@@ -402,6 +402,100 @@ async fn redispatched_continuations_do_not_starve_queued_merge_work() {
     );
 }
 
+/// A restored record that names no source peer goes to transport block sync,
+/// whose completion can arrive before the merge loop registers the query.
+/// The merge loop then handles that completion itself, and the DAG it
+/// completes must not wait for room in the merge loop's own channel.
+#[tokio::test(start_paused = true)]
+async fn sourceless_latched_completion_does_not_block_merge_loop() {
+    let blockstore = Arc::new(DefraBlockstore::new(
+        Arc::new(RegolithStore::in_memory().unwrap()),
+        true,
+    ));
+    let (head, head_data, leaf, leaf_data) = head_and_field();
+    blockstore.put(&head, &head_data).await.unwrap();
+    let pending_store = Arc::new(PendingDagStore::new(Arc::new(
+        RegolithStore::in_memory().unwrap(),
+    )));
+    pending_store
+        .put(
+            &head,
+            &PersistedPendingDag {
+                doc_id: "doc".to_string(),
+                collection_id: "collection".to_string(),
+                head_priority: Some(1),
+                creator: "creator".to_string(),
+                source_peer: None,
+                alternate_providers: Vec::new(),
+                is_explicit_replicator: false,
+                explicit_replay_authorization: None,
+            },
+        )
+        .await
+        .unwrap();
+    let transport = TestTransport::new(
+        blockstore.clone(),
+        head,
+        head_data,
+        RapidHashMap::new(),
+        RapidHashMap::new(),
+    );
+    transport.set_connected_peers(vec![PeerId::new("provider".to_string())]);
+    let config = SyncConfig {
+        event_buffer_size: 1,
+        ..SyncConfig::default()
+    };
+    let (coordinator, mut events) =
+        SyncCoordinator::new(transport.clone(), blockstore.clone(), config)
+            .await
+            .unwrap();
+    transport.set_early_success_completion(coordinator.manager().block_sync_completion_tracker());
+    coordinator.install_pending_dag_store(pending_store).await;
+    coordinator
+        .manager()
+        .event_sender()
+        .send(merge_work())
+        .await
+        .unwrap();
+    assert_eq!(coordinator.restore_pending_dags().await, 1);
+
+    let now = n0_future::time::Instant::now();
+    let dispatched = coordinator.dispatch_due_pending_dag_fetches_for_test(now);
+    blockstore.put(&leaf, &leaf_data).await.unwrap();
+    let config = ReplicationConfig::default();
+    let fetch = n0_future::time::timeout(
+        Duration::from_secs(5),
+        ReplicationLoop::process_next(&coordinator, &mut events, &MergeAll, &config),
+    )
+    .await;
+    let redispatched = fetch
+        .is_ok()
+        .then(|| coordinator.dispatch_due_pending_dag_fetches_for_test(now));
+    let merge = if redispatched == Some(1) {
+        Some(ReplicationLoop::process_next(&coordinator, &mut events, &MergeAll, &config).await)
+    } else {
+        None
+    };
+
+    coordinator.shutdown().await;
+
+    assert_eq!(dispatched, 1);
+    assert!(
+        matches!(fetch, Ok(ReplicationResult::BitswapFetchStarted { root_cid, .. }) if root_cid == head),
+        "the merge loop waited for room in its own channel: {fetch:?}"
+    );
+    assert_eq!(
+        redispatched,
+        Some(1),
+        "the completed root is due for the receiver clock at once"
+    );
+    assert!(
+        matches!(merge, Some(ReplicationResult::Merged { cid, .. }) if cid == head),
+        "the completed root was not merged from its dispatch: {merge:?}"
+    );
+    assert_eq!(transport.sync_batches(), vec![vec![leaf]]);
+}
+
 /// A fetch that completed its DAG waits for room in the merge loop's channel
 /// to report it. It needs no network while it waits, so it holds no fetch
 /// permit: the permits bound transfers, and pull fetches share them.
