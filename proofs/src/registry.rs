@@ -697,9 +697,9 @@ pub const PROPERTIES: &[Property] = &[
         // Fairness is the scheduler's only; every running send ends by a reply
         // or its send timeout.
         family: "Sync ownership transfer (head hint / receiver pull)",
-        name: "INV_QueueBounded / INV_PermitConservation / INV_PeerLeavesAWorker / INV_UnreachableLeaveAWorker / INV_DemoteAfterFailedProbe / LIVE_HealthyProgress",
+        name: "INV_QueueBounded / INV_PermitConservation / INV_PeerLeavesAWorker / INV_UnreachableLeaveAWorker / ACT_DemoteAfterFailedProbe / LIVE_HealthyProgress",
         axis: Tla,
-        anchor: "crates/p2p/src/sync/push_backlog.rs BacklogOwner::enqueue, pop_eligible, park_peer, park_peer_unreachable, peer_answered, take_queued_for_peer; crates/p2p/src/sync/coordinator/push_worker.rs spawn_push_workers, run_push_job",
+        anchor: "crates/p2p/src/sync/push_backlog.rs BacklogOwner::enqueue, pop_eligible, park_peer, park_peer_unreachable, peer_answered, retire_idle_cooldowns, take_queued_for_peer; crates/p2p/src/sync/coordinator/push_worker.rs spawn_push_workers, run_push_job",
         model_ref: "MC_PushBacklog_{Green,Green_TwoDead,Green_SharedCap,Red_TwoDead,Red_DemoteEveryTimeout,Red_NoPeerCap,Red_SpawnPerItem,Red_PermitLeak,Red_RetainHandles}.cfg",
         tiers: &[Boundary],
     },
