@@ -326,17 +326,41 @@ MClaim(s, v) ==
   /\ dispatches' = [dispatches EXCEPT ![<<s, v>>] = Min(@ + 1, RotateAfter)]
   /\ UNCHANGED <<mem, conts, cursor, peerCursor>>
 
+\* The end of a root's attempt (PendingDagLease::finish_attempt). A root that
+\* had RotateAfter dispatches gives its entry up, keeping its durable record,
+\* when a durable root has no entry and the map is full or the root's peer is at
+\* its quota; any other root waits out its backoff. An attempt whose result was
+\* lost has not ended.
+EndAttempt(r) ==
+  IF \* Retained, the rule before, never gives an acknowledged entry up.
+     /\ OverflowMode # "Retained"
+     \* The root holds an entry, had its dispatches, and its attempt has ended.
+     /\ r \in mem
+     /\ dispatches[r] >= RotateAfter
+     /\ flights'[r] = 0
+     \* Another durable root waits for an entry, and the map or the root's peer
+     \* is full.
+     /\ Waiting # {}
+     /\ Cardinality(Held) >= MemBound \/ Cardinality(PeerHeld(r)) >= PeerQuota
+  \* The entry goes; the durable record (pending) stays.
+  THEN /\ mem' = mem \ {r}
+       /\ dueOrder' = Without(dueOrder, {r})
+       /\ backoff' = backoff \ {r}
+       /\ dispatches' = Reset({r})
+       /\ UNCHANGED <<conts, cursor, peerCursor>>
+  ELSE UNCHANGED mvars
+
 \* An attempt ends without the DAG: it failed, was shed as busy, or deferred
-\* behind a local storage owner. The root waits out its backoff.
+\* behind a local storage owner.
 MFail(s, v) ==
   /\ FailFetchBeforeWaiter(s, v) \/ ProviderShed(s, v) \/ ContendedIngest(s, v)
-  /\ UNCHANGED mvars
+  /\ EndAttempt(<<s, v>>)
 
 \* A completed fetch, which a provider that never serves never gives.
 MComplete(s, v) ==
   /\ s \notin Dead
   /\ CompleteFetch(s, v)
-  /\ UNCHANGED mvars
+  /\ EndAttempt(<<s, v>>)
 
 \* The root's next_retry_at passes; its attempt has ended (the deadline runs
 \* from the end of the attempt, PendingDagLease::finish_attempt).
@@ -346,28 +370,6 @@ BecomeDue(s, v) ==
   /\ backoff' = backoff \ {<<s, v>>}
   /\ dueOrder' = Append(dueOrder, <<s, v>>)
   /\ UNCHANGED <<vars, mem, conts, dispatches, cursor, peerCursor>>
-
-\* At the end of an attempt a root that had RotateAfter dispatches gives its
-\* entry up, keeping its durable record, when a durable root has no entry and
-\* the map is full or the root's peer is at its quota
-\* (PendingDagLease::finish_attempt).
-Yield(s, v) ==
-  \* Retained, the rule before, never gives an acknowledged entry up.
-  /\ OverflowMode # "Retained"
-  \* The root holds an entry, had its dispatches, and its attempt has ended.
-  /\ <<s, v>> \in mem
-  /\ dispatches[<<s, v>>] >= RotateAfter
-  /\ flights[<<s, v>>] = 0
-  \* Another durable root waits for an entry, and the map or the root's peer
-  \* is full.
-  /\ Waiting # {}
-  /\ Cardinality(Held) >= MemBound \/ Cardinality(PeerHeld(<<s, v>>)) >= PeerQuota
-  \* The entry goes; the durable record (pending) stays.
-  /\ mem' = mem \ {<<s, v>>}
-  /\ dueOrder' = Without(dueOrder, {<<s, v>>})
-  /\ backoff' = backoff \ {<<s, v>>}
-  /\ dispatches' = Reset({<<s, v>>})
-  /\ UNCHANGED <<vars, conts, cursor, peerCursor>>
 
 \* The resync sweep admits the first waiting durable root it offers a place
 \* that fits, due at once, and passes the ones that do not
@@ -442,8 +444,9 @@ Answer(s, v) ==
   \/ MNack(s, v) \/ M(ProcessNack(s, v))
 
 \* Every SyncOwnership action, with registration, nack, claim, failure,
-\* completion and restart in their memory-aware forms, plus the second tier,
-\* the deadline, the sweep, the yield and the continuations.
+\* completion and restart in their memory-aware forms (failure and completion
+\* end an attempt), plus the second tier, the deadline, the sweep and the
+\* continuations.
 MNext ==
   \/ \E s \in Scopes : M(Update(s)) \/ M(ReHintMarker(s))
   \/ \E s \in Scopes, v \in 1..MaxV :
@@ -457,7 +460,7 @@ MNext ==
        \/ MComplete(s, v) \/ M(ClaimMerge(s, v))
        \/ M(CompleteMerge(s, v)) \/ M(ClaimTerminal(s, v))
        \/ M(CompleteTerminal(s, v))
-       \/ Yield(s, v) \/ PullYield(s, v) \/ ContinuationStop(s, v)
+       \/ PullYield(s, v) \/ ContinuationStop(s, v)
   \/ Resync
   \/ MCrash
   \/ M(Terminating)
@@ -471,10 +474,10 @@ MSpec == MInit /\ [][MNext]_allVars
 \* Each sending peer's retry ledger offers one of its dirty markers again,
 \* and the receiver answers one of that peer's hints: one scheduler per peer,
 \* never per scope, so a peer may keep offering a head that is nacked for
-\* ever instead of another. Per root there are only timers and the end of an
-\* attempt: a deadline passes, an attempt's windows end, and a root that keeps
-\* being able to give its entry up does, as finish_attempt does at the end of
-\* every attempt. Pull-sync merges, failures, the cleanup
+\* ever instead of another. Per root there are only timers: a deadline
+\* passes, an attempt's windows end. A root gives its entry up as its attempt
+\* ends (EndAttempt), so that step has no fairness of its own. Pull-sync
+\* merges, failures, the cleanup
 \* after a merge and the restart are never forced. The environment
 \* assumption is the dispatch model's: a fetch that can complete eventually
 \* does (strong fairness on some MComplete).
@@ -491,7 +494,6 @@ MFairSpec ==
   /\ \A s \in Scopes :
        /\ WF_allVars(\E v \in 1..MaxV : MFail(s, v))
        /\ WF_allVars(\E v \in 1..MaxV : BecomeDue(s, v))
-       /\ SF_allVars(\E v \in 1..MaxV : Yield(s, v))
 
 \* Promise: the added variables keep their shapes, on top of SyncOwnership's.
 INV_MemoryTypeOK ==
