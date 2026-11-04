@@ -191,14 +191,15 @@ impl Node {
             let grace = std::time::Duration::from_secs(2);
 
             match tasks {
-                super::node::P2PTasks::Libp2p {
-                    coordinator,
-                    host_task,
-                    replication_task,
-                    event_handler_task,
-                    failure_recorder_task,
-                    retry_loop_task,
-                } => {
+                super::node::P2PTasks::Libp2p(tasks) => {
+                    let super::node::Libp2pTasks {
+                        coordinator,
+                        host_task,
+                        replication_task,
+                        event_handler_task,
+                        failure_recorder_task,
+                        retry_loop_task,
+                    } = *tasks;
                     coordinator.shutdown().await;
 
                     // Abort all tasks - they will stop when the channel closes
