@@ -56,6 +56,22 @@ impl ScriptedPusher {
     fn attempted(&self) -> Vec<String> {
         self.attempted.load_clone()
     }
+
+    /// Clears `doc_id`'s marker with the head the peer acknowledged, as
+    /// `complete_document_retry_if_current` does after a delivered replay.
+    async fn complete(&self, peer_id: &PeerId, doc_id: &str, generation: u64) {
+        self.peerstore
+            .complete_retry_scope(
+                peer_id.as_str(),
+                doc_id,
+                "",
+                false,
+                generation,
+                &[format!("{doc_id}-head")],
+            )
+            .await
+            .unwrap();
+    }
 }
 
 #[async_trait]
@@ -79,10 +95,7 @@ impl TransportDocPusher for ScriptedPusher {
             .unwrap_or(Outcome::Delivered)
         {
             Outcome::Delivered => {
-                self.peerstore
-                    .complete_retry_scope(peer_id.as_str(), doc_id, "", false, generation, &[])
-                    .await
-                    .unwrap();
+                self.complete(peer_id, doc_id, generation).await;
                 Ok(())
             }
             Outcome::Failed(message) => Err(P2PError::internal(message)),
@@ -97,10 +110,7 @@ impl TransportDocPusher for ScriptedPusher {
             Outcome::WaitForAck(started, finish) => {
                 started.notify_one();
                 finish.notified().await;
-                self.peerstore
-                    .complete_retry_scope(peer_id.as_str(), doc_id, "", false, generation, &[])
-                    .await
-                    .unwrap();
+                self.complete(peer_id, doc_id, generation).await;
                 Ok(())
             }
             Outcome::Hangs => std::future::pending().await,
@@ -718,5 +728,39 @@ async fn a_failed_live_push_alone_keeps_the_escalated_rung() {
     assert!(
         due_in > RETRY_INTERVALS_SECS[0],
         "a failed live push with no delivery pulled a silent peer back to the first rung: due in {due_in} s"
+    );
+}
+
+/// A pass cut short by the marker cap fails nothing, so it charges no rung and
+/// calls no `Restart`. Its deliveries alone refute the escalation: the first
+/// timeout after it is charged from the first rung, not the old one.
+#[nuclei::test(start_paused = true)]
+async fn a_truncated_pass_that_delivered_returns_the_peer_to_the_first_rung() {
+    let bound = crate::retry::MAX_MARKERS_PER_PEER_PASS;
+    let mut docs: Vec<String> = (0..bound).map(|i| format!("doc-{i:03}")).collect();
+    docs.push("hangs".to_string());
+    let script = [("hangs".to_string(), Outcome::Hangs)]
+        .into_iter()
+        .collect();
+    let sweep = Sweep::with_peers(&[(PEER, docs)], script).await;
+    sweep.escalate(6).await;
+
+    sweep.run().await;
+    assert_eq!(sweep.pusher.attempted().len(), bound);
+    assert_eq!(
+        sweep.remaining_markers().await,
+        ["hangs"],
+        "the first pass was not cut short by the marker cap before the hung marker"
+    );
+
+    sweep.run().await;
+    assert_eq!(
+        sweep.pusher.attempted().last().map(String::as_str),
+        Some("hangs")
+    );
+    let due_in = sweep.seconds_until_due().await;
+    assert!(
+        due_in <= RETRY_INTERVALS_SECS[1],
+        "the peer took {bound} replays, yet the timeout after them was charged from the escalated rung: due in {due_in} s"
     );
 }

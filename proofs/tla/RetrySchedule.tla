@@ -5,9 +5,11 @@
 \* deadline passes, the retry sweep replays the peer's markers. A replay that
 \* lands removes its marker; a pass that lands nothing climbs one rung, so the
 \* next wait is longer, up to the last rung, which then repeats (Go's ladder:
-\* 30 seconds doubling to 32 minutes). Meanwhile local writes push their heads
-\* live: a live push that lands is a delivery, one that fails leaves its
-\* marker for the sweep.
+\* 30 seconds doubling to 32 minutes). A pass stops at a replay that fails or
+\* hangs, or is cut short by the per-pass cap with nothing failed; a pass cut
+\* short leaves the clock as it was, apart from what its replays' acknowledgements
+\* do. Meanwhile local writes push their heads live: a live push that lands is
+\* a delivery, one that fails leaves its marker for the sweep.
 \*
 \* Who acts: local writes (a live push that lands or fails), the sweep (a pass
 \* over a due peer), the wall clock (ticks toward the deadline), and the
@@ -20,12 +22,16 @@
 \*     that fails right after a live acknowledgement waits behind the rung that
 \*     an earlier outage, replay timeout or never-landing document charged, up
 \*     to the last one;
+\*   - the first pass that fails after a delivery, live or replayed, waits
+\*     longer than the second rung (INV_FirstFailureAfterDeliveryChargesSecondRung):
+\*     otherwise a run of replays that landed, in passes cut short by the cap,
+\*     leaves the next timeout to charge the old rung;
 \*   - a peer that keeps failing, with no delivery and no reconnect since, is
 \*     swept again sooner than its rung allows (INV_SilentPeerBacksOff):
 \*     otherwise every local write against a peer that is down would buy
 \*     another early retry, a retry storm.
 \*
-\* Both promises are safety; no action is given fairness. Time passes only
+\* Every promise is safety; no action is given fairness. Time passes only
 \* while the peer is not due: the sweep runs every two seconds, so a due peer
 \* is swept before a rung's worth of time can pass. Which marker a bounded pass
 \* reaches first (the durable dispatch cursor) and receiver backpressure are
@@ -39,10 +45,13 @@
 \*   crates/storage/src/stores/peerstore.rs   RegisterScopeMarkerAttempt (a new marker keeps the clock),
 \*                                            PeerstoreRetryAttempt::CompleteMarker (an acknowledged completion restarts it),
 \*                                            PeerstoreRetryAttempt::{Reschedule, Restart, Activate}
-\*   crates/p2p-adapter/src/retry.rs          run_retry_pass (one rung per failed pass, the first rung after progress),
+\*   crates/p2p-adapter/src/retry.rs          run_retry_pass (one rung per failed pass, the first rung after progress,
+\*                                            nothing when MAX_MARKERS_PER_PEER_PASS or MAX_PEER_PASS cuts it short),
 \*                                            record_failure (live acknowledgements and failures)
+\*   crates/db/src/merge/push_docs_common.rs  complete_document_retry_if_current (replay acknowledgements)
 \* Rust tests: crates/p2p-adapter/src/retry_sweep_tests.rs
 \*   a_live_ack_returns_an_escalated_peer_to_the_first_rung,
+\*   a_truncated_pass_that_delivered_returns_the_peer_to_the_first_rung,
 \*   a_failed_live_push_alone_keeps_the_escalated_rung.
 EXTENDS Naturals, Sequences
 
@@ -50,8 +59,9 @@ CONSTANTS
   Ladder,    \* the retry ladder in clock ticks, shortest first; its last rung repeats
   Scopes,    \* the documents the node pushes to the peer
   Poison,    \* documents whose push never lands, live or replayed
-  RestartOn  \* what returns the peer to the first rung, besides a pass that landed some markers:
-             \*   "LiveAck" (a delivery: the fix), "Register" or "Activate" (no delivery: mutants)
+  RestartOn  \* what returns the peer to the first rung, besides a failed pass that landed some markers:
+             \*   "LiveAck" and "ReplayAck" (a delivery, live or replayed: the fix, one rule in CompleteMarker),
+             \*   "Register" or "Activate" (no delivery: mutants)
 
 \* The ladder has at least one rung, and every rung waits some time.
 ASSUME Ladder \in Seq(Nat \ {0}) /\ Len(Ladder) >= 1
@@ -60,7 +70,7 @@ ASSUME \A i \in 1..(Len(Ladder) - 1) : Ladder[i] <= Ladder[i + 1]
 \* Never-landing documents are some of the documents.
 ASSUME Poison \subseteq Scopes
 \* The restart knob names only these events.
-ASSUME RestartOn \subseteq {"LiveAck", "Register", "Activate"}
+ASSUME RestartOn \subseteq {"LiveAck", "ReplayAck", "Register", "Activate"}
 
 \* The last rung's number.
 Top == Len(Ladder)
@@ -82,10 +92,11 @@ VARIABLES
   proven,   \* bookkeeping: the peer took a delivery since its last failed pass
   failed,   \* bookkeeping: passes failed in a row since the last delivery, saturated at the last rung
   woke,     \* bookkeeping: the peer reconnected since its last failed pass
-  slept     \* bookkeeping: ticks since the peer's last pass
+  slept,    \* bookkeeping: ticks since the peer's last pass
+  relapsed  \* bookkeeping: the peer's last failed pass came right after a delivery
 
 \* Every variable.
-vars == <<up, markers, rung, wait, proven, failed, woke, slept>>
+vars == <<up, markers, rung, wait, proven, failed, woke, slept, relapsed>>
 
 \* The peer is reachable, nothing is owed, and there is no clock yet.
 Init ==
@@ -97,6 +108,7 @@ Init ==
   /\ failed = 0
   /\ woke = FALSE
   /\ slept = 0
+  /\ relapsed = FALSE
 
 \* The peer becomes unreachable.
 Disconnect ==
@@ -105,7 +117,7 @@ Disconnect ==
   \* and now is not.
   /\ up' = FALSE
   \* Nothing else changes.
-  /\ UNCHANGED <<markers, rung, wait, proven, failed, woke, slept>>
+  /\ UNCHANGED <<markers, rung, wait, proven, failed, woke, slept, relapsed>>
 
 \* The peer comes back. Its connection event makes the clock due at once
 \* (Activate); the rung stays unless the Activate mutant restarts it.
@@ -121,7 +133,7 @@ Reconnect ==
   \* Remember the reconnect: it is evidence of a sort, not a delivery.
   /\ woke' = TRUE
   \* Nothing else changes.
-  /\ UNCHANGED <<markers, proven, failed, slept>>
+  /\ UNCHANGED <<markers, proven, failed, slept, relapsed>>
 
 \* A local write to s whose live push fails: its marker stays for the sweep.
 \* The first marker creates the clock one rung up (RegisterScopeMarkerAttempt
@@ -143,7 +155,7 @@ PushFails(s) ==
           \* The clock is kept.
           ELSE UNCHANGED <<rung, wait, slept>>
   \* No delivery happened, and the peer did not move.
-  /\ UNCHANGED <<up, proven, failed, woke>>
+  /\ UNCHANGED <<up, proven, failed, woke, relapsed>>
 
 \* A local write to s whose live push lands: a delivery. The acknowledgement
 \* clears s's marker (CompleteMarker). Clearing the last marker deletes the
@@ -173,7 +185,7 @@ PushLands(s) ==
   \* which ends its run of failed passes.
   /\ failed' = 0
   \* The peer did not move.
-  /\ UNCHANGED <<up, woke>>
+  /\ UNCHANGED <<up, woke, relapsed>>
 
 \* One tick of the wall clock toward the deadline. A due peer is swept first.
 Tick ==
@@ -186,7 +198,7 @@ Tick ==
   \* one tick longer since the last pass.
   /\ slept' = slept + 1
   \* Nothing else changes.
-  /\ UNCHANGED <<up, markers, rung, proven, failed, woke>>
+  /\ UNCHANGED <<up, markers, rung, proven, failed, woke, relapsed>>
 
 \* A failed pass: one rung up (Reschedule: bump_with_schedule at the current rung).
 Charge ==
@@ -200,6 +212,8 @@ Charge ==
   /\ failed' = Min(failed + 1, Top)
   \* with no reconnect since,
   /\ woke' = FALSE
+  \* right after a delivery, if the peer had just taken one,
+  /\ relapsed' = proven
   \* and its pass just happened.
   /\ slept' = 0
 
@@ -213,9 +227,10 @@ Pass ==
      \* Not connected: a redial, and one rung up.
      THEN /\ Charge
           /\ UNCHANGED <<up, markers>>
-     \* Connected: markers are replayed until one hangs or fails; any of the
-     \* documents that can land may have landed by then.
-     ELSE \E landed \in SUBSET (markers \ Poison) :
+     \* Connected: markers are replayed in turn, and any of the documents that
+     \* can land may land. The pass then stops on a replay that fails or hangs,
+     \* or the cap cuts it short with nothing failed.
+     ELSE \E landed \in SUBSET (markers \ Poison), stopped \in BOOLEAN :
             \* The landed documents are no longer owed.
             /\ markers' = markers \ landed
             \* The peer did not move.
@@ -228,16 +243,35 @@ Pass ==
                     /\ failed' = 0
                     /\ woke' = FALSE
                     /\ slept' = 0
-               ELSE IF landed # {}
-                    \* Some landed: back to the first rung (Restart).
-                    THEN /\ rung' = 1
-                         /\ wait' = First
+                    /\ UNCHANGED relapsed
+               ELSE IF stopped
+                    \* A replay failed or hung (failed in run_retry_pass).
+                    THEN IF landed # {}
+                         \* Some landed: back to the first rung (Restart).
+                         THEN /\ rung' = 1
+                              /\ wait' = First
+                              /\ proven' = TRUE
+                              /\ failed' = 0
+                              /\ woke' = FALSE
+                              /\ slept' = 0
+                              /\ UNCHANGED relapsed
+                         \* Nothing landed: one rung up.
+                         ELSE Charge
+                    \* Cut short with nothing failed: the pass itself leaves the
+                    \* clock due, and only the replays' acknowledgements move it.
+                    ELSE \* The cap is reached only after replays, and none failed, so some landed.
+                         /\ landed # {}
+                         \* The fix: each acknowledgement drops the clock to the first rung at most.
+                         \* The old rule: the escalated rung is kept.
+                         /\ rung' = IF "ReplayAck" \in RestartOn THEN Min(rung, 1) ELSE rung
+                         \* The peer has taken a delivery,
                          /\ proven' = TRUE
+                         \* which ends its run of failed passes,
                          /\ failed' = 0
-                         /\ woke' = FALSE
+                         \* and its pass just happened.
                          /\ slept' = 0
-                    \* Nothing landed: one rung up.
-                    ELSE Charge
+                         \* It is still due, and nothing else changes.
+                         /\ UNCHANGED <<wait, woke, relapsed>>
 
 \* Any one step: the network, the clock, the sweep, or a write's live push.
 Next ==
@@ -260,6 +294,7 @@ TypeOK ==
   /\ failed \in 0..Top
   /\ woke \in BOOLEAN
   /\ slept \in 0..Longest
+  /\ relapsed \in BOOLEAN
 
 \* Promise: once the peer has taken a delivery, and until one of its passes
 \* fails, its markers are due within the first rung.
@@ -271,4 +306,10 @@ INV_DeliveredPeerDueAtFirstRung ==
 \* pass before it is swept again.
 INV_SilentPeerBacksOff ==
   (markers # {} /\ ~proven /\ ~woke /\ failed >= 1) => slept + wait >= Ladder[failed]
+
+\* Promise: the first pass that fails after a delivery charges at most the
+\* second rung. The delivery put the clock on the first rung, so that failure
+\* climbs to the next one, not to the rung earlier failures earned.
+INV_FirstFailureAfterDeliveryChargesSecondRung ==
+  (relapsed /\ failed = 1 /\ markers # {}) => slept + wait <= Ladder[Min(2, Top)]
 ====
