@@ -27,9 +27,15 @@ async fn filtered_truncate_test(cluster: TestCluster) {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_filtered_truncate() {
-    let _root = integration_test::workspace_root();
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    filtered_truncate_test(cluster).await;
+    edge::compat(async move {
+        edge::compat(async move {
+            let _root = integration_test::workspace_root();
+            let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+            filtered_truncate_test(cluster).await;
+        })
+        .await;
+    })
+    .await;
 }

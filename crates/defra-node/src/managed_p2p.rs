@@ -178,7 +178,13 @@ enum ShutdownKind {
         recorder: Box<SegQueue<workers::Background>>,
     },
     #[cfg(feature = "p2p")]
-    Iroh(defra_p2p_adapter::IrohPeerShutdown),
+    Iroh {
+        peer: defra_p2p_adapter::IrohPeerShutdown,
+        /// The peer's own scope of the network edge, drained after the peer
+        /// stops: stopping it spawns the drain of its tasks, which the node's
+        /// closed scope would refuse.
+        scope: edge::Scope,
+    },
 }
 
 impl ShutdownHandle {
@@ -202,9 +208,9 @@ impl ShutdownHandle {
     }
 
     #[cfg(feature = "p2p")]
-    pub(crate) fn iroh(peer: defra_p2p_adapter::IrohPeerShutdown) -> Self {
+    pub(crate) fn iroh(peer: defra_p2p_adapter::IrohPeerShutdown, scope: edge::Scope) -> Self {
         Self {
-            inner: ShutdownKind::Iroh(peer),
+            inner: ShutdownKind::Iroh { peer, scope },
         }
     }
 
@@ -229,7 +235,10 @@ impl ShutdownHandle {
                 let _ = handle.shutdown().await;
             }
             #[cfg(feature = "p2p")]
-            ShutdownKind::Iroh(peer) => peer.shutdown().await,
+            ShutdownKind::Iroh { peer, scope } => {
+                peer.shutdown().await;
+                crate::network::drain(scope).await;
+            }
         }
     }
 }

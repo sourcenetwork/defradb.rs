@@ -6,8 +6,9 @@ const SCHEMA: &str = r#"type Article {
     category: String
 }"#;
 
-#[tokio::test]
+#[nuclei::test]
 async fn bm25_large_document() {
+    edge::compat(async move {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
     client.schema_add(SCHEMA).unwrap();
@@ -42,10 +43,13 @@ async fn bm25_large_document() {
         articles[0]["BM25"].as_f64().unwrap_or(0.0) > 0.0,
         "Should find 'needle' in large document"
     );
+})
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn bm25_unicode_and_special_characters() {
+    edge::compat(async move {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
     client.schema_add(SCHEMA).unwrap();
@@ -72,10 +76,13 @@ async fn bm25_unicode_and_special_characters() {
         .as_f64()
         .unwrap_or(0.0);
     assert!(normal_score > 0.0, "Should find 'normal' in Normal Article");
+})
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn bm25_empty_field_does_not_crash() {
+    edge::compat(async move {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
     client.schema_add(SCHEMA).unwrap();
@@ -116,10 +123,13 @@ async fn bm25_empty_field_does_not_crash() {
         content_score > 0.0,
         "Doc with content should score positive"
     );
+})
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn bm25_works_with_user_index_named_like_legacy_fulltext_key() {
+    edge::compat(async move {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
     client.schema_add(SCHEMA).unwrap();
@@ -153,4 +163,6 @@ async fn bm25_works_with_user_index_named_like_legacy_fulltext_key() {
         0.0,
         "Non-matching document should still receive zero score"
     );
+})
+    .await;
 }

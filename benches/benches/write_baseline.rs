@@ -111,13 +111,16 @@ fn main() {
             }
         })
     );
-    let rt = common::owned_runtime();
+    let server = common::server_edge();
+    let edge = server.edge().clone();
     for scenario in Scenario::ALL {
         let mut groups: Vec<Group> = Vec::new();
         for &count in &writers {
             let mut values: Vec<Vec<f64>> = Vec::new();
             for repetition in 0..repetitions {
-                let sample = rt.block_on(workload::run(scenario, count, operations));
+                let sample = edge
+                    .block_on(workload::run(&edge, scenario, count, operations))
+                    .unwrap();
                 let metrics = metrics(&sample);
                 if groups.is_empty() {
                     groups = metrics
@@ -175,4 +178,5 @@ fn main() {
         };
         family.emit(&format!("write_baseline_{}{suffix}", scenario.name()));
     }
+    server.shutdown().unwrap();
 }

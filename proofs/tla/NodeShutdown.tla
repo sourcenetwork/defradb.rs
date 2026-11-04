@@ -15,7 +15,11 @@
 \*   1. abort every task in the node's shutdown set (BackgroundTasks,
 \*      stop_services), then await each one until it let go of storage;
 \*   2. stop accepting requests and drain those in flight, up to a deadline
-\*      (NodeEdge::drain, crates/defra-node/src/network.rs);
+\*      (NodeEdge::drain, crates/defra-node/src/network.rs). The HTTP server
+\*      is a task of the node's scope, not a service: once the scope stops
+\*      accepting, its accept loop stops and each connection finishes the
+\*      requests in flight and closes (crates/net/src/server.rs serve,
+\*      until_closing), so the drain waits for them;
 \*   3. stop the workers: the pool finishes what it admitted and stops;
 \*   4. close regolith (close_database);
 \*   5. flush telemetry, handing the exporter join to the network runtime, or

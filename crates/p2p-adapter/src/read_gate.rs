@@ -303,7 +303,7 @@ mod tests {
         (cid, bytes)
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn classifier_uses_serving_cid_owner_metadata() {
         let db = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
         db.create_collection(test_collection()).await.unwrap();
@@ -339,7 +339,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn classifier_denies_field_block_without_owner_metadata() {
         let db = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
         db.create_collection(test_collection()).await.unwrap();
@@ -350,7 +350,7 @@ mod tests {
         assert_eq!(classifier.classify(&cid, &bytes).await, BlockClass::Deny);
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn indexed_classification_refuses_cross_collection_co_ownership() {
         let db = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
         db.create_collection(test_collection()).await.unwrap();
@@ -408,7 +408,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn indexed_classification_resolves_metadata_without_the_payload() {
         let db = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
         db.create_collection(test_collection()).await.unwrap();
@@ -453,7 +453,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn node_identity_without_a_grant_cannot_read_a_protected_block() {
         let owner =
             identity::Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap();

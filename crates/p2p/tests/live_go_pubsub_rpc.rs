@@ -43,7 +43,7 @@ use storage::RegolithStore;
 
 type TestBlockstore = DefraBlockstore<RegolithStore>;
 
-#[tokio::test]
+#[nuclei::test]
 #[ignore = "requires a pre-running Go defradb with DEFRADB_GO_PEER / DEFRADB_GO_DOC_ID set"]
 async fn doc_sync_against_go_defradb() {
     let peer_addr = std::env::var("DEFRADB_GO_PEER")
@@ -52,8 +52,9 @@ async fn doc_sync_against_go_defradb() {
         .expect("DEFRADB_GO_DOC_ID must be set to a docID the Go node has");
 
     let store = MockBitswapStore::new();
-    let (host, handle, events, _replicators) = P2PHost::new(store).await.unwrap();
-    tokio::spawn(host.run());
+    let (host, handle, events, _replicators) =
+        P2PHost::new(store, edge::testing::edge()).await.unwrap();
+    nuclei::spawn(host.run()).detach();
     handle
         .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
         .await
@@ -74,21 +75,26 @@ async fn doc_sync_against_go_defradb() {
         Arc::new(RegolithStore::in_memory().unwrap()),
         true,
     ));
-    let (coord, _sync_events) =
-        p2p::sync::SyncCoordinator::new(transport, blockstore, p2p::sync::SyncConfig::default())
-            .await
-            .expect("build coordinator");
+    let (coord, _sync_events) = p2p::sync::SyncCoordinator::new(
+        transport,
+        blockstore,
+        p2p::network::Network::on(edge::testing::edge()),
+        p2p::sync::SyncConfig::default(),
+    )
+    .await
+    .expect("build coordinator");
     let coord = Arc::new(coord);
 
     let coord_pump = Arc::clone(&coord);
-    tokio::spawn(async move {
+    nuclei::spawn(async move {
         let mut events = events;
         while let Some(host_event) = events.recv().await {
             let _ = coord_pump
                 .handle_transport_event(convert_host_event(host_event))
                 .await;
         }
-    });
+    })
+    .detach();
 
     coord
         .start_pubsub_services()
@@ -97,7 +103,7 @@ async fn doc_sync_against_go_defradb() {
     eprintln!("pubsub services started");
 
     // Give gossipsub a moment to form a mesh on the doc-sync topic.
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    nuclei::time::sleep(Duration::from_secs(2)).await;
 
     eprintln!("issuing pubsub_sync_documents for doc {doc_id}");
     let results = coord
@@ -132,7 +138,7 @@ async fn doc_sync_against_go_defradb() {
     handle.shutdown().await.ok();
 }
 
-#[tokio::test]
+#[nuclei::test]
 #[ignore = "requires a pre-running Go defradb with DEFRADB_GO_PEER / DEFRADB_GO_COLLECTION_ID set"]
 async fn branchable_sync_against_go_defradb() {
     let peer_addr = std::env::var("DEFRADB_GO_PEER")
@@ -141,8 +147,9 @@ async fn branchable_sync_against_go_defradb() {
         .expect("DEFRADB_GO_COLLECTION_ID must be set to a branchable collection id");
 
     let store = MockBitswapStore::new();
-    let (host, handle, events, _replicators) = P2PHost::new(store).await.unwrap();
-    tokio::spawn(host.run());
+    let (host, handle, events, _replicators) =
+        P2PHost::new(store, edge::testing::edge()).await.unwrap();
+    nuclei::spawn(host.run()).detach();
     handle
         .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
         .await
@@ -162,24 +169,29 @@ async fn branchable_sync_against_go_defradb() {
         Arc::new(RegolithStore::in_memory().unwrap()),
         true,
     ));
-    let (coord, _sync_events) =
-        p2p::sync::SyncCoordinator::new(transport, blockstore, p2p::sync::SyncConfig::default())
-            .await
-            .unwrap();
+    let (coord, _sync_events) = p2p::sync::SyncCoordinator::new(
+        transport,
+        blockstore,
+        p2p::network::Network::on(edge::testing::edge()),
+        p2p::sync::SyncConfig::default(),
+    )
+    .await
+    .unwrap();
     let coord = Arc::new(coord);
 
     let coord_pump = Arc::clone(&coord);
-    tokio::spawn(async move {
+    nuclei::spawn(async move {
         let mut events = events;
         while let Some(host_event) = events.recv().await {
             let _ = coord_pump
                 .handle_transport_event(convert_host_event(host_event))
                 .await;
         }
-    });
+    })
+    .detach();
 
     coord.start_pubsub_services().await.unwrap();
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    nuclei::time::sleep(Duration::from_secs(2)).await;
 
     eprintln!("issuing pubsub_sync_branchable_collection for {collection_id}");
     let reply = coord
@@ -223,7 +235,7 @@ async fn wait_connected(handle: &p2p::P2PHostHandle, target: libp2p::PeerId) {
             start.elapsed() < Duration::from_secs(10),
             "timed out waiting to connect to Go peer"
         );
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        nuclei::time::sleep(Duration::from_millis(100)).await;
     }
 }
 

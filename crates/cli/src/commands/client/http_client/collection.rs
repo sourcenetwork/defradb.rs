@@ -1,6 +1,6 @@
 //! Collection HTTP client methods
 
-use reqwest::Method;
+use net::http::Method;
 use urlencoding::encode;
 
 use super::HttpClient;

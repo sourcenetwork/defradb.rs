@@ -2,7 +2,7 @@ use integration_test::TestCluster;
 
 use super::support::{CHUNKS, SCHEMA};
 
-#[tokio::test]
+#[nuclei::test]
 async fn chunk_generates_a_queryable_collection() {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
@@ -20,7 +20,7 @@ async fn chunk_generates_a_queryable_collection() {
     assert_eq!(data["Article"], serde_json::json!([]));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn chunk_is_refused_off_a_string_field() {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
@@ -31,7 +31,7 @@ async fn chunk_is_refused_off_a_string_field() {
     assert!(err.contains("@chunk"), "{err}");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn generated_collection_has_no_mutations() {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
@@ -50,7 +50,7 @@ async fn generated_collection_has_no_mutations() {
     assert!(!names.iter().any(|n| n.contains(CHUNKS)), "{names:?}");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn the_chunk_list_is_not_a_mutation_input() {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);

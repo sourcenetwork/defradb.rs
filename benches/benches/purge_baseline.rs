@@ -200,7 +200,7 @@ where
     let storage_before = stats.snapshot();
     let retries_before = telemetry::conflict_metrics_snapshot();
     let start = Instant::now();
-    let mut tasks = tokio::task::JoinSet::new();
+    let mut tasks = nuclei::task::JoinSet::new();
     for index in 0..writers {
         tasks.spawn(writer(index));
     }

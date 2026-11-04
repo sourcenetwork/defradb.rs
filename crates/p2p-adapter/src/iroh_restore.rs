@@ -59,7 +59,9 @@ where
     let mut restored_doc_ids = RapidHashSet::new();
     match peerstore.load_documents().await {
         Ok(doc_ids) => {
+            let followed = coordinator.followed_documents();
             for doc_id in doc_ids {
+                followed.insert(doc_id.clone(), ());
                 if let Err(error) = transport
                     .subscribe(p2p::topics::DefraTopic::document(&doc_id))
                     .await

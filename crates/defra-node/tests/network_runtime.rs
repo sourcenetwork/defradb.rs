@@ -23,7 +23,11 @@ async fn build_and_stop(config: NodeConfig) -> Result<()> {
 /// The network runtime the node's database runs its network work on.
 async fn database_edge(config: NodeConfig) -> Result<Option<edge::Edge>> {
     let node = NodeBuilder::default().with_config(config).build().await?;
-    let edge = node.database().network().edge().cloned();
+    let edge = node
+        .database()
+        .network()
+        .ok()
+        .map(|network| network.edge().clone());
     node.shutdown().await.unwrap();
     Ok(edge)
 }

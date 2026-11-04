@@ -96,9 +96,10 @@ impl LoggingHandle {
 /// the `start` command sets it, matching Go (which configures telemetry only
 /// in `cli/start.go`). Ephemeral commands like `version` / `client` keep the
 /// fmt subscriber but never spin up the exporter thread or pay its shutdown
-/// cost.
+/// cost. The exporter runs on `edge`.
 pub fn init(
     config: &Config,
+    edge: &edge::Edge,
     enable_profiling: bool,
     enable_telemetry: bool,
 ) -> Result<LoggingHandle> {
@@ -134,6 +135,7 @@ pub fn init(
             enable_profiling,
             enable_telemetry,
             config,
+            edge,
         ),
         (LogFormat::Json, LogOutput::Stderr) => init_subscriber(
             filter,
@@ -141,6 +143,7 @@ pub fn init(
             enable_profiling,
             enable_telemetry,
             config,
+            edge,
         ),
         (LogFormat::Text, LogOutput::Stdout) => init_subscriber(
             filter,
@@ -148,6 +151,7 @@ pub fn init(
             enable_profiling,
             enable_telemetry,
             config,
+            edge,
         ),
         (LogFormat::Text, LogOutput::Stderr) => init_subscriber(
             filter,
@@ -155,6 +159,7 @@ pub fn init(
             enable_profiling,
             enable_telemetry,
             config,
+            edge,
         ),
     }
 }
@@ -165,6 +170,7 @@ fn init_subscriber<L>(
     enable_profiling: bool,
     enable_telemetry: bool,
     config: &Config,
+    edge: &edge::Edge,
 ) -> Result<LoggingHandle>
 where
     L: tracing_subscriber::Layer<Registry> + Send + Sync + 'static,
@@ -194,7 +200,7 @@ where
             "DefraDB",
             defra_version::VersionInfo::new().descriptive(),
         );
-        match telemetry::init(telemetry_config) {
+        match telemetry::init(telemetry_config, edge.clone()) {
             Ok((handle, tracer)) => (handle, Some(tracer)),
             Err(err) => {
                 eprintln!(
@@ -207,7 +213,7 @@ where
 
     #[cfg(not(feature = "otel"))]
     let telemetry_handle = {
-        let _ = (config, enable_telemetry); // unused when otel is off
+        let _ = (config, enable_telemetry, edge); // unused when otel is off
         telemetry::TelemetryHandle::noop()
     };
 

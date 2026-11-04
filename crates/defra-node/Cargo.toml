@@ -92,13 +92,6 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 axum = { workspace = true, optional = true }
-reqwest = { version = "0.12", default-features = false, features = [
-    "json",
-    "charset",
-    "http2",
-    "system-proxy",
-    "rustls-tls-native-roots",
-] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # Optional — HTTP server
@@ -115,9 +108,11 @@ libp2p = { workspace = true, optional = true }
 # Optional — OpenTelemetry exporter (see the `otel` feature)
 telemetry = { path = "../telemetry", default-features = false }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# HTTP on nuclei sockets.
+net = { path = "../net" }
 # The process allocator of the `coding-session-bench` binary; the library sets
 # none.
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 mimalloc.workspace = true
 
 [dev-dependencies]

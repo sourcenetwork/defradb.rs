@@ -2,9 +2,10 @@
 //! hold. Gossip may lose an announcement; this is what still gets the newest
 //! record through (`ServiceRecords.tla`, `LIVE_NewestReached`).
 
+use crate::rt::time::Instant;
 use iroh::EndpointId;
-use n0_future::time::{Duration, Instant};
 use rapidhash::{HashMapExt, RapidHashMap};
+use std::time::Duration;
 
 use super::{Book, Pointer};
 

@@ -4,11 +4,12 @@
 //! on. A panic aborts the module, so containment cannot catch it here.
 
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
-use n0_future::task::JoinHandle;
-use n0_future::time::{Instant, Sleep};
+pub(crate) use n0_future::time::{Instant, Sleep};
 
 use crate::config::EdgeConfig;
 use crate::error::EdgeError;
@@ -26,7 +27,7 @@ impl Rt {
         F: Future + 'static,
         F::Output: 'static,
     {
-        n0_future::task::spawn(future)
+        JoinHandle(n0_future::task::spawn(future))
     }
 
     /// One thread runs everything, so blocking work runs as a task.
@@ -35,11 +36,44 @@ impl Rt {
         F: FnOnce() -> T + 'static,
         T: 'static,
     {
-        n0_future::task::spawn(async move { work() })
+        JoinHandle(n0_future::task::spawn(async move { work() }))
     }
 
     pub(crate) fn sleep_until(&self, at: Instant) -> Sleep {
         n0_future::time::sleep_until(at)
+    }
+
+    pub(crate) fn poll_sleep(&self, sleep: Pin<&mut Sleep>, cx: &mut Context<'_>) -> Poll<()> {
+        sleep.poll(cx)
+    }
+}
+
+/// A spawned task's completion. Dropping it leaves the task running.
+pub(crate) struct JoinHandle<T>(n0_future::task::JoinHandle<T>);
+
+impl<T> JoinHandle<T> {
+    pub(crate) fn abort(&self) {
+        self.0.abort();
+    }
+
+    pub(crate) fn is_finished(&self) -> bool {
+        self.0.is_finished()
+    }
+}
+
+impl<T> Future for JoinHandle<T> {
+    type Output = Result<T, EdgeError>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut self.0).poll(cx).map(|joined| {
+            joined.map_err(|error| {
+                if error.is_panic() {
+                    EdgeError::Panicked(error.to_string())
+                } else {
+                    EdgeError::Cancelled
+                }
+            })
+        })
     }
 }
 

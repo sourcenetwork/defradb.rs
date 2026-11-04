@@ -43,7 +43,7 @@ where
 impl State {
     /// Makes the request `call` builds with a client of node `name`'s HTTP
     /// API. It runs on the network edge, and the test waits for it on a
-    /// worker, which has no tokio context.
+    /// worker, which has no network runtime.
     pub fn http_on<F, Fut, T>(&self, name: &str, call: F) -> Result<T, Failure>
     where
         F: FnOnce(HttpClient) -> Fut,
@@ -71,7 +71,7 @@ impl State {
             cli::commands::client::generate_auth_token(&private_key_hex(seed), &url)
                 .expect("a token for a test identity")
         });
-        let client = HttpClient::new(&url)
+        let client = HttpClient::new(&url, &network_edge())
             .expect("http client")
             .with_auth_token(token);
         Ok(self
@@ -88,12 +88,14 @@ impl State {
     /// reports no build status has nothing to wait for.
     pub fn wait_for_indexes_built(&self, name: &str) -> Result<(), Failure> {
         let url = format!("{}/api/v0/collections/indexes", self.url_on(name)?);
+        let edge = network_edge();
         let outcome = self
-            .block_on(network_edge().spawn(async move {
-                let http = reqwest::Client::new();
-                let deadline = tokio::time::Instant::now() + INDEX_BUILD_TIMEOUT;
+            .block_on(edge.clone().spawn(async move {
+                let http = net::http::Client::new(edge);
+                let deadline = nuclei::time::Instant::now() + INDEX_BUILD_TIMEOUT;
                 loop {
-                    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                    let remaining =
+                        deadline.saturating_duration_since(nuclei::time::Instant::now());
                     let listing = match http.get(&url).timeout(remaining).send().await {
                         Ok(response) => response.json::<Value>().await.map_err(|e| e.to_string()),
                         Err(error) => Err(error.to_string()),
@@ -103,10 +105,10 @@ impl State {
                         Ok(_) => "an index is still building".to_owned(),
                         Err(error) => format!("the index listing failed: {error}"),
                     };
-                    if tokio::time::Instant::now() >= deadline {
+                    if nuclei::time::Instant::now() >= deadline {
                         return Err(outcome);
                     }
-                    tokio::time::sleep(INDEX_BUILD_POLL).await;
+                    nuclei::time::sleep(INDEX_BUILD_POLL).await;
                 }
             }))
             .expect("run on the network edge");

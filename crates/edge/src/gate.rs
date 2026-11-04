@@ -23,6 +23,7 @@ use regolith::sync::{Event, Notify};
 pub(crate) struct Gate {
     parent: Option<Arc<Gate>>,
     closed: AtomicBool,
+    sealed: AtomicBool,
     in_flight: AtomicUsize,
     drained: Notify,
     closing: Event,
@@ -41,6 +42,7 @@ impl Gate {
         Self {
             parent,
             closed: AtomicBool::new(false),
+            sealed: AtomicBool::new(false),
             in_flight: AtomicUsize::new(0),
             drained: Notify::new(),
             closing: Event::new(),
@@ -65,6 +67,38 @@ impl Gate {
         Some(permit)
     }
 
+    /// A permit for work that continues a request already admitted: after
+    /// the gate closes it is granted only while admitted work is still in
+    /// flight, and never once the drain sealed the gate. `None` when it is
+    /// refused.
+    pub(crate) fn admit_continuation(self: &Arc<Self>) -> Option<Permit> {
+        let parent = match &self.parent {
+            Some(parent) => Some(Box::new(parent.admit_continuation()?)),
+            None => None,
+        };
+        loop {
+            let current = self.in_flight.load(Ordering::SeqCst);
+            if current == 0 && self.closed.load(Ordering::SeqCst) {
+                return None;
+            }
+            if self
+                .in_flight
+                .compare_exchange(current, current + 1, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                break;
+            }
+        }
+        let permit = Permit {
+            gate: Arc::clone(self),
+            _parent: parent,
+        };
+        if self.sealed.load(Ordering::SeqCst) {
+            return None;
+        }
+        Some(permit)
+    }
+
     pub(crate) fn close(&self) {
         self.closed.store(true, Ordering::SeqCst);
         self.closing.set();
@@ -82,12 +116,21 @@ impl Gate {
         self.in_flight.load(Ordering::SeqCst)
     }
 
-    /// Completes once nothing this gate admitted is still running.
+    /// Completes once nothing this gate admitted is still running. Once
+    /// closed, the first zero seals the gate and is looked at again, so a
+    /// continuation counted in from zero either sees the seal or is seen
+    /// here; both sides are SeqCst, which that store-then-load pairing needs.
     pub(crate) async fn drained(&self) {
         loop {
             let notified = self.drained.notified();
             if self.in_flight() == 0 {
-                return;
+                if !self.closed.load(Ordering::SeqCst) {
+                    return;
+                }
+                self.sealed.store(true, Ordering::SeqCst);
+                if self.in_flight() == 0 {
+                    return;
+                }
             }
             notified.await;
         }

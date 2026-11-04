@@ -1,10 +1,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_tungstenite::tungstenite::client::IntoClientRequest;
+use async_tungstenite::tungstenite::{Error as WsError, Message};
+use async_tungstenite::{client_async, WebSocketStream};
 use edge::{Edge, Service};
-use futures::{SinkExt, StreamExt};
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::Message;
+use futures::StreamExt;
 
 use crate::access_cache::AccessCache;
 use crate::provider::ProviderError;
@@ -14,6 +15,18 @@ use super::event_decoder::{decode_event, CacheInvalidation, EventDecodeError};
 const SUBSCRIPTION_QUERY: &str = "tm.event='Tx' AND message.module='acp'";
 const INITIAL_RECONNECT_DELAY: Duration = Duration::from_secs(1);
 const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(30);
+
+type Socket = WebSocketStream<net::ClientStream>;
+
+/// The WebSocket at `url`, on a nuclei socket (TLS for `wss`).
+async fn connect(url: &str) -> Result<Socket, Box<WsError>> {
+    let request = url.into_client_request()?;
+    let stream = net::connect(request.uri())
+        .await
+        .map_err(|error| WsError::Io(std::io::Error::other(error)))?;
+    let (socket, _) = client_async(request, stream).await?;
+    Ok(socket)
+}
 
 /// The event stream runs as a service of the network runtime: it stops
 /// when the subscriber is dropped or the runtime stops accepting.
@@ -42,8 +55,8 @@ async fn run(edge: Edge, websocket_url: String, cache: Arc<AccessCache>) {
     let mut reconnect_delay = INITIAL_RECONNECT_DELAY;
     loop {
         let mut session_duration = None;
-        match tokio_tungstenite::connect_async(&websocket_url).await {
-            Ok((mut socket, _)) => {
+        match connect(&websocket_url).await {
+            Ok(mut socket) => {
                 let subscription = serde_json::json!({
                     "jsonrpc": "2.0",
                     "id": 1,
@@ -62,7 +75,7 @@ async fn run(edge: Edge, websocket_url: String, cache: Arc<AccessCache>) {
                         invalidated_entries,
                         "cleared access cache after subscribing; events during the gap are not replayed"
                     );
-                    let session_started = tokio::time::Instant::now();
+                    let session_started = nuclei::time::Instant::now();
                     if let Err(error) = consume(&mut socket, &cache).await {
                         tracing::warn!(%error, "Vera ACP event stream disconnected");
                     }
@@ -93,13 +106,7 @@ fn retry_delay_after_session(current: Duration, session_duration: Option<Duratio
 }
 
 #[allow(clippy::result_large_err)]
-async fn consume<S>(
-    socket: &mut tokio_tungstenite::WebSocketStream<S>,
-    cache: &AccessCache,
-) -> Result<(), Box<tokio_tungstenite::tungstenite::Error>>
-where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
-{
+async fn consume(socket: &mut Socket, cache: &AccessCache) -> Result<(), Box<WsError>> {
     while let Some(message) = socket.next().await {
         match message? {
             Message::Text(text) => {
@@ -166,9 +173,12 @@ fn process_event(message: &str, cache: &AccessCache) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::net::TcpListener;
-    use tokio::time::timeout;
-    use tokio_tungstenite::accept_async;
+    use async_tungstenite::accept_async;
+    use nuclei::net::{TcpListener, TcpStream};
+    use nuclei::task::yield_now;
+    use nuclei::time::timeout;
+
+    type Accepted = WebSocketStream<TcpStream>;
 
     #[test]
     fn malformed_event_clears_cached_grants() {
@@ -198,7 +208,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn subscriber_rejects_invalid_urls_before_spawning() {
         let cache = Arc::new(AccessCache::new(Duration::from_secs(300)));
         let result = CosmosEventSubscriber::start(
@@ -223,9 +233,7 @@ mod tests {
     }
 
     /// Accepts the subscriber's connection on `listener`.
-    async fn accept_subscriber(
-        listener: &TcpListener,
-    ) -> tokio_tungstenite::WebSocketStream<tokio::net::TcpStream> {
+    async fn accept_subscriber(listener: &TcpListener) -> Accepted {
         let (stream, _) = timeout(Duration::from_secs(1), listener.accept())
             .await
             .unwrap()
@@ -234,9 +242,7 @@ mod tests {
     }
 
     /// Completes once the subscriber's side of `socket` went away.
-    async fn assert_disconnects(
-        socket: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
-    ) {
+    async fn assert_disconnects(socket: &mut Accepted) {
         timeout(Duration::from_secs(1), async {
             while let Some(Ok(message)) = socket.next().await {
                 if matches!(message, Message::Close(_)) {
@@ -248,10 +254,13 @@ mod tests {
         .expect("the subscriber must disconnect");
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn subscriber_stops_when_the_network_runtime_stops_accepting() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let websocket_url = format!("ws://{}/websocket", listener.local_addr().unwrap());
+        let websocket_url = format!(
+            "ws://{}/websocket",
+            listener.get_ref().local_addr().unwrap()
+        );
         let cache = Arc::new(AccessCache::new(Duration::from_secs(300)));
         let scope = edge::testing::edge().scope();
 
@@ -263,10 +272,13 @@ mod tests {
         assert_disconnects(&mut socket).await;
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn subscriber_processes_events_and_stops_on_drop() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let websocket_url = format!("ws://{}/websocket", listener.local_addr().unwrap());
+        let websocket_url = format!(
+            "ws://{}/websocket",
+            listener.get_ref().local_addr().unwrap()
+        );
         let cache = Arc::new(AccessCache::new(Duration::from_secs(300)));
         cache.set("did:key:alice", "p1", "users", "doc1", "read", true);
 
@@ -291,7 +303,7 @@ mod tests {
                 .get("did:key:alice", "p1", "users", "doc1", "read")
                 .is_some()
             {
-                tokio::task::yield_now().await;
+                yield_now().await;
             }
         })
         .await
@@ -308,7 +320,7 @@ mod tests {
                 {
                     break;
                 }
-                tokio::task::yield_now().await;
+                yield_now().await;
             }
         })
         .await

@@ -6,13 +6,13 @@
 //! a JWT (`aud` = B's peer-id), node A relays it, and node B authorizes the actor
 //! against its NAC engine before applying the op.
 //!
-//! Shared helpers (token mint, raw `reqwest` POST to the custom endpoints) live in
+//! Shared helpers (token mint, raw `net::http` POST to the custom endpoints) live in
 //! `manage_relay_common` and are also used by the iroh mirror.
 
 use std::time::{Duration, Instant};
 
 use integration_test::{generate_identity, TestCluster};
-use reqwest::StatusCode;
+use net::http::StatusCode;
 use serde_json::{json, Value};
 use serial_test::serial;
 
@@ -70,59 +70,62 @@ async fn setup() -> (TestCluster, String, String, String) {
 
 /// Admin token (`aud` = B peer-id) relayed via node A subscribes node B to the
 /// `User` collection. Proven by querying B's subscriptions over the same relay.
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn manage_collection_add_over_p2p_authorized() {
-    let (cluster, admin_key, addr_b, peer_id_b) = setup().await;
-    let api_a = cluster.api_url(0).to_string();
+    edge::compat(async {
+        let (cluster, admin_key, addr_b, peer_id_b) = setup().await;
+        let api_a = cluster.api_url(0).to_string();
 
-    let token = crate::manage_relay_common::mint_manage_token(&admin_key, &peer_id_b);
+        let token = crate::manage_relay_common::mint_manage_token(&admin_key, &peer_id_b);
 
-    let status = post_manage(
-        &api_a,
-        &admin_key,
-        &addr_b,
-        &token,
-        json!({ "Kind": "CollectionAdd", "collection_ids": ["User"] }),
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "authorized CollectionAdd relay should return 200"
-    );
-
-    // Prove the round-trip: B is now subscribed. Query over the same relay.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let (status, body) = post_manage_query(
+        let status = post_manage(
             &api_a,
             &admin_key,
             &addr_b,
             &token,
-            json!({ "Kind": "CollectionList" }),
+            json!({ "Kind": "CollectionAdd", "collection_ids": ["User"] }),
         )
         .await;
-        if status == StatusCode::OK && collection_list_nonempty(&body) {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "node B did not report the subscribed collection over the relay"
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "authorized CollectionAdd relay should return 200"
         );
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
 
-    // Cross-check directly on node B.
-    let node_b = cluster.client(1);
-    let direct = node_b
-        .p2p_collection_list_with_identity(&admin_key)
-        .expect("node B p2p_collection_list");
-    assert_eq!(
-        direct.as_array().map(|a| a.len()).unwrap_or(0),
-        1,
-        "node B should have exactly one subscribed collection"
-    );
+        // Prove the round-trip: B is now subscribed. Query over the same relay.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let (status, body) = post_manage_query(
+                &api_a,
+                &admin_key,
+                &addr_b,
+                &token,
+                json!({ "Kind": "CollectionList" }),
+            )
+            .await;
+            if status == StatusCode::OK && collection_list_nonempty(&body) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "node B did not report the subscribed collection over the relay"
+            );
+            nuclei::time::sleep(Duration::from_millis(200)).await;
+        }
+
+        // Cross-check directly on node B.
+        let node_b = cluster.client(1);
+        let direct = node_b
+            .p2p_collection_list_with_identity(&admin_key)
+            .expect("node B p2p_collection_list");
+        assert_eq!(
+            direct.as_array().map(|a| a.len()).unwrap_or(0),
+            1,
+            "node B should have exactly one subscribed collection"
+        );
+    })
+    .await;
 }
 
 /// Bring up a 2-node libp2p cluster WITHOUT NAC (`node_enable == false`, the CLI
@@ -177,129 +180,138 @@ async fn setup_no_nac() -> (TestCluster, String, String, String) {
 /// via node A still subscribes node B. This is the parity case with the embedded
 /// node: when NAC is off `check_permission` returns `Ok(true)`, so the manage
 /// channel must work without a NAC-enabled cluster.
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn manage_collection_add_over_p2p_nac_disabled() {
-    let (cluster, actor_key, addr_b, peer_id_b) = setup_no_nac().await;
-    let api_a = cluster.api_url(0).to_string();
+    edge::compat(async {
+        let (cluster, actor_key, addr_b, peer_id_b) = setup_no_nac().await;
+        let api_a = cluster.api_url(0).to_string();
 
-    let token = crate::manage_relay_common::mint_manage_token(&actor_key, &peer_id_b);
+        let token = crate::manage_relay_common::mint_manage_token(&actor_key, &peer_id_b);
 
-    let status = post_manage(
-        &api_a,
-        &actor_key,
-        &addr_b,
-        &token,
-        json!({ "Kind": "CollectionAdd", "collection_ids": ["User"] }),
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "CollectionAdd relay should return 200 with NAC disabled"
-    );
-
-    // Prove the round-trip: B is now subscribed.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let (status, body) = post_manage_query(
+        let status = post_manage(
             &api_a,
             &actor_key,
+            &addr_b,
+            &token,
+            json!({ "Kind": "CollectionAdd", "collection_ids": ["User"] }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "CollectionAdd relay should return 200 with NAC disabled"
+        );
+
+        // Prove the round-trip: B is now subscribed.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let (status, body) = post_manage_query(
+                &api_a,
+                &actor_key,
+                &addr_b,
+                &token,
+                json!({ "Kind": "CollectionList" }),
+            )
+            .await;
+            if status == StatusCode::OK && collection_list_nonempty(&body) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "node B did not report the subscribed collection over the relay (NAC disabled)"
+            );
+            nuclei::time::sleep(Duration::from_millis(200)).await;
+        }
+
+        // Cross-check directly on node B.
+        let node_b = cluster.client(1);
+        let direct = node_b
+            .p2p_collection_list()
+            .expect("node B p2p_collection_list");
+        assert_eq!(
+            direct.as_array().map(|a| a.len()).unwrap_or(0),
+            1,
+            "node B should have exactly one subscribed collection (NAC disabled)"
+        );
+    })
+    .await;
+}
+
+/// An outsider token (`aud` = B peer-id, signed by a non-admin key) is rejected
+/// by node B's NAC and surfaces as 403; node B must not subscribe.
+#[nuclei::test]
+#[serial]
+async fn manage_denied_for_unauthorized_actor() {
+    edge::compat(async {
+        let (cluster, admin_key, addr_b, peer_id_b) = setup().await;
+        let api_a = cluster.api_url(0).to_string();
+
+        let node_a = cluster.client(0);
+        let outsider = generate_identity(node_a.binary_path()).expect("outsider identity");
+
+        // HTTP caller is still admin (passes node A's P2pPeerConnect gate); the relayed
+        // actor token belongs to the outsider, so node B's NAC denies it.
+        let outsider_token =
+            crate::manage_relay_common::mint_manage_token(&outsider.private_key_hex, &peer_id_b);
+
+        let status = post_manage(
+            &api_a,
+            &admin_key,
+            &addr_b,
+            &outsider_token,
+            json!({ "Kind": "CollectionAdd", "collection_ids": ["User"] }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "unauthorized actor should be denied with 403"
+        );
+
+        // Node B must not have subscribed.
+        let node_b = cluster.client(1);
+        let direct = node_b
+            .p2p_collection_list_with_identity(&admin_key)
+            .expect("node B p2p_collection_list");
+        assert!(
+            direct.as_array().map(|a| a.is_empty()).unwrap_or(true),
+            "node B must not subscribe to any collection after a denied relay"
+        );
+    })
+    .await;
+}
+
+/// Pure read round-trip: admin CollectionList query over the relay returns a typed
+/// `Strings` result.
+#[nuclei::test]
+#[serial]
+async fn manage_query_collection_list_over_p2p() {
+    edge::compat(async {
+        let (cluster, admin_key, addr_b, peer_id_b) = setup().await;
+        let api_a = cluster.api_url(0).to_string();
+
+        let token = crate::manage_relay_common::mint_manage_token(&admin_key, &peer_id_b);
+
+        let (status, body) = post_manage_query(
+            &api_a,
+            &admin_key,
             &addr_b,
             &token,
             json!({ "Kind": "CollectionList" }),
         )
         .await;
-        if status == StatusCode::OK && collection_list_nonempty(&body) {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "node B did not report the subscribed collection over the relay (NAC disabled)"
+        assert_eq!(status, StatusCode::OK, "CollectionList query should be 200");
+        assert_eq!(
+            body["Kind"], "Strings",
+            "CollectionList must return a typed Strings result, got {body}"
         );
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
-
-    // Cross-check directly on node B.
-    let node_b = cluster.client(1);
-    let direct = node_b
-        .p2p_collection_list()
-        .expect("node B p2p_collection_list");
-    assert_eq!(
-        direct.as_array().map(|a| a.len()).unwrap_or(0),
-        1,
-        "node B should have exactly one subscribed collection (NAC disabled)"
-    );
-}
-
-/// An outsider token (`aud` = B peer-id, signed by a non-admin key) is rejected
-/// by node B's NAC and surfaces as 403; node B must not subscribe.
-#[tokio::test]
-#[serial]
-async fn manage_denied_for_unauthorized_actor() {
-    let (cluster, admin_key, addr_b, peer_id_b) = setup().await;
-    let api_a = cluster.api_url(0).to_string();
-
-    let node_a = cluster.client(0);
-    let outsider = generate_identity(node_a.binary_path()).expect("outsider identity");
-
-    // HTTP caller is still admin (passes node A's P2pPeerConnect gate); the relayed
-    // actor token belongs to the outsider, so node B's NAC denies it.
-    let outsider_token =
-        crate::manage_relay_common::mint_manage_token(&outsider.private_key_hex, &peer_id_b);
-
-    let status = post_manage(
-        &api_a,
-        &admin_key,
-        &addr_b,
-        &outsider_token,
-        json!({ "Kind": "CollectionAdd", "collection_ids": ["User"] }),
-    )
+        assert!(
+            body["values"].is_array(),
+            "Strings result must carry a values array, got {body}"
+        );
+    })
     .await;
-    assert_eq!(
-        status,
-        StatusCode::FORBIDDEN,
-        "unauthorized actor should be denied with 403"
-    );
-
-    // Node B must not have subscribed.
-    let node_b = cluster.client(1);
-    let direct = node_b
-        .p2p_collection_list_with_identity(&admin_key)
-        .expect("node B p2p_collection_list");
-    assert!(
-        direct.as_array().map(|a| a.is_empty()).unwrap_or(true),
-        "node B must not subscribe to any collection after a denied relay"
-    );
-}
-
-/// Pure read round-trip: admin CollectionList query over the relay returns a typed
-/// `Strings` result.
-#[tokio::test]
-#[serial]
-async fn manage_query_collection_list_over_p2p() {
-    let (cluster, admin_key, addr_b, peer_id_b) = setup().await;
-    let api_a = cluster.api_url(0).to_string();
-
-    let token = crate::manage_relay_common::mint_manage_token(&admin_key, &peer_id_b);
-
-    let (status, body) = post_manage_query(
-        &api_a,
-        &admin_key,
-        &addr_b,
-        &token,
-        json!({ "Kind": "CollectionList" }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "CollectionList query should be 200");
-    assert_eq!(
-        body["Kind"], "Strings",
-        "CollectionList must return a typed Strings result, got {body}"
-    );
-    assert!(
-        body["values"].is_array(),
-        "Strings result must carry a values array, got {body}"
-    );
 }
 
 /// SECURITY: a relayed actor token whose `aud` is NOT node B's peer-id must be
@@ -309,197 +321,206 @@ async fn manage_query_collection_list_over_p2p() {
 /// 400 (transport error), distinct from the 403 a NAC denial produces. Node B
 /// must not subscribe. This proves the replay/audience binding is enforced
 /// end-to-end through the relay.
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn manage_wrong_audience_token_rejected() {
-    let (cluster, admin_key, addr_b, _peer_id_b) = setup().await;
-    let api_a = cluster.api_url(0).to_string();
+    edge::compat(async {
+        let (cluster, admin_key, addr_b, _peer_id_b) = setup().await;
+        let api_a = cluster.api_url(0).to_string();
 
-    // Mint the actor token with the WRONG audience: node A's own peer-id, not B's.
-    let node_a = cluster.client(0);
-    let info_a = node_a
-        .p2p_info_with_identity(&admin_key)
-        .expect("p2p_info node A");
-    let addr_a = info_a
-        .as_array()
-        .and_then(|arr| arr.first())
-        .and_then(|v| v.as_str())
-        .expect("node A has no P2P address")
-        .to_string();
-    let peer_id_a = peer_id_of(&addr_a).to_string();
+        // Mint the actor token with the WRONG audience: node A's own peer-id, not B's.
+        let node_a = cluster.client(0);
+        let info_a = node_a
+            .p2p_info_with_identity(&admin_key)
+            .expect("p2p_info node A");
+        let addr_a = info_a
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.as_str())
+            .expect("node A has no P2P address")
+            .to_string();
+        let peer_id_a = peer_id_of(&addr_a).to_string();
 
-    // Wrong-audience token: signed by admin, but bound to A's peer-id.
-    let wrong_aud_token = crate::manage_relay_common::mint_manage_token(&admin_key, &peer_id_a);
+        // Wrong-audience token: signed by admin, but bound to A's peer-id.
+        let wrong_aud_token = crate::manage_relay_common::mint_manage_token(&admin_key, &peer_id_a);
 
-    let status = post_manage(
-        &api_a,
-        &admin_key,
-        &addr_b,
-        &wrong_aud_token,
-        json!({ "Kind": "CollectionAdd", "collection_ids": ["User"] }),
-    )
-    .await;
-    assert_ne!(
-        status,
-        StatusCode::OK,
-        "a wrong-audience token must NOT be accepted by node B"
-    );
-    assert_eq!(
+        let status = post_manage(
+            &api_a,
+            &admin_key,
+            &addr_b,
+            &wrong_aud_token,
+            json!({ "Kind": "CollectionAdd", "collection_ids": ["User"] }),
+        )
+        .await;
+        assert_ne!(
+            status,
+            StatusCode::OK,
+            "a wrong-audience token must NOT be accepted by node B"
+        );
+        assert_eq!(
         status,
         StatusCode::BAD_REQUEST,
         "a wrong-audience token is malformed-for-B (transport error) → 400, not a 403 NAC denial"
     );
 
-    // Node B must not have subscribed.
-    let node_b = cluster.client(1);
-    let direct = node_b
-        .p2p_collection_list_with_identity(&admin_key)
-        .expect("node B p2p_collection_list");
-    assert!(
-        direct.as_array().map(|a| a.is_empty()).unwrap_or(true),
-        "node B must not subscribe after a wrong-audience relay"
-    );
+        // Node B must not have subscribed.
+        let node_b = cluster.client(1);
+        let direct = node_b
+            .p2p_collection_list_with_identity(&admin_key)
+            .expect("node B p2p_collection_list");
+        assert!(
+            direct.as_array().map(|a| a.is_empty()).unwrap_or(true),
+            "node B must not subscribe after a wrong-audience relay"
+        );
+    })
+    .await;
 }
 
 /// Admin token (`aud` = B peer-id) relays a `ReplicatorAdd` to node B (replicating
 /// the `User` collection back to node A), then a `ReplicatorList` query over the
 /// same relay reflects it. Proves the ReplicatorAdd dispatch path AND the
 /// `ReplicatorInfo` → wire-type round-trip in the typed `Replicators` reply.
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn manage_replicator_add_and_list_over_p2p() {
-    let (cluster, admin_key, addr_b, peer_id_b) = setup().await;
-    let api_a = cluster.api_url(0).to_string();
+    edge::compat(async {
+        let (cluster, admin_key, addr_b, peer_id_b) = setup().await;
+        let api_a = cluster.api_url(0).to_string();
 
-    // Node A's listen address: B will replicate the User collection back to A.
-    let node_a = cluster.client(0);
-    let info_a = node_a
-        .p2p_info_with_identity(&admin_key)
-        .expect("p2p_info node A");
-    let addr_a = info_a
-        .as_array()
-        .and_then(|arr| arr.first())
-        .and_then(|v| v.as_str())
-        .expect("node A has no P2P address")
-        .to_string();
+        // Node A's listen address: B will replicate the User collection back to A.
+        let node_a = cluster.client(0);
+        let info_a = node_a
+            .p2p_info_with_identity(&admin_key)
+            .expect("p2p_info node A");
+        let addr_a = info_a
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.as_str())
+            .expect("node A has no P2P address")
+            .to_string();
 
-    let token = crate::manage_relay_common::mint_manage_token(&admin_key, &peer_id_b);
+        let token = crate::manage_relay_common::mint_manage_token(&admin_key, &peer_id_b);
 
-    let status = post_manage(
-        &api_a,
-        &admin_key,
-        &addr_b,
-        &token,
-        json!({
-            "Kind": "ReplicatorAdd",
-            "addresses": [addr_a],
-            "collection_ids": ["User"],
-        }),
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "authorized ReplicatorAdd relay should return 200"
-    );
-
-    // ReplicatorList over the relay must reflect the newly-added replicator.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let (status, body) = post_manage_query(
+        let status = post_manage(
             &api_a,
             &admin_key,
             &addr_b,
             &token,
-            json!({ "Kind": "ReplicatorList" }),
+            json!({
+                "Kind": "ReplicatorAdd",
+                "addresses": [addr_a],
+                "collection_ids": ["User"],
+            }),
         )
         .await;
-        if status == StatusCode::OK && replicator_list_nonempty(&body) {
-            assert_eq!(
-                body["Kind"], "Replicators",
-                "ReplicatorList must return a typed Replicators result, got {body}"
-            );
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "node B did not report the added replicator over the relay"
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "authorized ReplicatorAdd relay should return 200"
         );
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
+
+        // ReplicatorList over the relay must reflect the newly-added replicator.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let (status, body) = post_manage_query(
+                &api_a,
+                &admin_key,
+                &addr_b,
+                &token,
+                json!({ "Kind": "ReplicatorList" }),
+            )
+            .await;
+            if status == StatusCode::OK && replicator_list_nonempty(&body) {
+                assert_eq!(
+                    body["Kind"], "Replicators",
+                    "ReplicatorList must return a typed Replicators result, got {body}"
+                );
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "node B did not report the added replicator over the relay"
+            );
+            nuclei::time::sleep(Duration::from_millis(200)).await;
+        }
+    })
+    .await;
 }
 
 /// A relayed `ReplicatorAdd` that carries a rich filter must PRESERVE the filter
 /// end-to-end: the `ReplicatorList` reply over the same relay shows the replicator
 /// WITH a non-empty `filters`. Guards the manage-channel filter-drop regression.
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn manage_replicator_add_preserves_filter() {
-    let (cluster, admin_key, addr_b, peer_id_b) = setup().await;
-    let api_a = cluster.api_url(0).to_string();
+    edge::compat(async {
+        let (cluster, admin_key, addr_b, peer_id_b) = setup().await;
+        let api_a = cluster.api_url(0).to_string();
 
-    // Node A's listen address: B will replicate the User collection back to A.
-    let node_a = cluster.client(0);
-    let info_a = node_a
-        .p2p_info_with_identity(&admin_key)
-        .expect("p2p_info node A");
-    let addr_a = info_a
-        .as_array()
-        .and_then(|arr| arr.first())
-        .and_then(|v| v.as_str())
-        .expect("node A has no P2P address")
-        .to_string();
+        // Node A's listen address: B will replicate the User collection back to A.
+        let node_a = cluster.client(0);
+        let info_a = node_a
+            .p2p_info_with_identity(&admin_key)
+            .expect("p2p_info node A");
+        let addr_a = info_a
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.as_str())
+            .expect("node A has no P2P address")
+            .to_string();
 
-    let token = crate::manage_relay_common::mint_manage_token(&admin_key, &peer_id_b);
+        let token = crate::manage_relay_common::mint_manage_token(&admin_key, &peer_id_b);
 
-    let status = post_manage(
-        &api_a,
-        &admin_key,
-        &addr_b,
-        &token,
-        json!({
-            "Kind": "ReplicatorAdd",
-            "addresses": [addr_a],
-            "collection_ids": ["User"],
-            "filters": { "User": { "Conditions": { "name": { "_eq": "keep" } } } },
-        }),
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "authorized filtered ReplicatorAdd relay should return 200"
-    );
-
-    // ReplicatorList over the relay must reflect the replicator WITH its filter.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let (status, body) = post_manage_query(
+        let status = post_manage(
             &api_a,
             &admin_key,
             &addr_b,
             &token,
-            json!({ "Kind": "ReplicatorList" }),
+            json!({
+                "Kind": "ReplicatorAdd",
+                "addresses": [addr_a],
+                "collection_ids": ["User"],
+                "filters": { "User": { "Conditions": { "name": { "_eq": "keep" } } } },
+            }),
         )
         .await;
-        if status == StatusCode::OK && replicator_list_nonempty(&body) {
-            assert_eq!(
-                body["Kind"], "Replicators",
-                "ReplicatorList must return a typed Replicators result, got {body}"
-            );
-            let filters = &body["replicators"][0]["filters"];
-            assert!(
-                filters.as_object().map(|m| !m.is_empty()).unwrap_or(false),
-                "relayed replicator must retain a non-empty filter, got {body}"
-            );
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "node B did not report the filtered replicator over the relay"
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "authorized filtered ReplicatorAdd relay should return 200"
         );
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
+
+        // ReplicatorList over the relay must reflect the replicator WITH its filter.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let (status, body) = post_manage_query(
+                &api_a,
+                &admin_key,
+                &addr_b,
+                &token,
+                json!({ "Kind": "ReplicatorList" }),
+            )
+            .await;
+            if status == StatusCode::OK && replicator_list_nonempty(&body) {
+                assert_eq!(
+                    body["Kind"], "Replicators",
+                    "ReplicatorList must return a typed Replicators result, got {body}"
+                );
+                let filters = &body["replicators"][0]["filters"];
+                assert!(
+                    filters.as_object().map(|m| !m.is_empty()).unwrap_or(false),
+                    "relayed replicator must retain a non-empty filter, got {body}"
+                );
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "node B did not report the filtered replicator over the relay"
+            );
+            nuclei::time::sleep(Duration::from_millis(200)).await;
+        }
+    })
+    .await;
 }
 
 /// A RICH predicate (`_in`, not a single `_eq`) must round-trip through the
@@ -507,161 +528,170 @@ async fn manage_replicator_add_preserves_filter() {
 /// reconstructs the filter on the target (`to_p2p_replicator_info`); a
 /// field/value-only reconstruction silently corrupts any non-`_eq` predicate
 /// into `{"": {"_eq": null}}`, which a presence-only assertion would miss.
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn manage_replicator_add_preserves_rich_filter() {
-    let (cluster, admin_key, addr_b, peer_id_b) = setup().await;
-    let api_a = cluster.api_url(0).to_string();
+    edge::compat(async {
+        let (cluster, admin_key, addr_b, peer_id_b) = setup().await;
+        let api_a = cluster.api_url(0).to_string();
 
-    let node_a = cluster.client(0);
-    let info_a = node_a
-        .p2p_info_with_identity(&admin_key)
-        .expect("p2p_info node A");
-    let addr_a = info_a
-        .as_array()
-        .and_then(|arr| arr.first())
-        .and_then(|v| v.as_str())
-        .expect("node A has no P2P address")
-        .to_string();
+        let node_a = cluster.client(0);
+        let info_a = node_a
+            .p2p_info_with_identity(&admin_key)
+            .expect("p2p_info node A");
+        let addr_a = info_a
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.as_str())
+            .expect("node A has no P2P address")
+            .to_string();
 
-    let token = crate::manage_relay_common::mint_manage_token(&admin_key, &peer_id_b);
-    let expected = json!({ "name": { "_in": ["keep", "also"] } });
+        let token = crate::manage_relay_common::mint_manage_token(&admin_key, &peer_id_b);
+        let expected = json!({ "name": { "_in": ["keep", "also"] } });
 
-    let status = post_manage(
-        &api_a,
-        &admin_key,
-        &addr_b,
-        &token,
-        json!({
-            "Kind": "ReplicatorAdd",
-            "addresses": [addr_a],
-            "collection_ids": ["User"],
-            "filters": { "User": { "Conditions": expected } },
-        }),
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "authorized rich-filtered ReplicatorAdd relay should return 200"
-    );
-
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let (status, body) = post_manage_query(
+        let status = post_manage(
             &api_a,
             &admin_key,
             &addr_b,
             &token,
-            json!({ "Kind": "ReplicatorList" }),
+            json!({
+                "Kind": "ReplicatorAdd",
+                "addresses": [addr_a],
+                "collection_ids": ["User"],
+                "filters": { "User": { "Conditions": expected } },
+            }),
         )
         .await;
-        if status == StatusCode::OK && replicator_list_nonempty(&body) {
-            let filters = body["replicators"][0]["filters"]
-                .as_object()
-                .expect("replicator must carry a filters object");
-            let (_collection, filter) = filters
-                .iter()
-                .next()
-                .expect("filters object must have one entry");
-            assert_eq!(
-                filter["Conditions"], expected,
-                "rich predicate must round-trip through the relay reply intact, got {body}"
-            );
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "node B did not report the rich-filtered replicator over the relay"
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "authorized rich-filtered ReplicatorAdd relay should return 200"
         );
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let (status, body) = post_manage_query(
+                &api_a,
+                &admin_key,
+                &addr_b,
+                &token,
+                json!({ "Kind": "ReplicatorList" }),
+            )
+            .await;
+            if status == StatusCode::OK && replicator_list_nonempty(&body) {
+                let filters = body["replicators"][0]["filters"]
+                    .as_object()
+                    .expect("replicator must carry a filters object");
+                let (_collection, filter) = filters
+                    .iter()
+                    .next()
+                    .expect("filters object must have one entry");
+                assert_eq!(
+                    filter["Conditions"], expected,
+                    "rich predicate must round-trip through the relay reply intact, got {body}"
+                );
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "node B did not report the rich-filtered replicator over the relay"
+            );
+            nuclei::time::sleep(Duration::from_millis(200)).await;
+        }
+    })
+    .await;
 }
 
 /// Admin token (`aud` = B peer-id) relays a `DocumentAdd`. Document subscribe is a
 /// broadcaster delegation that succeeds even for a not-yet-existing doc id (the
 /// p2p document tests treat doc ids the same way), so a 200 proves the dispatch
 /// path is wired.
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn manage_document_add_over_p2p() {
-    let (cluster, admin_key, addr_b, peer_id_b) = setup().await;
-    let api_a = cluster.api_url(0).to_string();
+    edge::compat(async {
+        let (cluster, admin_key, addr_b, peer_id_b) = setup().await;
+        let api_a = cluster.api_url(0).to_string();
 
-    let token = crate::manage_relay_common::mint_manage_token(&admin_key, &peer_id_b);
+        let token = crate::manage_relay_common::mint_manage_token(&admin_key, &peer_id_b);
 
-    // A syntactically-valid bae- doc id; subscribe does not require the doc to exist.
-    let doc_id = "bae-0e7c3bb5-4917-46e2-b36e-3f8d0c4b3f5d";
-    let status = post_manage(
-        &api_a,
-        &admin_key,
-        &addr_b,
-        &token,
-        json!({
-            "Kind": "DocumentAdd",
-            "docs": [{ "collection": "User", "doc_id": doc_id }],
-        }),
-    )
+        // A syntactically-valid bae- doc id; subscribe does not require the doc to exist.
+        let doc_id = "bae-0e7c3bb5-4917-46e2-b36e-3f8d0c4b3f5d";
+        let status = post_manage(
+            &api_a,
+            &admin_key,
+            &addr_b,
+            &token,
+            json!({
+                "Kind": "DocumentAdd",
+                "docs": [{ "collection": "User", "doc_id": doc_id }],
+            }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "authorized DocumentAdd relay should return 200"
+        );
+    })
     .await;
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "authorized DocumentAdd relay should return 200"
-    );
 }
 
 /// Admin token (`aud` = B peer-id) relays a `DocumentAdd` for a doc id, then a
 /// `DocumentList` query over the same relay reflects it. Proves the DocumentList
 /// dispatch path AND the structured `Documents` reply round-trip.
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn manage_document_list_over_p2p() {
-    let (cluster, admin_key, addr_b, peer_id_b) = setup().await;
-    let api_a = cluster.api_url(0).to_string();
+    edge::compat(async {
+        let (cluster, admin_key, addr_b, peer_id_b) = setup().await;
+        let api_a = cluster.api_url(0).to_string();
 
-    let token = crate::manage_relay_common::mint_manage_token(&admin_key, &peer_id_b);
+        let token = crate::manage_relay_common::mint_manage_token(&admin_key, &peer_id_b);
 
-    let doc_id = "bae-0e7c3bb5-4917-46e2-b36e-3f8d0c4b3f5d";
-    let status = post_manage(
-        &api_a,
-        &admin_key,
-        &addr_b,
-        &token,
-        json!({
-            "Kind": "DocumentAdd",
-            "docs": [{ "collection": "User", "doc_id": doc_id }],
-        }),
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "authorized DocumentAdd relay should return 200"
-    );
-
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let (status, body) = post_manage_query(
+        let doc_id = "bae-0e7c3bb5-4917-46e2-b36e-3f8d0c4b3f5d";
+        let status = post_manage(
             &api_a,
             &admin_key,
             &addr_b,
             &token,
-            json!({ "Kind": "DocumentList" }),
+            json!({
+                "Kind": "DocumentAdd",
+                "docs": [{ "collection": "User", "doc_id": doc_id }],
+            }),
         )
         .await;
-        if status == StatusCode::OK && documents_list_contains(&body, doc_id) {
-            assert_eq!(
-                body["Kind"], "Documents",
-                "DocumentList must return a typed Documents result, got {body}"
-            );
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "node B did not report the subscribed document over the relay"
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "authorized DocumentAdd relay should return 200"
         );
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let (status, body) = post_manage_query(
+                &api_a,
+                &admin_key,
+                &addr_b,
+                &token,
+                json!({ "Kind": "DocumentList" }),
+            )
+            .await;
+            if status == StatusCode::OK && documents_list_contains(&body, doc_id) {
+                assert_eq!(
+                    body["Kind"], "Documents",
+                    "DocumentList must return a typed Documents result, got {body}"
+                );
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "node B did not report the subscribed document over the relay"
+            );
+            nuclei::time::sleep(Duration::from_millis(200)).await;
+        }
+    })
+    .await;
 }
 
 /// Bring up a NAC-enabled 3-node libp2p cluster (A=relay controller, B=manage
@@ -741,94 +771,100 @@ fn active_peers_contains(
 /// The disconnect is proven by C disappearing from B's active peers. The third
 /// node is essential: the A<->B relay link is a different connection, so the
 /// relay reply still returns even after C is dropped.
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn manage_peer_disconnect_severs_live_connection() {
-    let (cluster, admin_key, addr_b, addr_c) = setup_3().await;
-    let api_a = cluster.api_url(0).to_string();
-    let peer_id_b = peer_id_of(&addr_b).to_string();
-    let peer_id_c = peer_id_of(&addr_c).to_string();
+    edge::compat(async {
+        let (cluster, admin_key, addr_b, addr_c) = setup_3().await;
+        let api_a = cluster.api_url(0).to_string();
+        let peer_id_b = peer_id_of(&addr_b).to_string();
+        let peer_id_c = peer_id_of(&addr_c).to_string();
 
-    // Establish a LIVE B<->C connection directly (not over the relay).
-    cluster
-        .client(1)
-        .p2p_connect_with_identity(&[addr_c.as_str()], &admin_key)
-        .expect("node B connect to node C");
+        // Establish a LIVE B<->C connection directly (not over the relay).
+        cluster
+            .client(1)
+            .p2p_connect_with_identity(&[addr_c.as_str()], &admin_key)
+            .expect("node B connect to node C");
 
-    // Poll until C is present in B's active peers (connect is eventually-consistent).
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        if active_peers_contains(&cluster, 1, &admin_key, &peer_id_c) {
-            break;
+        // Poll until C is present in B's active peers (connect is eventually-consistent).
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            if active_peers_contains(&cluster, 1, &admin_key, &peer_id_c) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "node C never appeared in node B's active peers; cannot test disconnect"
+            );
+            nuclei::time::sleep(Duration::from_millis(200)).await;
         }
-        assert!(
-            Instant::now() < deadline,
-            "node C never appeared in node B's active peers; cannot test disconnect"
+
+        // Relay a PeerDisconnect to B targeting C's address.
+        let token = crate::manage_relay_common::mint_manage_token(&admin_key, &peer_id_b);
+        let status = post_manage(
+            &api_a,
+            &admin_key,
+            &addr_b,
+            &token,
+            json!({ "Kind": "PeerDisconnect", "address": addr_c }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "authorized PeerDisconnect relay should return 200"
         );
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
 
-    // Relay a PeerDisconnect to B targeting C's address.
-    let token = crate::manage_relay_common::mint_manage_token(&admin_key, &peer_id_b);
-    let status = post_manage(
-        &api_a,
-        &admin_key,
-        &addr_b,
-        &token,
-        json!({ "Kind": "PeerDisconnect", "address": addr_c }),
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "authorized PeerDisconnect relay should return 200"
-    );
-
-    // The real assertion: C must vanish from B's active peers — the relayed verb
-    // severed a live connection.
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        if !active_peers_contains(&cluster, 1, &admin_key, &peer_id_c) {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "relayed PeerDisconnect did not sever the live B<->C connection: \
+        // The real assertion: C must vanish from B's active peers - the relayed verb
+        // severed a live connection.
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            if !active_peers_contains(&cluster, 1, &admin_key, &peer_id_c) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "relayed PeerDisconnect did not sever the live B<->C connection: \
              node C is still in node B's active peers"
-        );
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
+            );
+            nuclei::time::sleep(Duration::from_millis(200)).await;
+        }
+    })
+    .await;
 }
 
 /// Admin token (`aud` = B peer-id) relays a `PeerDisconnect`. The disconnect
 /// primitive is idempotent-Ok, so a 200 proves the dispatch path is wired
 /// (mirrors `manage_document_add_over_p2p`). The target address is a third,
 /// unconnected peer so the relay's own A<->B connection is never torn down.
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn manage_peer_disconnect_over_p2p() {
-    let (cluster, admin_key, addr_b, peer_id_b) = setup().await;
-    let api_a = cluster.api_url(0).to_string();
+    edge::compat(async {
+        let (cluster, admin_key, addr_b, peer_id_b) = setup().await;
+        let api_a = cluster.api_url(0).to_string();
 
-    let token = crate::manage_relay_common::mint_manage_token(&admin_key, &peer_id_b);
+        let token = crate::manage_relay_common::mint_manage_token(&admin_key, &peer_id_b);
 
-    // A syntactically-valid multiaddr for a peer node B is not connected to.
-    // Disconnect is idempotent, so hanging up an absent peer succeeds.
-    let absent_peer =
-        "/ip4/127.0.0.1/tcp/65535/p2p/12D3KooWPjceQrSwdWXPyLLeABRXmuqt69Rg3sBYbU1Nft9HyQ6X";
-    let status = post_manage(
-        &api_a,
-        &admin_key,
-        &addr_b,
-        &token,
-        json!({ "Kind": "PeerDisconnect", "address": absent_peer }),
-    )
+        // A syntactically-valid multiaddr for a peer node B is not connected to.
+        // Disconnect is idempotent, so hanging up an absent peer succeeds.
+        let absent_peer =
+            "/ip4/127.0.0.1/tcp/65535/p2p/12D3KooWPjceQrSwdWXPyLLeABRXmuqt69Rg3sBYbU1Nft9HyQ6X";
+        let status = post_manage(
+            &api_a,
+            &admin_key,
+            &addr_b,
+            &token,
+            json!({ "Kind": "PeerDisconnect", "address": absent_peer }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "authorized PeerDisconnect relay should return 200"
+        );
+    })
     .await;
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "authorized PeerDisconnect relay should return 200"
-    );
 }
 
 /// True when a `RemoteManageQueryResult::Strings` body carries at least one value.

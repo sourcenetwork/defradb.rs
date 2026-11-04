@@ -48,38 +48,44 @@ async fn commit_signatures(signing: bool) -> Vec<serde_json::Value> {
     arr
 }
 
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn rust_no_signing_produces_unsigned_commits() {
-    let commits = commit_signatures(false).await;
+    edge::compat(async move {
+        let commits = commit_signatures(false).await;
 
-    let signed: Vec<_> = commits
-        .iter()
-        .filter(|c| !c["signature"].is_null())
-        .collect();
+        let signed: Vec<_> = commits
+            .iter()
+            .filter(|c| !c["signature"].is_null())
+            .collect();
 
-    assert!(
-        signed.is_empty(),
-        "--no-signing was passed but {} of {} commits carry a signature: {:?}",
-        signed.len(),
-        commits.len(),
-        signed
-    );
+        assert!(
+            signed.is_empty(),
+            "--no-signing was passed but {} of {} commits carry a signature: {:?}",
+            signed.len(),
+            commits.len(),
+            signed
+        );
+    })
+    .await;
 }
 
 /// The other half of the pair: without `--no-signing`, a configured node
 /// identity still signs. Without this, the test above would pass just as well
 /// against a build where signing never happens at all.
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn rust_signing_enabled_produces_signed_commits() {
-    let commits = commit_signatures(true).await;
+    edge::compat(async move {
+        let commits = commit_signatures(true).await;
 
-    let signed = commits.iter().filter(|c| !c["signature"].is_null()).count();
+        let signed = commits.iter().filter(|c| !c["signature"].is_null()).count();
 
-    assert!(
-        signed > 0,
-        "expected signed commits with a node identity and signing enabled, got {:?}",
-        commits
-    );
+        assert!(
+            signed > 0,
+            "expected signed commits with a node identity and signing enabled, got {:?}",
+            commits
+        );
+    })
+    .await;
 }

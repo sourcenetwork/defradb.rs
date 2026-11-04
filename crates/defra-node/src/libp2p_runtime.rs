@@ -117,6 +117,7 @@ where
             database.node_identity(),
             classifier.clone(),
             serve_acp.clone(),
+            edge.clone(),
         )
         .await
         .map_err(Error::HostCreate)?;
@@ -141,8 +142,11 @@ where
         }
     }
 
-    let collection_store: Arc<dyn p2p::sync::P2PCollectionStorage> = Arc::new(
-        p2p::sync::P2PCollectionStore::new(store.clone()).with_max_txn_retries(max_txn_retries),
+    let collection_store = p2p::sync::pooled_collection_store(
+        Arc::new(
+            p2p::sync::P2PCollectionStore::new(store.clone()).with_max_txn_retries(max_txn_retries),
+        ),
+        database.pool(),
     );
     let head_provider: Arc<dyn DocumentHeadProvider> =
         Arc::new(db::merge::create_head_provider(database.clone()));
@@ -150,6 +154,7 @@ where
         match p2p::sync::SyncCoordinator::with_head_provider_and_serve_gate(
             p2p::Libp2pTransport::new(handle.clone()),
             blockstore.clone(),
+            p2p::network::Network::on(edge.clone()),
             sync_config,
             p2p::bitswap::AccessMode::Controlled,
             replicator_registry,
@@ -170,9 +175,6 @@ where
 
     let failure_rx = db::merge::attach_failure_channel(&mut coordinator, 1024);
     let coordinator = Arc::new(coordinator);
-    // Its network work runs on the edge, also when a write on a pool worker
-    // hands it a broadcast.
-    coordinator.use_network(p2p::network::Network::on(edge.clone()));
     // Its durable registrations change on the database's worker pool.
     coordinator
         .install_pending_dag_store(p2p::sync::pooled_pending_store(
@@ -274,7 +276,7 @@ where
     // SE query correlator: lets this node serve as an SE replicator and route
     // any inbound replies. Cloned so the SAME correlator is shared between the
     // event handler (which delivers replies) and the owner/querier transport
-    // (which awaits them) — they must agree on message_id correlation (#976).
+    // (which awaits them): they must agree on message_id correlation (#976).
     let se_correlator = p2p::SeQueryCorrelator::new();
     let se_correlator_for_transport = se_correlator.clone();
     // Manage channel: correlators shared between the event loop (which delivers
@@ -326,7 +328,8 @@ where
         replication.merge_handler_inner.clone(),
         database.clone(),
     ));
-    let se_repusher: Arc<dyn db::merge::SeArtifactRepusher> = replication.broadcast_mutator.clone();
+    let se_repusher =
+        db::merge::pooled_se_repusher(replication.broadcast_mutator.clone(), database.pool());
     replication
         .merge_handler_inner
         .set_se_repusher(se_repusher.clone());
@@ -343,7 +346,12 @@ where
 
     let restore_peerstore = Peerstore::new(store.clone()).with_max_txn_retries(max_txn_retries);
     restore_libp2p_replicators(&handle, &restore_peerstore).await;
-    let restored_doc_ids = restore_libp2p_documents(&handle, &restore_peerstore).await;
+    let restored_doc_ids = restore_libp2p_documents(
+        &handle,
+        &restore_peerstore,
+        &coordinator.followed_documents(),
+    )
+    .await;
 
     let replicator_push_options = ReplicatorPushOptionsState::default();
     let adapter = P2PAdapter::with_full_context(

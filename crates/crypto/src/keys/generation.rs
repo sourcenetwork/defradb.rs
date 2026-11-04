@@ -6,8 +6,9 @@
 use ed25519_dalek::SigningKey as Ed25519SigningKey;
 use k256::ecdsa::SigningKey as Secp256k1SigningKey;
 use p256::ecdsa::SigningKey as Secp256r1SigningKey;
-use rand::rngs::OsRng;
+use rand::{rngs::OsRng, RngCore};
 use x25519_dalek::StaticSecret;
+use zeroize::Zeroizing;
 
 use defra_core::Result;
 
@@ -64,14 +65,28 @@ pub fn generate_key(key_type: KeyType) -> Result<Box<dyn PrivateKey>> {
 /// let public_key = private_key.public_key();
 /// ```
 pub fn generate_secp256k1() -> Result<Secp256k1PrivateKey> {
-    let signing_key = Secp256k1SigningKey::random(&mut OsRng);
-    Secp256k1PrivateKey::from_bytes(&signing_key.to_bytes())
+    loop {
+        let mut bytes = Zeroizing::new([0u8; 32]);
+        OsRng
+            .try_fill_bytes(bytes.as_mut())
+            .map_err(|error| crypto_error(format!("key generation failed: {error}")))?;
+        if Secp256k1SigningKey::from_slice(bytes.as_ref()).is_ok() {
+            return Secp256k1PrivateKey::from_bytes(bytes.as_ref());
+        }
+    }
 }
 
 /// Generate a new secp256r1 (P-256) private key
 pub fn generate_secp256r1() -> Result<Secp256r1PrivateKey> {
-    let signing_key = Secp256r1SigningKey::random(&mut OsRng);
-    Secp256r1PrivateKey::from_bytes(&signing_key.to_bytes())
+    loop {
+        let mut bytes = Zeroizing::new([0u8; 32]);
+        OsRng
+            .try_fill_bytes(bytes.as_mut())
+            .map_err(|error| crypto_error(format!("key generation failed: {error}")))?;
+        if Secp256r1SigningKey::from_slice(bytes.as_ref()).is_ok() {
+            return Secp256r1PrivateKey::from_bytes(bytes.as_ref());
+        }
+    }
 }
 
 /// Generate a new Ed25519 private key
@@ -85,7 +100,6 @@ pub fn generate_secp256r1() -> Result<Secp256r1PrivateKey> {
 /// let signature = private_key.sign(b"message")?;
 /// ```
 pub fn generate_ed25519() -> Result<Ed25519PrivateKey> {
-    use rand::RngCore;
     use zeroize::Zeroize;
 
     let mut seed = [0u8; 32];
@@ -132,7 +146,6 @@ pub fn generate_x25519() -> Result<StaticSecret> {
 /// ```
 pub fn generate_aes256() -> Result<Vec<u8>> {
     let mut key = vec![0u8; AES_KEY_SIZE];
-    use rand::RngCore;
     OsRng
         .try_fill_bytes(&mut key)
         .map_err(|e| crypto_error(format!("RNG failure in AES-256 key generation: {}", e)))?;

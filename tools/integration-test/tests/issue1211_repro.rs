@@ -6,7 +6,7 @@ use std::sync::Arc;
 use integration_test::TestCluster;
 use serde_json::{json, Value};
 
-async fn gql(http: &reqwest::Client, url: &str, query: &str) -> Result<Value, String> {
+async fn gql(http: &net::http::Client, url: &str, query: &str) -> Result<Value, String> {
     let response = http
         .post(format!("{url}/api/v0/graphql"))
         .json(&json!({ "query": query }))
@@ -29,22 +29,23 @@ async fn gql(http: &reqwest::Client, url: &str, query: &str) -> Result<Value, St
     Ok(body["data"].clone())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 16)]
+#[nuclei::test(threads = 16)]
 async fn concurrent_distinct_branchable_doc_updates_do_not_conflict() {
-    const WRITERS: usize = 16;
-    const ROUNDS: usize = 20;
+    edge::compat(async {
+        const WRITERS: usize = 16;
+        const ROUNDS: usize = 20;
 
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .with_store("regolith")
-        .build()
-        .await
-        .expect("build cluster");
-    let node = cluster.client(0);
-    let api_url = cluster.api_url(0).to_string();
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .with_store("regolith")
+            .build()
+            .await
+            .expect("build cluster");
+        let node = cluster.client(0);
+        let api_url = cluster.api_url(0).to_string();
 
-    node.schema_add(
-        r#"
+        node.schema_add(
+            r#"
         type AgentResponse @branchable {
             response_key: String @index(unique: true)
             status: String @index
@@ -54,17 +55,17 @@ async fn concurrent_distinct_branchable_doc_updates_do_not_conflict() {
             reasoning_progress_seq: Int
         }
         "#,
-    )
-    .expect("schema add");
+        )
+        .expect("schema add");
 
-    let http = reqwest::Client::new();
-    let mut doc_ids = Vec::with_capacity(WRITERS);
-    for writer in 0..WRITERS {
-        let data = gql(
-            &http,
-            &api_url,
-            &format!(
-                r#"mutation {{
+        let http = net::http::Client::new(edge::testing::edge());
+        let mut doc_ids = Vec::with_capacity(WRITERS);
+        for writer in 0..WRITERS {
+            let data = gql(
+                &http,
+                &api_url,
+                &format!(
+                    r#"mutation {{
                     add_AgentResponse(input: {{
                         response_key: "response-{writer}",
                         status: "streaming",
@@ -74,32 +75,32 @@ async fn concurrent_distinct_branchable_doc_updates_do_not_conflict() {
                         reasoning_progress_seq: 0
                     }}) {{ _docID }}
                 }}"#
-            ),
-        )
-        .await
-        .expect("create document");
-        doc_ids.push(
-            data["add_AgentResponse"][0]["_docID"]
-                .as_str()
-                .expect("document ID")
-                .to_string(),
-        );
-    }
+                ),
+            )
+            .await
+            .expect("create document");
+            doc_ids.push(
+                data["add_AgentResponse"][0]["_docID"]
+                    .as_str()
+                    .expect("document ID")
+                    .to_string(),
+            );
+        }
 
-    let barrier = Arc::new(regolith::sync::Barrier::new(WRITERS));
-    let mut tasks = Vec::with_capacity(WRITERS);
-    for (writer, doc_id) in doc_ids.iter().cloned().enumerate() {
-        let http = http.clone();
-        let api_url = api_url.clone();
-        let barrier = Arc::clone(&barrier);
-        tasks.push(tokio::spawn(async move {
-            for round in 0..ROUNDS {
-                barrier.wait().await;
-                gql(
-                    &http,
-                    &api_url,
-                    &format!(
-                        r#"mutation {{
+        let barrier = Arc::new(regolith::sync::Barrier::new(WRITERS));
+        let mut tasks = Vec::with_capacity(WRITERS);
+        for (writer, doc_id) in doc_ids.iter().cloned().enumerate() {
+            let http = http.clone();
+            let api_url = api_url.clone();
+            let barrier = Arc::clone(&barrier);
+            tasks.push(nuclei::spawn(async move {
+                for round in 0..ROUNDS {
+                    barrier.wait().await;
+                    gql(
+                        &http,
+                        &api_url,
+                        &format!(
+                            r#"mutation {{
                             update_AgentResponse(
                                 filter: {{
                                     _docID: {{_eq: "{doc_id}"}},
@@ -113,27 +114,28 @@ async fn concurrent_distinct_branchable_doc_updates_do_not_conflict() {
                                 }}
                             ) {{ _docID }}
                         }}"#
-                    ),
-                )
+                        ),
+                    )
+                    .await
+                    .map_err(|error| format!("round {round}: {error}"))?;
+                }
+                Ok::<_, String>(())
+            }));
+        }
+
+        for (writer, task) in tasks.into_iter().enumerate() {
+            task.join()
                 .await
-                .map_err(|error| format!("round {round}: {error}"))?;
-            }
-            Ok::<_, String>(())
-        }));
-    }
+                .expect("writer task panicked")
+                .unwrap_or_else(|error| panic!("writer {writer} failed: {error}"));
+        }
 
-    for (writer, task) in tasks.into_iter().enumerate() {
-        task.await
-            .expect("writer task panicked")
-            .unwrap_or_else(|error| panic!("writer {writer} failed: {error}"));
-    }
-
-    for (writer, doc_id) in doc_ids.iter().enumerate() {
-        let data = gql(
-            &http,
-            &api_url,
-            &format!(
-                r#"query {{
+        for (writer, doc_id) in doc_ids.iter().enumerate() {
+            let data = gql(
+                &http,
+                &api_url,
+                &format!(
+                    r#"query {{
                     AgentResponse(docID: "{doc_id}") {{
                         content
                         reasoning
@@ -141,21 +143,23 @@ async fn concurrent_distinct_branchable_doc_updates_do_not_conflict() {
                         reasoning_progress_seq
                     }}
                 }}"#
-            ),
-        )
-        .await
-        .expect("read final document");
-        let expected_round = ROUNDS - 1;
-        let document = &data["AgentResponse"][0];
-        assert_eq!(
-            document["content"],
-            json!(format!("writer-{writer}-round-{expected_round}"))
-        );
-        assert_eq!(
-            document["reasoning"],
-            json!(format!("reasoning-{writer}-{expected_round}"))
-        );
-        assert_eq!(document["token_count"], json!(expected_round));
-        assert_eq!(document["reasoning_progress_seq"], json!(expected_round));
-    }
+                ),
+            )
+            .await
+            .expect("read final document");
+            let expected_round = ROUNDS - 1;
+            let document = &data["AgentResponse"][0];
+            assert_eq!(
+                document["content"],
+                json!(format!("writer-{writer}-round-{expected_round}"))
+            );
+            assert_eq!(
+                document["reasoning"],
+                json!(format!("reasoning-{writer}-{expected_round}"))
+            );
+            assert_eq!(document["token_count"], json!(expected_round));
+            assert_eq!(document["reasoning_progress_seq"], json!(expected_round));
+        }
+    })
+    .await;
 }

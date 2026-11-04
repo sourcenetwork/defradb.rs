@@ -7,7 +7,7 @@ use crate::bitswap::BlockClass;
 use crate::error::Result;
 use crate::message::CarFetchRequest;
 use crate::sync::car::{
-    collect_dag_blocks_from_roots, collect_exact_blocks, decode_car, decode_car_oversized,
+    collect_dag_blocks_within, collect_exact_blocks, decode_car, decode_car_oversized,
     encode_car_response, CarCollectOutcome,
 };
 use crate::sync::coordinator::SyncCoordinator;
@@ -22,7 +22,7 @@ pub(crate) enum CarIngestDisposition {
     /// A root or shared descendant already has a storage owner. Wake this
     /// fetch with a non-success terminal result so its sole paced retry/provider
     /// rotation can re-offer the response after the owner completes.
-    Busy,
+    StorageContended,
 }
 
 fn sample_cids(cids: &[Cid]) -> Vec<String> {
@@ -65,14 +65,19 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             root_cid = %request.root_cid,
             peer_id = %peer_id,
             recursive = request.recursive,
+            max_depth = ?request.max_depth,
             requested_count = request.wanted_cids.len(),
             has_token = token.is_some(),
             "CAR handler: collecting blocks"
         );
         let response_roots = request.response_roots();
         let collected = if request.recursive {
-            collect_dag_blocks_from_roots(self.manager.blockstore().as_ref(), &response_roots)
-                .await?
+            collect_dag_blocks_within(
+                self.manager.blockstore().as_ref(),
+                &response_roots,
+                request.max_depth,
+            )
+            .await?
         } else {
             collect_exact_blocks(self.manager.blockstore().as_ref(), &request.wanted_cids).await?
         };
@@ -553,7 +558,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     same_root,
                     "Coalescing CAR response behind the current storage owner"
                 );
-                return Ok(CarIngestDisposition::Busy);
+                return Ok(CarIngestDisposition::StorageContended);
             }
         };
         let block_refs: Vec<(&Cid, &[u8])> = blocks.iter().map(|(c, d)| (c, d.as_ref())).collect();

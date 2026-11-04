@@ -103,7 +103,7 @@ impl ViewAddArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
         let query = match (&self.query, &self.query_file) {
             (Some(q), _) => q.clone(),
-            (None, Some(path)) => tokio::fs::read_to_string(path).await.map_err(|e| {
+            (None, Some(path)) => nuclei::fs::read_to_string(path).await.map_err(|e| {
                 crate::error::Error::Server(format!("failed to read query file: {}", e))
             })?,
             (None, None) => {
@@ -114,7 +114,7 @@ impl ViewAddArgs {
         };
         let sdl = match (&self.sdl, &self.sdl_file) {
             (Some(s), _) => s.clone(),
-            (None, Some(path)) => tokio::fs::read_to_string(path).await.map_err(|e| {
+            (None, Some(path)) => nuclei::fs::read_to_string(path).await.map_err(|e| {
                 crate::error::Error::Server(format!("failed to read SDL file: {}", e))
             })?,
             (None, None) => {
@@ -124,7 +124,7 @@ impl ViewAddArgs {
             }
         };
 
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
@@ -138,7 +138,7 @@ impl ViewAddArgs {
 
 impl ViewRefreshArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
@@ -149,7 +149,7 @@ impl ViewRefreshArgs {
 
 impl ViewGcArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 

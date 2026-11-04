@@ -372,8 +372,11 @@ async fn continuous_rollup_test(cluster: TestCluster) {
     handle.abort();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_continuous_rollup_from_update_events() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    continuous_rollup_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        continuous_rollup_test(cluster).await;
+    })
+    .await;
 }

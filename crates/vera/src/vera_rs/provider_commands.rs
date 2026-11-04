@@ -84,7 +84,7 @@ pub(crate) fn resolve_registered_or_passthrough_bearer_token_as(
     submitter: &str,
     deployment_id: u64,
 ) -> Result<Option<String>, crate::provider::ProviderError> {
-    use k256::ecdsa::SigningKey;
+    use vera_client::Secp256k1SigningKey as SigningKey;
 
     if let Some(signing_config) = defra_core::signing::get_identity(did) {
         if signing_config.has_local_private_key()

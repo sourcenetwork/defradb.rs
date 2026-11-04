@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use cid::Cid;
 use libp2p::PeerId;
-use tokio::time::Instant;
+use nuclei::time::Instant;
 
 #[derive(Debug, Default)]
 pub(crate) struct Timeouts(BTreeMap<(Instant, u64), (PeerId, Cid)>);

@@ -4,7 +4,7 @@ use integration_test::TestCluster;
 
 use super::support::{body, create, visible, CHUNKS, SCHEMA};
 
-#[tokio::test]
+#[nuclei::test]
 async fn chunks_and_their_settings_are_read_only() {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);

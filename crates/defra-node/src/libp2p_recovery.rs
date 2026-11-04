@@ -53,6 +53,7 @@ pub(crate) async fn restore_libp2p_replicators<S>(
 pub(crate) async fn restore_libp2p_documents<S>(
     handle: &p2p::P2PHostHandle,
     peerstore: &storage::stores::Peerstore<S>,
+    followed: &p2p::sync::FollowedDocuments,
 ) -> rapidhash::RapidHashSet<String>
 where
     S: storage::corekv::Store + 'static,
@@ -60,6 +61,7 @@ where
     let mut restored = rapidhash::RapidHashSet::default();
     if let Ok(doc_ids) = peerstore.load_documents().await {
         for doc_id in &doc_ids {
+            followed.insert(doc_id.clone(), ());
             let _ = handle.subscribe(DefraTopic::document(doc_id)).await;
             restored.insert(doc_id.clone());
         }

@@ -80,181 +80,196 @@ fn titles(value: &Value, label: &str) -> Vec<String> {
 /// The folded `@index(vector: {...})` is one grammar, so a schema either
 /// runtime accepts is accepted by both. Before the fold each spoke a different
 /// directive and neither could read the other's.
-#[tokio::test]
+#[nuclei::test]
 async fn go_vector_index_sdl_is_accepted_by_both() {
-    let cluster = mixed_cluster().await;
-    let rust = cluster.client(0);
-    let go = cluster.client(1);
+    edge::compat(async {
+        let cluster = mixed_cluster().await;
+        let rust = cluster.client(0);
+        let go = cluster.client(1);
 
-    rust.schema_add(SCHEMA)
-        .expect("Rust must accept the schema");
-    go.schema_add(SCHEMA).expect("Go must accept the schema");
+        rust.schema_add(SCHEMA)
+            .expect("Rust must accept the schema");
+        go.schema_add(SCHEMA).expect("Go must accept the schema");
 
-    // The description each runtime derived from that SDL has to agree, or the
-    // same schema means two different indexes.
-    let rust_indexes = rust.index_list(Some("Note")).expect("Rust index list");
-    let go_indexes = go.index_list(Some("Note")).expect("Go index list");
+        // The description each runtime derived from that SDL has to agree, or the
+        // same schema means two different indexes.
+        let rust_indexes = rust.index_list(Some("Note")).expect("Rust index list");
+        let go_indexes = go.index_list(Some("Note")).expect("Go index list");
 
-    let vector_of = |value: &Value, label: &str| -> Value {
-        let text = serde_json::to_string(value).unwrap_or_default();
-        assert!(
-            text.contains("\"Kind\""),
-            "{label}: no Kind discriminator in {text}"
-        );
-        value.clone()
-    };
-    let rust_shape = vector_of(&rust_indexes, "rust");
-    let go_shape = vector_of(&go_indexes, "go");
+        let vector_of = |value: &Value, label: &str| -> Value {
+            let text = serde_json::to_string(value).unwrap_or_default();
+            assert!(
+                text.contains("\"Kind\""),
+                "{label}: no Kind discriminator in {text}"
+            );
+            value.clone()
+        };
+        let rust_shape = vector_of(&rust_indexes, "rust");
+        let go_shape = vector_of(&go_indexes, "go");
 
-    for (label, shape) in [("rust", &rust_shape), ("go", &go_shape)] {
-        let text = serde_json::to_string(shape).unwrap_or_default();
-        assert!(
-            text.contains("COSINE"),
-            "{label}: the metric did not survive: {text}"
-        );
-        assert!(
-            text.contains("\"Dimensions\":8") || text.contains("\"Dimensions\": 8"),
-            "{label}: the dimensions did not survive: {text}"
-        );
-    }
+        for (label, shape) in [("rust", &rust_shape), ("go", &go_shape)] {
+            let text = serde_json::to_string(shape).unwrap_or_default();
+            assert!(
+                text.contains("COSINE"),
+                "{label}: the metric did not survive: {text}"
+            );
+            assert!(
+                text.contains("\"Dimensions\":8") || text.contains("\"Dimensions\": 8"),
+                "{label}: the dimensions did not survive: {text}"
+            );
+        }
+    })
+    .await;
 }
 
 /// The routed shape returns the same documents in the same order on both. This
 /// is the parity contract's first clause, and the first time it has been
 /// checked against a Go node for a vector query.
-#[tokio::test]
+#[nuclei::test]
 async fn go_vector_similarity_ordering_matches() {
-    let cluster = mixed_cluster().await;
-    let rust = cluster.client(0);
-    let go = cluster.client(1);
+    edge::compat(async {
+        let cluster = mixed_cluster().await;
+        let rust = cluster.client(0);
+        let go = cluster.client(1);
 
-    rust.schema_add(SCHEMA).expect("Rust schema");
-    go.schema_add(SCHEMA).expect("Go schema");
-    seed(&rust, "rust");
-    seed(&go, "go");
+        rust.schema_add(SCHEMA).expect("Rust schema");
+        go.schema_add(SCHEMA).expect("Go schema");
+        seed(&rust, "rust");
+        seed(&go, "go");
 
-    let query = format!(
-        r#"query {{ Note(order: {{_alias: {{sim: DESC}}}}, limit: 5) {{ title sim: SIMILARITY(embedding: {{vector: [{}]}}) }} }}"#,
-        render(&vector_for(3))
-    );
+        let query = format!(
+            r#"query {{ Note(order: {{_alias: {{sim: DESC}}}}, limit: 5) {{ title sim: SIMILARITY(embedding: {{vector: [{}]}}) }} }}"#,
+            render(&vector_for(3))
+        );
 
-    let rust_rows = rust.query(&query).expect("Rust query");
-    let go_rows = go.query(&query).expect("Go query");
+        let rust_rows = rust.query(&query).expect("Rust query");
+        let go_rows = go.query(&query).expect("Go query");
 
-    assert_eq!(
-        titles(&rust_rows, "rust"),
-        titles(&go_rows, "go"),
-        "the routed page differs between runtimes"
-    );
+        assert_eq!(
+            titles(&rust_rows, "rust"),
+            titles(&go_rows, "go"),
+            "the routed page differs between runtimes"
+        );
+    })
+    .await;
 }
 
 /// A shape neither runtime routes still has to agree. Ours declines and scans,
 /// Go declines and scans, and the answer must be the same one.
-#[tokio::test]
+#[nuclei::test]
 async fn go_vector_unrouted_shapes_agree() {
-    let cluster = mixed_cluster().await;
-    let rust = cluster.client(0);
-    let go = cluster.client(1);
+    edge::compat(async {
+        let cluster = mixed_cluster().await;
+        let rust = cluster.client(0);
+        let go = cluster.client(1);
 
-    rust.schema_add(SCHEMA).expect("Rust schema");
-    go.schema_add(SCHEMA).expect("Go schema");
-    seed(&rust, "rust");
-    seed(&go, "go");
+        rust.schema_add(SCHEMA).expect("Rust schema");
+        go.schema_add(SCHEMA).expect("Go schema");
+        seed(&rust, "rust");
+        seed(&go, "go");
 
-    let probe = render(&vector_for(3));
-    for (label, query) in [
-        (
-            "no limit",
-            format!(
-                r#"query {{ Note(order: {{_alias: {{sim: DESC}}}}) {{ title sim: SIMILARITY(embedding: {{vector: [{probe}]}}) }} }}"#
+        let probe = render(&vector_for(3));
+        for (label, query) in [
+            (
+                "no limit",
+                format!(
+                    r#"query {{ Note(order: {{_alias: {{sim: DESC}}}}) {{ title sim: SIMILARITY(embedding: {{vector: [{probe}]}}) }} }}"#
+                ),
             ),
-        ),
-        (
-            "ascending",
-            format!(
-                r#"query {{ Note(order: {{_alias: {{sim: ASC}}}}, limit: 5) {{ title sim: SIMILARITY(embedding: {{vector: [{probe}]}}) }} }}"#
+            (
+                "ascending",
+                format!(
+                    r#"query {{ Note(order: {{_alias: {{sim: ASC}}}}, limit: 5) {{ title sim: SIMILARITY(embedding: {{vector: [{probe}]}}) }} }}"#
+                ),
             ),
-        ),
-    ] {
-        let rust_rows = rust
-            .query(&query)
-            .unwrap_or_else(|e| panic!("{label}: rust: {e}"));
-        let go_rows = go
-            .query(&query)
-            .unwrap_or_else(|e| panic!("{label}: go: {e}"));
-        assert_eq!(
-            titles(&rust_rows, "rust"),
-            titles(&go_rows, "go"),
-            "{label}: an unrouted query differs between runtimes"
-        );
-    }
+        ] {
+            let rust_rows = rust
+                .query(&query)
+                .unwrap_or_else(|e| panic!("{label}: rust: {e}"));
+            let go_rows = go
+                .query(&query)
+                .unwrap_or_else(|e| panic!("{label}: go: {e}"));
+            assert_eq!(
+                titles(&rust_rows, "rust"),
+                titles(&go_rows, "go"),
+                "{label}: an unrouted query differs between runtimes"
+            );
+        }
+    })
+    .await;
 }
 
 /// Our extra algorithms are a stated divergence, so a Go node must refuse a
 /// schema carrying one rather than read it as something else. A silent
 /// misparse is what #1518 existed to close, and this is the executable form of
 /// that fence.
-#[tokio::test]
+#[nuclei::test]
 async fn go_refuses_our_divergent_algorithms() {
-    let cluster = mixed_cluster().await;
-    let rust = cluster.client(0);
-    let go = cluster.client(1);
+    edge::compat(async {
+        let cluster = mixed_cluster().await;
+        let rust = cluster.client(0);
+        let go = cluster.client(1);
 
-    for (label, sdl) in [
-        (
-            "ivfpq",
-            "type Diverged { e: [Float32!] @index(vector: {dimensions: 8, ivfpq: {nlist: 4}}) }",
-        ),
-        (
-            "ssg",
-            "type Diverged { e: [Float32!] @index(vector: {dimensions: 8, ssg: {R: 32}}) }",
-        ),
-        (
-            "flat",
-            "type Diverged { e: [Float32!] @index(vector: {dimensions: 8, flat: {}}) }",
-        ),
-    ] {
-        rust.schema_add(sdl)
-            .unwrap_or_else(|e| panic!("{label}: ours must accept its own algorithm: {e}"));
-        assert!(
-            go.schema_add(sdl).is_err(),
-            "{label}: Go accepted an algorithm it does not implement, which means it read it as something else"
-        );
-        purge_node(&cluster, 0).await;
-        purge_node(&cluster, 1).await;
-    }
+        for (label, sdl) in [
+            (
+                "ivfpq",
+                "type Diverged { e: [Float32!] @index(vector: {dimensions: 8, ivfpq: {nlist: 4}}) }",
+            ),
+            (
+                "ssg",
+                "type Diverged { e: [Float32!] @index(vector: {dimensions: 8, ssg: {R: 32}}) }",
+            ),
+            (
+                "flat",
+                "type Diverged { e: [Float32!] @index(vector: {dimensions: 8, flat: {}}) }",
+            ),
+        ] {
+            rust.schema_add(sdl)
+                .unwrap_or_else(|e| panic!("{label}: ours must accept its own algorithm: {e}"));
+            assert!(
+                go.schema_add(sdl).is_err(),
+                "{label}: Go accepted an algorithm it does not implement, which means it read it as something else"
+            );
+            purge_node(&cluster, 0).await;
+            purge_node(&cluster, 1).await;
+        }
+    })
+    .await;
 }
 
 /// Both runtimes share the HNSW parameter ceilings, so a schema one refuses the
 /// other must refuse too. A parameter accepted by only one is a schema that
 /// replicates into a node that cannot build it.
-#[tokio::test]
+#[nuclei::test]
 async fn go_and_rust_refuse_the_same_out_of_range_params() {
-    let cluster = mixed_cluster().await;
-    let rust = cluster.client(0);
-    let go = cluster.client(1);
+    edge::compat(async {
+        let cluster = mixed_cluster().await;
+        let rust = cluster.client(0);
+        let go = cluster.client(1);
 
-    for (label, sdl) in [
-        (
-            "zero dimensions",
-            "type Bad { e: [Float32!] @index(vector: {dimensions: 0}) }",
-        ),
-        (
-            "absent dimensions",
-            "type Bad { e: [Float32!] @index(vector: {}) }",
-        ),
-        (
-            "unknown metric",
-            "type Bad { e: [Float32!] @index(vector: {dimensions: 8, hnsw: {metric: MANHATTAN}}) }",
-        ),
-    ] {
-        assert!(
-            rust.schema_add(sdl).is_err(),
-            "{label}: ours accepted a schema it should refuse"
-        );
-        assert!(
-            go.schema_add(sdl).is_err(),
-            "{label}: Go accepted a schema ours refuses"
-        );
-    }
+        for (label, sdl) in [
+            (
+                "zero dimensions",
+                "type Bad { e: [Float32!] @index(vector: {dimensions: 0}) }",
+            ),
+            (
+                "absent dimensions",
+                "type Bad { e: [Float32!] @index(vector: {}) }",
+            ),
+            (
+                "unknown metric",
+                "type Bad { e: [Float32!] @index(vector: {dimensions: 8, hnsw: {metric: MANHATTAN}}) }",
+            ),
+        ] {
+            assert!(
+                rust.schema_add(sdl).is_err(),
+                "{label}: ours accepted a schema it should refuse"
+            );
+            assert!(
+                go.schema_add(sdl).is_err(),
+                "{label}: Go accepted a schema ours refuses"
+            );
+        }
+    })
+    .await;
 }

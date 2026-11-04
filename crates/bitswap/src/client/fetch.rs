@@ -1,8 +1,8 @@
 //! Bookkeeping for one `fetch` call: where its blocks are delivered and which cids are still pending.
 
 use cid::Cid;
+use nuclei::sync::mpsc;
 use rapidhash::RapidHashSet;
-use tokio::sync::mpsc;
 
 use crate::block::Block;
 

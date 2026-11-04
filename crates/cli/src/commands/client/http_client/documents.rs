@@ -1,7 +1,7 @@
 //! Document writes over Go's HTTP API.
 
+use net::http::{Method, Response};
 use query::documents::{self, AddOptions, DocumentsResult, Filter};
-use reqwest::{Method, Response};
 use serde_json::{json, Value};
 use urlencoding::encode;
 

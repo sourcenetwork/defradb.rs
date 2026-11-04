@@ -63,7 +63,7 @@ impl TxArgs {
 impl TxNewArgs {
     /// Execute the tx new command
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
         let response = client.tx_begin(self.read_only).await?;
@@ -78,7 +78,7 @@ impl TxNewArgs {
 impl TxCommitArgs {
     /// Execute the tx commit command
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
         client.tx_commit(&self.txn_id).await?;
@@ -89,7 +89,7 @@ impl TxCommitArgs {
 impl TxDiscardArgs {
     /// Execute the tx discard command
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
         client.tx_discard(&self.txn_id).await?;

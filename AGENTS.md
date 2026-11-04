@@ -79,6 +79,7 @@ crates/
 ├── identity/           # Identity and JWT management
 ├── keyring/            # Key storage
 ├── kms/                # DEK generation, wrapping, and distribution under NAC/DAC
+├── net/                # HTTP, TLS and gRPC on nuclei sockets: server loop, HTTP client, gRPC channel
 ├── lens/               # Schema migration via WASM transforms
 ├── orbis/              # Threshold BLS signing (Orbis ring client)
 ├── p2p/                # P2P networking (libp2p + optional Iroh)
@@ -262,6 +263,9 @@ Disjoint parts of one document never conflict. A read that validates more than i
   - work handed between tasks or cores: `regolith::sync::bounded` and `unbounded` channels;
   - a counter or a flag: a plain atomic;
   - one-time initialization: `regolith::sync::OnceCell` and `Lazy`.
+- Network-edge code (p2p, bitswap, net, http and what runs on the edge runtime) takes channels and semaphores from
+  `nuclei::sync` natively (p2p's `rt` gives the same API on wasm32), because they cost a seventh to a sixteenth of
+  regolith's per message; the data path keeps `regolith::sync`.
 - Only where waiting is part of the meaning (one task must wait for another) use a `regolith::sync` future: `Mutex`,
   `RwLock`, `Semaphore`, `Notify`, `Event`, `Latch`, `Barrier`. They suspend the task and never block the thread.
 - Never add a lock to make a value `Sync`, to serialize writers, or to avoid a transaction conflict. Shared durable
@@ -312,11 +316,21 @@ that is correct but slower is not done.
 
 ### The network edge
 
-- One tokio runtime, held in one place, serves all networking (HTTP, pg-compat, P2P, the Orbis, Vera and KMS clients,
-  embeddings, telemetry export). It is passed in as a narrow handle at construction; nothing finds a runtime ambiently
-  (`Handle::current`), and no other runtime is built.
+- One nuclei runtime, held by `edge`, serves all networking (HTTP, pg-compat, P2P, the Orbis, Vera and KMS clients,
+  embeddings, telemetry export). It is passed in as a narrow handle (`edge::Edge`) at construction; nothing finds a
+  runtime ambiently, and no other runtime is built.
+- The network runtime runs on cores of its own: sized from the machine, it holds a quarter of the cores alone in the
+  workers' CPU ledger (`workers::EdgeCores`), one nuclei shard pinned per CPU there, and a worker pool plans its
+  workers on the rest and sets nothing aside for it. Network threads and database workers never share a core.
+- No crate of ours depends on tokio, `tokio-stream` or `tokio-util`, tests and tools included, except `edge`, which owns
+  the one tokio runtime `edge::compat` enters.
+  Every socket of ours is a nuclei socket: `net` serves HTTP and gRPC, is the HTTP client in place of reqwest, and is
+  the gRPC channel tonic's clients run on; libp2p's TCP and WebSocket transports run on nuclei sockets too. A library
+  that binds its own tokio sockets and takes none of ours (iroh, libp2p's QUIC and DNS, the vera.rs clients) runs
+  inside `edge::compat`, the one place that tokio runtime is entered. The edge's owner thread builds it, so its workers
+  and the blocking threads they start later run on the whole edge CPU set, in the ledger; async-compat starts none.
 - The data-path crates (storage, datastore, blockstore, crdt, defra-core, query, db, acp, zanzibar, lens, kms, events)
-  do not depend on tokio: no `tokio::spawn`, `tokio::time`, `Handle::current`, `block_in_place` or `block_on`.
+  do not depend on a runtime: no `nuclei::spawn`, `nuclei::time`, `block_on`, and no tokio at all.
 - A network task that panics fails only its own request. Every completion a worker waits on carries a deadline.
 - Request context (identity, signing configuration, the DAC bypass) travels with the task or message, never in a
   thread-local or task-local.

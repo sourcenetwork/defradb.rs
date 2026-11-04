@@ -1,6 +1,6 @@
 //! Collection definitions and lenses over Go's HTTP API.
 
-use reqwest::{Method, Response};
+use net::http::{Method, Response};
 use schema::{CollectionSelector, CollectionVersion};
 use serde_json::{json, Map, Value};
 

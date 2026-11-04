@@ -1,8 +1,8 @@
 //! Commands sent from `IrohTransport` to the background `IrohEndpoint` event loop.
 
+use crate::rt::{mpsc, oneshot};
 use cid::Cid;
 use iroh::endpoint::SendStream;
-use tokio::sync::oneshot;
 
 use crate::message::{
     BranchableSyncRequest, DocSyncRequest, ManageQueryReply, ManageQueryRequest, ManageReply,
@@ -15,6 +15,14 @@ use crate::QueryId;
 
 /// Where the endpoint answers a command.
 pub type Reply<T> = oneshot::Sender<crate::error::Result<T>>;
+
+/// Resolves, as `Err(RecvError)`, once the endpoint task has stopped. The
+/// endpoint holds the other half, and stops once no transport holds one.
+pub type EndpointStopped = futures::future::Shared<oneshot::Receiver<()>>;
+
+/// How an `IrohTransport` reaches its endpoint: the command queue and the
+/// endpoint's stop signal.
+pub type CommandSender = (mpsc::Sender<IrohCommand>, EndpointStopped);
 
 /// Commands from the transport facade to the background endpoint.
 #[non_exhaustive]
@@ -63,6 +71,12 @@ pub enum IrohCommand {
     },
     ConnectedPeers {
         reply: oneshot::Sender<crate::error::Result<Vec<PeerId>>>,
+    },
+    /// Resolves once `peer_id` holds a connection; abandoned when the reply
+    /// receiver drops.
+    WaitConnected {
+        peer_id: PeerId,
+        reply: oneshot::Sender<crate::error::Result<()>>,
     },
     InboundBudget {
         reply: oneshot::Sender<crate::error::Result<Vec<crate::transport::InboundClassSnapshot>>>,
@@ -223,6 +237,8 @@ pub enum IrohCommand {
         root: Cid,
         providers: Vec<PeerId>,
         missing: Vec<Cid>,
+        /// Links below each missing CID to walk; `None` is the whole closure.
+        max_depth: Option<u32>,
         reply: oneshot::Sender<crate::error::Result<QueryId>>,
     },
     CancelSync {
