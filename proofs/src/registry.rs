@@ -1275,6 +1275,46 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // A signed query or transformed route keeps a request-scope permit
+        // while its started worker writes, so P2P cannot stop first.
+        family: "Node shutdown order",
+        name: "INV_CommittedMarked: a signed query or transformed route commits with its durable head marker",
+        axis: Tla,
+        anchor: "crates/defra-node/src/signed_query/mod.rs execute_with_signing_context; crates/http/src/server.rs Server::router; crates/query/src/pooled/mod.rs PooledExecutor::execute_prepared; crates/workers/src/pool/detached.rs run_on; crates/defra-node/src/network.rs NodeEdge::drain_requests",
+        model_ref: "MC_SignedRequestDrain_{Green,Red_TaskDeadline,Red_Transform}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // A transaction guard follows its admitted commit task rather than a
+        // caller that can stop waiting while the task still runs.
+        family: "Node shutdown order",
+        name: "INV_CommitNotAbandoned: cancelling the waiter does not abandon an edge-admitted commit in flight",
+        axis: Tla,
+        anchor: "crates/defra-node/src/transaction.rs NodeTransaction::commit; crates/query/src/txn/guard.rs TransactionGuard::drop; crates/db/src/txn/owner/table.rs Table::abandon",
+        model_ref: "MC_GuardedCommit_{Green,Red_CallerOwns}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // Request admission follows the worker; transaction ownership follows
+        // its commit task when the caller gives up waiting.
+        family: "Node shutdown order",
+        name: "start_keeps_permit / finish_keeps_permit / dropped_waiter_keeps_permit / expired_task_loses_permit / task_guard_survives_cancellation / caller_guard_is_abandoned / begin_open_has_owner / abandoned_begin_is_closed",
+        axis: Lean,
+        anchor: "crates/defra-node/src/signed_query/mod.rs execute_with_signing_context; crates/defra-node/src/transaction.rs NodeTransaction::commit; crates/workers/src/pool/detached.rs run_on",
+        model_ref: "RequestDrain (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        // The result of a detached begin abandons its transaction if its
+        // caller leaves before receiving the handle.
+        family: "Node shutdown order",
+        name: "INV_OpenHasOwner: an edge-admitted begin cannot leave an unowned transaction open",
+        axis: Tla,
+        anchor: "crates/defra-node/src/lib.rs Node::begin_transaction; crates/defra-node/src/ops/request.rs Node::txn_begin; crates/query/src/txn/guard.rs TransactionGuard::drop",
+        model_ref: "MC_DetachedBegin_{Green,Red_NoResultGuard}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         // A network task's completion says how the work ended: its own
         // handle's abort is Cancelled, the runtime's stop is Closed, a value
         // is a value. The handle records its abort before it cancels, and the

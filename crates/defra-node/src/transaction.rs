@@ -1,5 +1,52 @@
-use crate::{Node, QueryExecutor, QueryRequest, QueryResponse, TransactionHandle};
+use std::sync::Arc;
+
+use defra_core::RequestContext;
 use query::{TransactionError, TransactionGuard};
+
+use crate::{Node, QueryExecutor, QueryRequest, QueryResponse, TransactionHandle};
+
+/// Owns a transaction while its begin result or commit task is unobserved.
+pub(crate) struct OwnedTransaction {
+    executor: Arc<dyn QueryExecutor>,
+    handle: Option<TransactionHandle>,
+}
+
+impl OwnedTransaction {
+    pub(crate) fn new(executor: Arc<dyn QueryExecutor>, handle: TransactionHandle) -> Self {
+        Self {
+            executor,
+            handle: Some(handle),
+        }
+    }
+
+    pub(crate) fn handle(&self) -> Result<&TransactionHandle, TransactionError> {
+        self.handle
+            .as_ref()
+            .ok_or_else(|| TransactionError::already_finalized("transaction already finalized"))
+    }
+
+    pub(crate) fn into_handle(mut self) -> Result<TransactionHandle, TransactionError> {
+        self.handle
+            .take()
+            .ok_or_else(|| TransactionError::already_finalized("transaction already finalized"))
+    }
+
+    async fn commit(mut self, context: RequestContext) -> Result<(), TransactionError> {
+        self.executor
+            .commit_txn_as(&context, self.handle()?)
+            .await?;
+        self.handle = None;
+        Ok(())
+    }
+}
+
+impl Drop for OwnedTransaction {
+    fn drop(&mut self) {
+        if let Some(handle) = &self.handle {
+            self.executor.abandon_txn(handle);
+        }
+    }
+}
 
 /// An owning transaction that uses the node's signing and identity context.
 ///
@@ -56,11 +103,21 @@ impl NodeTransaction<'_> {
     }
 
     /// Commit the writes and consume the owning transaction, admitted as
-    /// [`Node::commit_transaction`] admits it. Dropping the guard afterwards
-    /// abandons nothing a commit finished; a refused commit's transaction is
-    /// abandoned with it.
+    /// [`Node::commit_transaction`] admits it. The commit task owns the guard
+    /// until completion when the node has a request edge, so caller
+    /// cancellation does not abandon it. A refused or failed commit abandons
+    /// the transaction. Without an edge, cancellation follows the executor.
     pub async fn commit(self) -> Result<(), TransactionError> {
-        self.node.commit_transaction(self.handle()).await
+        let handle = self
+            .guard
+            .into_handle()
+            .ok_or_else(|| TransactionError::already_finalized("transaction already finalized"))?;
+        let owned = OwnedTransaction::new(Arc::clone(self.node.runner()), handle);
+        let context = self.node.node_context();
+        self.node
+            .as_request(owned.commit(context))
+            .await
+            .unwrap_or_else(|error| Err(crate::refused_transaction(error, "committed")))
     }
 
     /// Roll back the writes and consume the owning transaction.
@@ -88,3 +145,6 @@ impl Node {
             .await
     }
 }
+
+#[cfg(test)]
+mod cancellation_tests;

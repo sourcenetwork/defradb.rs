@@ -34,6 +34,7 @@ pub(super) async fn execute_with_signing_context(
             None => super::execute_autocommit_request(executor.as_ref(), request).await,
         }
     }))
+    .within(std::time::Duration::MAX)
     .await
     .unwrap_or_else(refused_response)
 }

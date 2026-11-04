@@ -543,10 +543,10 @@ impl Server {
         let normalized = NormalizePathLayer::trim_trailing_slash().layer(router.clone());
         let mut router = router.fallback_service(normalized);
         if let Some(extra) = &self.extra_routes {
-            router = router.merge(extra.clone().layer(admitted));
+            router = router.merge(extra.clone().layer(admitted.clone()));
         }
         if let Some(transform) = &self.router_transform {
-            router = transform(router);
+            router = transform(router).layer(admitted);
         }
         Ok(router)
     }

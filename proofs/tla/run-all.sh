@@ -548,6 +548,13 @@ RUNS=(
   "MC_Arrivals_Red_Detached.cfg      Arrivals.tla RED"   # #1897 post-commit numbering: second durable commit (INV_OneCommitPerWrite)
   "MC_Arrivals_Red_DetachedOrder.cfg Arrivals.tla RED"   # #1897 short-ID numbering leaves commit order (INV_CommitOrder)
   "MC_Arrivals_Red_StampLatest.cfg   Arrivals.tla RED"   # bound by latest allocated seq: unapplied commit skipped (INV_NoSkip)
+  "MC_DetachedBegin_Green.cfg DetachedBegin.tla GREEN" # an unobserved begin is abandoned
+  "MC_DetachedBegin_Red_NoResultGuard.cfg DetachedBegin.tla RED" # the unobserved transaction leaks
+  "MC_GuardedCommit_Green.cfg GuardedCommit.tla GREEN" # the task owns the transaction guard
+  "MC_GuardedCommit_Red_CallerOwns.cfg GuardedCommit.tla RED" # a cancelled waiter abandons the running commit
+  "MC_SignedRequestDrain_Green.cfg SignedRequestDrain.tla GREEN" # a signed query keeps its permit until its worker ends
+  "MC_SignedRequestDrain_Red_TaskDeadline.cfg SignedRequestDrain.tla RED" # the task expires while its worker keeps writing
+  "MC_SignedRequestDrain_Red_Transform.cfg SignedRequestDrain.tla RED" # a transformed route escapes admission
   "MC_NodeShutdown_Green.cfg NodeShutdown.tla GREEN" # held tasks stop and are awaited before regolith closes; shutdown returns
   "MC_NodeShutdown_Red_RedriveDetached.cfg NodeShutdown.tla RED" # detached ACP redrive outlives the wait for tasks
   "MC_NodeShutdown_Red_ServicesNotAwaited.cfg NodeShutdown.tla RED" # stopped service still in storage when regolith closes

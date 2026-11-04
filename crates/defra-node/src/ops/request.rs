@@ -64,17 +64,18 @@ impl Node {
     /// whose context carries the returned ID run in it. Begun as a request,
     /// as [`Node::begin_transaction`] is.
     pub async fn txn_begin(&self, context: &RequestContext, read_only: bool) -> Result<TxnId> {
-        let (runner, caller) = (Arc::clone(self.runner()), self.caller(context));
-        let handle = self
-            .as_request(async move { runner.begin_txn_as(&caller, read_only).await })
+        let owned = self
+            .begin_owned_transaction(self.caller(context), read_only)
             .await
-            .unwrap_or_else(|error| Err(refused_transaction(error, "begun")))
             .map_err(transaction_error)?;
-        handle.parse().map_err(|_| {
+        let handle = owned.handle().map_err(transaction_error)?;
+        let id = handle.parse().map_err(|_| {
             Error::Transaction(TransactionError::Operation(format!(
                 "transaction ID '{handle}' is not a number"
             )))
-        })
+        })?;
+        owned.into_handle().map_err(transaction_error)?;
+        Ok(id)
     }
 
     /// Make the writes of transaction `id` durable and end it, admitted as
