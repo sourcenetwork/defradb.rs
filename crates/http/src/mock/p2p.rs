@@ -335,7 +335,7 @@ mod tests {
     use super::MockP2POperations;
     use crate::router::{P2PError, P2POperations, TransportPeerId};
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn default_identity_resolution_fails_closed() {
         let peer = TransportPeerId::new("peer-id").unwrap();
         assert!(matches!(

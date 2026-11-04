@@ -2,7 +2,6 @@ use bitswap::{ProtocolConfig, ProtocolId};
 use libp2p::core::upgrade::{InboundUpgrade, OutboundUpgrade};
 use libp2p::core::UpgradeInfo;
 use multistream_select::{dialer_select_proto, listener_select_proto, Version};
-use tokio_util::compat::TokioAsyncReadCompatExt;
 
 const ALL: [ProtocolId; 4] = [
     ProtocolId::Legacy,
@@ -65,32 +64,31 @@ fn ordering_follows_version() {
 }
 
 async fn negotiate(listener: ProtocolConfig, dialer: ProtocolConfig) -> (ProtocolId, ProtocolId) {
-    let (a, b) = tokio::io::duplex(64 * 1024);
+    let (a, b) = nuclei::io::duplex(64 * 1024);
     let server = async move {
-        let (protocol, stream) = listener_select_proto(a.compat(), listener.protocol_info())
+        let (protocol, stream) = listener_select_proto(a, listener.protocol_info())
             .await
             .unwrap();
         let framed = listener.upgrade_inbound(stream, protocol).await.unwrap();
         framed.codec().protocol
     };
     let client = async move {
-        let (protocol, stream) =
-            dialer_select_proto(b.compat(), dialer.protocol_info(), Version::V1Lazy)
-                .await
-                .unwrap();
+        let (protocol, stream) = dialer_select_proto(b, dialer.protocol_info(), Version::V1Lazy)
+            .await
+            .unwrap();
         let framed = dialer.upgrade_outbound(stream, protocol).await.unwrap();
         framed.codec().protocol
     };
     futures::future::join(server, client).await
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn both_default_lists_select_120() {
     let got = negotiate(ProtocolConfig::default(), ProtocolConfig::default()).await;
     assert_eq!(got, (ProtocolId::Bitswap120, ProtocolId::Bitswap120));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn listener_with_only_100_forces_100() {
     let listener = ProtocolConfig {
         protocol_ids: vec![ProtocolId::Bitswap100],

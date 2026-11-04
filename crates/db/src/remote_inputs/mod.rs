@@ -21,24 +21,25 @@ use regolith::sync::OnceCell;
 /// A database's remote-input services.
 #[derive(Default)]
 pub(crate) struct RemoteInputs {
-    runtime: OnceCell<inputs::Runtime>,
+    edge: OnceCell<edge::Edge>,
     signatures: OnceCell<inputs::Service<RemoteSignatures>>,
     embeddings: OnceCell<inputs::Service<Embeddings>>,
 }
 
 impl RemoteInputs {
-    /// Runs every round trip on `runtime`. Only before the first one: a
+    /// Runs every round trip on `edge`. Only before the first one: a
     /// service already built keeps its runtime. Returns whether it took.
-    pub(crate) fn set_runtime(&self, runtime: inputs::Runtime) -> bool {
-        self.runtime.set(runtime).is_ok()
+    pub(crate) fn set_edge(&self, edge: edge::Edge) -> bool {
+        self.edge.set(edge).is_ok()
     }
 
     /// The network runtime the node gave, else inline.
     fn runtime(&self) -> inputs::Runtime {
-        self.runtime
+        self.edge
             .get()
-            .cloned()
-            .unwrap_or_else(inputs::Runtime::inline)
+            .map_or_else(inputs::Runtime::inline, |edge| {
+                inputs::Runtime::edge(edge.clone())
+            })
     }
 
     /// Remote signatures, one call per wave and signer.
@@ -51,12 +52,13 @@ impl RemoteInputs {
     /// Embeddings, single-flighted and cached by text: on the network
     /// runtime the node gave, else through the process's shared service.
     pub(crate) fn embeddings(&self) -> &inputs::Service<Embeddings> {
-        self.embeddings
-            .get_or_init_racy(|| match self.runtime.get() {
-                Some(runtime) => {
-                    inputs::Service::new(Embeddings, embeddings::config(), runtime.clone())
-                }
-                None => embeddings::shared(),
-            })
+        self.embeddings.get_or_init_racy(|| match self.edge.get() {
+            Some(edge) => inputs::Service::new(
+                Embeddings::on(edge),
+                embeddings::config(),
+                inputs::Runtime::edge(edge.clone()),
+            ),
+            None => embeddings::shared(),
+        })
     }
 }

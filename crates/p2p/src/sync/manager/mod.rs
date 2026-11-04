@@ -16,6 +16,7 @@ mod config;
 pub(crate) mod diagnostics;
 mod events;
 pub(crate) mod links;
+pub(crate) mod log_throttle;
 pub(crate) mod pending;
 mod process;
 

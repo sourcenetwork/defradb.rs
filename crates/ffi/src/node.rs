@@ -55,9 +55,12 @@ pub(crate) async fn build_node_state(
     config.edge = Some(edge);
 
     // A persistent store opens with the server profile, as FFI always has.
+    // The embedding process is this node's only caller, so its transactions
+    // serve whichever identity a request acts as, as in Go.
     let mut builder = defra_node::NodeBuilder::default()
         .with_config(config)
-        .with_store_profile(defra_node::StoreProfile::Server);
+        .with_store_profile(defra_node::StoreProfile::Server)
+        .with_txn_ownership(db::TxnOwnership::Embedder);
     if let Some(path) = &db_path_opt {
         builder = builder.data_path(path);
     }

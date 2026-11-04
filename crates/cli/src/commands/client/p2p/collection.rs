@@ -130,7 +130,7 @@ impl P2pCollectionDeleteArgs {
 
 impl P2pCollectionSyncVersionsArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
@@ -144,7 +144,7 @@ impl P2pCollectionSyncVersionsArgs {
 
 impl P2pCollectionSyncBranchableArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 

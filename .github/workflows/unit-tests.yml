@@ -45,7 +45,9 @@ jobs:
         -p path+file://${{ github.workspace }}/crates/acp -p defra-version -p events -p lens
         -p replication-filter -p telemetry
       DATA: -p query -p db -p vera -p pg-compat
-      NETWORK: -p p2p -p defra-p2p-adapter -p orbis
+      NETWORK: >-
+        -p p2p -p defra-p2p-adapter -p orbis -p net -p edge -p inputs
+        -p workers
       SURFACES: >-
         -p defra-http -p cli -p ffi -p defra-node
         -p lens-host -p defra-wasm -p benches -p ffi-test

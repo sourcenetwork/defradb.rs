@@ -1,5 +1,6 @@
 //! Concurrent standalone reads through the HTTP router, on an on-disk store
-//! placed on the node's worker pool, wired as a server wires them. No
+//! placed on the node's worker pool, wired as a server wires them: the readers
+//! run on the network edge's cores, the pool on the rest. No
 //! network, signing or ACP.
 //!
 //! `cargo bench -p benches --bench read_baseline --profile release-fast`
@@ -80,7 +81,7 @@ struct Fixture {
 }
 
 impl Fixture {
-    async fn new() -> Self {
+    async fn new(edge: edge::Edge) -> Self {
         let pool = storage::start_pool(workers::Config::default(), None).unwrap();
         let directory = tempfile::tempdir().unwrap();
         let store = Arc::new(
@@ -142,7 +143,7 @@ impl Fixture {
                     .to_owned(),
             );
         }
-        let router = defra_http::Server::from_arc(executor, edge::testing::edge())
+        let router = defra_http::Server::from_arc(executor, edge)
             .with_pool(Some(pool.clone()))
             .router()
             .unwrap();
@@ -193,26 +194,33 @@ async fn read(router: Router, query: &str, rows: usize) -> Duration {
     elapsed
 }
 
-async fn run(fixture: &Fixture, shape: Shape, readers: usize, operations: usize) -> Measurement {
+async fn run(
+    fixture: &Fixture,
+    edge: &edge::Edge,
+    shape: Shape,
+    readers: usize,
+    operations: usize,
+) -> Measurement {
     let stats = fixture.store.transaction_stats_handle().unwrap();
     let off_pool = stats.snapshot().off_pool_calls;
     let tasks = fixture.pool_tasks();
     let start = Instant::now();
-    let mut set = tokio::task::JoinSet::new();
-    for reader in 0..readers {
-        let (router, ids) = (fixture.router.clone(), fixture.ids.clone());
-        set.spawn(async move {
-            let mut latencies = Vec::with_capacity(operations);
-            for operation in 0..operations {
-                let query = shape.query(reader, operation, &ids);
-                latencies.push(read(router.clone(), &query, shape.rows()).await);
-            }
-            latencies
-        });
-    }
+    let readers_running: Vec<_> = (0..readers)
+        .map(|reader| {
+            let (router, ids) = (fixture.router.clone(), fixture.ids.clone());
+            edge.spawn(async move {
+                let mut latencies = Vec::with_capacity(operations);
+                for operation in 0..operations {
+                    let query = shape.query(reader, operation, &ids);
+                    latencies.push(read(router.clone(), &query, shape.rows()).await);
+                }
+                latencies
+            })
+        })
+        .collect();
     let mut latencies = Vec::with_capacity(readers * operations);
-    while let Some(sample) = set.join_next().await {
-        latencies.extend(sample.unwrap());
+    for task in readers_running {
+        latencies.extend(task.await.unwrap());
     }
     let elapsed = start.elapsed();
     assert_eq!(
@@ -277,15 +285,19 @@ fn main() {
             }
         })
     );
-    let rt = common::owned_runtime();
-    let fixture = rt.block_on(Fixture::new());
+    let server = common::server_edge();
+    let edge = server.edge().clone();
+    let fixture = edge.block_on(Fixture::new(edge.clone())).unwrap();
     for shape in Shape::ALL {
-        rt.block_on(run(&fixture, shape, 1, DOCUMENTS));
+        edge.block_on(run(&fixture, &edge, shape, 1, DOCUMENTS))
+            .unwrap();
         let mut groups: Vec<Group> = Vec::new();
         for &count in &readers {
             let mut values: Vec<Vec<f64>> = Vec::new();
             for repetition in 0..repetitions {
-                let sample = rt.block_on(run(&fixture, shape, count, operations));
+                let sample = edge
+                    .block_on(run(&fixture, &edge, shape, count, operations))
+                    .unwrap();
                 let metrics = metrics(&sample);
                 if groups.is_empty() {
                     groups = metrics
@@ -335,6 +347,7 @@ fn main() {
         }
         family.emit(&format!("read_baseline_{}", shape.name()));
     }
-    rt.block_on(fixture.store.close()).unwrap();
+    edge.block_on(fixture.store.close()).unwrap().unwrap();
     fixture.pool.shutdown_blocking().unwrap();
+    server.shutdown().unwrap();
 }

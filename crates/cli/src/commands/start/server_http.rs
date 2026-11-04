@@ -211,6 +211,7 @@ impl Node {
         database: Arc<db::DB<storage::DynStore>>,
         config: &Config,
         query_setup: &QueryRunnerSetup,
+        edge: &edge::Edge,
     ) -> Result<Option<pg_compat::PgServer>> {
         if config.api.pg_address.is_empty() {
             return Ok(None);
@@ -232,6 +233,7 @@ impl Node {
             query_setup.runner.clone(),
             query_setup.collection_provider.clone(),
             Some(pg_schema_manager),
+            edge.clone(),
         )))
     }
 }

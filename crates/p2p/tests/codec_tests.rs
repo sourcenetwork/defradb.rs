@@ -19,7 +19,7 @@ fn encode_with_ciborium<T: serde::Serialize>(value: &T) -> Vec<u8> {
     bytes
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_codec_roundtrip_request() {
     let mut codec = PushLogCodec::new();
     let protocol = rep_request_protocol();
@@ -51,7 +51,7 @@ async fn test_codec_roundtrip_request() {
     assert_eq!(decoded.collection_id, original.collection_id);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_codec_roundtrip_response() {
     let mut codec = PushLogCodec::new();
     let protocol = rep_response_protocol();
@@ -76,7 +76,7 @@ async fn test_codec_roundtrip_response() {
     assert_eq!(decoded.message_id, original.message_id);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_codec_invalid_cbor_request() {
     let mut codec = PushLogCodec::new();
     let protocol = rep_request_protocol();
@@ -91,7 +91,7 @@ async fn test_codec_invalid_cbor_request() {
     assert!(err.to_string().contains("CBOR deserialization error"));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_codec_invalid_cbor_response() {
     let mut codec = PushLogCodec::new();
     let protocol = rep_response_protocol();
@@ -105,7 +105,7 @@ async fn test_codec_invalid_cbor_response() {
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_codec_empty_message() {
     let mut codec = PushLogCodec::new();
     let protocol = rep_request_protocol();
@@ -119,7 +119,7 @@ async fn test_codec_empty_message() {
     assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_codec_truncated_cbor() {
     let mut codec = PushLogCodec::new();
     let protocol = rep_request_protocol();

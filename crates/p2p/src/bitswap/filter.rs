@@ -261,7 +261,7 @@ mod tests {
         (cid, bytes)
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn open_mode_allows_all() {
         let registry = Arc::new(ReplicatorRegistry::new());
         let store = InMemoryStore::default();
@@ -274,7 +274,7 @@ mod tests {
         assert!(allowed);
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn controlled_mode_denies_unknown_peer() {
         let registry = Arc::new(ReplicatorRegistry::new());
         let store = InMemoryStore::default();
@@ -288,7 +288,7 @@ mod tests {
         assert!(!allowed, "unknown peer must be denied in Controlled mode");
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn controlled_mode_allows_registered_replicator() {
         let registry = Arc::new(ReplicatorRegistry::new());
         let store = InMemoryStore::default();
@@ -310,7 +310,7 @@ mod tests {
         assert!(allowed, "registered replicator must be served");
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn controlled_mode_denies_filtered_replicator_data_block_requests() {
         let registry = Arc::new(ReplicatorRegistry::new());
         let store = InMemoryStore::default();
@@ -345,7 +345,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn controlled_mode_denies_replicator_for_other_collection() {
         let registry = Arc::new(ReplicatorRegistry::new());
         let store = InMemoryStore::default();
@@ -371,7 +371,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn missing_block_denies_without_leaking() {
         let registry = Arc::new(ReplicatorRegistry::new());
         let store = InMemoryStore::default();
@@ -386,7 +386,7 @@ mod tests {
         assert!(!allowed, "missing block must be denied");
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn signature_block_is_served_without_registry_check() {
         use defra_core::{Signature as DefraSig, SignatureHeader, SignatureType};
         let header = SignatureHeader::new(SignatureType::EdDSA, vec![9, 9, 9]);
@@ -411,7 +411,7 @@ mod tests {
     /// Schema/collection definitions are broadcast to every peer regardless of
     /// per-collection registration (they carry no user data and must propagate
     /// for schema convergence). A peer with no registry entry can fetch them.
-    #[tokio::test]
+    #[nuclei::test]
     async fn definition_delta_is_served_without_registry_check() {
         use defra_core::{CollectionDefinitionDeltaPayload, CrdtDelta};
 
@@ -442,7 +442,7 @@ mod tests {
     /// a definition — it has no collection-version id, cannot be ACP-scoped, and
     /// is never transferred over P2P (circular-relation groups converge by local
     /// reconstruction). A non-replicator, unauthorized peer must be DENIED.
-    #[tokio::test]
+    #[nuclei::test]
     async fn collection_set_block_is_denied_to_non_replicator() {
         use defra_core::{CollectionSetDeltaPayload, CrdtDelta};
 
@@ -473,7 +473,7 @@ mod tests {
     /// `wasmBytes` / `chunks`) must be served to any peer in Controlled
     /// mode — they carry no user data and have to propagate so schema
     /// migrations converge across the network.
-    #[tokio::test]
+    #[nuclei::test]
     async fn lens_config_block_is_served_without_registry_check() {
         use defra_core::{build_lens_ipld_blocks, CidBlock};
 
@@ -499,7 +499,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn controlled_mode_uses_late_bound_gate_for_non_replicator() {
         let registry = Arc::new(ReplicatorRegistry::new());
         let store = InMemoryStore::default();
@@ -534,7 +534,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn controlled_mode_replicator_bypasses_uninstalled_gate() {
         let registry = Arc::new(ReplicatorRegistry::new());
         let store = InMemoryStore::default();

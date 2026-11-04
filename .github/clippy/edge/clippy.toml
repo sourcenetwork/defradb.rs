@@ -1,0 +1,22 @@
+# The network edge's confinement: read by the lint job's network edge step
+# through CLIPPY_CONF_DIR, over the library code of every crate but edge.
+# Network work runs on the one runtime edge holds, reached through the
+# edge::Edge a component is given at construction: nothing spawns on, blocks
+# on or looks up a runtime of its own, which off the edge's threads would
+# start nuclei's default runtime, a second one. Tests may.
+disallowed-methods = [
+    { path = "nuclei::spawn", reason = "spawn network work through the component's edge::Edge: Edge::spawn or Edge::spawn_service" },
+    { path = "nuclei::spawn_local", reason = "spawn network work through the component's edge::Edge: Edge::spawn or Edge::spawn_pinned" },
+    { path = "nuclei::spawn_blocking", reason = "run blocking network work through the component's edge::Edge: Edge::spawn_blocking" },
+    { path = "nuclei::block_on", reason = "block a plain thread on network work through the component's edge::Edge: Edge::block_on" },
+    { path = "nuclei::task::JoinSet::spawn", reason = "spawn network work through the component's edge::Edge" },
+    { path = "nuclei::task::JoinSet::spawn_local", reason = "spawn network work through the component's edge::Edge" },
+    { path = "nuclei::task::JoinSet::spawn_blocking", reason = "run blocking network work through the component's edge::Edge: Edge::spawn_blocking" },
+    { path = "nuclei::task::Builder::spawn", reason = "spawn network work through the component's edge::Edge: Edge::spawn or Edge::spawn_service" },
+    { path = "nuclei::task::Builder::spawn_local", reason = "spawn network work through the component's edge::Edge: Edge::spawn or Edge::spawn_pinned" },
+    { path = "nuclei::task::Builder::spawn_blocking", reason = "run blocking network work through the component's edge::Edge: Edge::spawn_blocking" },
+    { path = "nuclei::runtime::RuntimeHandle::current", reason = "take an edge::Edge at construction instead of looking up a runtime" },
+    { path = "nuclei::runtime::RuntimeHandle::try_current", reason = "take an edge::Edge at construction instead of looking up a runtime" },
+    { path = "nuclei::runtime::Runtime::new", reason = "the one network runtime is edge's: take an edge::Edge at construction" },
+    { path = "nuclei::runtime::Builder::build", reason = "the one network runtime is edge's: take an edge::Edge at construction" },
+]

@@ -116,7 +116,7 @@ pub enum Error {
     InvalidIdentity(String),
 
     #[error("HTTP request failed: {0}")]
-    HttpRequest(#[from] reqwest::Error),
+    HttpRequest(#[from] net::http::Error),
 
     #[error("server returned error: {0}")]
     Server(String),

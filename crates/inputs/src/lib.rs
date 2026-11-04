@@ -21,6 +21,9 @@
 //! other waiters share, and a waiter on any thread or executor suspends on an
 //! `Event`, holding no thread.
 //!
+//! The embedding providers' requests are here too ([`embeddings`]), so the
+//! data path that asks for an embedding makes no network call of its own.
+//!
 //! What must never happen: two round trips in flight for one key; an answer
 //! cached after an invalidation that began while it was being fetched; a
 //! caller waiting past its deadline; a cache above its byte budget for longer
@@ -28,6 +31,7 @@
 
 mod cache;
 mod config;
+pub mod embeddings;
 mod error;
 mod flight;
 mod lane;

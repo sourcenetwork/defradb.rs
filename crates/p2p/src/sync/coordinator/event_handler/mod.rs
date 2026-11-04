@@ -23,9 +23,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         tracing::debug!(peer_id = %peer_id, "Peer connected");
         self.access.peer_state.peer_connected(peer_id.as_str());
         self.redrive_pending_dags_for_peer(&peer_id);
-        // Durable registrations whose in-memory entries were TTL-evicted can
-        // only complete once a provider is reachable again: reconcile them
-        // now (single-flight; a no-op while another sweep runs).
+        // Durable registrations without an in-memory entry can only complete
+        // once a provider is reachable again: reconcile them now
+        // (single-flight; a no-op while another sweep runs).
         self.manager.resync_persisted_pending_dags().await;
     }
 
@@ -222,20 +222,22 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     async fn reject_car_fetch(
         &self,
         peer_id: &PeerId,
+        root_cid: &cid::Cid,
         token: Option<T::ResponseToken>,
         error: Error,
     ) -> Error {
-        // CAR has no error reply type — send an empty response so the sender
-        // sees an explicit (parseable) rejection rather than a hung stream.
+        // Busy, not empty: the requester rotates now instead of charging this
+        // provider a stalled window. Zero bytes is the legacy fallback.
+        let reply = crate::sync::car::encode_car_busy(root_cid).unwrap_or_default();
         let send_result = if let Some(token) = token {
             self.runtime
                 .transport
-                .send_car_response_token(token, Vec::new())
+                .send_car_response_token(token, reply)
                 .await
         } else {
             self.runtime
                 .transport
-                .send_car_response(peer_id, Vec::new())
+                .send_car_response(peer_id, reply)
                 .await
         };
         if let Err(send_err) = send_result {
@@ -326,9 +328,15 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     )
                     .await)
             }
-            TransportEvent::CarFetchRequest { peer_id, token, .. } => {
+            TransportEvent::CarFetchRequest {
+                peer_id,
+                request,
+                token,
+            } => {
                 let error = Self::saturated_error(&peer_id);
-                Err(self.reject_car_fetch(&peer_id, token, error).await)
+                Err(self
+                    .reject_car_fetch(&peer_id, &request.root_cid, token, error)
+                    .await)
             }
             TransportEvent::GossipMessage {
                 propagation_source, ..
@@ -513,10 +521,24 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             }
             TransportEvent::BitswapComplete {
                 query_id,
-                success,
-                error,
+                provider_busy: true,
+                ..
             } => {
-                self.handle_bitswap_complete(query_id, success, error)
+                self.handle_bitswap_provider_busy(query_id).await?;
+            }
+            TransportEvent::BitswapComplete {
+                query_id,
+                success,
+                cause,
+                error,
+                provider_busy: false,
+            } => {
+                let outcome = if success {
+                    Ok(())
+                } else {
+                    Err(cause.unwrap_or(crate::transport::FetchFailureCause::Error))
+                };
+                self.handle_bitswap_complete(query_id, outcome, error)
                     .await?;
             }
             TransportEvent::DocSyncRequest {
@@ -582,7 +604,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     &peer_id,
                     "CarFetchRequest",
                 ) {
-                    return Err(self.reject_car_fetch(&peer_id, token, error).await);
+                    return Err(self
+                        .reject_car_fetch(&peer_id, &request.root_cid, token, error)
+                        .await);
                 }
                 self.handle_car_fetch_request(peer_id, request, token)
                     .await?;
@@ -593,6 +617,22 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 root_cid,
                 car_data,
             } => {
+                if crate::sync::car::is_car_busy(&car_data) {
+                    // A block-sync query hears busy in the transport's aggregate
+                    // completion instead, once every provider has answered.
+                    self.manager.diagnostics.record_car_busy_response();
+                    tracing::debug!(
+                        root_cid = %root_cid,
+                        peer_id = %peer_id,
+                        "Provider shed the CAR request as busy"
+                    );
+                    self.manager.rooted_car_completion_tracker().complete_with(
+                        root_cid,
+                        &peer_id,
+                        crate::sync::manager::FetchCompletion::ProviderBusy,
+                    );
+                    return Ok(());
+                }
                 let has_blocks =
                     !car_data.is_empty() && crate::sync::car::car_has_any_block(&car_data);
                 let has_notices = crate::sync::car::decode_car_oversized(&car_data)
@@ -607,7 +647,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                             .rooted_car_completion_tracker()
                             .complete(root_cid, &peer_id, has_blocks);
                     }
-                    Some(car::CarIngestDisposition::Busy) => {
+                    Some(car::CarIngestDisposition::StorageContended) => {
                         self.manager
                             .rooted_car_completion_tracker()
                             .defer(root_cid, &peer_id);
@@ -633,10 +673,15 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     if has_blocks || has_notices {
                         match disposition {
                             Some(car::CarIngestDisposition::Completed) => {
-                                self.handle_bitswap_complete(query_id, has_blocks, None)
+                                let outcome = if has_blocks {
+                                    Ok(())
+                                } else {
+                                    Err(crate::transport::FetchFailureCause::NoBlocks)
+                                };
+                                self.handle_bitswap_complete(query_id, outcome, None)
                                     .await?;
                             }
-                            Some(car::CarIngestDisposition::Busy) => {
+                            Some(car::CarIngestDisposition::StorageContended) => {
                                 self.handle_bitswap_deferred(query_id).await?;
                             }
                             Some(car::CarIngestDisposition::SizeLimit(cid)) => {
@@ -645,7 +690,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                             None => {
                                 self.handle_bitswap_complete(
                                     query_id,
-                                    false,
+                                    Err(crate::transport::FetchFailureCause::Error),
                                     result.as_ref().err().map(ToString::to_string),
                                 )
                                 .await?;
@@ -957,17 +1002,21 @@ mod tests {
         )
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn gossip_root_only_relay_cannot_become_durable_recovery_provider() {
         use crate::sync::pending_store::{PendingDagStorage, PendingDagStore};
 
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = TestTransport::new();
-        let (coordinator, mut events) =
-            SyncCoordinator::new(transport, blockstore, SyncConfig::default())
-                .await
-                .expect("coordinator");
+        let (coordinator, mut events) = SyncCoordinator::new(
+            transport,
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
         let pending_store = Arc::new(PendingDagStore::new(Arc::new(
             RegolithStore::in_memory().unwrap(),
         )));
@@ -1001,17 +1050,21 @@ mod tests {
     /// can use: `transport.connected_peers()` does not list it, so a durable
     /// obligation bound to it defers "until the provider reconnects" forever.
     /// Such a hint must stay advisory.
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn gossip_origin_unknown_to_transport_does_not_create_durable_obligation() {
         use crate::sync::pending_store::{PendingDagStorage, PendingDagStore};
 
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = TestTransport::new();
-        let (coordinator, mut events) =
-            SyncCoordinator::new(transport, blockstore, SyncConfig::default())
-                .await
-                .expect("coordinator");
+        let (coordinator, mut events) = SyncCoordinator::new(
+            transport,
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
         let pending_store = Arc::new(PendingDagStore::new(Arc::new(
             RegolithStore::in_memory().unwrap(),
         )));
@@ -1047,17 +1100,21 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn gossip_routable_authenticated_origin_is_the_durable_recovery_provider() {
         use crate::sync::pending_store::{PendingDagStorage, PendingDagStore};
 
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = TestTransport::new();
-        let (coordinator, mut events) =
-            SyncCoordinator::new(transport, blockstore, SyncConfig::default())
-                .await
-                .expect("coordinator");
+        let (coordinator, mut events) = SyncCoordinator::new(
+            transport,
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
         let pending_store = Arc::new(PendingDagStore::new(Arc::new(
             RegolithStore::in_memory().unwrap(),
         )));
@@ -1092,7 +1149,7 @@ mod tests {
 
         assert!(events.try_recv().is_err());
         assert_eq!(
-            coordinator.dispatch_due_pending_dag_fetches_for_test(n0_future::time::Instant::now()),
+            coordinator.dispatch_due_pending_dag_fetches_for_test(crate::rt::time::Instant::now()),
             1
         );
         match events.try_recv().expect("clock-driven DagNeedsFetch event") {
@@ -1115,17 +1172,21 @@ mod tests {
         assert_eq!(records[0].1.source_peer.as_deref(), Some("origin-peer"));
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn unsigned_gossip_origin_cannot_become_a_durable_recovery_provider() {
         use crate::sync::pending_store::{PendingDagStorage, PendingDagStore};
 
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = TestTransport::new();
-        let (coordinator, mut events) =
-            SyncCoordinator::new(transport, blockstore, SyncConfig::default())
-                .await
-                .expect("coordinator");
+        let (coordinator, mut events) = SyncCoordinator::new(
+            transport,
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
         let pending_store = Arc::new(PendingDagStore::new(Arc::new(
             RegolithStore::in_memory().unwrap(),
         )));
@@ -1155,15 +1216,19 @@ mod tests {
     /// clock (a single dispatch site) performs the actual fetch. This
     /// prevents simultaneous connects from re-driving the same root more
     /// than once per tick.
-    #[tokio::test(start_paused = true)]
+    #[nuclei::test(start_paused = true)]
     async fn peer_connect_expedites_and_clock_dispatches_once() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = TestTransport::new();
-        let (coordinator, mut events) =
-            SyncCoordinator::new(transport, blockstore, SyncConfig::default())
-                .await
-                .expect("coordinator");
+        let (coordinator, mut events) = SyncCoordinator::new(
+            transport,
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
 
         let (field_cid, _field_block) = create_lww_block("name");
         let (root_cid, root_block) = create_composite_block("doc123", "name", field_cid);
@@ -1181,7 +1246,7 @@ mod tests {
 
         assert!(events.try_recv().is_err());
         assert_eq!(
-            coordinator.dispatch_due_pending_dag_fetches_for_test(n0_future::time::Instant::now()),
+            coordinator.dispatch_due_pending_dag_fetches_for_test(crate::rt::time::Instant::now()),
             1
         );
         match events.try_recv().expect("clock-driven DagNeedsFetch event") {
@@ -1204,7 +1269,7 @@ mod tests {
             .record_pending_dag_fetch_failure(&root_cid, "synthetic exhaustion");
 
         // Less than the first backoff rung (4s after one claim): not due yet.
-        tokio::time::advance(std::time::Duration::from_secs(2)).await;
+        nuclei::time::advance(std::time::Duration::from_secs(2)).await;
 
         // Act: a peer connects. Connect must only expedite, never dispatch.
         coordinator
@@ -1221,7 +1286,7 @@ mod tests {
         // One clock tick: the expedited root is now due.
         let due = coordinator
             .manager()
-            .claim_due_pending_dag_retries(n0_future::time::Instant::now());
+            .claim_due_pending_dag_retries(crate::rt::time::Instant::now());
         assert_eq!(due.len(), 1);
         assert_eq!(due[0].0, root_cid);
         for (due_root, dag) in &due {
@@ -1248,7 +1313,7 @@ mod tests {
         // above already re-armed the root to the next backoff rung.
         let due_again = coordinator
             .manager()
-            .claim_due_pending_dag_retries(n0_future::time::Instant::now());
+            .claim_due_pending_dag_retries(crate::rt::time::Instant::now());
         assert!(due_again.is_empty());
         assert!(
             events.try_recv().is_err(),
@@ -1268,15 +1333,19 @@ mod tests {
     /// #1116 stage 2: `SyncStatus` must surface the retry-clock counters and
     /// the earliest due retry time so operators can see the clock's state
     /// without instrumenting the manager directly.
-    #[tokio::test(start_paused = true)]
+    #[nuclei::test(start_paused = true)]
     async fn sync_status_surfaces_pending_dag_retry_clock() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = TestTransport::new();
-        let (coordinator, mut events) =
-            SyncCoordinator::new(transport, Arc::clone(&blockstore), SyncConfig::default())
-                .await
-                .expect("coordinator");
+        let (coordinator, mut events) = SyncCoordinator::new(
+            transport,
+            Arc::clone(&blockstore),
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
 
         // No pending DAGs registered yet: the clock has nothing due.
         assert_eq!(
@@ -1303,7 +1372,7 @@ mod tests {
         assert_eq!(before_clock.pending_dag_retry_dispatched, 0);
         assert!(before_clock.next_pending_retry_in_ms.is_some());
         assert_eq!(
-            coordinator.dispatch_due_pending_dag_fetches_for_test(n0_future::time::Instant::now()),
+            coordinator.dispatch_due_pending_dag_fetches_for_test(crate::rt::time::Instant::now()),
             1
         );
         match events.try_recv().expect("clock-driven DagNeedsFetch event") {
@@ -1316,6 +1385,24 @@ mod tests {
 
         let status = coordinator.sync_status().await;
         assert_eq!(status.pending_dag_retry_dispatched, 1);
+        let occupancy = &status.pending_dag_peer_occupancy;
+        assert_eq!(occupancy.len(), 1, "the dispatch pass sampled occupancy");
+        assert_eq!(
+            (occupancy[0].peer.as_str(), occupancy[0].held),
+            ("peer-1", 1)
+        );
+        assert_eq!(occupancy[0].occupancy_q8, 256);
+        assert_eq!(status.pending_dag_attempt_ewma_median_ms, None);
+        let json = serde_json::to_value(&status).expect("status serializes");
+        for field in [
+            "pending_dag_attempt_ewma_median_ms",
+            "pending_dag_attempt_ewma_max_ms",
+            "pending_dag_no_progress_median_ppm",
+            "pending_dag_tie_reorders",
+            "pending_dag_peer_occupancy",
+        ] {
+            assert!(json.get(field).is_some(), "{field} is exported");
+        }
         let next_retry_ms = status
             .next_pending_retry_in_ms
             .expect("incomplete pending DAG must report a due time");
@@ -1327,7 +1414,7 @@ mod tests {
         // A same-instant claim attempt is suppressed.
         assert!(!coordinator
             .manager()
-            .try_claim_pending_dag_dispatch(&root_cid, n0_future::time::Instant::now()));
+            .try_claim_pending_dag_dispatch(&root_cid, crate::rt::time::Instant::now()));
         assert_eq!(
             coordinator.sync_status().await.pending_dag_retry_suppressed,
             1
@@ -1363,14 +1450,18 @@ mod tests {
         );
     }
 
-    #[tokio::test(start_paused = true)]
+    #[nuclei::test(start_paused = true)]
     async fn receiver_clock_rejects_zero_interval_before_and_after_shutdown() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
-        let (coordinator, _events) =
-            SyncCoordinator::new(TestTransport::new(), blockstore, SyncConfig::default())
-                .await
-                .expect("coordinator");
+        let (coordinator, _events) = SyncCoordinator::new(
+            TestTransport::new(),
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
         let error = coordinator
             .run_pending_dag_retry_clock(Duration::ZERO)
             .await
@@ -1393,17 +1484,21 @@ mod tests {
             .unwrap();
     }
 
-    #[tokio::test(start_paused = true)]
+    #[nuclei::test(start_paused = true)]
     async fn receiver_clock_wakes_for_new_work_without_waiting_for_retry_tick() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
-        let (coordinator, mut events) =
-            SyncCoordinator::new(TestTransport::new(), blockstore, SyncConfig::default())
-                .await
-                .expect("coordinator");
+        let (coordinator, mut events) = SyncCoordinator::new(
+            TestTransport::new(),
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
         let coordinator = Arc::new(coordinator);
         let runner = Arc::clone(&coordinator);
-        let clock = n0_future::task::spawn(async move {
+        let clock = crate::rt::spawn(async move {
             runner
                 .run_pending_dag_retry_clock(Duration::from_secs(60))
                 .await
@@ -1411,8 +1506,8 @@ mod tests {
         });
         // Let the initial tick run before admitting work. No virtual time
         // advances until after the assertion below.
-        tokio::task::yield_now().await;
-        let now = n0_future::time::Instant::now();
+        crate::rt::yield_now().await;
+        let now = crate::rt::time::Instant::now();
         let (field_cid, _) = create_lww_block("name");
         let (root_cid, root_block) = create_composite_block("wake", "name", field_cid);
         coordinator
@@ -1425,20 +1520,20 @@ mod tests {
             )
             .await
             .expect("register pending root");
-        tokio::task::yield_now().await;
+        crate::rt::yield_now().await;
         assert!(
             matches!(events.try_recv(), Ok(SyncEvent::DagNeedsFetch { root_cid: root, .. }) if root == root_cid)
         );
-        assert_eq!(n0_future::time::Instant::now(), now);
+        assert_eq!(crate::rt::time::Instant::now(), now);
         assert_eq!(
             coordinator.sync_status().await.pending_dag_retry_dispatched,
             1
         );
         coordinator.shutdown().await;
-        clock.await.expect("retry owner exits on shutdown");
+        clock.join().await.expect("retry owner exits on shutdown");
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn receiver_clock_does_not_claim_behind_the_fetch_task_bound() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1447,9 +1542,14 @@ mod tests {
             max_concurrent_dag_fetches: 1,
             ..SyncConfig::default()
         };
-        let (coordinator, mut events) = SyncCoordinator::new(transport, blockstore, config)
-            .await
-            .expect("coordinator");
+        let (coordinator, mut events) = SyncCoordinator::new(
+            transport,
+            blockstore,
+            crate::network::test_network(),
+            config,
+        )
+        .await
+        .expect("coordinator");
 
         for (doc_id, field_name) in [("doc-1", "name"), ("doc-2", "age")] {
             let (field_cid, _field_block) = create_lww_block(field_name);
@@ -1467,7 +1567,7 @@ mod tests {
         }
 
         let retained_before = coordinator.sync_status().await.retained_background_tasks;
-        let now = n0_future::time::Instant::now();
+        let now = crate::rt::time::Instant::now();
         assert_eq!(
             coordinator.dispatch_due_pending_dag_fetches_for_test(now),
             1

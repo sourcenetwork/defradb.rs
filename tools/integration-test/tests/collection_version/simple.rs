@@ -1336,3 +1336,23 @@ fn collection_version_simple_with_json_field_adds_collection_given_type() {
     }
     .execute();
 }
+
+#[test]
+fn simple_doc_id_field_errors() {
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: vec![AddCollection {
+            sdl: r#"
+                    type User {
+                        _docID: String
+                    }
+                "#
+            .into(),
+            expected_error: Some("duplicate field. Name: _docID".to_string()),
+            ..Default::default()
+        }
+        .into()],
+        ..Default::default()
+    }
+    .execute();
+}

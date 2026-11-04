@@ -14,7 +14,7 @@ use super::NacAdapter;
 
 const OWNER: &str = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[nuclei::test(threads = 2)]
 async fn edge_routes_check_permissions_on_the_pool() {
     let pool = workers::Pool::start(storage::with_worker_io(workers::Config::unplaced(1))).unwrap();
     let options = storage::RegolithStoreOptions::memory().placed_on(&pool);

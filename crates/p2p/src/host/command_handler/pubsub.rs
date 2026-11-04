@@ -22,7 +22,7 @@ impl<S: Store> P2PHost<S> {
     pub(super) fn handle_subscribe(
         &mut self,
         topic: DefraTopic,
-        response: tokio::sync::oneshot::Sender<Result<bool>>,
+        response: crate::rt::oneshot::Sender<Result<bool>>,
     ) {
         let ident_topic = topic.to_ident_topic();
         let result = self
@@ -38,7 +38,7 @@ impl<S: Store> P2PHost<S> {
     pub(super) fn handle_unsubscribe(
         &mut self,
         topic: DefraTopic,
-        response: tokio::sync::oneshot::Sender<Result<bool>>,
+        response: crate::rt::oneshot::Sender<Result<bool>>,
     ) {
         let ident_topic = topic.to_ident_topic();
         let result = self
@@ -54,7 +54,7 @@ impl<S: Store> P2PHost<S> {
     pub(super) fn handle_subscribe_raw(
         &mut self,
         topic: String,
-        response: tokio::sync::oneshot::Sender<Result<bool>>,
+        response: crate::rt::oneshot::Sender<Result<bool>>,
     ) {
         let ident_topic = libp2p::gossipsub::IdentTopic::new(&topic);
         let result = self
@@ -71,7 +71,7 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         topic: DefraTopic,
         message: PushLogBroadcast,
-        response: tokio::sync::oneshot::Sender<Result<libp2p::gossipsub::MessageId>>,
+        response: crate::rt::oneshot::Sender<Result<libp2p::gossipsub::MessageId>>,
     ) {
         let ident_topic = topic.to_ident_topic();
         let result = message
@@ -92,7 +92,7 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         topic: String,
         data: Vec<u8>,
-        response: tokio::sync::oneshot::Sender<Result<libp2p::gossipsub::MessageId>>,
+        response: crate::rt::oneshot::Sender<Result<libp2p::gossipsub::MessageId>>,
     ) {
         let ident_topic = libp2p::gossipsub::IdentTopic::new(&topic);
         let result = self
@@ -108,7 +108,7 @@ impl<S: Store> P2PHost<S> {
     pub(super) fn handle_register_pubsub_rpc_topic(
         &mut self,
         topic: String,
-        response: tokio::sync::oneshot::Sender<()>,
+        response: crate::rt::oneshot::Sender<()>,
     ) {
         self.pubsub_rpc_topics.insert(topic);
         // Acknowledge the registration. The caller uses the oneshot to
@@ -119,7 +119,7 @@ impl<S: Store> P2PHost<S> {
 
     pub(super) fn handle_subscribed_topics(
         &self,
-        response: tokio::sync::oneshot::Sender<Vec<String>>,
+        response: crate::rt::oneshot::Sender<Vec<String>>,
     ) {
         let topics: Vec<String> = self
             .swarm

@@ -70,19 +70,31 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Inbound stream admission | TLA+, Lean | p2p |
 | Vector index link maintenance | TLA+ | storage, db-index |
 | Peer fetch stats | Lean | p2p |
+| DAG fetch provider ranking | TLA+, Lean | p2p |
+| DAG fetch arbitration (EWMA) | Lean | p2p |
 | Gossip connection ownership | TLA+, Lean | p2p |
 | Iroh service records | TLA+, Lean | p2p |
 | Iroh solicited replies | TLA+ | p2p |
 | Reply-driven DAG fetch | TLA+ | p2p |
+| Depth-cut DAG fetch | TLA+, Lean | p2p |
 | Index drop during backfill | TLA+ | db-index |
 | Purge by DocID | TLA+ | db |
 | Replication filter | TLA+ | db-merge |
-| Node startup | TLA+, Lean | embedded, storage |
+| Node startup | TLA+, Lean | defra-node, storage |
 | Text CRDT convergence | TLA+ & Lean | crdt, db-merge |
 | JSON CRDT per-path merge | TLA+ & Lean | crdt, db-merge (specified before the code, #2129) |
 | Custom CRDT types | TLA+ & Lean | crdt, schema, db-merge, p2p (#2183) |
 | Document write pipeline | TLA+ | db, db-block-builder |
 | Text chunking | Lean | chunk-split |
+| Postgres wire connection loop | TLA+ | pg-compat |
+| HTTP client redirects and body deadline | Lean | net |
+| Connect fallback race | TLA+ | net |
+| Coordinator shutdown drain | TLA+ | p2p, edge |
+| Edge completion | TLA+ | edge |
+| Edge gate continuation | TLA+ | edge, net (#2546) |
+| Iroh dial outcome | TLA+ | p2p, p2p-adapter |
+| Server drain | TLA+ | net, pg-compat, edge |
+| Document topic ingress | TLA+ | p2p, p2p-adapter (#2545) |
 | Add collection | TLA+ | db |
 | Collection truncate | TLA+ | db |
 | Add DAC policy | TLA+ | db, acp, vera, http, cli, ffi, defra-node |
@@ -218,7 +230,10 @@ Read this before trusting a verdict; it states the model's honest reach.
   bound, not a proof for all deployments.
 - **Environment assumptions (encoded, not proven):** `ProviderAvailable` (a fetch needs a
   reachable holder of the block); **eventual connectivity** + fair head rediscovery for
-  the convergence liveness results; weak fairness on protocol actions.
+  the convergence liveness results; weak fairness on protocol actions; an **eventually
+  serving provider** (strong fairness on some completed fetch) for the SyncOwnership
+  dispatch and memory liveness results, whose `Dead` and `Trickle` providers get no
+  merge promise. Those results give fairness to the scheduler only, never to a root.
 - **Crypto boundary (KMS):** ECIES is abstracted — a node can use an envelope iff it is
   the intended recipient. Real ECIES/IND-CCA security is assumed, not modeled.
 - **Float counter divergence (proven, real):** IEEE-754 addition is not associative, so

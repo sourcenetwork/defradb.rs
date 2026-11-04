@@ -12,11 +12,27 @@ use kovan::Atom;
 use crate::sync::head_scope::{HeadVersion, Scope, ScopeDecision};
 use crate::ExplicitReplayAuthorization;
 
-/// Time-to-live for a pending DAG entry.
+/// Time-to-live for a pending DAG entry that was never acknowledged.
 ///
-/// Entries older than this are evicted during insertion to prevent
+/// Such entries older than this are evicted during insertion to prevent
 /// indefinitely stale DAGs from accumulating.
 pub const PENDING_DAG_TTL: Duration = Duration::from_secs(300);
+
+/// Who put an entry in the pending map, which decides how it leaves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingOrigin {
+    /// A sender's PushLog registered it. Once acknowledged it is the head's
+    /// one owner, so it leaves only on merge, quarantine or a newer head of
+    /// its scope.
+    Push,
+    /// The resync sweep re-registered it from its durable record (a push
+    /// acknowledged before a restart). It leaves as a `Push` entry does.
+    Restored,
+    /// A local pull-sync merge yielded its work budget. No sender waits on it
+    /// and it has no durable record, so it lives only while its merge keeps
+    /// yielding: the first turn that ends any other way removes it.
+    LocalContinuation,
+}
 
 /// Metadata for a pending DAG sync waiting for Bitswap to complete.
 #[derive(Debug, Clone)]
@@ -62,14 +78,32 @@ pub struct PendingDag {
     /// Every dispatch site must win `try_claim_pending_dag_dispatch`,
     /// which advances this by `retry_backoff(dispatches)`, the receiver's
     /// re-arm pacing (#1112 inbound half, #1116 stage 2).
-    pub next_retry_at: n0_future::time::Instant,
+    pub next_retry_at: crate::rt::time::Instant,
     /// Fetch dispatches claimed for this root (drives the backoff rung).
     pub dispatches: u32,
+    /// Clock-dispatched fetch attempts that ended with this root's DAG still
+    /// incomplete; every `MAX_FETCH_ATTEMPTS`-th is reported as exhaustion.
+    pub incomplete_attempts: u32,
     /// Committed merge work yielded with a locally ready DAG. Never persisted:
     /// restart/TTL recovery must validate local availability again.
     pub merge_continuation: bool,
     /// Transient local contention; discarded with this bounded pending root.
     pub storage_blocker: Option<Cid>,
+    /// Who put this entry in the map.
+    pub origin: PendingOrigin,
+    /// How this root's attempts have gone; exported, read by nothing else.
+    pub estimates: crate::sync::arbitration::RootEstimates,
+}
+
+impl PendingDag {
+    /// An entry expires only while it is not acknowledged. Once the sender has
+    /// a success reply it has dropped its retry marker, so this entry is the
+    /// head's one owner: it stays until merge, quarantine or a newer head of
+    /// its scope, bounded by `max_pending_dags`. A local continuation does not
+    /// expire either; it ends when its merge stops yielding (`PendingOrigin`).
+    pub fn is_expired(&self, now: Instant) -> bool {
+        !self.is_recovery_registered && now.duration_since(self.inserted_at) >= PENDING_DAG_TTL
+    }
 }
 
 /// Pending roots and the reverse index used to route arriving blocks only to
@@ -146,11 +180,9 @@ impl PendingDagRegistry {
         }
     }
 
-    /// Whether any entry has outlived `PENDING_DAG_TTL` at `now`.
+    /// Whether any entry has expired at `now`.
     pub(super) fn has_expired(&self, now: Instant) -> bool {
-        self.roots
-            .values()
-            .any(|dag| now.duration_since(dag.inserted_at) >= PENDING_DAG_TTL)
+        self.roots.values().any(|dag| dag.is_expired(now))
     }
 
     pub(super) fn snapshot(&self, root_cid: &Cid) -> Option<PendingDag> {
@@ -210,6 +242,11 @@ impl PendingDagRegistry {
             }
         }
         Some(Arc::try_unwrap(dag).unwrap_or_else(|shared| PendingDag::clone(&shared)))
+    }
+
+    /// Entries held per source peer.
+    pub(super) fn held_by_source(&self) -> RapidHashMap<Arc<str>, usize> {
+        self.roots_by_source.clone()
     }
 
     pub(super) fn source_count(&self, source_peer: &str) -> usize {
@@ -315,6 +352,12 @@ impl SharedPendingDags {
         }
     }
 }
+
+/// Clock dispatches after which a root with a durable record gives its
+/// in-memory entry to a durable root waiting for one, keeping its record
+/// (`PendingDagLease::finish_attempt`): the attempts a reply-driven fetch
+/// makes before it gives up.
+pub const PENDING_ROTATE_AFTER_DISPATCHES: u32 = 3;
 
 /// Base delay before the first scheduled re-dispatch of a pending root.
 pub const PENDING_RETRY_BASE: Duration = Duration::from_secs(2);

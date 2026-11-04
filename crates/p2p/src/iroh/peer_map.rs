@@ -147,6 +147,10 @@ impl PeerMap {
         })
     }
 
+    pub fn is_connected(&self, id: &EndpointId) -> bool {
+        self.connections.contains_key(id)
+    }
+
     pub fn connected_peers(&self) -> Vec<PeerId> {
         self.connections
             .keys()
@@ -166,7 +170,10 @@ impl PeerMap {
 /// write: a count reaching zero removes the entry and a first count emits
 /// `PeerConnected`, so the count and the entry's presence must change together.
 #[derive(Debug, Default)]
-pub struct SharedPeerMap(Atom<PeerMap>);
+pub struct SharedPeerMap {
+    map: Atom<PeerMap>,
+    changed: crate::rt::Notify,
+}
 
 impl SharedPeerMap {
     pub fn new() -> Self {
@@ -175,10 +182,11 @@ impl SharedPeerMap {
 
     fn update<R>(&self, mut f: impl FnMut(&mut PeerMap) -> R) -> R {
         loop {
-            let current = self.0.load();
+            let current = self.map.load();
             let mut next = PeerMap::clone(&current);
             let result = f(&mut next);
-            if self.0.compare_and_swap(&current, next).is_ok() {
+            if self.map.compare_and_swap(&current, next).is_ok() {
+                self.changed.notify_waiters();
                 return result;
             }
         }
@@ -202,18 +210,30 @@ impl SharedPeerMap {
     }
 
     pub fn remote_addr(&self, id: &EndpointId) -> Option<SocketAddr> {
-        self.0.peek(|map| map.remote_addr(id))
+        self.map.peek(|map| map.remote_addr(id))
     }
 
     pub fn connection(&self, id: &EndpointId) -> Option<PeerConnectionInfo> {
-        self.0.peek(|map| map.connection(id))
+        self.map.peek(|map| map.connection(id))
     }
 
     pub fn connected_peers(&self) -> Vec<PeerId> {
-        self.0.peek(PeerMap::connected_peers)
+        self.map.peek(PeerMap::connected_peers)
     }
 
     pub fn peer_addresses(&self) -> Vec<String> {
-        self.0.peek(PeerMap::peer_addresses)
+        self.map.peek(PeerMap::peer_addresses)
+    }
+
+    /// Resolves once `id` holds a connection. Each look is registered before
+    /// it is taken, so a change between the look and the wait is not lost.
+    pub async fn wait_connected(&self, id: &EndpointId) {
+        loop {
+            let changed = self.changed.notified();
+            if self.map.peek(|map| map.is_connected(id)) {
+                return;
+            }
+            changed.await;
+        }
     }
 }

@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use kovan_queue::seg_queue::SegQueue;
-use n0_future::task::JoinHandle;
 use p2p::iroh::IrohTransport;
 use p2p::P2PTransport;
 
@@ -22,9 +21,9 @@ pub struct IrohPeerShutdown {
 struct Parts {
     transport: IrohTransport,
     coordinator: p2p::sync::SyncShutdownHandle,
-    endpoint_task: JoinHandle<()>,
+    endpoint_task: edge::Task<()>,
     retry_loop_task: edge::Task<()>,
-    tasks: Vec<JoinHandle<()>>,
+    tasks: Vec<edge::Service>,
     failure_recorder_task: crate::FailureRecorder,
     edge: edge::Edge,
 }
@@ -33,9 +32,9 @@ impl IrohPeerShutdown {
     pub(super) fn new(
         transport: IrohTransport,
         coordinator: p2p::sync::SyncShutdownHandle,
-        endpoint_task: JoinHandle<()>,
+        endpoint_task: edge::Task<()>,
         retry_loop_task: edge::Task<()>,
-        tasks: Vec<JoinHandle<()>>,
+        tasks: Vec<edge::Service>,
         failure_recorder_task: crate::FailureRecorder,
         edge: edge::Edge,
     ) -> Self {
@@ -60,7 +59,7 @@ impl IrohPeerShutdown {
         let Some(Parts {
             transport,
             coordinator,
-            mut endpoint_task,
+            endpoint_task,
             retry_loop_task,
             tasks,
             failure_recorder_task,
@@ -78,17 +77,19 @@ impl IrohPeerShutdown {
         drop(transport);
 
         for task in tasks {
-            stop_task(&edge, task, JoinHandle::abort).await;
+            let _ = edge.timeout(TASK_STOP_TIMEOUT, task.stopped()).await;
         }
         stop_task(&edge, failure_recorder_task, crate::FailureRecorder::abort).await;
 
+        let mut endpoint = std::pin::pin!(endpoint_task);
         if edge
-            .timeout(ENDPOINT_STOP_TIMEOUT, &mut endpoint_task)
+            .timeout(ENDPOINT_STOP_TIMEOUT, endpoint.as_mut())
             .await
             .is_err()
         {
             tracing::warn!("iroh endpoint did not stop after graceful shutdown; aborting");
-            stop_task(&edge, endpoint_task, JoinHandle::abort).await;
+            endpoint.abort();
+            let _ = edge.timeout(TASK_STOP_TIMEOUT, endpoint).await;
         }
     }
 }

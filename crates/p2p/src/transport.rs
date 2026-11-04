@@ -119,6 +119,23 @@ impl From<libp2p::gossipsub::MessageId> for MessageId {
     }
 }
 
+/// Why a block fetch query ended without usable blocks. Diagnostics only.
+///
+/// Ordered so that, across providers, the cause an operator acts on first is
+/// the greatest: a query is `Refused` only when every provider refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum FetchFailureCause {
+    /// An empty response: the provider's capacity, rate-limit or access refusal.
+    Refused,
+    /// The provider answered, but with none of the requested blocks.
+    NoBlocks,
+    /// A connect, stream or read error, or a failure the transport did not
+    /// classify.
+    Error,
+    /// No answer within the transport's response deadline.
+    TimedOut,
+}
+
 /// Events from the transport layer, consumed by the sync coordinator.
 ///
 /// This mirrors `HostEvent` but uses transport-agnostic types.
@@ -163,7 +180,11 @@ pub enum TransportEvent<ResponseToken> {
     BitswapComplete {
         query_id: QueryId,
         success: bool,
+        /// Why a failed query failed; `None` on success.
+        cause: Option<FetchFailureCause>,
         error: Option<String>,
+        /// Every provider shed the request with a busy reply.
+        provider_busy: bool,
     },
     BitswapBlockReceived {
         query_id: QueryId,
@@ -297,7 +318,7 @@ pub struct InboundClassSnapshot {
 }
 
 /// Point-in-time measurements of the CAR fetches we made to one peer.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct PeerFetchStats {
     pub peer: String,
     pub fetches: u64,
@@ -306,14 +327,19 @@ pub struct PeerFetchStats {
     pub delivery_rate_bytes_per_sec: u64,
     /// Lowest round-trip time seen on the connection.
     pub min_rtt_micros: Option<u64>,
-    /// Rolling shares of fetches that succeeded, timed out or came back
-    /// partial, in parts per million.
+    /// Rolling shares of fetches that succeeded, timed out, came back
+    /// partial or were shed busy, in parts per million.
     pub success_ppm: u64,
     pub timeout_ppm: u64,
     pub partial_ppm: u64,
+    pub busy_ppm: u64,
     pub in_flight: u64,
     /// Response bytes received so far by fetches still in flight.
     pub in_flight_bytes: u64,
+    /// Time-decayed estimates, half-life `PROVIDER_HALF_LIFE`; `None` until a
+    /// fetch has finished. Exported only: ranking still reads the ratios above.
+    #[serde(flatten)]
+    pub estimates: crate::sync::arbitration::ProviderEstimateExport,
 }
 
 /// The live connection to one peer, as far as the transport can see it.
@@ -588,6 +614,19 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
         providers: Vec<PeerId>,
         missing: Vec<Cid>,
     ) -> Result<QueryId>;
+
+    /// [`sync_blocks`](Self::sync_blocks) with descendant closures cut
+    /// `max_depth` links below each missing CID. Exact-CID transports keep
+    /// the default.
+    async fn sync_blocks_within(
+        &self,
+        root: Cid,
+        providers: Vec<PeerId>,
+        missing: Vec<Cid>,
+        _max_depth: u32,
+    ) -> Result<QueryId> {
+        self.sync_blocks(root, providers, missing).await
+    }
 
     /// Whether `sync_blocks(root, providers, [])` is a cancellable recursive
     /// CAR request.  The iroh transport provides that contract; libp2p's

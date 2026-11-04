@@ -26,7 +26,7 @@ fn auth_token(identity_hex: &str, audience: &str) -> String {
     String::from_utf8(token).expect("token must be utf-8")
 }
 
-async fn tx_create(client: &reqwest::Client, api_url: &str, identity_hex: &str) -> String {
+async fn tx_create(client: &net::http::Client, api_url: &str, identity_hex: &str) -> String {
     let response = client
         .post(format!("{api_url}/api/v0/tx"))
         .bearer_auth(auth_token(identity_hex, api_url))
@@ -48,7 +48,7 @@ async fn tx_create(client: &reqwest::Client, api_url: &str, identity_hex: &str) 
         .to_string()
 }
 
-async fn tx_discard(client: &reqwest::Client, api_url: &str, tx_id: &str, identity_hex: &str) {
+async fn tx_discard(client: &net::http::Client, api_url: &str, tx_id: &str, identity_hex: &str) {
     let response = client
         .delete(format!("{api_url}/api/v0/tx/{tx_id}"))
         .bearer_auth(auth_token(identity_hex, api_url))
@@ -66,7 +66,7 @@ async fn tx_discard(client: &reqwest::Client, api_url: &str, tx_id: &str, identi
 }
 
 async fn graphql_query(
-    client: &reqwest::Client,
+    client: &net::http::Client,
     api_url: &str,
     identity_hex: &str,
     query: &str,
@@ -105,7 +105,7 @@ async fn acp_transaction_rollback_test(cluster: TestCluster) {
     let node = cluster.client(0);
     let binary = node.binary_path().to_path_buf();
     let api_url = cluster.api_url(0).to_string();
-    let http = reqwest::Client::new();
+    let http = net::http::Client::new(edge::testing::edge());
 
     let alice = generate_identity(&binary).expect("Alice identity");
     let bob = generate_identity(&binary).expect("Bob identity");
@@ -206,14 +206,17 @@ async fn acp_transaction_rollback_test(cluster: TestCluster) {
     assert_eq!(bob_after_docs[0]["_docID"], doc_id);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_acp_transaction_rollback() {
-    let _root = integration_test::workspace_root();
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .with_acp_local()
-        .build()
-        .await
-        .expect("build cluster");
-    acp_transaction_rollback_test(cluster).await;
+    edge::compat(async {
+        let _root = integration_test::workspace_root();
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .with_acp_local()
+            .build()
+            .await
+            .expect("build cluster");
+        acp_transaction_rollback_test(cluster).await;
+    })
+    .await;
 }

@@ -139,11 +139,7 @@ fn measure(profile: &str, workload: &str) -> Option<f64> {
 fn main() {
     if let Ok(case) = std::env::var(CASE_VAR) {
         let (profile, workload) = case.split_once('/').expect("a profile/workload case");
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("a runtime")
-            .block_on(run_case(profile, workload));
+        common::owned_runtime().block_on(run_case(profile, workload));
         match peak_rss_bytes() {
             Some(bytes) => println!("{MARKER}{bytes}"),
             None => eprintln!("memory: peak RSS is not available on this platform"),

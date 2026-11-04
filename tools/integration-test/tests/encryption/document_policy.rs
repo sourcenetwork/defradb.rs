@@ -119,14 +119,17 @@ async fn unencrypted_document_new_field_stays_plaintext_test(cluster: TestCluste
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_document_policy_covers_new_field() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .build()
-        .await
-        .expect("build rust cluster");
-    document_policy_covers_new_field_test(cluster).await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .build()
+            .await
+            .expect("build rust cluster");
+        document_policy_covers_new_field_test(cluster).await;
+    })
+    .await;
 }
 
 for_each_runtime!(

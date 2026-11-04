@@ -6,7 +6,7 @@ use super::{shutdown_tracked_tasks, spawn_task, SpawnedTasks};
 use crate::tracked_task::TrackedAbort;
 
 fn registry() -> SpawnedTasks {
-    Arc::new(super::TaskRegistry::default())
+    Arc::new(super::TaskRegistry::new(edge::testing::edge()))
 }
 
 fn spawn(tasks: &SpawnedTasks, future: impl Future<Output = ()> + Send + 'static) {
@@ -14,16 +14,16 @@ fn spawn(tasks: &SpawnedTasks, future: impl Future<Output = ()> + Send + 'static
 }
 
 async fn finished(task: &TrackedAbort) {
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    nuclei::time::timeout(std::time::Duration::from_secs(5), async {
         while !task.is_finished() {
-            tokio::task::yield_now().await;
+            nuclei::task::yield_now().await;
         }
     })
     .await
     .expect("task did not finish");
 }
 
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn shutdown_rejects_new_work_without_polling_it() {
     let tasks = registry();
     shutdown_tracked_tasks(tasks.clone()).await;
@@ -54,7 +54,7 @@ impl Drop for SpawnOnDrop {
     }
 }
 
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn shutdown_joins_tasks_and_rejects_work_spawned_during_cleanup() {
     let tasks = registry();
     let resource = Arc::new(());
@@ -63,7 +63,7 @@ async fn shutdown_joins_tasks_and_rejects_work_spawned_during_cleanup() {
         tasks: tasks.clone(),
         resource,
     };
-    let (started, ready) = tokio::sync::oneshot::channel();
+    let (started, ready) = nuclei::sync::oneshot::channel();
     spawn(&tasks, async move {
         let _guard = guard;
         started.send(()).unwrap();
@@ -77,7 +77,7 @@ async fn shutdown_joins_tasks_and_rejects_work_spawned_during_cleanup() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn spawning_reaps_completed_tasks_and_preserves_individual_cancellation() {
     let tasks = registry();
     for _ in 0..REAP_FLOOR {
@@ -99,13 +99,13 @@ async fn spawning_reaps_completed_tasks_and_preserves_individual_cancellation() 
     shutdown_tracked_tasks(tasks).await;
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[nuclei::test(threads = 4)]
 async fn concurrent_spawn_and_shutdown_release_all_resources() {
     let tasks = registry();
     let resource = Arc::new(());
     let retained = Arc::downgrade(&resource);
     let barrier = Arc::new(regolith::sync::Barrier::new(65));
-    let mut callers = tokio::task::JoinSet::new();
+    let mut callers = nuclei::task::JoinSet::new();
     for _ in 0..64 {
         let tasks = tasks.clone();
         let resource = resource.clone();
@@ -128,11 +128,11 @@ async fn concurrent_spawn_and_shutdown_release_all_resources() {
     assert!(retained.upgrade().is_none());
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[nuclei::test(threads = 4)]
 async fn shutdown_bounds_non_cooperative_tasks() {
     let tasks = registry();
     let (release, blocked) = std::sync::mpsc::channel();
-    let (started, ready) = tokio::sync::oneshot::channel();
+    let (started, ready) = nuclei::sync::oneshot::channel();
     let work = async move {
         started.send(()).unwrap();
         // Deliberately model a synchronous section that cannot be aborted.
@@ -140,7 +140,7 @@ async fn shutdown_bounds_non_cooperative_tasks() {
     };
     spawn(&tasks, work);
     ready.await.unwrap();
-    let result = tokio::time::timeout(
+    let result = nuclei::time::timeout(
         std::time::Duration::from_secs(7),
         shutdown_tracked_tasks(tasks.clone()),
     )
@@ -155,7 +155,7 @@ async fn shutdown_bounds_non_cooperative_tasks() {
 /// long-lived ones. Reaping walks every tracked task, so it must not run on
 /// every spawn: the walks stay proportional to the spawns, and the queue to
 /// the live tasks.
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn spawning_beside_long_lived_tasks_reaps_amortized() {
     const LIVE: usize = 200;
     const SHORT: usize = 2_000;

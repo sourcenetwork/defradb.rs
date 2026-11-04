@@ -65,8 +65,8 @@ impl Inbox {
 
 #[cfg(test)]
 mod tests {
+    use crate::rt::time::GossipInstant as Instant;
     use iroh_gossip::proto::{self, Command, InEvent, OutEvent, PeerData, TopicId};
-    use n0_future::time::Instant;
     use rand::SeedableRng;
 
     use super::*;
@@ -90,7 +90,7 @@ mod tests {
         message
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn a_full_received_lane_never_holds_up_control() {
         let inbox = Inbox::new(1);
         let peer = iroh::SecretKey::generate().public();
@@ -102,7 +102,7 @@ mod tests {
         assert!(matches!(inbox.next().await, Some(Input::Received { .. })));
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn inputs_queued_before_close_are_still_read() {
         let inbox = Inbox::new(1);
         inbox.push(Input::Quit("t".to_string()));

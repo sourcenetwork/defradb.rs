@@ -3,8 +3,8 @@
 use std::time::Instant;
 
 use libp2p::swarm::ConnectionId;
+use nuclei::sync::oneshot;
 use rapidhash::{RapidHashMap, RapidHashSet};
-use tokio::sync::oneshot;
 
 use crate::network::DialResult;
 use crate::protocol::ProtocolId;

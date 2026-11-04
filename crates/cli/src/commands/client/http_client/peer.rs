@@ -1,7 +1,7 @@
 //! Go's peer operations over its HTTP API.
 
 use defra_p2p_adapter::peer::Replicator;
-use reqwest::Method;
+use net::http::Method;
 use serde_json::json;
 
 use super::HttpClient;

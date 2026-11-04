@@ -44,10 +44,13 @@ mod write_contention;
 #[path = "replicator_retry_common.rs"]
 mod replicator_retry_common;
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_replicator_retry_intervals() {
-    replicator_retry_common::retry_intervals_test(
-        integration_test::TestCluster::builder().with_p2p(),
-    )
+    edge::compat(async {
+        replicator_retry_common::retry_intervals_test(
+            integration_test::TestCluster::builder().with_p2p(),
+        )
+        .await;
+    })
     .await;
 }
