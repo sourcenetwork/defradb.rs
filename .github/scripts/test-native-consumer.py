@@ -97,6 +97,97 @@ class Tests(unittest.TestCase):
         log.write_text('qualification failed without a Rust panic\n')
         self.assertIsNone(driver.panic_site(log))
 
+    def test_restart_failure_classifies_only_known_error_report_signatures(self):
+        log = self.root / 'private.log'
+        examples = {
+            'ready_timeout': ('node-secret: failed to restart',
+                              ['node-secret: did not become ready', 'timed out waiting for node ready']),
+            'health_timeout': ('node-secret: health check failed after restart',
+                               ['health check timed out for http://secret-address/health-check']),
+            'port_reclaim': ('node-secret: could not reclaim its ports within 10s — a restart cannot move to fresh ports, since peers and clients hold this address', []),
+            'child_exited': ('node-secret: failed to restart',
+                             ['node-secret: process exited before becoming ready',
+                              '--- stderr.log (last 15 lines) ---',
+                              'node-secret: did not become ready', 'timed out waiting for node ready']),
+        }
+        for category, (message, causes) in examples.items():
+            for line, column in ((259, 18), (330, 14)):
+                with self.subTest(category=category, line=line):
+                    report = ("thread 'policy' panicked at /private/policy_generations.rs:"
+                              f"{line}:{column}:\ncalled `Result::unwrap()` on an `Err` value: {message}\n")
+                    if causes:
+                        report += '\nCaused by:\n' + ''.join(f'    {i}: {cause}\n' for i, cause in enumerate(causes))
+                    log.write_text(report + '\nprivate-key-value\n')
+                    site = driver.panic_site(log)
+                    self.assertEqual(driver.restart_failure(log, 'replication-restart', site), category)
+                    self.assertIsNone(driver.restart_failure(log, 'policy-lifecycle', site))
+                    self.assertIsNone(driver.restart_failure(log, 'replication-restart',
+                                                              {**site, 'line': 331}))
+
+    def test_restart_failure_is_other_when_report_is_missing_ambiguous_or_injected(self):
+        log = self.root / 'private.log'
+        header = "thread 'policy' panicked at /private/policy_generations.rs:330:14:\n"
+        site = {'file': 'policy_generations.rs', 'line': 330, 'column': 14}
+        for body in (
+            'arbitrary panic\ntimed out waiting for node ready\n',
+            'called `Result::unwrap()` on an `Err` value: unknown\n\n'
+            'Caused by:\n    0: node: did not become ready\n'
+            '    1: timed out waiting for node ready\n'
+            '    2: node: health check failed after restart\n'
+            '    3: health check timed out for http://private\n',
+            'called `Result::unwrap()` on an `Err` value: unknown\n\n'
+            'Caaused by:\n    0: node: did not become ready\n'
+            '    1: timed out waiting for node ready\n',
+            'called `Result::unwrap()` on an `Err` value: unknown\n\n'
+            'Caused by:\n    0: node: did not become ready\n'
+            '    1: timed out waiting for node ready\n'
+            '    2: node: process exited before becoming ready\n',
+            'called `Result::unwrap()` on an `Err` value: unknown\n\n'
+            'unrelated log: node: did not become ready\ntimed out waiting for node ready\n',
+            'called `Result::unwrap()` on an `Err` value: unknown\n' + header,
+        ):
+            with self.subTest(body=body):
+                log.write_text(header + body)
+                self.assertEqual(driver.restart_failure(log, 'replication-restart', site), 'other')
+
+    def test_restart_category_public_output_is_allowlisted_and_redacted(self):
+        for value in ('private-key-value', 'ready_timeout\nprivate-key-value', '', None, [], {}):
+            record = {'phase': 'replication-restart', 'exit_code': 101, 'restart_failure': value,
+                      'log': '/private/secret', 'command': ['private-key-value']}
+            self.assertNotIn('restart_failure', driver.public_phase(record))
+        record['restart_failure'] = 'ready_timeout'
+        public = json.dumps(driver.public_phase(record))
+        self.assertEqual(json.loads(public)['restart_failure'], 'ready_timeout')
+        self.assertNotIn('private-key-value', public)
+        self.assertNotIn('/private/secret', public)
+
+    def test_real_runner_saves_and_prints_only_restart_category(self):
+        runner = object.__new__(driver.Runner)
+        runner.root = runner.private = self.root
+        runner.summary = self.root / 'summary.json'
+        runner.env, runner.sources, runner.binaries, runner.records = {}, {}, {}, []
+        runner.sdk_revision = 'a' * 40
+
+        def process(*args, **kwargs):
+            kwargs['stdout'].write("thread 'policy' panicked at /private/policy_generations.rs:330:14:\n"
+                "called `Result::unwrap()` on an `Err` value: private-key: failed to restart\n\n"
+                "Caused by:\n    0: private-key: did not become ready\n"
+                "    1: timed out waiting for node ready\n\nsecret-value\n")
+            child = unittest.mock.Mock()
+            child.wait.return_value = 101
+            return child
+
+        with patch.object(runner, 'guard'), patch.object(driver.subprocess, 'Popen', side_effect=process), \
+                patch.object(driver, 'stop_group'), patch('builtins.print') as output:
+            with self.assertRaises(RuntimeError):
+                runner.run('replication-restart', ['secret-command'])
+        summary = runner.summary.read_text()
+        printed = str(output.call_args_list)
+        self.assertEqual(json.loads(summary)['phases'][0]['restart_failure'], 'ready_timeout')
+        for value in ('private-key', '/private/', 'secret-value', 'secret-command'):
+            self.assertNotIn(value, summary)
+            self.assertNotIn(value, printed)
+
     def test_sdk_pin_reader_requires_all_seven_exact_matching_declarations(self):
         for file, count in zip(driver.SDK_MANIFESTS, (3, 4)):
             path = self.root / file

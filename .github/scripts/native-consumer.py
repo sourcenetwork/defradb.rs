@@ -48,10 +48,15 @@ LIVE_CASES = (
 CARGO = ["cargo", "+1.99.1"]
 BUILD = ["--release", "--frozen", "-j", "2"]
 PUBLIC_FIELDS = ("phase", "exit_code", "seconds", "passed", "panic_site")
+RESTART_FAILURES = frozenset(("ready_timeout", "health_timeout", "port_reclaim", "child_exited", "other"))
 
 
 def public_phase(record):
-    return {key: record[key] for key in PUBLIC_FIELDS if key in record}
+    public = {key: record[key] for key in PUBLIC_FIELDS if key in record}
+    category = record.get("restart_failure")
+    if isinstance(category, str) and category in RESTART_FAILURES:
+        public["restart_failure"] = category
+    return public
 
 
 def panic_site(log):
@@ -63,6 +68,53 @@ def panic_site(log):
                 file, row, column = match.groups()
                 return {"file": file, "line": int(row), "column": int(column)}
     return None
+
+
+def restart_failure(log, phase, site):
+    """Classify only the two known restart unwraps; never return private text."""
+    if phase != "replication-restart" or site not in (
+        {"file": "policy_generations.rs", "line": 259, "column": 18},
+        {"file": "policy_generations.rs", "line": 330, "column": 14},
+    ):
+        return None
+
+    lines = log.read_text(errors="replace").splitlines()
+    panic = re.compile(r"panicked at (?:[^\n]*[/\\])?policy_generations\.rs:"
+                       + str(site["line"]) + ":" + str(site["column"]) + r":$")
+    headers = [index for index, line in enumerate(lines) if panic.search(line)]
+    if len(headers) != 1 or headers[0] + 1 >= len(lines):
+        return "other"
+    first = lines[headers[0] + 1]
+    prefix = "called `Result::unwrap()` on an `Err` value: "
+    if not first.startswith(prefix):
+        return "other"
+
+    # Eyre formats the error followed by a blank line and a Caused by section.
+    # Node exit reports include private log tails. Never inspect those tails.
+    report = [first[len(prefix):]]
+    rest = lines[headers[0] + 2:]
+    if (not report[0].endswith(": process exited before becoming ready")
+            and len(rest) >= 2 and not rest[0].strip() and rest[1].strip() == "Caused by:"):
+        for line in rest[2:]:
+            line = re.sub(r"^\s*(?:\d+:\s*)?", "", line)
+            if not line or line.startswith("--- "):
+                break
+            report.append(line)
+            if line.endswith(": process exited before becoming ready"):
+                break
+
+    matches = set()
+    if any(line.endswith(": process exited before becoming ready") for line in report):
+        matches.add("child_exited")
+    if (any(line.endswith(": did not become ready") for line in report)
+            and "timed out waiting for node ready" in report):
+        matches.add("ready_timeout")
+    if (any(line.endswith(": health check failed after restart") for line in report)
+            and any(line.startswith("health check timed out for ") for line in report)):
+        matches.add("health_timeout")
+    if any(": could not reclaim its ports within " in line for line in report):
+        matches.add("port_reclaim")
+    return next(iter(matches)) if len(matches) == 1 else "other"
 
 
 def revision(root):
@@ -262,6 +314,9 @@ class Runner:
             site = panic_site(log)
             if site is not None:
                 record["panic_site"] = site
+                category = restart_failure(log, phase, site)
+                if category is not None:
+                    record["restart_failure"] = category
                 self.save()
         print(json.dumps(public_phase(record)), flush=True)
         if record["exit_code"] != 0:
