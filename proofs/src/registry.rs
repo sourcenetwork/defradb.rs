@@ -465,14 +465,15 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         // One retry clock per peer serves all of its markers. An acknowledged
-        // delivery returns it to the first rung, never later than it was; a
+        // delivery, live or replayed, returns it to the first rung, never
+        // later than it was, so the next failure charges the second rung; a
         // new marker and a reconnect keep the rung, so a peer that keeps
         // failing climbs the ladder however often local writes touch it.
         family: "Retry input and marker fencing",
-        name: "INV_DeliveredPeerDueAtFirstRung / INV_SilentPeerBacksOff — a delivery restarts the peer clock, nothing else does",
+        name: "INV_DeliveredPeerDueAtFirstRung / INV_FirstFailureAfterDeliveryChargesSecondRung / INV_SilentPeerBacksOff — a delivery restarts the peer clock, nothing else does",
         axis: Tla,
-        anchor: "crates/storage/src/stores/retry_info.rs RetryInfo::restart_after_delivery, RetryInfo::bump_with_schedule; crates/storage/src/stores/peerstore.rs PeerstoreRetryAttempt::{CompleteMarker, Reschedule, Restart, Activate}, RegisterScopeMarkerAttempt; crates/p2p-adapter/src/retry.rs run_retry_pass, record_failure",
-        model_ref: "MC_RetrySchedule_{Green,Red_KeepRung,Red_RegisterRestarts,Red_ActivateRestarts}.cfg",
+        anchor: "crates/storage/src/stores/retry_info.rs RetryInfo::restart_after_delivery, RetryInfo::bump_with_schedule; crates/storage/src/stores/peerstore.rs PeerstoreRetryAttempt::{CompleteMarker, Reschedule, Restart, Activate}, RegisterScopeMarkerAttempt; crates/p2p-adapter/src/retry.rs run_retry_pass, record_failure; crates/db/src/merge/push_docs_common.rs complete_document_retry_if_current",
+        model_ref: "MC_RetrySchedule_{Green,Red_KeepRung,Red_ReplayKeepsRung,Red_RegisterRestarts,Red_ActivateRestarts}.cfg",
         tiers: &[Boundary],
     },
     Property {
