@@ -109,8 +109,8 @@ pub(super) async fn report_push_ack(
 /// the latest; with a sibling head beside this one, only the retry ladder,
 /// which sends every current head, may complete the scope, and this head's
 /// ack is not reported: without its generation the recorder would record it
-/// unfenced, over the frontier the ladder records. A failed lookup leaves the
-/// marker in place.
+/// unfenced, over the frontier the ladder records. A failed lookup, or one that
+/// finds no heads (`NoOpHeadProvider` finds none), leaves the marker in place.
 async fn is_whole_frontier<T>(context: &PushWorkerContext<T>, job: &PushJobSpec) -> bool {
     let heads = if job.doc_id.is_empty() {
         context
@@ -120,7 +120,7 @@ async fn is_whole_frontier<T>(context: &PushWorkerContext<T>, job: &PushJobSpec)
     } else {
         context.head_provider.get_document_heads(&job.doc_id).await
     };
-    heads.is_ok_and(|heads| heads.iter().all(|head| *head == job.root_cid))
+    heads.is_ok_and(|heads| heads == [job.root_cid])
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -1910,6 +1910,8 @@ async fn committed_head_admission_does_not_wait_for_a_batching_timer() {
 /// clear the marker. The retry ladder delivers the rest. An ack that may not
 /// clear the marker is not reported: without its generation the recorder
 /// would write the acked heads unfenced, over the frontier the ladder records.
+/// No heads at all is no frontier: `NoOpHeadProvider`, which the default
+/// constructors install, finds none.
 #[tokio::test]
 async fn live_ack_of_a_sibling_head_does_not_clear_the_scope_marker() {
     use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink};
@@ -1930,7 +1932,11 @@ async fn live_ack_of_a_sibling_head_does_not_clear_the_scope_marker() {
     let (left, _) = composite(2, "left", vec![base]);
     let (right, right_data) = composite(2, "right", vec![base]);
 
-    for (heads, clears) in [(vec![left, right], false), (vec![right], true)] {
+    for (heads, clears) in [
+        (vec![left, right], false),
+        (vec![], false),
+        (vec![right], true),
+    ] {
         let transport = NoopTransport::new();
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
