@@ -97,8 +97,9 @@ fn recovered_metadata_error(cid: Cid, details: impl Into<String>) -> Replication
 /// optional gossip rebroadcast, which remains disabled in production for
 /// stage 3. The replicators' durable markers must exist before the root is
 /// marked merged, because the mark discharges the root's upstream pending
-/// record; a forward that fails leaves the root unmarked, so the receiver
-/// clock re-drives it. Returns the failure's result, if the forward failed.
+/// record; a forward that fails leaves the root unmarked, and so still owed
+/// to the next re-drive of it. Returns the failure's result, if the forward
+/// failed.
 async fn forward_merged<B, T>(
     coordinator: &SyncCoordinator<B, T>,
     cid: Cid,
