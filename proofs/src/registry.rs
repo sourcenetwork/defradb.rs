@@ -60,6 +60,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_dag",
         model_ref: "LocalFetchPermit (lake build)",
         tiers: &[Boundary],
+        bound_by: "crates/p2p/src/sync/coordinator/dag_fetcher_tests.rs local_complete_fetch_releases_peer_permit_before_waiting_to_send",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
@@ -68,6 +69,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_dag; crates/p2p/src/sync/coordinator/dag_fetcher_tests.rs local_complete_fetch_releases_peer_permit_before_waiting_to_send",
         model_ref: "MC_LocalFetchPermit_{Green,Red_Hold}.cfg",
         tiers: &[Boundary],
+        bound_by: "crates/p2p/src/sync/coordinator/dag_fetcher_tests.rs local_complete_fetch_releases_peer_permit_before_waiting_to_send",
     },
     Property {
         family: "HTTP router composition",
@@ -1690,6 +1692,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/defra-node/src/signed_query/mod.rs execute_with_signing_context; crates/http/src/server.rs Server::router; crates/query/src/pooled/mod.rs PooledExecutor::execute_prepared; crates/workers/src/pool/detached.rs run_on; crates/defra-node/src/network.rs NodeEdge::drain_requests",
         model_ref: "MC_SignedRequestDrain_{Green,Red_TaskDeadline,Red_Transform}.cfg",
         tiers: &[Boundary],
+        bound_by: "crates/defra-node/src/signed_query/tests.rs a_signed_query_remains_admitted_past_the_edge_deadline; crates/http/tests/request_admission.rs a_route_added_by_router_transform_stays_admitted_until_it_ends",
     },
     Property {
         // A transaction guard follows its admitted commit task rather than a
@@ -1700,6 +1703,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/defra-node/src/transaction.rs NodeTransaction::commit; crates/query/src/txn/guard.rs TransactionGuard::drop; crates/db/src/txn/owner/table.rs Table::abandon",
         model_ref: "MC_GuardedCommit_{Green,Red_CallerOwns}.cfg",
         tiers: &[Boundary],
+        bound_by: "crates/defra-node/src/transaction/cancellation_tests.rs cancelling_a_commit_waiter_does_not_abandon_the_running_commit",
     },
     Property {
         // Request admission follows the worker; transaction ownership follows
@@ -1710,6 +1714,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/defra-node/src/signed_query/mod.rs execute_with_signing_context; crates/defra-node/src/transaction.rs NodeTransaction::commit; crates/workers/src/pool/detached.rs run_on",
         model_ref: "RequestDrain (lake build)",
         tiers: &[Boundary],
+        bound_by: "crates/defra-node/src/signed_query/tests.rs a_signed_query_remains_admitted_past_the_edge_deadline; crates/http/tests/request_admission.rs a_route_added_by_router_transform_stays_admitted_until_it_ends; crates/defra-node/src/transaction/cancellation_tests.rs cancelling_a_commit_waiter_does_not_abandon_the_running_commit, cancelling_a_begin_waiter_abandons_the_unreturned_transaction",
     },
     Property {
         // The result of a detached begin abandons its transaction if its
@@ -1720,6 +1725,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/defra-node/src/lib.rs Node::begin_transaction; crates/defra-node/src/ops/request.rs Node::txn_begin; crates/query/src/txn/guard.rs TransactionGuard::drop",
         model_ref: "MC_DetachedBegin_{Green,Red_NoResultGuard}.cfg",
         tiers: &[Boundary],
+        bound_by: "crates/defra-node/src/transaction/cancellation_tests.rs cancelling_a_begin_waiter_abandons_the_unreturned_transaction",
     },
     Property {
         // A network task's completion says how the work ended: its own
