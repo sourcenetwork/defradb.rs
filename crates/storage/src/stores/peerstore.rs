@@ -44,6 +44,25 @@ fn scope_marker_key(peer_id: &str, scope: super::RetryScope, id: &str) -> Vec<u8
     }
 }
 
+/// Restart `peer_id`'s clock after a delivery
+/// ([`super::RetryInfo::restart_after_delivery`]), writing it only if it moves.
+async fn restart_after_delivery(
+    io: &mut dyn crate::corekv::RetryAttemptIO,
+    peer_id: &str,
+    schedule: &super::RetrySchedule,
+) -> Result<()> {
+    let key = ReplicatorRetryIDKey::new(peer_id).bytes();
+    let Some(bytes) = io.get(&key).await? else {
+        return Ok(());
+    };
+    let mut info = super::RetryInfo::from_bytes(&bytes).map_err(crate::corekv::Error::Other)?;
+    if info.restart_after_delivery(peer_id, schedule) {
+        io.set(&key, &info.to_bytes().map_err(crate::corekv::Error::Other)?)
+            .await?;
+    }
+    Ok(())
+}
+
 /// Peerstore provides storage for peer and replication metadata
 pub struct Peerstore<S: Store> {
     store: NamespacedStore<S>,
@@ -300,12 +319,16 @@ impl RetryAttemptFn for PeerstoreRetryAttempt {
                         return Ok(Box::new(false) as crate::corekv::RetryAttemptValue);
                     }
                     if let Some(expected_generation) = *expected_generation {
-                        let Some(bytes) = io.get(key).await? else {
-                            txn.finish_attempt_io(io, crate::corekv::TxnCallbacks::default())?;
-                            return Ok(Box::new(false) as crate::corekv::RetryAttemptValue);
-                        };
-                        let current = decode_retry_marker_generation(&bytes).unwrap_or(0);
-                        if current != expected_generation {
+                        let current = io
+                            .get(key)
+                            .await?
+                            .map(|bytes| decode_retry_marker_generation(&bytes).unwrap_or(0));
+                        if current != Some(expected_generation) {
+                            // A newer registration owns the marker and its
+                            // acknowledged record; the delivery still counts.
+                            if !acked.is_empty() {
+                                restart_after_delivery(io.as_mut(), peer_id, schedule).await?;
+                            }
                             txn.finish_attempt_io(io, crate::corekv::TxnCallbacks::default())?;
                             return Ok(Box::new(false) as crate::corekv::RetryAttemptValue);
                         }
