@@ -326,8 +326,7 @@ their scope markers on the success reply.
   `SharedPeer` names the scopes one source peer announces, each with
   `PeerPermits` permits; every other scope's peer announces only it. Pull
   fetches of that peer (DocSync and BranchableSync replies) take its permits
-  too, with no slot (`PullBegin`, at most `MaxPulls`, the environment's
-  budget like `crashed`: they answer this node's own sync requests; `PullEnd`).
+  too, with no slot (`PullBegin`, at most `MaxPulls` at once; `PullEnd`).
   `PermitMode = "WithSlot"`: the clock takes a root's slot and a permit of its
   peer together (`DagFetchLimiter::try_reserve_peer` in
   `dispatch_due_pending_dag_fetches`; the `DagNeedsFetch` event carries the
@@ -357,7 +356,7 @@ for ever. Per root there are only timers: a deadline passes (`BecomeDue`),
 an attempt's windows end (`WFail`: each window is bounded), a quantum ends
 (`Preempt`).
 
-`LIVE_AckedRootMerged` rests on one environment assumption, stated as strong
+`LIVE_AckedRootMerged` rests on an environment assumption, stated as strong
 fairness on some `WComplete`: a fetch that can complete eventually does.
 Reachability alone does not give it, since a reachable provider can answer
 busy every time. The assumption is a `Boundary` in `proofs/src/registry.rs`.
@@ -379,8 +378,11 @@ safety only, since its liveness run takes close to a minute;
 with two documents, one slot and a pull fetch that may hold d1's peer's only
 permit: d1 is passed over while it does and still merges. A passed-over root
 has no fairness of its own: its turn follows from the due order once a
-permit comes back. Without weak fairness on `PullEnd` (a pull fetch that
-never ends) d1 is never dispatched and the liveness check fails, so the
+permit comes back. The liveness runs also assume that pull fetches, which
+answer this node's own sync requests, come in bursts that end: from some
+point on none starts (`<>[][~PullBegin]_allVars` in `WFairSpec`). Without
+that assumption, or without weak fairness on `PullEnd` (a pull fetch that
+never ends), d1 is never dispatched and the liveness check fails, so the
 result is not vacuous.
 
 ## In-memory pending map
