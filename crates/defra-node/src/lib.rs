@@ -185,6 +185,122 @@ impl defra_http::router::CollectionOperations for HttpSchemaOps {
     }
 }
 
+#[cfg(feature = "http")]
+struct HttpBackupOps {
+    database: Arc<db::DB<storage::RegolithStore>>,
+    runner: Arc<dyn QueryExecutor>,
+    /// The request these operations serve, for ones bound to it.
+    context: Option<RequestContext>,
+}
+
+#[cfg(feature = "http")]
+#[async_trait::async_trait]
+impl defra_http::router::BackupOperations for HttpBackupOps {
+    fn bind_request(
+        &self,
+        context: &RequestContext,
+    ) -> Option<Arc<dyn defra_http::router::BackupOperations>> {
+        Some(Arc::new(Self {
+            database: Arc::clone(&self.database),
+            runner: Arc::clone(&self.runner),
+            context: Some(context.clone()),
+        }))
+    }
+
+    async fn export(
+        &self,
+        collections: Option<Vec<String>>,
+        pretty: bool,
+    ) -> Result<String, String> {
+        let context = RequestContext::bound_or_ambient(self.context.as_ref());
+        let names = collections.unwrap_or_default();
+        db::backup::export_database_as(&context, &self.database, &self.runner, &names, pretty).await
+    }
+
+    async fn import(&self, data: &str) -> Result<defra_http::router::ImportResult, String> {
+        let context = RequestContext::bound_or_ambient(self.context.as_ref());
+        let stats =
+            db::backup::import_database_as(&context, &self.database, &self.runner, data).await?;
+        Ok(defra_http::router::ImportResult {
+            documents_imported: stats.documents_imported,
+            documents_skipped: 0,
+            collections_affected: stats.collections_affected,
+            errors: vec![],
+        })
+    }
+}
+
+#[cfg(feature = "http")]
+struct HttpDocAcpOps {
+    acp_ops: Arc<dyn acp_ops::AcpOps>,
+    document_acp: Arc<dyn acp::DocumentACP>,
+}
+
+#[cfg(feature = "http")]
+#[async_trait::async_trait]
+impl defra_http::router::DocumentAcpOperations for HttpDocAcpOps {
+    async fn check_doc_access(
+        &self,
+        actor: &identity::Did,
+        permission: acp::DocumentPermission,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> std::result::Result<bool, String> {
+        self.document_acp
+            .check_doc_access(
+                &acp::Identity::Authenticated(actor.clone()),
+                permission,
+                policy_id,
+                resource_name,
+                doc_id,
+            )
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    async fn add_doc_relationship(
+        &self,
+        requestor: &identity::Did,
+        target_actor: &str,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+    ) -> std::result::Result<bool, String> {
+        self.acp_ops
+            .add_dac_actor_relationship(
+                requestor.as_ref(),
+                collection,
+                doc_id,
+                relation,
+                target_actor,
+            )
+            .await
+            .map(|existed_already| !existed_already)
+            .map_err(|error| error.to_string())
+    }
+
+    async fn delete_doc_relationship(
+        &self,
+        requestor: &identity::Did,
+        target_actor: &str,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+    ) -> std::result::Result<bool, String> {
+        self.acp_ops
+            .delete_dac_actor_relationship(
+                requestor.as_ref(),
+                collection,
+                doc_id,
+                relation,
+                target_actor,
+            )
+            .await
+            .map_err(|error| error.to_string())
+    }
+}
+
 #[async_trait::async_trait]
 trait BlockOps: Send + Sync {
     async fn signed_block_bytes(
