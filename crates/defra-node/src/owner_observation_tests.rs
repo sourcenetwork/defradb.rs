@@ -571,6 +571,40 @@ fn transactional_relationship_notifies_only_after_commit() {
     .unwrap();
 }
 
+#[test]
+fn transactional_resource_links_propagate_parent_authority() {
+    workers::block_on(async {
+        let node = EmbeddedNode::builder().build().await.unwrap();
+        let policy = node.add_dac_policy(A, "name: Parent links\nresources:\n  - name: nodes\n    permissions:\n      - name: read\n      - name: update\n      - name: delete\n  - name: agents\n    relations:\n      - name: parent\n        types: [nodes]\n    permissions:\n      - name: read\n        expr: parent->read\n      - name: update\n        expr: parent->update\n      - name: delete\n        expr: parent->delete\n  - name: sessions\n    relations:\n      - name: parent\n        types: [agents]\n    permissions:\n      - name: read\n        expr: parent->read\n      - name: update\n        expr: parent->update\n      - name: delete\n        expr: parent->delete\n").await.unwrap();
+        for (collection, resource) in [("Nodes", "nodes"), ("Agents", "agents"), ("Sessions", "sessions")] {
+            node.add_collection(&format!("type {collection} @policy(id: \"{policy}\", resource: \"{resource}\") {{ name: String }}")).await.unwrap();
+        }
+        let owner = node.execute_request(query::QueryRequest::new("mutation { add_Nodes(input: {name: \"home\"}) { _docID } }").with_identity(Some(Did::new(A).unwrap()))).await;
+        assert!(!owner.has_errors(), "{:?}", owner.errors);
+        let node_doc = owner.data.unwrap()["add_Nodes"][0]["_docID"].as_str().unwrap().to_owned();
+        let executor = node.runner();
+        let agent = actor(B);
+        let txn = executor.begin_txn_as(&agent, false).await.unwrap();
+        let create = |collection: &str, name: &str| query::QueryRequest::new(format!("mutation {{ add_{collection}(input: {{name: \"{name}\"}}) {{ _docID }} }}")).with_context(agent.clone()).with_identity(Some(Did::new(B).unwrap()));
+        let created = executor.execute_in_txn(create("Agents", "agent"), &txn).await;
+        assert!(!created.has_errors(), "{:?}", created.errors);
+        let agent_doc = created.data.unwrap()["add_Agents"][0]["_docID"].as_str().unwrap().to_owned();
+        executor.add_relationship_in_txn(agent.clone(), &txn, Did::new(B).unwrap(), "Agents", &agent_doc, "parent", acp::Subject::entity_set("nodes", &node_doc, "")).await.unwrap();
+        let created = executor.execute_in_txn(create("Sessions", "session"), &txn).await;
+        assert!(!created.has_errors(), "{:?}", created.errors);
+        let session_doc = created.data.unwrap()["add_Sessions"][0]["_docID"].as_str().unwrap().to_owned();
+        assert!(executor.add_relationship_in_txn(agent.clone(), &txn, Did::new(B).unwrap(), "Sessions", &session_doc, "parent", acp::Subject::entity_set("agents", "missing", "")).await.is_err());
+        executor.add_relationship_in_txn(agent.clone(), &txn, Did::new(B).unwrap(), "Sessions", &session_doc, "parent", acp::Subject::entity_set("agents", &agent_doc, "")).await.unwrap();
+        executor.commit_txn_as(&agent, &txn).await.unwrap();
+        let visible = node.execute_request(query::QueryRequest::new("{ Sessions { _docID } }").with_identity(Some(Did::new(A).unwrap()))).await;
+        assert_eq!(visible.data.unwrap()["Sessions"][0]["_docID"], session_doc);
+        let deleted = node.execute_request(query::QueryRequest::new(format!("mutation {{ delete_Sessions(docID: \"{session_doc}\") {{ _docID }} }}")).with_identity(Some(Did::new(A).unwrap()))).await;
+        assert!(!deleted.has_errors(), "{:?}", deleted.errors);
+        assert_eq!(deleted.data.unwrap()["delete_Sessions"][0]["_docID"], session_doc);
+        node.shutdown().await;
+    }).unwrap();
+}
+
 #[cfg(feature = "http")]
 #[test]
 fn http_relationship_uses_authenticated_transaction_owner() {
@@ -618,6 +652,90 @@ fn http_relationship_uses_authenticated_transaction_owner() {
             .bearer_auth(&reader_token).json(&serde_json::json!({"query":"{ Users { _docID name } }"}))
             .send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
         assert_eq!(visible["data"]["Users"][0]["_docID"], doc);
+        node.shutdown().await;
+    }).unwrap();
+}
+
+#[cfg(feature = "http")]
+#[test]
+fn enabled_node_acp_gates_http_and_allows_granted_document_access() {
+    use crypto::Key as _;
+    use identity::Identity as _;
+    use std::time::Duration;
+
+    edge::testing::edge().block_on(async {
+        let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
+        let key = crypto::generate_ed25519().unwrap();
+        let runtime = identity::RawIdentity::from_ed25519(key.clone()).unwrap();
+        let runtime_did = runtime.did().unwrap().to_string();
+        let public = runtime.public_key_bytes();
+        defra_core::signing::store_identity(&runtime_did, defra_core::signing::SigningConfig {
+            key_type: defra_core::signing::SigningKeyType::Ed25519,
+            private_key_bytes: key.raw().to_vec(), public_key_hex: hex::encode(&public),
+            public_key_bytes: public, remote_signer: None, signing_authorization: None,
+        });
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let node = EmbeddedNode::builder().with_node_identity_did(&runtime_did)
+            .with_node_acp_enabled().with_http(crate::HttpConfig::with_listener(listener).unwrap())
+            .build().await.unwrap();
+        let policy = node.add_dac_policy(&runtime_did, POLICY).await.unwrap();
+        node.add_collection(&format!("type Users @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}")).await.unwrap();
+        let user = identity::RawIdentity::from_private_key(crypto::generate_ed25519().unwrap()).unwrap();
+        let token = |who: &identity::RawIdentity| String::from_utf8(identity::new_token(who, Duration::from_secs(60), Some(address.to_string()), None).unwrap()).unwrap();
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let base = format!("http://{address}/api/v0");
+        let user_token = token(&user);
+        let query = serde_json::json!({"query":"{ Users { _docID } }"});
+        let denied = client.post(format!("{base}/graphql")).bearer_auth(&user_token).json(&query).send().await.unwrap();
+        assert!(!denied.status().is_success());
+        for relation in ["read-document", "update-document", "add-dac-relation"] {
+            let response = client.post(format!("{base}/acp/node/relationship"))
+                .bearer_auth(token(&runtime)).json(&serde_json::json!({"Relation":relation,"TargetActor":user.did().unwrap().to_string()}))
+                .send().await.unwrap();
+            assert!(response.status().is_success(), "{}", response.text().await.unwrap());
+        }
+        let allowed = client.post(format!("{base}/graphql")).bearer_auth(&user_token).json(&query).send().await.unwrap();
+        assert!(allowed.status().is_success(), "{}", allowed.text().await.unwrap());
+        node.shutdown().await;
+    }).unwrap();
+}
+
+#[cfg(feature = "http")]
+#[test]
+fn http_resource_relationship_is_transaction_scoped() {
+    use identity::Identity as _;
+    use std::time::Duration;
+
+    edge::testing::edge().block_on(async {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let node = EmbeddedNode::builder().with_http(crate::HttpConfig::with_listener(listener).unwrap()).build().await.unwrap();
+        let policy = node.add_dac_policy(A, "name: HTTP parent links\nresources:\n  - name: parents\n    relations:\n      - name: reader\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n  - name: children\n    relations:\n      - name: parent\n        types: [parents]\n    permissions:\n      - name: read\n        expr: parent->read\n      - name: update\n      - name: delete\n").await.unwrap();
+        node.add_collection(&format!("type Parents @policy(id: \"{policy}\", resource: \"parents\") {{ name: String }}\ntype Children @policy(id: \"{policy}\", resource: \"children\") {{ name: String }}")).await.unwrap();
+        let user = identity::RawIdentity::from_private_key(crypto::generate_ed25519().unwrap()).unwrap();
+        let reader = identity::RawIdentity::from_private_key(crypto::generate_ed25519().unwrap()).unwrap();
+        let token = |who: &identity::RawIdentity| String::from_utf8(identity::new_token(who, Duration::from_secs(60), Some(address.to_string()), None).unwrap()).unwrap();
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let base = format!("http://{address}/api/v0");
+        let txn: serde_json::Value = client.post(format!("{base}/tx")).bearer_auth(token(&user)).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+        let txn = txn["id"].as_u64().unwrap().to_string();
+        let created: serde_json::Value = client.post(format!("{base}/graphql")).bearer_auth(token(&user)).header("x-defradb-tx", &txn)
+            .json(&serde_json::json!({"query":"mutation { add_Parents(input:{name:\"p\"}) {_docID} add_Children(input:{name:\"c\"}) {_docID} }"}))
+            .send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+        assert!(created.get("errors").is_none(), "{created}");
+        let parent = created["data"]["add_Parents"][0]["_docID"].as_str().unwrap();
+        let child = created["data"]["add_Children"][0]["_docID"].as_str().unwrap();
+        let actor_grant = serde_json::json!({"collection":"Parents", "doc_id":parent, "relation":"reader", "target_actor":reader.did().unwrap().to_string()});
+        client.post(format!("{base}/acp/document/relationship")).bearer_auth(token(&user)).header("x-defradb-tx", &txn).json(&actor_grant).send().await.unwrap().error_for_status().unwrap();
+        let link = serde_json::json!({"collection":"Children", "doc_id":child, "relation":"parent", "target_resource":"parents", "target_doc_id":parent});
+        let denied = client.post(format!("{base}/acp/document/resource-relationship")).bearer_auth(token(&reader)).header("x-defradb-tx", &txn).json(&link).send().await.unwrap();
+        assert!(!denied.status().is_success());
+        client.post(format!("{base}/acp/document/resource-relationship")).bearer_auth(token(&user)).header("x-defradb-tx", &txn).json(&link).send().await.unwrap().error_for_status().unwrap();
+        client.post(format!("{base}/tx/{txn}")).bearer_auth(token(&user)).send().await.unwrap().error_for_status().unwrap();
+        let visible: serde_json::Value = client.post(format!("{base}/graphql")).bearer_auth(token(&reader))
+            .json(&serde_json::json!({"query":"{ Children { _docID } }"})).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+        assert_eq!(visible["data"]["Children"][0]["_docID"], child);
         node.shutdown().await;
     }).unwrap();
 }

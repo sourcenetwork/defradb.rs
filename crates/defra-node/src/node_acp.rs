@@ -3,6 +3,48 @@ use crate::Error;
 use crate::Result;
 use std::sync::Arc;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) struct NativeNacChecker {
+    nac: Arc<dyn db::NacManagerApi>,
+    pool: Option<workers::Pool>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl NativeNacChecker {
+    pub(crate) fn new(nac: Arc<dyn db::NacManagerApi>, pool: Option<workers::Pool>) -> Self {
+        Self { nac, pool }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait::async_trait]
+impl query::NacChecker for NativeNacChecker {
+    async fn check_permission(
+        &self,
+        identity: &identity::Did,
+        permission: acp::nac::NodePermission,
+    ) -> bool {
+        if self.pool.is_none() || workers::on_worker() {
+            return self
+                .nac
+                .check_permission(identity, permission)
+                .await
+                .unwrap_or(false);
+        }
+        let nac = self.nac.clone();
+        let identity = identity.clone();
+        workers::run_on(
+            self.pool.as_ref(),
+            workers::Target::LeastLoaded,
+            move || async move { nac.check_permission(&identity, permission).await },
+        )
+        .await
+        .ok()
+        .and_then(|result| result.ok())
+        .unwrap_or(false)
+    }
+}
+
 pub(crate) enum Persistence {
     Persistent,
     Memory,

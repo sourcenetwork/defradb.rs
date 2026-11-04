@@ -185,6 +185,8 @@ pub struct EmbeddedNode {
     schema_ops: Arc<dyn SchemaOps>,
     #[cfg(feature = "http")]
     collection_version_ops: Arc<dyn defra_http::router::CollectionVersionOperations>,
+    #[cfg(feature = "http")]
+    nac_adapter: Option<Arc<defra_http::NacAdapter>>,
     block_ops: Arc<dyn BlockOps>,
     acp_ops: Arc<dyn acp_ops::AcpOps>,
     document_acp: Arc<dyn acp::DocumentACP>,
@@ -1788,6 +1790,12 @@ impl NodeBuilder {
                 server
             };
 
+            let server = if let Some(nac) = &node.nac_adapter {
+                server.with_nac_arc(nac.clone())
+            } else {
+                server
+            };
+
             #[cfg(feature = "p2p")]
             let server = if let Some(p2p) = node.p2p_ops.as_ref() {
                 server.with_p2p_arc(Arc::clone(p2p))
@@ -2100,6 +2108,10 @@ impl NodeBuilder {
 
         // Assemble query runner
         let pool = database.pool().cloned();
+        #[cfg(feature = "http")]
+        let nac_adapter = database
+            .nac_manager()
+            .map(|nac| Arc::new(defra_http::NacAdapter::new(nac).placed_on(pool.as_ref())));
         let query_runner =
             query::QueryRunner::with_arc_registry_and_provider(fetcher, provider, registry.clone())
                 .with_mutator(mutator)
@@ -2111,6 +2123,13 @@ impl NodeBuilder {
                 .with_deadline_pool(pool.clone());
         let query_runner = if let Some(timeout) = query_timeout {
             query_runner.with_query_timeout(timeout_secs(timeout))
+        } else {
+            query_runner
+        };
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let query_runner = if let Some(nac) = database.nac_manager() {
+            query_runner.with_nac(Arc::new(node_acp::NativeNacChecker::new(nac, pool.clone())))
         } else {
             query_runner
         };
@@ -2193,6 +2212,8 @@ impl NodeBuilder {
             schema_ops,
             #[cfg(feature = "http")]
             collection_version_ops,
+            #[cfg(feature = "http")]
+            nac_adapter,
             block_ops,
             acp_ops,
             document_acp,

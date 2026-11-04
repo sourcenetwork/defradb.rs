@@ -144,6 +144,59 @@ pub struct DocRelationshipResponse {
     pub existed_already: bool,
 }
 
+/// A resource target is linked only inside the caller's explicit transaction.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DocResourceRelationshipRequest {
+    pub collection: String,
+    pub doc_id: String,
+    pub relation: String,
+    pub target_resource: String,
+    pub target_doc_id: String,
+}
+
+pub async fn add_doc_resource_relationship(
+    State(state): State<AppState>,
+    identity: ExtractIdentity,
+    headers: HeaderMap,
+    Json(body): Json<DocResourceRelationshipRequest>,
+) -> Result<Json<DocRelationshipResponse>, HttpError> {
+    require_permission(&state, &identity, NodePermission::DacRelationAdd).await?;
+    let actor = identity
+        .did()
+        .ok_or_else(|| HttpError::BadRequest("identity required for document ACP".into()))?;
+    if body.collection.is_empty()
+        || body.doc_id.is_empty()
+        || body.relation.is_empty()
+        || body.target_resource.is_empty()
+        || body.target_doc_id.is_empty()
+        || body.relation == "owner"
+    {
+        return Err(HttpError::BadRequest(
+            "invalid document resource relationship".into(),
+        ));
+    }
+    let txn = crate::handlers::txn_header::txn_id_from_headers(&headers)?
+        .ok_or_else(|| HttpError::BadRequest("transaction id required".into()))?
+        .parse()
+        .map_err(|_| HttpError::BadRequest("invalid transaction id".into()))?;
+    let added = state
+        .executor
+        .add_relationship_in_txn(
+            identity.context(),
+            &txn,
+            actor.clone(),
+            &body.collection,
+            &body.doc_id,
+            &body.relation,
+            acp::Subject::entity_set(body.target_resource, body.target_doc_id, ""),
+        )
+        .await
+        .map_err(|error| HttpError::BadRequest(error.to_string()))?;
+    Ok(Json(DocRelationshipResponse {
+        existed_already: !added,
+    }))
+}
+
 fn validate_add_doc_relationship(body: &DocRelationshipRequest) -> Result<(), HttpError> {
     if body.collection.is_empty() {
         return Err(HttpError::BadRequest(

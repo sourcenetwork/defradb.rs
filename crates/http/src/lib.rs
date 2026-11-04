@@ -100,7 +100,11 @@ pub mod handlers;
 #[cfg(feature = "server")]
 pub mod identity_extractor;
 #[cfg(feature = "server")]
+mod nac_adapter;
+#[cfg(feature = "server")]
 pub mod nac_guard;
+#[cfg(feature = "server")]
+pub use nac_adapter::NacAdapter;
 #[cfg(feature = "server")]
 pub mod pool_layer;
 #[cfg(feature = "server")]

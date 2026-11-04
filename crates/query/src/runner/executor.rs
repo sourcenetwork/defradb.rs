@@ -240,7 +240,29 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         relation: &str,
         target: identity::Did,
     ) -> Result<bool> {
-        self.add_actor_relation(context, handle, actor, collection, doc_id, relation, target)
+        self.add_relation(
+            context,
+            handle,
+            actor,
+            collection,
+            doc_id,
+            relation,
+            acp::Subject::Entity(target),
+        )
+        .await
+    }
+
+    async fn add_relationship_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        actor: identity::Did,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+        target: acp::Subject,
+    ) -> Result<bool> {
+        self.add_relation(context, handle, actor, collection, doc_id, relation, target)
             .await
     }
 

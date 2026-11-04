@@ -13,6 +13,28 @@ pub struct EmbeddedTransaction<'a> {
 }
 
 impl EmbeddedNode {
+    /// Add a policy-declared subject relationship within an existing transaction.
+    pub async fn add_dac_relationship_in_txn(
+        &self,
+        handle: &TransactionHandle,
+        actor: identity::Did,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+        target: acp::Subject,
+    ) -> query::error::Result<bool> {
+        self.runner()
+            .add_relationship_in_txn(
+                self.node_context(),
+                handle,
+                actor,
+                collection,
+                doc_id,
+                relation,
+                target,
+            )
+            .await
+    }
     /// Begin a transaction that is abandoned automatically unless finalized.
     ///
     /// ```no_run

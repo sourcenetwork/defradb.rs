@@ -157,7 +157,7 @@ where
             .await
             .map_err(|error| QueryError::execution(error.to_string()))?
     }
-    pub(super) async fn add_actor_relation(
+    pub(super) async fn add_relation(
         &self,
         context: RequestContext,
         handle: &TransactionHandle,
@@ -165,7 +165,7 @@ where
         collection: &str,
         doc_id: &str,
         relation: &str,
-        target: Did,
+        target: acp::Subject,
     ) -> Result<bool> {
         if collection.is_empty() || doc_id.is_empty() || relation.is_empty() {
             return Err(QueryError::parse(
@@ -228,10 +228,34 @@ where
                             "document is not registered with its policy",
                         ));
                     }
+                    if let acp::Subject::EntitySet {
+                        resource,
+                        object_id,
+                        relation: target_relation,
+                    } = &target
+                    {
+                        if resource.is_empty()
+                            || object_id.is_empty()
+                            || !target_relation.is_empty()
+                        {
+                            return Err(QueryError::parse(
+                                "relationship target must name a resource and object",
+                            ));
+                        }
+                        if !acp
+                            .is_doc_registered(&policy.id, resource, object_id)
+                            .await
+                            .map_err(|error| QueryError::execution(error.to_string()))?
+                        {
+                            return Err(QueryError::execution(
+                                "target object is not registered with this policy",
+                            ));
+                        }
+                    }
                     let added = acp
-                        .add_actor_relationship(
+                        .add_relationship(
                             &actor,
-                            &target,
+                            target,
                             &policy.id,
                             &policy.resource_name,
                             &doc_id,
