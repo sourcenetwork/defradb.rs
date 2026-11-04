@@ -11,9 +11,9 @@
 
 use std::sync::Arc;
 
-use regolith::sync::{ArrayQueue, Notify};
 use crate::rt::mpsc;
 use crate::rt::mpsc::error::TryRecvError;
+use regolith::sync::{ArrayQueue, Notify};
 
 use super::events::SyncEvent;
 
