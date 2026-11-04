@@ -121,6 +121,9 @@ struct NoopTransport {
     pubkey: Vec<u8>,
     publish_calls: Arc<AtomicUsize>,
     sync_blocks_calls: Arc<AtomicUsize>,
+    hang_provider_lookup: Arc<AtomicBool>,
+    provider_lookups: Arc<AtomicUsize>,
+    car_requests: Arc<AtomicUsize>,
     replicators: Arc<kovan::Atom<Vec<ReplicatorInfo>>>,
     pushlog_requests: Arc<kovan_queue::seg_queue::SegQueue<(PeerId, PushLogRequest)>>,
 }
@@ -132,6 +135,9 @@ impl NoopTransport {
             pubkey: vec![1, 2, 3],
             publish_calls: Arc::new(AtomicUsize::new(0)),
             sync_blocks_calls: Arc::new(AtomicUsize::new(0)),
+            hang_provider_lookup: Arc::new(AtomicBool::new(false)),
+            provider_lookups: Arc::new(AtomicUsize::new(0)),
+            car_requests: Arc::new(AtomicUsize::new(0)),
             replicators: Arc::new(kovan::Atom::new(Vec::new())),
             pushlog_requests: Arc::new(kovan_queue::seg_queue::SegQueue::new()),
         }
@@ -648,6 +654,14 @@ impl P2PTransport for PollFetchTransport {
 impl P2PTransport for NoopTransport {
     type ResponseToken = ();
 
+    async fn collection_providers(&self, _collection_id: &str) -> P2PResult<Vec<PeerId>> {
+        self.provider_lookups.fetch_add(1, Ordering::SeqCst);
+        if self.hang_provider_lookup.load(Ordering::SeqCst) {
+            futures::future::pending::<()>().await;
+        }
+        Ok(Vec::new())
+    }
+
     fn local_peer_id(&self) -> &PeerId {
         &self.peer_id
     }
@@ -673,7 +687,11 @@ impl P2PTransport for NoopTransport {
     }
 
     async fn connected_peers(&self) -> P2PResult<Vec<PeerId>> {
-        Ok(Vec::new())
+        if self.hang_provider_lookup.load(Ordering::SeqCst) {
+            Ok(vec![PeerId::new("source-peer".into())])
+        } else {
+            Ok(Vec::new())
+        }
     }
 
     async fn listen_addresses(&self) -> P2PResult<Vec<PeerAddr>> {
@@ -763,6 +781,7 @@ impl P2PTransport for NoopTransport {
     }
 
     async fn send_car_request(&self, _peer_id: &PeerId, _root_cid: Cid) -> P2PResult<()> {
+        self.car_requests.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 
@@ -3606,4 +3625,227 @@ async fn peer_details_follows_a_pending_root_into_quarantine() {
         .await;
     assert!(other.quarantined.is_empty());
     assert_eq!(other.history, crate::sync::PeerHistory::default());
+}
+
+#[nuclei::test(threads = 0)]
+async fn stalled_provider_lookup_does_not_block_unrelated_merge() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let transport = NoopTransport::new();
+    transport.hang_provider_lookup.store(true, Ordering::SeqCst);
+    let transport_observer = transport.clone();
+    let (coordinator, _) = crate::sync::coordinator::SyncCoordinator::with_access_control(
+        transport,
+        blockstore.clone(),
+        crate::network::test_network(),
+        crate::sync::SyncConfig::default(),
+        AccessMode::Open,
+        Arc::new(crate::ReplicatorRegistry::new()),
+        Arc::new(crate::sync::collection_store::MemoryCollectionStorage::default()),
+        Arc::new(EqOnlyFilterMatcher),
+    )
+    .await
+    .unwrap();
+    use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink};
+    let missing = make_cid(b"missing");
+    let block = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            collection_version_id: "schema1".into(),
+            priority: 1,
+            status: 1,
+        }),
+        vec![],
+        vec![DAGLink::new("missing", missing)],
+    );
+    let root = block.generate_cid().unwrap();
+    coordinator
+        .handle_transport_event(TransportEvent::TwoStreamRequest {
+            peer_id: PeerId::new("source-peer".into()),
+            request: PushLogRequest::new(
+                "pending".into(),
+                bytes::Bytes::from(root.to_bytes()),
+                "col1".into(),
+                "creator".into(),
+                bytes::Bytes::from(block.to_dag_cbor().unwrap()),
+            ),
+            token: None,
+            is_explicit_replicator: true,
+            explicit_replay_authorization: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(coordinator.pending_dag_count(), 1);
+    let unrelated = make_cid(b"unrelated-block");
+    blockstore
+        .put(&unrelated, b"unrelated-block")
+        .await
+        .unwrap();
+    let (tx, rx) = mpsc::channel(2);
+    tx.send(SyncEvent::DagNeedsFetch {
+        root_cid: root,
+        missing: vec![missing],
+        providers: vec![],
+        doc_id: "pending".into(),
+        collection_id: "col1".into(),
+        creator: "creator".into(),
+        sender_peer: Some("source-peer".into()),
+        is_explicit_replicator: false,
+        explicit_replay_authorization: None,
+        peer_permit: Default::default(),
+    })
+    .await
+    .unwrap();
+    tx.send(SyncEvent::BlockReceived {
+        cid: unrelated,
+        doc_id: "ready".into(),
+        collection_id: "col1".into(),
+        creator: "creator".into(),
+        sender_peer: None,
+        is_explicit_replicator: false,
+        explicit_replay_authorization: None,
+    })
+    .await
+    .unwrap();
+    let handler = TestMergeHandler::new(true, false);
+    let mut events = crate::sync::SyncEventReceiver::from(rx);
+    let results = crate::rt::time::timeout(
+        Duration::from_secs(2),
+        ReplicationLoop::process_next_batch(
+            &coordinator,
+            &mut events,
+            &handler,
+            &ReplicationConfig::default(),
+        ),
+    )
+    .await
+    .expect("a stalled best-effort provider lookup must not block an unrelated merge");
+    assert!(results.iter().any(|result| matches!(result, ReplicationResult::DagFetchStarted { root_cid } if *root_cid == root)));
+    assert!(results.iter().any(
+        |result| matches!(result, ReplicationResult::Merged { cid, .. } if *cid == unrelated)
+    ));
+    assert_eq!(handler.calls(), 1);
+    crate::rt::time::timeout(Duration::from_secs(2), async {
+        while transport_observer.provider_lookups.load(Ordering::SeqCst) == 0 {
+            crate::rt::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the fetch task must attempt provider discovery");
+    crate::rt::time::timeout(Duration::from_secs(5), async {
+        while transport_observer.car_requests.load(Ordering::SeqCst) == 0 {
+            crate::rt::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("a timed-out lookup must fall back to the announcing peer");
+    assert_eq!(
+        coordinator
+            .manager()
+            .diagnostics()
+            .snapshot()
+            .provider_lookup_timed_out_total,
+        1
+    );
+    coordinator.shutdown().await;
+}
+
+#[nuclei::test(threads = 0)]
+async fn shutdown_cancels_stalled_provider_lookup_and_releases_reserved_permit() {
+    use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink};
+
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let transport = NoopTransport::new();
+    transport.hang_provider_lookup.store(true, Ordering::SeqCst);
+    let observer = transport.clone();
+    let (coordinator, mut events) = crate::sync::coordinator::SyncCoordinator::with_access_control(
+        transport,
+        blockstore,
+        crate::network::test_network(),
+        crate::sync::SyncConfig {
+            max_concurrent_dag_fetches: 2,
+            ..Default::default()
+        },
+        AccessMode::Open,
+        Arc::new(crate::ReplicatorRegistry::new()),
+        Arc::new(crate::sync::collection_store::MemoryCollectionStorage::default()),
+        Arc::new(EqOnlyFilterMatcher),
+    )
+    .await
+    .unwrap();
+    let block = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            collection_version_id: "schema1".into(),
+            priority: 1,
+            status: 1,
+        }),
+        vec![],
+        vec![DAGLink::new("missing", make_cid(b"cancel-missing"))],
+    );
+    let root = block.generate_cid().unwrap();
+    coordinator
+        .handle_transport_event(TransportEvent::TwoStreamRequest {
+            peer_id: PeerId::new("source-peer".into()),
+            request: PushLogRequest::new(
+                "pending".into(),
+                bytes::Bytes::from(root.to_bytes()),
+                "col1".into(),
+                "creator".into(),
+                bytes::Bytes::from(block.to_dag_cbor().unwrap()),
+            ),
+            token: None,
+            is_explicit_replicator: true,
+            explicit_replay_authorization: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        coordinator.dispatch_due_pending_dag_fetches_for_test(crate::rt::time::Instant::now()),
+        1
+    );
+    assert_eq!(coordinator.pending_dag_work_count(), 1);
+    assert_eq!(
+        coordinator.available_peer_fetch_permits_for_test("source-peer"),
+        0
+    );
+    let handler = TestMergeHandler::new(true, false);
+    let result = ReplicationLoop::process_next(
+        &coordinator,
+        &mut events,
+        &handler,
+        &ReplicationConfig::default(),
+    )
+    .await;
+    assert!(matches!(result, ReplicationResult::DagFetchStarted { root_cid } if root_cid == root));
+    crate::rt::time::timeout(Duration::from_secs(2), async {
+        while observer.provider_lookups.load(Ordering::SeqCst) == 0 {
+            crate::rt::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("provider lookup must start");
+    assert_eq!(
+        coordinator.available_peer_fetch_permits_for_test("source-peer"),
+        0
+    );
+    coordinator.shutdown().await;
+    assert_eq!(coordinator.pending_dag_work_count(), 0);
+    assert_eq!(
+        coordinator.available_peer_fetch_permits_for_test("source-peer"),
+        1
+    );
+    crate::rt::time::sleep(Duration::from_millis(1100)).await;
+    assert_eq!(
+        observer.car_requests.load(Ordering::SeqCst),
+        0,
+        "cancelled work must not issue a late fetch"
+    );
+    assert_eq!(
+        coordinator
+            .manager()
+            .diagnostics()
+            .snapshot()
+            .provider_lookup_timed_out_total,
+        0
+    );
 }

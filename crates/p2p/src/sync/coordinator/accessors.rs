@@ -59,6 +59,14 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         self.runtime.dag_fetch_limiter.clone()
     }
 
+    #[cfg(test)]
+    pub(crate) fn available_peer_fetch_permits_for_test(&self, peer: &str) -> usize {
+        self.runtime
+            .dag_fetch_limiter
+            .peer_semaphore(peer)
+            .available_permits()
+    }
+
     /// Get the sync manager reference.
     pub fn manager(&self) -> &SyncManager<B> {
         &self.manager
