@@ -61,7 +61,7 @@ async fn wait_for(node: &DefraClient, filter: &str) {
         }) {
             return;
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        nuclei::time::sleep(Duration::from_millis(200)).await;
     }
     let field = filter
         .trim_start_matches('{')
@@ -123,87 +123,96 @@ async fn rejoin(cluster: &TestCluster, alice_addr: &str, bob_addr: &str) {
         .unwrap();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_text_index_follows_local_edits() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    let node = cluster.client(0);
-    node.schema_add("type Note { body: String @crdt(type: text) @index }")
-        .unwrap();
-    let doc_id = node
-        .query(r#"mutation { add_Note(input: {body: "hello world"}) { _docID } }"#)
-        .unwrap()["add_Note"][0]["_docID"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    update(&node, &doc_id, r#"{body: "hello brave world"}"#);
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        let node = cluster.client(0);
+        node.schema_add("type Note { body: String @crdt(type: text) @index }")
+            .unwrap();
+        let doc_id = node
+            .query(r#"mutation { add_Note(input: {body: "hello world"}) { _docID } }"#)
+            .unwrap()["add_Note"][0]["_docID"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        update(&node, &doc_id, r#"{body: "hello brave world"}"#);
 
-    let (found, fetches) = find(&node, r#"{body: {_eq: "hello brave world"}}"#);
-    assert_eq!((found, fetches), (1, 1), "the edited text is indexed");
-    let (found, fetches) = find(&node, r#"{body: {_eq: "hello world"}}"#);
-    assert_eq!((found, fetches), (0, 0), "the old text left the index");
+        let (found, fetches) = find(&node, r#"{body: {_eq: "hello brave world"}}"#);
+        assert_eq!((found, fetches), (1, 1), "the edited text is indexed");
+        let (found, fetches) = find(&node, r#"{body: {_eq: "hello world"}}"#);
+        assert_eq!((found, fetches), (0, 0), "the old text left the index");
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_text_index_follows_merged_edits() {
-    let (cluster, doc_id, alice_addr, bob_addr) = apart(
-        "type Note { body: String @crdt(type: text) @index }",
-        r#"{body: "hello world"}"#,
-        r#"{body: {_eq: "hello world"}}"#,
-    )
-    .await;
-    let (alice, bob) = (cluster.client(0), cluster.client(1));
-    update(&alice, &doc_id, r#"{body: "hello brave world"}"#);
-    update(&bob, &doc_id, r#"{body: "hello world!"}"#);
-    rejoin(&cluster, &alice_addr, &bob_addr).await;
+    edge::compat(async {
+        let (cluster, doc_id, alice_addr, bob_addr) = apart(
+            "type Note { body: String @crdt(type: text) @index }",
+            r#"{body: "hello world"}"#,
+            r#"{body: {_eq: "hello world"}}"#,
+        )
+        .await;
+        let (alice, bob) = (cluster.client(0), cluster.client(1));
+        update(&alice, &doc_id, r#"{body: "hello brave world"}"#);
+        update(&bob, &doc_id, r#"{body: "hello world!"}"#);
+        rejoin(&cluster, &alice_addr, &bob_addr).await;
 
-    let merged = r#"{body: {_eq: "hello brave world!"}}"#;
-    for (name, node) in [("alice", &alice), ("bob", &bob)] {
-        wait_for(node, merged).await;
-        assert_eq!(
-            find(node, merged),
-            (1, 1),
-            "{name}: the merged text is indexed"
-        );
-        for stale in ["hello world", "hello brave world", "hello world!"] {
-            let filter = format!(r#"{{body: {{_eq: "{stale}"}}}}"#);
+        let merged = r#"{body: {_eq: "hello brave world!"}}"#;
+        for (name, node) in [("alice", &alice), ("bob", &bob)] {
+            wait_for(node, merged).await;
             assert_eq!(
-                find(node, &filter),
-                (0, 0),
-                "{name}: {stale:?} left the index"
+                find(node, merged),
+                (1, 1),
+                "{name}: the merged text is indexed"
             );
+            for stale in ["hello world", "hello brave world", "hello world!"] {
+                let filter = format!(r#"{{body: {{_eq: "{stale}"}}}}"#);
+                assert_eq!(
+                    find(node, &filter),
+                    (0, 0),
+                    "{name}: {stale:?} left the index"
+                );
+            }
         }
-    }
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_json_index_follows_merged_edits() {
-    let (cluster, doc_id, alice_addr, bob_addr) = apart(
-        "type Note { meta: JSON @crdt(type: json) @index }",
-        r#"{meta: {a: 1, b: 1}}"#,
-        "{meta: {a: {_eq: 1}}}",
-    )
-    .await;
-    let (alice, bob) = (cluster.client(0), cluster.client(1));
-    update(&alice, &doc_id, "{meta: {a: 2, b: 1}}");
-    update(&bob, &doc_id, "{meta: {a: 1, b: 2}}");
-    rejoin(&cluster, &alice_addr, &bob_addr).await;
+    edge::compat(async {
+        let (cluster, doc_id, alice_addr, bob_addr) = apart(
+            "type Note { meta: JSON @crdt(type: json) @index }",
+            r#"{meta: {a: 1, b: 1}}"#,
+            "{meta: {a: {_eq: 1}}}",
+        )
+        .await;
+        let (alice, bob) = (cluster.client(0), cluster.client(1));
+        update(&alice, &doc_id, "{meta: {a: 2, b: 1}}");
+        update(&bob, &doc_id, "{meta: {a: 1, b: 2}}");
+        rejoin(&cluster, &alice_addr, &bob_addr).await;
 
-    let merged = "{meta: {a: {_eq: 2}, b: {_eq: 2}}}";
-    for (name, node) in [("alice", &alice), ("bob", &bob)] {
-        wait_for(node, merged).await;
-        for path in ["a", "b"] {
-            let filter = format!("{{meta: {{{path}: {{_eq: 2}}}}}}");
-            assert_eq!(
-                find(node, &filter),
-                (1, 1),
-                "{name}: merged {path} is indexed"
-            );
-            let filter = format!("{{meta: {{{path}: {{_eq: 1}}}}}}");
-            assert_eq!(
-                find(node, &filter),
-                (0, 0),
-                "{name}: old {path} left the index"
-            );
+        let merged = "{meta: {a: {_eq: 2}, b: {_eq: 2}}}";
+        for (name, node) in [("alice", &alice), ("bob", &bob)] {
+            wait_for(node, merged).await;
+            for path in ["a", "b"] {
+                let filter = format!("{{meta: {{{path}: {{_eq: 2}}}}}}");
+                assert_eq!(
+                    find(node, &filter),
+                    (1, 1),
+                    "{name}: merged {path} is indexed"
+                );
+                let filter = format!("{{meta: {{{path}: {{_eq: 1}}}}}}");
+                assert_eq!(
+                    find(node, &filter),
+                    (0, 0),
+                    "{name}: old {path} left the index"
+                );
+            }
         }
-    }
+    })
+    .await;
 }
