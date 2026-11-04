@@ -188,6 +188,7 @@ pub struct EmbeddedNode {
     block_ops: Arc<dyn BlockOps>,
     acp_ops: Arc<dyn acp_ops::AcpOps>,
     document_acp: Arc<dyn acp::DocumentACP>,
+    nac_manager: Option<Arc<dyn db::NacManagerApi>>,
     embedding_config: db::EmbeddingClientConfig,
     node_identity_did: Option<String>,
     node_query_identity: Option<identity::Did>,
@@ -513,6 +514,64 @@ impl EmbeddedNode {
         }
     }
 
+    fn schema_context(&self, actor: identity::Did) -> RequestContext {
+        self.node_context()
+            .with_identity(Some(actor.to_string()))
+            .with_dac_bypass(false)
+    }
+
+    /// Grant the existing ACP1 node administrator relation. The embedder
+    /// authenticates `actor`; NAC checks its authority. An administrator has all
+    /// node permissions, including DAC bypass. Returns true for a new grant.
+    pub async fn grant_node_admin_as(
+        &self,
+        actor: identity::Did,
+        target: identity::Did,
+    ) -> Result<bool> {
+        let nac = self.nac_manager.clone().ok_or(Error::NodeAcpUnavailable)?;
+        self.on_pool(move || async move {
+            nac.add_admin(&actor, &target)
+                .await
+                .map_err(Error::NodeAcpGrant)
+        })
+        .await
+    }
+
+    /// Grant a node permission using ACP1. The embedder authenticates `actor`;
+    /// the existing NAC manager checks whether it may delegate. Returns true
+    /// when a grant was added. This does not grant document access.
+    pub async fn grant_node_permission_as(
+        &self,
+        actor: identity::Did,
+        target: identity::Did,
+        permission: acp::nac::NodePermission,
+    ) -> Result<bool> {
+        let nac = self.nac_manager.clone().ok_or(Error::NodeAcpUnavailable)?;
+        self.on_pool(move || async move {
+            nac.add_permission_grant(&actor, &target, permission)
+                .await
+                .map_err(Error::NodeAcpGrant)
+        })
+        .await
+    }
+
+    /// Revoke a node permission using ACP1. The embedder authenticates `actor`;
+    /// NAC checks its authority. Returns true when a grant was removed.
+    pub async fn revoke_node_permission_as(
+        &self,
+        actor: identity::Did,
+        target: identity::Did,
+        permission: acp::nac::NodePermission,
+    ) -> Result<bool> {
+        let nac = self.nac_manager.clone().ok_or(Error::NodeAcpUnavailable)?;
+        self.on_pool(move || async move {
+            nac.remove_permission_grant(&actor, &target, permission)
+                .await
+                .map_err(Error::NodeAcpGrant)
+        })
+        .await
+    }
+
     /// DID used as the embedded node identity for signing, when configured.
     pub fn node_identity_did(&self) -> Option<&str> {
         self.node_identity_did.as_deref()
@@ -559,11 +618,19 @@ impl EmbeddedNode {
 
     /// Add a schema from a GraphQL SDL type definition.
     pub async fn add_collection(&self, sdl: &str) -> Result<()> {
-        let (ops, sdl, context) = (
-            Arc::clone(&self.schema_ops),
-            sdl.to_owned(),
-            self.node_context(),
-        );
+        self.add_collection_with_context(sdl, self.node_context())
+            .await
+    }
+
+    /// Add a schema as an actor authenticated by the embedder. NAC checks that
+    /// actor; it does not inherit the node's DAC bypass.
+    pub async fn add_collection_as(&self, sdl: &str, actor: identity::Did) -> Result<()> {
+        self.add_collection_with_context(sdl, self.schema_context(actor))
+            .await
+    }
+
+    async fn add_collection_with_context(&self, sdl: &str, context: RequestContext) -> Result<()> {
+        let (ops, sdl) = (Arc::clone(&self.schema_ops), sdl.to_owned());
         self.on_pool(move || async move { ops.add_collection(&context, &sdl).await.map(|_| ()) })
             .await
     }
@@ -577,7 +644,36 @@ impl EmbeddedNode {
         name: &str,
         fields: Vec<schema::IndexedFieldDescription>,
     ) -> Result<schema::IndexDescription> {
-        let (ops, context) = (Arc::clone(&self.schema_ops), self.node_context());
+        self.ensure_ordinary_index_with_context(collection, name, fields, self.node_context())
+            .await
+    }
+
+    /// Ensure an index as an actor authenticated by the embedder. NAC checks
+    /// the actor without inheriting the node's DAC bypass.
+    pub async fn ensure_ordinary_index_as(
+        &self,
+        collection: &str,
+        name: &str,
+        fields: Vec<schema::IndexedFieldDescription>,
+        actor: identity::Did,
+    ) -> Result<schema::IndexDescription> {
+        self.ensure_ordinary_index_with_context(
+            collection,
+            name,
+            fields,
+            self.schema_context(actor),
+        )
+        .await
+    }
+
+    async fn ensure_ordinary_index_with_context(
+        &self,
+        collection: &str,
+        name: &str,
+        fields: Vec<schema::IndexedFieldDescription>,
+        context: RequestContext,
+    ) -> Result<schema::IndexDescription> {
+        let ops = Arc::clone(&self.schema_ops);
         let (collection, name) = (collection.to_owned(), name.to_owned());
         self.on_pool(move || async move {
             ops.ensure_ordinary_index(&context, &collection, &name, fields)
@@ -592,7 +688,29 @@ impl EmbeddedNode {
     /// `target_sdl` is the SDL for the view collection (may include directives
     /// like `@downsample` that are forward-declared for future defradb.rs support).
     pub async fn add_view(&self, source_query: &str, target_sdl: &str) -> Result<()> {
-        let (ops, context) = (Arc::clone(&self.schema_ops), self.node_context());
+        self.add_view_with_context(source_query, target_sdl, self.node_context())
+            .await
+    }
+
+    /// Perform this schema operation as an actor authenticated by the embedder.
+    /// NAC checks the actor without inheriting the node's DAC bypass.
+    pub async fn add_view_as(
+        &self,
+        source_query: &str,
+        target_sdl: &str,
+        actor: identity::Did,
+    ) -> Result<()> {
+        self.add_view_with_context(source_query, target_sdl, self.schema_context(actor))
+            .await
+    }
+
+    async fn add_view_with_context(
+        &self,
+        source_query: &str,
+        target_sdl: &str,
+        context: RequestContext,
+    ) -> Result<()> {
+        let ops = Arc::clone(&self.schema_ops);
         let (query, sdl) = (source_query.to_owned(), target_sdl.to_owned());
         self.on_pool(move || async move { ops.add_view(&context, &query, &sdl).await })
             .await
@@ -611,7 +729,29 @@ impl EmbeddedNode {
         collection_name: &str,
         patch: &str,
     ) -> Result<CollectionVersion> {
-        let (ops, context) = (Arc::clone(&self.schema_ops), self.node_context());
+        self.patch_collection_with_context(collection_name, patch, self.node_context())
+            .await
+    }
+
+    /// Perform this schema operation as an actor authenticated by the embedder.
+    /// NAC checks the actor without inheriting the node's DAC bypass.
+    pub async fn patch_collection_as(
+        &self,
+        collection_name: &str,
+        patch: &str,
+        actor: identity::Did,
+    ) -> Result<CollectionVersion> {
+        self.patch_collection_with_context(collection_name, patch, self.schema_context(actor))
+            .await
+    }
+
+    async fn patch_collection_with_context(
+        &self,
+        collection_name: &str,
+        patch: &str,
+        context: RequestContext,
+    ) -> Result<CollectionVersion> {
+        let ops = Arc::clone(&self.schema_ops);
         let (name, patch) = (collection_name.to_owned(), patch.to_owned());
         self.on_pool(move || async move { ops.patch_collection(&context, &name, &patch).await })
             .await
@@ -623,7 +763,27 @@ impl EmbeddedNode {
     /// collection-name pointer to resolve to this version. If migrations are
     /// registered, documents are reindexed through them.
     pub async fn set_active_collection_version(&self, version_id: &str) -> Result<()> {
-        let (ops, context) = (Arc::clone(&self.schema_ops), self.node_context());
+        self.set_active_collection_version_with_context(version_id, self.node_context())
+            .await
+    }
+
+    /// Perform this schema operation as an actor authenticated by the embedder.
+    /// NAC checks the actor without inheriting the node's DAC bypass.
+    pub async fn set_active_collection_version_as(
+        &self,
+        version_id: &str,
+        actor: identity::Did,
+    ) -> Result<()> {
+        self.set_active_collection_version_with_context(version_id, self.schema_context(actor))
+            .await
+    }
+
+    async fn set_active_collection_version_with_context(
+        &self,
+        version_id: &str,
+        context: RequestContext,
+    ) -> Result<()> {
+        let ops = Arc::clone(&self.schema_ops);
         let version = version_id.to_owned();
         self.on_pool(
             move || async move { ops.set_active_collection_version(&context, &version).await },
@@ -640,7 +800,27 @@ impl EmbeddedNode {
     /// Requires the `wasmtime-runtime` feature (on by default). Without it this
     /// returns an explicit error instead of registering a no-op transform.
     pub async fn set_migration(&self, config: LensConfig) -> Result<TransformId> {
-        let (ops, context) = (Arc::clone(&self.schema_ops), self.node_context());
+        self.set_migration_with_context(config, self.node_context())
+            .await
+    }
+
+    /// Perform this schema operation as an actor authenticated by the embedder.
+    /// NAC checks the actor without inheriting the node's DAC bypass.
+    pub async fn set_migration_as(
+        &self,
+        config: LensConfig,
+        actor: identity::Did,
+    ) -> Result<TransformId> {
+        self.set_migration_with_context(config, self.schema_context(actor))
+            .await
+    }
+
+    async fn set_migration_with_context(
+        &self,
+        config: LensConfig,
+        context: RequestContext,
+    ) -> Result<TransformId> {
+        let ops = Arc::clone(&self.schema_ops);
         self.on_pool(move || async move { ops.set_migration(&context, config).await })
             .await
     }
@@ -650,7 +830,27 @@ impl EmbeddedNode {
     /// Returns the number of documents advanced to the active version. This is a
     /// datastore-only operation and does not create or broadcast document commits.
     pub async fn materialize_collection(&self, collection_name: &str) -> Result<usize> {
-        let (ops, context) = (Arc::clone(&self.schema_ops), self.node_context());
+        self.materialize_collection_with_context(collection_name, self.node_context())
+            .await
+    }
+
+    /// Perform this schema operation as an actor authenticated by the embedder.
+    /// NAC checks the actor without inheriting the node's DAC bypass.
+    pub async fn materialize_collection_as(
+        &self,
+        collection_name: &str,
+        actor: identity::Did,
+    ) -> Result<usize> {
+        self.materialize_collection_with_context(collection_name, self.schema_context(actor))
+            .await
+    }
+
+    async fn materialize_collection_with_context(
+        &self,
+        collection_name: &str,
+        context: RequestContext,
+    ) -> Result<usize> {
+        let ops = Arc::clone(&self.schema_ops);
         let name = collection_name.to_owned();
         self.on_pool(move || async move { ops.materialize_collection(&context, &name).await })
             .await
@@ -2100,6 +2300,7 @@ impl NodeBuilder {
 
         // Assemble query runner
         let pool = database.pool().cloned();
+        let nac_manager = database.nac_manager();
         let query_runner =
             query::QueryRunner::with_arc_registry_and_provider(fetcher, provider, registry.clone())
                 .with_mutator(mutator)
@@ -2196,6 +2397,7 @@ impl NodeBuilder {
             block_ops,
             acp_ops,
             document_acp,
+            nac_manager,
             embedding_config,
             node_identity_did,
             node_query_identity,

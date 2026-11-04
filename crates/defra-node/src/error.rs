@@ -40,6 +40,12 @@ pub enum Error {
     /// An access-control check or policy operation failed.
     #[error(transparent)]
     Acp(#[from] acp::Error),
+    /// NAC is not configured on this node.
+    #[error("node access control is not configured")]
+    NodeAcpUnavailable,
+    /// NAC rejected the node permission operation.
+    #[error("node access control operation failed: {0}")]
+    NodeAcpGrant(#[source] db::nac::Error),
     /// The node network runtime did not start.
     #[error(transparent)]
     EdgeRuntime(#[from] edge::EdgeError),

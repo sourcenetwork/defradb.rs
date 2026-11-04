@@ -506,3 +506,105 @@ fn concurrent_identical_policy_adds_get_distinct_ids_across_a_restart() {
     })
     .unwrap()
 }
+
+#[test]
+fn object_relation_follows_acp1_checks_and_revoke() {
+    workers::block_on(async {
+        let node = EmbeddedNode::builder().build().await.unwrap();
+        let policy = node.add_dac_policy(DID_A, "name: Links\nresources:\n  - name: rows\n    relations:\n      - name: parent\n        types: [rows]\n    permissions:\n      - name: read\n        expr: parent->owner\n      - name: update\n      - name: delete\n").await.unwrap();
+        node.add_collection(&format!("type Users @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}")).await.unwrap();
+        let mut docs = Vec::new();
+        for (owner, name) in [(DID_A, "child"), (DID_B, "parent")] {
+            let response = node.execute_request(query::QueryRequest::new(format!("mutation {{ add_Users(input: {{name: \"{name}\"}}) {{ _docID }} }}")).with_identity(Some(identity::Did::new(owner).unwrap()))).await;
+            assert!(!response.has_errors(), "{:?}", response.errors);
+            docs.push(response.data.unwrap()["add_Users"][0]["_docID"].as_str().unwrap().to_owned());
+        }
+        let target = format!("rows:{}", docs[1]);
+        assert!(node.add_dac_actor_relationship(DID_B, "Users", &docs[0], "parent", &target).await.is_err());
+        assert!(!node.add_dac_actor_relationship(DID_A, "Users", &docs[0], "parent", &target).await.unwrap());
+        assert!(node.add_dac_actor_relationship(DID_A, "Users", &docs[0], "parent", &target).await.unwrap());
+        assert_eq!(visible_users(&node, Some(identity::Did::new(DID_B).unwrap())).await, 2);
+        assert!(node.delete_dac_actor_relationship(DID_A, "Users", &docs[0], "parent", &target).await.unwrap());
+        assert!(!node.delete_dac_actor_relationship(DID_A, "Users", &docs[0], "parent", &target).await.unwrap());
+        assert_eq!(visible_users(&node, Some(identity::Did::new(DID_B).unwrap())).await, 1);
+        node.shutdown().await;
+    }).unwrap();
+}
+
+#[test]
+fn explicit_schema_actor_obeys_existing_nac_grant_and_revoke() {
+    workers::block_on(async {
+        let _serial = SIGNING_STORE_GUARD.lock().await;
+        defra_core::signing::clear_identity_store();
+        let owner = register_local_node_identity();
+        let node = EmbeddedNode::builder()
+            .with_node_identity_did(&owner)
+            .with_node_acp_enabled()
+            .build()
+            .await
+            .unwrap();
+        let owner = identity::Did::new(&owner).unwrap();
+        let actor = identity::Did::new(DID_B).unwrap();
+        let permission = acp::nac::NodePermission::CollectionPatch;
+        assert!(node
+            .add_collection_as("type First { value: String }", actor.clone())
+            .await
+            .is_err());
+        assert!(node
+            .grant_node_permission_as(actor.clone(), actor.clone(), permission)
+            .await
+            .is_err());
+        assert!(node
+            .grant_node_permission_as(owner.clone(), actor.clone(), permission)
+            .await
+            .unwrap());
+        assert!(!node
+            .grant_node_permission_as(owner.clone(), actor.clone(), permission)
+            .await
+            .unwrap());
+        node.add_collection_as("type First { value: String }", actor.clone())
+            .await
+            .unwrap();
+        assert!(node
+            .revoke_node_permission_as(owner.clone(), actor.clone(), permission)
+            .await
+            .unwrap());
+        assert!(!node
+            .revoke_node_permission_as(owner, actor.clone(), permission)
+            .await
+            .unwrap());
+        assert!(node
+            .add_collection_as("type Second { value: String }", actor.clone())
+            .await
+            .is_err());
+        assert!(node
+            .grant_node_admin_as(actor.clone(), actor.clone())
+            .await
+            .is_err());
+        let owner = identity::Did::new(node.node_identity_did().unwrap()).unwrap();
+        assert!(node
+            .grant_node_admin_as(owner.clone(), actor.clone())
+            .await
+            .unwrap());
+        assert!(!node
+            .grant_node_admin_as(owner, actor.clone())
+            .await
+            .unwrap());
+        let nac = node.nac_manager.clone().unwrap();
+        let administrator = actor.clone();
+        assert!(node
+            .on_pool(move || async move {
+                nac.check_permission(&administrator, acp::nac::NodePermission::DacBypass)
+                    .await
+                    .map_err(super::Error::NodeAcpGrant)
+            })
+            .await
+            .unwrap());
+        node.add_collection_as("type Second { value: String }", actor)
+            .await
+            .unwrap();
+        node.shutdown().await;
+        defra_core::signing::clear_identity_store();
+    })
+    .unwrap();
+}
