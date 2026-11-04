@@ -408,12 +408,14 @@ pub const PROPERTIES: &[Property] = &[
         // both land, leaving two tips for a later merge: that is what makes the
         // head set a CRDT rather than a last-writer-wins cell. The eager-delete
         // strategy makes them write the same key, which regolith refuses at
-        // every isolation level, so the RED configuration is the defect and the
-        // GREEN one is the derived-head fix.
+        // every isolation level, so the RED configuration is the defect. The
+        // GREEN one is the per-key design that preceded the head-set
+        // operator; the tree reaches the same conclusion by blind merges into
+        // one key, and overlapping_appends_both_commit checks it.
         family: "Concurrent collection-head transitions",
         name: "INV_NoWriteConflict — concurrent appends to one collection both commit and form siblings",
         axis: Tla,
-        anchor: "crates/db/src/block/builder/collection.rs write_collection_block; crates/storage/src/backends/regolith/transaction.rs",
+        anchor: "crates/db/src/block/builder/collection.rs write_collection_block; crates/db/src/block/heads.rs publish_collection_block; crates/storage/src/backends/regolith/transaction.rs; crates/db/tests/block/heads.rs overlapping_appends_both_commit",
         model_ref: "MC_HeadSet_Green.cfg (GREEN) / MC_HeadSet_Red_EagerDelete.cfg (RED) / MC_HeadSet_Red_PerKeyScan.cfg (RED)",
         tiers: &[Behavioral],
     },
@@ -431,15 +433,16 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Contract],
     },
     Property {
-        // The algebra the temporal model rests on: every key a writer writes
-        // names that writer, so two writers cannot collide (disjointness), and
-        // the eager strategy demonstrably does collide (non-vacuity). Appending
-        // a block makes it a head and un-heads the parents it named, which is
-        // what the delete used to achieve.
+        // The algebra the temporal model rests on, for the per-key design:
+        // every key a writer writes names that writer, so two writers cannot
+        // collide (disjointness), and the eager strategy demonstrably does
+        // collide (non-vacuity). The tree keeps none of those keys; it binds to
+        // this model only at reads, where head_queries_match_executable_lean
+        // compares derivedHeads with live_collection_heads.
         family: "Concurrent collection-head transitions",
-        name: "derived_writeSets_disjoint / eager_writeSets_overlap / applyDerived_parents_not_head",
+        name: "derivedHeads reads as live_collection_heads; derived_writeSets_disjoint / eager_writeSets_overlap / applyDerived_parents_not_head are about the per-key design",
         axis: Lean,
-        anchor: "crates/db/src/block/heads/document.rs iterator/supersede; crates/db/src/block/heads.rs live_collection_heads; crates/db/src/block/builder/collection.rs write_collection_block",
+        anchor: "crates/db/src/block/heads.rs live_collection_heads, publish_collection_block; crates/db/src/block/builder/collection.rs write_collection_block; crates/db/tests/block/head_conformance.rs head_queries_match_executable_lean",
         model_ref: "HeadSet.Core (lake build)",
         tiers: &[Contract],
     },
@@ -455,7 +458,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Retry input and marker fencing",
         name: "INV_ProviderOncePerContext / INV_NewRegistrationSurvivesOldAck / ACT_NewRegistrationSurvivesOldClear",
         axis: Tla,
-        anchor: "crates/db/src/write/autocommit/{create,update,delete}.rs NeedsInput resolver; crates/db/src/write/create.rs NeedsInput waves; crates/query/src/prepared.rs; crates/storage/src/stores/peerstore.rs register/complete/clear retry scope",
+        anchor: "crates/query/src/error.rs QueryError::NeedsInput; crates/db/src/write/autocommit/create.rs create_many_with_resolved_inputs; update.rs update_with_projected_resolved_inputs; delete.rs delete_with_resolved_inputs; crates/db/src/write/create.rs embed, compute_many; crates/query/src/prepared.rs; crates/storage/src/stores/peerstore.rs register/complete/clear retry scope",
         model_ref: "MC_RetryPreparedInputs_{Green,Red_*}.cfg / MC_RetryMarkerGeneration_{Green,Red_*}.cfg",
         tiers: &[Boundary],
     },
@@ -662,7 +665,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "ACT_AttemptsStartInDueOrder / ACT_EndedAttemptQueuesBehind / ACT_AckedRootLeavesOwned / INV_NoSlotWaitsForPermit / LIVE_AckedRootMerged (assumes an eventually serving provider)",
         axis: Tla,
-        anchor: "crates/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_dag, FetchTaskEnd; crates/p2p/src/sync/coordinator/dag_retry.rs CLOCK_ATTEMPT_QUANTUM; crates/p2p/src/sync/replication/handlers.rs handle_dag_needs_fetch; crates/p2p/src/sync/coordinator/dag_context.rs DagFetchContext::finish_clock_attempt; crates/p2p/src/sync/manager/process/pending_dag.rs try_claim_pending_dag_dispatch, PendingDagLease::finish_attempt, due_pending_dag_retries; crates/p2p/src/sync/manager/pending.rs PendingDag::is_expired; crates/p2p/src/sync/manager/config.rs SyncConfig::pending_dag_ttl (default PENDING_DAG_TTL); crates/p2p/src/sync/coordinator/mod.rs dispatch_due_pending_dag_fetches, DagFetchLimiter::try_reserve_peer, DagFetchLimiter::acquire",
+        anchor: "crates/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_dag, FetchTaskEnd; crates/p2p/src/sync/coordinator/dag_retry.rs CLOCK_ATTEMPT_QUANTUM; crates/p2p/src/sync/replication/handlers.rs handle_dag_needs_fetch; crates/p2p/src/sync/coordinator/dag_context.rs DagFetchContext::finish_clock_attempt; crates/p2p/src/sync/manager/process/pending_dag.rs try_claim_pending_dag_dispatch, PendingDagLease::finish_attempt, due_pending_dag_retries; crates/p2p/src/sync/manager/pending.rs PendingDag::is_expired; crates/p2p/src/sync/manager/config.rs SyncConfig::pending_dag_ttl; crates/p2p/src/sync/manager/pending.rs PENDING_DAG_TTL; crates/p2p/src/sync/coordinator/mod.rs dispatch_due_pending_dag_fetches, DagFetchLimiter::try_reserve_peer, DagFetchLimiter::acquire",
         model_ref: "MC_SyncOwnership_{Green_Dispatch,Green_Dispatch_DeadProvider,Green_Dispatch_Trickle,Green_Dispatch_PeerPermits,Green_Dispatch_PullPermit,Red_HeldSlot,Red_ClaimTimeRearm,Red_AckedTtl,Red_UnboundedProductive,Red_SlotBeforePermit}.cfg",
         tiers: &[Boundary],
     },
@@ -936,7 +939,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "ACP soundness + revocation + dual-path commits",
         name: "INV_NeverStale / INV_FailsOnlyWhenEveryAskOvertaken / INV_AttemptsBounded / LIVE_Answers: a proven read the chain overtook is asked again, bounded, never accepted stale",
         axis: Tla,
-        anchor: "crates/vera/src/vera_rs/provider/verified.rs verified, ATTEMPTS; crates/vera/src/vera_rs/provider.rs create_policy, query_policy, query_object_owner, verify_access, create_access_decision; acp-light-client HeaderChain::accept_response",
+        anchor: "crates/vera/src/vera_rs/provider/verified.rs verified, ATTEMPTS; crates/vera/src/vera_rs/provider.rs create_policy, query_policy, query_object_owner, verify_access, create_access_decision; backbone:acp-light-client HeaderChain::accept_response",
         model_ref: "MC_VerifiedRead_{Green,Green_Exhausted,Red_AcceptStale,Red_NoRetry,Red_Uncapped}.cfg",
         tiers: &[Boundary],
     },
@@ -1483,7 +1486,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Edge completion",
         name: "INV_AbortSaysCancelled / INV_StopSaysClosed / INV_DoneSaysValue: a completion its handle aborted says Cancelled, one the runtime's stop cut off says Closed, one that finished says its value",
         axis: Tla,
-        anchor: "crates/edge/src/task.rs Task::poll, Task::abort; crates/edge/src/platform/native.rs the shutdown, Shared::stop",
+        anchor: "crates/edge/src/task.rs Task::poll, Task::abort; crates/edge/src/platform/native.rs the shutdown; crates/edge/src/shared.rs Shared::stop",
         model_ref: "MC_EdgeCompletion_{Green,Red_NoMap,Red_CancelBeforeFlag,Red_CancelBeforeStopMark}.cfg",
         tiers: &[Boundary],
     },
@@ -1507,7 +1510,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Iroh dial outcome",
         name: "INV_RefusalKnownIsSaid / LIVE_DialAnswered: a dial never answers ok on a connection the peer's refusal already closed, and every dial is answered",
         axis: Tla,
-        anchor: "crates/p2p/src/iroh/endpoint_commands.rs handle_dial; crates/p2p-adapter/src/iroh.rs P2PAdapter::connect_peer; crates/p2p/src/iroh/transport.rs poll_until_connected",
+        anchor: "crates/p2p/src/iroh/endpoint_commands.rs handle_dial; crates/p2p-adapter/src/iroh.rs IrohP2PAdapter::connect_peer; crates/p2p/src/iroh/transport.rs poll_until_connected",
         model_ref: "MC_IrohDialOutcome_{Green,Green_Admitted,Red_Poll,Red_NoCheck}.cfg",
         tiers: &[Boundary],
     },
@@ -1531,7 +1534,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Document topic ingress",
         name: "INV_NoApplyAfterUnsubscribe / INV_FollowedApplies: no update is applied after the document's unsubscribe returned unless its collection is followed, and none taken while followed is dropped",
         axis: Tla,
-        anchor: "crates/p2p/src/sync/coordinator/event_handler/gossip.rs handle_gossip_message; crates/p2p/src/sync/coordinator/access.rs is_followed_document; crates/p2p-adapter/src/libp2p.rs P2PAdapter::add_documents, remove_documents; crates/p2p-adapter/src/iroh.rs P2PAdapter::add_documents, remove_documents; crates/defra-node/src/libp2p_recovery.rs restore_libp2p_documents; crates/p2p-adapter/src/iroh_restore.rs restore_iroh_p2p_state",
+        anchor: "crates/p2p/src/sync/coordinator/event_handler/gossip.rs handle_gossip_message; crates/p2p/src/sync/coordinator/access.rs is_followed_document; crates/p2p-adapter/src/libp2p.rs P2PAdapter::add_documents, remove_documents; crates/p2p-adapter/src/iroh.rs IrohP2PAdapter::add_documents, remove_documents; crates/defra-node/src/libp2p_recovery.rs restore_libp2p_documents; crates/p2p-adapter/src/iroh_restore.rs restore_iroh_p2p_state",
         model_ref: "MC_DocTopicIngress_{Green,Red_NoCheck,Red_OwnSet,Red_NoCollection}.cfg",
         tiers: &[Boundary],
     },
@@ -1600,7 +1603,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "DAG fetch arbitration (EWMA)",
         name: "ArbitrationConstants: VALUE_BITS, TIME_BITS, WEIGHT_ONE, the half-lives, shifts, tick, TIE_BUCKET, BACKOFF_FLOOR, units, floor and WEIGHT_TABLE, with table_is_floor / table_decreasing / table_wraps / packed_word_fits / tie_bucket_le_backoff_floor / useful_floor_is_one_64th / occupancy_half_life_ticks checked on exactly these values",
         axis: Lean,
-        anchor: "crates/p2p/src/sync/arbitration/mod.rs constants; crates/p2p/src/sync/arbitration/ewma.rs weight_q32; proofs/tests/lean_conformance.rs lean_arbitration_constants_match_rust",
+        anchor: "crates/p2p/src/sync/arbitration/mod.rs VALUE_BITS, TIME_BITS, WEIGHT_ONE, WEIGHT_TABLE, PROVIDER_HALF_LIFE; crates/p2p/src/sync/arbitration/ewma.rs weight_q32; proofs/tests/lean_conformance.rs lean_arbitration_constants_match_rust",
         model_ref: "Arbitration.Constants (lake build); Conformance.lean ArbitrationConstants",
         tiers: &[Contract],
     },
@@ -1608,7 +1611,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "DAG fetch arbitration (EWMA)",
         name: "roll_le_bound / troll_le_bound / record_first / troll_full / iter_monotone_up / iter_stays_below / decay_geometric / troll_decay_up / troll_decay_down / dither_mean / weight_le_one / weight_zero_gap / weight_first_ms / expected_useful_le / bucket_order_any_score / inversion_within_bucket / rearmed_root_goes_behind",
         axis: Lean,
-        anchor: "crates/p2p/src/sync/arbitration/ewma.rs roll, troll, record_word, PackedEwma; root.rs RootEstimates::observe; occupancy.rs advance; provider.rs ProviderEstimates, expected_useful; due_order.rs tie_break_order; sync::arbitration::tests; tests/unit/estimator_trace_replay.rs; tests/unit/estimators_observe_only.rs",
+        anchor: "crates/p2p/src/sync/arbitration/ewma.rs roll, troll, record_word, PackedEwma; root.rs RootEstimates::observe; occupancy.rs advance; provider.rs ProviderEstimates, expected_useful; due_order.rs tie_break_order; tests.rs; tests/unit/estimator_trace_replay.rs; tests/unit/estimators_observe_only.rs",
         model_ref: "Arbitration (lake build)",
         tiers: &[Boundary],
     },

@@ -8,11 +8,19 @@
 //! capital) count as symbols. A segment that opens with `repo:` names another
 //! repository and is not resolved. Symbols after a directory are not checked.
 //!
-//! A symbol resolves when each `::` part is a whole word in the file, or in
-//! the module the file roots (`name.rs` with `name/`, or any `mod.rs`).
+//! A symbol resolves against what the file declares, together with the
+//! module it roots (`name.rs` with `name/`, or any `mod.rs`): a lone name or
+//! `file.rs::name` must be declared there, and in `Owner::item` each part must
+//! hold the next, as a type holds its fields, variants or `impl` items and a
+//! module its items. A name that is only used there does not resolve.
 
+mod declarations;
+
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use declarations::Declarations;
 
 const ROOTS: &[&str] = &["crates/", "tools/", "proofs/"];
 
@@ -30,6 +38,7 @@ enum Scope {
 /// Every reason `anchor` does not resolve under `root`; empty when it does.
 pub fn problems(root: &Path, anchor: &str) -> Vec<String> {
     let mut problems = Vec::new();
+    let mut read = HashMap::new();
     let mut scope: Option<Scope> = None;
     let mut beside: Option<PathBuf> = None;
     for segment in anchor.split(';') {
@@ -62,7 +71,7 @@ pub fn problems(root: &Path, anchor: &str) -> Vec<String> {
                     }
                 }
                 if let Some(symbol) = symbol {
-                    check(&scope, symbol, &mut problems);
+                    check(&scope, symbol, &mut read, &mut problems);
                 }
                 rest = tail;
             }
@@ -76,7 +85,7 @@ pub fn problems(root: &Path, anchor: &str) -> Vec<String> {
             };
             for token in symbols {
                 for symbol in token.split('/') {
-                    check(&scope, symbol, &mut problems);
+                    check(&scope, symbol, &mut read, &mut problems);
                 }
             }
         }
@@ -178,16 +187,28 @@ fn is_code(token: &&str) -> bool {
             && token.chars().any(|c| c.is_ascii_lowercase())
 }
 
-fn check(scope: &Option<Scope>, symbol: &str, problems: &mut Vec<String>) {
+fn check(
+    scope: &Option<Scope>,
+    symbol: &str,
+    read: &mut HashMap<PathBuf, Declarations>,
+    problems: &mut Vec<String>,
+) {
     let Some(Scope::File(file)) = scope else {
         return;
     };
-    let text = module_text(file);
-    for part in symbol.split("::") {
-        if !has_word(&text, part) {
-            problems.push(format!("`{symbol}`: no `{part}` in {}", file.display()));
-            return;
-        }
+    let found = read
+        .entry(file.clone())
+        .or_insert_with(|| Declarations::read(&module_text(file)));
+    let parts: Vec<&str> = symbol.split("::").collect();
+    let missing = match parts.as_slice() {
+        [name] => (!found.declares(name)).then(|| format!("no `{name}` declared")),
+        _ => parts
+            .windows(2)
+            .find(|pair| !found.holds(pair[0], pair[1]))
+            .map(|pair| format!("`{}` holds no `{}`", pair[0], pair[1])),
+    };
+    if let Some(missing) = missing {
+        problems.push(format!("`{symbol}`: {missing} in {}", file.display()));
     }
 }
 
@@ -212,18 +233,10 @@ fn append_sources(dir: &Path, text: &mut String) {
         if path.is_dir() {
             append_sources(&path, text);
         } else if path.extension().is_some_and(|ext| ext == "rs") {
+            text.push('\n');
             text.push_str(&fs::read_to_string(&path).unwrap_or_default());
         }
     }
-}
-
-fn has_word(text: &str, word: &str) -> bool {
-    let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
-    text.match_indices(word).any(|(at, _)| {
-        let before = text[..at].chars().next_back();
-        let after = text[at + word.len()..].chars().next();
-        !before.is_some_and(is_ident) && !after.is_some_and(is_ident)
-    })
 }
 
 #[cfg(test)]
@@ -280,6 +293,14 @@ mod tests {
             (
                 "crates/p2p/src/sync/{queue,no_such_module}.rs",
                 "`crates/p2p/src/sync/no_such_module.rs`",
+            ),
+            (
+                "crates/p2p/src/sync/queue.rs ProcessQueue::cid",
+                "`ProcessQueue` holds no `cid`",
+            ),
+            (
+                "crates/db/src/block/heads/document.rs supersede",
+                "no `supersede` declared",
             ),
         ];
         for (anchor, expected) in cases {

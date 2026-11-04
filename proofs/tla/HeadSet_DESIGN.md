@@ -87,6 +87,15 @@ Both are functions of the writer's own block id, so two writers cannot collide.
 The head set stops being maintained by deletion and becomes a query: a stored
 head key is a head exactly when nothing supersedes it.
 
+That is the design the tree had before the head-set operator, and the model's
+variables are its keys, not the tree's. The tree maps to it only at reads:
+`crates/db/tests/block/head_conformance.rs::head_queries_match_executable_lean`
+runs the Lean oracle and the storage owner on the same transaction actions and
+compares the heads each reads, and
+`crates/db/tests/block/heads.rs::overlapping_appends_both_commit` checks the
+conclusion, that two concurrent appends both commit, which the tree reaches by
+blind merges into one key.
+
 `INV_HeadsExact` is what keeps this a refactor rather than a redefinition. It
 requires the head set a reader observes to equal the DAG's actual tips, computed
 independently of either strategy as "stored blocks that no stored block names as
