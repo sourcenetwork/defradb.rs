@@ -88,7 +88,8 @@
 \*                   begin_transaction_guard), commit_transaction (and
 \*                   NodeTransaction::commit), execute_as and the unsigned
 \*                   execute_prepared_request run as tasks of the request
-\*                   scope, as signed queries do, and with them the ops API's
+\*                   scope, as signed queries do with no task deadline (see
+\*                   SignedRequestDrain), and with them the ops API's
 \*                   Node::txn_begin and Node::txn_commit
 \*                   (crates/defra-node/src/ops/request.rs). The raw runner()
 \*                   is outside the promise, as are the ops that write no

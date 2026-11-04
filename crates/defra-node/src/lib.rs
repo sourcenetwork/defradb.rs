@@ -586,11 +586,23 @@ impl Node {
         &self,
         readonly: bool,
     ) -> Result<TransactionHandle, query::TransactionError> {
+        self.begin_owned_transaction(self.node_context(), readonly)
+            .await?
+            .into_handle()
+    }
+
+    async fn begin_owned_transaction(
+        &self,
+        context: RequestContext,
+        readonly: bool,
+    ) -> Result<transaction::OwnedTransaction, query::TransactionError> {
         let runner = Arc::clone(&self.runner);
-        let context = self.node_context();
-        self.as_request(async move { runner.begin_txn_as(&context, readonly).await })
-            .await
-            .unwrap_or_else(|error| Err(refused_transaction(error, "begun")))
+        self.as_request(async move {
+            let handle = runner.begin_txn_as(&context, readonly).await?;
+            Ok(transaction::OwnedTransaction::new(runner, handle))
+        })
+        .await
+        .unwrap_or_else(|error| Err(refused_transaction(error, "begun")))
     }
 
     /// Commit a transaction owned by this node.

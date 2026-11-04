@@ -146,3 +146,65 @@ fn the_edge_deadline_does_not_end_a_requests_admission() {
     assert_eq!(status, StatusCode::OK);
     runtime.shutdown().unwrap();
 }
+
+#[test]
+fn a_route_added_by_router_transform_stays_admitted_until_it_ends() {
+    let edge = edge::testing::edge();
+    let scope = edge.scope();
+    let started = Arc::new(regolith::sync::Event::new());
+    let release = Arc::new(regolith::sync::Event::new());
+    let router = Server::with_config(
+        HeldExecutor(Arc::new(Held::default())),
+        ServerConfig::default(),
+        scope.edge().clone(),
+    )
+    .with_router_transform({
+        let started = Arc::clone(&started);
+        let release = Arc::clone(&release);
+        Arc::new(move |router| {
+            let started = Arc::clone(&started);
+            let release = Arc::clone(&release);
+            router.route(
+                "/transformed-write",
+                axum::routing::post(move || {
+                    let started = Arc::clone(&started);
+                    let release = Arc::clone(&release);
+                    async move {
+                        started.set();
+                        release.wait().await;
+                        StatusCode::OK
+                    }
+                }),
+            )
+        })
+    })
+    .router()
+    .unwrap();
+    let drained_early = edge
+        .block_on(async {
+            let request = Request::post("/transformed-write")
+                .body(Body::empty())
+                .unwrap();
+            let response = nuclei::spawn(router.oneshot(request));
+            started.wait().await;
+            let drain = scope.drain(Duration::from_secs(3));
+            let mut drain = std::pin::pin!(drain);
+            let drained_early = nuclei::time::timeout(Duration::from_millis(100), &mut drain)
+                .await
+                .is_ok();
+            release.set();
+            assert_eq!(
+                response.join().await.unwrap().unwrap().status(),
+                StatusCode::OK
+            );
+            if !drained_early {
+                assert!(drain.await.is_complete());
+            }
+            drained_early
+        })
+        .unwrap();
+    assert!(
+        !drained_early,
+        "a route added by the transform was not counted"
+    );
+}

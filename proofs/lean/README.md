@@ -19,6 +19,7 @@ The model proves:
 
 | Theorem | Meaning | Rust source |
 |---|---|---|
+| `RequestDrain.start_keeps_permit`, `finish_keeps_permit`, `dropped_waiter_keeps_permit`, `expired_task_loses_permit`, `task_guard_survives_cancellation`, `caller_guard_is_abandoned`, `begin_open_has_owner`, `abandoned_begin_is_closed` | A running worker keeps its admission, and an edge-admitted commit task owns its guard when the caller stops waiting. | `crates/defra-node/src/signed_query/mod.rs`, `crates/defra-node/src/transaction.rs` |
 | `lwwState_merge_comm`, `lwwState_merge_assoc`, `lwwState_merge_idem` | LWW is a join over the deterministic priority/value key. | `crates/crdt/src/field/lww.rs` |
 | `word64Add_comm`, `word64Add_assoc` | Int64 counter accumulation is order-independent under wrapping addition. | `crates/crdt/src/field/counter.rs` |
 | `word64Add_not_idempotent` | Raw counter merge is not idempotent. Duplicate suppression is not local to `CounterField::merge`. | `crates/crdt/src/field/counter.rs` |
