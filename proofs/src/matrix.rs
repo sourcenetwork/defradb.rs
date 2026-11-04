@@ -55,6 +55,7 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "Inbound stream admission",
     "Peer fetch stats",
     "DAG fetch provider ranking",
+    "DAG fetch arbitration (EWMA)",
     "Gossip connection ownership",
     "Iroh service records",
     "Iroh solicited replies",
@@ -66,6 +67,7 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "JSON CRDT per-path merge",
     "Custom CRDT types",
     "Document write pipeline",
+    "P2P delivery liveness",
 ];
 
 pub fn properties_for(family: &'static str) -> impl Iterator<Item = &'static Property> {
