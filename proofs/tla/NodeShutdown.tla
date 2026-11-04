@@ -76,11 +76,13 @@
 \*   RequestsFirst   crates/defra-node/src/lib.rs Node::shutdown, which drains
 \*                   the request scope (NodeEdge::drain_requests) before P2P,
 \*                   with every HTTP request run as a task of it
-\*                   (crates/http/src/server.rs Server::router), so a client
-\*                   that goes away does not end the request's admission
-\*                   before its handler ends. Regression:
+\*                   (crates/http/src/server.rs Server::router) with no
+\*                   deadline of its own and inside the request timeout, so
+\*                   neither a client that goes away nor a timeout ends the
+\*                   request's admission before its handler ends. Regression:
 \*                   a_transaction_committed_during_shutdown_is_refused_or_keeps_its_head_marker
-\*                   in crates/defra-node/tests/commit_during_shutdown.rs;
+\*                   in crates/defra-node/tests/commit_during_shutdown.rs, and
+\*                   crates/http/tests/request_admission.rs;
 \*   CommitsAdmitted crates/defra-node/src/lib.rs Node::as_request, through
 \*                   which begin_transaction (and with it
 \*                   begin_transaction_guard), commit_transaction (and

@@ -488,6 +488,35 @@ impl Server {
             router = router.layer(DefaultBodyLimit::disable());
         }
 
+        // Every request, extra routes included, runs as a task of the server's
+        // edge, admitted and counted until its handler ends, so a node's
+        // shutdown drains the requests in flight and refuses new ones before
+        // they write, ahead of stopping what their writes depend on (P2P's
+        // durable head markers). A task, not the connection's future, with no
+        // deadline of its own and inside the request timeout: a client that
+        // goes away mid-request, or a request that times out, drops only its
+        // wait, while the handler, and the pool work it started, run to their
+        // end inside the drain. Accepted connections outlive the accept loop.
+        let edge = self.edge.clone();
+        let admitted = axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                let handled = edge.spawn(next.run(request)).within(Duration::MAX);
+                async move {
+                    match handled.await {
+                        Ok(response) => response,
+                        Err(edge::EdgeError::Closed) => {
+                            StatusCode::SERVICE_UNAVAILABLE.into_response()
+                        }
+                        Err(error) => {
+                            tracing::error!(%error, "HTTP request task failed");
+                            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                        }
+                    }
+                }
+            },
+        );
+        router = router.layer(admitted.clone());
+
         // Apply concurrency limit (0 = unlimited)
         if self.config.max_concurrent_requests > 0 {
             router = router.layer(ConcurrencyLimitLayer::new(
@@ -514,37 +543,11 @@ impl Server {
         let normalized = NormalizePathLayer::trim_trailing_slash().layer(router.clone());
         let mut router = router.fallback_service(normalized);
         if let Some(extra) = &self.extra_routes {
-            router = router.merge(extra.clone());
+            router = router.merge(extra.clone().layer(admitted));
         }
         if let Some(transform) = &self.router_transform {
             router = transform(router);
         }
-        // Outermost: every request, extra routes included, runs as a task of
-        // the server's edge, admitted and counted until its handler ends, so a
-        // node's shutdown drains the requests in flight and refuses new ones
-        // before they write, ahead of stopping what their writes depend on
-        // (P2P's durable head markers). A task, not the connection's future:
-        // a client that goes away mid-request drops only its wait, while the
-        // handler, and the pool work it started, run to their end inside the
-        // drain. Accepted connections outlive the accept loop.
-        let edge = self.edge.clone();
-        router = router.layer(axum::middleware::from_fn(
-            move |request: axum::extract::Request, next: axum::middleware::Next| {
-                let handled = edge.spawn(next.run(request));
-                async move {
-                    match handled.await {
-                        Ok(response) => response,
-                        Err(edge::EdgeError::Closed) => {
-                            StatusCode::SERVICE_UNAVAILABLE.into_response()
-                        }
-                        Err(error) => {
-                            tracing::error!(%error, "HTTP request task failed");
-                            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-                        }
-                    }
-                }
-            },
-        ));
         Ok(router)
     }
 
