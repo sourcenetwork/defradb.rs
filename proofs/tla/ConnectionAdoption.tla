@@ -15,6 +15,13 @@
 \* finish_connection and handle_incoming; endpoint_rpc.rs connect_with_cache,
 \* remember_connection and restore_displaced_connection; endpoint_commands.rs
 \* handle_dial.
+\* origin, allowed, registryOpen: caller direction, admission and task registry.
+\* sibling, siblingOpen: the other retained peer-map connection and its close reason.
+\* step, cancelled: the adopt future's program counter and cancellation.
+\* open, count, refused: the new handle's close reason, peer-map count and admission result.
+\* cached, displaced: the RPC cache slot and the handle held by the adopt future.
+\* pumped, exited: the registered stream task and whether its cleanup has run.
+\* hit: the later RPC cache lookup's local completion.
 EXTENDS TLC, Integers, Sequences
 \* Each switch is one safeguard; a RED configuration turns exactly one off.
 CONSTANTS AdoptRpcDial, PumpBeforeAnnounce, CleanupRefusedPump, HitSkipsAdoption, NarrowRefusal, RestoreSibling, CloseRetained
