@@ -556,10 +556,24 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     }
                 };
                 if let Some(error) = refusal {
+                    // Undo only what is still this registration's: its entry,
+                    // unless another replaced it, and the head it retired, if
+                    // that head kept its durable record and has no entry.
+                    // `insert` never makes an older head current, so the scope
+                    // head does not move back.
                     self.pending_dags.update(|pending| {
-                        pending.remove(cid);
+                        if pending
+                            .get(cid)
+                            .is_some_and(|dag| dag.inserted_at == inserted_at)
+                        {
+                            pending.remove(cid);
+                        }
                         if let Some((old_root, old_dag)) = superseded.clone() {
-                            pending.insert(old_root, old_dag);
+                            if !pending.contains_key(&old_root)
+                                && self.persisted.contains(&old_root)
+                            {
+                                pending.insert(old_root, old_dag);
+                            }
                         }
                     });
                     return Err(error);
@@ -747,9 +761,11 @@ pub(super) mod tests {
     };
     use crate::sync::{PeerStateTracker, SyncConfig};
 
-    /// Holds each registration until the test releases it.
+    /// Holds each registration until the test releases it. One built with
+    /// `refusing` holds and then refuses only that root's registration.
     pub(crate) struct BlockingPendingDagStore {
         inner: PendingDagStore<RegolithStore>,
+        refused: Option<Cid>,
         pub(crate) register_entered: Notify,
         pub(crate) register_release: Notify,
     }
@@ -758,8 +774,16 @@ pub(super) mod tests {
         pub(crate) fn new(store: Arc<RegolithStore>) -> Self {
             Self {
                 inner: PendingDagStore::new(store),
+                refused: None,
                 register_entered: Notify::new(),
                 register_release: Notify::new(),
+            }
+        }
+
+        fn refusing(store: Arc<RegolithStore>, root: Cid) -> Self {
+            Self {
+                refused: Some(root),
+                ..Self::new(store)
             }
         }
     }
@@ -772,8 +796,14 @@ pub(super) mod tests {
             registration: Registration<'_>,
             view: &Arc<PersistedView>,
         ) -> Result<Admission> {
+            if self.refused.is_some_and(|root| root != registration.root) {
+                return self.inner.register(registration, view).await;
+            }
             self.register_entered.notify_one();
             self.register_release.notified().await;
+            if self.refused.is_some() {
+                return Err(Error::Storage("registration refused".to_string()));
+            }
             self.inner.register(registration, view).await
         }
 
@@ -1000,6 +1030,112 @@ pub(super) mod tests {
                 "an acked sibling head must stay registered until it merges"
             );
         }
+    }
+
+    /// A refused durable registration puts back the head it retired only
+    /// while that head keeps its durable record: one merged and discharged
+    /// meanwhile is not resurrected.
+    #[tokio::test]
+    async fn refused_register_does_not_resurrect_a_root_merged_meanwhile() {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(DefraBlockstore::new(store.clone(), true));
+        let peer_state = Arc::new(PeerStateTracker::new());
+        let (manager, _events) = SyncManager::new(blockstore, peer_state, SyncConfig::default());
+        let (old_root, old_bytes) = composite_with_priority(1, "old");
+        let (new_root, new_bytes) = composite_over(2, "new", vec![old_root]);
+        let pending_store = Arc::new(BlockingPendingDagStore::refusing(store, new_root));
+        manager
+            .install_pending_dag_store(pending_store.clone())
+            .await;
+        let manager = Arc::new(manager);
+        manager
+            .process_pushlog(
+                &make_broadcast("doc123", old_root, old_bytes, "collection1"),
+                Some("peer-1"),
+                true,
+                None,
+            )
+            .await
+            .expect("the old head is acked");
+
+        let process_manager = Arc::clone(&manager);
+        let process = n0_future::task::spawn(async move {
+            process_manager
+                .process_pushlog(
+                    &make_broadcast("doc123", new_root, new_bytes, "collection1"),
+                    Some("peer-1"),
+                    true,
+                    None,
+                )
+                .await
+        });
+        pending_store.register_entered.notified().await;
+        manager.discharge_merged(&old_root).await;
+        pending_store.register_release.notify_one();
+
+        process
+            .await
+            .expect("PushLog task should not panic")
+            .expect_err("the refused head is nacked");
+        assert_eq!(
+            manager.pending_dag_cids(),
+            Vec::<Cid>::new(),
+            "a head discharged as merged must not come back with the rollback"
+        );
+    }
+
+    /// A head that links the scope's current head retires it, even after a
+    /// refused registration rolled back. The refused head had retired an
+    /// older one, and a newer head retired the refused one before the refusal
+    /// landed; putting the older head back must not make it current again.
+    #[tokio::test]
+    async fn refused_register_does_not_move_the_scope_head_back() {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(DefraBlockstore::new(store.clone(), true));
+        let peer_state = Arc::new(PeerStateTracker::new());
+        let (manager, _events) = SyncManager::new(blockstore, peer_state, SyncConfig::default());
+        let (old_root, old_bytes) = composite_with_priority(1, "old");
+        let (refused_root, refused_bytes) = composite_over(2, "refused", vec![old_root]);
+        let (newer_root, newer_bytes) = composite_over(3, "newer", vec![refused_root]);
+        let (latest_root, latest_bytes) = composite_over(4, "latest", vec![newer_root]);
+        let pending_store = Arc::new(BlockingPendingDagStore::refusing(store, refused_root));
+        manager
+            .install_pending_dag_store(pending_store.clone())
+            .await;
+        let manager = Arc::new(manager);
+        let push = |root, bytes| make_broadcast("doc123", root, bytes, "collection1");
+        manager
+            .process_pushlog(&push(old_root, old_bytes), Some("peer-1"), true, None)
+            .await
+            .expect("the old head is acked");
+
+        let process_manager = Arc::clone(&manager);
+        let refused = push(refused_root, refused_bytes);
+        let process = n0_future::task::spawn(async move {
+            process_manager
+                .process_pushlog(&refused, Some("peer-1"), true, None)
+                .await
+        });
+        pending_store.register_entered.notified().await;
+        manager
+            .process_pushlog(&push(newer_root, newer_bytes), Some("peer-1"), true, None)
+            .await
+            .expect("the newer head is acked");
+        pending_store.register_release.notify_one();
+        process
+            .await
+            .expect("PushLog task should not panic")
+            .expect_err("the refused head is nacked");
+
+        manager
+            .process_pushlog(&push(latest_root, latest_bytes), Some("peer-1"), true, None)
+            .await
+            .expect("the latest head is acked");
+        let pending = manager.pending_dag_cids();
+        assert!(
+            pending.contains(&latest_root) && !pending.contains(&newer_root),
+            "the head linking the scope's current head retires it: {pending:?}"
+        );
     }
 
     /// The ack contract, checked at the boundary that answers the sender.
