@@ -11,6 +11,8 @@
 
 use std::sync::Arc;
 
+use futures::FutureExt;
+
 use crate::rt::mpsc;
 use crate::rt::mpsc::error::TryRecvError;
 use regolith::sync::{ArrayQueue, Notify};
@@ -90,19 +92,32 @@ impl SyncEventReceiver {
         if let Ok(event) = self.try_recv() {
             return Some(event);
         }
-        crate::rt::select! {
-            biased;
-            event = self.dispatch.next() => Some(self.dispatched(event)),
-            event = self.events.recv() => event.map(|event| self.merge_work(event)),
-        }
+        let (dispatch, event) = futures::select_biased! {
+            event = self.dispatch.next().fuse() => (true, Some(event)),
+            event = self.events.recv().fuse() => (false, event),
+        };
+        event.map(|event| {
+            if dispatch {
+                self.dispatched(event)
+            } else {
+                self.merge_work(event)
+            }
+        })
     }
 
     /// The next event, if one is waiting.
     pub fn try_recv(&mut self) -> Result<SyncEvent, TryRecvError> {
-        if self.turns > 0 || self.events.is_empty() {
-            if let Some(event) = self.dispatch.pop() {
-                return Ok(self.dispatched(event));
-            }
+        if self.turns == 0 {
+            return match self.events.try_recv() {
+                Ok(event) => Ok(self.merge_work(event)),
+                Err(error) => match self.dispatch.pop() {
+                    Some(event) => Ok(self.dispatched(event)),
+                    None => Err(error),
+                },
+            };
+        }
+        if let Some(event) = self.dispatch.pop() {
+            return Ok(self.dispatched(event));
         }
         self.events.try_recv().map(|event| self.merge_work(event))
     }
@@ -122,5 +137,51 @@ impl SyncEventReceiver {
 impl From<mpsc::Receiver<SyncEvent>> for SyncEventReceiver {
     fn from(events: mpsc::Receiver<SyncEvent>) -> Self {
         Self::new(Arc::new(DispatchLane::new(1)), events)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event(label: &str) -> SyncEvent {
+        SyncEvent::SyncError {
+            cid: cid::Cid::new_v1(
+                0x55,
+                cid::multihash::Multihash::<64>::wrap(0, b"event").unwrap(),
+            ),
+            error: label.to_owned(),
+        }
+    }
+
+    fn label(event: SyncEvent) -> String {
+        match event {
+            SyncEvent::SyncError { error, .. } => error,
+            _ => panic!("expected a sync error"),
+        }
+    }
+
+    #[test]
+    fn exhausted_lane_yields_to_work_but_drains_when_work_is_empty_or_closed() {
+        let dispatch = Arc::new(DispatchLane::new(1));
+        let (sender, events) = mpsc::channel(1);
+        let mut receiver = SyncEventReceiver::new(Arc::clone(&dispatch), events);
+
+        assert!(dispatch.push(event("first dispatch")));
+        sender.try_send(event("merge work")).unwrap();
+        assert_eq!(label(receiver.try_recv().unwrap()), "first dispatch");
+        assert!(dispatch.push(event("second dispatch")));
+        assert_eq!(label(receiver.try_recv().unwrap()), "merge work");
+        assert_eq!(label(receiver.try_recv().unwrap()), "second dispatch");
+
+        assert!(dispatch.push(event("empty channel")));
+        assert_eq!(label(receiver.try_recv().unwrap()), "empty channel");
+        assert!(dispatch.push(event("closed channel")));
+        drop(sender);
+        assert_eq!(label(receiver.try_recv().unwrap()), "closed channel");
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(TryRecvError::Disconnected)
+        ));
     }
 }
