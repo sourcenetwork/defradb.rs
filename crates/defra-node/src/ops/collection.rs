@@ -10,6 +10,25 @@ use crate::ops::request::transaction_error;
 use crate::{Error, Node, Result};
 
 impl Node {
+    /// Apply a patch and return the exact collection version it created.
+    pub async fn patch_collection(
+        &self,
+        collection_name: &str,
+        patch: &str,
+    ) -> Result<CollectionVersion> {
+        let database = std::sync::Arc::clone(&self.database);
+        let context = self.node_context();
+        let collection_name = collection_name.to_owned();
+        let patch = patch.to_owned();
+        self.on_pool(move || async move {
+            database
+                .patch_collection_as(&context, &collection_name, &patch)
+                .await
+                .map_err(Into::into)
+        })
+        .await
+    }
+
     /// Apply the JSON patch `patch` to the collection definitions, with
     /// `migration`, a lens (Go's `model.Lens`), as the migration to the
     /// versions it adds. Go's `PatchCollection`.

@@ -97,6 +97,60 @@ fn patch_collection_adds_field_and_bumps_version() -> Result<()> {
 }
 
 #[test]
+fn patch_receipt_names_the_inactive_version_not_the_active_version() -> Result<()> {
+    workers::block_on(async {
+        let node = Node::builder().build().await?;
+        node.add_collection(USER_SDL).await?;
+        let original = node.get_collection("User")?.expect("active collection");
+        let patch = r#"[
+            {"op":"add","path":"/User/Fields/-","value":{"Name":"label","Kind":"String"}},
+            {"op":"replace","path":"/IsActive","value":false}
+        ]"#;
+        let receipt = node.patch_collection("User", patch).await?;
+        assert!(!receipt.is_active);
+        assert_ne!(receipt.version_id, original.version_id);
+        assert!(receipt.fields.iter().any(|field| field.name == "label"));
+        assert_eq!(
+            node.get_collection("User")?.unwrap().version_id,
+            original.version_id
+        );
+        let stored = node
+            .get_collection_by_version_id(&receipt.version_id)
+            .await?;
+        assert_eq!(stored.unwrap().version_id, receipt.version_id);
+        node.shutdown().await?;
+        Ok(())
+    })
+    .unwrap()
+}
+
+#[test]
+fn concurrent_patch_receipts_belong_to_their_own_patches() -> Result<()> {
+    workers::block_on(async {
+        let node = Node::builder().build().await?;
+        node.add_collection(USER_SDL).await?;
+        let first =
+            r#"[{"op":"add","path":"/User/Fields/-","value":{"Name":"first","Kind":"String"}}]"#;
+        let second =
+            r#"[{"op":"add","path":"/User/Fields/-","value":{"Name":"second","Kind":"String"}}]"#;
+        let (a, b) = futures::join!(
+            node.patch_collection("User", first),
+            node.patch_collection("User", second)
+        );
+        assert!(a.is_ok() || b.is_ok(), "both concurrent patches failed");
+        if let Ok(version) = a {
+            assert!(version.fields.iter().any(|field| field.name == "first"));
+        }
+        if let Ok(version) = b {
+            assert!(version.fields.iter().any(|field| field.name == "second"));
+        }
+        node.shutdown().await?;
+        Ok(())
+    })
+    .unwrap()
+}
+
+#[test]
 fn patch_collection_chained_evolutions_produce_distinct_versions() -> Result<()> {
     workers::block_on(async {
         let node = Node::builder().build().await?;

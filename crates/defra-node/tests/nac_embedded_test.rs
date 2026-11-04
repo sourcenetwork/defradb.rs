@@ -63,6 +63,15 @@ fn node_acts_as_self_with_nac_enabled() {
             .await
             .expect("add_collection must succeed as node identity");
 
+        let receipt = node
+            .patch_collection(
+                "Widget",
+                r#"[{"op":"add","path":"/Widget/Fields/-","value":{"Name":"label","Kind":"String"}}]"#,
+            )
+            .await
+            .expect("patch_collection must succeed as node identity");
+        assert!(receipt.fields.iter().any(|field| field.name == "label"));
+
         // Document create via execute() (DocumentUpdate gate in the mutators).
         let create = node
             .execute(r#"mutation { create_Widget(input: {name: "gadget"}) { _docID name } }"#)
