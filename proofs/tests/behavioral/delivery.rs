@@ -31,7 +31,12 @@ const THROTTLE_RUN: Duration = Duration::from_millis(100);
 const THROTTLE_STOP: Duration = Duration::from_secs(25);
 /// `p2p::PENDING_RECOVERY_WORST_CASE_SECS`: how long a pending head may wait
 /// for its fetch once the receiver has capacity for it.
-const DELIVERY_BOUND: Duration = Duration::from_secs(60);
+const DELIVERY_BOUND: Duration = Duration::from_secs(p2p::PENDING_RECOVERY_WORST_CASE_SECS);
+/// How long A's head may wait for a slot a productive catch-up attempt holds:
+/// the attempt gives it back at the first window boundary past its quantum,
+/// and a window lasts at most the block-sync watchdog.
+const SLOT_RELEASE_BOUND: Duration =
+    p2p::CLOCK_ATTEMPT_QUANTUM.saturating_add(p2p::BLOCK_SYNC_COMPLETION_WATCHDOG);
 /// How soon an unthrottled sender sees its head acknowledged, so a late
 /// delivery is the receiver's.
 const ACK_BOUND: Duration = Duration::from_secs(5);
@@ -155,26 +160,26 @@ async fn hub_restart_under_catchup_delivers_new_doc_within_bound() {
         let load = hub_restarted_under_catchup(&mut cluster, DEFAULT_FETCH_SLOTS).await;
         let (hub, desktop) = (cluster.client(HUB), cluster.client(DESKTOP));
 
-    let acked_before = heads_acked_by(&cluster, DESKTOP, &hub_peer).await;
-    let x = create(&desktop, "x");
-    let written = Instant::now();
-    wait_for_ack(&cluster, &hub_peer, acked_before, ACK_BOUND).await;
-    let acked = written.elapsed();
-    let delivered = eventually(DELIVERY_BOUND.saturating_sub(written.elapsed()), || {
-        holds(&hub, &desktop, &x)
-    })
-    .await;
-    assert!(
-        delivered,
-        "the hub acknowledged the desktop's new document but did not hold it {:?} after it \
-         was written; the catch-up node's fetches held every slot. hub sync status: {}",
-        written.elapsed(),
-        sync_status(&cluster, HUB).await
-    );
-    eprintln!(
-        "A: x acked {acked:?} and delivered {:?} after it was written",
-        written.elapsed()
-    );
+        let acked_before = heads_acked_by(&cluster, DESKTOP, &hub_peer).await;
+        let x = create(&desktop, "x");
+        let written = Instant::now();
+        wait_for_ack(&cluster, &hub_peer, acked_before, ACK_BOUND).await;
+        let acked = written.elapsed();
+        let delivered = eventually(SLOT_RELEASE_BOUND.saturating_sub(written.elapsed()), || {
+            holds(&hub, &desktop, &x)
+        })
+        .await;
+        assert!(
+            delivered,
+            "the hub acknowledged the desktop's new document but did not hold it {:?} after it \
+             was written; the catch-up node's fetches held every slot. hub sync status: {}",
+            written.elapsed(),
+            sync_status(&cluster, HUB).await
+        );
+        eprintln!(
+            "A: x acked {acked:?} and delivered {:?} after it was written",
+            written.elapsed()
+        );
 
         load.throttle
             .release()

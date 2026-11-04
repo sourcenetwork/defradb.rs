@@ -39,7 +39,7 @@ const FETCH_RETRY_BACKOFF_BASE: Duration = Duration::from_secs(2);
 /// every block it fetched, and its root is due again at once, behind every
 /// root already due: a provider that trickles blocks cannot hold a slot for
 /// as long as its DAG takes.
-pub(super) const CLOCK_ATTEMPT_QUANTUM: Duration = Duration::from_secs(60);
+pub const CLOCK_ATTEMPT_QUANTUM: Duration = Duration::from_secs(60);
 
 /// Shed attempts a reply-driven fetch retries in place: rides out a momentary
 /// saturation without hammering a saturated hub. A clock-dispatched fetch
