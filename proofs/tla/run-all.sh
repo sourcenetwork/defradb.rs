@@ -197,9 +197,9 @@ RUNS=(
   "MC_S4_Naive.cfg              MC_S4.tla                    RED"    # B3 field-grain #2721 (S4)
   "MC_S4_FullWalkA.cfg          MC_S4.tla                    RED"    # B3 Model A over-fetch (S4)
   "MC_S4_ModelB.cfg             MC_S4.tla                    GREEN"  # B3 Model B (S4)
-  "MC_Conv_Eventual.cfg         MC_Conv_Eventual.tla         GREEN"  # convergence, eventual connectivity
-  "MC_Conv_RestartEviction.cfg  MC_Conv_RestartEviction.tla  GREEN"  # convergence, eviction+restart
-  "MC_Conv_NoHeadRediscovery.cfg MC_Conv_NoHeadRediscovery.tla RED"  # convergence fails w/o rediscovery
+  "MC_Conv_Eventual.cfg         MC_Conv_Eventual.tla         GREEN"  # convergence, eventual connectivity, retry markers owe the heads
+  "MC_Conv_RestartEviction.cfg  MC_Conv_RestartEviction.tla  GREEN"  # convergence, restarts evict memory, durable records re-drive
+  "MC_Conv_NoHeadRediscovery.cfg MC_Conv_NoHeadRediscovery.tla RED"  # convergence fails when nothing owes the heads (no on-connect rediscovery)
   "MC_Claim_Unfiltered_Eventual.cfg  MC_Claim_Common.tla     GREEN"  # claim eventual-unique
   "MC_Claim_Filtered_Eventual.cfg    MC_Claim_Common.tla     GREEN"  # claim eventual-unique (filtered)
   "MC_Claim_Unfiltered_Execution.cfg MC_Claim_Common.tla     RED"    # exec-unique fails (CAS race)
@@ -433,13 +433,13 @@ RUNS=(
   "MC_PendingDagQuarantine_Green.cfg PendingDagQuarantine.tla GREEN" # #1128: deterministic rejection quarantines durably; sound docs merge, poison docs quarantine
   "MC_PendingDagQuarantine_Red_RetryForever.cfg PendingDagQuarantine.tla RED" # pre-#1128 wedge, still live for any unclassified Rejected producer: Rejected treated as retryable skip -> poison root swept forever (LIVE_PoisonQuiesces)
   "MC_PendingDagQuarantine_Red_OvereagerQuarantine.cfg PendingDagQuarantine.tla RED" # forbidden overcorrection: sound doc's transient failure also quarantines it (LIVE_SoundEventuallyMerged)
-  "MC_P2PDelivery_Green_Receiver.cfg MC_P2PDelivery_Receiver.tla GREEN" # target contract on a restarted hub with main's #2548 receiver rules: past a dead and a trickling root, pull fetches, storms and continuations, x merges and stays owed
+  "MC_P2PDelivery_Green_Receiver.cfg MC_P2PDelivery_Receiver.tla GREEN" # target contract on a restarted hub with main's #2548 receiver rules: past a dead and a trickling root, a dropped connection, pull fetches, storms and continuations, x merges and stays owed
   "MC_P2PDelivery_Red_F8_SlotBeforePermit.cfg MC_P2PDelivery_Receiver.tla RED" # F8, main: a dispatch parks on the only slot waiting for a permit a pull fetch holds (LIVE_HeadDelivered)
   "MC_P2PDelivery_Red_F9_MergeFifo.cfg MC_P2PDelivery_Receiver.tla RED" # F9, main: dispatch through a merge channel catch-up traffic keeps full (LIVE_HeadDelivered)
   "MC_P2PDelivery_Finding_AdvisoryPermits.cfg MC_P2PDelivery_Receiver.tla RED" # finding, no planted bug: advisory pull fetches can take every global permit ahead of a due durable root (LIVE_HeadDelivered)
-  "MC_P2PDelivery_Green_E2E.cfg MC_P2PDelivery_E2E.tla GREEN" # target contract end to end: through a crash and a failed registration, every head stays owed on every edge, no request goes unanswered, and every head reaches every node
+  "MC_P2PDelivery_Green_E2E.cfg MC_P2PDelivery_E2E.tla GREEN" # target contract end to end: through a crash and a failed registration or forward, every head stays owed on every edge, no request goes unanswered, and every head reaches every node
   "MC_P2PDelivery_Red_F1_PriorityCover.cfg MC_P2PDelivery_E2E.tla RED" # F1, main: a sibling is covered or retired by (priority, CID) and lost (INV_ObligationOwned)
-  "MC_P2PDelivery_Red_F2_MarkerAfterCommit.cfg MC_P2PDelivery_E2E.tla RED" # F2, main: a crash between the commit and its marker (INV_ObligationOwned)
+  "MC_P2PDelivery_Red_F2_MarkerAfterCommit.cfg MC_P2PDelivery_E2E.tla RED" # F2, main: P2P stops before the drain, between a commit and its marker (INV_ObligationOwned)
   "MC_P2PDelivery_Red_F3_DischargeBeforeForward.cfg MC_P2PDelivery_E2E.tla RED" # F3, main: a crash between the hub's discharge and its forward (INV_ObligationOwned)
   "MC_P2PDelivery_Red_F4_LoopFirst.cfg MC_P2PDelivery_E2E.tla RED" # F4, main: a restarted hub merges a pushed head before its replicators are restored (INV_ObligationOwned)
   "MC_P2PDelivery_Red_F5_FanoutAbort.cfg MC_P2PDelivery_E2E.tla RED" # F5, main: a failed registration on the hub drops the intent of the peer not registered yet (INV_ObligationOwned)

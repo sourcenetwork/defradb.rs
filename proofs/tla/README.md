@@ -182,18 +182,19 @@ FFI-wrapped surfaces; exposing them to untrusted callers requires the same gate.
 ## DAG Convergence Runs (partition / restart / eviction)
 
 Design notes in [Convergence_DESIGN.md](Convergence_DESIGN.md). Strengthens the B3
-fair-delivery model to **eventual connectivity** + bounded synced-CID eviction + node
-restart. The order-independence half (CRDT merge is a commutative monoid) is proved in
+fair-delivery model to **eventual connectivity** + node restart, with the heads owed by
+the code's two owners: the sender's retry markers and the receiver's durable pending
+records. The order-independence half (CRDT merge is a commutative monoid) is proved in
 Lean under [`../lean/`](../lean/README.md).
 
 ```bash
-# GREEN: under eventual connectivity + fair head rediscovery, a partitioned node
-#        eventually receives and merges every accepted head history.
+# GREEN: under eventual connectivity, a partitioned node whose heads a retry marker
+#        owes eventually receives and merges every accepted head history.
 ./tools/tlc -metadir states/conv_eventual    -config MC_Conv_Eventual.cfg        MC_Conv_Eventual.tla
-# GREEN: same, with MaxSynced=1 FIFO eviction + one restart per node (hints cleared,
-#        durable merge state preserved).
+# GREEN: same, with one restart per node (in-memory map evicted, durable records and
+#        markers kept).
 ./tools/tlc -metadir states/conv_restart     -config MC_Conv_RestartEviction.cfg MC_Conv_RestartEviction.tla
-# RED: without head rediscovery, reconnected peers never learn missed heads → no convergence.
+# RED: heads nothing owes (published only) are never learned after reconnect → no convergence.
 ./tools/tlc -metadir states/conv_norediscov  -config MC_Conv_NoHeadRediscovery.cfg MC_Conv_NoHeadRediscovery.tla
 ```
 

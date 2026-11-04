@@ -1,9 +1,10 @@
 //! DAG convergence under partition — two nodes each make an independent write
-//! while partitioned (node1 is restarted to sever the link), and once
-//! reconnected BOTH nodes converge to holding BOTH writes. This is the core
-//! convergence guarantee — every node eventually receives every delta — across a
-//! real partition in both directions. Distinct from the live-forward
-//! (`replication.rs`) and one-way resume (`replicator_lifecycle.rs`) tests.
+//! while partitioned (node1 is restarted to sever the link), and BOTH nodes
+//! converge to holding BOTH writes after an explicit replicator re-set on
+//! reconnect. The re-set is the embedder's head rediscovery: reconnecting
+//! alone re-drives only retry markers and durable pending records. Distinct
+//! from the live-forward (`replication.rs`) and one-way resume
+//! (`replicator_lifecycle.rs`) tests.
 //! Model: `MC_Conv_Eventual` / `MC_Conv_RestartEviction` (proofs/tla).
 
 use crate::support;
