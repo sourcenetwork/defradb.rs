@@ -52,8 +52,8 @@ fn node_transaction_visibility_uses_actor_dac_and_node_nac() {
             private_key_bytes: key.raw().to_vec(), public_key_hex: hex::encode(&public),
             public_key_bytes: public, remote_signer: None, signing_authorization: None,
         });
-        let node = EmbeddedNode::builder().with_node_identity_did(&owner).with_node_acp_enabled().build().await.unwrap();
-        let policy = node.add_dac_policy(&owner, POLICY).await.unwrap();
+        let node = Node::builder().with_node_identity_did(&owner).with_node_acp_enabled().build().await.unwrap();
+        let policy = node.add_dac_policy_as(&actor(&owner), POLICY).await.unwrap();
         node.add_collection(&format!("type Users @branchable @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}")).await.unwrap();
         let response = node.execute("mutation { add_Users(input: {name: \"private\"}) { _docID } }").await;
         assert!(!response.has_errors(), "{:?}", response.errors);
