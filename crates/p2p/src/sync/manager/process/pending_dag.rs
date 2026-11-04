@@ -350,15 +350,15 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         let expired = self
             .pending_dags
             .update(|pending| evict_expired_pending_dags(pending, now));
-        self.trace_expired(&expired);
+        self.trace_expired(expired.iter().map(|(root, _)| root));
         for _ in &expired {
             self.diagnostics.record_pending_dag_expired();
         }
     }
 
-    /// Records the TTL's eviction of each of `expired` from memory.
-    fn trace_expired(&self, expired: &[(Cid, PendingDag)]) {
-        for (root, _) in expired {
+    /// Records the TTL's eviction of each of `roots` from memory.
+    fn trace_expired<'a>(&self, roots: impl IntoIterator<Item = &'a Cid>) {
+        for root in roots {
             crate::model_trace!(Expire {
                 head: root.to_string(),
                 removed: self.pending_store().is_none(),
@@ -601,7 +601,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 expired,
             )
         });
-        self.trace_expired(&expired);
+        self.trace_expired(expired.iter().map(|(root, _)| root));
         if let Some(depth) = depth {
             self.diagnostics.observe_pending_dag_depth(depth);
             if registered {
@@ -884,9 +884,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         // update so concurrent retries observe monotonic attempt counts.
         let now = Instant::now();
         let (pending_info, expired) = self.pending_dags.update(|pending| {
-            let expired = evict_expired_pending_dags(pending, now);
-            let entry = match expired.iter().find(|(cid, _)| cid == root_cid) {
-                Some((_, dag)) => Some(PendingDagRetryEntry::Expired(dag.clone())),
+            let mut expired = evict_expired_pending_dags(pending, now);
+            let entry = match expired.iter().position(|(cid, _)| cid == root_cid) {
+                Some(own) => Some(PendingDagRetryEntry::Expired(expired.swap_remove(own).1)),
                 None => pending.get_mut(root_cid).map(|dag| {
                     dag.attempts = dag.attempts.saturating_add(1);
                     PendingDagRetryEntry::Current(dag.clone())
@@ -894,7 +894,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             };
             (entry, expired)
         });
-        self.trace_expired(&expired);
+        self.trace_expired(expired.iter().map(|(root, _)| root));
 
         let Some(info) = pending_info else {
             tracing::debug!(
@@ -907,6 +907,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         let info = match info {
             PendingDagRetryEntry::Current(info) => info,
             PendingDagRetryEntry::Expired(info) => {
+                self.trace_expired([root_cid]);
                 self.diagnostics.record_pending_dag_expired();
                 tracing::warn!(
                     root_cid = %root_cid,
