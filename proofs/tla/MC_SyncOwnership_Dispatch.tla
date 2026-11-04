@@ -66,8 +66,6 @@
 \*             poll_fetch_dag without a pending lease, spawned by the DocSync and
 \*             BranchableSync reply handlers (coordinator/event_handler/doc_sync.rs,
 \*             branchable_sync.rs).
-\*   pullsLeft the environment's budget of such fetches, like SyncOwnership's crashed:
-\*             they answer this node's own sync requests, so they come in finite bursts.
 \* A peer's free permits (its Semaphore's available_permits) are PeerPermits
 \* less InUse below.
 \* SyncOwnership's flights is the fetch reservation (SyncShutdownHandle's
@@ -105,7 +103,7 @@ CONSTANTS
   CutoffMode,  \* "Quantum": a productive attempt gives its slot back at its quantum | "Unbounded": the bug, it keeps it
   SharedPeer,  \* scopes whose heads one source peer announces; every other scope's peer announces only it
   PeerPermits, \* fetch permits per source peer (DagFetchLimiter's per-peer limit)
-  MaxPulls,    \* pull fetches of SharedPeer's peer the environment may start: each holds a permit and no slot
+  MaxPulls,    \* pull fetches of SharedPeer's peer that run at once: each holds a permit and no slot
   PermitMode   \* "WithSlot": the clock takes a root's slot and its peer's permit together | "AfterSlot": the bug, the slot first, then the fetch waits for the permit
 
 \* Each knob takes one of its named values.
@@ -134,11 +132,10 @@ VARIABLES
   backoff,   \* roots whose next_retry_at is still ahead
   tries,     \* [Roots -> 0..MaxAttempts], the attempt a root's fetch task is on
   parked,    \* roots holding a slot whose fetch waits for a permit of its peer
-  pullHeld,  \* permits of SharedPeer's peer held by pull fetches
-  pullsLeft  \* pull fetches the environment may still start
+  pullHeld   \* permits of SharedPeer's peer held by pull fetches
 
 \* The variables this module adds.
-dvars == <<dueOrder, backoff, tries, parked, pullHeld, pullsLeft>>
+dvars == <<dueOrder, backoff, tries, parked, pullHeld>>
 \* Every variable, SyncOwnership's and this module's.
 allVars == <<vars, dvars>>
 
@@ -203,7 +200,7 @@ QueueStep ==
   /\ parked' = (parked \cup {r \in claimed : PermitMode = "AfterSlot" /\ ~PeerFree(r[1])})
                  \ (released \cup removed)
   \* Pull fetches start and end in steps of their own.
-  /\ UNCHANGED <<pullHeld, pullsLeft>>
+  /\ UNCHANGED pullHeld
 
 \* A SyncOwnership step followed by the bookkeeping.
 W(A) == A /\ QueueStep
@@ -231,22 +228,21 @@ Unpark(s, v) ==
   /\ <<s, v>> \in parked
   /\ PeerFree(s)
   /\ parked' = parked \ {<<s, v>>}
-  /\ UNCHANGED <<vars, dueOrder, backoff, tries, pullHeld, pullsLeft>>
+  /\ UNCHANGED <<vars, dueOrder, backoff, tries, pullHeld>>
 
 \* A pull fetch of the shared peer (a DocSync or BranchableSync reply) takes
 \* one of that peer's free permits, and no slot.
 PullBegin ==
-  /\ pullsLeft > 0
+  /\ pullHeld < MaxPulls
   /\ \E s \in SharedPeer : PeerFree(s)
   /\ pullHeld' = pullHeld + 1
-  /\ pullsLeft' = pullsLeft - 1
   /\ UNCHANGED <<vars, dueOrder, backoff, tries, parked>>
 
 \* A pull fetch ends and gives its permit back.
 PullEnd ==
   /\ pullHeld > 0
   /\ pullHeld' = pullHeld - 1
-  /\ UNCHANGED <<vars, dueOrder, backoff, tries, parked, pullsLeft>>
+  /\ UNCHANGED <<vars, dueOrder, backoff, tries, parked>>
 
 \* A failed attempt gives the slot back. Under WholeTask only the last of the
 \* task's attempts does; the earlier ones retry in place (below). A trickling
@@ -288,7 +284,7 @@ Preempt(s, v) ==
   /\ dueOrder' = Append(Without(dueOrder, {<<s, v>>}), <<s, v>>)
   /\ backoff' = backoff \ {<<s, v>>}
   /\ tries' = [tries EXCEPT ![<<s, v>>] = 0]
-  /\ UNCHANGED <<parked, pullHeld, pullsLeft>>
+  /\ UNCHANGED <<parked, pullHeld>>
 
 \* The root's next_retry_at passes and the root is due again. AttemptEnd sets
 \* that deadline when the attempt ends, so only a root with no fetch running
@@ -303,7 +299,7 @@ BecomeDue(s, v) ==
   /\ backoff' = backoff \ {<<s, v>>}
   /\ dueOrder' = Append(dueOrder, <<s, v>>)
   \* Nothing else changes.
-  /\ UNCHANGED <<vars, tries, parked, pullHeld, pullsLeft>>
+  /\ UNCHANGED <<vars, tries, parked, pullHeld>>
 
 \* WholeTask only: a failed attempt keeps its slot, sleeps, and starts the next
 \* attempt without asking the clock, ahead of every root that is waiting.
@@ -319,7 +315,7 @@ RetryInPlace(s, v) ==
   \* The next attempt starts.
   /\ tries' = [tries EXCEPT ![<<s, v>>] = @ + 1]
   \* Nothing else changes: the slot stays with this root.
-  /\ UNCHANGED <<vars, dueOrder, backoff, parked, pullHeld, pullsLeft>>
+  /\ UNCHANGED <<vars, dueOrder, backoff, parked, pullHeld>>
 
 \* WallClockTtl only: the TTL drops an acknowledged root that has not been
 \* fetched yet, whether or not it was ever given a slot.
@@ -359,10 +355,8 @@ WCrash ==
   /\ tries' = [r \in Roots |-> 0]
   /\ parked' = {}
   /\ pullHeld' = 0
-  /\ UNCHANGED pullsLeft
 
-\* Nothing pending, so nothing due or waiting, no fetch task, no permit held,
-\* and every pull fetch still to come.
+\* Nothing pending, so nothing due or waiting, no fetch task and no permit held.
 WInit ==
   /\ Init
   /\ dueOrder = <<>>
@@ -370,7 +364,6 @@ WInit ==
   /\ tries = [r \in Roots |-> 0]
   /\ parked = {}
   /\ pullHeld = 0
-  /\ pullsLeft = MaxPulls
 
 \* Every SyncOwnership action, with the claim, the failure, the completion and
 \* the restart replaced by their dispatch-aware forms, the attempt's other
@@ -411,11 +404,13 @@ WSpec == WInit /\ [][WNext]_allVars
 \* liveness configs. Failures, retries in place, the TTL and the restart are
 \* never forced.
 \*
-\* The one environment assumption: a fetch that can complete eventually does
+\* Two environment assumptions. A fetch that can complete eventually does
 \* (strong fairness on some WComplete). Reachability alone does not give it:
 \* a provider can answer busy, or stall, every time. Dead and Trickle
 \* providers never complete here; their heads stay owned
 \* (ACT_AckedRootLeavesOwned), and LIVE_AckedRootMerged promises them nothing.
+\* And pull fetches answer this node's own sync requests, so they come in
+\* bursts that end: from some point on none starts (<>[][~PullBegin]).
 \* A pull fetch ends (its windows are bounded) and a permit given back goes to
 \* a fetch waiting for one; starting a pull fetch is never forced.
 WFairSpec ==
@@ -423,6 +418,7 @@ WFairSpec ==
   /\ WF_allVars(\E s \in Scopes, v \in 1..MaxV : WClaim(s, v))
   /\ WF_allVars(\E s \in Scopes, v \in 1..MaxV : Unpark(s, v))
   /\ WF_allVars(PullEnd)
+  /\ <>[][~PullBegin]_allVars
   /\ SF_allVars(\E s \in Scopes, v \in 1..MaxV : WComplete(s, v))
   /\ SF_allVars(\E s \in Scopes, v \in 1..MaxV : W(ClaimMerge(s, v)))
   /\ SF_allVars(\E s \in Scopes, v \in 1..MaxV : W(CompleteMerge(s, v)))
@@ -441,7 +437,6 @@ INV_DispatchTypeOK ==
   /\ tries \in [Roots -> 0..MaxAttempts]
   /\ parked \subseteq Roots
   /\ pullHeld \in 0..PeerPermits
-  /\ pullsLeft \in 0..MaxPulls
 
 \* Promise: a pending root with no fetch running is either due or waiting out
 \* its backoff, never both and never neither, so no root is lost to the clock.
