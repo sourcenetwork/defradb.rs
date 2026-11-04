@@ -1,7 +1,7 @@
 //! Pending DAG registration and retry logic.
 
 use crate::rt::mpsc::error::TrySendError;
-use rapidhash::{HashSetExt, RapidHashSet};
+use rapidhash::{HashSetExt, RapidHashMap, RapidHashSet};
 use std::sync::Arc;
 use web_time::Instant;
 
@@ -76,9 +76,10 @@ impl PendingDagLease {
     /// gives its in-memory entry up when it holds a contended place (the map
     /// is full, or its source peer is at its quota) while a durable root has
     /// no entry. Its record stays, and the resync sweep, which resumes after
-    /// the root it admitted last, brings it back once the others had a turn:
-    /// durable roots past the cap take turns instead of the first ones in key
-    /// order holding the map for good.
+    /// the place it admitted at last and gives a peer's places to that peer's
+    /// roots in turn, brings it back once the others had a turn: durable
+    /// roots past the cap take turns instead of the first ones in key order
+    /// holding the map for good.
     ///
     /// `sample` feeds the root's estimates and nothing else: the re-arm is the
     /// same whatever it says.
@@ -1029,9 +1030,10 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// (restore), periodically and as the single-flight sweep behind peer
     /// connects, so a registration whose in-memory entry gave its slot up
     /// (`PendingDagLease::finish_attempt`) is recovered without a restart.
-    /// Roots that no longer fit under `max_pending_dags` keep their record
-    /// for the next sweep, which resumes after the root this one admitted
-    /// last. Returns the count re-driven.
+    /// Roots that no longer fit under `max_pending_dags` or their peer's quota
+    /// keep their record for the next sweep, which resumes after the place
+    /// this one admitted at last and gives each peer's places to its roots in
+    /// turn after the one it admitted last. Returns the count re-driven.
     pub async fn resync_persisted_pending_dags(&self) -> usize {
         let Some(store) = self.pending_store() else {
             return 0;
@@ -1096,12 +1098,13 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         if records.is_empty() {
             return 0;
         }
-        let records = self.records_after_resync_cursor(records);
+        let mut peer_cursors = self.pending_resync_peer_cursors.load_clone();
+        let records = self.records_after_resync_cursor(records, &mut peer_cursors);
 
         let mut restored = 0usize;
         let mut waiting = 0usize;
         let mut last_admitted = None;
-        for (root_cid, mut record) in records {
+        for (place, root_cid, mut record) in records {
             let now = Instant::now();
             let live = self
                 .pending_dags
@@ -1272,11 +1275,15 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 );
             }
             restored += 1;
-            last_admitted = Some(root_cid);
+            last_admitted = Some(place);
+            if let Some(peer) = &record.source_peer {
+                peer_cursors.insert(peer.clone(), root_cid);
+            }
         }
         if last_admitted.is_some() {
             self.pending_resync_cursor.store(last_admitted);
         }
+        self.pending_resync_peer_cursors.store(peer_cursors);
 
         if waiting > 0 {
             tracing::debug!(
@@ -1335,19 +1342,57 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             })
     }
 
-    /// The records in key order (the store's), starting after the root the
-    /// previous sweep admitted last and wrapping around.
+    /// The records in the order the sweep offers them places, each after the
+    /// key of the place it takes. The places run in key order (the store's),
+    /// starting after the previous sweep's cursor and wrapping around, and a
+    /// source peer's places go to that peer's roots in key order after the
+    /// one in `peer_cursors`. Peers left with no record leave `peer_cursors`.
     fn records_after_resync_cursor(
         &self,
         mut records: Vec<(Cid, PersistedPendingDag)>,
-    ) -> Vec<(Cid, PersistedPendingDag)> {
+        peer_cursors: &mut RapidHashMap<String, Cid>,
+    ) -> Vec<(Cid, Cid, PersistedPendingDag)> {
         records.sort_by_cached_key(|(root, _)| root.to_string());
         if let Some(cursor) = self.pending_resync_cursor.load_clone() {
             let cursor = cursor.to_string();
             let start = records.partition_point(|(root, _)| root.to_string() <= cursor);
             records.rotate_left(start);
         }
-        records
+        let mut peer_places: RapidHashMap<&str, Vec<(usize, String)>> = RapidHashMap::default();
+        for (index, (root, record)) in records.iter().enumerate() {
+            if let Some(peer) = record.source_peer.as_deref() {
+                peer_places
+                    .entry(peer)
+                    .or_default()
+                    .push((index, root.to_string()));
+            }
+        }
+        peer_cursors.retain(|peer, _| peer_places.contains_key(peer.as_str()));
+        let mut order: Vec<usize> = (0..records.len()).collect();
+        for (peer, places) in &peer_places {
+            let Some(cursor) = peer_cursors.get(*peer).map(Cid::to_string) else {
+                continue;
+            };
+            let mut turns: Vec<_> = places.iter().collect();
+            turns.sort_unstable_by(|(_, a), (_, b)| a.cmp(b));
+            let start = turns.partition_point(|(_, key)| *key <= cursor);
+            turns.rotate_left(start);
+            for ((place, _), (turn, _)) in places.iter().zip(turns) {
+                if let Some(slot) = order.get_mut(*place) {
+                    *slot = *turn;
+                }
+            }
+        }
+        let places: Vec<Cid> = records.iter().map(|(root, _)| *root).collect();
+        let mut records: Vec<_> = records.into_iter().map(Some).collect();
+        places
+            .into_iter()
+            .zip(order)
+            .filter_map(|(place, index)| {
+                let (root, record) = records.get_mut(index)?.take()?;
+                Some((place, root, record))
+            })
+            .collect()
     }
 
     /// Quarantine a terminally-rejected pending-DAG root (#1128).
