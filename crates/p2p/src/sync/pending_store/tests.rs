@@ -462,7 +462,10 @@ async fn concurrent_siblings_of_one_scope_each_keep_their_record() {
         }));
     }
     for task in tasks {
-        assert!(matches!(task.join().await.unwrap(), Admission::Registered { .. }));
+        assert!(matches!(
+            task.join().await.unwrap(),
+            Admission::Registered { .. }
+        ));
     }
     let mut expected = siblings.clone();
     expected.sort();
