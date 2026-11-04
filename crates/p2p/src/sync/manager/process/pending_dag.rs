@@ -1,8 +1,8 @@
 //! Pending DAG registration and retry logic.
 
+use crate::rt::mpsc::error::TrySendError;
 use rapidhash::{HashSetExt, RapidHashSet};
 use std::sync::Arc;
-use crate::rt::mpsc::error::TrySendError;
 use web_time::Instant;
 
 use cid::Cid;

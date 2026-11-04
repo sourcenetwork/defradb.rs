@@ -12,8 +12,8 @@
 //! `at_global_cap_an_unawaited_descendant_is_shed`, and
 //! `pending_capacity_sheds_unrelated_blocks_but_accepts_missing_dependency`.
 
-use rapidhash::{HashSetExt, RapidHashSet};
 use crate::rt::mpsc::error::TrySendError;
+use rapidhash::{HashSetExt, RapidHashSet};
 use web_time::Instant;
 
 use cid::Cid;

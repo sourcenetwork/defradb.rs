@@ -180,9 +180,14 @@ async fn acked_head_behind_full_channel() -> (
         event_buffer_size: 1,
         ..SyncConfig::default()
     };
-    let (coordinator, events) = SyncCoordinator::new(transport, blockstore, crate::network::test_network(), config)
-        .await
-        .unwrap();
+    let (coordinator, events) = SyncCoordinator::new(
+        transport,
+        blockstore,
+        crate::network::test_network(),
+        config,
+    )
+    .await
+    .unwrap();
     coordinator
         .install_pending_dag_store(Arc::new(PendingDagStore::new(Arc::new(
             RegolithStore::in_memory().unwrap(),
@@ -359,9 +364,14 @@ async fn redispatched_continuations_do_not_starve_queued_merge_work() {
         max_concurrent_dag_fetches: 2,
         ..SyncConfig::default()
     };
-    let (coordinator, mut events) = SyncCoordinator::new(transport, blockstore, crate::network::test_network(), config)
-        .await
-        .unwrap();
+    let (coordinator, mut events) = SyncCoordinator::new(
+        transport,
+        blockstore,
+        crate::network::test_network(),
+        config,
+    )
+    .await
+    .unwrap();
     let metadata =
         BlockMetadata::normal("doc", "collection", "creator", Some("remote-peer"), false);
     for root in &roots {
@@ -445,10 +455,14 @@ async fn sourceless_latched_completion_does_not_block_merge_loop() {
         event_buffer_size: 1,
         ..SyncConfig::default()
     };
-    let (coordinator, mut events) =
-        SyncCoordinator::new(transport.clone(), blockstore.clone(), crate::network::test_network(), config)
-            .await
-            .unwrap();
+    let (coordinator, mut events) = SyncCoordinator::new(
+        transport.clone(),
+        blockstore.clone(),
+        crate::network::test_network(),
+        config,
+    )
+    .await
+    .unwrap();
     transport.set_early_success_completion(coordinator.manager().block_sync_completion_tracker());
     coordinator.install_pending_dag_store(pending_store).await;
     coordinator
@@ -607,10 +621,14 @@ async fn complete_sourceless_root_merges_without_block_sync() {
         event_buffer_size: 1,
         ..SyncConfig::default()
     };
-    let (coordinator, mut events) =
-        SyncCoordinator::new(transport.clone(), blockstore.clone(), crate::network::test_network(), config)
-            .await
-            .unwrap();
+    let (coordinator, mut events) = SyncCoordinator::new(
+        transport.clone(),
+        blockstore.clone(),
+        crate::network::test_network(),
+        config,
+    )
+    .await
+    .unwrap();
     coordinator.install_pending_dag_store(pending_store).await;
     coordinator
         .manager()

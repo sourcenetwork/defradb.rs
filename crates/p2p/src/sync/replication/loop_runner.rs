@@ -20,8 +20,8 @@
 
 use std::sync::Arc;
 
-use blockstore::Blockstore;
 use crate::rt::mpsc::error::TryRecvError;
+use blockstore::Blockstore;
 
 use super::config::ReplicationConfig;
 use super::handlers::{
