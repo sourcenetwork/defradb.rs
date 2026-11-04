@@ -360,17 +360,18 @@ impl Node {
     }
 
     /// Runs in-process work that may write as a task of the node's request
-    /// scope, as a signed query runs: admitted and counted until it ends, so
-    /// shutdown drains it before P2P stops recording head markers, refused once
-    /// shutdown stops admitting requests, and run to its end if its caller
-    /// stops waiting. A node with no network has no P2P, and runs it in place.
+    /// scope, as a signed query runs: admitted and counted until it ends, with
+    /// no deadline of its own, so shutdown drains it before P2P stops
+    /// recording head markers, refused once shutdown stops admitting requests,
+    /// and run to its end if its caller stops waiting. A node with no network
+    /// has no P2P, and runs it in place.
     async fn as_request<F>(&self, work: F) -> std::result::Result<F::Output, edge::EdgeError>
     where
         F: std::future::Future + defra_core::thread_bounds::MaybeSend + 'static,
         F::Output: defra_core::thread_bounds::MaybeSend + 'static,
     {
         match self.network.as_ref() {
-            Some(network) => network.requests().spawn(work).await,
+            Some(network) => network.requests().spawn(work).within(Duration::MAX).await,
             None => Ok(work.await),
         }
     }
