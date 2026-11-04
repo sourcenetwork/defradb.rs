@@ -42,6 +42,22 @@ impl MergeHandler for MergeAll {
     }
 }
 
+struct AlwaysYield;
+
+#[async_trait]
+impl MergeHandler for AlwaysYield {
+    type Error = NoMergeExpected;
+
+    async fn handle_block(
+        &self,
+        _cid: &Cid,
+        _block_data: &[u8],
+        _metadata: BlockMetadata<'_>,
+    ) -> Result<MergeOutcome, NoMergeExpected> {
+        Ok(MergeOutcome::Yielded)
+    }
+}
+
 /// A document head and its one field block, which is not stored locally.
 fn head_and_field() -> (Cid, Vec<u8>, Cid, Vec<u8>) {
     let leaf = Block::new(
@@ -224,6 +240,78 @@ async fn pushlog_reply_not_blocked_by_full_event_channel() {
     assert!(
         matches!(first, Some(ReplicationResult::DagFetchStarted { root_cid }) if root_cid == head),
         "the merge loop processed {first:?} before the completed root"
+    );
+}
+
+/// A long history's merge yields and is due again at once, so the clock
+/// re-dispatches it before the merge loop's next receive. With one such
+/// continuation per fetch slot the lane is never empty when the merge loop
+/// looks; the merge work queued behind them must still get its turn.
+#[tokio::test(start_paused = true)]
+async fn redispatched_continuations_do_not_starve_queued_merge_work() {
+    let blockstore = Arc::new(DefraBlockstore::new(
+        Arc::new(RegolithStore::in_memory().unwrap()),
+        true,
+    ));
+    let mut roots = Vec::new();
+    for value in 0..2 {
+        let data = encode_ipld(ipld!({ "value": value }));
+        let cid = make_cid(&data);
+        blockstore.put(&cid, &data).await.unwrap();
+        roots.push(cid);
+    }
+    let transport = TestTransport::new(
+        blockstore.clone(),
+        roots[0],
+        Vec::new(),
+        RapidHashMap::new(),
+        RapidHashMap::new(),
+    );
+    let config = SyncConfig {
+        event_buffer_size: 1,
+        max_concurrent_dag_fetches: 2,
+        ..SyncConfig::default()
+    };
+    let (coordinator, mut events) = SyncCoordinator::new(transport, blockstore, config)
+        .await
+        .unwrap();
+    let metadata =
+        BlockMetadata::normal("doc", "collection", "creator", Some("remote-peer"), false);
+    for root in &roots {
+        assert!(coordinator.manager().continue_merge(root, Some(&metadata)));
+    }
+    coordinator
+        .manager()
+        .event_sender()
+        .send(merge_work())
+        .await
+        .unwrap();
+
+    let config = ReplicationConfig::default();
+    let mut continuations = 0;
+    let mut merge_work_taken = false;
+    for _ in 0..8 {
+        coordinator.dispatch_due_pending_dag_fetches_for_test(n0_future::time::Instant::now());
+        match ReplicationLoop::process_next(&coordinator, &mut events, &AlwaysYield, &config).await
+        {
+            ReplicationResult::Failed { cid, .. } if cid == make_cid(b"merge work") => {
+                merge_work_taken = true;
+                break;
+            }
+            ReplicationResult::Skipped { cid, .. } if roots.contains(&cid) => continuations += 1,
+            other => panic!("unexpected result {other:?}"),
+        }
+    }
+
+    coordinator.shutdown().await;
+
+    assert!(
+        merge_work_taken,
+        "re-dispatched continuations kept the queued merge work waiting"
+    );
+    assert_eq!(
+        continuations, 2,
+        "the merge work waited for more than one dispatch per fetch slot"
     );
 }
 

@@ -2,10 +2,12 @@
 //!
 //! Merge work (blocks to merge, completed DAGs, errors) queues on a bounded
 //! channel whose senders wait for room. The receiver clock's dispatches take
-//! a lane of their own, which the merge loop empties first: a dispatch never
-//! competes with a waiting sender for room, and never waits behind queued
-//! merge work. Model: proofs/tla/MC_SyncOwnership_Dispatch.tla
-//! (`DispatchPath`).
+//! a lane of their own, which the merge loop takes from first: a dispatch
+//! never competes with a waiting sender for room, and never waits behind more
+//! than one event of queued merge work. After as many dispatches in a row as
+//! the lane has slots, waiting merge work takes the next turn, so dispatches
+//! re-armed before every receive cannot hold it back. Model:
+//! proofs/tla/MC_SyncOwnership_Dispatch.tla (`DispatchPath`, `LaneTurns`).
 
 use std::sync::Arc;
 
@@ -35,6 +37,10 @@ impl DispatchLane {
         !self.queue.is_full()
     }
 
+    fn capacity(&self) -> usize {
+        self.queue.capacity()
+    }
+
     /// Queues `event`; `false`, dropping it, when the lane is full.
     pub(crate) fn push(&self, event: SyncEvent) -> bool {
         if self.queue.push(event).is_err() {
@@ -59,36 +65,56 @@ impl DispatchLane {
 }
 
 /// The merge loop's end of both: the clock's dispatches first, then merge
-/// work in the order it was sent.
+/// work in the order it was sent. Once the lane has had as many turns in a
+/// row as it has slots, waiting merge work goes next.
 pub struct SyncEventReceiver {
     dispatch: Arc<DispatchLane>,
     events: mpsc::Receiver<SyncEvent>,
+    /// Dispatches the lane may still hand over ahead of waiting merge work.
+    turns: usize,
 }
 
 impl SyncEventReceiver {
     pub(crate) fn new(dispatch: Arc<DispatchLane>, events: mpsc::Receiver<SyncEvent>) -> Self {
-        Self { dispatch, events }
+        let turns = dispatch.capacity();
+        Self {
+            dispatch,
+            events,
+            turns,
+        }
     }
 
     /// The next event, waiting for one; `None` once the merge-work channel
     /// is closed.
     pub async fn recv(&mut self) -> Option<SyncEvent> {
-        if let Some(event) = self.dispatch.pop() {
+        if let Ok(event) = self.try_recv() {
             return Some(event);
         }
         tokio::select! {
             biased;
-            event = self.dispatch.next() => Some(event),
-            event = self.events.recv() => event,
+            event = self.dispatch.next() => Some(self.dispatched(event)),
+            event = self.events.recv() => event.map(|event| self.merge_work(event)),
         }
     }
 
     /// The next event, if one is waiting.
     pub fn try_recv(&mut self) -> Result<SyncEvent, TryRecvError> {
-        match self.dispatch.pop() {
-            Some(event) => Ok(event),
-            None => self.events.try_recv(),
+        if self.turns > 0 || self.events.is_empty() {
+            if let Some(event) = self.dispatch.pop() {
+                return Ok(self.dispatched(event));
+            }
         }
+        self.events.try_recv().map(|event| self.merge_work(event))
+    }
+
+    fn dispatched(&mut self, event: SyncEvent) -> SyncEvent {
+        self.turns = self.turns.saturating_sub(1);
+        event
+    }
+
+    fn merge_work(&mut self, event: SyncEvent) -> SyncEvent {
+        self.turns = self.dispatch.capacity();
+        event
     }
 }
 
