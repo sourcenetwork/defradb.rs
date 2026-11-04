@@ -6,9 +6,12 @@
 \* crates/p2p/src/sync/manager/process/pending_dag.rs (try_insert_pending_dag), the
 \* durable one in crates/p2p/src/sync/pending_store/store.rs (register), the hub's view
 \* of it in crates/p2p/src/sync/pending_store/view.rs (PersistedView), the Processed
-\* outcome of process_block_inner, and the reply seams in
+\* outcome of process_block_inner, the peer's share in
+\* crates/p2p/src/sync/pending_store/shares.rs, and the reply seams in
 \* crates/p2p/src/sync/coordinator/event_handler/pushlog.rs.
-\* Rust test: crates/p2p/tests/unit/durable_only_ack.rs.
+\* Rust tests: crates/p2p/tests/unit/durable_only_ack.rs, crates/p2p/tests/unit/durable_share.rs
+\* poison_peer_cannot_fill_durable_cap, pending_store/tests.rs
+\* a_registration_beside_another_of_its_peer_is_refused_at_the_share.
 \*
 \* THE STORY: a pusher sends the hub one head block at a time. The hub either merges
 \* the head, registers it as pending (it owns fetching the rest of its DAG), or nacks
@@ -42,10 +45,20 @@
 \* nacks a head whose record is durable; the reply seams map that nack to RATE_LIMITED, and
 \* the sender parks the hub for it.
 \*
+\* THE PEER'S SHARE: the store holds at most Quota durable records of one announcing peer
+\* (max_persisted_pending_per_peer), in either tier, and nacks a head past it
+\* (PendingDagCapacity) while the sender keeps its marker. A head that links the scope's
+\* current head takes over its record and needs no more of the share. The store counts the
+\* peer's records in the registration's own transaction (shares.rs: a validated read of the
+\* peer's count), so the check and the record are one step. A check that reads the view's
+\* count (PersistedView::source_count) and leaves the store to write the record passes every
+\* registration of the peer that commits while the view lags, and the peer holds more than
+\* its share: its records that never resolve then fill the store.
+\*
 \* THE INVARIANT: every head the pusher was told succeeded is reachable from what the
 \* hub holds: a pending head or a merged one, or an ancestor of one.
 \*
-\* Three knobs:
+\* Four knobs:
 \*   ReplyMode = "NackOnFull"    - capacity overflow nacks; the pusher retries. [GREEN]
 \*             = "SuccessOnFull" - overflow drops the head and acks success. [RED]
 \*   CoverRule = "Parent"        - a head retires the current head only when it links
@@ -56,8 +69,14 @@
 \*                                 for this push (Processed::DurablyRegistered). [GREEN]
 \*             = "View"          - the guard reads only the view, which may not show that
 \*                                 record yet: a head the hub owns is nacked. [RED]
+\*   QuotaMode = "Store"         - the share is checked against the durable records, in the
+\*                                 registration's transaction (shares.rs held). [GREEN]
+\*             = "View"          - the share is checked against the view before the store
+\*                                 writes the record: registrations past it pass. [RED]
 \*
-\* Abstractions: the pusher is one per-head ack/retry record; heads of different
+\* Abstractions: the heads are one announcing peer's pushes, which its share and the
+\* global capacity both bound; other peers' pushes contend only for the global capacity,
+\* so they are left out. The pusher is one per-head ack/retry record; heads of different
 \* scopes are independent. HOW a push comes to have missing links is abstracted:
 \* HubComplete models an arrival whose DAG is already complete, HubAdmit/HubOverflow*
 \* one that is not. Merging a head merges its whole DAG, so its ancestors' pending
@@ -74,9 +93,11 @@ CONSTANTS
   ScopeOf,     \* [Heads -> scopes]: each head's sender scope
   Cap,         \* admission capacity: SyncConfig::max_pending_dags with no durable store; with one, the
                \* durable tier (a full map admits on the record alone, MC_SyncOwnership_Memory)
+  Quota,       \* durable records the pushing peer may hold: max_persisted_pending_per_peer
   ReplyMode,   \* "NackOnFull" | "SuccessOnFull"
   CoverRule,   \* "Parent" | "Priority"
-  GuardMode    \* "Committed" | "View"
+  GuardMode,   \* "Committed" | "View"
+  QuotaMode    \* "Store" | "View"
 
 \* NoHead stands for "the scope has no current head"; it is never a real head.
 NoHead == 0
@@ -85,10 +106,14 @@ ASSUME Heads # {} /\ Heads \subseteq Nat /\ NoHead \notin Heads
 ASSUME Parent \in [Heads -> SUBSET Heads]
 ASSUME Prio \in [Heads -> Nat]
 ASSUME Cap \in Nat /\ Cap >= 1
+\* The peer may hold at least one record and at most every slot.
+ASSUME Quota \in 1..Cap
 ASSUME ReplyMode \in {"NackOnFull", "SuccessOnFull"}
 ASSUME CoverRule \in {"Parent", "Priority"}
 \* The guard knob takes one of its named values.
 ASSUME GuardMode \in {"Committed", "View"}
+\* The share knob takes one of its named values.
+ASSUME QuotaMode \in {"Store", "View"}
 
 \* The sender scopes that any head belongs to.
 Scopes == {ScopeOf[h] : h \in Heads}
@@ -177,6 +202,14 @@ NextCur(h) ==
   IF c = NoHead \/ Retires(h) # NoHead \/ ~Before(h, c) THEN h ELSE c
   \* h takes over when there is none, when h retires it, or when h is newer.
 
+\* The peer's records the share is checked against: the durable records the registration's
+\* transaction reads (Store), or the view (View).
+Counted == IF QuotaMode = "Store" THEN pending ELSE view
+
+\* The peer may take a record for h: h takes over the record of the head it retires, or
+\* the peer holds fewer records than its share, as the check counts them.
+ShareRoom(h) == Retires(h) # NoHead \/ Cardinality(Counted) < Quota
+
 \* Scopes whose current head is in gone lose it.
 ClearCur(gone) == [s \in Scopes |-> IF cur[s] \in gone THEN NoHead ELSE cur[s]]
 
@@ -243,7 +276,9 @@ Admissible(h) ==
   /\ ~Covered(h)
   \* nor treats it as covered;
   /\ (Cardinality(pending) < Cap \/ Retires(h) # NoHead)
-  \* and a slot is free, or h retires a head and takes its slot.
+  \* a slot is free, or h retires a head and takes its slot;
+  /\ ShareRoom(h)
+  \* and the peer is within its share, as the check counts it.
 
 \* The registration of h: the retired head's record goes, h's arrives, and the scope's
 \* current head moves on. The view drops the retired record; it learns of h's later
@@ -330,6 +365,24 @@ HubOverflowNack(h) ==
   /\ pusher' = [pusher EXCEPT ![h] = "retryQueued"]
   /\ UNCHANGED <<pending, merged, cur, view>>
 
+\* The peer holds its share, as the check counts it: the hub nacks (PendingDagCapacity) and
+\* registers nothing; the pusher keeps its retry record and re-pushes.
+HubShareNack(h) ==
+  /\ pusher[h] = "inflight"
+  \* the push is on the wire;
+  /\ h \notin merged
+  \* the hub has not merged h;
+  /\ h \notin pending
+  \* nor registered it;
+  /\ ~Covered(h)
+  \* nor treats it as covered;
+  /\ ~ShareRoom(h)
+  \* and the peer holds its share;
+  /\ pusher' = [pusher EXCEPT ![h] = "retryQueued"]
+  \* so the hub nacks h;
+  /\ UNCHANGED <<pending, merged, cur, view>>
+  \* and records nothing.
+
 \* The fetch completes a registered DAG and it merges, with every ancestor
 \* (retry_pending_dag -> DagReady -> merge); records of merged ancestors go too.
 Resolve(h) ==
@@ -355,6 +408,7 @@ HubReply(h) ==
   \/ HubAdmitDurableOnly(h)
   \/ HubOverflowSuccess(h)
   \/ HubOverflowNack(h)
+  \/ HubShareNack(h)
 
 Next ==
   \E h \in Heads :
@@ -400,6 +454,10 @@ INV_AckedHeadReachable ==
 \* registered on its durable record alone before the view shows that record.
 INV_NackImpliesUnregistered ==
   \A h \in Heads : pusher[h] = "retryQueued" => h \notin pending
+
+\* The peer never holds more durable records than its share. View violates this: two pushes
+\* of the peer both pass a check against a view that shows neither record yet.
+INV_PeerQuota == Cardinality(pending) <= Quota
 
 \* Liveness (GREEN, under FairSpec): with overflow nacked and every acked head
 \* reachable, every pushed head eventually merges.

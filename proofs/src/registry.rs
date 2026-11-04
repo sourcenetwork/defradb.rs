@@ -704,15 +704,34 @@ pub const PROPERTIES: &[Property] = &[
         // acknowledged on its durable record alone and joins the rotation,
         // instead of being nacked while the store has room, which left the
         // obligation with the sender for as long as the map stayed full.
-        // Each peer holds at most its share of the durable records, so one
-        // peer's never-serving roots cannot fill the store and leave every
-        // other peer nacked. Fairness is per scheduler: each sending peer's
-        // retry ledger and the receiver's answers to that peer, never a scope.
+        // Each peer holds at most its share of the durable records, counted
+        // by the store in each registration's own transaction, so one peer's
+        // never-serving roots cannot fill the store and leave every other
+        // peer nacked. Fairness is per scheduler: each sending peer's retry
+        // ledger and the receiver's answers to that peer, never a scope.
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "LIVE_WrittenHeadMerged / INV_DurablePeerQuota: a full map admits on the durable record within each peer's share",
         axis: Tla,
-        anchor: "crates/p2p/src/sync/manager/process/pushlog.rs process_block_inner; crates/p2p/src/sync/manager/process/pending_dag.rs durable_share_admits, admits_durable_only, max_persisted_pending_per_peer, try_insert_pending_dag; crates/p2p/src/sync/pending_store/view.rs PersistedView::source_count",
+        anchor: "crates/p2p/src/sync/manager/process/pushlog.rs process_block_inner; crates/p2p/src/sync/manager/process/pending_dag.rs durable_share_admits, admits_durable_only, max_persisted_pending_per_peer, try_insert_pending_dag; crates/p2p/src/sync/pending_store/store.rs take_new",
         model_ref: "MC_SyncOwnership_{Green_Memory,Green_TwoTierQuota,Red_MemoryOnlyAdmission,Red_NoDurablePeerQuota}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // A durable record ends only when its root merges or is quarantined:
+        // nothing times one out. A root whose provider never serves (gone or
+        // asleep for good, its blocks ACP-filtered, a key never granted, a
+        // peer whose identity rotated) keeps its record and its place in its
+        // peer's share for good, and that peer's later heads are nacked at
+        // the share. The share holds one peer's such roots to a quarter of
+        // the durable cap, so the roots of four peers still fill the store,
+        // after which every new head is nacked at the cap. Every sweep reads
+        // every record; one the map has no place for is skipped before its
+        // block is read or its DAG walked.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "Durable records have no expiry: never-serving roots hold their peer's share for good",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/pending_store/store.rs register, take_new; crates/p2p/src/sync/pending_store/shares.rs; crates/p2p/src/sync/manager/process/pending_dag.rs restored_root_fits, resync_persisted_pending_dags_inner",
+        model_ref: "MC_SyncOwnership_Green_TwoTierQuota.cfg",
         tiers: &[Boundary],
     },
     Property {
@@ -727,6 +746,18 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/p2p/src/sync/manager/process/pushlog.rs process_pushlog_with_provider_evidence, assert_pushlog_left_durable_state, process_block_inner, Processed; crates/p2p/src/sync/pending_store/store.rs register; crates/p2p/src/sync/pending_store/view.rs PersistedView::registered",
         model_ref: "MC_PushLogAdmission_{Green,Red_SuccessOnFull,Red_ViewGuard}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // The store counts a peer's durable records in the registration's own
+        // transaction, so two registrations of the peer that run at once, or
+        // that commit while the view of the durable records lags, never both
+        // pass its share. A check against the view alone lets them both pass.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_PeerQuota: each peer's share is held in the registration's transaction",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/pending_store/store.rs register, take_new; crates/p2p/src/sync/pending_store/shares.rs held, charge, hand_over, give_back; crates/p2p/src/sync/manager/process/pending_dag.rs durable_share_admits",
+        model_ref: "MC_PushLogAdmission_{Green_PeerShare,Red_ViewShare}.cfg",
         tiers: &[Boundary],
     },
     Property {

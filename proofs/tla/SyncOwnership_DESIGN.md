@@ -475,21 +475,28 @@ a key-order sweep.
   roots whose providers never serve, no durable root waits, nothing gives an
   entry up, and the head is nacked for ever.
 - Each sending peer (`PeerScopes`) holds at most `DurableQuota` durable roots
-  (`durable_share_admits`, `max_persisted_pending_per_peer`, a quarter of the
-  durable cap, as the map's per-peer quota is a quarter of the map), in either
-  tier. A head that would take its peer past it is nacked; nothing else is,
-  except at the store's own cap (`ProcessNack`). With no quota
-  (`DurableQuota = Cap`) one peer's never-serving roots fill the store and
-  every other peer's head is nacked for ever.
+  (`max_persisted_pending_per_peer`, a quarter of the durable cap, as the
+  map's per-peer quota is a quarter of the map), in either tier. A head that
+  would take its peer past it is nacked; nothing else is, except at the
+  store's own cap (`ProcessNack`). With no quota (`DurableQuota = Cap`) one
+  peer's never-serving roots fill the store and every other peer's head is
+  nacked for ever. With the quota they hold their peer's share for good: a
+  durable record ends only at a merge or a quarantine, so four peers' such
+  roots still fill the store (a Boundary row in `registry.rs`).
 - The acknowledgement of a head on its durable record alone rests on the
   record the store committed (`Processed::DurablyRegistered`), not on the
   view: `PersistedView` learns of a commit in commit-receipt order, which an
   earlier commit's hook on the same store holds back past the reply.
   `MRegisterDurable` registers and acknowledges in one step for that reason;
-  `PushLogAdmission.tla` (`GuardMode`) checks the guard itself. The share
-  check reads the view's `source_count`, so registrations of one peer whose
-  events have not gone out yet can pass it together; the model checks it
-  against the durable set in one step, and the store's slots bound the total.
+  `PushLogAdmission.tla` (`GuardMode`) checks the guard itself. The store
+  holds the quota in the registration's own transaction: it reads the peer's
+  count of records (`pending_store/shares.rs`), validated, and writes the
+  record and the count together, so the model checks the quota against the
+  durable set in the registration's step. Admission also reads the view's
+  `source_count` first (`durable_share_admits`) to nack most heads past the
+  share before the map takes an entry; registrations of one peer whose events
+  have not gone out yet pass that check together, and the store refuses those
+  past the share (`PushLogAdmission.tla`, `QuotaMode`).
 - The second tier ends the nacks; it bounds no wait. A root without an entry
   gets one only from the resync sweep (every 60 s, or on a peer connect),
   which walks the waiting records in key order after the cursor and gives a
