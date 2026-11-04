@@ -1,7 +1,17 @@
 ---- MODULE HeadSet ----
-\* Concurrent document/field and collection-head transitions, abstracting
-\* crates/db/src/block/heads/document.rs and builder/collection.rs over the
-\* regolith-backed store in crates/storage/src/backends/regolith.
+\* Concurrent collection-head transitions in the per-key design that preceded
+\* the head-set operator, over the regolith-backed store in
+\* crates/storage/src/backends/regolith.
+\*
+\* CORRESPONDENCE. The variables are the per-key design's. headKeys,
+\* supersedes, walked and pruned have no counterpart in the tree: a
+\* collection's heads are one value that writers only merge into
+\* (crates/db/src/block/heads.rs publish_collection_block, folded by
+\* crates/storage/src/backends/regolith/merge/head_set.rs), nothing scans a head
+\* prefix and nothing sweeps. What carries over is INV_NoWriteConflict's
+\* conclusion, that two concurrent appends both commit, which the tree reaches
+\* by blind merges instead of disjoint keys;
+\* crates/db/tests/block/heads.rs overlapping_appends_both_commit checks it.
 \*
 \* A document head's publication is recorded by its priority index entry
 \* (h/p, empty value), not by a guard key: a block publishes its head at most
