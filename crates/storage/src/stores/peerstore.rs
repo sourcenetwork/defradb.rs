@@ -1143,6 +1143,7 @@ impl<S: Store> Peerstore<S> {
             .get_retry_info(peer_id)
             .await?
             .and_then(|bytes| super::RetryInfo::from_bytes(&bytes).ok())
+            .map(|info| info.bounded_by(&self.retry_schedule))
             .unwrap_or_else(super::RetryInfo::new_initial);
         let ranges = match &retry_info.dispatch_after {
             None => vec![(Document, None, None), (CollectionCommit, None, None)],
