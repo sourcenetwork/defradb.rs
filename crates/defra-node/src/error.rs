@@ -243,6 +243,12 @@ pub enum Error {
     /// Enabling node ACP failed.
     #[error("failed to enable node ACP: {0}")]
     NodeAcpEnable(#[source] db::nac::Error),
+
+    #[error("node access control is not enabled")]
+    NodeAcpUnavailable,
+
+    #[error("node access control permission grant failed")]
+    NodeAcpGrant(#[source] db::nac::Error),
     /// The at-rest encryption keys were rejected.
     #[error("invalid at-rest encryption keys: {0}")]
     InvalidAtRestKeys(#[source] storage::Error),

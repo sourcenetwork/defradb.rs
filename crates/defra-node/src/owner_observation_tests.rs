@@ -691,6 +691,8 @@ fn enabled_node_acp_gates_http_and_allows_granted_document_access() {
         let query = serde_json::json!({"query":"{ Users { _docID } }"});
         let denied = client.post(format!("{base}/graphql")).bearer_auth(&user_token).json(&query).send().await.unwrap();
         assert!(!denied.status().is_success());
+        assert!(node.grant_node_permission_as(user.did().unwrap(), user.did().unwrap(), acp::nac::NodePermission::DocumentRead).await.is_err());
+        assert!(node.grant_node_permission_as(runtime.did().unwrap(), user.did().unwrap(), acp::nac::NodePermission::DocumentRead).await.unwrap());
         for relation in ["read-document", "update-document", "add-dac-relation"] {
             let response = client.post(format!("{base}/acp/node/relationship"))
                 .bearer_auth(token(&runtime)).json(&serde_json::json!({"Relation":relation,"TargetActor":user.did().unwrap().to_string()}))

@@ -190,6 +190,7 @@ pub struct EmbeddedNode {
     block_ops: Arc<dyn BlockOps>,
     acp_ops: Arc<dyn acp_ops::AcpOps>,
     document_acp: Arc<dyn acp::DocumentACP>,
+    nac_manager: Option<Arc<dyn db::NacManagerApi>>,
     embedding_config: db::EmbeddingClientConfig,
     node_identity_did: Option<String>,
     node_query_identity: Option<identity::Did>,
@@ -523,6 +524,23 @@ impl EmbeddedNode {
                 .with_dac_bypass(false),
             None => self.node_context(),
         }
+    }
+
+    /// Grant a node operation to a DID. The supplied actor is authenticated by
+    /// the embedder; the native node policy decides whether it may delegate.
+    pub async fn grant_node_permission_as(
+        &self,
+        actor: identity::Did,
+        target: identity::Did,
+        permission: acp::nac::NodePermission,
+    ) -> Result<bool> {
+        let nac = self.nac_manager.clone().ok_or(Error::NodeAcpUnavailable)?;
+        self.on_pool(move || async move {
+            nac.add_permission_grant(&actor, &target, permission)
+                .await
+                .map_err(Error::NodeAcpGrant)
+        })
+        .await
     }
 
     /// DID used as the embedded node identity for signing, when configured.
@@ -2171,6 +2189,7 @@ impl NodeBuilder {
 
         // Assemble query runner
         let pool = database.pool().cloned();
+        let nac_manager = database.nac_manager();
         #[cfg(feature = "http")]
         let nac_adapter = database
             .nac_manager()
@@ -2280,6 +2299,7 @@ impl NodeBuilder {
             block_ops,
             acp_ops,
             document_acp,
+            nac_manager,
             embedding_config,
             node_identity_did,
             node_query_identity,
