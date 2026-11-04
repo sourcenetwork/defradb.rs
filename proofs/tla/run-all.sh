@@ -127,6 +127,15 @@ RUNS=(
   "MC_SharedRpcConnection_Red_StaleEviction.cfg SharedRpcConnection.tla RED"
   "MC_SharedRpcConnection_Red_WrongMux.cfg SharedRpcConnection.tla RED"
   "MC_SharedRpcConnection_Red_RetainedClosed.cfg SharedRpcConnection.tla RED"
+  "MC_ConnectionAdoption_Green.cfg ConnectionAdoption.tla GREEN"
+  "MC_ConnectionAdoption_Red_OpenUncounted.cfg ConnectionAdoption.tla RED"
+  "MC_ConnectionAdoption_Red_RevokeCacheOnly.cfg ConnectionAdoption.tla RED"
+  "MC_ConnectionAdoption_Red_NoRpcAdoption.cfg ConnectionAdoption.tla RED"
+  "MC_ConnectionAdoption_Red_PumpLate.cfg ConnectionAdoption.tla RED"
+  "MC_ConnectionAdoption_Red_NoCleanup.cfg ConnectionAdoption.tla RED"
+  "MC_ConnectionAdoption_Red_HitAdopts.cfg ConnectionAdoption.tla RED"
+  "MC_ConnectionAdoption_Red_PeerWide.cfg ConnectionAdoption.tla RED"
+  "MC_ConnectionAdoption_Red_NoRestore.cfg ConnectionAdoption.tla RED"
   "MC_PeerDisconnect_Green.cfg PeerDisconnect.tla GREEN" # Disconnect answers only once the peer's last connection closed
   "MC_PeerDisconnect_Red_EarlyAck.cfg PeerDisconnect.tla RED" # answering before the closes (INV_AnsweredMeansClosed)
   "MC_SchemaPublication_Green.cfg SchemaPublication.tla GREEN"
