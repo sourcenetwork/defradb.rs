@@ -23,6 +23,9 @@ mod head_provider;
 mod head_scope;
 mod manager;
 
+pub use coordinator::{
+    dag_fetcher::BLOCK_SYNC_COMPLETION_WATCHDOG, dag_retry::CLOCK_ATTEMPT_QUANTUM,
+};
 pub use manager::pending::{PENDING_DAG_TTL, PENDING_RECOVERY_WORST_CASE_SECS};
 mod merge;
 mod peer_state;

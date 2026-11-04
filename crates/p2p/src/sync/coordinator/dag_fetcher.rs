@@ -39,7 +39,7 @@ const SELECTIVE_FETCH_BATCH_SIZE: usize = 2048;
 /// Iroh bounds its request/response read at 30 seconds. The receiver owner must
 /// outlive that bound so the transport completion event, rather than a racing
 /// shorter poll window, decides when a productive CAR stream is reaped.
-pub(super) const BLOCK_SYNC_COMPLETION_WATCHDOG: Duration = Duration::from_secs(35);
+pub const BLOCK_SYNC_COMPLETION_WATCHDOG: Duration = Duration::from_secs(35);
 
 // The free refusals of one attempt together cost at most one fetch window.
 const _: () = assert!(
