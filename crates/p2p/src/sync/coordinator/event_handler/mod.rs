@@ -1584,11 +1584,14 @@ mod tests {
             let (field_cid, _) = create_lww_block(&field);
             let (root, block) =
                 create_composite_block(&format!("queued-{index}"), &field, field_cid);
+            // One source peer per root: a peer has one fetch permit fewer
+            // than there are slots, and the clock gives a root a slot only
+            // with its peer's permit (#2569), so one peer cannot fill all four.
             coordinator
                 .manager()
                 .process_pushlog(
                     &make_broadcast(&format!("queued-{index}"), root, block, "collection1"),
-                    Some("peer-1"),
+                    Some(&format!("peer-{index}")),
                     false,
                     None,
                 )
@@ -1711,12 +1714,16 @@ mod tests {
             )
             .await
             .unwrap();
-        let sender = coordinator.manager().event_sender();
-        let mut permits = Vec::new();
-        while let Ok(permit) = sender.try_reserve() {
-            permits.push(permit);
+        // The clock's dispatches take their own lane into the merge loop
+        // (#2567), so a full merge channel no longer stops them; fill the
+        // lane, one cell per fetch slot, instead.
+        let dag = coordinator.manager().pending_dag_snapshot(&root).unwrap();
+        let mut filled = 0;
+        while coordinator.manager().can_dispatch() {
+            coordinator.dispatch_pending_dag_fetch_for_test(root, &dag);
+            filled += 1;
         }
-        assert!(!permits.is_empty());
+        assert!(filled > 0);
         assert_eq!(
             coordinator.dispatch_due_pending_dag_fetches_for_test(n0_future::time::Instant::now()),
             0
@@ -1733,7 +1740,11 @@ mod tests {
                 .is_none(),
             "failed event admission must not repeatedly wake its own retry"
         );
-        drop(permits);
+        for _ in 0..filled {
+            assert!(
+                matches!(events.try_recv().unwrap(), SyncEvent::DagNeedsFetch { root_cid, .. } if root_cid == root)
+            );
+        }
         assert_eq!(
             coordinator.dispatch_due_pending_dag_fetches_for_test(n0_future::time::Instant::now()),
             1
