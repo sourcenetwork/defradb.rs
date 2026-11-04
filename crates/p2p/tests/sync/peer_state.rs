@@ -515,7 +515,7 @@ pub fn test_peer_history_records_each_sync_direction() {
     tracker.record_block_received(&peer);
     tracker.record_block_failed(&peer, "merge failed".to_string());
     std::thread::sleep(Duration::from_millis(5));
-    tracker.record_head_push_failed(&peer, "no reply within 30000ms".to_string());
+    tracker.record_head_push_failed(&peer, "no reply within 30000ms".to_string(), false);
     tracker.record_head_acked(&peer);
 
     let peer_history = history(&tracker, &peer);
@@ -541,6 +541,30 @@ pub fn test_peer_history_records_each_sync_direction() {
     assert_eq!(summary.last_block_received_at, received.last_succeeded_at);
     assert_eq!(summary.last_head_acked_at, pushed.last_succeeded_at);
     assert_eq!(Some(summary.last_seen_at), peer_history.last_seen_at);
+}
+
+/// Audit F76: a push that got no reply records the failure but does not mark
+/// the peer seen; a nack, which is a reply, does.
+#[test]
+pub fn an_unanswered_push_does_not_refresh_last_seen() {
+    let tracker = PeerStateTracker::new();
+    let peer = test_peer_id();
+    tracker.record_head_acked(&peer);
+    let seen = history(&tracker, &peer).last_seen_at;
+
+    std::thread::sleep(Duration::from_millis(5));
+    tracker.record_head_push_failed(&peer, "no reply within 30000ms".to_string(), false);
+    let timed_out = history(&tracker, &peer);
+    assert_eq!(timed_out.last_seen_at, seen);
+    let failure = timed_out
+        .heads_pushed
+        .last_failure
+        .expect("failure is recorded");
+    assert!(Some(failure.at) > seen);
+
+    std::thread::sleep(Duration::from_millis(5));
+    tracker.record_head_push_failed(&peer, "rejected by peer".to_string(), true);
+    assert!(history(&tracker, &peer).last_seen_at > Some(failure.at));
 }
 
 #[test]
