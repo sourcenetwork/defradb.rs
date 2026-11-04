@@ -169,8 +169,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             ));
         }
 
-        // Some field merges write the merged value into the document, so the
-        // index update has to start from a read taken before them.
+        // Read the document before merging fields. Some merges save the new
+        // value right away, and the index needs the old one to drop its entry.
         if let Some(collection) = context.collection.as_ref().filter(|collection| {
             pending.iter().any(|(_, _, deltas)| {
                 deltas.iter().any(|effective| {
