@@ -19,7 +19,8 @@ replicator peer. The model checks three things about those markers:
 | `BeginClear`, `FinishClear` | `clear_retry_peer_for_incarnation` reads the replicator row and incarnation in the transaction that clears retry state |
 | `Vanish` | `truncate_collection` (the pin has no purge): the document's DocID mapping is deleted |
 | `Tick` | `crates/p2p-adapter/src/retry.rs` `run_retry_pass`: a one-marker probe (`Peerstore::get_retry_page(peer, 1)`) answers "any markers?" and "due?"; only a due peer loads `get_retry_page(peer, MAX_MARKERS_PER_PEER_PASS + 1)` |
-| `NewPage`, `Rotation` | `Peerstore::load_scope_markers`: the scopes after `RetryInfo::dispatch_after`, then wrapping round, in key order |
+| `Load`, `Rotation` | `Peerstore::load_scope_markers`: at most `limit` scopes after `RetryInfo::dispatch_after`, then wrapping round, in key order |
+| `Probe`, `PageRead` | the keys `get_retry_page(peer, 1)` and `get_retry_page(peer, MAX_MARKERS_PER_PEER_PASS + 1)` read; the probe also decides `complete` after the pass |
 | `Step` | `retry_doc` in `crates/db/src/merge/push_docs.rs`; a document with no DocID mapping goes to `complete_document_retry_if_absent` before its collection is resolved |
 | end of a failed pass | `reschedule_retry_peer_for_incarnation` / `restart_retry_peer_for_incarnation` with the last marker tried, which becomes `dispatch_after` |
 | `Elapse` | `RetryInfo::is_due` once the ladder deadline passes |
@@ -37,7 +38,8 @@ Each RED turns one guard off:
   (`INV_NewRegistrationSurvivesOldAck`).
 - `Red_Readd`: a clear finishes without checking the incarnation. A clear
   begun before forget/re-add erases the re-added peer's state
-  (`INV_NewRegistrationSurvivesOldClear`).
+  (`ACT_NewRegistrationSurvivesOldClear`, a property of each `FinishClear`
+  step).
 - `Red_UnboundedReads`: the tick reads every marker before asking whether the
   peer is due. This was `run_retry_pass` before the bounded page: every two
   seconds it loaded and sorted each scheduled peer's whole marker set, then
@@ -62,6 +64,9 @@ the cursor and the page alone.
 
 ## What it leaves out
 
+- The peer is always reachable. A due pass for a peer the transport does not
+  report connected redials and replays nothing, so it keeps every marker, a
+  vanished document's too, until the peer is reachable again.
 - A marker for a live document that the peer keeps refusing, or for a peer that
   never comes back, is an obligation and is kept. Deleting the replicator is
   its terminal state.

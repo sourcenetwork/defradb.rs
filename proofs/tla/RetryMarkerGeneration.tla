@@ -13,10 +13,39 @@
 \* A document can also leave this node (purge, truncate): its marker then
 \* has nothing left to deliver.
 \* What must never happen:
-\*   - an old acknowledgement or an old clear erases a newer registration;
-\*   - one tick reads more marker keys than one page, whatever the backlog;
-\*   - the marker of a document that left this node stays forever.
-EXTENDS Naturals, Sequences, FiniteSets
+\*   - an old acknowledgement or an old clear erases a newer registration
+\*     (INV_NewRegistrationSurvivesOldAck, ACT_NewRegistrationSurvivesOldClear);
+\*   - one tick reads more marker keys than one page, whatever the backlog
+\*     (INV_SweepReadsBounded);
+\*   - the marker of a document that left this node stays forever at a peer
+\*     the sweep reaches (LIVE_VanishedMarkerDischarged).
+\* The peer is always reachable here: a pass for a peer the transport does not
+\* report connected redials and replays nothing, so it keeps every marker.
+\*
+\* Every variable is state the code holds; the properties are stated over that
+\* state, as invariants or as properties of each step, and nothing is recorded
+\* only to state them.
+\*
+\* Variables and the code state each one is (crates/storage/src/stores, and
+\* crates/p2p-adapter/src/retry.rs run_retry_pass):
+\*   present      the peer's replicator row (Peerstore::get_replicator).
+\*   incarnation  Peerstore::get_replicator_incarnation.
+\*   marker[s]    the generation stored at scope s's marker key
+\*                (RegisterScopeMarkerAttempt).
+\*   pending[s]   that marker key exists.
+\*   observed[s]  the generation the latest worker on s read before its network
+\*                I/O: the live push's, or PushRetryMarker::generation on the
+\*                sweep's page.
+\*   clearEpoch   the expected_incarnation a running
+\*                clear_retry_peer_for_incarnation was given.
+\*   clearing     that clear is running.
+\*   live[s]      s's DocID mapping exists (the lookup at the top of retry_doc).
+\*   due          RetryInfo::is_due for the peer's shared clock.
+\*   cursor       RetryInfo::dispatch_after (NoScope is None).
+\*   page         the entries of run_retry_pass's `markers` its loop has yet to
+\*                try, at most MAX_MARKERS_PER_PEER_PASS.
+\*   failed       run_retry_pass's `failed`.
+EXTENDS Naturals, Sequences
 
 CONSTANTS
   N,                 \* how many document scopes the peer can be owed; their keys are 1..N
@@ -39,34 +68,18 @@ MaxGen == 2
 \* The cursor before any pass has moved it.
 NoScope == 0
 
-VARIABLES
-  present,     \* the replicator row exists
-  incarnation, \* changes on forget and on re-add
-  marker,      \* scope -> generation of its latest registration
-  observed,    \* scope -> generation the latest worker saw before its network I/O
-  pending,     \* scope -> the durable marker exists
-  clearEpoch,  \* the incarnation a running clear began on
-  clearing,    \* a clear is running
-  staleClear,  \* witness: a clear finished across a forget/re-add
-  live,        \* scope -> the document still exists on this node
-  due,         \* the peer's shared retry clock has elapsed
-  cursor,      \* the scope the last failed pass tried last (NoScope at first)
-  page,        \* scopes the running pass still has to replay, in order
-  failed,      \* the running pass hit a marker it could not discharge
-  overRead     \* witness: a tick read more marker keys than its budget
+VARIABLES present, incarnation, marker, observed, pending, clearEpoch, clearing,
+          live, due, cursor, page, failed
 
 \* Every variable, for stuttering steps.
 vars == <<present, incarnation, marker, observed, pending, clearEpoch, clearing,
-          staleClear, live, due, cursor, page, failed, overRead>>
+          live, due, cursor, page, failed>>
 
 \* The variables only the sweep's own steps change.
-sweepVars == <<due, cursor, page, failed, overRead>>
+sweepVars == <<due, cursor, page, failed>>
 
 \* The variables only peer management changes.
-peerVars == <<present, incarnation, clearEpoch, clearing, staleClear>>
-
-\* The scopes whose durable marker exists.
-Pending == {s \in Scopes : pending[s]}
+peerVars == <<present, incarnation, clearEpoch, clearing>>
 
 \* True for a scope whose marker exists; used to filter a sequence.
 IsPending(s) == pending[s]
@@ -77,23 +90,31 @@ Rotation == [i \in 1..N |-> ((cursor + i - 1) % N) + 1]
 \* The scopes with a marker, in dispatch order.
 DueOrder == SelectSeq(Rotation, IsPending)
 
-\* The page a due pass loads: at most PageSize markers in dispatch order.
-NewPage == SubSeq(DueOrder, 1, IF Len(DueOrder) < PageSize THEN Len(DueOrder) ELSE PageSize)
+\* The first k entries of a sequence, or all of it when it is shorter.
+Prefix(seq, k) == SubSeq(seq, 1, IF Len(seq) < k THEN Len(seq) ELSE k)
+
+\* get_retry_page(peer, k): at most k markers in dispatch order. Its iterator
+\* reads one marker key per marker it returns.
+Load(k) == Prefix(DueOrder, k)
+
+\* What a tick loads before it asks "due?", and the pass loads again at its end
+\* to decide `complete`: get_retry_page(peer, 1). With BoundedSweep off it is
+\* get_retry_documents, which returns every marker.
+Probe == IF BoundedSweep THEN Load(1) ELSE DueOrder
+
+\* The marker keys a due tick reads after its probe: one page and one more
+\* marker that tells whether the page was cut short. With BoundedSweep off the
+\* probe already holds every marker, and the pass replays from it.
+PageRead == IF BoundedSweep THEN Load(PageSize + 1) ELSE <<>>
+
+\* What a due tick holds for its pass (`markers`).
+Held == IF BoundedSweep THEN PageRead ELSE Probe
+
+\* Whether this tick's peer has markers and its clock is due.
+Runs == due /\ Probe # <<>>
 
 \* The scopes a sequence names.
 Range(seq) == {seq[i] : i \in DOMAIN seq}
-
-\* Marker keys a tick may read: one existence probe, plus, when the peer is due,
-\* one page and one more key that tells whether the page was cut short.
-Budget == 1 + (IF due THEN PageSize + 1 ELSE 0)
-
-\* Marker keys a tick does read. Bounded: the probe, then a page only when due.
-\* Unbounded (the code before this change): every marker, before asking "due?".
-Reads == IF BoundedSweep
-           THEN IF Pending = {} THEN 0
-                ELSE 1 + (IF due THEN IF Len(DueOrder) > PageSize THEN PageSize + 1 ELSE Len(DueOrder)
-                          ELSE 0)
-           ELSE Cardinality(Pending)
 
 \* At the start every scope is dirty at generation 0, the peer is present, its
 \* clock is due, and no pass is running.
@@ -104,13 +125,11 @@ Init == /\ present = TRUE
         /\ pending = [s \in Scopes |-> TRUE]
         /\ clearEpoch = 0
         /\ clearing = FALSE
-        /\ staleClear = FALSE
         /\ live = [s \in Scopes |-> TRUE]
         /\ due = TRUE
         /\ cursor = NoScope
         /\ page = <<>>
         /\ failed = FALSE
-        /\ overRead = FALSE
 
 \* A local commit on a document that exists registers a fresh generation,
 \* even when the scope was already dirty.
@@ -137,7 +156,7 @@ Forget == /\ present
           /\ incarnation < 2
           /\ present' = FALSE
           /\ incarnation' = incarnation + 1
-          /\ UNCHANGED <<marker, observed, pending, clearEpoch, clearing, staleClear, live, sweepVars>>
+          /\ UNCHANGED <<marker, observed, pending, clearEpoch, clearing, live, sweepVars>>
 
 \* Re-add installs a new incarnation and registers every document that still exists.
 Readd == /\ ~present
@@ -147,23 +166,20 @@ Readd == /\ ~present
          /\ incarnation' = incarnation + 1
          /\ marker' = [s \in Scopes |-> IF live[s] THEN marker[s] + 1 ELSE marker[s]]
          /\ pending' = [s \in Scopes |-> pending[s] \/ live[s]]
-         /\ UNCHANGED <<observed, clearEpoch, clearing, staleClear, live, sweepVars>>
+         /\ UNCHANGED <<observed, clearEpoch, clearing, live, sweepVars>>
 
 \* A clear records the incarnation it began on before it sweeps retry state.
 BeginClear == /\ present
               /\ ~clearing
               /\ clearing' = TRUE
               /\ clearEpoch' = incarnation
-              /\ UNCHANGED <<present, incarnation, marker, observed, pending, staleClear, live, sweepVars>>
+              /\ UNCHANGED <<present, incarnation, marker, observed, pending, live, sweepVars>>
 
 \* A clear erases the peer's retry state. With the guard it finishes only for
-\* the incarnation it began on; without it, staleClear records the crossing.
+\* the incarnation it began on; without it, also across a forget/re-add.
 FinishClear == /\ clearing
                /\ clearing' = FALSE
-               /\ IF ValidatePeer
-                    THEN /\ clearEpoch = incarnation
-                         /\ staleClear' = staleClear
-                    ELSE staleClear' = (staleClear \/ (clearEpoch # incarnation))
+               /\ ValidatePeer => clearEpoch = incarnation
                /\ pending' = [s \in Scopes |-> FALSE]
                /\ observed' = marker
                /\ UNCHANGED <<present, incarnation, marker, clearEpoch, live, sweepVars>>
@@ -181,15 +197,14 @@ Recreate(s) == /\ ~live[s]
 \* Time passes until the peer's retry clock is due again.
 Elapse == /\ ~due
           /\ due' = TRUE
-          /\ UNCHANGED <<peerVars, marker, observed, pending, live, cursor, page, failed, overRead>>
+          /\ UNCHANGED <<peerVars, marker, observed, pending, live, cursor, page, failed>>
 
-\* The two-second tick for a present peer with no pass running: it is charged
-\* the keys it reads, and when the peer is due it loads one page after the
-\* cursor and records the generation of every marker on it.
+\* The two-second tick for a present peer with no pass running: it probes, and
+\* when the peer is due it replays the first PageSize markers it holds, which
+\* start after the cursor, and records the generation of every marker on them.
 Tick == /\ present
         /\ page = <<>>
-        /\ overRead' = (overRead \/ Reads > Budget)
-        /\ page' = IF due THEN NewPage ELSE <<>>
+        /\ page' = IF Runs THEN Prefix(Held, PageSize) ELSE <<>>
         /\ observed' = [s \in Scopes |-> IF s \in Range(page') THEN marker[s] ELSE observed[s]]
         /\ failed' = FALSE
         /\ UNCHANGED <<peerVars, marker, pending, live, due, cursor>>
@@ -214,7 +229,7 @@ Step == /\ page # <<>>
                 /\ failed' = nowFailed
                 /\ due' = IF rest = <<>> /\ nowFailed THEN FALSE ELSE due
                 /\ cursor' = IF rest = <<>> /\ nowFailed /\ RotateCursor THEN s ELSE cursor
-        /\ UNCHANGED <<peerVars, marker, observed, live, overRead>>
+        /\ UNCHANGED <<peerVars, marker, observed, live>>
 
 \* Any one thing can happen next.
 Next == \/ \E s \in Scopes : Register(s) \/ Observe(s) \/ Ack(s) \/ Vanish(s) \/ Recreate(s)
@@ -237,23 +252,23 @@ TypeOK == /\ present \in BOOLEAN
           /\ pending \in [Scopes -> BOOLEAN]
           /\ clearEpoch \in 0..2
           /\ clearing \in BOOLEAN
-          /\ staleClear \in BOOLEAN
           /\ live \in [Scopes -> BOOLEAN]
           /\ due \in BOOLEAN
           /\ cursor \in 0..N
           /\ Len(page) <= PageSize /\ Range(page) \subseteq Scopes
           /\ failed \in BOOLEAN
-          /\ overRead \in BOOLEAN
 
 \* An old acknowledgement never removed newer work: a scope without a marker
 \* was last seen at its current generation.
 INV_NewRegistrationSurvivesOldAck == \A s \in Scopes : pending[s] \/ marker[s] = observed[s]
 
-\* A clear that crossed a forget/re-add never finished.
-INV_NewRegistrationSurvivesOldClear == ~staleClear
+\* A clear that began before a forget/re-add never finishes.
+ACT_NewRegistrationSurvivesOldClear == [][FinishClear => clearEpoch = incarnation]_vars
 
-\* No tick ever read more marker keys than one probe plus, when due, one page.
-INV_SweepReadsBounded == ~overRead
+\* What the sweep reads never grows with the backlog: the probe a tick reads
+\* before "due?", which is also the probe that ends a pass, is one marker key,
+\* and what a due tick reads after it is one page and one more key.
+INV_SweepReadsBounded == Len(Probe) <= 1 /\ Len(PageRead) <= PageSize + 1
 
 \* A marker whose document left this node, at a present peer, is eventually
 \* discharged, unless the document comes back or the peer is forgotten.
