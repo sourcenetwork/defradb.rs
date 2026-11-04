@@ -1,6 +1,7 @@
 //! Shared helpers for the chunk tests.
 #![allow(dead_code)]
 
+use integration_test::actions::{Actions, AddCollection};
 use integration_test::DefraClient;
 use serde_json::Value;
 
@@ -100,4 +101,12 @@ pub fn visible_hashes(client: &DefraClient, identity: Option<&str>) -> Vec<Strin
 
 pub fn first_doc_id(data: &Value, key: &str) -> String {
     data[key][0]["_docID"].as_str().expect("docID").to_string()
+}
+
+pub fn add_article_collection() -> Actions {
+    AddCollection {
+        sdl: SCHEMA.into(),
+        ..Default::default()
+    }
+    .into()
 }

@@ -1,20 +1,19 @@
-#[path = "chunk/access_local.rs"]
-mod access_local;
-#[path = "chunk/backup.rs"]
-mod backup;
-#[path = "chunk/concurrency.rs"]
-mod concurrency;
-#[path = "chunk/declaration.rs"]
-mod declaration;
-#[path = "chunk/lifecycle.rs"]
-mod lifecycle;
-#[path = "chunk/locality.rs"]
-mod locality;
-#[path = "chunk/protection.rs"]
-mod protection;
-#[path = "chunk/replication.rs"]
-mod replication;
-#[path = "chunk/revert.rs"]
-mod revert;
-#[path = "chunk/support.rs"]
-mod support;
+#![recursion_limit = "4096"]
+
+mod chunk {
+    mod access_local;
+    mod backup;
+    mod concurrency;
+    mod declare_collection;
+    mod declare_definition;
+    mod declare_string_only;
+    mod lifecycle;
+    mod locality;
+    mod protect_api_writes;
+    mod protect_list_input;
+    mod protect_no_mutations;
+    mod protection;
+    mod replication;
+    mod revert;
+    mod support;
+}
