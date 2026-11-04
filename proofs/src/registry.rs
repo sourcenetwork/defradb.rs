@@ -92,6 +92,18 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // iroh answers Disconnect once the close has started, the Red_EarlyAck
+        // shape: connected_peers lists the peer until its stream task observes
+        // the close, so a connect_peer in that window does nothing. Callers
+        // that need the peer gone poll connected_peers.
+        family: "Peer connection observation",
+        name: "INV_AnsweredMeansClosed binds libp2p only: iroh answers Disconnect before the peer leaves connected_peers",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/endpoint_commands.rs handle_disconnect; crates/p2p-adapter/src/iroh.rs connected_peers, connect_peer",
+        model_ref: "MC_PeerDisconnect_Red_EarlyAck.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Peer connection observation",
         name: "ExplicitOnly / ExactAddress / RequestedPort / DefaultPreserved / UnavailableRefused / MappingScope / MappingDefaultsPreserved",
         axis: Tla,
@@ -132,10 +144,15 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // Revoke is API-only: revoke_selected_car_root has no production
+        // caller. A grant lasts for the life of the store, through deny/allow,
+        // purge and identity rotation, and storage grows with each distinct
+        // selected (peer, head). A grant only re-authorizes bytes already sent
+        // to that peer.
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "Selected exact peer/root authority survives cache loss, restart and time until explicit revocation",
         axis: Tla,
-        anchor: "crates/storage/src/stores/peerstore/selected_car.rs; crates/p2p/src/sync/coordinator/event_handler/car.rs",
+        anchor: "crates/storage/src/stores/peerstore/selected_car.rs revoke_selected_car_root; crates/p2p/src/sync/coordinator/event_handler/car.rs",
         model_ref: "MC_SelectedCarAuthority_{Green,Red_*}.cfg",
         tiers: &[Boundary],
     },
@@ -148,6 +165,8 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // As above: nothing in production revokes, so revoked_denied is about
+        // an API no caller uses.
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "revoked_denied / other_preserved / exact_scope",
         axis: Lean,
@@ -290,6 +309,18 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/iroh/endpoint_streams.rs handle_incoming; endpoint_rpc.rs remember_connection, connect_with_cache and evict_connection; crates/p2p/tests/iroh/shared_connection.rs",
         model_ref: "MC_SharedRpcConnection_{Green,Red_*}.cfg; MC_LegacyRpcCache_{Green,Red_*}.cfg; MC_RpcCacheEviction_{Green,Red_*}.cfg",
         tiers: &[Contract],
+    },
+    Property {
+        // When the cached RPC handle closes, its slot is left empty and the
+        // next RPC dials rather than promoting an open sibling. That is cheap
+        // only because every dialled connection is adopted and served; a
+        // sibling of unknown liveness may be a connection whose peer is gone.
+        family: "Peer connection observation",
+        name: "A closed cached RPC connection is replaced by a fresh dial, never by promoting a sibling",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/endpoint_rpc.rs connect_with_cache, evict_connection; crates/p2p/src/iroh/endpoint_streams.rs handle_connection_streams",
+        model_ref: "MC_SharedRpcConnection_{Green,Red_NoAdoption}.cfg",
+        tiers: &[Boundary],
     },
     Property {
         family: "Peer connection observation",
@@ -557,6 +588,20 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // Only sender retry markers and receiver durable pending records
+        // re-drive a head. A head nobody holds an obligation for (a gossip
+        // drop, a publish while offline, a head acknowledged then dropped)
+        // comes back only through an explicit sync_documents or
+        // BranchableSync, or a replicator re-set: there is no on-connect
+        // anti-entropy.
+        family: "DAG convergence (partition / eviction / restart)",
+        name: "INV_Converged assumes fair head rediscovery, which the embedder owns",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/event_handler/mod.rs handle_peer_connected; crates/p2p-adapter/src/retry.rs run_retry_pass",
+        model_ref: "MC_Conv_NoHeadRediscovery.cfg (RED)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "CRDT merge laws",
         // Generic CrdtField core (DefraConvergence.CrdtField): comm+assoc => the merge
         // fold is order-independent (every field). Idempotence is the dividing line:
@@ -697,6 +742,11 @@ pub const PROPERTIES: &[Property] = &[
         // held at its quota does not hold the others back. A local pull-sync
         // continuation ends at its first turn that does not yield; it is
         // never an acknowledged obligation and is promised no merge.
+        // Pull-originated roots have no durable record: a merge that fails, or
+        // a yield whose continuation is refused at map or per-peer capacity
+        // (reported Failed), is dropped, and its blocks stay unmerged until the
+        // next pull or push of the head. Callers own pull completion, and
+        // nothing re-drives these at startup.
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "LIVE_DurableRootMerged / LIVE_ContinuationEnds / INV_ContinuationsNeverAcked / INV_MemoryBounded",
         axis: Tla,
@@ -845,10 +895,36 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
-        family: "Multi-instance claim",
-        name: "INV_EventualUnique — claim CAS converges to a single winner",
+        // Rejected is assumed content-determined. Under strict (Vera) ACP a
+        // denial depends on the local relationship view, so an update whose
+        // grant has not arrived yet is quarantined for good, after its
+        // sender's marker was discharged. Local ACP cannot reach this.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_NoSilentDrop / LIVE_SoundEventuallyMerged / LIVE_PoisonQuiesces assume a rejection is content-determined",
         axis: Tla,
-        anchor: "gents:crates/gents/src/lifecycle/claim.rs:claim_inner (foreign substrate, not the defradb.rs binary)",
+        anchor: "crates/db/src/merge/acp_merge_handler.rs on_protected_update; crates/p2p/src/sync/coordinator/merge_state.rs quarantine_pending_dag",
+        model_ref: "MC_PendingDagQuarantine_{Green,Red_OvereagerQuarantine,Red_RetryForever}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // With no pending store installed a success ack is backed only in
+        // memory, and a restart loses it. Every production embedding installs
+        // a store.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_AckBacked holds only with a pending store installed",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/manager/process/pushlog.rs process_block_inner, extend_registered_root; crates/p2p/src/sync/pending_store/mod.rs",
+        model_ref: "MC_PendingDagRestart_{Green,Red_ProcessLocal}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // Per-field LWW is the DefraDB data model: fields are not atomic across
+        // a record, so a converged claim can mix different claimants' fields.
+        // Consumers fence on one field (gents: execution_generation).
+        family: "Multi-instance claim",
+        name: "INV_EventualUnique per field — each AgentRequest field converges to one LWW winner (priority, then bytes)",
+        axis: Tla,
+        anchor: "crates/crdt/src/field/lww.rs LwwField::merge; gents:crates/gents/src/request/lifecycle/claim.rs claim_inner (foreign substrate, not the defradb.rs binary)",
         model_ref: "MC_Claim_Filtered_Eventual.cfg",
         tiers: &[Boundary],
     },
@@ -877,6 +953,19 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/kms/src/defra_kms.rs serve_request; crates/kms/src/nac_dac_policy.rs",
         model_ref: "MC_Kms_Green.cfg",
         tiers: &[Behavioral, Boundary],
+    },
+    Property {
+        // A merge that needs a DEK fetches it inline on the serial merge
+        // executor, blocking unrelated merges for up to RESPONSE_TIMEOUT (5 s,
+        // plus up to SUBSCRIBER_WAIT_TIMEOUT, 10 s, when no subscriber is
+        // known). KeyUnavailable is retryable, so an unauthorized replica pays
+        // this on every re-drive.
+        family: "KMS key distribution",
+        name: "LIVE_UnrelatedMergeProgress is not claimed: a merge awaiting a DEK holds the merge executor",
+        axis: Tla,
+        anchor: "crates/db/src/merge/merge_handler/dispatch.rs merge_with_retries; crates/p2p/src/kms/pubsub_transport.rs RESPONSE_TIMEOUT, SUBSCRIBER_WAIT_TIMEOUT",
+        model_ref: "MC_EncryptedLwwReplay_Green.cfg",
+        tiers: &[Boundary],
     },
     Property {
         // A write asks the KMS once per key scope: every field under document
@@ -1118,6 +1207,19 @@ pub const PROPERTIES: &[Property] = &[
         name: "INV_OnlyLegitAccepted — forged/expired/wrong-target capability rejected",
         axis: Tla,
         anchor: "crates/p2p capability replay gate",
+        model_ref: "MC_Capability_Green.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // The pending entry, its durable record across a restart, and the
+        // merge (the collection/creator check and the strict-ACP bypass) reuse
+        // the admission verdict without re-checking expiry or revocation.
+        // Only KMS key release verifies again. Revocations live in process
+        // memory and are lost on restart.
+        family: "P2P explicit-replay capability gate",
+        name: "INV_TtlCapped / INV_RevokedNeverAccepted hold at PushLog admission only",
+        axis: Tla,
+        anchor: "crates/db/src/merge/merge_handler/authorization.rs validate_explicit_replay_authorization; crates/p2p/src/explicit_replay.rs",
         model_ref: "MC_Capability_Green.cfg",
         tiers: &[Boundary],
     },
@@ -1568,6 +1670,19 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // A request shed while every rejection worker is busy is dropped. Its
+        // stream closes empty, so the requester sees Refused (CAR) or
+        // Transport (PushLog) instead of Busy, and spends free refusals, stall
+        // budget and an attempt. Retries stay bounded by DagFetchBudget and the
+        // per-root clock.
+        family: "Inbound stream admission",
+        name: "A request shed past the rejection workers is answered by a closed stream, not Busy",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/event_dispatcher.rs run_event_dispatcher, MAX_ACTIVE_REJECTIONS; crates/p2p/src/iroh/endpoint_rpc.rs CarFetchOutcome",
+        model_ref: "MC_InboundAdmission_Green.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Inbound stream admission",
         name: "acquire_conserves / release_all_restores / admit_failure_keeps_nothing",
         axis: Lean,
@@ -1648,6 +1763,17 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // A node publishes a service record only after its embedder sets a
+        // ServiceProfile, and only the CLI does. For NodeBuilder and FFI
+        // nodes LIVE_NewestReached is vacuous.
+        family: "Iroh service records",
+        name: "LIVE_NewestReached and LIVE_Found assume the embedder sets a ServiceProfile",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/records/task.rs Records::renew; crates/cli/src/commands/start/server_p2p/iroh.rs",
+        model_ref: "MC_ServiceRecords_Green.cfg / MC_ProviderLookup_Green.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Depth-cut DAG fetch",
         name: "INV_HistoryNotResent / INV_RoundsLogarithmic / LIVE_Completes",
         axis: Tla,
@@ -1664,16 +1790,55 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
-        family: "Reply-driven DAG fetch",
-        name: "INV_OneFetchPerRoot / INV_NoReplyLost",
+        // libp2p CAR bodies have one fixed total read deadline. A response
+        // slower than CAR_MAX_BYTES over that deadline fails, and the fetch
+        // falls back to Bitswap.
+        family: "Depth-cut DAG fetch",
+        name: "LIVE_Completes on libp2p assumes a CAR body arrives within the stream read deadline",
         axis: Tla,
-        anchor: "crates/p2p/src/sync/coordinator/mod.rs DagFetchLimiter::claim_root, RootKey, RootClaim; crates/p2p/src/sync/coordinator/event_handler/doc_sync.rs handle_doc_sync_reply; crates/p2p/src/sync/coordinator/event_handler/branchable_sync.rs handle_branchable_sync_reply",
+        anchor: "crates/p2p/src/two_stream/handler/car.rs read_stream; crates/p2p/src/two_stream/runner.rs TwoStreamRunner::new",
+        model_ref: "MC_DepthCutFetch_Green.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // Clock and PushLog fetches single-flight per root in
+        // PendingDagFetchTask, separately, and may overlap a reply fetch of the
+        // same root. CAR ingest serializes the overlap (StorageContended
+        // defers it); it costs bandwidth and a limiter permit, never a head.
+        family: "Reply-driven DAG fetch",
+        name: "INV_OneFetchPerRoot per claim key (root, replier's sorted explicit-replicator collection set), reply-driven fetches only / INV_NoReplyLost",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/mod.rs DagFetchLimiter::claim_root, RootKey, RootClaim, PendingDagFetchTask; crates/p2p/src/sync/coordinator/event_handler/doc_sync.rs handle_doc_sync_reply; crates/p2p/src/sync/coordinator/event_handler/branchable_sync.rs handle_branchable_sync_reply; crates/p2p/src/sync/coordinator/event_handler/car.rs CarIngestDisposition::StorageContended; crates/p2p/src/sync/manager/process/mod.rs try_acquire_car_storage_owners",
+        model_ref: "MC_RootSingleFlight_Green.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // Pull fetches are best-effort. A reply that cannot claim its root is
+        // dropped, and the claimant tries only its replier and up to
+        // MAX_PENDING_DAG_ALTERNATE_PROVIDERS connected alternates. Deferred,
+        // Busy or no provider ends the pull with no re-drive: sync_documents
+        // and BranchableSync callers own completion.
+        family: "Reply-driven DAG fetch",
+        name: "INV_NoReplyLost assumes the running fetch reaches a holder; a pull it fails is not re-driven",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/dag_context.rs DagFetchContext::with_alternate_providers; crates/p2p/src/sync/pending_store/mod.rs MAX_PENDING_DAG_ALTERNATE_PROVIDERS; crates/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_dag",
         model_ref: "MC_RootSingleFlight_Green.cfg",
         tiers: &[Boundary],
     },
     Property {
         family: "Iroh service records",
         name: "INV_AskOnlyWhenEmpty / LIVE_Found",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/records/task.rs Records::providers, Records::on_message",
+        model_ref: "MC_ProviderLookup_Green.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // A lookup asks only when the book has no live record for the
+        // collection key. Records name holders of a collection, not of a root,
+        // so a non-holder's live record suppresses Who.
+        family: "Iroh service records",
+        name: "LIVE_Found assumes a live record's peer holds the root, not only the collection",
         axis: Tla,
         anchor: "crates/p2p/src/iroh/records/task.rs Records::providers, Records::on_message",
         model_ref: "MC_ProviderLookup_Green.cfg",
@@ -1723,6 +1888,18 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // The sweep does not read the pending-DAG store, so it reclaims the
+        // fetched blocks of a durable obligation stalled past the TTL. The
+        // model's weak fairness on Fetch assumes such a block can be fetched
+        // again.
+        family: "Orphan block sweep",
+        name: "PROP_Reclaims assumes a reclaimed unmerged block can be fetched again",
+        axis: Tla,
+        anchor: "crates/db/src/block/orphan_gc.rs DB::decide_orphans, OrphanSweepConfig::TTL",
+        model_ref: "MC_OrphanGc_Green.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Orphan block sweep",
         name: "time_value / time_short / time_long / time_legacy",
         axis: Lean,
@@ -1734,7 +1911,10 @@ pub const PROPERTIES: &[Property] = &[
         // The replication filter (#2451): asked between the merge's phases,
         // so a refused document stores nothing; a refusal skips only its own
         // event, for good, and a later commit of a refused document is refused
-        // too; a branchable collection is not filtered.
+        // too; a branchable collection is not filtered. A non-genesis commit
+        // that finds no live heads is taken to follow a refusal: that is sound
+        // only while a refusal is the only thing that leaves a document
+        // headless, and a purge or a predecessor skipped non-terminally also do.
         family: "Replication filter",
         name: "INV_RefusedNothingStored / INV_KeptMerged / INV_MergedOnce / INV_BranchableUnfiltered",
         axis: Tla,
@@ -1779,6 +1959,19 @@ pub const PROPERTIES: &[Property] = &[
         name: "INV_NoUnsolicitedAdmitted / INV_SolicitedAdmitted / INV_NoReplyStreamOnV2",
         axis: Tla,
         anchor: "crates/p2p/src/iroh/solicited.rs Solicited::expect, Solicited::take, Solicited::prune; crates/p2p/src/iroh/endpoint_streams.rs admit_stream, dispatch_stream; crates/p2p/src/iroh/endpoint_commands.rs handle_command; crates/p2p/src/iroh/endpoint_rpc.rs handle_reply_on_stream",
+        model_ref: "MC_SolicitedReplies_Green.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // Reply expectations are keyed by (peer, tag) across all of the peer's
+        // connections, and are taken before the size, budget and body checks.
+        // A concurrent mux 0.1 connection can therefore open up to that many
+        // unowed reply streams (still budgeted and matched by message id), and
+        // a reply reset for room or size loses its expectation.
+        family: "Iroh solicited replies",
+        name: "INV_NoUnsolicitedAdmitted counts expectations per (peer, tag), not per connection or reply",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/solicited.rs Solicited::expect, Solicited::take; crates/p2p/src/iroh/endpoint_streams.rs admit_stream",
         model_ref: "MC_SolicitedReplies_Green.cfg",
         tiers: &[Boundary],
     },
@@ -1849,6 +2042,18 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/p2p/src/two_stream/peer_streams.rs PeerStreams::admit, StreamAdmission; crates/p2p/src/two_stream/runner.rs TwoStreamRunner::run",
         model_ref: "MC_PeerStreamCap_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // Replies to this node's own requests arrive as inbound streams and
+        // share the per-peer cap and the max_p2p_tasks pool with requests, as
+        // in Go's rcmgr. A reply past the cap is reset and shows up as a reply
+        // timeout. libp2p only.
+        family: "Per-peer stream cap",
+        name: "INV_WithinCap counts replies with requests: a reply past the cap is reset",
+        axis: Tla,
+        anchor: "crates/p2p/src/two_stream/runner.rs TwoStreamRunner::run; crates/p2p/src/two_stream/peer_streams.rs PeerStreams::admit",
+        model_ref: "MC_PeerStreamCap_Green.cfg",
         tiers: &[Boundary],
     },
     Property {
@@ -1942,6 +2147,17 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/p2p/src/sync/manager/process/pushlog.rs process_block_inner; tools/integration-test/tests/p2p_admission.rs fan_in_pushlog_admission_no_silent_divergence",
         model_ref: "MC_PushLogAdmission_{Green,Red_SuccessOnFull}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // gate_fetched judges only roots with a resident pending record. Pulls
+        // and expired unacknowledged entries take the Walk path: their CAR is
+        // imported unchecked and refused at merge.
+        family: "Receive gate",
+        name: "INV_FetchRefusalImportsNothing holds for pushed roots only",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/receive_gate.rs SyncCoordinator::gate_fetched",
+        model_ref: "MC_ReceiveGate_Green.cfg",
         tiers: &[Boundary],
     },
 ];
