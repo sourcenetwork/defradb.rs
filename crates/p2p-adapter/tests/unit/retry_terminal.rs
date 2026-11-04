@@ -17,6 +17,7 @@ enum Vanish {
 /// document has left this node by `vanish`.
 async fn markers_after_sweep(vanish: Vanish) -> Vec<String> {
     let db = Arc::new(db::DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap());
+    db.set_network(edge::testing::edge());
     db.create_collection(schema::CollectionVersion::new(
         "Users",
         "version-users",
