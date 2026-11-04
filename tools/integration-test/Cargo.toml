@@ -126,7 +126,7 @@ path = "tests/http_contract.rs"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "696538b9e3be3be058ff159d93878264807a925d" }
 commonware-codec = "=2026.10.0"
-defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "501bff096be8a3e1de1d203f4cad0f95e8d4883a" }
+defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "f64d3f00b4e5e0d399db80af05aa8f4e5b150990" }
 crypto = { path = "../../crates/crypto" }
 document = { path = "../../crates/document" }
 edge = { path = "../../crates/edge", features = ["testing"] }
