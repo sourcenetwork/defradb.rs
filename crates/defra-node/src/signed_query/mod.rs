@@ -1,6 +1,6 @@
-//! Queries the node runs as its own signing identity.
+//! Queries a signing node runs with a resolved signer.
 //!
-//! The node's identity, signing config and batch session travel in the
+//! The acting identity, signing config and batch session travel in the
 //! request's context. A signed query runs as a task of the network runtime
 //! ([`Edge::spawn`]), so it keeps running if its caller stops waiting.
 
@@ -13,6 +13,8 @@ use query::{QueryExecutor, QueryRequest, QueryResponse, TransactionHandle};
 #[cfg(test)]
 mod tests;
 
+/// `request` run as the node identity `node_did`, signing with
+/// `signing_config`.
 pub(super) async fn execute_with_signing_context(
     edge: &Edge,
     executor: Arc<dyn QueryExecutor>,
@@ -21,12 +23,21 @@ pub(super) async fn execute_with_signing_context(
     signing_config: SigningConfig,
     node_did: String,
 ) -> QueryResponse {
-    let batch_session = Some(signing_config.public_key_hex.clone());
-    request.context = request
-        .context
-        .with_identity(Some(node_did))
-        .with_signing(Some(signing_config))
-        .with_batch_session(batch_session);
+    request.context = request.context.with_identity(Some(node_did));
+    execute_signed(edge, executor, request, txn_handle, signing_config).await
+}
+
+/// `request` run as the identity its context acts as, signing with
+/// `signing_config`. Its signatures are prepared on this network-runtime
+/// task, outside database workers.
+pub(super) async fn execute_signed(
+    edge: &Edge,
+    executor: Arc<dyn QueryExecutor>,
+    mut request: QueryRequest,
+    txn_handle: Option<TransactionHandle>,
+    signing_config: SigningConfig,
+) -> QueryResponse {
+    request.context = request.context.with_signing_session(Some(signing_config));
     let context = request.context.clone();
     edge.spawn(context.mirror(async move {
         match txn_handle {
