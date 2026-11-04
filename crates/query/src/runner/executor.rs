@@ -230,6 +230,20 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
             .await
     }
 
+    async fn add_actor_relationship_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        actor: identity::Did,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+        target: identity::Did,
+    ) -> Result<bool> {
+        self.add_actor_relation(context, handle, actor, collection, doc_id, relation, target)
+            .await
+    }
+
     async fn observe_document_visibility_in_txn(
         &self,
         context: RequestContext,

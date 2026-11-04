@@ -434,6 +434,17 @@ pub trait TransactionContext: MaybeSendSync {
         None
     }
 
+    /// Schedule a subscription re-evaluation after a relationship commits.
+    fn notify_relationship_on_commit(
+        &self,
+        _collection_id: &str,
+        _doc_id: &str,
+    ) -> crate::error::Result<()> {
+        Err(crate::error::QueryError::execution(
+            "transactional relationship notifications are unavailable",
+        ))
+    }
+
     /// Get transaction-scoped projection for external ACP registration writes.
     fn acp_registration_projection(&self) -> Option<Arc<AcpRegistrationProjection>> {
         None

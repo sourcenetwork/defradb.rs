@@ -13,7 +13,7 @@ use query::fetcher::CollectionProvider;
 use query::mutator::DocMutator;
 use query::runner::DocFetcher;
 use query::txn::{AcpRegistrationProjection, TransactionContext};
-use storage::corekv::Store;
+use storage::corekv::{OnCommit, Store};
 
 use crate::collection::provider::TxnCollectionProvider;
 use crate::database::DB;
@@ -82,6 +82,42 @@ impl<S: Store + 'static> TransactionContext for DbTransactionContext<S> {
     fn collection_provider(&self) -> Option<Arc<dyn CollectionProvider>> {
         let txn = self.txn.upgrade()?;
         Some(Arc::new(TxnCollectionProvider::new(self.db.clone(), &txn)))
+    }
+
+    fn notify_relationship_on_commit(
+        &self,
+        collection_id: &str,
+        doc_id: &str,
+    ) -> query::error::Result<()> {
+        let Some(bus) = self.db.event_bus().cloned() else {
+            return Ok(());
+        };
+        let txn = self.txn.upgrade().ok_or_else(|| {
+            query::error::QueryError::execution("transaction is no longer active")
+        })?;
+        let db = self.db.clone();
+        let collection_id = collection_id.to_owned();
+        let doc_id = doc_id.to_owned();
+        txn.on_commit(OnCommit::Async(Box::new(move || {
+            Box::pin(async move {
+                match crate::block::reader::read_latest_composite_block(&db, &doc_id).await {
+                    Ok(result) => bus.publish(events::Message::update(events::Update::new(
+                        doc_id,
+                        result.cid,
+                        collection_id,
+                        result.block,
+                        false,
+                        false,
+                    ))),
+                    Err(error) => tracing::warn!(
+                        doc_id,
+                        error,
+                        "failed to publish document update after transactional DAC grant"
+                    ),
+                }
+            })
+        })))
+        .map_err(|error| query::error::QueryError::execution(error.to_string()))
     }
 
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]

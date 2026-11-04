@@ -172,6 +172,29 @@ impl QueryExecutor for PooledExecutor {
             .await
     }
 
+    async fn add_actor_relationship_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        actor: identity::Did,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+        target: identity::Did,
+    ) -> Result<bool> {
+        self.inner
+            .add_actor_relationship_in_txn(
+                context.or_ambient(),
+                handle,
+                actor,
+                collection,
+                doc_id,
+                relation,
+                target,
+            )
+            .await
+    }
+
     async fn observe_document_visibility_in_txn(
         &self,
         context: RequestContext,

@@ -12,6 +12,7 @@
 
 use axum::{
     extract::{Path, State},
+    http::HeaderMap,
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -266,6 +267,7 @@ pub async fn decide_doc_access(
 pub async fn add_doc_relationship(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
     Json(body): Json<DocRelationshipRequest>,
 ) -> Result<Json<DocRelationshipResponse>, HttpError> {
     require_permission(&state, &identity, NodePermission::DacRelationAdd).await?;
@@ -275,6 +277,29 @@ pub async fn add_doc_relationship(
         .ok_or_else(|| HttpError::BadRequest("identity required for document ACP".into()))?;
 
     validate_add_doc_relationship(&body)?;
+    if let Some(txn_id) = crate::handlers::txn_header::txn_id_from_headers(&headers)? {
+        let handle = txn_id
+            .parse()
+            .map_err(|_| HttpError::BadRequest("invalid transaction id".into()))?;
+        let target = identity::Did::new(&body.target_actor)
+            .map_err(|error| HttpError::BadRequest(error.to_string()))?;
+        let added = state
+            .executor
+            .add_actor_relationship_in_txn(
+                identity.context(),
+                &handle,
+                requestor.clone(),
+                &body.collection,
+                &body.doc_id,
+                &body.relation,
+                target,
+            )
+            .await
+            .map_err(|error| HttpError::BadRequest(error.to_string()))?;
+        return Ok(Json(DocRelationshipResponse {
+            existed_already: !added,
+        }));
+    }
     let doc_acp = bound(state.require_doc_acp()?, &identity.context());
     Ok(Json(
         apply_add_doc_relationship(doc_acp.as_ref(), requestor, &body).await?,

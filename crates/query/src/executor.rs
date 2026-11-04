@@ -480,6 +480,24 @@ pub trait QueryExecutor: MaybeSendSync {
         ))
     }
 
+    /// Add an actor relationship in the same transaction as its document.
+    /// The caller authenticates `actor`; the handle remains owned by `context`.
+    async fn add_actor_relationship_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        actor: Did,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+        target: Did,
+    ) -> Result<bool> {
+        let _ = (context, handle, actor, collection, doc_id, relation, target);
+        Err(crate::error::QueryError::execution(
+            "transaction-bound relationship writes are unsupported",
+        ))
+    }
+
     /// Check known documents as `actor` in the owning principal's transaction.
     /// The transaction principal must independently hold node read permission;
     /// document and application read checks always use `actor`. Native callers

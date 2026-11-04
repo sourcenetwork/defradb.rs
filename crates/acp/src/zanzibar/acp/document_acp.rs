@@ -40,6 +40,25 @@ impl<S: ZanzibarStore + ?Sized + 'static> DocumentACP for ZanzibarDocumentACP<S>
         ))))
     }
 
+    async fn validate_declared_relation(
+        &self,
+        policy_id: &str,
+        resource: &str,
+        relation: &str,
+    ) -> Result<()> {
+        let policy = self
+            .store
+            .get_policy(policy_id)
+            .await?
+            .ok_or_else(|| Error::InvalidPolicy(format!("policy '{policy_id}' not found")))?;
+        if policy.get_relation(resource, relation).is_none() {
+            return Err(Error::InvalidRelation(format!(
+                "relation '{relation}' is not declared on '{resource}'"
+            )));
+        }
+        Ok(())
+    }
+
     async fn register_doc_object(
         &self,
         identity: &Did,

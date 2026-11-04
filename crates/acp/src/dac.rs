@@ -57,6 +57,18 @@ pub trait DocumentACP: MaybeSendSync {
         true
     }
 
+    /// Confirm a declared relationship using this provider's current snapshot.
+    async fn validate_declared_relation(
+        &self,
+        _policy_id: &str,
+        _resource: &str,
+        _relation: &str,
+    ) -> Result<()> {
+        Err(Error::UnsupportedSubject(
+            "transactional relationship validation".into(),
+        ))
+    }
+
     /// Register a document with creator as owner.
     ///
     /// This is called when a document is created with an identity.

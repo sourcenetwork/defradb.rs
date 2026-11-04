@@ -157,4 +157,103 @@ where
             .await
             .map_err(|error| QueryError::execution(error.to_string()))?
     }
+    pub(super) async fn add_actor_relation(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        actor: Did,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+        target: Did,
+    ) -> Result<bool> {
+        if collection.is_empty() || doc_id.is_empty() || relation.is_empty() {
+            return Err(QueryError::parse(
+                "collection, document and relationship are required",
+            ));
+        }
+        if !self
+            .nac
+            .check_permission(&actor, acp::nac::NodePermission::DacRelationAdd)
+            .await
+        {
+            return Err(QueryError::execution(
+                "node permission for relationship creation denied",
+            ));
+        }
+        let context = context.or_ambient();
+        let runner = self.for_request(context.clone());
+        let collection = collection.to_owned();
+        let doc_id = doc_id.to_owned();
+        let relation = relation.to_owned();
+        let job = txn_job(move |turn| {
+            Box::pin(async move {
+                if turn.is_readonly() {
+                    return Err(QueryError::execution(
+                        "relationship requires a writable transaction",
+                    ));
+                }
+                turn.begin_statement()
+                    .map_err(|error| QueryError::execution(error.to_string()))?;
+                let result: Result<bool> = async {
+                    let ctx = turn
+                        .context()
+                        .map_err(|error| QueryError::execution(error.to_string()))?;
+                    let acp = ctx
+                        .doc_fetcher()
+                        .transaction_acp(runner.acp.clone())
+                        .await?
+                        .ok_or_else(|| {
+                            QueryError::execution("transaction-bound authorization is unavailable")
+                        })?;
+                    let provider = ctx.collection_provider().ok_or_else(|| {
+                        QueryError::execution("transaction schema observation is unavailable")
+                    })?;
+                    let definition = provider
+                        .get_collection(&collection)
+                        .await?
+                        .ok_or_else(|| QueryError::collection_not_found(&collection))?;
+                    let policy = definition.policy.as_ref().ok_or_else(|| {
+                        QueryError::execution("collection has no document policy")
+                    })?;
+                    acp.validate_declared_relation(&policy.id, &policy.resource_name, &relation)
+                        .await
+                        .map_err(|error| QueryError::execution(error.to_string()))?;
+                    if !acp
+                        .is_doc_registered(&policy.id, &policy.resource_name, &doc_id)
+                        .await
+                        .map_err(|error| QueryError::execution(error.to_string()))?
+                    {
+                        return Err(QueryError::execution(
+                            "document is not registered with its policy",
+                        ));
+                    }
+                    let added = acp
+                        .add_actor_relationship(
+                            &actor,
+                            &target,
+                            &policy.id,
+                            &policy.resource_name,
+                            &doc_id,
+                            &relation,
+                            &[],
+                        )
+                        .await
+                        .map_err(|error| QueryError::execution(error.to_string()))?;
+                    if added {
+                        ctx.notify_relationship_on_commit(&definition.collection_id, &doc_id)?;
+                    }
+                    Ok(added)
+                }
+                .await;
+                turn.end_statement(result.is_ok())
+                    .map_err(|error| QueryError::execution(error.to_string()))?;
+                result
+            })
+        });
+        self.registry
+            .run_as(&context, handle, self.deadline(), job)
+            .await
+            .map_err(|error| QueryError::execution(error.to_string()))?
+    }
 }

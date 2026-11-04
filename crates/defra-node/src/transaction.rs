@@ -70,6 +70,30 @@ impl EmbeddedTransaction<'_> {
 }
 
 impl EmbeddedNode {
+    /// Add a document relationship in the same transaction as its document.
+    /// In-process callers authenticate the supplied actor at their own boundary.
+    pub async fn add_dac_actor_relationship_in_txn(
+        &self,
+        handle: &TransactionHandle,
+        actor: identity::Did,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+        target: identity::Did,
+    ) -> query::error::Result<bool> {
+        self.runner()
+            .add_actor_relationship_in_txn(
+                self.node_context(),
+                handle,
+                actor,
+                collection,
+                doc_id,
+                relation,
+                target,
+            )
+            .await
+    }
+
     /// Read authenticated owners in the same explicit transaction as its rows.
     /// The node remains the transaction actor. A supplied document-read identity
     /// follows the ordinary GraphQL permission path; it does not borrow another
