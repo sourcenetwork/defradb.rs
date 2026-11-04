@@ -2169,10 +2169,27 @@ fn assert_refused_dial(result: defra_p2p_adapter::P2PResult<()>) {
             matches!(&error, defra_p2p_adapter::P2PError::Transport(reason)
                 if reason.contains("timeout")
                     || reason.contains("timed out")
-                    || reason.contains("not authorized")),
+                    || reason.contains("not authorized"))
+                || matches!(&error, defra_p2p_adapter::P2PError::Unauthorized(reason)
+                    if reason == "peer refused the connection: not authorized"),
             "refused dial failed before reaching the allowlist: {error}"
         );
     }
+}
+
+#[test]
+fn refused_dial_accepts_typed_allowlist_refusal() {
+    assert_refused_dial(Err(defra_p2p_adapter::P2PError::Unauthorized(
+        "peer refused the connection: not authorized".into(),
+    )));
+}
+
+#[test]
+#[should_panic(expected = "refused dial failed before reaching the allowlist")]
+fn refused_dial_rejects_unrelated_authorization_error() {
+    assert_refused_dial(Err(defra_p2p_adapter::P2PError::Unauthorized(
+        "local permission denied".into(),
+    )));
 }
 
 /// `Node::allow_p2p_peer` is the only reachable way to widen an
