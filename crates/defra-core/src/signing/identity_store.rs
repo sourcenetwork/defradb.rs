@@ -2,10 +2,10 @@
 //!
 //! A request names the identity that signs it by DID, so the signing keys
 //! live here, where every caller can look one up. An identity is either
-//! pinned, for the life of the process (a node's own generated identity, the
-//! CLI's), or held: each holder (an FFI identity handle, a node using that
-//! identity) takes one hold and gives it back, and the key leaves the store
-//! when the last hold goes. Two holders may name one DID, so the store
+//! pinned, for the life of the process, or held: each holder (an FFI
+//! identity handle, a node that generated or uses that identity) takes one
+//! hold and gives it back, and the key leaves the store when the last hold
+//! goes. Two holders may name one DID, so the store
 //! counts them rather than letting the first release drop the other's key.
 
 use std::sync::Arc;
@@ -65,6 +65,28 @@ pub fn hold_identity(did: &str, config: SigningConfig) {
         holds: current.holds + 1,
         config: Some(config.clone()),
     });
+}
+
+/// One hold on a DID's signing config, given back when dropped.
+#[must_use = "dropping the hold gives it back at once"]
+pub struct IdentityHold {
+    did: String,
+}
+
+impl IdentityHold {
+    /// Stores `did`'s signing config and holds it until this is dropped.
+    pub fn new(did: &str, config: SigningConfig) -> Self {
+        hold_identity(did, config);
+        Self {
+            did: did.to_owned(),
+        }
+    }
+}
+
+impl Drop for IdentityHold {
+    fn drop(&mut self) {
+        release_identity(&self.did);
+    }
 }
 
 /// Takes one more hold on `did`'s stored signing config. Answers false, and

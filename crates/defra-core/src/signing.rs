@@ -18,7 +18,7 @@ mod identity_store;
 
 pub use identity_store::{
     clear_identity_store, find_remote_signer_did, get_identity, hold_identity, release_identity,
-    retain_identity, store_identity,
+    retain_identity, store_identity, IdentityHold,
 };
 
 #[cfg(any(test, feature = "ambient"))]
@@ -623,6 +623,23 @@ mod tests {
             release_identity(did);
             assert!(get_identity(did).is_some());
             release_identity(did);
+            assert!(get_identity(did).is_none());
+
+            clear_identity_store();
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn dropping_an_identity_hold_gives_it_back() {
+        workers::block_on(async {
+            let _guard = lock_identity_store().await;
+            clear_identity_store();
+            let did = "did:key:guarded";
+            let hold = IdentityHold::new(did, make_config("guarded"));
+            assert!(get_identity(did).is_some());
+
+            drop(hold);
             assert!(get_identity(did).is_none());
 
             clear_identity_store();

@@ -80,6 +80,22 @@ fn a_node_keeps_its_identity_after_the_handle_is_freed() {
 }
 
 #[test]
+fn closing_a_node_removes_the_key_it_generated() {
+    let node = node_with(NodeInitOptions {
+        enable_signing: 1,
+        ..local_options()
+    });
+    let did = crate::state::NODES
+        .get(node, |state| state.identity_did())
+        .flatten()
+        .expect("a signing node generates an identity");
+    assert!(get_identity(&did).is_some(), "the node signs with it");
+
+    close(node);
+    assert!(get_identity(&did).is_none(), "nothing holds it any more");
+}
+
+#[test]
 fn replacing_a_node_identity_gives_back_the_old_hold() {
     let node = node_with(local_options());
     let identity = new_identity();
