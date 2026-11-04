@@ -66,9 +66,11 @@ impl<S: Store> crate::database::DB<S> {
             let commitments = schema::Commitments::of(&schema);
             let mut fld_cids = Vec::new();
             for field in &sorted {
-                if let Ok(cid) =
-                    schema::generate_field_cid_with_priority(field, 1, commitments.is_governed())
-                {
+                if let Ok(cid) = schema::generate_field_cid_with_priority(
+                    field,
+                    1,
+                    commitments.commits_field_metadata(),
+                ) {
                     fld_cids.push(cid);
                 }
             }
@@ -182,7 +184,7 @@ impl<S: Store> crate::database::DB<S> {
                 field,
                 1,
                 &[],
-                commitments.is_governed(),
+                commitments.commits_field_metadata(),
             ) {
                 Ok(block_with_cid) => {
                     blockstore

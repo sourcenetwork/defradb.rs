@@ -56,7 +56,7 @@ fn target_bound_rule_is_validated_for_direct_collection_versions() {
     assert!(invalid.validate().is_err());
     invalid = collection.clone();
     invalid.governance_root = None;
-    assert!(invalid.validate().is_err());
+    invalid.validate().unwrap();
     invalid = collection.clone();
     invalid.fields[1].immutable = false;
     assert!(invalid.validate().is_err());

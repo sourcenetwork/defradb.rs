@@ -4,8 +4,8 @@ use super::*;
 use schema::{CType, FieldKind, ScalarKind};
 
 #[test]
-fn target_bound_create_requires_a_complete_governed_local_rule() {
-    let sdl = r#"type Requests @governed(root: "root") @policy(id: "p", resource: "requests", createField: "agent_did", createTarget: "Agent", createTargetField: "did", createPermission: "invoke", createRelation: "worker", createActorField: "did") { agent_did: String @immutable }"#;
+fn target_bound_create_requires_a_complete_local_rule() {
+    let sdl = r#"type Requests @policy(id: "p", resource: "requests", createField: "agent_did", createTarget: "Agent", createTargetField: "did", createPermission: "invoke", createRelation: "worker", createActorField: "did") { agent_did: String @immutable }"#;
     let parsed = parse_sdl(sdl).unwrap();
     let policy = parsed[0].policy.as_ref().unwrap();
     let rule = policy.create_rule.as_ref().unwrap();
@@ -23,12 +23,22 @@ fn target_bound_create_requires_a_complete_governed_local_rule() {
         parsed[0].version_id,
         parse_sdl(&changed).unwrap()[0].version_id
     );
+    assert_eq!(
+        parsed[0].collection_id,
+        parse_sdl(&changed).unwrap()[0].collection_id
+    );
+    assert_ne!(parsed[0].version_id, parsed[0].collection_id);
+    let legacy =
+        r#"type Requests @policy(id: "p", resource: "requests") { agent_did: String @immutable }"#;
+    let legacy_without_policy = r#"type Requests { agent_did: String @immutable }"#;
+    assert_eq!(
+        parse_sdl(legacy).unwrap()[0].version_id,
+        parse_sdl(legacy_without_policy).unwrap()[0].version_id
+    );
+    let governed = sdl.replace("@policy(", "@governed(root: \"root\") @policy(");
+    assert!(parse_sdl(&governed).is_ok());
     for invalid in [
-        sdl.replace("@governed(root: \"root\")", ""),
-        sdl.replace(
-            "@governed(root: \"root\")",
-            "@governed(root: \"root\") @branchable",
-        ),
+        sdl.replace("@policy(", "@branchable @policy("),
         sdl.replace(" @immutable", ""),
         sdl.replace(", createPermission: \"invoke\"", ""),
         sdl.replace("createField: \"agent_did\"", "createField: 4"),

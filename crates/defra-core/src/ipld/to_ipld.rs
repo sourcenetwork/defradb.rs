@@ -335,6 +335,9 @@ impl TryFrom<&CollectionDefinitionDeltaPayload> for Ipld {
         if payload.is_branchable {
             map.insert("branchable".to_string(), Ipld::Bool(true));
         }
+        if payload.local_policy {
+            map.insert("localPolicy".to_string(), Ipld::Bool(true));
+        }
         if let Some(ref policy_cid) = payload.policy_cid {
             map.insert("policy".to_string(), Ipld::Link(*policy_cid));
         }

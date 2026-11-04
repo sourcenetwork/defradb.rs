@@ -410,7 +410,7 @@ pub(super) fn generate_collection_id(
 
     // Generate CIDs for each field definition with priority=1 (like Go does)
     // All fields use the same priority=1, not incrementing priorities
-    let governed = commitments.is_governed();
+    let governed = commitments.commits_field_metadata();
     let field_cids: Vec<Cid> = sorted_fields
         .iter()
         .filter_map(|f| schema::generate_field_cid_with_priority(f, 1, governed).ok())

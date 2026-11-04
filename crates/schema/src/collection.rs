@@ -428,14 +428,9 @@ impl CollectionVersion {
         if let Some(ref policy) = self.policy {
             policy.validate()?;
             if let Some(rule) = &policy.create_rule {
-                if self.is_branchable
-                    || self
-                        .governance_root
-                        .as_deref()
-                        .is_none_or(|root| root.trim().is_empty())
-                {
+                if self.is_branchable {
                     return Err(SchemaError::InvalidPolicy(
-                        "target-bound create requires a governed, non-branchable collection".into(),
+                        "target-bound create requires a non-branchable collection".into(),
                     ));
                 }
                 let field = self.field_by_name(&rule.input_field).ok_or_else(|| {

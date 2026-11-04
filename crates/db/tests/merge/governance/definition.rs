@@ -597,6 +597,63 @@ fn an_ungoverned_policy_link_does_not_move_the_collection_id() {
     .unwrap()
 }
 
+#[test]
+fn a_local_policy_definition_cannot_be_merged_from_a_peer() {
+    workers::block_on(async {
+        let node = Node::bare().await;
+        for branchable in [false, true] {
+            let block = Block::new(
+                CrdtDelta::CollectionDefinition(
+                    CollectionDefinitionDeltaPayload::new(1)
+                        .with_name("LocalRequests")
+                        .with_branchable(branchable)
+                        .with_local_policy(),
+                ),
+                vec![],
+                vec![],
+            );
+            let cid = block.generate_cid().unwrap();
+            let bytes = block.to_dag_cbor().unwrap();
+            assert_eq!(
+                node.handler
+                    .handle_block(
+                        &cid,
+                        &bytes,
+                        BlockMetadata::normal("", "", "peer-did", Some("peer"), false)
+                    )
+                    .await
+                    .unwrap(),
+                MergeOutcome::rejected("local-only policy commitments cannot be merged")
+            );
+            assert!(node.db.get_collection("LocalRequests").unwrap().is_none());
+        }
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_peer_patch_cannot_strip_the_local_policy_marker() {
+    workers::block_on(async {
+        let node = Node::bare().await;
+        let defined = query::parse_sdl(r#"type LocalRequests @policy(id: "p1", resource: "requests", createField: "writer", createTarget: "Agents", createTargetField: "did", createPermission: "invoke") { writer: String @immutable }"#).unwrap().remove(0);
+        node.db.create_collection(defined.clone()).await.unwrap();
+        let head: Cid = defined.version_id.parse().unwrap();
+        let block = Block::new(
+            CrdtDelta::CollectionDefinition(CollectionDefinitionDeltaPayload::new(1)),
+            vec![head],
+            vec![],
+        );
+        let cid = block.generate_cid().unwrap();
+        let bytes = block.to_dag_cbor().unwrap();
+        assert_eq!(
+            node.handler.handle_block(&cid, &bytes, BlockMetadata::normal("", "", "peer-did", Some("peer"), false)).await.unwrap(),
+            MergeOutcome::rejected("local-only policy commitments cannot be merged")
+        );
+        assert_eq!(node.db.get_collection("LocalRequests").unwrap().unwrap().schema().version_id, defined.version_id);
+        assert!(node.db.get_collection_by_version_id_full(&cid.to_string()).await.unwrap().is_none());
+    }).unwrap()
+}
+
 /// The definition block of a collection this node defined itself comes back
 /// from a peer. The record on disk is the one a restart reads, and it holds
 /// what the block cannot: that the collection is active, and for an

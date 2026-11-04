@@ -50,6 +50,27 @@ fn created(response: &defra_node::QueryResponse, name: &str) -> String {
 }
 
 #[test]
+fn local_policy_commitment_survives_creation_and_schema_patch() {
+    workers::block_on(async {
+        let node = EmbeddedNode::builder().build().await.unwrap();
+        let policy = node.add_dac_policy(OWNER, POLICY).await.unwrap();
+        node.add_collection(&format!(r#"type Agent @policy(id: "{policy}", resource: "agents") {{ did: String @index(unique: true) @immutable }}"#)).await.unwrap();
+        let sdl = format!(r#"type Requests @policy(id: "{policy}", resource: "requests", createField: "agent_did", createTarget: "Agent", createTargetField: "did", createPermission: "invoke") {{ agent_did: String @immutable }}"#);
+        let parsed = query::sdl_parse::parse_sdl(&sdl).unwrap().remove(0);
+        node.add_collection(&sdl).await.unwrap();
+        let original = node.get_collection("Requests").unwrap().unwrap();
+        assert_eq!(original.collection_id, parsed.collection_id);
+        assert_eq!(original.version_id, parsed.version_id);
+        assert_ne!(original.collection_id, original.version_id);
+        let patched = node.patch_collection("Requests", r#"[{"op":"add","path":"/Requests/Fields/-","value":{"Name":"message","Kind":"String"}}]"#).await.unwrap();
+        assert_eq!(patched.collection_id, original.collection_id);
+        assert_ne!(patched.version_id, original.version_id);
+        assert_eq!(patched.policy, original.policy);
+        assert!(patched.policy.as_ref().unwrap().create_rule.is_some());
+    }).unwrap()
+}
+
+#[test]
 fn target_bound_create_and_revoke_are_transactional() {
     workers::block_on(async {
         let node = EmbeddedNode::builder().build().await.unwrap();
@@ -60,23 +81,23 @@ fn target_bound_create_and_revoke_are_transactional() {
                 did: String @index(unique: true) @immutable
                 nonce: String @immutable
             }}
-            type Requests @governed(root: "root") @policy(id: "{policy}", resource: "requests",
+            type Requests @policy(id: "{policy}", resource: "requests",
                 createField: "agent_did", createTarget: "Agent", createTargetField: "did", createPermission: "invoke", createRelation: "working_agent", createActorField: "did") {{
                 agent_did: String @immutable
                 request_key: String @index(unique: true) @immutable
                 message: String
             }}
-            type GoalCommand @governed(root: "root") @policy(id: "{policy}", resource: "requests",
+            type GoalCommand @policy(id: "{policy}", resource: "requests",
                 createField: "target_doc", createTarget: "Agent", createTargetField: "_docID", createPermission: "invoke", createMatchField: "selected_did", createTargetMatchField: "did", createParentRelation: "parent") {{
                 target_doc: String @immutable
                 selected_did: String @immutable
             }}
-            type BadCommand @governed(root: "root") @policy(id: "{policy}", resource: "requests",
+            type BadCommand @policy(id: "{policy}", resource: "requests",
                 createField: "target_doc", createTarget: "Agent", createTargetField: "_docID", createPermission: "invoke", createParentRelation: "undeclared") {{
                 target_doc: String @immutable
             }}
             type OtherAgent @policy(id: "{other_policy}", resource: "agents") {{ did: String @immutable }}
-            type CrossCommand @governed(root: "root") @policy(id: "{policy}", resource: "requests",
+            type CrossCommand @policy(id: "{policy}", resource: "requests",
                 createField: "target_doc", createTarget: "OtherAgent", createTargetField: "_docID", createPermission: "invoke", createParentRelation: "parent") {{
                 target_doc: String @immutable
             }}"#)).await.unwrap();

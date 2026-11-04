@@ -73,7 +73,7 @@ impl<S: Store> crate::database::DB<S> {
         };
 
         // Generate CIDs only for NEW fields with priority=1 (matching Go's empty headstore)
-        let governed = schema.governance_root.is_some();
+        let governed = schema::Commitments::of(&*schema).commits_field_metadata();
         let mut field_cids: Vec<Cid> = Vec::new();
         for &idx in &new_field_indices {
             let field = &schema.fields[idx];

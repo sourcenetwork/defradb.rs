@@ -766,6 +766,29 @@ fn a_governance_root_round_trips_through_both_codecs() {
     assert_eq!(restored, delta);
 }
 
+#[test]
+fn a_local_policy_marker_round_trips_and_preserves_legacy_bytes() {
+    let bare = CollectionDefinitionDeltaPayload::new(1).with_name("Agent");
+    let marked = bare.clone().with_local_policy();
+    let bare_bytes = serde_ipld_dagcbor::to_vec(&bare).unwrap();
+    assert!(!String::from_utf8_lossy(&bare_bytes).contains("localPolicy"));
+    let bytes = serde_ipld_dagcbor::to_vec(&marked).unwrap();
+    assert_ne!(bare_bytes, bytes);
+    assert_eq!(
+        serde_ipld_dagcbor::from_slice::<CollectionDefinitionDeltaPayload>(&bytes).unwrap(),
+        marked
+    );
+    let ipld = Ipld::try_from(&marked).unwrap();
+    assert_eq!(
+        CollectionDefinitionDeltaPayload::try_from(&ipld).unwrap(),
+        marked
+    );
+    let mut invalid = BTreeMap::new();
+    invalid.insert("priority".to_string(), Ipld::Integer(1));
+    invalid.insert("localPolicy".to_string(), Ipld::String("yes".to_string()));
+    assert!(CollectionDefinitionDeltaPayload::try_from(&Ipld::Map(invalid)).is_err());
+}
+
 /// Two definitions alike but for their root must not share a CID; that is the
 /// whole point of putting the root in the identity.
 #[test]

@@ -22,8 +22,8 @@ pub struct PolicyDescription {
     #[serde(rename = "ResourceName", default)]
     pub resource_name: String,
 
-    /// Optional target-bound create permission. It is part of a governed
-    /// collection's policy commitment, not a caller-supplied preflight.
+    /// Optional target-bound create permission committed in the local schema
+    /// version, not a caller-supplied preflight.
     #[serde(
         rename = "CreateRule",
         default,

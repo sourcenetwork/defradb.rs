@@ -397,6 +397,10 @@ pub struct CollectionDefinitionDeltaPayload {
     /// version of the same collection.
     #[serde(rename = "policy", default, skip_serializing_if = "Option::is_none")]
     pub policy_cid: Option<Cid>,
+
+    /// A policy-bound local schema, never a replicated governance claim.
+    #[serde(rename = "localPolicy", default, skip_serializing_if = "is_false")]
+    pub local_policy: bool,
 }
 
 impl CollectionDefinitionDeltaPayload {
@@ -410,6 +414,7 @@ impl CollectionDefinitionDeltaPayload {
             governance_root: None,
             is_branchable: false,
             policy_cid: None,
+            local_policy: false,
         }
     }
 
@@ -446,6 +451,11 @@ impl CollectionDefinitionDeltaPayload {
     /// Set the CID over the collection's policy reference.
     pub fn with_policy_cid(mut self, policy_cid: Cid) -> Self {
         self.policy_cid = Some(policy_cid);
+        self
+    }
+
+    pub fn with_local_policy(mut self) -> Self {
+        self.local_policy = true;
         self
     }
 }

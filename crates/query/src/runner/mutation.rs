@@ -705,8 +705,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
         caller: &Option<Did>,
         fetcher: &dyn crate::fetcher::DocFetcher,
     ) -> Result<()> {
-        if collection.governance_root.is_none()
-            || collection.is_branchable
+        if collection.is_branchable
             || !collection.fields.iter().any(|field| {
                 field.name == rule.input_field
                     && field.immutable

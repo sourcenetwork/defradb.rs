@@ -14,6 +14,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         payload: &CollectionDefinitionDeltaPayload,
         _metadata: &BlockMetadata<'_>,
     ) -> Result<MergeOutcome, MergeError> {
+        // Local policy rules cannot be reconstructed safely from peer genesis.
+        if payload.local_policy {
+            return Ok(MergeOutcome::rejected(
+                "local-only policy commitments cannot be merged",
+            ));
+        }
         // The version_id is the CID of this collection definition block
         let version_id = cid.to_string();
 
@@ -57,6 +63,19 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 }
             }
         };
+
+        // A peer can omit the marker on a forged patch. Its predecessor still
+        // identifies the local-only rule, so never admit that descendant.
+        if previous.as_ref().is_some_and(|schema| {
+            schema
+                .policy
+                .as_ref()
+                .is_some_and(|policy| policy.create_rule.is_some())
+        }) {
+            return Ok(MergeOutcome::rejected(
+                "local-only policy commitments cannot be merged",
+            ));
+        }
 
         tracing::info!(
             cid = %cid,
@@ -163,6 +182,16 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 previous.as_ref().and_then(|prev| prev.policy.clone()),
                 policy_cid,
             );
+        }
+        if schema.is_branchable
+            && schema
+                .policy
+                .as_ref()
+                .is_some_and(|policy| policy.create_rule.is_some())
+        {
+            return Ok(MergeOutcome::rejected(
+                "target-bound create policies cannot be branchable",
+            ));
         }
 
         // For patched versions, set previous_version to point to the head (previous version CID)

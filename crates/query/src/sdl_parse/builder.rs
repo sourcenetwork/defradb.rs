@@ -758,15 +758,18 @@ impl<'a> SdlParser<'a> {
             is_branchable: type_def.directives.is_branchable,
             // The collection ID never carries the policy: see below.
             policy_cid: None,
+            local_policy: type_def
+                .directives
+                .policy
+                .as_ref()
+                .is_some_and(|policy| policy.create_rule.is_some()),
         };
         let collection_id = generate_collection_id(&type_def.name, &fields, headstore, commitments);
 
         // Version ID equals collection ID for new schemas (Go behavior), unless
-        // a governed collection has a policy attached: that reaches the version
-        // and not the collection, so attaching or amending one mints a new
-        // version of the same collection rather than a different collection.
-        // An ungoverned collection commits to no policy at all, and keeps the
-        // version ID it has today.
+        // a governed collection or local target-bound rule has a policy: that
+        // reaches the version and not the collection. Legacy ungoverned
+        // collections without rules keep their existing version IDs.
         let policy = type_def.directives.policy.as_ref().map(|policy_config| {
             let mut policy =
                 schema::PolicyDescription::new(&policy_config.id, &policy_config.resource);
@@ -777,9 +780,9 @@ impl<'a> SdlParser<'a> {
             .as_ref()
             .and_then(|policy| policy.create_rule.as_ref())
         {
-            if type_def.directives.is_branchable || type_def.directives.governance_root.is_none() {
+            if type_def.directives.is_branchable {
                 return Err(QueryError::parse(
-                    "target-bound create requires a governed, non-branchable collection",
+                    "target-bound create requires a non-branchable collection",
                 ));
             }
             if !fields.iter().any(|field| {
@@ -798,7 +801,7 @@ impl<'a> SdlParser<'a> {
             }
         }
         let policy_commitment = commitments
-            .is_governed()
+            .commits_field_metadata()
             .then(|| schema::policy_commitment(policy.as_ref()))
             .flatten();
         let version_id = match policy_commitment {

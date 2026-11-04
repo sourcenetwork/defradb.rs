@@ -31,13 +31,9 @@ pub struct BlockWithCid {
 /// whose history is verifiable when another's is not, is a different
 /// collection.
 ///
-/// A schema opts into carrying them by declaring a governance root. Without
-/// one, nothing here reaches the delta and every identity is byte-identical to
-/// what it was before any of this existed, whatever `@immutable` or
-/// `@branchable` the schema carries. The gate is the root because identity is
-/// derived from the schema: an opt-in that lived in node configuration would
-/// let two nodes running the same schema disagree about what a collection is,
-/// which is the failure the commitment exists to rule out.
+/// Governed schemas carry their root. A non-branchable target-bound create
+/// rule opts into local policy and field commitments without declaring a root.
+/// Schemas without either retain their legacy identities.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Commitments<'a> {
     /// The governance root claiming the collection, from `@governed`.
@@ -48,9 +44,12 @@ pub struct Commitments<'a> {
     ///
     /// **Version ID only.** The collection ID derivation leaves this unset, so
     /// attaching or amending a policy mints a new version without changing
-    /// which collection it is. Like the rest, it reaches the delta only for a
-    /// governed collection.
+    /// which collection it is. Governed schemas and local target-bound rules
+    /// carry it in the version delta.
     pub policy_cid: Option<Cid>,
+    /// A target-bound rule needs a policy/field commitment even without a
+    /// governance root. Such schemas are local only and cannot be replicated.
+    pub local_policy: bool,
 }
 
 /// The policy commitment for a collection's optional policy.
@@ -82,14 +81,31 @@ impl<'a> Commitments<'a> {
         Self {
             governance_root: version.governance_root.as_deref(),
             is_branchable: version.is_branchable,
-            policy_cid: policy_commitment(version.policy.as_ref()),
+            policy_cid: if version.governance_root.is_some()
+                || version
+                    .policy
+                    .as_ref()
+                    .is_some_and(|policy| policy.create_rule.is_some())
+            {
+                policy_commitment(version.policy.as_ref())
+            } else {
+                None
+            },
+            local_policy: version
+                .policy
+                .as_ref()
+                .is_some_and(|policy| policy.create_rule.is_some()),
         }
     }
 
-    /// Whether the schema declared a root, and so opted its identity into
-    /// committing to the rest of these.
+    /// Whether the schema declared a governance root.
     pub fn is_governed(&self) -> bool {
         self.governance_root.is_some()
+    }
+
+    /// Whether immutable field metadata is committed in the schema identity.
+    pub fn commits_field_metadata(&self) -> bool {
+        self.is_governed() || self.local_policy
     }
 }
 
@@ -250,9 +266,9 @@ pub fn generate_collection_cid_full_with_query(
 /// Helper to build a CollectionDefinitionDeltaPayload with optional fields.
 /// Build the delta a collection's identity is a CID over.
 ///
-/// The commitments enter only when the schema declared a governance root:
-/// without one the bytes are exactly what they were before governance
-/// existed, so no collection anyone has today changes identity.
+/// Legacy schemas without a governance root or target-bound create rule keep
+/// their existing bytes. A local rule adds a marker and commits its policy in
+/// the version while leaving the collection ID independent of policy contents.
 fn build_collection_delta(
     name: Option<&str>,
     priority: u64,
@@ -273,6 +289,11 @@ fn build_collection_delta(
     if let Some(root) = commitments.governance_root {
         delta = delta.with_governance_root(root);
         delta = delta.with_branchable(commitments.is_branchable);
+    }
+    if commitments.local_policy && !commitments.is_governed() {
+        delta = delta.with_local_policy();
+    }
+    if commitments.is_governed() || commitments.local_policy {
         if let Some(policy) = commitments.policy_cid {
             delta = delta.with_policy_cid(policy);
         }

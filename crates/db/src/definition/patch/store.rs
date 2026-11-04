@@ -457,7 +457,7 @@ impl<S: Store> crate::database::DB<S> {
                     field,
                     1,
                     &[],
-                    commitments.is_governed(),
+                    commitments.commits_field_metadata(),
                 ) {
                     Ok(block_with_cid) => {
                         blockstore
