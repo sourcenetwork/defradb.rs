@@ -415,7 +415,15 @@ fn rpc_dialed_connection_serves_reverse_service_request() {
             }));
 
             let direct = acceptor.endpoint.addr().ip_addrs().next().copied();
-            let forward = identity_rpc(&dialer, &acceptor.endpoint, direct, "forward").await;
+            let acceptor_id = acceptor.endpoint.id();
+            let waiter = dialer.peer_map.wait_connected(&acceptor_id);
+            futures::pin_mut!(waiter);
+            assert!(futures::poll!(&mut waiter).is_pending());
+            let (forward, connected) = futures::join!(
+                identity_rpc(&dialer, &acceptor.endpoint, direct, "forward"),
+                crate::rt::time::timeout(std::time::Duration::from_secs(2), waiter,),
+            );
+            connected.expect("an RPC-dialed connection must wake connection waiters");
             assert_eq!(
                 forward.err_message.as_deref(),
                 Some(IDENTITY_UNCONFIGURED_ERROR)
