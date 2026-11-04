@@ -287,7 +287,7 @@ pub const PROPERTIES: &[Property] = &[
         name: "Open RPC connections stay counted after cache displacement and close on revoke",
         axis: Tla,
         anchor: "crates/p2p/src/iroh/endpoint_rpc.rs close_peer_connections; crates/p2p/tests/iroh/shared_connection.rs displaced_rpc_dialed_connection_is_closed_by_revoke",
-        model_ref: "MC_ConnectionAdoption_Green.cfg; MC_ConnectionAdoption_Red_OpenUncounted.cfg",
+        model_ref: "MC_ConnectionAdoption_{Green,Red_*}.cfg",
         tiers: &[Contract],
     },
     Property {

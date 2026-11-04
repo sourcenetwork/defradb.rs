@@ -17,7 +17,7 @@
 \* handle_dial.
 EXTENDS TLC, Integers, Sequences
 \* Each switch is one safeguard; a RED configuration turns exactly one off.
-CONSTANTS AdoptRpcDial, PumpBeforeAnnounce, CleanupRefusedPump, HitSkipsAdoption, NarrowRefusal, RestoreSibling
+CONSTANTS AdoptRpcDial, PumpBeforeAnnounce, CleanupRefusedPump, HitSkipsAdoption, NarrowRefusal, RestoreSibling, CloseRetained
 \* The scenario, fixed at the start: how the connection arose, whether the
 \* allowlist admits the peer, whether tasks can still be spawned, and whether
 \* a sibling exists. A later connection may also become the sibling.
@@ -200,8 +200,8 @@ Replace == /\ Finished /\ origin = "rpc" /\ ~refused /\ open
 
 \* Revocation closes every retained handle, including a displaced sibling.
 Revoke == /\ Finished /\ ~refused /\ open
-          /\ open' = FALSE
-          /\ siblingOpen' = FALSE
+          /\ open' = IF CloseRetained \/ cached = "new" THEN FALSE ELSE open
+          /\ siblingOpen' = IF CloseRetained \/ cached = "sibling" THEN FALSE ELSE siblingOpen
           /\ cached' = "none"
           /\ UNCHANGED <<origin, allowed, registryOpen, sibling, step, cancelled, count, refused, displaced, pumped, exited, hit>>
 
@@ -212,6 +212,8 @@ Spec == Init /\ [][Next]_vars
 
 \* Every open new connection remains counted even after a sibling takes the shared slot.
 OpenIsCounted == open => count >= 1
+\* Revoking the peer closes both the cached and the displaced connection.
+RevokeClosesAll == [][Revoke => (~open' /\ ~siblingOpen')]_vars
 \* Once the adopt stops changing the slot, an open shared path has a pump serving it.
 Served == (cached = "new" /\ open /\ Idle) => pumped
 \* A closed connection with no pump left to run holds no count and no cache entry.
