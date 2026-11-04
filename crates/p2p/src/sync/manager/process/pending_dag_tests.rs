@@ -25,6 +25,8 @@ mod estimators_observe_only;
 
 #[path = "../../../../tests/unit/durable_share.rs"]
 mod durable_share;
+#[path = "../../../../tests/unit/resync_waiting_root.rs"]
+mod resync_waiting_root;
 
 fn test_cid(label: usize) -> Cid {
     Cid::new_v1(
