@@ -5,8 +5,8 @@
 //! post-merge path `handle_replicated_block` gives a first-attempt merge —
 //! fan out to this node's replicators, still subject to the replication
 //! policy's `may_send`, then mark merged. The mark discharges the root's
-//! pending record, so a fan-out that fails leaves the root unmarked for that
-//! record's re-drive to forward.
+//! pending record, so a fan-out that fails leaves the root unmarked for a
+//! later re-drive to forward: that record's, or the governance sweep's.
 
 use std::sync::Arc;
 
