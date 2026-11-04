@@ -182,7 +182,8 @@ fn two_stalled_replicators_do_not_starve_healthy_peer() {
     edge::testing::paused(|edge| async move {
         use crate::sync::{
             DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER, DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
-            DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY, DEFAULT_PUSH_SEND_TIMEOUT,
+            DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY,
+            DEFAULT_PUSH_SEND_TIMEOUT,
         };
 
         const WRITES: u8 = 50;
@@ -247,7 +248,8 @@ fn transient_transport_failure_keeps_queued_jobs_live() {
 
         use crate::sync::{
             DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER, DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
-            DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY, DEFAULT_PUSH_SEND_TIMEOUT,
+            DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY,
+            DEFAULT_PUSH_SEND_TIMEOUT,
         };
 
         const JOBS: u8 = 20;
