@@ -5,9 +5,10 @@
 //! installed, it takes the durable record alone and is acked; the resync sweep
 //! brings it into the map once an entry frees or a root that spent its
 //! dispatches gives one up. Each peer holds at most its share of the durable
-//! records (`max_persisted_pending_per_peer`): a head that would take its peer
-//! past it is nacked, as is one the full durable store has no slot for, so the
-//! sender keeps its marker. Without a store the map is the only tier.
+//! records (`max_persisted_pending_per_peer`), counted by the store in the
+//! registration's own transaction: a head that would take its peer past it is
+//! nacked, as is one the full durable store has no slot for, so the sender
+//! keeps its marker. Without a store the map is the only tier.
 //!
 //! When neither tier has a place, a push is acked only when it costs no new slot: a
 //! root already registered or persisted, a scope head that refreshes the
@@ -469,7 +470,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
 
             // A peer holds at most its share of the durable records, whichever
             // tier would hold this head: at its share the head is nacked and
-            // the sender keeps its marker.
+            // the sender keeps its marker. The registration below holds the
+            // share by the store's count; the view, which may lag it, nacks
+            // most such heads here, before the map takes an entry for one.
             if self.pending_store().is_some()
                 && !self.durable_share_admits(
                     *cid,
@@ -592,11 +595,13 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                         .as_ref()
                         .map(Into::into),
                 };
+                let peer_share = self.max_persisted_pending_per_peer();
                 let registration = Registration {
                     root: *cid,
                     parents: announced_block_kind.parents(),
                     record: &record,
                     capacity: durable_cap,
+                    peer_capacity: peer_share,
                 };
                 let refusal = match store.register(registration, &self.persisted).await {
                     Ok(Admission::Registered) => None,
@@ -609,6 +614,17 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                             "Durable pending DAG registrations at capacity, rejecting PushLog DAG registration"
                         );
                         Some(Error::PendingDagCapacity { max: durable_cap })
+                    }
+                    Ok(Admission::AtPeerCapacity) => {
+                        self.diagnostics.record_pending_dag_capacity_shed();
+                        tracing::warn!(
+                            cid = %cid,
+                            doc_id = %msg.doc_id,
+                            source_peer = ?sender_peer,
+                            max_persisted_per_peer = peer_share,
+                            "Peer holds its share of the durable pending DAG registrations, rejecting PushLog DAG registration"
+                        );
+                        Some(Error::PendingDagCapacity { max: peer_share })
                     }
                     Err(error) => {
                         tracing::warn!(
@@ -773,14 +789,20 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     .map(Into::into),
             };
             let capacity = self.persisted_pending_capacity();
+            let peer_capacity = self.max_persisted_pending_per_peer();
             let registration = Registration {
                 root: *cid,
                 parents: &[],
                 record: &record,
                 capacity,
+                peer_capacity,
             };
-            if store.register(registration, &self.persisted).await? == Admission::AtCapacity {
-                return Err(Error::PendingDagCapacity { max: capacity });
+            match store.register(registration, &self.persisted).await? {
+                Admission::AtCapacity => return Err(Error::PendingDagCapacity { max: capacity }),
+                Admission::AtPeerCapacity => {
+                    return Err(Error::PendingDagCapacity { max: peer_capacity })
+                }
+                Admission::Registered => {}
             }
         }
         self.pending_dags.update(|pending| {

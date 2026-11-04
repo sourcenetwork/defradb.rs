@@ -150,6 +150,9 @@ fn view() -> Arc<PersistedView> {
     Arc::new(PersistedView::default())
 }
 
+/// A share no test peer reaches, for the tests of the cap alone.
+const NO_SHARE: usize = usize::MAX;
+
 async fn register(
     store: &PendingDagStore<RegolithStore>,
     view: &Arc<PersistedView>,
@@ -169,6 +172,20 @@ async fn register_over(
     record: &PersistedPendingDag,
     capacity: usize,
 ) -> Admission {
+    register_within(store, view, root, parents, record, capacity, NO_SHARE).await
+}
+
+/// Registers `root`, which links `parents`, under a share of `peer_capacity`
+/// records for its peer.
+async fn register_within<S: Store + 'static>(
+    store: &PendingDagStore<S>,
+    view: &Arc<PersistedView>,
+    root: Cid,
+    parents: &[Cid],
+    record: &PersistedPendingDag,
+    capacity: usize,
+    peer_capacity: usize,
+) -> Admission {
     store
         .register(
             Registration {
@@ -176,6 +193,7 @@ async fn register_over(
                 parents,
                 record,
                 capacity,
+                peer_capacity,
             },
             view,
         )
@@ -345,6 +363,7 @@ async fn concurrent_registrations_never_exceed_the_cap() {
                         parents: &[],
                         record: &record,
                         capacity: 4,
+                        peer_capacity: NO_SHARE,
                     },
                     &view,
                 )
@@ -357,6 +376,7 @@ async fn concurrent_registrations_never_exceed_the_cap() {
         match task.await.unwrap() {
             Admission::Registered => registered += 1,
             Admission::AtCapacity => {}
+            Admission::AtPeerCapacity => panic!("no share binds"),
         }
     }
     assert_eq!(registered, 4);
@@ -433,6 +453,7 @@ async fn concurrent_siblings_of_one_scope_each_keep_their_record() {
                         parents: &[base],
                         record: &record,
                         capacity: 9,
+                        peer_capacity: NO_SHARE,
                     },
                     &view,
                 )
@@ -456,6 +477,168 @@ async fn concurrent_siblings_of_one_scope_each_keep_their_record() {
     assert_eq!(roots.len(), siblings.len());
     assert!(roots.contains(&merge) && !roots.contains(&base));
     assert_eq!(view.len(), siblings.len());
+}
+
+/// A peer holds at most its share of the records: a root new to the store is
+/// refused at the share and nothing is written, a newer head of a scope
+/// takes over the older head's place in the share, and a discharge gives the
+/// place back.
+#[tokio::test]
+async fn a_peer_holds_its_share_and_a_discharge_gives_a_place_back() {
+    let store = memory_store();
+    let view = view();
+    let (old, new, other) = (cid(b"old"), cid(b"new"), cid(b"other"));
+    assert_eq!(
+        register_within(&store, &view, old, &[], &head(1), 4, 1).await,
+        Admission::Registered
+    );
+    assert_eq!(
+        register_within(&store, &view, new, &[old], &head(2), 4, 1).await,
+        Admission::Registered,
+        "a newer head takes over the older head's place"
+    );
+    assert_eq!(
+        register_within(&store, &view, other, &[], &record("doc-other"), 4, 1).await,
+        Admission::AtPeerCapacity
+    );
+    assert_eq!(store.load_all().await.unwrap(), vec![(new, head(2))]);
+    let other_peer = PersistedPendingDag {
+        source_peer: Some("peer-2".to_string()),
+        ..record("doc-other")
+    };
+    assert_eq!(
+        register_within(&store, &view, other, &[], &other_peer, 4, 1).await,
+        Admission::Registered,
+        "another peer has a share of its own"
+    );
+
+    assert!(store.remove(&new, &view).await.unwrap());
+    let third = cid(b"third");
+    assert_eq!(
+        register_within(&store, &view, third, &[], &record("doc-third"), 4, 1).await,
+        Admission::Registered
+    );
+}
+
+/// Commits a registration of its own root, of the same peer, between the
+/// first attempt of the transition it runs and that attempt's commit, as a
+/// registration that ran at the same moment would.
+struct RegistersBeside {
+    inner: Arc<RegolithStore>,
+    root: Cid,
+    record: PersistedPendingDag,
+    view: Arc<PersistedView>,
+    owed: Arc<std::sync::atomic::AtomicBool>,
+    attempt_calls: Arc<AtomicUsize>,
+}
+
+impl storage::corekv::private::Sealed for RegistersBeside {}
+
+#[async_trait]
+impl Store for RegistersBeside {
+    fn crdts(&self) -> &storage::Crdts {
+        self.inner.crdts()
+    }
+
+    async fn allocate(
+        &self,
+        key: &[u8],
+        count: u64,
+    ) -> storage::corekv::Result<std::ops::Range<u64>> {
+        self.inner.allocate(key, count).await
+    }
+
+    fn transaction_stats_handle(&self) -> Option<storage::backends::TransactionStatsHandle> {
+        self.inner.transaction_stats_handle()
+    }
+
+    async fn new_txn(&self, readonly: bool) -> storage::corekv::Result<Box<dyn Txn>> {
+        self.inner.new_txn(readonly).await
+    }
+
+    async fn transact_retry(
+        &self,
+        options: RetryOptions,
+        attempt: storage::corekv::RetryAttempt,
+    ) -> std::result::Result<RetryAttemptValue, storage::corekv::RetryAttemptError> {
+        let wrapped = Box::new(RegisterBeside {
+            inner: attempt,
+            store: Arc::clone(&self.inner),
+            root: self.root,
+            record: self.record.clone(),
+            view: Arc::clone(&self.view),
+            owed: Arc::clone(&self.owed),
+            attempt_calls: Arc::clone(&self.attempt_calls),
+        });
+        self.inner.transact_retry(options, wrapped).await
+    }
+
+    async fn close(&self) -> storage::corekv::Result<()> {
+        self.inner.close().await
+    }
+}
+
+struct RegisterBeside {
+    inner: storage::corekv::RetryAttempt,
+    store: Arc<RegolithStore>,
+    root: Cid,
+    record: PersistedPendingDag,
+    view: Arc<PersistedView>,
+    owed: Arc<std::sync::atomic::AtomicBool>,
+    attempt_calls: Arc<AtomicUsize>,
+}
+
+impl RetryAttemptFn for RegisterBeside {
+    fn run<'a>(&'a mut self, retry: &'a mut dyn RetryTxn) -> RetryAttemptFuture<'a> {
+        Box::pin(async move {
+            self.attempt_calls.fetch_add(1, Ordering::SeqCst);
+            let output = self.inner.run(retry).await?;
+            if self.owed.swap(false, Ordering::SeqCst) {
+                let beside = PendingDagStore::new(Arc::clone(&self.store));
+                assert_eq!(
+                    register_within(&beside, &self.view, self.root, &[], &self.record, 4, 1).await,
+                    Admission::Registered,
+                    "the registration beside it runs first and commits"
+                );
+            }
+            Ok(output)
+        })
+    }
+}
+
+/// Two registrations of one peer that run at the same moment both read the
+/// peer's count before either commits. The read is validated, so the one
+/// that commits second runs again, reads the count the other wrote, and is
+/// refused at the share: the peer never holds more than its share.
+#[tokio::test]
+async fn a_registration_beside_another_of_its_peer_is_refused_at_the_share() {
+    let inner = Arc::new(RegolithStore::in_memory().unwrap());
+    let view = view();
+    let (first, beside) = (cid(b"first"), cid(b"beside"));
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let store = PendingDagStore::new(Arc::new(RegistersBeside {
+        inner: Arc::clone(&inner),
+        root: beside,
+        record: record("doc-beside"),
+        view: Arc::clone(&view),
+        owed: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        attempt_calls: Arc::clone(&attempts),
+    }));
+
+    assert_eq!(
+        register_within(&store, &view, first, &[], &record("doc-first"), 4, 1).await,
+        Admission::AtPeerCapacity,
+        "a peer with a share of one holds one record"
+    );
+    assert_eq!(
+        attempts.load(Ordering::SeqCst),
+        2,
+        "the first attempt read the count the registration beside it wrote"
+    );
+    assert_eq!(
+        PendingDagStore::new(inner).load_all().await.unwrap(),
+        vec![(beside, record("doc-beside"))]
+    );
 }
 
 /// A quarantine moves the root out of the live keyspace in one transaction,

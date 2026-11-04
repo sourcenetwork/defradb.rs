@@ -222,8 +222,8 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// durable share: the head is its scope's durable current head or links
     /// it as a parent, taking over its record, or the peer holds fewer records
     /// than its share. The count is the view's, so registrations of one peer
-    /// that run at once can pass it together; the store's slots still bound
-    /// the total.
+    /// that run at once can pass it together; the store's registration counts
+    /// them in its own transaction and refuses those past the share.
     pub(super) fn durable_share_admits(
         &self,
         root_cid: Cid,
@@ -1188,6 +1188,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     parents: &[],
                     record: &record,
                     capacity: self.persisted_pending_capacity(),
+                    peer_capacity: self.max_persisted_pending_per_peer(),
                 };
                 if let Err(error) = store.register(upgrade, &self.persisted).await {
                     tracing::warn!(
