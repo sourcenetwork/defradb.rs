@@ -62,13 +62,18 @@
 \*   cursor     SyncManager::pending_resync_cursor (manager/process/mod.rs): the root
 \*              the last sweep admitted, as its place in key order (0: none).
 \* SyncOwnership's pending is the durable record set (PersistedView,
-\* pending_store/view.rs), and the count of a peer's roots in it is
-\* PersistedView::source_count, by the record's source_peer (PeerScopes); flights the fetch reservation
+\* pending_store/view.rs), and the count of a peer's roots in it is the count the
+\* store's registration reads and writes in its own transaction (pending_store/shares.rs),
+\* by the record's source_peer (PeerScopes; a record written before shares holds no charge,
+\* and the model has none), so a registration's quota check and its record are one step
+\* here as in the code (PushLogAdmission's Red_ViewShare checks the quota against the
+\* lagging view instead); flights the fetch reservation
 \* (SyncShutdownHandle's pending_dag_fetch_tasks, coordinator/mod.rs), and crashed
 \* the restart.
 \*
 \* Code it models (crates/p2p/src/sync):
 \*   manager/process/pushlog.rs  process_block_inner (the two tiers, the share check and the nack)
+\*   pending_store/store.rs  register and take_new (the quota, checked and charged with the record)
 \*   manager/process/pending_dag.rs  try_insert_pending_dag (the map's cap),
 \*     durable_share_admits, admits_durable_only, max_persisted_pending_per_peer (the quota),
 \*     restored_root_fits (the sweep admits only what the map has a place for),
@@ -78,9 +83,11 @@
 \*     continue_merge (a local continuation), consume_pending_merge_continuation and
 \*     MergeTurn (the continuation ends when a turn does not yield again)
 \*   manager/pending.rs  PendingOrigin, PENDING_ROTATE_AFTER_DISPATCHES
-\*   pending_store/view.rs  PersistedView::source_count (each peer's durable roots)
+\*   pending_store/shares.rs  held, charge, hand_over, give_back (each peer's durable roots)
 \*   replication/handlers.rs  handle_block_received, process_merge_batch (hold the turn)
-\* Rust tests: tests/unit/durable_overflow_rotation.rs (both tests), tests/unit/durable_share.rs,
+\* Rust tests: tests/unit/durable_overflow_rotation.rs (both tests), tests/unit/durable_share.rs
+\*   (both tests), tests/unit/resync_waiting_root.rs, pending_store/tests.rs
+\*   a_registration_beside_another_of_its_peer_is_refused_at_the_share,
 \*   replication/continuation_tests.rs a_local_continuation_ends_on_a_non_terminal_skip.
 EXTENDS SyncOwnership, Sequences
 
@@ -166,7 +173,7 @@ Retires(s, v) == IF PendingMode = "ScopeCurrent" THEN Supersedes(s, v) ELSE {}
 \* The head needs a durable record of its own: it is not registered yet.
 NewRecord(s, v) == <<s, v>> \notin pending
 \* The head's peer stays within its quota once the head is registered: what
-\* it retires gives its record up (durable_share_admits).
+\* it retires gives its record up (take_new, in the registration's transaction).
 DurableRoom(s, v) ==
   Cardinality({r \in pending \ Retires(s, v) : r[1] \in PeerOf(s)}) < DurableQuota
 \* Where the sweep starts: after the cursor when it rotates, at the first key otherwise.

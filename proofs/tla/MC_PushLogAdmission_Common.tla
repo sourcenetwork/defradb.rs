@@ -1,6 +1,7 @@
 ---- MODULE MC_PushLogAdmission_Common ----
 EXTENDS PushLogAdmission
-\* Shared model values for the PushLogAdmission GREEN/RED configs.
+\* Shared model values for the PushLogAdmission GREEN/RED configs. The heads are one
+\* peer's pushes - see PushLogAdmission.tla.
 mcHeads == {1, 2, 3}
 \* Independent pushes: three heads with no parents, each its own scope, against one
 \* pending slot, so admission overflow is reachable with concurrent inflight pushes.
@@ -15,4 +16,7 @@ mcSiblingCap == 2
 mcSiblingParents == [h \in mcHeads |-> IF h = 1 THEN {} ELSE {1}]
 mcSiblingPrio == [h \in mcHeads |-> IF h = 1 THEN 1 ELSE 2]
 mcOneScope == [h \in mcHeads |-> "hub"]
+\* The share configs: two durable slots, of which the pushing peer may hold one.
+mcShareCap == 2
+mcQuota    == 1
 ====
