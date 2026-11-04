@@ -4,7 +4,7 @@ use integration_test::TestCluster;
 
 use super::support::{create, CHUNKS, SCHEMA};
 
-#[tokio::test]
+#[nuclei::test]
 async fn the_collection_api_cannot_write_chunks_or_the_chunk_list() {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
