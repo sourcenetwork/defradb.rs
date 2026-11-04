@@ -15,6 +15,13 @@ Index behaviour beyond what Go's integration suite checks.
 
 With a unique index on `User.name` and a stored `{"name":"alice","age":1}`, adding `{"name":"alice","age":2}` fails with `can not index a doc's field(s) that violates unique index. DocID: <new document's DocID>, name: alice`. Updating another document's `name` to `alice` fails with `failed to update index: can not index a doc's field(s) that violates unique index. DocID: <updated document's DocID>, name: alice. IndexName: User_name_ASC`. The error never contains the DocID of the document already holding the value, which the writer may not be allowed to read. Go develop builds the same text (`NewErrCanNotIndexNonUniqueFields`, `NewErrUpdateIndex`).
 
+# `defra.index.merged_field`: An index on a merged field follows the merged value
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::merged_field::a_text_index_follows_local_edits", "index::merged_field::a_text_index_follows_merged_edits", "index::merged_field::a_json_index_follows_merged_edits"]
+
+For a field whose CRDT merges by value (text, JSON), the index holds only the current value. After a local edit, or after two nodes edit the field concurrently and replicate to each other, a filter on the merged value fetches one index entry and one document, and a filter on any earlier value fetches none.
+
 # `defra.collection`: Collection-wide operations
 
 - **Parents:** ["defra"]

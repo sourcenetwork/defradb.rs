@@ -25,6 +25,7 @@ mod index {
     mod json_unique_array;
     mod list_actions;
     mod list_collection_name;
+    mod merged_field;
     mod new;
     mod new_composite;
     mod new_get;
