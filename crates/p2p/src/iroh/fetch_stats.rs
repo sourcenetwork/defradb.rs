@@ -1,16 +1,18 @@
 //! How each peer answers our CAR fetches: how fast, how reliably, and how much
-//! is in flight. Measured only; nothing here changes how we fetch.
+//! is in flight. DAG fetches rank providers by these.
 //!
 //! The rolling averages and totals are proved to stay in range in
-//! `proofs/lean/FetchStats/Rolling.lean`.
+//! `proofs/lean/FetchStats/Rolling.lean`; the time-decayed estimates in
+//! `proofs/lean/Arbitration.lean`.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use n0_future::time::Instant;
+use crate::rt::time::Instant;
 use regolith::sync::HopscotchMap;
 
+use crate::sync::arbitration::{millis_since, ProviderEstimates};
 use crate::transport::{PeerFetchStats, PeerId};
 
 /// Peers measured at once. Fetches from any later peer still run, unmeasured.
@@ -32,6 +34,8 @@ pub enum FetchOutcome {
     /// The provider sent some blocks but hit its response size limit.
     Partial,
     TimedOut,
+    /// The provider shed the request instead of serving it.
+    Busy,
     Failed,
 }
 
@@ -39,12 +43,15 @@ pub enum FetchOutcome {
 #[derive(Debug)]
 pub struct FetchStats {
     peers: HopscotchMap<PeerId, Arc<PeerCounters>, rapidhash::fast::RandomState>,
+    /// Where the estimates' millisecond clock starts.
+    epoch: Instant,
 }
 
 impl Default for FetchStats {
     fn default() -> Self {
         Self {
             peers: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
+            epoch: Instant::now(),
         }
     }
 }
@@ -61,6 +68,9 @@ impl FetchStats {
             delivery: None,
             bytes: 0,
             rtt: None,
+            started: Instant::now(),
+            epoch: self.epoch,
+            carried_blocks: false,
         }
     }
 
@@ -75,9 +85,10 @@ impl FetchStats {
     }
 
     pub fn snapshot(&self) -> Vec<PeerFetchStats> {
+        let now_ms = millis_since(self.epoch, Instant::now());
         self.peers
             .iter()
-            .map(|(peer, counters)| counters.snapshot(&peer))
+            .map(|(peer, counters)| counters.snapshot(&peer, now_ms))
             .collect()
     }
 }
@@ -93,8 +104,10 @@ struct PeerCounters {
     success_ppm: AtomicU64,
     timeout_ppm: AtomicU64,
     partial_ppm: AtomicU64,
+    busy_ppm: AtomicU64,
     in_flight: AtomicU64,
     in_flight_bytes: AtomicU64,
+    estimates: ProviderEstimates,
 }
 
 impl Default for PeerCounters {
@@ -108,8 +121,10 @@ impl Default for PeerCounters {
             success_ppm: AtomicU64::new(0),
             timeout_ppm: AtomicU64::new(0),
             partial_ppm: AtomicU64::new(0),
+            busy_ppm: AtomicU64::new(0),
             in_flight: AtomicU64::new(0),
             in_flight_bytes: AtomicU64::new(0),
+            estimates: ProviderEstimates::default(),
         }
     }
 }
@@ -122,6 +137,7 @@ impl PeerCounters {
         roll_in(&self.success_ppm, first, hit(FetchOutcome::Success));
         roll_in(&self.timeout_ppm, first, hit(FetchOutcome::TimedOut));
         roll_in(&self.partial_ppm, first, hit(FetchOutcome::Partial));
+        roll_in(&self.busy_ppm, first, hit(FetchOutcome::Busy));
         if let Some(rate) = rate {
             let first_rate = bump(&self.rate_samples, 1) == 0;
             roll_in(&self.delivery_rate, first_rate, rate);
@@ -132,7 +148,7 @@ impl PeerCounters {
         }
     }
 
-    fn snapshot(&self, peer: &PeerId) -> PeerFetchStats {
+    fn snapshot(&self, peer: &PeerId, now_ms: u64) -> PeerFetchStats {
         let load = |counter: &AtomicU64| counter.load(Ordering::Relaxed);
         let min_rtt = load(&self.min_rtt_micros);
         PeerFetchStats {
@@ -144,8 +160,10 @@ impl PeerCounters {
             success_ppm: load(&self.success_ppm),
             timeout_ppm: load(&self.timeout_ppm),
             partial_ppm: load(&self.partial_ppm),
+            busy_ppm: load(&self.busy_ppm),
             in_flight: load(&self.in_flight),
             in_flight_bytes: load(&self.in_flight_bytes),
+            estimates: self.estimates.export(now_ms),
         }
     }
 }
@@ -159,6 +177,11 @@ pub struct FetchTimer {
     delivery: Option<(Instant, Instant)>,
     bytes: u64,
     rtt: Option<Duration>,
+    started: Instant,
+    epoch: Instant,
+    /// The reply carried at least one block. A size-limit notice is recorded
+    /// `Partial` with or without blocks, so the outcome alone cannot say.
+    carried_blocks: bool,
 }
 
 impl FetchTimer {
@@ -171,6 +194,12 @@ impl FetchTimer {
         if let Some(counters) = &self.counters {
             counters.in_flight_bytes.fetch_add(len, Ordering::Relaxed);
         }
+    }
+
+    /// The reply carried at least one block: the fetch was useful, whatever
+    /// its outcome says.
+    pub fn carried_blocks(&mut self) {
+        self.carried_blocks = true;
     }
 
     /// The connection's round-trip time while this fetch ran.
@@ -191,6 +220,12 @@ impl FetchTimer {
                 u64::try_from(rate).unwrap_or(u64::MAX)
             });
         counters.record(outcome, self.bytes, rate, self.rtt);
+        let now = Instant::now();
+        counters.estimates.record(
+            millis_since(self.epoch, now),
+            now.saturating_duration_since(self.started),
+            self.carried_blocks,
+        );
     }
 }
 
@@ -266,6 +301,20 @@ mod tests {
     }
 
     #[test]
+    fn a_busy_provider_is_counted_apart_from_failures_and_timeouts() {
+        let stats = FetchStats::default();
+        stats.start(&peer("a")).finish(FetchOutcome::Busy);
+        let snapshot = only(&stats);
+        assert_eq!(snapshot.busy_ppm, SCALE);
+        assert_eq!((snapshot.success_ppm, snapshot.timeout_ppm), (0, 0));
+
+        stats.start(&peer("a")).finish(FetchOutcome::Success);
+        let snapshot = only(&stats);
+        assert!(snapshot.busy_ppm < SCALE);
+        assert!(snapshot.success_ppm > 0);
+    }
+
+    #[test]
     fn a_cancelled_fetch_leaves_flight_without_counting() {
         let stats = FetchStats::default();
         let mut timer = stats.start(&peer("a"));
@@ -303,6 +352,44 @@ mod tests {
         timer.saw_rtt(Some(rtt));
         timer.finish(FetchOutcome::Success);
         only(stats).min_rtt_micros
+    }
+
+    #[test]
+    fn finished_fetches_feed_the_estimates_and_cancelled_ones_do_not() {
+        let stats = FetchStats::default();
+        drop(stats.start(&peer("a")));
+        assert_eq!(only(&stats).estimates, Default::default());
+
+        let mut notice_only = stats.start(&peer("a"));
+        notice_only.received(64);
+        notice_only.finish(FetchOutcome::Partial);
+        let estimates = only(&stats).estimates;
+        assert_eq!(
+            estimates.useful_ewma_ppm,
+            Some(0),
+            "a notice without blocks is not useful"
+        );
+        assert_eq!(estimates.success_latency_micros, None);
+
+        let stats = FetchStats::default();
+        let mut delivered = stats.start(&peer("a"));
+        delivered.carried_blocks();
+        delivered.finish(FetchOutcome::Success);
+        let estimates = only(&stats).estimates;
+        assert!(estimates.success_latency_micros.is_some());
+        assert_eq!(estimates.useful_ewma_ppm, Some(SCALE));
+        assert_eq!(
+            estimates.expected_useful_micros,
+            estimates.attempt_cost_micros
+        );
+
+        stats.start(&peer("a")).finish(FetchOutcome::TimedOut);
+        let after = only(&stats).estimates;
+        assert_eq!(
+            after.success_latency_micros,
+            estimates.success_latency_micros
+        );
+        assert!(after.useful_ewma_ppm <= Some(SCALE));
     }
 
     #[test]

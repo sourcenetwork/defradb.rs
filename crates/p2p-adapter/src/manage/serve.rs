@@ -567,7 +567,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn unauthorized_rejected_before_side_effects() {
         let ops = MockOps::new("12D3KooW-THIS");
         let token = crate::manage::auth::mint_token_for("12D3KooW-THIS").0;
@@ -585,7 +585,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn invalid_token_rejected_before_side_effects() {
         let ops = MockOps::new("12D3KooW-THIS");
         // Token minted for a different node must not authorize against this one,
@@ -605,7 +605,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn authorized_dispatches_to_controller() {
         let ops = MockOps::new("12D3KooW-THIS");
         let token = crate::manage::auth::mint_token_for("12D3KooW-THIS").0;
@@ -620,7 +620,7 @@ mod tests {
         assert_eq!(ops.added_collections(), vec!["c1".to_string()]);
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn replicator_add_multi_address_rejected_without_side_effects() {
         let ops = MockOps::new("12D3KooW-THIS");
         let token = crate::manage::auth::mint_token_for("12D3KooW-THIS").0;
@@ -648,7 +648,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn replicator_add_single_address_dispatches() {
         let ops = MockOps::new("12D3KooW-THIS");
         let token = crate::manage::auth::mint_token_for("12D3KooW-THIS").0;
@@ -672,7 +672,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn replicator_add_forwards_filters() {
         let ops = MockOps::new("12D3KooW-THIS");
         let token = crate::manage::auth::mint_token_for("12D3KooW-THIS").0;
@@ -706,7 +706,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn document_list_returns_documents() {
         let ops = MockOps::with_documents(
             "12D3KooW-THIS",
@@ -745,7 +745,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn peer_disconnect_dispatches() {
         let ops = MockOps::new("12D3KooW-THIS");
         let token = crate::manage::auth::mint_token_for("12D3KooW-THIS").0;
@@ -763,7 +763,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn peer_disconnect_unauthorized_rejected_before_side_effects() {
         let ops = MockOps::new("12D3KooW-THIS");
         let token = crate::manage::auth::mint_token_for("12D3KooW-THIS").0;

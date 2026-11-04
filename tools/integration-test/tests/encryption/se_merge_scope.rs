@@ -132,7 +132,7 @@ async fn wait_for_merge(cluster: &TestCluster, idx: usize, doc_id: &str, deadlin
             Instant::now() < deadline,
             "document {doc_id} never merged onto node {idx}; last: {res}"
         );
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        nuclei::time::sleep(Duration::from_millis(250)).await;
     }
 }
 
@@ -162,7 +162,7 @@ async fn se_query_hits(
         if Instant::now() >= deadline {
             return false;
         }
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        nuclei::time::sleep(Duration::from_millis(250)).await;
     }
 }
 
@@ -170,115 +170,124 @@ async fn se_query_hits(
 /// (`crates/cli/src/commands/start/server_p2p/libp2p.rs:145,429-438`), so a
 /// miss here CANNOT be a tag mismatch: it isolates the missing
 /// regenerate-and-push-on-merge.
-#[tokio::test]
+#[nuclei::test]
 async fn rust_merger_se_query_finds_replicated_doc() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(3)
-        .with_p2p()
-        .with_encryption()
-        .with_shared_searchable_encryption_key(SHARED_SE_KEY)
-        .build()
-        .await
-        .expect("build 3-node rust cluster");
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .rust_nodes(3)
+            .with_p2p()
+            .with_encryption()
+            .with_shared_searchable_encryption_key(SHARED_SE_KEY)
+            .build()
+            .await
+            .expect("build 3-node rust cluster");
 
-    build_chain(&cluster, 0, 1, 2).await;
-    let doc_id = create_user(&cluster, 0, "John");
-    wait_for_merge(
-        &cluster,
-        1,
-        &doc_id,
-        Instant::now() + Duration::from_secs(45),
-    )
-    .await;
+        build_chain(&cluster, 0, 1, 2).await;
+        let doc_id = create_user(&cluster, 0, "John");
+        wait_for_merge(
+            &cluster,
+            1,
+            &doc_id,
+            Instant::now() + Duration::from_secs(45),
+        )
+        .await;
 
-    let hit = se_query_hits(
-        &cluster,
-        1,
-        &doc_id,
-        "John",
-        Instant::now() + Duration::from_secs(45),
-    )
+        let hit = se_query_hits(
+            &cluster,
+            1,
+            &doc_id,
+            "John",
+            Instant::now() + Duration::from_secs(45),
+        )
+        .await;
+        assert!(
+            hit,
+            "rust merger did not resolve a merged doc through its own SE query"
+        );
+    })
     .await;
-    assert!(
-        hit,
-        "rust merger did not resolve a merged doc through its own SE query"
-    );
 }
 
 /// Go CREATOR (node 2) -> Rust MIDDLE (node 0) -> Rust TAIL (node 1).
-#[tokio::test]
+#[nuclei::test]
 async fn go_creator_rust_merger_se_query_finds_doc() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(2)
-        .go_nodes(1)
-        .with_go_binary(BinarySource::Path(go_binary()))
-        .with_p2p()
-        .with_encryption()
-        .with_shared_searchable_encryption_key(SHARED_SE_KEY)
-        .build()
-        .await
-        .expect("build 2-rust + 1-go cluster");
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .rust_nodes(2)
+            .go_nodes(1)
+            .with_go_binary(BinarySource::Path(go_binary()))
+            .with_p2p()
+            .with_encryption()
+            .with_shared_searchable_encryption_key(SHARED_SE_KEY)
+            .build()
+            .await
+            .expect("build 2-rust + 1-go cluster");
 
-    build_chain(&cluster, 2, 0, 1).await;
-    let doc_id = create_user(&cluster, 2, "John");
-    wait_for_merge(
-        &cluster,
-        0,
-        &doc_id,
-        Instant::now() + Duration::from_secs(60),
-    )
-    .await;
+        build_chain(&cluster, 2, 0, 1).await;
+        let doc_id = create_user(&cluster, 2, "John");
+        wait_for_merge(
+            &cluster,
+            0,
+            &doc_id,
+            Instant::now() + Duration::from_secs(60),
+        )
+        .await;
 
-    let hit = se_query_hits(
-        &cluster,
-        0,
-        &doc_id,
-        "John",
-        Instant::now() + Duration::from_secs(45),
-    )
+        let hit = se_query_hits(
+            &cluster,
+            0,
+            &doc_id,
+            "John",
+            Instant::now() + Duration::from_secs(45),
+        )
+        .await;
+        assert!(
+            hit,
+            "rust merger did not resolve a Go-created merged doc through its own SE query"
+        );
+    })
     .await;
-    assert!(
-        hit,
-        "rust merger did not resolve a Go-created merged doc through its own SE query"
-    );
 }
 
 /// The mirror: Rust CREATOR (node 0) -> Go MIDDLE (node 1) -> Go TAIL (node 2).
-#[tokio::test]
+#[nuclei::test]
 async fn go_merger_se_query_finds_rust_created_doc() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .go_nodes(2)
-        .with_go_binary(BinarySource::Path(go_binary()))
-        .with_p2p()
-        .with_encryption()
-        .with_shared_searchable_encryption_key(SHARED_SE_KEY)
-        .build()
-        .await
-        .expect("build 1-rust + 2-go cluster");
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .go_nodes(2)
+            .with_go_binary(BinarySource::Path(go_binary()))
+            .with_p2p()
+            .with_encryption()
+            .with_shared_searchable_encryption_key(SHARED_SE_KEY)
+            .build()
+            .await
+            .expect("build 1-rust + 2-go cluster");
 
-    build_chain(&cluster, 0, 1, 2).await;
-    let doc_id = create_user(&cluster, 0, "John");
-    wait_for_merge(
-        &cluster,
-        1,
-        &doc_id,
-        Instant::now() + Duration::from_secs(60),
-    )
-    .await;
+        build_chain(&cluster, 0, 1, 2).await;
+        let doc_id = create_user(&cluster, 0, "John");
+        wait_for_merge(
+            &cluster,
+            1,
+            &doc_id,
+            Instant::now() + Duration::from_secs(60),
+        )
+        .await;
 
-    let hit = se_query_hits(
-        &cluster,
-        1,
-        &doc_id,
-        "John",
-        Instant::now() + Duration::from_secs(45),
-    )
+        let hit = se_query_hits(
+            &cluster,
+            1,
+            &doc_id,
+            "John",
+            Instant::now() + Duration::from_secs(45),
+        )
+        .await;
+        assert!(
+            hit,
+            "go merger did not resolve a Rust-created merged doc through its own SE query"
+        );
+    })
     .await;
-    assert!(
-        hit,
-        "go merger did not resolve a Rust-created merged doc through its own SE query"
-    );
 }
 
 /// Separates the defect from the soak generator's 40-name pool
@@ -292,60 +301,63 @@ async fn go_merger_se_query_finds_rust_created_doc() {
 /// If `B` hits and `A` misses, the miss is per-document and the pool only
 /// multiplies how many `A`-like documents one query has to name: pool size
 /// changes the reported rate, not the defect.
-#[tokio::test]
+#[nuclei::test]
 async fn merged_and_self_written_docs_both_hit_on_same_name() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(3)
-        .with_p2p()
-        .with_encryption()
-        .with_shared_searchable_encryption_key(SHARED_SE_KEY)
-        .build()
-        .await
-        .expect("build 3-node rust cluster");
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .rust_nodes(3)
+            .with_p2p()
+            .with_encryption()
+            .with_shared_searchable_encryption_key(SHARED_SE_KEY)
+            .build()
+            .await
+            .expect("build 3-node rust cluster");
 
-    build_chain(&cluster, 0, 1, 2).await;
+        build_chain(&cluster, 0, 1, 2).await;
 
-    let merged = create_user_aged(&cluster, 0, "John", 21);
-    let self_written = create_user_aged(&cluster, 1, "John", 22);
-    wait_for_merge(
-        &cluster,
-        1,
-        &merged,
-        Instant::now() + Duration::from_secs(45),
-    )
-    .await;
+        let merged = create_user_aged(&cluster, 0, "John", 21);
+        let self_written = create_user_aged(&cluster, 1, "John", 22);
+        wait_for_merge(
+            &cluster,
+            1,
+            &merged,
+            Instant::now() + Duration::from_secs(45),
+        )
+        .await;
 
-    // Control: MIDDLE's own write must be resolvable through its replicator.
-    let control_hit = se_query_hits(
-        &cluster,
-        1,
-        &self_written,
-        "John",
-        Instant::now() + Duration::from_secs(45),
-    )
-    .await;
-    assert!(
-        control_hit,
-        "control failed: MIDDLE cannot resolve a document it wrote itself, \
+        // Control: MIDDLE's own write must be resolvable through its replicator.
+        let control_hit = se_query_hits(
+            &cluster,
+            1,
+            &self_written,
+            "John",
+            Instant::now() + Duration::from_secs(45),
+        )
+        .await;
+        assert!(
+            control_hit,
+            "control failed: MIDDLE cannot resolve a document it wrote itself, \
          so this test cannot say anything about the merged one"
-    );
+        );
 
-    let merged_hit = se_query_hits(
-        &cluster,
-        1,
-        &merged,
-        "John",
-        Instant::now() + Duration::from_secs(30),
-    )
-    .await;
+        let merged_hit = se_query_hits(
+            &cluster,
+            1,
+            &merged,
+            "John",
+            Instant::now() + Duration::from_secs(30),
+        )
+        .await;
 
-    let ids = cluster
-        .client(1)
-        .query(r#"query { encrypted_User(filter: {name: {_eq: "John"}}) { docIDs } }"#)
-        .expect("se query");
-    assert!(
-        merged_hit,
-        "one name, two documents: MIDDLE resolved its own write {self_written} \
+        let ids = cluster
+            .client(1)
+            .query(r#"query { encrypted_User(filter: {name: {_eq: "John"}}) { docIDs } }"#)
+            .expect("se query");
+        assert!(
+            merged_hit,
+            "one name, two documents: MIDDLE resolved its own write {self_written} \
          but not the merged {merged}; query returned {ids}"
-    );
+        );
+    })
+    .await;
 }

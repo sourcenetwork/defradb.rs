@@ -76,6 +76,9 @@ lean_lib ByteBudget where
 lean_lib FetchStats where
 
 @[default_target]
+lean_lib ProviderHealth where
+
+@[default_target]
 lean_lib GossipFrame where
 
 @[default_target]
@@ -134,3 +137,15 @@ lean_lib LensListing where
 
 @[default_target]
 lean_lib JsonSubPathCut where
+
+@[default_target]
+lean_lib CarClosureDepth where
+
+@[default_target]
+lean_lib TxnAdmission where
+
+@[default_target]
+lean_lib HttpClient where
+
+@[default_target]
+lean_lib Arbitration where

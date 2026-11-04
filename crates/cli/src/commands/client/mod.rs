@@ -60,6 +60,8 @@ pub struct ClientContext {
     pub development: bool,
     /// Verbose mode
     pub verbose: bool,
+    /// The network runtime requests run on
+    pub edge: edge::Edge,
 }
 
 /// Helper to get data from either inline argument or file
@@ -142,8 +144,13 @@ pub enum ClientCommand {
 }
 
 impl ClientArgs {
-    /// Execute the client command
-    pub async fn execute(&self, config: Config, url_override: Option<String>) -> Result<()> {
+    /// Execute the client command, its requests on `edge`
+    pub async fn execute(
+        &self,
+        config: Config,
+        url_override: Option<String>,
+        edge: edge::Edge,
+    ) -> Result<()> {
         let url = get_url(&config, url_override);
 
         let identity_key_bytes = if let Some(ref identity_hex) = self.identity {
@@ -173,6 +180,7 @@ impl ClientArgs {
             tx_id: self.tx.map(|id| id.to_string()),
             development: config.development,
             verbose: self.verbose,
+            edge,
         };
 
         match &self.command {

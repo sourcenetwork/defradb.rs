@@ -126,7 +126,7 @@ impl DocumentArgs {
 
 /// The client a document write runs with, and the session transaction.
 pub(crate) fn write_client(ctx: &ClientContext) -> Result<(HttpClient, Option<String>)> {
-    let client = HttpClient::new(&ctx.url)?
+    let client = HttpClient::new(&ctx.url, &ctx.edge)?
         .with_auth_token(ctx.auth_token.clone())
         .with_verbose(ctx.verbose);
     let txn = ctx
@@ -185,7 +185,7 @@ impl DocumentGetArgs {
             fields = field_selection
         );
 
-        let client = HttpClient::new(&ctx.url)?
+        let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
         let response = client.graphql(&query, None, ctx.tx_id.clone()).await?;

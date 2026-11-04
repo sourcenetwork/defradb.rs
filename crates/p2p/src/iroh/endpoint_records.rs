@@ -2,10 +2,10 @@
 //! sends, looks up pointers and hints gossip joins.
 
 use bytes::Bytes;
+use futures_lite::StreamExt;
 use iroh::address_lookup::UserData;
 use iroh::EndpointId;
-use n0_future::time::Duration;
-use n0_future::StreamExt;
+use std::time::Duration;
 use tracing::debug;
 
 use super::endpoint::{peer_direct_addr, spawn_task, EndpointResources};
@@ -70,7 +70,7 @@ impl Net for EndpointNet {
         let records = self.records.clone();
         let _ = spawn_task(&self.resources.spawned_tasks, async move {
             let pointer =
-                n0_future::time::timeout(RESOLVE_DEADLINE, lookup_pointer(&endpoint, peer))
+                crate::rt::time::timeout(RESOLVE_DEADLINE, lookup_pointer(&endpoint, peer))
                     .await
                     .ok()
                     .flatten();

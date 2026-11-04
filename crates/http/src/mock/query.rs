@@ -6,6 +6,8 @@ use async_trait::async_trait;
 use kovan::Atom;
 use serde_json::json;
 
+use crate::mock::nac::MockNodeAcpOperations;
+use defra_core::RequestContext;
 use query::documents::Filter;
 use query::error::{QueryError, Result, TransactionError};
 use query::executor::{QueryExecutor, QueryRequest, QueryResponse};
@@ -18,8 +20,10 @@ type TruncateCall = (String, Option<Filter>);
 #[derive(Debug, Clone)]
 pub struct MockQueryExecutor {
     schema_sdl: String,
-    /// Each truncate asked for: the collection and its filter.
+    /// Each truncate asked for: the collection and filter.
     truncated: Arc<Atom<Vec<TruncateCall>>>,
+    /// Backs the node access control executor methods when set.
+    nac: Option<Arc<MockNodeAcpOperations>>,
 }
 
 /// Mock executor for testing error paths. Schema errors are optional.
@@ -121,6 +125,13 @@ impl QueryExecutor for FailingMockExecutor {
     }
 }
 
+/// Map a mock NAC failure onto the executor error that the HTTP layer
+/// translates through `http_error_from_backend_message` (BadRequest unless
+/// the message classifies otherwise).
+fn nac_error(message: String) -> TransactionError {
+    TransactionError::execution(message)
+}
+
 impl MockQueryExecutor {
     /// Create a mock executor with default schema.
     pub fn new() -> Self {
@@ -132,6 +143,17 @@ impl MockQueryExecutor {
         Self {
             schema_sdl: schema.into(),
             truncated: Arc::default(),
+            nac: None,
+        }
+    }
+
+    /// Create with a NAC backend: the node access control executor methods
+    /// delegate to it instead of refusing.
+    pub fn with_nac(nac: Arc<MockNodeAcpOperations>) -> Self {
+        Self {
+            schema_sdl: default_mock_schema(),
+            truncated: Arc::default(),
+            nac: Some(nac),
         }
     }
 
@@ -265,6 +287,85 @@ impl QueryExecutor for MockQueryExecutor {
 
     async fn schema(&self) -> Result<String> {
         Ok(self.schema_sdl.clone())
+    }
+
+
+    async fn nac_status_as(
+        &self,
+        _context: &RequestContext,
+    ) -> std::result::Result<acp::nac::NacStatus, TransactionError> {
+        match &self.nac {
+            Some(nac) => Ok(nac.status()),
+            None => Err(TransactionError::not_supported(
+                "node access control is not supported by this executor",
+            )),
+        }
+    }
+
+    async fn disable_nac_as(
+        &self,
+        _context: &RequestContext,
+    ) -> std::result::Result<(), TransactionError> {
+        match &self.nac {
+            Some(nac) => nac.disable_nac().map_err(nac_error),
+            None => Err(TransactionError::not_supported(
+                "node access control is not supported by this executor",
+            )),
+        }
+    }
+
+    async fn re_enable_nac_as(
+        &self,
+        _context: &RequestContext,
+    ) -> std::result::Result<(), TransactionError> {
+        match &self.nac {
+            Some(nac) => nac.re_enable_nac().map_err(nac_error),
+            None => Err(TransactionError::not_supported(
+                "node access control is not supported by this executor",
+            )),
+        }
+    }
+
+    async fn add_nac_actor_relationship_as(
+        &self,
+        _context: &RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        match &self.nac {
+            Some(nac) => {
+                let target = target_actor
+                    .parse()
+                    .map_err(|_| TransactionError::execution(format!(
+                        "invalid TargetActor DID: {target_actor}"
+                    )))?;
+                nac.add_relationship(relation, &target).await.map_err(nac_error)
+            }
+            None => Err(TransactionError::not_supported(
+                "node access control is not supported by this executor",
+            )),
+        }
+    }
+
+    async fn delete_nac_actor_relationship_as(
+        &self,
+        _context: &RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        match &self.nac {
+            Some(nac) => {
+                let target = target_actor
+                    .parse()
+                    .map_err(|_| TransactionError::execution(format!(
+                        "invalid TargetActor DID: {target_actor}"
+                    )))?;
+                nac.remove_relationship(relation, &target).await.map_err(nac_error)
+            }
+            None => Err(TransactionError::not_supported(
+                "node access control is not supported by this executor",
+            )),
+        }
     }
 }
 

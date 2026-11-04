@@ -5,7 +5,7 @@ use p2p::{ManageCorrelator, ManageQueryCorrelator};
 // ManageCorrelator tests
 // -----------------------------------------------------------------------
 
-#[tokio::test]
+#[nuclei::test]
 async fn register_then_deliver_routes_reply() {
     let c = ManageCorrelator::new();
     let mut pending = c.register("msg-1".into());
@@ -18,14 +18,14 @@ async fn register_then_deliver_routes_reply() {
     assert_eq!(got.message_id, "msg-1");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn stale_reply_returns_false() {
     let c = ManageCorrelator::new();
     assert!(!c.deliver(ManageReply::success("never-registered")));
     assert_eq!(c.in_flight(), 0);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn dropping_guard_cancels_slot() {
     let c = ManageCorrelator::new();
     let pending = c.register("msg-2".into());
@@ -36,7 +36,7 @@ async fn dropping_guard_cancels_slot() {
     assert!(!c.deliver(ManageReply::success("msg-2")));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn cancel_removes_slot() {
     let c = ManageCorrelator::new();
     let _pending = c.register("msg-3".into());
@@ -44,7 +44,7 @@ async fn cancel_removes_slot() {
     assert_eq!(c.in_flight(), 0);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn second_register_overwrites_first() {
     let c = ManageCorrelator::new();
     let mut first = c.register("dup".into());
@@ -65,7 +65,7 @@ fn query_reply(message_id: &str) -> ManageQueryReply {
     ManageQueryReply::success(message_id, ManageQueryResult::Strings { values: vec![] })
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn query_register_then_deliver_routes_reply() {
     let c = ManageQueryCorrelator::new();
     let mut pending = c.register("msg-1".into());
@@ -78,14 +78,14 @@ async fn query_register_then_deliver_routes_reply() {
     assert_eq!(got.message_id, "msg-1");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn query_stale_reply_returns_false() {
     let c = ManageQueryCorrelator::new();
     assert!(!c.deliver(query_reply("never-registered")));
     assert_eq!(c.in_flight(), 0);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn query_dropping_guard_cancels_slot() {
     let c = ManageQueryCorrelator::new();
     let pending = c.register("msg-2".into());
@@ -95,7 +95,7 @@ async fn query_dropping_guard_cancels_slot() {
     assert!(!c.deliver(query_reply("msg-2")));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn query_cancel_removes_slot() {
     let c = ManageQueryCorrelator::new();
     let _pending = c.register("msg-3".into());
@@ -103,7 +103,7 @@ async fn query_cancel_removes_slot() {
     assert_eq!(c.in_flight(), 0);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn query_second_register_overwrites_first() {
     let c = ManageQueryCorrelator::new();
     let mut first = c.register("dup".into());

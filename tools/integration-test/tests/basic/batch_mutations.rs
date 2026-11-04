@@ -198,11 +198,14 @@ async fn batched_mutation_aliases_p2p_regression_test(cluster: TestCluster) {
 for_each_runtime!(batched_mutation_aliases, batched_mutation_aliases_test);
 for_each_runtime!(batched_mutation_rollback, batched_mutation_rollback_test);
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_mutation_fragment_directives() {
-    let _root = integration_test::workspace_root();
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    mutation_fragment_directives_test(cluster).await;
+    edge::compat(async move {
+        let _root = integration_test::workspace_root();
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        mutation_fragment_directives_test(cluster).await;
+    })
+    .await;
 }
 
 for_each_runtime!(

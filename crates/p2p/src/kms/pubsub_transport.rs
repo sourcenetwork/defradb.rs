@@ -345,7 +345,7 @@ impl<T: P2PTransport> PubsubKeyTransport<T> {
     /// [`SUBSCRIBER_WAIT_TIMEOUT`]. Timing out is not fatal: the caller still
     /// attempts the publish (it may yet succeed, or surface a clear error).
     async fn wait_for_subscriber(&self) {
-        let mut deadline = std::pin::pin!(n0_future::time::sleep(SUBSCRIBER_WAIT_TIMEOUT));
+        let mut deadline = std::pin::pin!(crate::rt::time::sleep(SUBSCRIBER_WAIT_TIMEOUT));
         loop {
             // Registered before the check, so a subscription that lands
             // between the two still wakes the wait.
@@ -375,10 +375,10 @@ impl<T: P2PTransport> PubsubKeyTransport<T> {
     where
         D: Future<Output = ()>,
     {
-        use n0_future::FutureExt;
+        use futures_lite::FutureExt;
         async {
             subscribed
-                .or(n0_future::time::sleep(GOSSIP_HEARTBEAT))
+                .or(crate::rt::time::sleep(GOSSIP_HEARTBEAT))
                 .await;
             true
         }
@@ -397,7 +397,7 @@ impl<T: P2PTransport> PubsubKeyTransport<T> {
     /// the mesh graft (gossipsub heartbeat). Retry within the same bounded
     /// window rather than failing outright.
     async fn publish_with_graft_retry(&self, topic: String, payload: Vec<u8>) -> KmsResult<()> {
-        let mut deadline = std::pin::pin!(n0_future::time::sleep(SUBSCRIBER_WAIT_TIMEOUT));
+        let mut deadline = std::pin::pin!(crate::rt::time::sleep(SUBSCRIBER_WAIT_TIMEOUT));
         loop {
             let subscribed = self.subscribed.notified();
             match self
@@ -471,11 +471,11 @@ impl<T: P2PTransport> KeyTransport for PubsubKeyTransport<T> {
         let (tx, rx) = kms::transport_reply_channel(16);
         let transport = self.transport.clone();
         let correlator = self.correlator.clone();
-        n0_future::task::spawn(async move {
-            let deadline = n0_future::time::Instant::now() + RESPONSE_TIMEOUT;
-            let mut republish_at = n0_future::time::Instant::now() + REPUBLISH_INTERVAL;
+        drop(self.edge.spawn(async move {
+            let deadline = crate::rt::time::Instant::now() + RESPONSE_TIMEOUT;
+            let mut republish_at = crate::rt::time::Instant::now() + REPUBLISH_INTERVAL;
             loop {
-                tokio::select! {
+                crate::rt::select! {
                     // Prefer an already-delivered reply over a concurrent
                     // republish tick — the tick's re-registration drops the
                     // old channel, and with it any buffered reply.
@@ -513,8 +513,8 @@ impl<T: P2PTransport> KeyTransport for PubsubKeyTransport<T> {
                             break;
                         }
                     }
-                    _ = n0_future::time::sleep_until(republish_at) => {
-                        if n0_future::time::Instant::now() >= deadline {
+                    _ = crate::rt::time::sleep_until(republish_at) => {
+                        if crate::rt::time::Instant::now() >= deadline {
                             warn!(
                                 request_id = %prep.id,
                                 timeout = ?RESPONSE_TIMEOUT,
@@ -552,7 +552,7 @@ impl<T: P2PTransport> KeyTransport for PubsubKeyTransport<T> {
                     }
                 }
             }
-        });
+        }));
         Ok(rx)
     }
 
@@ -820,7 +820,7 @@ mod tests {
     /// topic to have a known subscriber before publishing, so a fetch issued
     /// immediately on a key-miss does not fail with `InsufficientPeers`. The
     /// request must be published on the base `encryption` topic.
-    #[tokio::test(start_paused = true)]
+    #[nuclei::test(start_paused = true)]
     async fn send_request_waits_for_subscriber_then_publishes() {
         let transport = RacyTransport::new(3);
         let publish_attempts = transport.publish_attempts.clone();
@@ -855,7 +855,7 @@ mod tests {
 
     /// A subscription event wakes a request waiting for a subscriber at once,
     /// not at the next gossip heartbeat.
-    #[tokio::test(start_paused = true)]
+    #[nuclei::test(start_paused = true)]
     async fn a_subscription_event_wakes_a_waiting_request_before_the_heartbeat() {
         let transport = RacyTransport::new(2);
         let published = transport.published.clone();
@@ -866,13 +866,13 @@ mod tests {
         )
         .await
         .unwrap();
-        let started = n0_future::time::Instant::now();
+        let started = crate::rt::time::Instant::now();
         let request = EncodedFetchRequest {
             payload: b"fetch".to_vec(),
             request_id: "r1".to_string(),
         };
-        let (sent, ()) = tokio::join!(kt.send_request(request), async {
-            n0_future::time::sleep(Duration::from_millis(10)).await;
+        let (sent, ()) = futures::join!(kt.send_request(request), async {
+            crate::rt::time::sleep(Duration::from_millis(10)).await;
             kt.peer_subscribed(ENCRYPTION_TOPIC);
         });
 
@@ -885,7 +885,7 @@ mod tests {
         );
     }
 
-    #[tokio::test(start_paused = true)]
+    #[nuclei::test(start_paused = true)]
     async fn send_request_stops_when_transport_is_closed() {
         let transport = RacyTransport::new(usize::MAX);
         let publish_attempts = transport.publish_attempts.clone();
@@ -902,7 +902,7 @@ mod tests {
             payload: b"fetch".to_vec(),
             request_id: "r1".to_string(),
         };
-        let result = n0_future::time::timeout(Duration::from_secs(1), kt.send_request(request))
+        let result = crate::rt::time::timeout(Duration::from_secs(1), kt.send_request(request))
             .await
             .expect("a closed transport must not consume the subscriber retry window");
 
@@ -913,7 +913,7 @@ mod tests {
     /// A response envelope arriving on the local `_response` sub-topic must be
     /// decoded, correlated to the outstanding request, and surfaced on the
     /// reply stream as `(FetchEncryptionKeyReply, responder_peer_id)`.
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn response_envelope_routes_to_waiting_request() {
         let transport = RacyTransport::new(1);
         let kt = PubsubKeyTransport::new(
@@ -954,7 +954,7 @@ mod tests {
         )
         .await;
 
-        let (got_reply, responder_id) = n0_future::time::timeout(Duration::from_secs(1), rx.recv())
+        let (got_reply, responder_id) = crate::rt::time::timeout(Duration::from_secs(1), rx.recv())
             .await
             .expect("reply must arrive within timeout")
             .expect("reply present")
@@ -967,7 +967,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn empty_reply_does_not_hide_later_key_reply() {
         let transport = RacyTransport::new(1);
         let kt = PubsubKeyTransport::new(
@@ -1023,7 +1023,7 @@ mod tests {
         )
         .await;
 
-        let (got_reply, responder_id) = n0_future::time::timeout(Duration::from_secs(1), rx.recv())
+        let (got_reply, responder_id) = crate::rt::time::timeout(Duration::from_secs(1), rx.recv())
             .await
             .expect("key reply must arrive within timeout")
             .expect("reply present")
@@ -1032,7 +1032,7 @@ mod tests {
         assert_eq!(responder_id, key_responder.to_string());
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn partial_replies_are_collected_until_all_requested_links_arrive() {
         let transport = RacyTransport::new(1);
         let kt = PubsubKeyTransport::new(
@@ -1082,12 +1082,12 @@ mod tests {
             .await;
         }
 
-        let first = n0_future::time::timeout(Duration::from_secs(1), rx.recv())
+        let first = crate::rt::time::timeout(Duration::from_secs(1), rx.recv())
             .await
             .expect("first partial reply must arrive")
             .expect("first partial reply present")
             .expect("first partial reply succeeds");
-        let second = n0_future::time::timeout(Duration::from_secs(1), rx.recv())
+        let second = crate::rt::time::timeout(Duration::from_secs(1), rx.recv())
             .await
             .expect("second partial reply must arrive")
             .expect("second partial reply present")
@@ -1095,16 +1095,16 @@ mod tests {
         assert_eq!(first.0.links, vec![first_link]);
         assert_eq!(second.0.links, vec![second_link]);
         drop(rx);
-        n0_future::time::timeout(Duration::from_secs(1), async {
+        crate::rt::time::timeout(Duration::from_secs(1), async {
             while kt.correlator.in_flight() != 0 {
-                tokio::task::yield_now().await;
+                crate::rt::yield_now().await;
             }
         })
         .await
         .expect("dropping the downstream receiver must cancel correlation");
     }
 
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn claimed_complete_reply_does_not_hide_later_verified_candidate() {
         let transport = RacyTransport::new(1);
         let kt = PubsubKeyTransport::new(
@@ -1152,12 +1152,12 @@ mod tests {
             .await;
         }
 
-        let first = n0_future::time::timeout(Duration::from_secs(1), rx.recv())
+        let first = crate::rt::time::timeout(Duration::from_secs(1), rx.recv())
             .await
             .expect("first claimed reply must arrive")
             .expect("first claimed reply present")
             .expect("first claimed reply succeeds");
-        let second = n0_future::time::timeout(Duration::from_secs(1), rx.recv())
+        let second = crate::rt::time::timeout(Duration::from_secs(1), rx.recv())
             .await
             .expect("later candidate must arrive")
             .expect("later candidate present")
@@ -1171,100 +1171,105 @@ mod tests {
     /// while no reply arrives, the identical request must be republished every
     /// `REPUBLISH_INTERVAL`, and a late reply must still be correlated and
     /// surfaced through the re-registered entry.
-    #[tokio::test(start_paused = true)]
-    async fn request_republishes_until_reply_arrives() {
-        let transport = RacyTransport::new(0);
-        let published = transport.published.clone();
-        let kt = PubsubKeyTransport::new(
-            transport,
-            Arc::new(crate::AnonymousResolver),
-            edge::testing::edge(),
-        )
-        .await
-        .unwrap();
-
-        let payload = b"retry-me".to_vec();
-        let req = EncodedFetchRequest {
-            payload: payload.clone(),
-            request_id: "r1".to_string(),
-        };
-        let mut rx = kt.send_request(req).await.expect("send_request");
-
-        // Two republish intervals with no reply → initial + 2 republishes.
-        n0_future::time::sleep(REPUBLISH_INTERVAL * 2 + Duration::from_millis(100)).await;
-        {
-            let pubs = published.load();
-            assert_eq!(
-                pubs.len(),
-                3,
-                "one initial publish plus one republish per interval"
-            );
-            assert!(
-                pubs.iter()
-                    .all(|(t, d)| t == ENCRYPTION_TOPIC && d == &payload),
-                "republished bytes must be identical (same request-ID)"
-            );
-        }
-
-        // A reply arriving AFTER republishes must still correlate.
-        let reply = FetchEncryptionKeyReply {
-            links: vec![vec![1]],
-            blocks: vec![vec![2]],
-            ephemeral_public_key: vec![7; 32],
-        };
-        let envelope = InternalResponse {
-            id: crate::pubsub_rpc::derive_request_id(&payload).to_string(),
-            err: String::new(),
-            data: defra_core::cbor::to_vec(&reply).unwrap(),
-            from: Vec::new(),
-        };
-        kt.dispatch_incoming(
-            a_libp2p_peer().to_string(),
-            kt.self_response_topic().to_string(),
-            envelope.to_cbor().unwrap(),
-        )
-        .await;
-
-        let (got, _) = n0_future::time::timeout(Duration::from_secs(1), rx.recv())
+    #[test]
+    fn request_republishes_until_reply_arrives() {
+        edge::testing::paused(|edge| async move {
+            let transport = RacyTransport::new(0);
+            let published = transport.published.clone();
+            let kt = PubsubKeyTransport::new(
+                transport,
+                Arc::new(crate::AnonymousResolver),
+                edge.clone(),
+            )
             .await
-            .expect("reply within timeout")
-            .expect("reply present")
-            .expect("reply must succeed");
-        assert_eq!(got, reply);
+            .unwrap();
+
+            let payload = b"retry-me".to_vec();
+            let req = EncodedFetchRequest {
+                payload: payload.clone(),
+                request_id: "r1".to_string(),
+            };
+            let mut rx = kt.send_request(req).await.expect("send_request");
+
+            // Two republish intervals with no reply → initial + 2 republishes.
+            crate::rt::time::sleep(REPUBLISH_INTERVAL * 2 + Duration::from_millis(100)).await;
+            {
+                let pubs = published.load();
+                assert_eq!(
+                    pubs.len(),
+                    3,
+                    "one initial publish plus one republish per interval"
+                );
+                assert!(
+                    pubs.iter()
+                        .all(|(t, d)| t == ENCRYPTION_TOPIC && d == &payload),
+                    "republished bytes must be identical (same request-ID)"
+                );
+            }
+
+            // A reply arriving AFTER republishes must still correlate.
+            let reply = FetchEncryptionKeyReply {
+                links: vec![vec![1]],
+                blocks: vec![vec![2]],
+                ephemeral_public_key: vec![7; 32],
+            };
+            let envelope = InternalResponse {
+                id: crate::pubsub_rpc::derive_request_id(&payload).to_string(),
+                err: String::new(),
+                data: defra_core::cbor::to_vec(&reply).unwrap(),
+                from: Vec::new(),
+            };
+            kt.dispatch_incoming(
+                a_libp2p_peer().to_string(),
+                kt.self_response_topic().to_string(),
+                envelope.to_cbor().unwrap(),
+            )
+            .await;
+
+            let (got, _) = crate::rt::time::timeout(Duration::from_secs(1), rx.recv())
+                .await
+                .expect("reply within timeout")
+                .expect("reply present")
+                .expect("reply must succeed");
+            assert_eq!(got, reply);
+        })
     }
 
     /// Go parity (`fetchEncryptionKeyResponseTimeout`): with no reply at all,
     /// the reply stream must report unavailability once the response timeout
     /// elapses, so callers can retry instead of treating silence as denial.
-    #[tokio::test(start_paused = true)]
-    async fn request_with_no_reply_reports_unavailable() {
-        let transport = RacyTransport::new(0);
-        let kt = PubsubKeyTransport::new(
-            transport,
-            Arc::new(crate::AnonymousResolver),
-            edge::testing::edge(),
-        )
-        .await
-        .unwrap();
-
-        let req = EncodedFetchRequest {
-            payload: b"never-answered".to_vec(),
-            request_id: "r1".to_string(),
-        };
-        let mut rx = kt.send_request(req).await.expect("send_request");
-
-        let error = n0_future::time::timeout(RESPONSE_TIMEOUT + Duration::from_secs(1), rx.recv())
+    #[test]
+    fn request_with_no_reply_reports_unavailable() {
+        edge::testing::paused(|edge| async move {
+            let transport = RacyTransport::new(0);
+            let kt = PubsubKeyTransport::new(
+                transport,
+                Arc::new(crate::AnonymousResolver),
+                edge.clone(),
+            )
             .await
-            .expect("stream must resolve at the response timeout, not hang")
-            .expect("timeout result present")
-            .expect_err("no reply must be retryable unavailability");
-        assert!(matches!(error, kms::Error::KeyUnavailable));
-        assert!(rx.recv().await.is_none());
+            .unwrap();
+
+            let req = EncodedFetchRequest {
+                payload: b"never-answered".to_vec(),
+                request_id: "r1".to_string(),
+            };
+            let mut rx = kt.send_request(req).await.expect("send_request");
+
+            let error =
+                crate::rt::time::timeout(RESPONSE_TIMEOUT + Duration::from_secs(1), rx.recv())
+                    .await
+                    .expect("stream must resolve at the response timeout, not hang")
+                    .expect("timeout result present")
+                    .expect_err("no reply must be retryable unavailability");
+            assert!(matches!(error, kms::Error::KeyUnavailable));
+            assert!(rx.recv().await.is_none());
+        })
     }
 
     /// An inbound request on the base topic must be answered by publishing an
     /// internalResponse envelope on the caller's `_response` sub-topic.
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn inbound_request_publishes_reply_on_caller_response_topic() {
         struct FixedIdentityResolver(identity::Did);
         #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -1361,7 +1366,7 @@ mod tests {
     /// A request that lands before `install_handler` is buffered and served
     /// once the handler exists, instead of being dropped into the
     /// startup-wiring window.
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn request_before_handler_is_served_after_install() {
         assert_buffered_request_is_served(|kt, handler| kt.install_handler(handler)).await;
     }
@@ -1369,7 +1374,7 @@ mod tests {
     /// The replay runs on the network runtime the transport was given, so a
     /// handler installed from a thread outside any runtime still serves the
     /// buffered request.
-    #[tokio::test]
+    #[nuclei::test(threads = 0)]
     async fn request_before_handler_is_served_when_installed_outside_a_runtime() {
         assert_buffered_request_is_served(|kt, handler| {
             std::thread::spawn(move || kt.install_handler(handler))
@@ -1447,7 +1452,7 @@ mod tests {
                 served = true;
                 break;
             }
-            n0_future::time::sleep(Duration::from_millis(20)).await;
+            crate::rt::time::sleep(Duration::from_millis(20)).await;
         }
         assert!(
             served,

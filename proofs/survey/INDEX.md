@@ -129,7 +129,7 @@ integration tests, Go FFI parity, or unit tests. One line each on why.
 - **defra-version** — compile-time version/build metadata; immutable string/JSON shapes covered by unit tests.
 - **document** — pure single-threaded value handling; only content-addressing determinism, already assumed by Convergence/Integrity and recorded in db-blocks survey.
 - **embedded** — node-assembly Arc-graph + spawn/shutdown/recovery; retry/resume/convergence already in Replicator + Convergence slices.
-- **events** — in-process tokio-mpsc fan-out; drop-counting is a single-atomic invariant covered by tokio unit tests; end-to-end consistency in consumer slices.
+- **events**: in-process mpsc fan-out; drop-counting is a single-atomic invariant covered by unit tests; end-to-end consistency in consumer slices.
 - **ffi** — extern "C" marshalling over an opaque handle registry; correctness-bearing behavior delegated to crates with existing slices; covered by Go suite.
 - **http** — routing + JSON serde + auth-gate enforcement boundary; the auth state machine is exactly the existing Auth slice; routes pinned by unit test.
 - **keyring** — stateless CRUD over filesystem/OS keyring; KeyName path-traversal covered by unit tests; key distribution lives in kms.

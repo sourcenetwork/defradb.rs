@@ -2,7 +2,8 @@
 # data-path step through CLIPPY_CONF_DIR, over the library code of the
 # data-path crates only (storage, datastore, blockstore, crdt, defra-core,
 # query, db, acp, zanzibar, lens, kms, events). That code runs on the worker
-# pool: it never spawns on, looks up or blocks on a runtime. Their tests may.
+# pool: it never spawns on, looks up, blocks on or times with a runtime. Their
+# tests may.
 disallowed-methods = [
     { path = "tokio::runtime::Handle::current", reason = "take an edge::Edge at construction instead of looking up a runtime" },
     { path = "tokio::runtime::Handle::try_current", reason = "take an edge::Edge at construction instead of looking up a runtime" },
@@ -12,4 +13,16 @@ disallowed-methods = [
     { path = "tokio::task::block_in_place", reason = "nothing on the data path blocks a worker: await the worker's IoQueue completion instead" },
     { path = "futures::executor::block_on", reason = "nothing on the data path blocks a worker: await it, or workers::block_on on a plain thread" },
     { path = "futures_executor::block_on", reason = "nothing on the data path blocks a worker: await it, or workers::block_on on a plain thread" },
+    { path = "nuclei::spawn", reason = "data-path work is a task of the worker pool: workers::spawn_local, workers::spawn or a pool submit" },
+    { path = "nuclei::spawn_local", reason = "data-path work is a task of the worker pool: workers::spawn_local, workers::spawn or a pool submit" },
+    { path = "nuclei::spawn_blocking", reason = "blocking code goes to the pool's blocking threads: workers::Pool::spawn_blocking" },
+    { path = "nuclei::block_on", reason = "nothing on the data path blocks a worker: await it, or workers::block_on on a plain thread" },
+    { path = "nuclei::runtime::RuntimeHandle::current", reason = "take an edge::Edge at construction instead of looking up a runtime" },
+    { path = "nuclei::runtime::RuntimeHandle::try_current", reason = "take an edge::Edge at construction instead of looking up a runtime" },
+    { path = "nuclei::time::sleep", reason = "data-path timers run on the worker's deadline queue: workers::sleep or workers::delay" },
+    { path = "nuclei::time::sleep_until", reason = "data-path timers run on the worker's deadline queue: workers::sleep or workers::delay" },
+    { path = "nuclei::time::timeout", reason = "data-path deadlines run on the worker's deadline queue: workers::timeout" },
+    { path = "nuclei::time::timeout_at", reason = "data-path deadlines run on the worker's deadline queue: workers::timeout" },
+    { path = "nuclei::time::interval", reason = "periodic data-path work is a job on the worker's deadline queue: workers::every" },
+    { path = "nuclei::time::interval_at", reason = "periodic data-path work is a job on the worker's deadline queue: workers::every" },
 ]

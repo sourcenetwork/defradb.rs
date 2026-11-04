@@ -197,7 +197,7 @@ async fn acp_p2p_subscribe_add_get_single_with_permissioned_collection_test(clus
     // grant, so it resolves to an unauthorized/anonymous actor for a registered
     // private doc. Allow a settle window well beyond the replicator variant's
     // normal sync latency, then assert node1 never received the doc.
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    nuclei::time::sleep(Duration::from_secs(5)).await;
 
     assert!(
         query_user_names(&node1, Some(&owner.private_key_hex)).is_empty(),
@@ -375,217 +375,262 @@ async fn acp_p2p_delete_private_documents_on_different_nodes_test(cluster: TestC
     .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_rust_acp_p2p_add_private_documents_on_different_nodes() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(2)
-        .with_p2p()
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    acp_p2p_add_private_documents_on_different_nodes_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(2)
+            .with_p2p()
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        acp_p2p_add_private_documents_on_different_nodes_test(cluster).await;
+    })
+    .await;
 }
 
 /// Go does not carry owner DID in PushLog Creator field, so ACP
 /// enforcement on the receiving node cannot work for Go-originated documents.
-#[tokio::test]
+#[nuclei::test]
 #[ignore]
 async fn go_go_acp_p2p_add_private_documents_on_different_nodes() {
-    let cluster = TestCluster::builder()
-        .go_nodes(2)
-        .with_p2p()
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    acp_p2p_add_private_documents_on_different_nodes_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .go_nodes(2)
+            .with_p2p()
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        acp_p2p_add_private_documents_on_different_nodes_test(cluster).await;
+    })
+    .await;
 }
 
 /// Go does not carry owner DID in PushLog Creator field, so ACP
 /// enforcement on the receiving node cannot work for Go-originated documents.
-#[tokio::test]
+#[nuclei::test]
 #[ignore]
 async fn go_rust_acp_p2p_add_private_documents_on_different_nodes() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .go_nodes(1)
-        .with_p2p()
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    acp_p2p_add_private_documents_on_different_nodes_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .go_nodes(1)
+            .with_p2p()
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        acp_p2p_add_private_documents_on_different_nodes_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_rust_acp_p2p_subscribe_add_get_single_with_permissioned_collection() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(2)
-        .with_p2p()
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    acp_p2p_subscribe_add_get_single_with_permissioned_collection_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(2)
+            .with_p2p()
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        acp_p2p_subscribe_add_get_single_with_permissioned_collection_test(cluster).await;
+    })
+    .await;
 }
 
 /// Go does not carry owner DID in PushLog Creator field, so ACP
 /// enforcement on the receiving node cannot work for Go-originated documents.
-#[tokio::test]
+#[nuclei::test]
 #[ignore]
 async fn go_go_acp_p2p_subscribe_add_get_single_with_permissioned_collection() {
-    let cluster = TestCluster::builder()
-        .go_nodes(2)
-        .with_p2p()
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    acp_p2p_subscribe_add_get_single_with_permissioned_collection_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .go_nodes(2)
+            .with_p2p()
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        acp_p2p_subscribe_add_get_single_with_permissioned_collection_test(cluster).await;
+    })
+    .await;
 }
 
 /// Go does not carry owner DID in PushLog Creator field, so ACP
 /// enforcement on the receiving node cannot work for Go-originated documents.
-#[tokio::test]
+#[nuclei::test]
 #[ignore]
 async fn go_rust_acp_p2p_subscribe_add_get_single_with_permissioned_collection() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .go_nodes(1)
-        .with_p2p()
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    acp_p2p_subscribe_add_get_single_with_permissioned_collection_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .go_nodes(1)
+            .with_p2p()
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        acp_p2p_subscribe_add_get_single_with_permissioned_collection_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_rust_acp_p2p_one_to_one_replicator_with_permissioned_collection() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(2)
-        .with_p2p()
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    acp_p2p_one_to_one_replicator_with_permissioned_collection_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(2)
+            .with_p2p()
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        acp_p2p_one_to_one_replicator_with_permissioned_collection_test(cluster).await;
+    })
+    .await;
 }
 
 /// Go does not carry owner DID in PushLog Creator field, so ACP
 /// enforcement on the receiving node cannot work for Go-originated documents.
-#[tokio::test]
+#[nuclei::test]
 #[ignore]
 async fn go_go_acp_p2p_one_to_one_replicator_with_permissioned_collection() {
-    let cluster = TestCluster::builder()
-        .go_nodes(2)
-        .with_p2p()
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    acp_p2p_one_to_one_replicator_with_permissioned_collection_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .go_nodes(2)
+            .with_p2p()
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        acp_p2p_one_to_one_replicator_with_permissioned_collection_test(cluster).await;
+    })
+    .await;
 }
 
 /// Go does not carry owner DID in PushLog Creator field, so ACP
 /// enforcement on the receiving node cannot work for Go-originated documents.
-#[tokio::test]
+#[nuclei::test]
 #[ignore]
 async fn go_rust_acp_p2p_one_to_one_replicator_with_permissioned_collection() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .go_nodes(1)
-        .with_p2p()
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    acp_p2p_one_to_one_replicator_with_permissioned_collection_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .go_nodes(1)
+            .with_p2p()
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        acp_p2p_one_to_one_replicator_with_permissioned_collection_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_rust_acp_p2p_update_private_documents_on_different_nodes() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(2)
-        .with_p2p()
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    acp_p2p_update_private_documents_on_different_nodes_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(2)
+            .with_p2p()
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        acp_p2p_update_private_documents_on_different_nodes_test(cluster).await;
+    })
+    .await;
 }
 
 /// Go does not carry owner DID in PushLog Creator field, so ACP
 /// enforcement on the receiving node cannot work for Go-originated documents.
-#[tokio::test]
+#[nuclei::test]
 #[ignore]
 async fn go_go_acp_p2p_update_private_documents_on_different_nodes() {
-    let cluster = TestCluster::builder()
-        .go_nodes(2)
-        .with_p2p()
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    acp_p2p_update_private_documents_on_different_nodes_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .go_nodes(2)
+            .with_p2p()
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        acp_p2p_update_private_documents_on_different_nodes_test(cluster).await;
+    })
+    .await;
 }
 
 /// Go does not carry owner DID in PushLog Creator field, so ACP
 /// enforcement on the receiving node cannot work for Go-originated documents.
-#[tokio::test]
+#[nuclei::test]
 #[ignore]
 async fn go_rust_acp_p2p_update_private_documents_on_different_nodes() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .go_nodes(1)
-        .with_p2p()
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    acp_p2p_update_private_documents_on_different_nodes_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .go_nodes(1)
+            .with_p2p()
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        acp_p2p_update_private_documents_on_different_nodes_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_rust_acp_p2p_delete_private_documents_on_different_nodes() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(2)
-        .with_p2p()
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    acp_p2p_delete_private_documents_on_different_nodes_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(2)
+            .with_p2p()
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        acp_p2p_delete_private_documents_on_different_nodes_test(cluster).await;
+    })
+    .await;
 }
 
 /// Go does not carry owner DID in PushLog Creator field, so ACP
 /// enforcement on the receiving node cannot work for Go-originated documents.
-#[tokio::test]
+#[nuclei::test]
 #[ignore]
 async fn go_go_acp_p2p_delete_private_documents_on_different_nodes() {
-    let cluster = TestCluster::builder()
-        .go_nodes(2)
-        .with_p2p()
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    acp_p2p_delete_private_documents_on_different_nodes_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .go_nodes(2)
+            .with_p2p()
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        acp_p2p_delete_private_documents_on_different_nodes_test(cluster).await;
+    })
+    .await;
 }
 
 /// Go does not carry owner DID in PushLog Creator field, so ACP
 /// enforcement on the receiving node cannot work for Go-originated documents.
-#[tokio::test]
+#[nuclei::test]
 #[ignore]
 async fn go_rust_acp_p2p_delete_private_documents_on_different_nodes() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .go_nodes(1)
-        .with_p2p()
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    acp_p2p_delete_private_documents_on_different_nodes_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .go_nodes(1)
+            .with_p2p()
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        acp_p2p_delete_private_documents_on_different_nodes_test(cluster).await;
+    })
+    .await;
 }

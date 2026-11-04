@@ -114,6 +114,33 @@ impl DagFetchContext {
         self
     }
 
+    /// Whether the per-root retry clock dispatched this fetch and owns its retries.
+    pub(crate) fn is_clock_owned(&self) -> bool {
+        self.pending_lease.is_some()
+    }
+
+    /// End a clock-dispatched attempt: the clock re-arms its root and `sample`
+    /// feeds its estimates (see `PendingDagLease::finish_attempt`). A
+    /// reply-driven fetch has no lease, retries in place and never touches the
+    /// clock, so this is a no-op for it.
+    pub(crate) fn finish_clock_attempt(
+        &self,
+        end: super::dag_fetcher::FetchTaskEnd,
+        sample: crate::sync::arbitration::AttemptSample,
+    ) {
+        if let Some(lease) = &self.pending_lease {
+            lease.finish_attempt(end == super::dag_fetcher::FetchTaskEnd::Preempted, sample);
+        }
+    }
+
+    /// Count a clock-dispatched attempt that left the DAG incomplete; see
+    /// `PendingDagLease::record_incomplete_attempt`.
+    pub(crate) fn record_incomplete_attempt(&self) -> Option<u32> {
+        self.pending_lease
+            .as_ref()
+            .and_then(crate::sync::manager::PendingDagLease::record_incomplete_attempt)
+    }
+
     pub(crate) fn is_current(&self) -> bool {
         self.pending_lease
             .as_ref()
@@ -148,7 +175,7 @@ impl DagFetchContext {
     pub(crate) fn track_block_sync(
         &self,
         query_id: crate::QueryId,
-    ) -> Option<tokio::sync::oneshot::Receiver<crate::sync::manager::FetchCompletion>> {
+    ) -> Option<crate::rt::oneshot::Receiver<crate::sync::manager::FetchCompletion>> {
         self.block_sync_completions
             .as_ref()
             .map(|tracker| tracker.register(query_id))
@@ -164,7 +191,7 @@ impl DagFetchContext {
         &self,
         root_cid: Cid,
         peer_id: &PeerId,
-    ) -> Option<tokio::sync::oneshot::Receiver<crate::sync::manager::FetchCompletion>> {
+    ) -> Option<crate::rt::oneshot::Receiver<crate::sync::manager::FetchCompletion>> {
         self.rooted_car_completions
             .as_ref()
             .map(|tracker| tracker.register(root_cid, peer_id.clone()))

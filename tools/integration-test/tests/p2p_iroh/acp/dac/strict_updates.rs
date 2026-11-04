@@ -136,26 +136,38 @@ async fn owner_edit_on_relay(delete: bool, grant_writer: bool) {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn owner_update_elsewhere_requires_relay_write_permission() {
-    owner_edit_on_relay(false, false).await;
+    edge::compat(async move {
+        owner_edit_on_relay(false, false).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn owner_delete_elsewhere_requires_relay_write_permission() {
-    owner_edit_on_relay(true, false).await;
+    edge::compat(async move {
+        owner_edit_on_relay(true, false).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn owner_update_elsewhere_with_granted_relay_syncs() {
-    owner_edit_on_relay(false, true).await;
+    edge::compat(async move {
+        owner_edit_on_relay(false, true).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn owner_delete_elsewhere_with_granted_relay_syncs() {
-    owner_edit_on_relay(true, true).await;
+    edge::compat(async move {
+        owner_edit_on_relay(true, true).await;
+    })
+    .await;
 }

@@ -76,7 +76,7 @@ impl KeyTransport for PeerTransport {
         let request: FetchEncryptionKeyRequest = defra_core::cbor::from_slice(&request.payload)
             .map_err(|error| crate::Error::WireDecode(error.to_string()))?;
         self.links.fetch_add(request.links.len(), Ordering::SeqCst);
-        tokio::time::sleep(LATENCY).await;
+        nuclei::time::sleep(LATENCY).await;
         let from = PeerIdentity {
             peer_id: "peer".into(),
             authenticated_did: Some(node()),
@@ -135,10 +135,10 @@ async fn peer_and_node(
     (transport, node_kms, cids)
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn every_missing_key_of_a_call_goes_out_in_one_wire_request() {
     let (transport, kms, cids) = peer_and_node(5, true).await;
-    let started = tokio::time::Instant::now();
+    let started = nuclei::time::Instant::now();
     let keys = kms
         .get_keys_each(&RequestContext::anonymous(), &cids)
         .await
@@ -155,7 +155,7 @@ async fn every_missing_key_of_a_call_goes_out_in_one_wire_request() {
     assert_eq!(transport.requests.load(Ordering::SeqCst), 1);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn concurrent_requests_for_one_key_make_one_wire_request() {
     let (transport, kms, cids) = peer_and_node(1, true).await;
     let kms = Arc::new(kms);
@@ -163,7 +163,7 @@ async fn concurrent_requests_for_one_key_make_one_wire_request() {
         .map(|_| {
             let kms = Arc::clone(&kms);
             let cids = cids.clone();
-            tokio::spawn(async move {
+            nuclei::spawn(async move {
                 kms.get_keys_each(&RequestContext::anonymous(), &cids)
                     .await
                     .unwrap()
@@ -171,12 +171,12 @@ async fn concurrent_requests_for_one_key_make_one_wire_request() {
         })
         .collect();
     for call in calls {
-        assert!(call.await.unwrap()[0].is_ok());
+        assert!(call.join().await.unwrap()[0].is_ok());
     }
     assert_eq!(transport.requests.load(Ordering::SeqCst), 1);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_merge_after_a_prefetch_joins_it_instead_of_asking_again() {
     // Ownership unknown: a held key still defers to the owner, as a block
     // fetched during DAG sync does before its merge records ownership.

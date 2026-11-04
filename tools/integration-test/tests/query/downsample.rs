@@ -64,7 +64,7 @@ async fn sleep_until(timestamp: DateTime<Utc>) {
         .to_std()
         .unwrap_or_default();
     if !delay.is_zero() {
-        tokio::time::sleep(delay).await;
+        nuclei::time::sleep(delay).await;
     }
 }
 
@@ -207,7 +207,7 @@ async fn wait_for_rollup(
             );
         }
 
-        tokio::time::sleep(POLL_INTERVAL).await;
+        nuclei::time::sleep(POLL_INTERVAL).await;
     }
 }
 
@@ -487,13 +487,16 @@ async fn downsample_test(cluster: TestCluster) {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_downsample_updates_stable_rollup_docs() {
-    let _root = workspace_root();
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .build()
-        .await
-        .expect("build cluster");
-    downsample_test(cluster).await;
+    edge::compat(async {
+        let _root = workspace_root();
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .build()
+            .await
+            .expect("build cluster");
+        downsample_test(cluster).await;
+    })
+    .await;
 }

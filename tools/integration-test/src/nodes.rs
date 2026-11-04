@@ -176,7 +176,7 @@ impl TestNode {
                 .map_err(|e| e.to_string())?
                 .map_err(|e| e.to_string()),
             (None, Some(url)) => {
-                let client = HttpClient::new(url).map_err(|e| e.to_string())?;
+                let client = HttpClient::new(url, &network_edge()).map_err(|e| e.to_string())?;
                 workers::block_on(network_edge().spawn(async move { client.peer_info().await }))
                     .map_err(|e| e.to_string())?
                     .map_err(|e| e.to_string())?

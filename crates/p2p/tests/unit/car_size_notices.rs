@@ -59,3 +59,28 @@ fn malformed_size_notices_are_rejected() {
     assert!(decode_car_oversized(&[]).is_err());
     assert!(decode_car_oversized(&[127, 0]).is_err());
 }
+
+#[test]
+fn a_busy_reply_is_a_header_only_car_older_peers_can_decode() {
+    let root = cid(b"root");
+    let busy = encode_car_busy(&root).unwrap();
+    assert!(is_car_busy(&busy));
+    assert!(!car_has_any_block(&busy));
+    let (roots, blocks) = decode_car(&busy).unwrap();
+    assert_eq!(roots, vec![root]);
+    assert!(blocks.is_empty());
+}
+
+#[test]
+fn only_the_busy_header_reads_as_busy() {
+    let root = cid(b"root");
+    assert!(!is_car_busy(&[]));
+    assert!(!is_car_busy(&encode_car(&[root], &[]).unwrap()));
+    assert!(!is_car_busy(
+        &encode_car(&[root], &[(&root, b"block".as_slice())]).unwrap()
+    ));
+    let mut busy_with_block = encode_car_busy(&root).unwrap();
+    busy_with_block.extend_from_slice(&[3, 1, 2, 3]);
+    assert!(!is_car_busy(&busy_with_block));
+    assert!(!is_car_busy(&[0x7f, 0xaa]));
+}

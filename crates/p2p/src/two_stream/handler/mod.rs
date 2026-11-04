@@ -25,9 +25,9 @@ use kovan_map::HopscotchMap;
 use kovan_queue::seg_queue::SegQueue;
 use libp2p::Stream;
 
+use crate::rt::oneshot;
 use libp2p::StreamProtocol;
 use libp2p_stream as stream;
-use tokio::sync::oneshot;
 
 use libp2p::PeerId;
 
@@ -365,7 +365,7 @@ where
     T: serde::de::DeserializeOwned,
 {
     let mut buf = Vec::new();
-    tokio::time::timeout(
+    crate::rt::time::timeout(
         stream_read_timeout,
         (&mut stream).take(max_msg_size).read_to_end(&mut buf),
     )

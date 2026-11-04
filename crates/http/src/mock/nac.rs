@@ -17,6 +17,7 @@ use crate::router::{NacStatus, NodeAcpOperations, NodePermission};
 /// - Owner identity
 /// - Admin identities
 /// - Permission grants
+#[derive(Debug)]
 pub struct MockNodeAcpOperations {
     status: Arc<Atom<NacStatus>>,
     owner: Arc<AtomOption<Did>>,
@@ -85,6 +86,95 @@ impl MockNodeAcpOperations {
             grants.push((identity.clone(), permission))
         });
         self
+    }
+
+    /// The current status.
+    pub fn status(&self) -> NacStatus {
+        *self.status.load()
+    }
+
+    /// Whether `identity` counts as an admin: everyone when NAC is not
+    /// enabled, the owner, or a member of the admin set.
+    pub async fn is_admin(&self, identity: &Did) -> Result<bool, String> {
+        if *self.status.load() != NacStatus::Enabled {
+            return Ok(true);
+        }
+        if let Some(owner) = self.owner.load() {
+            if *owner == *identity {
+                return Ok(true);
+            }
+        }
+        Ok(self.admins.contains_key(identity))
+    }
+
+    /// Temporarily disable NAC.
+    pub fn disable_nac(&self) -> Result<(), String> {
+        self.status.store(NacStatus::DisabledTemporarily);
+        Ok(())
+    }
+
+    /// Re-enable temporarily disabled NAC.
+    pub fn re_enable_nac(&self) -> Result<(), String> {
+        self.status.store(NacStatus::Enabled);
+        Ok(())
+    }
+
+    /// Add a relationship: "admin" adds an admin, a valid permission name
+    /// adds a grant, "owner" and anything else are refused.
+    pub async fn add_relationship(&self, relation: &str, target: &Did) -> Result<bool, String> {
+        if relation == "owner" {
+            return Err("relation not in resource".into());
+        }
+        if relation == "admin" {
+            if *self.status.load() == NacStatus::DisabledTemporarily {
+                return Err(
+                    "cannot modify relationships while NAC is disabled - re-enable NAC first"
+                        .into(),
+                );
+            }
+            return Ok(self.admins.insert_if_absent(target.clone(), ()).is_some());
+        }
+        if NodePermission::parse(relation).is_some() {
+            if *self.status.load() == NacStatus::DisabledTemporarily {
+                return Err(
+                    "cannot modify relationships while NAC is disabled - re-enable NAC first"
+                        .into(),
+                );
+            }
+            return Ok(true);
+        }
+        Err("relation not in resource".into())
+    }
+
+    /// Remove a relationship: mirrors [`Self::add_relationship`].
+    pub async fn remove_relationship(&self, relation: &str, target: &Did) -> Result<bool, String> {
+        if relation == "owner" {
+            return Err("relation not in resource".into());
+        }
+        if relation == "admin" {
+            if *self.status.load() == NacStatus::DisabledTemporarily {
+                return Err(
+                    "cannot modify relationships while NAC is disabled - re-enable NAC first"
+                        .into(),
+                );
+            }
+            if let Some(owner) = self.owner.load() {
+                if *owner == *target {
+                    return Err("cannot remove owner's admin access".into());
+                }
+            }
+            return Ok(self.admins.remove(target).is_some());
+        }
+        if NodePermission::parse(relation).is_some() {
+            if *self.status.load() == NacStatus::DisabledTemporarily {
+                return Err(
+                    "cannot modify relationships while NAC is disabled - re-enable NAC first"
+                        .into(),
+                );
+            }
+            return Ok(true);
+        }
+        Err("relation not in resource".into())
     }
 }
 

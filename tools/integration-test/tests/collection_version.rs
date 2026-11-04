@@ -7,6 +7,7 @@
 
 mod collection_version {
     mod add_one_one_data;
+    mod one_one;
     mod aggregates {
         mod inline_array;
         mod simple;

@@ -18,6 +18,11 @@ Companion models retain their narrower contracts:
   3 replaces its CID-valued durable ledger with the head-current marker guard
   modeled here.
 
+`MC_SyncOwnership_Dispatch.tla` extends this model with the receiver clock's
+slot dispatch, retry deadlines and the pending TTL; see *Receiver dispatch*
+below. `MC_SyncOwnership_Memory.tla` extends it with the bounded in-memory
+pending map; see *In-memory pending map* below.
+
 ## State and actions
 
 `Docs` and `Cols` are both replayable scopes. `localV` and `mergedV` abstract
@@ -195,6 +200,135 @@ event (while retaining its bounded timeout and lease checks); transport
 completion therefore releases the one-root admission slot without a polling
 delay.
 
+## Receiver dispatch
+
+`MC_SyncOwnership_Dispatch.tla` runs every action of this model and adds the
+clock's queue around `ClaimFetch`. After a hub restart the clock can hand
+every fetch slot to restored catch-up roots whose providers stall. If each
+fetch kept its slot through every attempt and backoff sleep, every newly
+acknowledged head would wait behind them, and a wall-clock pending TTL would
+drop acknowledged heads that were never fetched although their senders ended
+their scope markers on the success reply.
+
+- The module adds only state the code holds; its header maps each variable
+  to its Rust field. `dueOrder` and `backoff` are `PendingDag::next_retry_at`
+  kept by its order, the only thing the code reads from it: `dueOrder` holds
+  the roots whose deadline has passed, in `next_retry_at` order (what
+  `due_pending_dag_retries` returns), and `backoff` the roots whose deadline
+  is still ahead; `BecomeDue` is a deadline passing, in any order. `tries` is
+  the loop index of `poll_fetch_dag`'s attempts. An acknowledged root is due at once
+  (`next_retry_at = now` at registration, and at restore). `WClaim` is
+  `ClaimFetch` restricted to a due root, and to the oldest due root that could
+  take a slot (`dispatch_due_pending_dag_fetches`); a root still in backoff is
+  not due, so a root that became due later goes before it, as in the code.
+  The claim moves the root into `backoff` (`try_claim_pending_dag_dispatch`
+  sets `next_retry_at`). `INV_DueOrBackoff` checks the bookkeeping: an idle
+  pending root is due or in backoff, never both, never neither.
+- `AttemptMode = "PerAttempt"`: a clock-dispatched fetch makes one attempt and
+  returns its slot (`poll_fetch_dag` with a pending lease). `"WholeTask"` is
+  the old rule: `RetryInPlace` starts the next of `MaxAttempts` attempts while
+  keeping the slot.
+- `RearmMode = "AttemptEnd"`: the root's next deadline runs from the end of
+  its attempt (`PendingDagLease::finish_attempt`, reached only through
+  `DagFetchContext::finish_clock_attempt`, which does nothing for a
+  reply-driven fetch: it has no lease and retries in place, outside this
+  clock). So `BecomeDue` waits for the attempt to end. `"ClaimTime"` keeps the
+  deadline the claim set: it can pass while the attempt runs, and when the
+  attempt fails the root is due ahead of every head acknowledged meanwhile.
+- `ExpiryMode = "AckRetained"`: an acknowledged entry never expires
+  (`PendingDag::is_expired`); it leaves on merge, quarantine or a newer head of
+  its scope and counts against `max_pending_dags` meanwhile, whose overflow
+  nacks so the sender keeps its marker. `"WallClockTtl"` lets `Expire` drop an
+  acknowledged root that has not been fetched. The model does not credit the
+  durable resync: with a pending store it re-registers such a root within a
+  minute, but with its backoff reset, its running fetch's lease invalidated and
+  a new TTL; without one the head is gone.
+- `Dead` names the scopes whose provider never serves a fetch: it answers
+  busy, stalls or is gone, for good. `WComplete` never fires for them; their
+  attempts only fail.
+- `Trickle` names the scopes whose provider serves slowly but productively:
+  every window delivers a block (`TrickleWindow`), so the attempt never
+  stalls, but the DAG outlasts any quantum. `CutoffMode = "Quantum"`: such an
+  attempt gives its slot back at `CLOCK_ATTEMPT_QUANTUM` (`Preempt`), keeping
+  what it fetched, and its root is due again at once, behind every root
+  already due (`FetchTaskEnd::Preempted`, `finish_attempt(preempted)`).
+  `"Unbounded"`, the rule before, ends an attempt only on a window without
+  progress, so a trickling attempt keeps its slot as long as its DAG takes.
+
+The checks use two documents, one fetch slot, `MaxV = 1` and one restart. The
+liveness run makes only the receiver fair, and only at the scheduler level:
+the clock dispatches whenever some due root can take a slot (weak fairness
+on some `WClaim`), and merges and their cleanup run. No root, scope or job
+has dispatch fairness of its own: which root goes next is the due order's
+choice, so per-root progress has to follow from FIFO, the quantum and
+rotation. Granting it per root is the assumption that would hide a slot held
+for ever. Per root there are only timers: a deadline passes (`BecomeDue`),
+an attempt's windows end (`WFail`: each window is bounded), a quantum ends
+(`Preempt`).
+
+`LIVE_AckedRootMerged` rests on one environment assumption, stated as strong
+fairness on some `WComplete`: a fetch that can complete eventually does.
+Reachability alone does not give it, since a reachable provider can answer
+busy every time. The assumption is a `Boundary` in `proofs/src/registry.rs`.
+`Dead` and `Trickle` providers never complete in the model. Their heads stay
+owned (`ACT_AckedRootLeavesOwned`) and keep being retried, but
+`LIVE_AckedRootMerged` promises them nothing; it promises that they do not
+stop the other heads from merging. `MC_SyncOwnership_Green_Dispatch_DeadProvider`
+and `MC_SyncOwnership_Green_Dispatch_Trickle` check that; with the property
+unrestricted, the dead-provider check fails, which is why the assumption is
+needed. `MC_SyncOwnership_Red_UnboundedProductive` drops the quantum: a
+trickling root claims the only slot and d2 is never dispatched.
+
+## In-memory pending map
+
+`MC_SyncOwnership_Memory.tla` runs every action of this model with the
+receiver's bounded in-memory map in front of `pending`. Only roots in memory
+(`mem`) can be claimed, and a registration needs an entry first
+(`try_insert_pending_dag`): with the map full the push is nacked (`MNack`)
+before anything is durable, so the sender keeps its marker. The durable set
+can be larger than the map: before the one restart the map holds the whole
+durable set, after it `MemCap` entries, which is an upgrade or a lower cap. The
+restart restores only what fits (`Resync`). Roots of `Dead` scopes sort first
+in key order, the worst case for a key-order sweep.
+
+- As in the dispatch model, every variable is code state, mapped in the
+  module header: `mem` and `conts` are the map's keys by `PendingDag::origin`,
+  `dispatches` is `PendingDag::dispatches` (counted up to `RotateAfter`),
+  `dueOrder` and `backoff` are `next_retry_at` by its order, and `cursor` is
+  `pending_resync_cursor`.
+- `OverflowMode = "Rotate"`: a root whose `dispatches` reached `RotateAfter`
+  (`PENDING_ROTATE_AFTER_DISPATCHES`; 1 in the configurations) gives its
+  entry up once its attempt has ended, while the map is full and a durable
+  root waits, keeping its record (`Yield`; `PendingDagLease::finish_attempt`).
+  The sweep resumes after the root it
+  admitted last (`records_after_resync_cursor`). `"KeyOrder"` yields but
+  sweeps from the first key, re-admitting the root that just gave its entry up.
+  `"Retained"`, the rule before, never gives an acknowledged entry up.
+- Entries record their origin (`PendingOrigin`): `Push`, `Restored` or
+  `LocalContinuation`. A pull-sync merge that yields its work budget leaves a
+  local continuation (`PullYield`, `continue_merge`); it is never an
+  acknowledged obligation (`INV_ContinuationsNeverAcked`), and a push for the
+  same root takes its entry over. `ContinuationMode = "EndOnStop"`: the first
+  turn that does not yield again (merged, a non-terminal skip, an error)
+  removes the entry (`ContinuationStop`; `MergeTurn` dropping at the end of
+  the turn). `"Retained"`, the rule before, keeps the entry, which the clock
+  re-drives for ever while it counts against `max_pending_dags`.
+
+`LIVE_AckedRootMerged` does not extend to local continuations, and is not
+meant to: no sender waits on one, and a non-terminal skip waits on an input
+the receiver does not own (a definition, an ACP registration). What holds is
+that every continuation leaves the map (`LIVE_ContinuationEnds`) and that
+ending one drops no acknowledged head. Its blocks stay local and unmerged;
+the next pull or push of the head starts the merge again.
+
+The checks use two documents (`d1` dead and first in key order, `d2` also
+pulled), `MaxV = 1`, one fetch slot, a map of one after the restart, and the
+dispatch model's scheduler-level fairness and environment assumption. Claims
+follow `next_retry_at` order (`dueOrder`), as in the dispatch model, so no
+root needs claim fairness of its own here either. Nothing is recorded only to
+state a property: the end of a continuation is the liveness property
+`LIVE_ContinuationEnds` over the map itself.
+
 ## Checked properties
 
 - `INV_ObligationConservation`: when a receiver is behind the sender's current
@@ -251,6 +385,27 @@ delay.
   scope eventually stays current despite drops, nacks, and one restart.
 - `LIVE_EventualReceiverQuiescence`: currency is not enough; every merged durable
   receiver obligation is eventually retired.
+- `ACT_AttemptsStartInDueOrder`, `ACT_EndedAttemptQueuesBehind` (dispatch),
+  both properties of every step over `next_retry_at` order: an attempt starts
+  only for the oldest due root that can run, and an attempt that ends leaves
+  its root behind every root already waiting. Together a due root waiting for
+  a fetch slot is never passed by a root that became due after it, so a head
+  acknowledged after a restart is not starved by catch-up roots retrying.
+- `INV_DueOrBackoff` (dispatch): an idle pending root is either due or waiting
+  out its backoff.
+- `ACT_AckedRootLeavesOwned` (dispatch), a property of every step: an
+  acknowledged head leaves the receiver only while someone else (sender
+  marker, a hint, a newer pending head or the merge) still owns it.
+- `LIVE_AckedRootMerged` (dispatch): every acknowledged head whose provider
+  eventually serves is merged (the environment assumption above).
+- `INV_MemoryBounded`, `INV_MemoryHoldsDurable` (memory): the map never holds
+  more entries than it may, and an acknowledged entry always has its record.
+- `INV_ContinuationsNeverAcked` (memory): a local continuation is never an
+  acknowledged obligation.
+- `LIVE_DurableRootMerged` (memory): every acknowledged durable head whose
+  provider serves is merged, however many never-serving roots were restored
+  ahead of it into a map too small for all of them.
+- `LIVE_ContinuationEnds` (memory): every local continuation leaves the map.
 
 The register-then-ack deviation from Go remains honest because `pending` is
 durable in the green policy. An optimistic acknowledgement for an in-flight
@@ -288,6 +443,18 @@ fetch owner is deliberately not expressible.
 | `MC_SyncOwnership_Red_EagerIdentityLookup.cfg` | RED | a durable replicator grant waits behind an unnecessary reverse DID challenge until CAR timeout |
 | `MC_SyncOwnership_Red_BlockingHostEvent.cfg` | RED | a full event channel blocks the host command needed to reply and release admitted work |
 | `MC_SyncOwnership_Red_BusyExhaustion.cfg` | RED | a useful CAR coalesced behind an existing shared-CID storage owner is misclassified as terminal provider exhaustion instead of returning to the paced root clock |
+| `MC_SyncOwnership_Green_Dispatch.cfg` | GREEN | one attempt per fetch slot, its next deadline from its end, acknowledged heads kept: due roots go in order and every acknowledged head merges across a restart |
+| `MC_SyncOwnership_Green_Dispatch_DeadProvider.cfg` | GREEN | the same with `d1`'s provider never serving: `d1`'s head is kept, `d2`'s still merges |
+| `MC_SyncOwnership_Green_Dispatch_Trickle.cfg` | GREEN | the same with `d1`'s provider trickling: `d1`'s attempt gives its slot back at its quantum and `d2`'s head still merges |
+| `MC_SyncOwnership_Red_UnboundedProductive.cfg` | RED | no quantum: `d1`'s trickling attempt never ends, holds the only slot, and `d2` is never dispatched (`LIVE_AckedRootMerged`) |
+| `MC_SyncOwnership_Red_HeldSlot.cfg` | RED | a fetch keeps its slot through all of its attempts and starts the next ahead of a head acknowledged while it held the slot (`ACT_AttemptsStartInDueOrder`) |
+| `MC_SyncOwnership_Red_ClaimTimeRearm.cfg` | RED | the root's next deadline is fixed when it is claimed and passes during the attempt, so the failed root ends due ahead of heads acknowledged during its attempt (`ACT_EndedAttemptQueuesBehind`) |
+| `MC_SyncOwnership_Red_AckedTtl.cfg` | RED | the pending TTL drops an acknowledged head whose sender already ended its marker (`ACT_AckedRootLeavesOwned`) |
+| `MC_SyncOwnership_Green_Memory.cfg` | GREEN | durable roots past the in-memory cap take turns, so a never-serving root restored first does not keep the other from merging; a local continuation ends when it stops yielding |
+| `MC_SyncOwnership_Red_RetainedOverflow.cfg` | RED | an acknowledged root never gives its entry up: the never-serving root restored first holds the only entry for good (`LIVE_DurableRootMerged`) |
+| `MC_SyncOwnership_Red_KeyOrderResync.cfg` | RED | the root gives its entry up but the sweep restarts at the first key and re-admits it ahead of the other (`LIVE_DurableRootMerged`) |
+| `MC_SyncOwnership_Red_ImmortalContinuation.cfg` | RED | a local continuation whose turn skips keeps its entry and is re-driven for ever (`LIVE_ContinuationEnds`) |
+| `MC_SyncOwnership_Red_ShedAsStall.cfg` | RED | a provider that sheds a CAR request as busy is read as a stalled window, so repeated shedding by a saturated hub burns the attempt budget into terminal provider exhaustion. `ProviderShed` is the release of an attempt in which every provider shed one batch, or in which a provider shed and none delivered, including a busy hub beside alternates that do not hold the root; like `BusyExhaustion`, this guards the classification, and the provider mix itself is tested in `busy_provider_rotation.rs` |
 
 Each red configuration checks only type safety plus the property it is meant to
 violate, keeping its counterexample attributable.

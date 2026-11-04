@@ -150,7 +150,7 @@ impl CollectionAddArgs {
         }
 
         let sdl = sdl_parts.join("\n");
-        let client = super::http_client::HttpClient::new(&ctx.url)?
+        let client = super::http_client::HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 

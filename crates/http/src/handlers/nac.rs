@@ -115,18 +115,38 @@ pub async fn go_add_relationship(
 
 /// POST /api/v0/acp/node/relationships
 ///
-/// Add several NAC relationships in one request, in order. An error stops
-/// the request without undoing the entries before it.
+/// Add several NAC relationships in one request, in order. Every entry is
+/// validated before any write runs; a later backend error stops the request
+/// without undoing the entries before it.
 pub async fn go_add_relationships(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     Json(bodies): Json<Vec<GoNacRelationshipRequest>>,
 ) -> Result<Json<Vec<AddActorRelationshipResult>>, HttpError> {
+    let targets = bodies
+        .iter()
+        .map(validate_add_relationship)
+        .collect::<Result<Vec<_>, _>>()?;
     let mut results = Vec::with_capacity(bodies.len());
-    for body in &bodies {
+    for (body, _target) in bodies.iter().zip(&targets) {
         results.push(add_relationship(&state, &identity, body).await?);
     }
     Ok(Json(results))
+}
+
+/// Validate one add-relationship entry: the relation must be a NAC relation
+/// other than "owner", and the target must parse as a DID.
+fn validate_add_relationship(body: &GoNacRelationshipRequest) -> Result<identity::Did, HttpError> {
+    if !acp::is_valid_nac_relation(&body.relation) || body.relation == "owner" {
+        return Err(HttpError::BadRequest(
+            "relation not in resource".to_string(),
+        ));
+    }
+    if body.target_actor.is_empty() {
+        return Err(HttpError::BadRequest("actor must be a valid did".into()));
+    }
+    identity::Did::new(&body.target_actor)
+        .map_err(|e| HttpError::BadRequest(format!("invalid TargetActor DID: {}", e)))
 }
 
 async fn add_relationship(
@@ -171,4 +191,65 @@ pub async fn re_enable(
 ) -> Result<Json<()>, HttpError> {
     state.executor.re_enable_nac_as(&identity.context()).await?;
     Ok(Json(()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mock::{MockNodeAcpOperations, MockQueryExecutor};
+    use crate::router::AppStateBuilder;
+    use query::executor::QueryExecutor;
+    use std::sync::Arc;
+
+    fn relationship(relation: &str, target_actor: &str) -> GoNacRelationshipRequest {
+        GoNacRelationshipRequest {
+            relation: relation.into(),
+            target_actor: target_actor.into(),
+        }
+    }
+
+    #[nuclei::test]
+    async fn add_relationships_prevalidates_and_returns_ordered_results() {
+        let requestor = identity::Did::new("did:key:requestor").unwrap();
+        let target = identity::Did::new("did:key:target").unwrap();
+        let nac = Arc::new(MockNodeAcpOperations::enabled_with_owner(requestor.clone()));
+        let state = AppStateBuilder::new(
+            Arc::new(MockQueryExecutor::with_nac(Arc::clone(&nac))) as Arc<dyn QueryExecutor>,
+            edge::testing::edge(),
+        )
+        .build();
+        let identity = ExtractIdentity::from_did(Some(requestor));
+
+        let result = go_add_relationships(
+            State(state.clone()),
+            identity.clone(),
+            Json(vec![
+                relationship("admin", target.as_str()),
+                relationship("owner", "did:key:other"),
+            ]),
+        )
+        .await;
+
+        assert!(matches!(result, Err(HttpError::BadRequest(_))));
+        assert!(!nac.is_admin(&target).await.unwrap());
+
+        let Json(results) = go_add_relationships(
+            State(state),
+            identity,
+            Json(vec![
+                relationship("admin", target.as_str()),
+                relationship("admin", target.as_str()),
+            ]),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            results
+                .iter()
+                .map(|result| result.existed_already)
+                .collect::<Vec<_>>(),
+            vec![false, true]
+        );
+    }
 }

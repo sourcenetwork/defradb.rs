@@ -9,6 +9,7 @@
 
 use std::time::Duration;
 
+pub mod arbitration;
 mod broadcast_coalescer;
 mod broadcaster;
 pub(crate) mod car;
@@ -33,15 +34,17 @@ pub mod receive_gate;
 mod replication;
 
 pub use broadcaster::{BroadcastResult, Broadcaster};
-pub use collection_store::{MemoryCollectionStorage, P2PCollectionStorage, P2PCollectionStore};
+pub use collection_store::{
+    pooled_collection_store, MemoryCollectionStorage, P2PCollectionStorage, P2PCollectionStore,
+};
 #[cfg(feature = "iroh-transport")]
 pub use coordinator::IrohSyncCoordinator;
 #[cfg(feature = "libp2p-transport")]
 pub use coordinator::Libp2pSyncCoordinator;
 pub use coordinator::{
-    CreateReplicatorResult, HeadHintCarAuthority, HeadHintCarGrant, LoadReplicatorsResult,
-    PeerDetails, PendingFetch, PushFailure, PushFailureReceiver, QuarantinedRoot, SyncCoordinator,
-    SyncShutdownHandle, SyncStatus,
+    CreateReplicatorResult, FollowedDocuments, HeadHintCarAuthority, HeadHintCarGrant,
+    LoadReplicatorsResult, PeerDetails, PendingFetch, PushFailure, PushFailureReceiver,
+    QuarantinedRoot, SyncCoordinator, SyncShutdownHandle, SyncStatus,
 };
 pub use dag_sync::{DagSync, DagSyncConfig, DagSyncState, NeedsFetchData, SyncPlan};
 pub use dispatch_queue::{

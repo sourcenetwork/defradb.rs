@@ -1,3 +1,6 @@
+-- The estimators' constants, `Arbitration.contract`.
+import Arbitration.Constants
+
 /-!
 # Conformance contract generator
 
@@ -63,8 +66,9 @@ structure Vocabulary where
   values : List String
 
 def vocabularies : List Vocabulary :=
-  [ { domain := "MergeResult",        values := mergeOutcomes.map MergeOutcome.toDefraDB }
-  , { domain := "RelationExpression", values := relExprs.map RelExpr.toDefraDB } ]
+  [ { domain := "MergeResult",          values := mergeOutcomes.map MergeOutcome.toDefraDB }
+  , { domain := "RelationExpression",   values := relExprs.map RelExpr.toDefraDB }
+  , { domain := "ArbitrationConstants", values := Arbitration.contract } ]
 
 /-! ## Minimal JSON encoding (no mathlib) -/
 

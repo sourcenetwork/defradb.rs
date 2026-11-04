@@ -6,7 +6,7 @@ fn cid(label: &[u8]) -> Cid {
     Cid::new_v1(0x71, Code::Sha2_256.digest(label))
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn completed_cache_reclamation_cannot_remove_selected_authority() {
     let access = Arc::new(SelectiveCarAccess::default());
     let authority = HeadHintCarAuthority::new(access.clone());

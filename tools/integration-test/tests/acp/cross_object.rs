@@ -170,13 +170,16 @@ async fn cross_object_parent_read_inheritance(cluster: TestCluster) {
 
 // Rust-only: collection-level / cross-object ACP is unimplemented in Go
 // (sourcenetwork/defradb#3883), so there is no Go-parity variant.
-#[tokio::test]
+#[nuclei::test]
 async fn rust_cross_object_parent_read_inheritance() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    cross_object_parent_read_inheritance(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        cross_object_parent_read_inheritance(cluster).await;
+    })
+    .await;
 }

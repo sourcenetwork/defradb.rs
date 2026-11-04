@@ -81,7 +81,7 @@ fn request(peer: &str, names: &[&str]) -> ReplicatorInstallRequest {
     )
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn finish_is_fenced_idempotent_and_preserves_the_requested_set() {
     let h = Harness::default();
     let mut events = h.bus.subscribe(&[EventName::ReplicatorCompleted]);
@@ -128,7 +128,7 @@ async fn finish_is_fenced_idempotent_and_preserves_the_requested_set() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn waiting_has_a_deadline_and_does_not_clear_the_active_install() {
     assert_waiting_has_a_deadline_and_preserves_the_install().await;
 }
@@ -209,7 +209,7 @@ async fn assert_waiting_has_a_deadline_and_preserves_the_install() {
     assert!(next.replay.is_empty());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn abandoned_replay_reports_interruption_once_and_forces_a_new_replay() {
     let h = Harness::default();
     let mut events = h.bus.subscribe(&[EventName::ReplicatorCompleted]);
@@ -234,7 +234,7 @@ async fn abandoned_replay_reports_interruption_once_and_forces_a_new_replay() {
     assert_eq!(next.replay, ["Note"]);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn changed_and_removed_capabilities_trigger_replay_without_persisting_tokens() {
     let h = Harness::default();
     let mut request = request("peer", &["Note"]);
@@ -261,7 +261,7 @@ async fn changed_and_removed_capabilities_trigger_replay_without_persisting_toke
     assert_eq!(changed.replay, ["Note"]);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn malformed_durable_state_fails_without_overwriting_it() {
     let h = Harness::default();
     h.store
@@ -280,7 +280,7 @@ async fn malformed_durable_state_fails_without_overwriting_it() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_replaced_peer_configuration_cannot_report_the_old_replay_as_successful() {
     let h = Harness::default();
     let mut events = h.bus.subscribe(&[EventName::ReplicatorCompleted]);
@@ -319,7 +319,7 @@ impl RetryAttemptFn for CorruptInstall {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn one_corrupt_record_does_not_block_recovery_of_other_peers() {
     let h = Harness::default();
     let mut events = h.bus.subscribe(&[EventName::ReplicatorCompleted]);
@@ -351,7 +351,7 @@ impl RetryAttemptFn for PauseFirstAttempt {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn conflicting_installs_redecide_in_the_engine_transaction() {
     let h = Harness::default();
     let id = h
@@ -373,7 +373,7 @@ async fn conflicting_installs_redecide_in_the_engine_transaction() {
         resume: resume.clone(),
     };
     let store = h.store.clone();
-    let loser = tokio::spawn(async move {
+    let loser = p2p::rt::spawn(async move {
         corekv::transact::<_, Decision>(&*store, retry(), None, Box::new(attempt))
             .await
             .unwrap()
@@ -381,7 +381,7 @@ async fn conflicting_installs_redecide_in_the_engine_transaction() {
     staged.wait().await;
     let winner = h.prepare(&request("peer", &["User"])).await.unwrap();
     resume.set();
-    assert!(matches!(loser.await.unwrap(), Decision::Busy(id) if id == winner.id));
+    assert!(matches!(loser.join().await.unwrap(), Decision::Busy(id) if id == winner.id));
     let row = h.store.get_replicator("peer").await.unwrap().unwrap();
     assert_eq!(
         p2p::ReplicatorInfo::from_bytes(&row).unwrap().collections,
@@ -439,7 +439,7 @@ impl Store for ReorderedAllocation {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn stale_preallocated_identity_redecides_after_a_newer_install() {
     use std::sync::atomic::Ordering;
     let store = ReorderedAllocation {
@@ -470,7 +470,7 @@ async fn stale_preallocated_identity_redecides_after_a_newer_install() {
     store.harness.finish(&plan, None).await.unwrap();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn request_recovery_settles_only_the_requested_peer() {
     let h = Harness::default();
     let mut events = h.bus.subscribe(&[EventName::ReplicatorCompleted]);

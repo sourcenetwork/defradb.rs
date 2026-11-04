@@ -3,7 +3,7 @@
 use regolith::sync::OnceCell;
 use std::time::Duration;
 
-use reqwest::{Client, RequestBuilder, Response, StatusCode};
+use net::http::{Client, RequestBuilder, Response, StatusCode};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value as JsonValue;
 use url::Url;
@@ -57,9 +57,9 @@ pub const RETRYABLE_STATUS_CODES: &[u16] = &[408, 429, 500, 502, 503, 504];
 /// Global shared HTTP client for connection reuse across commands
 static SHARED_CLIENT: OnceCell<std::result::Result<Client, String>> = OnceCell::new();
 
-fn get_shared_client() -> Result<&'static Client> {
+fn get_shared_client(edge: &edge::Edge) -> Result<&'static Client> {
     let result = SHARED_CLIENT.get_or_init_racy(|| {
-        Client::builder()
+        Client::builder(edge.clone())
             .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
             .connect_timeout(Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS))
             .pool_max_idle_per_host(5)
@@ -104,11 +104,12 @@ pub struct HttpClient {
 }
 
 impl HttpClient {
-    /// Create a new HTTP client with the given base URL.
+    /// Create a new HTTP client with the given base URL, its connections on
+    /// `edge`.
     ///
     /// Uses a shared connection pool with configured timeouts for efficiency.
     /// Returns an error if the URL is invalid or the HTTP client fails to initialize.
-    pub fn new(base_url: &str) -> Result<Self> {
+    pub fn new(base_url: &str, edge: &edge::Edge) -> Result<Self> {
         let normalized_url = base_url.trim_end_matches('/');
 
         // Validate the URL format
@@ -116,7 +117,7 @@ impl HttpClient {
             .map_err(|e| Error::InvalidUrl(normalized_url.to_string(), e.to_string()))?;
 
         Ok(Self {
-            client: get_shared_client()?,
+            client: get_shared_client(edge)?,
             base_url: normalized_url.to_string(),
             auth_token: None,
             verbose: false,
@@ -180,7 +181,7 @@ impl HttpClient {
     }
 
     /// Check if an error is retryable (connection errors, timeouts)
-    fn is_retryable_error(error: &reqwest::Error) -> bool {
+    fn is_retryable_error(error: &net::http::Error) -> bool {
         error.is_connect() || error.is_timeout()
     }
 
@@ -201,7 +202,7 @@ impl HttpClient {
                     "Warning: Request failed, retry attempt {}/{} after {}ms delay...",
                     attempt, MAX_RETRIES, backoff_ms
                 );
-                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                nuclei::time::sleep(Duration::from_millis(backoff_ms)).await;
                 backoff_ms *= 2; // Exponential backoff
             }
 

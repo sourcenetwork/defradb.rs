@@ -7,6 +7,7 @@ use crypto::generate_ed25519;
 use identity::{Identity, RawIdentity};
 use std::time::Duration;
 
+use nuclei::time::timeout;
 use p2p::testutil::MockBitswapStore;
 use p2p::{
     message::{
@@ -16,7 +17,6 @@ use p2p::{
     signing::sign_message,
     DefraTopic, P2PHost, PeerId, PushLogRequest,
 };
-use tokio::time::timeout;
 
 fn authorizer_identity() -> RawIdentity {
     RawIdentity::from_private_key(generate_ed25519().unwrap()).unwrap()
@@ -37,7 +37,7 @@ async fn wait_until_connected(handle: &p2p::P2PHostHandle, peer_id: PeerId) {
             start.elapsed() < Duration::from_secs(5),
             "timed out waiting for connection to {peer_id}"
         );
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        nuclei::time::sleep(Duration::from_millis(50)).await;
     }
 }
 
@@ -58,7 +58,7 @@ async fn publish_when_ready(
                     std::time::Instant::now() < deadline,
                     "publish never succeeded within 15s: {e}"
                 );
-                tokio::time::sleep(Duration::from_millis(200)).await;
+                nuclei::time::sleep(Duration::from_millis(200)).await;
             }
         }
     }
@@ -67,11 +67,13 @@ async fn publish_when_ready(
 async fn assert_hosts_connect_over(listen_addr: &str) {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _replicators0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, _events1, _replicators1) = P2PHost::new(store1).await.unwrap();
+    let (host0, handle0, _events0, _replicators0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, _events1, _replicators1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
 
-    tokio::spawn(host0.run());
-    tokio::spawn(host1.run());
+    nuclei::spawn(host0.run()).detach();
+    nuclei::spawn(host1.run()).detach();
 
     handle1.listen(listen_addr.parse().unwrap()).await.unwrap();
     let addr1 = handle1.listen_addresses().await.unwrap().remove(0);
@@ -89,13 +91,13 @@ async fn assert_hosts_connect_over(listen_addr: &str) {
 async fn send_two_stream_request_and_capture_flag(
     sender: &p2p::P2PHostHandle,
     receiver: &p2p::P2PHostHandle,
-    events: &mut tokio::sync::mpsc::Receiver<p2p::HostEvent>,
+    events: &mut nuclei::sync::mpsc::Receiver<p2p::HostEvent>,
     target_peer_id: PeerId,
     request: PushLogRequest,
 ) -> (bool, Option<String>) {
     let sender_handle = sender.clone();
     let receiver_handle = receiver.clone();
-    let send_task = tokio::spawn(async move {
+    let send_task = nuclei::spawn(async move {
         sender_handle
             .send_two_stream_request(target_peer_id, request)
             .await
@@ -132,7 +134,7 @@ async fn send_two_stream_request_and_capture_flag(
         }
     };
 
-    send_task.await.unwrap();
+    send_task.join().await.unwrap();
     captured
 }
 
@@ -154,10 +156,10 @@ fn explicit_replay_capability(
     (did, capability)
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_host_creation() {
     let store = MockBitswapStore::new();
-    let result = P2PHost::new(store).await;
+    let result = P2PHost::new(store, edge::testing::edge()).await;
     assert!(result.is_ok());
 
     let (host, handle, _events, _replicators) = result.unwrap();
@@ -168,13 +170,14 @@ async fn test_host_creation() {
     handle.shutdown().await.unwrap();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn connection_poll_stops_when_host_is_closed() {
     let store = MockBitswapStore::new();
-    let (host, handle, _events, _replicators) = P2PHost::new(store).await.unwrap();
-    let host_task = tokio::spawn(host.run());
+    let (host, handle, _events, _replicators) =
+        P2PHost::new(store, edge::testing::edge()).await.unwrap();
+    let host_task = nuclei::spawn(host.run());
     handle.shutdown().await.unwrap();
-    host_task.await.unwrap();
+    host_task.join().await.unwrap();
 
     let peer_id = PeerId::from_public_key(&libp2p::identity::Keypair::generate_ed25519().public());
     let result = timeout(
@@ -187,25 +190,27 @@ async fn connection_poll_stops_when_host_is_closed() {
     assert!(result.is_err());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_host_connects_over_quic() {
     assert_hosts_connect_over("/ip4/127.0.0.1/udp/0/quic-v1").await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_host_connects_over_websocket() {
     assert_hosts_connect_over("/ip4/127.0.0.1/tcp/0/ws").await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_two_stream_non_replicator_is_not_marked_explicit() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _replicators0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, mut events1, _replicators1) = P2PHost::new(store1).await.unwrap();
+    let (host0, handle0, _events0, _replicators0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, mut events1, _replicators1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
 
-    tokio::spawn(host0.run());
-    tokio::spawn(host1.run());
+    nuclei::spawn(host0.run()).detach();
+    nuclei::spawn(host1.run()).detach();
 
     handle1
         .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
@@ -240,7 +245,7 @@ async fn test_two_stream_non_replicator_is_not_marked_explicit() {
     handle1.shutdown().await.unwrap();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_identity_protocol_roundtrip_returns_defra_identity() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
@@ -251,6 +256,7 @@ async fn test_identity_protocol_roundtrip_returns_defra_identity() {
         store0,
         p2p::P2PHostConfig::default(),
         Some(node_identity0),
+        edge::testing::edge(),
     )
     .await
     .unwrap();
@@ -259,12 +265,13 @@ async fn test_identity_protocol_roundtrip_returns_defra_identity() {
         store1,
         p2p::P2PHostConfig::default(),
         Some(node_identity1.clone()),
+        edge::testing::edge(),
     )
     .await
     .unwrap();
 
-    tokio::spawn(host0.run());
-    tokio::spawn(host1.run());
+    nuclei::spawn(host0.run()).detach();
+    nuclei::spawn(host1.run()).detach();
 
     handle1
         .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
@@ -292,15 +299,17 @@ async fn test_identity_protocol_roundtrip_returns_defra_identity() {
     handle1.shutdown().await.unwrap();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_se_query_protocol_roundtrip() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
-    let (host0, handle0, mut events0, _replicators0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, mut events1, _replicators1) = P2PHost::new(store1).await.unwrap();
+    let (host0, handle0, mut events0, _replicators0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, mut events1, _replicators1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
 
-    tokio::spawn(host0.run());
-    tokio::spawn(host1.run());
+    nuclei::spawn(host0.run()).detach();
+    nuclei::spawn(host1.run()).detach();
 
     handle1
         .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
@@ -376,18 +385,21 @@ async fn test_se_query_protocol_roundtrip() {
     handle1.shutdown().await.unwrap();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_two_stream_reply_from_wrong_transport_peer_is_rejected() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
     let store2 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _replicators0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, mut events1, _replicators1) = P2PHost::new(store1).await.unwrap();
-    let (host2, handle2, _events2, _replicators2) = P2PHost::new(store2).await.unwrap();
+    let (host0, handle0, _events0, _replicators0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, mut events1, _replicators1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
+    let (host2, handle2, _events2, _replicators2) =
+        P2PHost::new(store2, edge::testing::edge()).await.unwrap();
 
-    tokio::spawn(host0.run());
-    tokio::spawn(host1.run());
-    tokio::spawn(host2.run());
+    nuclei::spawn(host0.run()).detach();
+    nuclei::spawn(host1.run()).detach();
+    nuclei::spawn(host2.run()).detach();
 
     handle1
         .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
@@ -420,8 +432,9 @@ async fn test_two_stream_reply_from_wrong_transport_peer_is_rejected() {
     );
 
     let sender_handle = handle0.clone();
-    let mut send_task =
-        tokio::spawn(async move { sender_handle.send_two_stream_request(peer1, request).await });
+    let mut send_join =
+        nuclei::spawn(async move { sender_handle.send_two_stream_request(peer1, request).await })
+            .join();
 
     let received_request = loop {
         let event = timeout(Duration::from_secs(5), events1.recv())
@@ -447,7 +460,7 @@ async fn test_two_stream_reply_from_wrong_transport_peer_is_rejected() {
         .await
         .unwrap();
 
-    match timeout(Duration::from_millis(300), &mut send_task).await {
+    match timeout(Duration::from_millis(300), &mut send_join).await {
         Err(_) => {}
         Ok(result) => panic!("wrong-peer replay unexpectedly completed request: {result:?}"),
     }
@@ -459,7 +472,7 @@ async fn test_two_stream_reply_from_wrong_transport_peer_is_rejected() {
         .await
         .unwrap();
 
-    let reply = timeout(Duration::from_secs(5), send_task)
+    let reply = timeout(Duration::from_secs(5), send_join)
         .await
         .expect("timed out waiting for legitimate two-stream response")
         .unwrap()
@@ -471,15 +484,17 @@ async fn test_two_stream_reply_from_wrong_transport_peer_is_rejected() {
     handle2.shutdown().await.unwrap();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_two_stream_registered_replicator_without_capability_is_not_marked_explicit() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _replicators0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, mut events1, _replicators1) = P2PHost::new(store1).await.unwrap();
+    let (host0, handle0, _events0, _replicators0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, mut events1, _replicators1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
 
-    tokio::spawn(host0.run());
-    tokio::spawn(host1.run());
+    nuclei::spawn(host0.run()).detach();
+    nuclei::spawn(host1.run()).detach();
 
     handle1
         .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
@@ -519,15 +534,17 @@ async fn test_two_stream_registered_replicator_without_capability_is_not_marked_
     handle1.shutdown().await.unwrap();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_two_stream_registered_replicator_with_capability_is_marked_explicit() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _replicators0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, mut events1, _replicators1) = P2PHost::new(store1).await.unwrap();
+    let (host0, handle0, _events0, _replicators0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, mut events1, _replicators1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
 
-    tokio::spawn(host0.run());
-    tokio::spawn(host1.run());
+    nuclei::spawn(host0.run()).detach();
+    nuclei::spawn(host1.run()).detach();
 
     handle1
         .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
@@ -570,15 +587,17 @@ async fn test_two_stream_registered_replicator_with_capability_is_marked_explici
     handle1.shutdown().await.unwrap();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_cached_capability_is_not_attached_to_public_push() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _replicators0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, mut events1, _replicators1) = P2PHost::new(store1).await.unwrap();
+    let (host0, handle0, _events0, _replicators0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, mut events1, _replicators1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
 
-    tokio::spawn(host0.run());
-    tokio::spawn(host1.run());
+    nuclei::spawn(host0.run()).detach();
+    nuclei::spawn(host1.run()).detach();
 
     handle1
         .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
@@ -624,15 +643,17 @@ async fn test_cached_capability_is_not_attached_to_public_push() {
     handle1.shutdown().await.unwrap();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_two_stream_capability_for_other_collection_is_rejected() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _replicators0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, mut events1, _replicators1) = P2PHost::new(store1).await.unwrap();
+    let (host0, handle0, _events0, _replicators0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, mut events1, _replicators1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
 
-    tokio::spawn(host0.run());
-    tokio::spawn(host1.run());
+    nuclei::spawn(host0.run()).detach();
+    nuclei::spawn(host1.run()).detach();
 
     handle1
         .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
@@ -669,15 +690,17 @@ async fn test_two_stream_capability_for_other_collection_is_rejected() {
     handle1.shutdown().await.unwrap();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_two_stream_expired_capability_is_rejected() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _replicators0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, mut events1, _replicators1) = P2PHost::new(store1).await.unwrap();
+    let (host0, handle0, _events0, _replicators0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, mut events1, _replicators1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
 
-    tokio::spawn(host0.run());
-    tokio::spawn(host1.run());
+    nuclei::spawn(host0.run()).detach();
+    nuclei::spawn(host1.run()).detach();
 
     handle1
         .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
@@ -727,15 +750,17 @@ async fn test_two_stream_expired_capability_is_rejected() {
     handle1.shutdown().await.unwrap();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_two_stream_invalid_authorizer_signature_is_rejected() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _replicators0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, mut events1, _replicators1) = P2PHost::new(store1).await.unwrap();
+    let (host0, handle0, _events0, _replicators0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, mut events1, _replicators1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
 
-    tokio::spawn(host0.run());
-    tokio::spawn(host1.run());
+    nuclei::spawn(host0.run()).detach();
+    nuclei::spawn(host1.run()).detach();
 
     handle1
         .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
@@ -789,18 +814,21 @@ async fn test_two_stream_invalid_authorizer_signature_is_rejected() {
     handle1.shutdown().await.unwrap();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_two_stream_capability_is_edge_scoped() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
     let store2 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _replicators0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, _events1, _replicators1) = P2PHost::new(store1).await.unwrap();
-    let (host2, handle2, mut events2, _replicators2) = P2PHost::new(store2).await.unwrap();
+    let (host0, handle0, _events0, _replicators0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, _events1, _replicators1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
+    let (host2, handle2, mut events2, _replicators2) =
+        P2PHost::new(store2, edge::testing::edge()).await.unwrap();
 
-    tokio::spawn(host0.run());
-    tokio::spawn(host1.run());
-    tokio::spawn(host2.run());
+    nuclei::spawn(host0.run()).detach();
+    nuclei::spawn(host1.run()).detach();
+    nuclei::spawn(host2.run()).detach();
 
     handle2
         .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
@@ -839,13 +867,14 @@ async fn test_two_stream_capability_is_edge_scoped() {
     handle2.shutdown().await.unwrap();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_replicator_management() {
     let store = MockBitswapStore::new();
-    let (host, handle, _events, replicators) = P2PHost::new(store).await.unwrap();
+    let (host, handle, _events, replicators) =
+        P2PHost::new(store, edge::testing::edge()).await.unwrap();
 
     // Spawn the host
-    tokio::spawn(host.run());
+    nuclei::spawn(host.run()).detach();
 
     let peer_id = PeerId::random();
     let collections = vec!["users".to_string(), "posts".to_string()];
@@ -890,15 +919,17 @@ async fn test_replicator_management() {
 // senders produce DIFFERENT IDs. A prior Rust override hashed message
 // data, collapsing them — see #834. This test fails pre-fix and passes
 // post-fix.
-#[tokio::test]
+#[nuclei::test]
 async fn regression_834_gossipsub_message_id_distinguishes_senders() {
     let store0 = MockBitswapStore::new();
     let store1 = MockBitswapStore::new();
-    let (host0, handle0, _events0, _replicators0) = P2PHost::new(store0).await.unwrap();
-    let (host1, handle1, _events1, _replicators1) = P2PHost::new(store1).await.unwrap();
+    let (host0, handle0, _events0, _replicators0) =
+        P2PHost::new(store0, edge::testing::edge()).await.unwrap();
+    let (host1, handle1, _events1, _replicators1) =
+        P2PHost::new(store1, edge::testing::edge()).await.unwrap();
 
-    tokio::spawn(host0.run());
-    tokio::spawn(host1.run());
+    nuclei::spawn(host0.run()).detach();
+    nuclei::spawn(host1.run()).detach();
 
     handle0
         .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
@@ -959,19 +990,23 @@ async fn wait_until_disconnected(handle: &p2p::P2PHostHandle, peer_id: PeerId) {
             start.elapsed() < Duration::from_secs(5),
             "timed out waiting for disconnection from {peer_id}"
         );
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        nuclei::time::sleep(Duration::from_millis(50)).await;
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_disconnect_drops_connected_peer() {
     let (host0, handle0, _events0, _replicators0) =
-        P2PHost::new(MockBitswapStore::new()).await.unwrap();
+        P2PHost::new(MockBitswapStore::new(), edge::testing::edge())
+            .await
+            .unwrap();
     let (host1, handle1, _events1, _replicators1) =
-        P2PHost::new(MockBitswapStore::new()).await.unwrap();
+        P2PHost::new(MockBitswapStore::new(), edge::testing::edge())
+            .await
+            .unwrap();
 
-    tokio::spawn(host0.run());
-    tokio::spawn(host1.run());
+    nuclei::spawn(host0.run()).detach();
+    nuclei::spawn(host1.run()).detach();
 
     handle1
         .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
@@ -991,14 +1026,18 @@ async fn test_disconnect_drops_connected_peer() {
     handle1.shutdown().await.unwrap();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn test_disconnect_absent_peer_is_ok() {
     let (host0, handle0, _events0, _replicators0) =
-        P2PHost::new(MockBitswapStore::new()).await.unwrap();
-    tokio::spawn(host0.run());
+        P2PHost::new(MockBitswapStore::new(), edge::testing::edge())
+            .await
+            .unwrap();
+    nuclei::spawn(host0.run()).detach();
 
     let (_host1, handle1, _events1, _replicators1) =
-        P2PHost::new(MockBitswapStore::new()).await.unwrap();
+        P2PHost::new(MockBitswapStore::new(), edge::testing::edge())
+            .await
+            .unwrap();
     let never_connected = handle1.local_peer_id_cached();
 
     handle0

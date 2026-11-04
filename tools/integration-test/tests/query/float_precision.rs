@@ -61,20 +61,29 @@ async fn sum_test(cluster: TestCluster) {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_float_precision_create_round_trip() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    create_round_trip_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        create_round_trip_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_float_precision_filter_round_trip() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    filter_round_trip_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        filter_round_trip_test(cluster).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_float_precision_sum() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    sum_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        sum_test(cluster).await;
+    })
+    .await;
 }
