@@ -10,7 +10,146 @@ use crate::collection::loader::get_collection_with_lazy_load;
 
 use super::LensedDocFetcher;
 
+async fn read_validated_exact(
+    view: &datastore::NamespaceView,
+    key: &[u8],
+) -> query::error::Result<Option<Vec<u8>>> {
+    let mut end = key.to_vec();
+    end.push(0);
+    let options = storage::corekv::IterOptions::new()
+        .with_start(key.to_vec())
+        .with_end(end)
+        .with_validation(true);
+    let mut iterator = view
+        .iterator(options)
+        .await
+        .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+    let mut value = None;
+    while let Some(entry) = iterator
+        .next()
+        .await
+        .map_err(|error| query::error::QueryError::execution(error.to_string()))?
+    {
+        if entry.key.as_slice() == key {
+            value = Some(entry.value.to_vec());
+        }
+    }
+    Ok(value)
+}
+
 impl<S: Store + 'static> LensedDocFetcher<S> {
+    pub(super) async fn get_by_unique_string_in_txn_impl(
+        &self,
+        collection_name: &str,
+        field_name: &str,
+        value: &str,
+    ) -> query::error::Result<Option<(Document, std::sync::Arc<schema::CollectionVersion>)>> {
+        let (collection, datastore, systemstore) =
+            get_collection_with_lazy_load(&*self.shared_txn()?, collection_name).await?;
+        if field_name == "_docID" {
+            use storage::corekv::Key;
+            let mapping = storage::keys::doc_id_index::DocIDToDocRefKey::new(value).bytes();
+            let Some(bytes) = read_validated_exact(&systemstore, &mapping).await? else {
+                return Ok(None);
+            };
+            let reference = storage::keys::doc_id_index::DocRef::decode(&bytes)
+                .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+            if reference.collection_short_id != collection.resolved_root_id() {
+                return Ok(None);
+            }
+            let row = collection.doc_key(reference.doc_short_id);
+            let deleted = collection.deleted_key(reference.doc_short_id);
+            if read_validated_exact(&datastore, &row).await?.is_none()
+                || read_validated_exact(&datastore, &deleted).await?.is_some()
+            {
+                return Ok(None);
+            }
+            let result = self
+                .get_by_ids_impl(collection_name, &[value.to_owned()])
+                .await?;
+            let Some(doc) = result.into_docs().into_iter().next() else {
+                return Ok(None);
+            };
+            if doc.id().is_none_or(|id| id.to_string() != value) {
+                return Err(query::error::QueryError::execution(
+                    "target document identity differs from selector",
+                ));
+            }
+            return Ok(Some((
+                doc,
+                std::sync::Arc::new(collection.schema().clone()),
+            )));
+        }
+        let field = collection
+            .schema()
+            .fields
+            .iter()
+            .find(|field| field.name == field_name)
+            .ok_or_else(|| {
+                query::error::QueryError::execution(
+                    "create authorization target field does not exist",
+                )
+            })?;
+        if !field.immutable
+            || !matches!(
+                &field.kind,
+                schema::FieldKind::Scalar(
+                    schema::ScalarKind::String | schema::ScalarKind::NillableString
+                )
+            )
+        {
+            return Err(query::error::QueryError::execution(
+                "create authorization target field must be an immutable string",
+            ));
+        }
+        let index = collection
+            .schema()
+            .indexes
+            .iter()
+            .find(|index| {
+                index.unique && index.fields.len() == 1 && index.fields[0].name == field_name
+            })
+            .ok_or_else(|| {
+                query::error::QueryError::execution(
+                    "create authorization target field needs a unique index",
+                )
+            })?;
+        let key = storage::keys::IndexDataStoreKey::new(
+            collection.resolved_root_id(),
+            index.id,
+            vec![storage::keys::datastore::IndexedField::new(
+                document::NormalValue::String(value.to_owned()),
+                index.fields[0].descending,
+            )],
+        )
+        .try_bytes()
+        .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+        let Some(bytes) = read_validated_exact(&datastore, &key).await? else {
+            return Ok(None);
+        };
+        let short_id = storage::keys::doc_id_index::decode_doc_short_id(&bytes)
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+        let doc_id = crate::docid::map::get_doc_id(&systemstore, short_id)
+            .await
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))?
+            .ok_or_else(|| {
+                query::error::QueryError::execution("unique target has no document identity")
+            })?;
+        let result = self.get_by_ids_impl(collection_name, &[doc_id]).await?;
+        let Some(doc) = result.into_docs().into_iter().next() else {
+            return Ok(None);
+        };
+        if doc.get(field_name).and_then(|value| value.as_str()) != Some(value) {
+            return Err(query::error::QueryError::execution(
+                "unique target index does not match document",
+            ));
+        }
+        Ok(Some((
+            doc,
+            std::sync::Arc::new(collection.schema().clone()),
+        )))
+    }
+
     /// Every live document, read for a decision on `deciding_on` when it is
     /// given (see `Collection::get_all_with_datastore_deciding_on`).
     pub(super) async fn get_all_impl(

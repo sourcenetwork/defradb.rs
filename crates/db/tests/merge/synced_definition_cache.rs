@@ -28,6 +28,7 @@ fn policy() -> PolicyDescription {
     PolicyDescription {
         id: "policy-agents".to_string(),
         resource_name: "agents".to_string(),
+        create_rule: None,
     }
 }
 

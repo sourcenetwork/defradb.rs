@@ -182,6 +182,10 @@ pub(crate) fn create_router_with_state_and_body_limits(
 
     // ACP routes
     let acp_routes = Router::new()
+        .route(
+            "/document/transaction-permission",
+            post(handlers::acp::observe_transaction_permission),
+        )
         .route("/status", get(handlers::acp::get_status))
         .route(
             "/document/resource-relationship",

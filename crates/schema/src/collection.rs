@@ -427,6 +427,50 @@ impl CollectionVersion {
     fn validate_policy(&self) -> Result<()> {
         if let Some(ref policy) = self.policy {
             policy.validate()?;
+            if let Some(rule) = &policy.create_rule {
+                if self.is_branchable
+                    || self
+                        .governance_root
+                        .as_deref()
+                        .is_none_or(|root| root.trim().is_empty())
+                {
+                    return Err(SchemaError::InvalidPolicy(
+                        "target-bound create requires a governed, non-branchable collection".into(),
+                    ));
+                }
+                let field = self.field_by_name(&rule.input_field).ok_or_else(|| {
+                    SchemaError::InvalidPolicy("target-bound create input field is missing".into())
+                })?;
+                if !field.immutable
+                    || !matches!(
+                        &field.kind,
+                        FieldKind::Scalar(
+                            crate::ScalarKind::String | crate::ScalarKind::NillableString
+                        )
+                    )
+                {
+                    return Err(SchemaError::InvalidPolicy(
+                        "target-bound create input must be an immutable string".into(),
+                    ));
+                }
+                if let Some(name) = &rule.match_input_field {
+                    let matched = self.field_by_name(name).ok_or_else(|| {
+                        SchemaError::InvalidPolicy("target match input field is missing".into())
+                    })?;
+                    if !matched.immutable
+                        || !matches!(
+                            &matched.kind,
+                            FieldKind::Scalar(
+                                crate::ScalarKind::String | crate::ScalarKind::NillableString
+                            )
+                        )
+                    {
+                        return Err(SchemaError::InvalidPolicy(
+                            "target match input must be an immutable string".into(),
+                        ));
+                    }
+                }
+            }
         }
         Ok(())
     }

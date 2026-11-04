@@ -32,6 +32,9 @@ pub const TXN_RETRY_EXHAUSTED_ERROR_CODE: &str = "TXN_RETRY_EXHAUSTED";
 /// remains unknown; clients must not infer that replaying a mutation is safe.
 pub const STORAGE_FULL_ERROR_CODE: &str = "STORAGE_FULL";
 
+/// A native authorization decision denied the requested operation.
+pub const PERMISSION_DENIED_ERROR_CODE: &str = "PERMISSION_DENIED";
+
 /// Stable conflict message recognized by the remote DefraDB client.
 pub const TXN_CONFLICT_MESSAGE: &str = "transaction conflict. Please retry";
 
@@ -302,6 +305,7 @@ impl QueryResponseError {
             &error,
             crate::error::QueryError::Storage(cause) if cause.is_storage_full()
         );
+        let is_permission_denied = matches!(&error, crate::error::QueryError::PermissionDenied(_));
         let retry_input = match &error {
             crate::error::QueryError::NeedsInput(request) => Some(request.clone()),
             _ => None,
@@ -313,6 +317,8 @@ impl QueryResponseError {
             response_error.with_code(TXN_RETRY_EXHAUSTED_ERROR_CODE)
         } else if is_storage_full {
             response_error.with_code(STORAGE_FULL_ERROR_CODE)
+        } else if is_permission_denied {
+            response_error.with_code(PERMISSION_DENIED_ERROR_CODE)
         } else {
             response_error
         };
@@ -329,6 +335,14 @@ impl QueryResponseError {
 #[cfg(test)]
 mod prepared_retry_tests {
     use super::*;
+
+    #[test]
+    fn permission_denial_has_stable_graphql_code() {
+        let response = QueryResponseError::from_query_error(
+            crate::error::QueryError::permission_denied("requester cannot update document"),
+        );
+        assert_eq!(response.code(), Some(PERMISSION_DENIED_ERROR_CODE));
+    }
 
     #[test]
     fn needs_input_is_internal_and_wire_bytes_are_not_serialized() {
@@ -477,6 +491,28 @@ pub trait QueryExecutor: MaybeSendSync {
         let _ = (context, handle, collection, doc_ids, identity);
         Err(crate::error::QueryError::execution(
             "transaction-bound document owner observations are unsupported",
+        ))
+    }
+
+    /// Observe a signed requester's native permission in the transaction that
+    /// will consume its request. The caller authenticates the requester and
+    /// binds it to the durable intent; the transaction principal must itself
+    /// be able to read the target. Unsupported backends fail closed.
+    async fn observe_document_permission_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        observer: Did,
+        requester: Did,
+        collection: &str,
+        doc_id: &str,
+        permission: acp::DocumentPermission,
+    ) -> Result<bool> {
+        let _ = (
+            context, handle, observer, requester, collection, doc_id, permission,
+        );
+        Err(crate::error::QueryError::execution(
+            "transaction-bound permission observations are unsupported",
         ))
     }
 

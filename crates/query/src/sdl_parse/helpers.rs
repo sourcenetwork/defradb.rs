@@ -228,9 +228,74 @@ pub(super) fn parse_policy_directive(directive: &Directive<'_, String>) -> Resul
         return Err(QueryError::parse("resource name must not be empty"));
     }
 
+    let names = [
+        "createField",
+        "createTarget",
+        "createTargetField",
+        "createPermission",
+        "createRelation",
+        "createActorField",
+        "createMatchField",
+        "createTargetMatchField",
+        "createParentRelation",
+    ];
+    let values: Vec<_> = names
+        .iter()
+        .map(|name| get_directive_arg(directive, name))
+        .collect();
+    let create_rule = if values.iter().all(Option::is_none) {
+        None
+    } else {
+        let parse = |index: usize| match values[index] {
+            Some(graphql_parser::schema::Value::String(value)) if !value.trim().is_empty() => {
+                Ok(value.clone())
+            }
+            _ => Err(QueryError::parse(format!(
+                "@policy requires a non-empty string '{}' for target-bound create",
+                names[index]
+            ))),
+        };
+        let target_relation = if values[4].is_none() && values[5].is_none() {
+            None
+        } else {
+            Some(parse(4)?)
+        };
+        let target_actor_field = if values[4].is_none() && values[5].is_none() {
+            None
+        } else {
+            Some(parse(5)?)
+        };
+        let match_input_field = if values[6].is_none() && values[7].is_none() {
+            None
+        } else {
+            Some(parse(6)?)
+        };
+        let match_target_field = if values[6].is_none() && values[7].is_none() {
+            None
+        } else {
+            Some(parse(7)?)
+        };
+        let target_parent_relation = if values[8].is_none() {
+            None
+        } else {
+            Some(parse(8)?)
+        };
+        Some(schema::CreateRule {
+            input_field: parse(0)?,
+            target_collection: parse(1)?,
+            target_field: parse(2)?,
+            permission: parse(3)?,
+            target_relation,
+            target_actor_field,
+            match_input_field,
+            match_target_field,
+            target_parent_relation,
+        })
+    };
     Ok(PolicyConfig {
         id: id.unwrap(),
         resource: resource.unwrap(),
+        create_rule,
     })
 }
 

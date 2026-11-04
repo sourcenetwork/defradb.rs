@@ -79,6 +79,7 @@ impl Default for ParsedTypeDirectives {
 pub(super) struct PolicyConfig {
     pub(super) id: String,
     pub(super) resource: String,
+    pub(super) create_rule: Option<schema::CreateRule>,
 }
 
 #[derive(Debug)]

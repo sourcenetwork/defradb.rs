@@ -21,6 +21,33 @@ pub struct PolicyDescription {
     /// Name of the corresponding resource within the policy.
     #[serde(rename = "ResourceName", default)]
     pub resource_name: String,
+
+    /// Optional target-bound create permission. It is part of a governed
+    /// collection's policy commitment, not a caller-supplied preflight.
+    #[serde(
+        rename = "CreateRule",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub create_rule: Option<CreateRule>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CreateRule {
+    pub input_field: String,
+    pub target_collection: String,
+    pub target_field: String,
+    pub permission: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_relation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_actor_field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub match_input_field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub match_target_field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_parent_relation: Option<String>,
 }
 
 impl PolicyDescription {
@@ -29,6 +56,7 @@ impl PolicyDescription {
         Self {
             id: id.into(),
             resource_name: resource_name.into(),
+            create_rule: None,
         }
     }
 
@@ -45,6 +73,39 @@ impl PolicyDescription {
     pub fn validate(&self) -> Result<()> {
         Self::validate_field(&self.id, "policy id")?;
         Self::validate_field(&self.resource_name, "policy resource_name")?;
+        if let Some(rule) = &self.create_rule {
+            Self::validate_field(&rule.input_field, "create rule input field")?;
+            Self::validate_field(&rule.target_collection, "create rule target collection")?;
+            Self::validate_field(&rule.target_field, "create rule target field")?;
+            Self::validate_field(&rule.permission, "create rule permission")?;
+            match (&rule.target_relation, &rule.target_actor_field) {
+                (Some(relation), Some(field)) => {
+                    Self::validate_field(relation, "create rule target relation")?;
+                    Self::validate_field(field, "create rule target actor field")?;
+                }
+                (None, None) => {}
+                _ => {
+                    return Err(SchemaError::InvalidPolicy(
+                        "target grant relation and actor field must be provided together".into(),
+                    ))
+                }
+            }
+            match (&rule.match_input_field, &rule.match_target_field) {
+                (Some(input), Some(target)) => {
+                    Self::validate_field(input, "create rule match input field")?;
+                    Self::validate_field(target, "create rule match target field")?;
+                }
+                (None, None) => {}
+                _ => {
+                    return Err(SchemaError::InvalidPolicy(
+                        "target match fields must be provided together".into(),
+                    ))
+                }
+            }
+            if let Some(relation) = &rule.target_parent_relation {
+                Self::validate_field(relation, "create rule parent relation")?;
+            }
+        }
         Ok(())
     }
 

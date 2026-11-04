@@ -256,6 +256,51 @@ pub struct DocDecisionResponse {
     pub allowed: bool,
 }
 
+/// A caller-authenticated observation within its active transaction.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TransactionPermissionRequest {
+    pub actor: String,
+    pub collection: String,
+    pub doc_id: String,
+    pub permission: String,
+}
+
+/// Observe a requester's native document permission in the consuming transaction.
+/// The caller must authenticate the requester and its binding to the intent.
+pub async fn observe_transaction_permission(
+    State(state): State<AppState>,
+    identity: ExtractIdentity,
+    headers: HeaderMap,
+    Json(body): Json<TransactionPermissionRequest>,
+) -> Result<Json<DocDecisionResponse>, HttpError> {
+    require_permission(&state, &identity, NodePermission::DacStatus).await?;
+    let observer = identity
+        .did()
+        .ok_or_else(|| HttpError::BadRequest("identity required".into()))?;
+    let txn = crate::handlers::txn_header::txn_id_from_headers(&headers)?
+        .ok_or_else(|| HttpError::BadRequest("transaction required".into()))?;
+    let handle = txn
+        .parse()
+        .map_err(|_| HttpError::BadRequest("invalid transaction id".into()))?;
+    let actor = identity::Did::new(&body.actor)
+        .map_err(|error| HttpError::BadRequest(error.to_string()))?;
+    let permission = parse_doc_permission(&body.permission)?;
+    let allowed = state
+        .executor
+        .observe_document_permission_in_txn(
+            identity.context(),
+            &handle,
+            observer.clone(),
+            actor,
+            &body.collection,
+            &body.doc_id,
+            permission,
+        )
+        .await
+        .map_err(|error| HttpError::BadRequest(error.to_string()))?;
+    Ok(Json(DocDecisionResponse { allowed }))
+}
+
 fn parse_doc_permission(permission: &str) -> Result<acp::DocumentPermission, HttpError> {
     match permission {
         "read" => Ok(acp::DocumentPermission::Read),

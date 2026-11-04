@@ -4,6 +4,54 @@ use super::*;
 use schema::{CType, FieldKind, ScalarKind};
 
 #[test]
+fn target_bound_create_requires_a_complete_governed_local_rule() {
+    let sdl = r#"type Requests @governed(root: "root") @policy(id: "p", resource: "requests", createField: "agent_did", createTarget: "Agent", createTargetField: "did", createPermission: "invoke", createRelation: "worker", createActorField: "did") { agent_did: String @immutable }"#;
+    let parsed = parse_sdl(sdl).unwrap();
+    let policy = parsed[0].policy.as_ref().unwrap();
+    let rule = policy.create_rule.as_ref().unwrap();
+    assert_eq!(rule.input_field, "agent_did");
+    assert_eq!(rule.target_collection, "Agent");
+    assert_eq!(rule.target_field, "did");
+    assert_eq!(rule.permission, "invoke");
+    assert_eq!(rule.target_relation.as_deref(), Some("worker"));
+    assert_eq!(rule.target_actor_field.as_deref(), Some("did"));
+    let changed = sdl.replace(
+        "createPermission: \"invoke\"",
+        "createPermission: \"other\"",
+    );
+    assert_ne!(
+        parsed[0].version_id,
+        parse_sdl(&changed).unwrap()[0].version_id
+    );
+    for invalid in [
+        sdl.replace("@governed(root: \"root\")", ""),
+        sdl.replace(
+            "@governed(root: \"root\")",
+            "@governed(root: \"root\") @branchable",
+        ),
+        sdl.replace(" @immutable", ""),
+        sdl.replace(", createPermission: \"invoke\"", ""),
+        sdl.replace("createField: \"agent_did\"", "createField: 4"),
+        sdl.replace(", createActorField: \"did\"", ""),
+    ] {
+        assert!(parse_sdl(&invalid).is_err(), "accepted {invalid}");
+    }
+    let no_grant = sdl.replace(
+        ", createRelation: \"worker\", createActorField: \"did\"",
+        "",
+    );
+    assert!(parse_sdl(&no_grant).unwrap()[0]
+        .policy
+        .as_ref()
+        .unwrap()
+        .create_rule
+        .as_ref()
+        .unwrap()
+        .target_relation
+        .is_none());
+}
+
+#[test]
 fn test_parse_simple_type() {
     let sdl = r#"
         type User {

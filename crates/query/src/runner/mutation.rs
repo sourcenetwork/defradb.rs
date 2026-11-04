@@ -46,6 +46,81 @@ fn preserve_acp_input_error(action: &str, doc_id: &str, error: QueryError) -> Qu
     }
 }
 
+fn create_rule_actor(
+    rule: &schema::CreateRule,
+    document: &document::Document,
+    collection: &schema::CollectionVersion,
+) -> Result<Option<Did>> {
+    match (&rule.target_relation, &rule.target_actor_field) {
+        (None, None) => Ok(None),
+        (Some(_), Some(field_name)) => {
+            let field = collection
+                .field_by_name(field_name)
+                .ok_or_else(|| QueryError::execution("target actor field is missing"))?;
+            if !field.immutable
+                || !matches!(
+                    &field.kind,
+                    schema::FieldKind::Scalar(
+                        schema::ScalarKind::String | schema::ScalarKind::NillableString
+                    )
+                )
+            {
+                return Err(QueryError::execution(
+                    "target actor field must be an immutable string",
+                ));
+            }
+            let value = document
+                .get(field_name)
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| QueryError::execution("target actor is missing"))?;
+            Ok(Some(Did::new(value).map_err(|error| {
+                QueryError::execution(error.to_string())
+            })?))
+        }
+        _ => Err(QueryError::execution("incomplete target actor grant")),
+    }
+}
+
+fn validate_create_target_match(
+    rule: &schema::CreateRule,
+    input: &rapidhash::RapidHashMap<String, JsonValue>,
+    document: &document::Document,
+    collection: &schema::CollectionVersion,
+) -> Result<()> {
+    match (&rule.match_input_field, &rule.match_target_field) {
+        (None, None) => Ok(()),
+        (Some(input_field), Some(target_field)) => {
+            let field = collection
+                .field_by_name(target_field)
+                .ok_or_else(|| QueryError::execution("target match field is missing"))?;
+            if !field.immutable
+                || !matches!(
+                    &field.kind,
+                    schema::FieldKind::Scalar(
+                        schema::ScalarKind::String | schema::ScalarKind::NillableString
+                    )
+                )
+            {
+                return Err(QueryError::execution(
+                    "target match field must be an immutable string",
+                ));
+            }
+            let expected = input
+                .get(input_field)
+                .and_then(JsonValue::as_str)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| QueryError::execution("target match input is missing"))?;
+            if document.get(target_field).and_then(|value| value.as_str()) != Some(expected) {
+                return Err(QueryError::execution(
+                    "target match input differs from target",
+                ));
+            }
+            Ok(())
+        }
+        _ => Err(QueryError::execution("incomplete target match rule")),
+    }
+}
+
 impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R> {
     pub(crate) async fn check_doc_access_for_read(
         &self,
@@ -587,12 +662,130 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
             }
         }
 
+        // Preparation may compute blocks outside the database transaction, but
+        // the target decision must be made again inside the actual attempt.
+        if projected_ids.is_none() {
+            if let Some(rule) = collection
+                .policy
+                .as_ref()
+                .and_then(|policy| policy.create_rule.as_ref())
+            {
+                let creates = mutation.mutation_type == MutationType::Add
+                    || (mutation.mutation_type == MutationType::Upsert
+                        && acp_filtered_doc_ids
+                            .as_ref()
+                            .or(resolved_doc_ids.as_ref())
+                            .is_none_or(Vec::is_empty));
+                if creates {
+                    self.authorize_target_create(
+                        &collection,
+                        rule,
+                        mutation,
+                        caller_identity,
+                        fetcher,
+                    )
+                    .await?;
+                }
+            }
+        }
+
         Ok(AuthorizedMutation {
             collection,
             mapping,
             resolved_doc_ids,
             acp_filtered_doc_ids,
         })
+    }
+
+    async fn authorize_target_create(
+        &self,
+        collection: &schema::CollectionVersion,
+        rule: &schema::CreateRule,
+        mutation: &Mutation,
+        caller: &Option<Did>,
+        fetcher: &dyn crate::fetcher::DocFetcher,
+    ) -> Result<()> {
+        if collection.governance_root.is_none()
+            || collection.is_branchable
+            || !collection.fields.iter().any(|field| {
+                field.name == rule.input_field
+                    && field.immutable
+                    && matches!(
+                        &field.kind,
+                        schema::FieldKind::Scalar(
+                            schema::ScalarKind::String | schema::ScalarKind::NillableString
+                        )
+                    )
+            })
+        {
+            return Err(QueryError::execution("invalid target-bound create policy"));
+        }
+        let actor = caller.as_ref().ok_or_else(|| {
+            QueryError::execution("target-bound create requires an authenticated actor")
+        })?;
+        let acp = fetcher
+            .transaction_acp(self.acp.clone())
+            .await?
+            .ok_or_else(|| {
+                QueryError::execution("target-bound create requires transactional ACP")
+            })?;
+        if mutation.create_input.is_empty() {
+            return Err(QueryError::execution(
+                "target-bound create requires an input",
+            ));
+        }
+        for input in &mutation.create_input {
+            let target = input
+                .get(&rule.input_field)
+                .and_then(JsonValue::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| QueryError::execution("target-bound create requires a target"))?;
+            let (document, target_collection) = fetcher
+                .get_by_unique_string_in_txn(&rule.target_collection, &rule.target_field, target)
+                .await?
+                .ok_or_else(|| {
+                    QueryError::document_not_found("target not found or not authorized")
+                })?;
+            let policy = target_collection.policy.as_ref().ok_or_else(|| {
+                QueryError::document_not_found("target not found or not authorized")
+            })?;
+            if rule.target_parent_relation.is_some()
+                && collection
+                    .policy
+                    .as_ref()
+                    .is_none_or(|source| source.id != policy.id)
+            {
+                return Err(QueryError::document_not_found(
+                    "target not found or not authorized",
+                ));
+            }
+            let doc_id = document
+                .id()
+                .ok_or_else(|| QueryError::execution("target has no document identity"))?
+                .to_string();
+            let allowed = acp
+                .check_named_permission(
+                    &Identity::Authenticated(actor.clone()),
+                    &policy.id,
+                    &policy.resource_name,
+                    &doc_id,
+                    &rule.permission,
+                )
+                .await
+                .map_err(|error| QueryError::execution(error.to_string()))?;
+            if !allowed {
+                return Err(QueryError::document_not_found(
+                    "target not found or not authorized",
+                ));
+            }
+            create_rule_actor(rule, &document, &target_collection).map_err(|_| {
+                QueryError::document_not_found("target not found or not authorized")
+            })?;
+            validate_create_target_match(rule, input, &document, &target_collection).map_err(
+                |_| QueryError::document_not_found("target not found or not authorized"),
+            )?;
+        }
+        Ok(())
     }
 
     /// Execute a single mutation operation with ACP enforcement.
@@ -677,6 +870,18 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                 .await?
             }
         };
+        let target_create = collection
+            .policy
+            .as_ref()
+            .and_then(|policy| policy.create_rule.as_ref())
+            .filter(|_| {
+                mutation.mutation_type == MutationType::Add
+                    || (mutation.mutation_type == MutationType::Upsert
+                        && acp_filtered_doc_ids
+                            .as_ref()
+                            .or(resolved_doc_ids.as_ref())
+                            .is_none_or(Vec::is_empty))
+            });
 
         // This mutation's own encryption and, for a remote signer, the access
         // decision its creates are signed under, so neither reaches another one.
@@ -983,6 +1188,103 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
         let (mut results, result_doc_ids) = plan_drive::close_after(plan.as_mut(), outcome)
             .await
             .map_err(map_doc_not_found)?;
+
+        if let Some(rule) = target_create {
+            let policy = collection
+                .policy
+                .as_ref()
+                .ok_or_else(|| QueryError::execution("target-bound create has no policy"))?;
+            let actor = caller_identity.as_ref().ok_or_else(|| {
+                QueryError::execution("target-bound create requires an authenticated actor")
+            })?;
+            let acp = fetcher
+                .transaction_acp(self.acp.clone())
+                .await?
+                .ok_or_else(|| {
+                    QueryError::execution("target-bound create requires transactional ACP")
+                })?;
+            if result_doc_ids.len() != mutation.create_input.len() {
+                return Err(QueryError::execution(
+                    "target-bound create result count differs from input",
+                ));
+            }
+            for relation in [
+                rule.target_relation.as_deref(),
+                rule.target_parent_relation.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                acp.validate_declared_relation(&policy.id, &policy.resource_name, relation)
+                    .await
+                    .map_err(|error| QueryError::execution(error.to_string()))?;
+            }
+            if rule.target_relation.is_some() || rule.target_parent_relation.is_some() {
+                for (doc_id, input) in result_doc_ids.iter().zip(&mutation.create_input) {
+                    let target = input
+                        .get(&rule.input_field)
+                        .and_then(JsonValue::as_str)
+                        .ok_or_else(|| {
+                            QueryError::execution("target-bound create requires a target")
+                        })?;
+                    let (document, target_collection) = fetcher
+                        .get_by_unique_string_in_txn(
+                            &rule.target_collection,
+                            &rule.target_field,
+                            target,
+                        )
+                        .await?
+                        .ok_or_else(|| {
+                            QueryError::document_not_found("target not found or not authorized")
+                        })?;
+                    if let Some(relation) = rule.target_relation.as_deref() {
+                        let target_actor = create_rule_actor(rule, &document, &target_collection)?
+                            .ok_or_else(|| {
+                                QueryError::execution("target actor grant is missing")
+                            })?;
+                        acp.add_actor_relationship(
+                            actor,
+                            &target_actor,
+                            &policy.id,
+                            &policy.resource_name,
+                            doc_id,
+                            relation,
+                            &[],
+                        )
+                        .await
+                        .map_err(|error| QueryError::execution(error.to_string()))?;
+                    }
+                    if let Some(relation) = rule.target_parent_relation.as_deref() {
+                        let target_policy = target_collection
+                            .policy
+                            .as_ref()
+                            .ok_or_else(|| QueryError::execution("target policy is missing"))?;
+                        if target_policy.id != policy.id {
+                            return Err(QueryError::execution("target parent policy differs"));
+                        }
+                        let target_doc_id = document
+                            .id()
+                            .ok_or_else(|| QueryError::execution("target identity is missing"))?
+                            .to_string();
+                        acp.add_relationship(
+                            actor,
+                            acp::Subject::entity_set(
+                                &target_policy.resource_name,
+                                target_doc_id,
+                                "",
+                            ),
+                            &policy.id,
+                            &policy.resource_name,
+                            doc_id,
+                            relation,
+                            &[],
+                        )
+                        .await
+                        .map_err(|error| QueryError::execution(error.to_string()))?;
+                    }
+                }
+            }
+        }
 
         if let Some(prepared) = prepared {
             for (created, actual) in prepared.creates.iter().zip(&result_doc_ids) {

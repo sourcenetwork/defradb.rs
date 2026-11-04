@@ -606,6 +606,51 @@ fn transactional_resource_links_propagate_parent_authority() {
 }
 
 #[test]
+fn requester_permission_observation_detects_revocation_and_regrant() {
+    workers::block_on(async {
+        use crypto::Key as _;
+        use identity::Identity as _;
+        let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
+        let key = crypto::generate_ed25519().unwrap();
+        let runtime = identity::RawIdentity::from_ed25519(key.clone()).unwrap();
+        let runtime_did = runtime.did().unwrap().to_string();
+        let public = runtime.public_key_bytes();
+        defra_core::signing::store_identity(&runtime_did, defra_core::signing::SigningConfig {
+            key_type: defra_core::signing::SigningKeyType::Ed25519,
+            private_key_bytes: key.raw().to_vec(), public_key_hex: hex::encode(&public),
+            public_key_bytes: public, remote_signer: None, signing_authorization: None,
+        });
+        let node = EmbeddedNode::builder().with_node_identity_did(&runtime_did).with_node_acp_enabled().build().await.unwrap();
+        for did in [A, B] {
+            for permission in [acp::nac::NodePermission::DocumentRead, acp::nac::NodePermission::DocumentUpdate, acp::nac::NodePermission::DacRelationAdd, acp::nac::NodePermission::DacRelationDelete] {
+                node.grant_node_permission_as(Did::new(&runtime_did).unwrap(), Did::new(did).unwrap(), permission).await.unwrap();
+            }
+        }
+        let yaml = "name: Intent target\nresources:\n  - name: rows\n    relations:\n      - name: updater\n    permissions:\n      - name: read\n        expr: updater\n      - name: update\n        expr: updater\n      - name: delete\n";
+        let policy = node.add_dac_policy(&runtime_did, yaml).await.unwrap();
+        node.add_collection(&format!("type Users @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}\ntype Receipts {{ result: String }}")).await.unwrap();
+        let created = node.execute_request(query::QueryRequest::new("mutation { add_Users(input: {name: \"target\"}) { _docID } }").with_identity(Some(Did::new(A).unwrap()))).await;
+        let doc = created.data.unwrap()["add_Users"][0]["_docID"].as_str().unwrap().to_owned();
+        node.add_dac_actor_relationship(A, "Users", &doc, "updater", B).await.unwrap();
+        let executor = node.runner();
+        let observer = actor(A);
+        let txn = executor.begin_txn_as(&observer, false).await.unwrap();
+        assert!(executor.observe_document_permission_in_txn(observer.clone(), &txn, Did::new(A).unwrap(), Did::new(B).unwrap(), "Users", &doc, acp::DocumentPermission::Update).await.unwrap());
+        let staged = executor.execute_in_txn(query::QueryRequest::new("mutation { add_Receipts(input: {result: \"applied\"}) { _docID } }").with_context(observer.clone()).with_identity(Some(Did::new(A).unwrap())), &txn).await;
+        assert!(!staged.has_errors(), "{:?}", staged.errors);
+        node.delete_dac_actor_relationship(A, "Users", &doc, "updater", B).await.unwrap();
+        node.add_dac_actor_relationship(A, "Users", &doc, "updater", B).await.unwrap();
+        assert!(executor.commit_txn_as(&observer, &txn).await.is_err(), "a requester revoked and restored during execution must conflict");
+        node.delete_dac_actor_relationship(A, "Users", &doc, "updater", B).await.unwrap();
+        let txn = executor.begin_txn_as(&observer, false).await.unwrap();
+        assert!(!executor.observe_document_permission_in_txn(observer.clone(), &txn, Did::new(A).unwrap(), Did::new(B).unwrap(), "Users", &doc, acp::DocumentPermission::Update).await.unwrap());
+        executor.discard_txn_as(&observer, &txn).await.unwrap();
+        node.shutdown().await;
+        defra_core::signing::clear_identity_store();
+    }).unwrap();
+}
+
+#[test]
 fn inherited_manager_grant_conflicts_with_concurrent_parent_revocation() {
     workers::block_on(async {
         let node = EmbeddedNode::builder().build().await.unwrap();
@@ -705,6 +750,19 @@ fn http_relationship_uses_authenticated_transaction_owner() {
             .bearer_auth(&reader_token).json(&serde_json::json!({"query":"{ Users { _docID name } }"}))
             .send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
         assert_eq!(visible["data"]["Users"][0]["_docID"], doc);
+        let inspect: serde_json::Value = client.post(format!("{base}/tx")).bearer_auth(&user_token)
+            .send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+        let inspect = inspect["id"].as_u64().unwrap().to_string();
+        let request = serde_json::json!({"actor": reader.did().unwrap().to_string(), "collection": "Users", "doc_id": doc, "permission": "read"});
+        let cross_owner = client.post(format!("{base}/acp/document/transaction-permission"))
+            .bearer_auth(&reader_token).header("x-defradb-tx", &inspect).json(&request).send().await.unwrap();
+        assert!(!cross_owner.status().is_success());
+        let decision = client.post(format!("{base}/acp/document/transaction-permission"))
+            .bearer_auth(&user_token).header("x-defradb-tx", &inspect).json(&request)
+            .send().await.unwrap();
+        assert!(!decision.status().is_success(), "unbound node authorization must fail closed");
+        client.delete(format!("{base}/tx/{inspect}")).bearer_auth(&user_token)
+            .send().await.unwrap().error_for_status().unwrap();
         let revoke: serde_json::Value = client.post(format!("{base}/tx")).bearer_auth(&user_token)
             .send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
         let revoke = revoke["id"].as_u64().unwrap().to_string();
@@ -761,7 +819,7 @@ fn enabled_node_acp_gates_http_and_allows_granted_document_access() {
         assert!(!denied.status().is_success());
         assert!(node.grant_node_permission_as(user.did().unwrap(), user.did().unwrap(), acp::nac::NodePermission::DocumentRead).await.is_err());
         assert!(node.grant_node_permission_as(runtime.did().unwrap(), user.did().unwrap(), acp::nac::NodePermission::DocumentRead).await.unwrap());
-        for relation in ["read-document", "update-document", "add-dac-relation"] {
+        for relation in ["read-document", "update-document", "add-dac-relation", "get-dac-status"] {
             let response = client.post(format!("{base}/acp/node/relationship"))
                 .bearer_auth(token(&runtime)).json(&serde_json::json!({"Relation":relation,"TargetActor":user.did().unwrap().to_string()}))
                 .send().await.unwrap();
@@ -769,6 +827,20 @@ fn enabled_node_acp_gates_http_and_allows_granted_document_access() {
         }
         let allowed = client.post(format!("{base}/graphql")).bearer_auth(&user_token).json(&query).send().await.unwrap();
         assert!(allowed.status().is_success(), "{}", allowed.text().await.unwrap());
+        let created: serde_json::Value = client.post(format!("{base}/graphql")).bearer_auth(&user_token)
+            .json(&serde_json::json!({"query":"mutation { add_Users(input: {name: \"http target\"}) { _docID } }"}))
+            .send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+        let doc = created["data"]["add_Users"][0]["_docID"].as_str().unwrap();
+        let txn: serde_json::Value = client.post(format!("{base}/tx")).bearer_auth(&user_token)
+            .send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+        let txn = txn["id"].as_u64().unwrap().to_string();
+        let decision: serde_json::Value = client.post(format!("{base}/acp/document/transaction-permission"))
+            .bearer_auth(&user_token).header("x-defradb-tx", &txn)
+            .json(&serde_json::json!({"actor":user.did().unwrap().to_string(), "collection":"Users", "doc_id":doc, "permission":"update"}))
+            .send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+        assert_eq!(decision["allowed"], true);
+        client.delete(format!("{base}/tx/{txn}")).bearer_auth(&user_token)
+            .send().await.unwrap().error_for_status().unwrap();
         node.shutdown().await;
     }).unwrap();
 }

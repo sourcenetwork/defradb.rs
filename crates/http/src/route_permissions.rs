@@ -178,6 +178,9 @@ pub fn route_permission(path: &str, method: &Method) -> RoutePermission {
         "/api/v0/acp/policy" => RoutePermission::Required(NodePermission::DacStatus),
         "/api/v0/acp/policy/{id}" => RoutePermission::Required(NodePermission::DacStatus),
         "/api/v0/acp/document/decide" => RoutePermission::Required(NodePermission::DacStatus),
+        "/api/v0/acp/document/transaction-permission" => {
+            RoutePermission::Required(NodePermission::DacStatus)
+        }
         "/api/v0/acp/document/resource-relationship" => {
             RoutePermission::Required(NodePermission::DacRelationAdd)
         }

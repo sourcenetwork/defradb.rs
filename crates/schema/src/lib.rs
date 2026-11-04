@@ -46,7 +46,7 @@ pub use index::{
     IvfFlatParams, IvfPqParams, OrderedIndexDescription, SsgParams, VectorAlgorithm,
     VectorIndexDescription,
 };
-pub use policy::PolicyDescription;
+pub use policy::{CreateRule, PolicyDescription};
 pub use source::{
     query_select_json_bytes, CollectionSetDescription, CollectionSource, QuerySource,
 };

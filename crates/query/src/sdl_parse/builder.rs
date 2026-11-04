@@ -768,8 +768,35 @@ impl<'a> SdlParser<'a> {
         // An ungoverned collection commits to no policy at all, and keeps the
         // version ID it has today.
         let policy = type_def.directives.policy.as_ref().map(|policy_config| {
-            schema::PolicyDescription::new(&policy_config.id, &policy_config.resource)
+            let mut policy =
+                schema::PolicyDescription::new(&policy_config.id, &policy_config.resource);
+            policy.create_rule = policy_config.create_rule.clone();
+            policy
         });
+        if let Some(rule) = policy
+            .as_ref()
+            .and_then(|policy| policy.create_rule.as_ref())
+        {
+            if type_def.directives.is_branchable || type_def.directives.governance_root.is_none() {
+                return Err(QueryError::parse(
+                    "target-bound create requires a governed, non-branchable collection",
+                ));
+            }
+            if !fields.iter().any(|field| {
+                field.name == rule.input_field
+                    && field.immutable
+                    && matches!(
+                        &field.kind,
+                        FieldKind::Scalar(
+                            schema::ScalarKind::String | schema::ScalarKind::NillableString
+                        )
+                    )
+            }) {
+                return Err(QueryError::parse(
+                    "target-bound create input field must be an immutable string",
+                ));
+            }
+        }
         let policy_commitment = commitments
             .is_governed()
             .then(|| schema::policy_commitment(policy.as_ref()))

@@ -195,6 +195,29 @@ impl QueryExecutor for PooledExecutor {
             .await
     }
 
+    async fn observe_document_permission_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        observer: identity::Did,
+        requester: identity::Did,
+        collection: &str,
+        doc_id: &str,
+        permission: acp::DocumentPermission,
+    ) -> Result<bool> {
+        self.inner
+            .observe_document_permission_in_txn(
+                context.or_ambient(),
+                handle,
+                observer,
+                requester,
+                collection,
+                doc_id,
+                permission,
+            )
+            .await
+    }
+
     async fn add_relationship_in_txn(
         &self,
         context: RequestContext,

@@ -253,6 +253,22 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         .await
     }
 
+    async fn observe_document_permission_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        observer: identity::Did,
+        requester: identity::Did,
+        collection: &str,
+        doc_id: &str,
+        permission: acp::DocumentPermission,
+    ) -> Result<bool> {
+        self.observe_permission(
+            context, handle, observer, requester, collection, doc_id, permission,
+        )
+        .await
+    }
+
     async fn delete_actor_relationship_in_txn(
         &self,
         context: RequestContext,

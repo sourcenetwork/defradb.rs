@@ -38,6 +38,34 @@ impl TransactionZanzibarStore {
             Relationship::relation_prefix(resource, object_id, relation)
         )
     }
+
+    /// DefraLevel point reads compare values, so an ABA revoke/regrant can
+    /// otherwise validate. An exact consumed range validates every intervening
+    /// write, including one that restores the original bytes.
+    async fn read_exact(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        let mut end = key.to_vec();
+        end.push(0);
+        let options = IterOptions::new()
+            .with_start(key.to_vec())
+            .with_end(end)
+            .with_validation(true);
+        let mut iterator = self
+            .view
+            .iterator(options)
+            .await
+            .map_err(|error| Error::Serialization(error.to_string()))?;
+        let mut value = None;
+        while let Some(entry) = iterator
+            .next()
+            .await
+            .map_err(|error| Error::Serialization(error.to_string()))?
+        {
+            if entry.key.as_slice() == key {
+                value = Some(entry.value.to_vec());
+            }
+        }
+        Ok(value)
+    }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
@@ -70,15 +98,9 @@ impl ZanzibarStore for TransactionZanzibarStore {
     }
 
     async fn get_policy(&self, policy_id: &str) -> Result<Option<Policy>> {
-        let txn = &self.view;
-
         let key = Self::policy_key(policy_id);
 
-        match txn
-            .get(key.as_bytes())
-            .await
-            .map_err(|e| Error::Serialization(format!("get_policy: get key {}: {}", key, e)))?
-        {
+        match self.read_exact(key.as_bytes()).await? {
             Some(data) => {
                 let policy: Policy = serde_json::from_slice(&data)?;
                 Ok(Some(policy))
@@ -88,10 +110,10 @@ impl ZanzibarStore for TransactionZanzibarStore {
     }
 
     async fn has_policy(&self, policy_id: &str) -> Result<bool> {
-        self.view
-            .has(Self::policy_key(policy_id).as_bytes())
-            .await
-            .map_err(|e| Error::Serialization(format!("has_policy: {}", e)))
+        Ok(self
+            .read_exact(Self::policy_key(policy_id).as_bytes())
+            .await?
+            .is_some())
     }
 
     async fn list_policies(&self) -> Result<Vec<Policy>> {
@@ -211,14 +233,10 @@ impl ZanzibarStore for TransactionZanzibarStore {
         relation: &str,
         subject: &Subject,
     ) -> Result<bool> {
-        let txn = &self.view;
-
         let rel = Relationship::new(resource, object_id, relation, subject.clone());
         let key = Self::relationship_key(policy_id, &rel);
 
-        txn.has(key.as_bytes())
-            .await
-            .map_err(|e| Error::Serialization(e.to_string()))
+        Ok(self.read_exact(key.as_bytes()).await?.is_some())
     }
 
     async fn check_permission_direct(
@@ -234,22 +252,14 @@ impl ZanzibarStore for TransactionZanzibarStore {
         let direct = Relationship::with_entity(resource, object_id, relation, subject.clone());
         let direct_key = Self::relationship_key(policy_id, &direct);
 
-        if txn
-            .has(direct_key.as_bytes())
-            .await
-            .map_err(|e| Error::Serialization(e.to_string()))?
-        {
+        if self.read_exact(direct_key.as_bytes()).await?.is_some() {
             return Ok(true);
         }
 
         let wildcard = Relationship::new(resource, object_id, relation, Subject::Wildcard);
         let wildcard_key = Self::relationship_key(policy_id, &wildcard);
 
-        if txn
-            .has(wildcard_key.as_bytes())
-            .await
-            .map_err(|e| Error::Serialization(e.to_string()))?
-        {
+        if self.read_exact(wildcard_key.as_bytes()).await?.is_some() {
             return Ok(true);
         }
 

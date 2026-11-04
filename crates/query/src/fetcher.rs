@@ -292,6 +292,20 @@ pub trait DocFetcher: MaybeSendSync {
         value: &str,
     ) -> Result<Vec<Document>>;
 
+    /// Resolve a non-null value through a single-field unique index in the
+    /// active write transaction. The exact index entry, the resulting row and
+    /// collection definition must all participate in commit validation.
+    async fn get_by_unique_string_in_txn(
+        &self,
+        _collection_name: &str,
+        _field_name: &str,
+        _value: &str,
+    ) -> Result<Option<(Document, std::sync::Arc<schema::CollectionVersion>)>> {
+        Err(crate::error::QueryError::execution(
+            "transaction-bound unique lookup is unsupported",
+        ))
+    }
+
     /// Read committed arrivals in local commit order. A transaction's own
     /// creates acquire cursors only at commit and are absent from this result.
     async fn get_document_arrivals(

@@ -324,6 +324,16 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
             .await
     }
 
+    async fn get_by_unique_string_in_txn(
+        &self,
+        collection_name: &str,
+        field_name: &str,
+        value: &str,
+    ) -> query::error::Result<Option<(Document, Arc<schema::CollectionVersion>)>> {
+        self.get_by_unique_string_in_txn_impl(collection_name, field_name, value)
+            .await
+    }
+
     async fn get_document_arrivals(
         &self,
         options: &query::fetcher::DocumentArrivalOptions,

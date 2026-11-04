@@ -13,6 +13,29 @@ pub struct EmbeddedTransaction<'a> {
 }
 
 impl EmbeddedNode {
+    /// Observe a signed requester's permission in the consuming transaction.
+    /// In-process callers authenticate and bind the requester to its intent.
+    pub async fn observe_document_permission_in_txn(
+        &self,
+        handle: &TransactionHandle,
+        observer: identity::Did,
+        requester: identity::Did,
+        collection: &str,
+        doc_id: &str,
+        permission: acp::DocumentPermission,
+    ) -> query::error::Result<bool> {
+        self.runner()
+            .observe_document_permission_in_txn(
+                self.node_context(),
+                handle,
+                observer,
+                requester,
+                collection,
+                doc_id,
+                permission,
+            )
+            .await
+    }
     /// Revoke a document relationship in the same transaction as related writes.
     /// In-process callers authenticate the supplied actor at their own boundary.
     pub async fn delete_dac_actor_relationship_in_txn(

@@ -32,6 +32,49 @@ fn user_collection() -> CollectionVersion {
     )
 }
 
+#[test]
+fn target_bound_rule_is_validated_for_direct_collection_versions() {
+    let mut collection = user_collection();
+    collection.fields[1].immutable = true;
+    collection.governance_root = Some("root".into());
+    let mut policy = PolicyDescription::new("policy", "requests");
+    policy.create_rule = Some(schema::CreateRule {
+        input_field: "name".into(),
+        target_collection: "Agent".into(),
+        target_field: "did".into(),
+        permission: "invoke".into(),
+        target_relation: Some("worker".into()),
+        target_actor_field: Some("did".into()),
+        match_input_field: None,
+        match_target_field: None,
+        target_parent_relation: None,
+    });
+    collection.policy = Some(policy);
+    collection.validate().unwrap();
+    let mut invalid = collection.clone();
+    invalid.is_branchable = true;
+    assert!(invalid.validate().is_err());
+    invalid = collection.clone();
+    invalid.governance_root = None;
+    assert!(invalid.validate().is_err());
+    invalid = collection.clone();
+    invalid.fields[1].immutable = false;
+    assert!(invalid.validate().is_err());
+    invalid = collection.clone();
+    invalid.fields[1].kind = FieldKind::int();
+    assert!(invalid.validate().is_err());
+    invalid = collection.clone();
+    invalid
+        .policy
+        .as_mut()
+        .unwrap()
+        .create_rule
+        .as_mut()
+        .unwrap()
+        .input_field = "missing".into();
+    assert!(invalid.validate().is_err());
+}
+
 fn post_collection_with_author(is_primary: bool) -> CollectionVersion {
     let mut author_field = FieldDescription::new(
         "1",

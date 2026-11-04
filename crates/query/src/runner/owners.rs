@@ -15,6 +15,101 @@ where
     F: DocFetcher + 'static,
     R: TransactionRegistry,
 {
+    pub(super) async fn observe_permission(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        observer: Did,
+        requester: Did,
+        collection: &str,
+        doc_id: &str,
+        permission: acp::DocumentPermission,
+    ) -> Result<bool> {
+        // The transaction principal must be able to observe the exact live
+        // document as the selected actor before it can inspect another actor.
+        let observations = self
+            .observe_owners(
+                context.clone(),
+                handle,
+                collection,
+                &[doc_id.to_owned()],
+                Some(observer),
+                true,
+            )
+            .await?;
+        if !observations.first().is_some_and(|row| row.visible) {
+            return Ok(false);
+        }
+        let node_permission = match permission {
+            acp::DocumentPermission::Read => acp::nac::NodePermission::DocumentRead,
+            acp::DocumentPermission::Update => acp::nac::NodePermission::DocumentUpdate,
+            acp::DocumentPermission::Delete => acp::nac::NodePermission::DocumentDelete,
+            _ => return Err(QueryError::execution("unsupported document permission")),
+        };
+        let runner = self.for_request(context.clone());
+        let collection = collection.to_owned();
+        let doc_id = doc_id.to_owned();
+        let job = txn_job(move |turn| {
+            Box::pin(async move {
+                let ctx = turn
+                    .context()
+                    .map_err(|error| QueryError::execution(error.to_string()))?;
+                let fetcher = ctx.doc_fetcher();
+                match fetcher
+                    .check_node_permission(&requester, node_permission)
+                    .await?
+                {
+                    Some(true) => {}
+                    Some(false) => return Ok(false),
+                    None => {
+                        return Err(QueryError::execution(
+                            "transaction-bound node authorization is unavailable",
+                        ))
+                    }
+                }
+                let acp = fetcher
+                    .transaction_acp(runner.acp.clone())
+                    .await?
+                    .ok_or_else(|| {
+                        QueryError::execution(
+                            "transaction-bound document authorization is unavailable",
+                        )
+                    })?;
+                let provider = ctx.collection_provider().ok_or_else(|| {
+                    QueryError::execution("transaction schema observation is unavailable")
+                })?;
+                let definition = provider
+                    .get_collection(&collection)
+                    .await?
+                    .ok_or_else(|| QueryError::collection_not_found(&collection))?;
+                let policy = definition
+                    .policy
+                    .as_ref()
+                    .ok_or_else(|| QueryError::execution("collection has no document policy"))?;
+                if !acp
+                    .is_doc_registered(&policy.id, &policy.resource_name, &doc_id)
+                    .await
+                    .map_err(|error| QueryError::execution(error.to_string()))?
+                {
+                    return Ok(false);
+                }
+                acp.check_doc_access(
+                    &acp::Identity::Authenticated(requester),
+                    permission,
+                    &policy.id,
+                    &policy.resource_name,
+                    &doc_id,
+                )
+                .await
+                .map_err(|error| QueryError::execution(error.to_string()))
+            })
+        });
+        self.registry
+            .run_as(&context, handle, self.deadline(), job)
+            .await
+            .map_err(|error| QueryError::execution(error.to_string()))?
+    }
+
     pub(super) async fn observe_owners(
         &self,
         context: RequestContext,
