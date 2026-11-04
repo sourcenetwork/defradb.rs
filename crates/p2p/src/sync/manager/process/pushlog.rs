@@ -655,7 +655,10 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             // The cap, the retirement of the sender scope's durable current
             // head when this one links it, and the record are one engine
             // transaction.
-            let mut retired: Vec<Cid> = superseded.iter().map(|(root, _)| *root).collect();
+            let mut retired: Vec<Cid> = Vec::new();
+            if crate::model_trace::ENABLED {
+                retired.extend(superseded.iter().map(|(root, _)| *root));
+            }
             if let Some(store) = self.pending_store() {
                 let durable_cap = self.persisted_pending_capacity();
                 let record = PersistedPendingDag {
@@ -680,8 +683,8 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 };
                 let refusal = match store.register(registration, &self.persisted).await {
                     Ok(Admission::Registered { retired: durable }) => {
-                        if let Some(root) = durable.filter(|root| !retired.contains(root)) {
-                            retired.push(root);
+                        if crate::model_trace::ENABLED {
+                            retired.extend(durable.filter(|root| !retired.contains(root)));
                         }
                         None
                     }

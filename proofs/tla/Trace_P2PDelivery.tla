@@ -33,6 +33,10 @@
 \* FALSE), so the code's Acquire after a Schedule that found its permits
 \* free is no change either. The code logs no FloodOff: a Schedule through
 \* the merge channel first replays the storm passing.
+\*
+\* Variables: P2PDelivery's, and l, the position in the recorded
+\* model_trace log (the nodes' own log lines, merged by time). The replay
+\* adds no other state.
 EXTENDS P2PDelivery
 
 CONSTANT

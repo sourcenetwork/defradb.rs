@@ -961,7 +961,7 @@ where
                     };
                 }
             }
-        } else {
+        } else if crate::model_trace::ENABLED {
             for block in merge_blocks
                 .iter()
                 .filter(|block| merged_cids.contains(&block.cid))
