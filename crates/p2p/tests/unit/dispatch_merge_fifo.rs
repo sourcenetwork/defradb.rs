@@ -58,6 +58,56 @@ impl MergeHandler for AlwaysYield {
     }
 }
 
+/// A blockstore whose writes fail, as on a full or failing disk.
+struct FailingPuts(DefraBlockstore<RegolithStore>);
+
+#[async_trait]
+impl Blockstore for FailingPuts {
+    async fn get(&self, cid: &Cid) -> blockstore::Result<Option<bytes::Bytes>> {
+        self.0.get(cid).await
+    }
+
+    async fn put(&self, _cid: &Cid, _data: &[u8]) -> blockstore::Result<()> {
+        Err(blockstore::Error::Storage(storage::corekv::Error::DBClosed))
+    }
+
+    async fn put_many(&self, _blocks: &[(&Cid, &[u8])]) -> blockstore::Result<()> {
+        Err(blockstore::Error::Storage(storage::corekv::Error::DBClosed))
+    }
+
+    async fn has(&self, cid: &Cid) -> blockstore::Result<bool> {
+        self.0.has(cid).await
+    }
+
+    async fn delete(&self, cid: &Cid) -> blockstore::Result<()> {
+        self.0.delete(cid).await
+    }
+
+    async fn get_size(&self, cid: &Cid) -> blockstore::Result<Option<usize>> {
+        self.0.get_size(cid).await
+    }
+
+    async fn all_cids(&self) -> blockstore::Result<Vec<Cid>> {
+        self.0.all_cids().await
+    }
+
+    fn hash_on_read(&self, enabled: bool) {
+        self.0.hash_on_read(enabled);
+    }
+
+    async fn is_merged(&self, cid: &Cid) -> blockstore::Result<bool> {
+        self.0.is_merged(cid).await
+    }
+
+    async fn mark_as_merged(&self, cid: &Cid) -> blockstore::Result<()> {
+        self.0.mark_as_merged(cid).await
+    }
+
+    async fn get_unmerged(&self) -> blockstore::Result<Vec<Cid>> {
+        self.0.get_unmerged().await
+    }
+}
+
 /// A document head and its one field block, which is not stored locally.
 fn head_and_field() -> (Cid, Vec<u8>, Cid, Vec<u8>) {
     let leaf = Block::new(
@@ -241,6 +291,43 @@ async fn pushlog_reply_not_blocked_by_full_event_channel() {
         matches!(first, Some(ReplicationResult::DagFetchStarted { root_cid }) if root_cid == head),
         "the merge loop processed {first:?} before the completed root"
     );
+}
+
+/// A PushLog handler whose block cannot be stored reports the error to the
+/// merge loop. It holds an admission lane slot and the CID guard, so it must
+/// not wait for room in the merge loop's channel to do so.
+#[nuclei::test(start_paused = true)]
+async fn pushlog_storage_error_reply_not_blocked_by_full_event_channel() {
+    let blockstore = Arc::new(FailingPuts(DefraBlockstore::new(
+        Arc::new(RegolithStore::in_memory().unwrap()),
+        true,
+    )));
+    let config = SyncConfig {
+        event_buffer_size: 1,
+        ..SyncConfig::default()
+    };
+    let (manager, mut events) = crate::sync::manager::SyncManager::new(
+        blockstore,
+        Arc::new(crate::sync::PeerStateTracker::new()),
+        config,
+    );
+    manager.event_sender().send(merge_work()).await.unwrap();
+    let (head, head_data, _, _) = head_and_field();
+
+    let reply = crate::rt::time::timeout(
+        Duration::from_secs(5),
+        manager.process_pushlog(&push(head, &head_data), Some("remote-peer"), false, None),
+    )
+    .await;
+
+    assert!(
+        matches!(reply, Ok(Err(crate::error::Error::BlockstoreError(_)))),
+        "the PushLog reply waited on the merge loop's full channel: {reply:?}"
+    );
+    assert!(matches!(
+        events.try_recv(),
+        Ok(SyncEvent::SyncError { cid, .. }) if cid == make_cid(b"merge work")
+    ));
 }
 
 /// A long history's merge yields and is due again at once, so the clock

@@ -13,6 +13,7 @@
 //! `pending_capacity_sheds_unrelated_blocks_but_accepts_missing_dependency`.
 
 use rapidhash::{HashSetExt, RapidHashSet};
+use crate::rt::mpsc::error::TrySendError;
 use web_time::Instant;
 
 use cid::Cid;
@@ -67,21 +68,23 @@ fn announced_block_kind(bytes: &[u8]) -> AnnouncedBlockKind {
 }
 
 impl<B: Blockstore + 'static> SyncManager<B> {
-    async fn emit_sync_error(&self, cid: &Cid, error: &Error) -> Result<()> {
-        if self
-            .event_tx
-            .clone()
-            .send(SyncEvent::SyncError {
-                cid: *cid,
-                error: error.to_string(),
-            })
-            .await
-            .is_err()
-        {
-            tracing::warn!(?cid, "Failed to send SyncError event - receiver dropped");
-            return Err(Error::ChannelSend);
+    /// The handler holds its lane slot and the CID guard, so it never waits
+    /// for room in the merge loop's channel: a full channel drops the report.
+    fn emit_sync_error(&self, cid: &Cid, error: &Error) -> Result<()> {
+        match self.event_tx.try_send(SyncEvent::SyncError {
+            cid: *cid,
+            error: error.to_string(),
+        }) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => {
+                tracing::debug!(?cid, %error, "Merge loop channel full; SyncError not reported");
+                Ok(())
+            }
+            Err(TrySendError::Closed(_)) => {
+                tracing::warn!(?cid, "Failed to send SyncError event - receiver dropped");
+                Err(Error::ChannelSend)
+            }
         }
-        Ok(())
     }
 
     /// Process an incoming PushLog broadcast.
@@ -264,7 +267,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 // Not merged, continue processing
             }
             Err(e) => {
-                self.emit_sync_error(cid, &e).await?;
+                self.emit_sync_error(cid, &e)?;
                 return Err(e);
             }
         }
@@ -321,7 +324,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             .await
             .map_err(Error::from_blockstore)
         {
-            self.emit_sync_error(cid, &e).await?;
+            self.emit_sync_error(cid, &e)?;
             return Err(e);
         }
 
@@ -355,19 +358,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             Ok(m) => m,
             Err(e) => {
                 // Block parsing failed - emit error event and propagate error
-                if self
-                    .event_tx
-                    .clone()
-                    .send(SyncEvent::SyncError {
-                        cid: *cid,
-                        error: e.to_string(),
-                    })
-                    .await
-                    .is_err()
-                {
-                    tracing::warn!(?cid, "Failed to send SyncError event - receiver dropped");
-                    return Err(Error::ChannelSend);
-                }
+                self.emit_sync_error(cid, &e)?;
                 return Err(e);
             }
         };
