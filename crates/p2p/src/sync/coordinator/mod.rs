@@ -399,7 +399,9 @@ impl DagFetchLimiter {
         if self.closed.is_set() {
             return None;
         }
-        self.peer_semaphore(source_peer).acquire_owned(1).now_or_never()
+        self.peer_semaphore(source_peer)
+            .acquire_owned(1)
+            .now_or_never()
     }
 
     /// Waits for `source_peer`'s permit, unless the fetch already holds one
