@@ -76,6 +76,7 @@ pub trait TransportDocPusher: defra_core::thread_bounds::MaybeSendSync {
         filters: &p2p::ReplicationFilters,
         se_key: Option<&[u8]>,
         se_identity_pubkey: Option<&[u8]>,
+        install_incarnation: u64,
     ) -> P2PResult<()>;
 
     /// Replay an explicit `(collection_name, doc_id)` set to one peer.
@@ -309,6 +310,7 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
         filters: &p2p::ReplicationFilters,
         se_key: Option<&[u8]>,
         se_identity_pubkey: Option<&[u8]>,
+        install_incarnation: u64,
     ) -> P2PResult<()> {
         db::merge::push_existing_docs_with_config(
             &self.transport,
@@ -323,6 +325,7 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
             },
             db::merge::ReplayPushConfig {
                 retry_schedule: self.retry_schedule.clone(),
+                install_incarnation: Some(install_incarnation),
                 ..Default::default()
             },
             &replication_filter::QueryReplicationFilterMatcher::new(),

@@ -153,6 +153,7 @@ impl TransportDocPusher for PooledDocPusher {
         filters: &p2p::ReplicationFilters,
         se_key: Option<&[u8]>,
         se_identity_pubkey: Option<&[u8]>,
+        install_incarnation: u64,
     ) -> P2PResult<()> {
         let (peer_id, collections, filters) =
             (peer_id.clone(), collections.to_vec(), filters.clone());
@@ -168,6 +169,7 @@ impl TransportDocPusher for PooledDocPusher {
                     &filters,
                     se_key.as_deref(),
                     se_identity_pubkey.as_deref(),
+                    install_incarnation,
                 )
                 .await
         })
@@ -329,6 +331,7 @@ mod tests {
             _: &p2p::ReplicationFilters,
             _: Option<&[u8]>,
             _: Option<&[u8]>,
+            _: u64,
         ) -> P2PResult<()> {
             self.note()
         }

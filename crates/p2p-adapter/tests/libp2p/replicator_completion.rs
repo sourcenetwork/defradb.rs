@@ -47,6 +47,7 @@ impl TransportDocPusher for ReplayPusher {
         _: &p2p::ReplicationFilters,
         _: Option<&[u8]>,
         _: Option<&[u8]>,
+        _: u64,
     ) -> P2PResult<()> {
         self.calls.push(collections.to_vec());
         let gate = self.gate.load().clone();

@@ -16,7 +16,7 @@ use crate::merge::push_docs_replay::{
 };
 
 enum PushOwnership {
-    Replicator,
+    Replicator(u64),
     Selected(RapidHashSet<(String, String)>),
 }
 
@@ -217,17 +217,20 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
     let mut ownership = if let Some(docs) = allowlist {
         PushOwnership::Selected(docs.iter().cloned().collect())
     } else {
-        if peerstore
-            .get_replicator(peer_id.as_str())
+        let current = peerstore
+            .get_replicator_incarnation(peer_id.as_str())
             .await
             .map_err(|error| format!("failed to load replicator: {error}"))?
-            .is_none()
-        {
+            .ok_or_else(|| {
+                format!("replicator {peer_id} removed before existing-document replay")
+            })?;
+        let incarnation = replay_config.install_incarnation.unwrap_or(current);
+        if incarnation != current {
             return Err(format!(
-                "replicator {peer_id} removed before existing-document replay"
+                "replicator {peer_id} changed before existing-document replay"
             ));
         }
-        PushOwnership::Replicator
+        PushOwnership::Replicator(incarnation)
     };
     let txn = db
         .new_txn(true)
@@ -363,7 +366,7 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
 
                 // Tracked replay registers before the fallible serving capability,
                 // so a refused grant or signature leaves its durable retry owner intact.
-                let marker_generation = if matches!(&ownership, PushOwnership::Replicator) {
+                let marker_generation = if matches!(&ownership, PushOwnership::Replicator(_)) {
                     let Some(generation) = peerstore
                         .observe_push_head_with_generation(
                             peer_id.as_str(),
@@ -634,8 +637,8 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
     }
     tracing::debug!("all push tasks completed");
     match &ownership {
-        PushOwnership::Replicator => {
-            persist_replay_failures(&peerstore, peer_id, &replay_failures).await?;
+        PushOwnership::Replicator(incarnation) => {
+            persist_replay_failures(&peerstore, peer_id, *incarnation, &replay_failures).await?;
         }
         PushOwnership::Selected(pending) if !pending.is_empty() => {
             let mut reasons: Vec<_> = pending
