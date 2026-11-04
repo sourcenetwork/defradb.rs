@@ -47,66 +47,73 @@ fn update_mutation(doc_id: &str, i: usize) -> String {
 
 #[nuclei::test]
 async fn concurrent_updates_leave_the_chunks_of_the_winning_text() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    let client = cluster.client(0);
-    client.schema_add(SCHEMA).unwrap();
-    let doc_id = create(&client, &body(4, "start"));
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        let client = cluster.client(0);
+        client.schema_add(SCHEMA).unwrap();
+        let doc_id = create(&client, &body(4, "start"));
 
-    let succeeded = std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..8)
-            .map(|i| {
-                let client = cluster.client(0);
-                let mutation = update_mutation(&doc_id, i);
-                scope.spawn(move || client.query(&mutation).is_ok())
-            })
-            .collect();
-        handles
+        let succeeded = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..8)
+                .map(|i| {
+                    let client = cluster.client(0);
+                    let mutation = update_mutation(&doc_id, i);
+                    scope.spawn(move || client.query(&mutation).is_ok())
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().unwrap())
+                .filter(|ok| *ok)
+                .count()
+        });
+        assert!(succeeded > 0, "every concurrent update failed");
+
+        let stored = stored_body(&client, &doc_id).expect("parent still exists");
+        assert_eq!(text_from_chunks(&client, &doc_id), stored);
+        let mut listed: Vec<String> = list_of(&client, &doc_id, None)
             .into_iter()
-            .map(|h| h.join().unwrap())
-            .filter(|ok| *ok)
-            .count()
-    });
-    assert!(succeeded > 0, "every concurrent update failed");
-
-    let stored = stored_body(&client, &doc_id).expect("parent still exists");
-    assert_eq!(text_from_chunks(&client, &doc_id), stored);
-    let mut listed: Vec<String> = list_of(&client, &doc_id, None)
-        .into_iter()
-        .skip(1)
-        .collect();
-    listed.sort();
-    listed.dedup();
-    assert_eq!(visible_hashes(&client, None), listed);
+            .skip(1)
+            .collect();
+        listed.sort();
+        listed.dedup();
+        assert_eq!(visible_hashes(&client, None), listed);
+    })
+    .await;
 }
 
 #[nuclei::test]
 async fn concurrent_updates_and_a_delete_leave_no_stray_chunk() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    let client = cluster.client(0);
-    client.schema_add(SCHEMA).unwrap();
-    let doc_id = create(&client, &body(4, "start"));
-
-    let succeeded = std::thread::scope(|scope| {
-        let mut handles: Vec<_> = (0..6)
-            .map(|i| {
-                let client = cluster.client(0);
-                let mutation = update_mutation(&doc_id, i);
-                scope.spawn(move || client.query(&mutation).is_ok())
-            })
-            .collect();
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
         let client = cluster.client(0);
-        let delete = format!(r#"mutation {{ delete_Article(docID: "{doc_id}") {{ _docID }} }}"#);
-        handles.push(scope.spawn(move || client.query(&delete).is_ok()));
-        handles
-            .into_iter()
-            .map(|h| h.join().unwrap())
-            .filter(|ok| *ok)
-            .count()
-    });
-    assert!(succeeded > 0, "every concurrent write failed");
+        client.schema_add(SCHEMA).unwrap();
+        let doc_id = create(&client, &body(4, "start"));
 
-    match stored_body(&client, &doc_id) {
-        None => assert!(visible_hashes(&client, None).is_empty()),
-        Some(stored) => assert_eq!(text_from_chunks(&client, &doc_id), stored),
-    }
+        let succeeded = std::thread::scope(|scope| {
+            let mut handles: Vec<_> = (0..6)
+                .map(|i| {
+                    let client = cluster.client(0);
+                    let mutation = update_mutation(&doc_id, i);
+                    scope.spawn(move || client.query(&mutation).is_ok())
+                })
+                .collect();
+            let client = cluster.client(0);
+            let delete =
+                format!(r#"mutation {{ delete_Article(docID: "{doc_id}") {{ _docID }} }}"#);
+            handles.push(scope.spawn(move || client.query(&delete).is_ok()));
+            handles
+                .into_iter()
+                .map(|h| h.join().unwrap())
+                .filter(|ok| *ok)
+                .count()
+        });
+        assert!(succeeded > 0, "every concurrent write failed");
+
+        match stored_body(&client, &doc_id) {
+            None => assert!(visible_hashes(&client, None).is_empty()),
+            Some(stored) => assert_eq!(text_from_chunks(&client, &doc_id), stored),
+        }
+    })
+    .await;
 }

@@ -29,27 +29,30 @@ fn backup(cluster: &TestCluster, node: usize, args: &[&str]) {
 
 #[nuclei::test]
 async fn a_backup_round_trip_rebuilds_the_chunks() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(2)
-        .with_development()
-        .build()
-        .await
-        .unwrap();
-    let (source, target) = (cluster.client(0), cluster.client(1));
-    source.schema_add(SCHEMA).unwrap();
-    target.schema_add(SCHEMA).unwrap();
-    let doc_id = create(&source, &body(5, "harbours"));
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(2)
+            .with_development()
+            .build()
+            .await
+            .unwrap();
+        let (source, target) = (cluster.client(0), cluster.client(1));
+        source.schema_add(SCHEMA).unwrap();
+        target.schema_add(SCHEMA).unwrap();
+        let doc_id = create(&source, &body(5, "harbours"));
 
-    let file = format!("{}/backup.json", cluster.nodes[0].rootdir.display());
-    backup(&cluster, 0, &["export", &file]);
-    let exported = std::fs::read_to_string(&file).unwrap();
-    assert!(!exported.contains("__body_chunk"), "{exported}");
-    assert!(!exported.contains("_body_chunks"), "{exported}");
+        let file = format!("{}/backup.json", cluster.nodes[0].rootdir.display());
+        backup(&cluster, 0, &["export", &file]);
+        let exported = std::fs::read_to_string(&file).unwrap();
+        assert!(!exported.contains("__body_chunk"), "{exported}");
+        assert!(!exported.contains("_body_chunks"), "{exported}");
 
-    backup(&cluster, 1, &["import", &file]);
-    assert_eq!(visible_hashes(&target, None), visible_hashes(&source, None));
-    assert_eq!(
-        listed(&target, &doc_id, None),
-        listed(&source, &doc_id, None)
-    );
+        backup(&cluster, 1, &["import", &file]);
+        assert_eq!(visible_hashes(&target, None), visible_hashes(&source, None));
+        assert_eq!(
+            listed(&target, &doc_id, None),
+            listed(&source, &doc_id, None)
+        );
+    })
+    .await;
 }
