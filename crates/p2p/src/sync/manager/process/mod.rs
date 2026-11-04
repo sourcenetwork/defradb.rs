@@ -126,10 +126,17 @@ pub struct SyncManager<B: Blockstore> {
     /// early-exit so store/set desyncs from rare races self-heal.
     pub(super) pending_resync_tick: std::sync::atomic::AtomicUsize,
 
-    /// The durable root the last resync sweep admitted. The next sweep
-    /// resumes after it in key order, so roots past the in-memory cap take
-    /// turns instead of the first keys being admitted every time.
+    /// The place in key order at which the last resync sweep admitted a root
+    /// last; the next sweep resumes after it. Roots past the in-memory cap
+    /// take turns instead of the first keys being admitted every time.
     pub(super) pending_resync_cursor: kovan::Atom<Option<Cid>>,
+
+    /// For each source peer with a durable record, the root of that peer the
+    /// resync sweep admitted last. The sweep gives the peer's places to its
+    /// roots in key order after this one, so a root left waiting on its
+    /// peer's quota takes the next place its peer frees, and a peer held at
+    /// its quota does not move the cursor for the others.
+    pub(super) pending_resync_peer_cursors: kovan::Atom<rapidhash::RapidHashMap<String, Cid>>,
 }
 
 /// Every Nth resync is a forced full sweep (see `pending_resync_tick`).
@@ -214,6 +221,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             pending_resync_in_flight: std::sync::atomic::AtomicBool::new(false),
             pending_resync_tick: std::sync::atomic::AtomicUsize::new(0),
             pending_resync_cursor: kovan::Atom::new(None),
+            pending_resync_peer_cursors: kovan::Atom::new(rapidhash::RapidHashMap::default()),
         };
 
         (manager, SyncEventReceiver::new(dispatch_lane, event_rx))
