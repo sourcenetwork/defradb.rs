@@ -235,6 +235,21 @@ impl RetryInfo {
         restarted
     }
 
+    /// No rung of `schedule` waits longer than its longest one, so a deadline
+    /// further ahead was written before the wall clock stepped back, or under
+    /// a longer ladder, and is due now. Receiver backpressure still holds.
+    pub fn bounded_by(mut self, schedule: &RetrySchedule) -> Self {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let bound = now.saturating_add(schedule.cap(u32::MAX));
+        if self.next_retry_unix > bound.max(self.not_before_unix) {
+            self.next_retry_unix = now.max(self.not_before_unix);
+        }
+        self
+    }
+
     /// Schedule another attempt without recording a delivery failure.
     pub fn defer_for(&mut self, delay: Duration) {
         let (_, deadline) = Self::deferred_deadline(delay);
