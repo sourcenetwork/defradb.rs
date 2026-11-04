@@ -2,43 +2,62 @@
 \* Latest-head retirement for outbound PushLog work (#1102), and the live
 \* acknowledgement that completes a scope's durable marker (F1 sibling heads).
 \*
-\* THE STORY: a node produces heads of one document and offers each to a peer. Each
-\* offer registers the head under the scope's durable marker (a presence marker with a
-\* generation; Rust stores no head list) and queues a live push. The queue keeps only the
-\* newest head per (scope, peer). A worker sends it; an ack delivers it. The retry
-\* ladder, when the marker is set, sends every current head of the document and clears
-\* the marker. Heads form a DAG: a head links its parents. Two heads merged from two
-\* different writers are siblings: neither links the other.
+\* THE STORY: a node commits heads of one document and offers each to every replicator
+\* peer. The offer registers the scope's durable marker under a fresh generation, then
+\* queues a live push job carrying that generation. The queue keeps only the newest head
+\* per (scope, peer). A worker sends a job only while it is the newest live head and the
+\* marker still holds its generation; the peer acks it or the send fails. The retry
+\* ladder, while the marker is set, sends every current head of the document, records
+\* them as the peer's acked heads and clears the marker. Heads form a DAG: a head links
+\* its parents. Two heads merged from two different writers are siblings: neither links
+\* the other.
 \*
 \* WHAT CAN GO WRONG:
-\*   - head 1 becomes active, head 2 arrives and retires every queued/persisted
-\*     predecessor, then head 1 fails: the failure must not recreate a persisted retry
-\*     for head 1 (#1102);
-\*   - a live ack clears the marker, which stands for every head registered under it.
-\*     If the acked head does not reach a sibling registered before it (retired from the
-\*     queue, or fenced out of the live path by the newer generation), that sibling is
-\*     never sent again (F1);
+\*   - head 1 is in flight, head 2 registers, then head 1 fails: the stale failure must
+\*     not take the marker from head 2's job (#1102);
+\*   - a live ack clears the marker, which stands for every head committed under it. If
+\*     the acked head does not reach a sibling (retired from the queue, or fenced out of
+\*     the live path by the newer generation), that sibling is never sent again (F1);
 \*   - an ack that may not clear the marker still records its head as the peer's acked
 \*     heads, with no generation to fence it. Landing after the ladder recorded the whole
 \*     frontier, it overwrites that record with one head, and with the marker clear nothing
 \*     rewrites it until the document moves again: the peer reads as unacknowledged.
 \*
-\* `persisted` is a ghost witness for the head whose failure dirtied a scope; `marker` is
-\* a ghost witness for the heads the durable marker stands for; `offered` remembers every
-\* head offered to a peer; `ackedRecord` is the peer's acked-heads record ({} for none). Rust stores only the presence marker and its generation, and
-\* rederives the current heads on retry.
+\* Every variable is code state (one document scope; per peer unless noted):
+\*   nextHead    heads 1..nextHead-1 are committed: blocks in the local blockstore, and
+\*               Frontier is what the headstore holds (DocumentHeadProvider) - local DB
+\*   nextGen     the peerstore's generation allocator (/rep/retry/marker-generation) - local DB
+\*   markerGen   the scope's retry marker (ReplicatorRetryDocIDKey): 0 when absent, else
+\*               the generation it holds
+\*   latest      PushBacklog Inner.latest for (peer, scope): the newest live head, 0 when
+\*               absent
+\*   queued      the peer's backlog queue: jobs <<head, marker_generation>> (PushJobSpec)
+\*   active      jobs a push worker admitted and sent (run_push_job past admit_push_scope)
+\*   delivered   heads the peer accepted, which it then owns with their DAG (the receiver's
+\*               pending or merged heads: PushLogAdmission)
+\*   ackedRecord the peer's acked-heads record (ReplicatorAckedHeadsKey): {} when absent
 \*
-\* Code: crates/p2p/src/sync/push_backlog.rs (enqueue, job_done),
+\* Abstractions: one allocation per commit numbers that commit's registration for every
+\* peer (a generation is compared only within its own marker key), and an allocation no
+\* write uses is left out. Heads commit in (priority, CID) order, so the backlog never
+\* retires an arriving head as stale. A commit and its registrations are one step. The
+\* ladder's read, sends and fenced completion are one step: a registration in between
+\* fails its fence and leaves the marker set.
+\*
+\* Code: crates/p2p/src/sync/coordinator/broadcast.rs (admit_replicator_push),
+\* crates/p2p/src/sync/push_backlog.rs (BacklogOwner::enqueue, is_current, job_done),
 \* crates/p2p/src/sync/coordinator/push_worker.rs (run_push_job, is_whole_frontier,
-\* report_push_ack), crates/p2p/src/sync/coordinator/broadcast.rs (admit_replicator_push),
-\* crates/storage/src/stores/peerstore.rs (complete_retry_scope, record_acknowledged_heads,
-\* acknowledged_heads), crates/db/src/merge/replication_ack.rs, and the ladder in
-\* crates/db/src/merge/push_docs.rs (retry_doc, complete_document_retry_if_current).
+\* report_push_ack), crates/p2p-adapter/src/retry.rs (record_failure),
+\* crates/storage/src/stores/peerstore.rs (observe_push_head_with_generation,
+\* admit_push_scope, refresh_push_failure_with_generation, complete_retry_scope,
+\* record_acknowledged_heads, acknowledged_heads), crates/db/src/merge/replication_ack.rs,
+\* and the ladder in crates/db/src/merge/push_docs.rs (retry_doc,
+\* complete_document_retry_if_current).
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS
-  Peers,        \* the peers heads are offered to
-  MaxHead,      \* heads 1..MaxHead are produced in this order
+  Peers,        \* the replicator peers every head is offered to
+  MaxHead,      \* heads 1..MaxHead are committed in this order
   Parent,       \* [1..MaxHead -> SUBSET (1..MaxHead)]: the heads each head links
   QueueMode,    \* "LatestOnly" | "AppendEvery"
   RetryMode,    \* "CurrentOnly" | "ReplayEvery"
@@ -49,15 +68,21 @@ ASSUME MaxHead \in Nat /\ MaxHead >= 2
 ASSUME QueueMode \in {"LatestOnly", "AppendEvery"}
 ASSUME RetryMode \in {"CurrentOnly", "ReplayEvery"}
 ASSUME CompleteRule \in {"Frontier", "Generation", "Unfenced"}
-\* A head links only heads produced before it, so the parents form a DAG.
+\* A head links only heads committed before it, so the parents form a DAG.
 ASSUME \A h \in 1..MaxHead : Parent[h] \subseteq 1..(h - 1)
 
-VARIABLES nextHead, latest, queued, active, persisted, delivered, retired, marker, offered,
-          ackedRecord
+VARIABLES nextHead, nextGen, markerGen, latest, queued, active, delivered, ackedRecord
 
-vars == <<nextHead, latest, queued, active, persisted, delivered, retired, marker, offered,
-          ackedRecord>>
+vars == <<nextHead, nextGen, markerGen, latest, queued, active, delivered, ackedRecord>>
 Heads == 1..MaxHead
+
+\* Each commit takes one generation, and each failure at most one more per peer: a job
+\* fails at most once, and each peer gets one job per head.
+MaxGen == MaxHead * (1 + Cardinality(Peers))
+Gens == 1..MaxGen
+
+\* A live push job: the head it sends and the marker generation it was queued with.
+Jobs == Heads \X Gens
 
 \* Every ancestor of h: its parents, their parents, and so on.
 RECURSIVE AncOf(_)
@@ -66,166 +91,147 @@ AncOf(h) == Parent[h] \cup UNION {AncOf(p) : p \in Parent[h]}
 \* The heads S holds, with every ancestor: what a peer holding S can reach.
 Reach(S) == S \cup UNION {AncOf(h) : h \in S}
 
-\* The heads produced so far.
+\* The heads committed so far.
 Produced == 1..(nextHead - 1)
 
-\* The document's current heads: produced heads no other produced head links.
+\* The document's current heads: committed heads no other committed head links.
 Frontier == {h \in Produced : \A g \in Produced : h \notin AncOf(g)}
+
+\* The heads a set of jobs sends.
+HeadsOf(J) == {j[1] : j \in J}
+
+\* The backlog's latest entry once job j is done: job_done removes it only if it is j's.
+DoneLatest(p, j) == [latest EXCEPT ![p] = IF @ = j[1] THEN 0 ELSE @]
 
 TypeOK ==
   /\ nextHead \in 1..(MaxHead + 1)
+  /\ nextGen \in 1..(MaxGen + 1)
+  /\ markerGen \in [Peers -> 0..MaxGen]
   /\ latest \in [Peers -> 0..MaxHead]
-  /\ queued \in [Peers -> SUBSET Heads]
-  /\ active \in [Peers -> SUBSET Heads]
-  /\ persisted \in [Peers -> SUBSET Heads]
+  /\ queued \in [Peers -> SUBSET Jobs]
+  /\ active \in [Peers -> SUBSET Jobs]
   /\ delivered \in [Peers -> SUBSET Heads]
-  /\ retired \in 0..(MaxHead * Cardinality(Peers) * 3)
-  /\ marker \in [Peers -> SUBSET Heads]
-  /\ offered \in [Peers -> SUBSET Heads]
   /\ ackedRecord \in [Peers -> SUBSET Heads]
 
 Init ==
   /\ nextHead = 1
+  /\ nextGen = 1
+  /\ markerGen = [p \in Peers |-> 0]
   /\ latest = [p \in Peers |-> 0]
   /\ queued = [p \in Peers |-> {}]
   /\ active = [p \in Peers |-> {}]
-  /\ persisted = [p \in Peers |-> {}]
   /\ delivered = [p \in Peers |-> {}]
-  /\ retired = 0
-  /\ marker = [p \in Peers |-> {}]
-  /\ offered = [p \in Peers |-> {}]
   /\ ackedRecord = [p \in Peers |-> {}]
 
-\* A newer local head is offered to one peer. Its registration sets the marker (and
-\* takes the newest generation) before it is queued. LatestOnly atomically retires queued
-\* and persisted predecessors before installing the new obligation.
-Enqueue(p) ==
+\* A head commits and is offered to every peer. Its registration writes a fresh marker
+\* generation, set or not, before its job is queued. LatestOnly retires the queued older
+\* head of the (scope, peer); AppendEvery keeps every job.
+Enqueue ==
   /\ nextHead <= MaxHead
-  /\ LET h == nextHead
-         old == Cardinality(queued[p]) + Cardinality(persisted[p])
-     IN /\ latest' = [latest EXCEPT ![p] = h]
-        /\ queued' = [queued EXCEPT ![p] =
-             IF QueueMode = "LatestOnly" THEN {h} ELSE @ \cup {h}]
-        /\ persisted' = [persisted EXCEPT ![p] =
-             IF QueueMode = "LatestOnly" THEN {} ELSE @]
-        /\ retired' = retired + IF QueueMode = "LatestOnly" THEN old ELSE 0
-        /\ marker' = [marker EXCEPT ![p] = @ \cup {h}]
-        \* the marker now also stands for h;
-        /\ offered' = [offered EXCEPT ![p] = @ \cup {h}]
-        \* and h is offered to p for good;
+  /\ LET job == <<nextHead, nextGen>>
+     IN /\ markerGen' = [p \in Peers |-> nextGen]
+        /\ latest' = [p \in Peers |-> nextHead]
+        /\ queued' = [p \in Peers |->
+             IF QueueMode = "LatestOnly" THEN {job} ELSE queued[p] \cup {job}]
   /\ nextHead' = nextHead + 1
+  /\ nextGen' = nextGen + 1
   /\ UNCHANGED <<active, delivered, ackedRecord>>
 
-\* A worker takes a queued head and sends it.
-Start(p, h) ==
-  /\ h \in queued[p]
-  /\ queued' = [queued EXCEPT ![p] = @ \ {h}]
-  /\ active' = [active EXCEPT ![p] = @ \cup {h}]
-  /\ UNCHANGED <<nextHead, latest, persisted, delivered, retired, marker, offered, ackedRecord>>
+\* A worker takes a queued job. It sends it only while the job is the newest live head
+\* (is_current) and the marker still holds its generation (admit_push_scope); otherwise
+\* the job ends unsent.
+Start(p, j) ==
+  /\ j \in queued[p]
+  /\ queued' = [queued EXCEPT ![p] = @ \ {j}]
+  /\ IF latest[p] = j[1] /\ markerGen[p] = j[2]
+       THEN /\ active' = [active EXCEPT ![p] = @ \cup {j}]
+            /\ UNCHANGED latest
+       ELSE /\ latest' = DoneLatest(p, j)
+            /\ UNCHANGED active
+  /\ UNCHANGED <<nextHead, nextGen, markerGen, delivered, ackedRecord>>
 
-\* A superseded active send may finish failing after a newer enqueue.  The
-\* CurrentOnly path retires it; ReplayEvery recreates the stale persisted head.
-Fail(p, h) ==
-  /\ h \in active[p]
-  /\ active' = [active EXCEPT ![p] = @ \ {h}]
-  /\ persisted' = [persisted EXCEPT ![p] =
-       IF RetryMode = "CurrentOnly" /\ h = latest[p] THEN {h} ELSE
-       IF RetryMode = "ReplayEvery" THEN @ \cup {h} ELSE @]
-  /\ retired' = retired + IF RetryMode = "CurrentOnly" /\ h < latest[p] THEN 1 ELSE 0
-  /\ UNCHANGED <<nextHead, latest, queued, delivered, marker, offered, ackedRecord>>
+\* The send fails. CurrentOnly: only the newest live head reports it, and the marker takes
+\* a fresh generation, for the ladder, only while it still holds the job's. ReplayEvery
+\* (#1102): every failure registers the marker afresh, current or not.
+Fail(p, j) ==
+  /\ j \in active[p]
+  /\ active' = [active EXCEPT ![p] = @ \ {j}]
+  /\ LET writes == RetryMode = "ReplayEvery" \/ (latest[p] = j[1] /\ markerGen[p] = j[2])
+     IN /\ markerGen' = [markerGen EXCEPT ![p] = IF writes THEN nextGen ELSE @]
+        /\ nextGen' = IF writes THEN nextGen + 1 ELSE nextGen
+  /\ latest' = DoneLatest(p, j)
+  /\ UNCHANGED <<nextHead, queued, delivered, ackedRecord>>
 
-\* The persisted failure witness is sent again.
-Retry(p, h) ==
-  /\ h \in persisted[p]
-  /\ persisted' = [persisted EXCEPT ![p] = @ \ {h}]
-  /\ active' = [active EXCEPT ![p] = @ \cup {h}]
-  /\ UNCHANGED <<nextHead, latest, queued, delivered, retired, marker, offered, ackedRecord>>
+\* The peer accepts the head. Only the newest live head reports the ack. Frontier: only
+\* when the head is the document's whole frontier, so every head committed before it is
+\* one of its ancestors. Generation (before F1): always. Either way the ack carries the
+\* job's generation and completes the marker, recording the head, only while the marker
+\* still holds it. Unfenced (the first F1 patch): an ack that is not the whole frontier
+\* is reported with no generation and recorded regardless.
+Ack(p, j) ==
+  /\ j \in active[p]
+  /\ active' = [active EXCEPT ![p] = @ \ {j}]
+  /\ delivered' = [delivered EXCEPT ![p] = @ \cup {j[1]}]
+  /\ LET current == latest[p] = j[1]
+         whole == Frontier = {j[1]}
+         completes == current /\ (whole \/ CompleteRule = "Generation") /\ markerGen[p] = j[2]
+         unfenced == current /\ ~whole /\ CompleteRule = "Unfenced"
+     IN /\ markerGen' = [markerGen EXCEPT ![p] = IF completes THEN 0 ELSE @]
+        /\ ackedRecord' = [ackedRecord EXCEPT ![p] =
+             IF completes \/ unfenced THEN {j[1]} ELSE @]
+  /\ latest' = DoneLatest(p, j)
+  /\ UNCHANGED <<nextHead, nextGen, queued>>
 
-\* Whether the live ack of h may clear its scope's marker. Generation: the ack of the
-\* head holding the newest generation clears it (complete_retry_scope alone). Frontier:
-\* only when h is also the document's whole frontier (is_whole_frontier), so every head
-\* registered before it is one of its ancestors. Unfenced clears as Frontier does.
-ClearsMarker(h) ==
-  \/ CompleteRule = "Generation"
-  \* the old rule: the newest generation's ack is enough;
-  \/ Frontier \subseteq {h}
-  \* the code: h must be the whole frontier.
-
-\* The peer acks an active head: it is delivered. Only the head holding the newest
-\* generation (the latest registration) can clear the marker, and only if ClearsMarker.
-\* That ack carries the generation: completing the marker records h only while the
-\* marker is still set. The code reports no other ack; Unfenced (the first F1 patch)
-\* reports the newest head's non-clearing ack with no generation, recording h regardless.
-Ack(p, h) ==
-  /\ h \in active[p]
-  \* h was sent to p;
-  /\ active' = [active EXCEPT ![p] = @ \ {h}]
-  \* the send is over;
-  /\ delivered' = [delivered EXCEPT ![p] = @ \cup {h}]
-  \* p holds h;
-  /\ marker' = [marker EXCEPT ![p] =
-       IF h = latest[p] /\ ClearsMarker(h) THEN {} ELSE @]
-  \* the marker clears only for the newest generation, under ClearsMarker;
-  /\ ackedRecord' = [ackedRecord EXCEPT ![p] =
-       IF h = latest[p] /\ ClearsMarker(h) /\ marker[p] # {} THEN {h} ELSE
-       IF h = latest[p] /\ ~ClearsMarker(h) /\ CompleteRule = "Unfenced" THEN {h} ELSE @]
-  \* a fenced completion records h while the marker is set; an unfenced one, regardless;
-  /\ UNCHANGED <<nextHead, latest, queued, persisted, retired, offered>>
-  \* nothing else changes.
-
-\* The retry ladder: with the marker set, send every current head of the document; once
-\* all are acked and the heads have not moved, clear the marker and its failure witness,
-\* and record the frontier as the peer's acked heads.
+\* The retry ladder, with the marker set: it sends every current head and, once all are
+\* acked and the heads have not moved, clears the marker and records them as the peer's
+\* acked heads in one transaction.
 Ladder(p) ==
-  /\ marker[p] # {}
-  \* the scope is dirty for p;
+  /\ markerGen[p] # 0
   /\ delivered' = [delivered EXCEPT ![p] = @ \cup Frontier]
-  \* every current head is sent and acked;
-  /\ marker' = [marker EXCEPT ![p] = {}]
-  \* the marker clears;
-  /\ persisted' = [persisted EXCEPT ![p] = {}]
-  \* and with it the failure witness, which is the same durable key;
+  /\ markerGen' = [markerGen EXCEPT ![p] = 0]
   /\ ackedRecord' = [ackedRecord EXCEPT ![p] = Frontier]
-  \* the acked heads are the frontier it sent;
-  /\ UNCHANGED <<nextHead, latest, queued, active, retired, offered>>
-  \* nothing else changes.
+  /\ UNCHANGED <<nextHead, nextGen, latest, queued, active>>
 
 Next ==
-  \/ \E p \in Peers : Enqueue(p) \/ Ladder(p)
-  \/ \E p \in Peers, h \in Heads :
-       Start(p, h) \/ Fail(p, h) \/ Retry(p, h) \/ Ack(p, h)
+  \/ Enqueue
+  \/ \E p \in Peers :
+       \/ Ladder(p)
+       \/ \E j \in queued[p] : Start(p, j)
+       \/ \E j \in active[p] : Fail(p, j) \/ Ack(p, j)
 
 Spec == Init /\ [][Next]_vars
 
 INV_TypeOK == TypeOK
 
-\* Safety: neither in-memory admission nor durable retry contains two heads
-\* for one (scope, peer).
+\* Safety: the live queue holds at most one job per (scope, peer).
 INV_OneLiveHead == \A p \in Peers : Cardinality(queued[p]) <= 1
-INV_OnePersistedHead == \A p \in Peers : Cardinality(persisted[p]) <= 1
 
-\* A persisted retry is always the newest head known for that peer.
+\* #1102: a stale send never takes the marker from the newest live head. While the
+\* backlog's latest head is queued or in flight, the marker is clear or holds that job's
+\* generation.
 INV_NoStaleRetry ==
-  \A p \in Peers : persisted[p] \subseteq {latest[p]}
+  \A p \in Peers : \A j \in queued[p] \cup active[p] :
+    j[1] = latest[p] => markerGen[p] \in {0, j[2]}
 
-\* Liveness accounting: retirement never destroys the newest obligation.  It
-\* remains queued, active, persisted, or has already been acknowledged.
+\* Retirement never drops the newest committed head: it is queued or in flight, its
+\* marker is set, or the peer holds it.
 INV_NewestRetained ==
   \A p \in Peers :
-    latest[p] = 0 \/ latest[p] \in (queued[p] \cup active[p] \cup persisted[p])
-                  \/ latest[p] \in Reach(delivered[p])
+    \/ nextHead = 1
+    \/ nextHead - 1 \in HeadsOf(queued[p] \cup active[p])
+    \/ markerGen[p] # 0
+    \/ nextHead - 1 \in Reach(delivered[p])
 
-\* THE F1 INVARIANT: once a scope's marker is clear, every head ever offered to the peer
-\* is delivered or an ancestor of a delivered head. A cleared marker with an undelivered
-\* sibling is a head nothing will ever send again.
+\* THE F1 INVARIANT: once a scope's marker is clear, the peer holds every committed head
+\* or a head that links it. A cleared marker with an undelivered sibling is a head nothing
+\* will ever send again.
 INV_ClearedScopeDelivered ==
-  \A p \in Peers :
-    marker[p] = {} => offered[p] \subseteq Reach(delivered[p])
+  \A p \in Peers : markerGen[p] = 0 => Produced \subseteq Reach(delivered[p])
 
 \* Once a scope's marker is clear, the peer's acked-heads record, when it has one, is the
 \* document's current frontier: replication_acknowledged compares the two for equality,
 \* and with the marker clear nothing rewrites the record until the document moves.
 INV_AckRecordCurrent ==
   \A p \in Peers :
-    marker[p] = {} /\ ackedRecord[p] # {} => ackedRecord[p] = Frontier
+    markerGen[p] = 0 /\ ackedRecord[p] # {} => ackedRecord[p] = Frontier
 ====
