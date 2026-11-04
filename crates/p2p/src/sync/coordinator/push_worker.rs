@@ -361,6 +361,11 @@ where
         }
         JobCompletion::Succeeded
     } else {
+        // The newer head's marker generation fences this acknowledgement; the
+        // recorder still counts it as a delivery to the peer.
+        if job.marker_generation.is_some() {
+            let _ = report_push_ack(&context.failure_tx, job).await;
+        }
         JobCompletion::Retired
     }
 }

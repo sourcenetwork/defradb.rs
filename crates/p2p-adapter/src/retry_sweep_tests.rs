@@ -710,6 +710,39 @@ async fn a_live_ack_returns_an_escalated_peer_to_the_first_rung() {
     );
 }
 
+/// A newer write registers the document again before the peer acknowledges the
+/// push it superseded. The newer marker and its acknowledged record stay, and
+/// the acknowledgement still returns the peer to the first rung.
+#[tokio::test(start_paused = true)]
+async fn a_superseded_live_ack_returns_an_escalated_peer_to_the_first_rung() {
+    let sweep = Sweep::with_markers(&["slow"], &[("slow", Outcome::Hangs)]).await;
+    sweep.escalate(5).await;
+    sweep.run().await;
+    assert!(sweep.seconds_until_due().await > RETRY_INTERVALS_SECS[0]);
+
+    let superseded = sweep.register_live("hot").await;
+    let newer = sweep.register_live("hot").await;
+    assert_eq!(sweep.live_push("hot", Some(superseded), true).await, None);
+    let fresh = sweep.register_live("fresh").await;
+    sweep.live_push("fresh", Some(fresh), false).await;
+
+    assert_eq!(sweep.remaining_markers().await, ["fresh", "hot", "slow"]);
+    assert_eq!(
+        sweep
+            .peerstore
+            .acknowledged_heads(PEER, "hot", false)
+            .await
+            .unwrap(),
+        None
+    );
+    let due_in = sweep.seconds_until_due().await;
+    assert!(
+        due_in <= RETRY_INTERVALS_SECS[0],
+        "the peer acknowledged a superseded push, yet the push that failed after it waits behind the escalated rung: due in {due_in} s"
+    );
+    assert_eq!(sweep.live_push("hot", Some(newer), true).await, Some(newer));
+}
+
 /// Without a delivery a failed live push is no evidence the peer is back: it
 /// waits the rung the peer earned, so a peer that is down is not retried at the
 /// first rung on every local write.
