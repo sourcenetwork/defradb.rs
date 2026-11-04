@@ -28,6 +28,7 @@
 \*   MergeMode = "SerializedBatch" | "ParallelWriters" |
 \*               "DuplicateTerminal" | "DischargeBeforeForward" |
 \*               "OwedInMemory"
+\*   MarkerHandoff = "Atomic" | "Drained" | "Undrained"
 \*
 \* A scope is either a document or a branchable collection.  A monotonically
 \* increasing version abstracts the current composite/collection head CID;
@@ -75,6 +76,15 @@
 \* crates/db/src/merge/redriven_sink.rs;
 \* crates/p2p/src/sync/manager/process/mod.rs mark_as_merged, discharge_merged;
 \* crates/p2p/src/sync/coordinator/broadcast.rs push_to_replicators_with_creator.
+\*
+\* The sender's commit-to-marker handoff (MarkerHandoff). Rust: handoff is
+\* the scopes whose ordered_transaction_broadcast task
+\* (crates/db/src/merge/txn_broadcaster.rs SyncTxnBroadcaster::submit_update)
+\* has not ended, each holding the BroadcastDone its commit call waits on
+\* (crates/db/src/event/emission.rs register_update_event_callback);
+\* senderUp is SyncCoordinator::spawn_background_task still accepting tasks
+\* (crates/p2p/src/sync/coordinator/mod.rs), false once the coordinator's
+\* shutdown began or its process died.
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS
@@ -95,6 +105,14 @@ CONSTANTS
   CompletionMode,
   PendingMode,
   MergeMode
+
+\* How a local write's commit, marker registration and acknowledgement relate
+\* (see Commit below). "Atomic" for every configuration that does not split
+\* them; a configuration that does overrides this definition with
+\* HandoffDrained or HandoffUndrained (`MarkerHandoff <- HandoffDrained`).
+MarkerHandoff == "Atomic"
+HandoffDrained == "Drained"
+HandoffUndrained == "Undrained"
 
 Scopes == Docs \cup Cols
 Roots == Scopes \X (1..MaxV)
@@ -121,6 +139,7 @@ ASSUME CompletionMode \in {"LatchedDrain", "EdgeTriggered", "WorkerSaturated",
 ASSUME PendingMode \in {"ScopeCurrent", "EveryRoot"}
 ASSUME MergeMode \in {"SerializedBatch", "ParallelWriters", "DuplicateTerminal",
                        "DischargeBeforeForward", "OwedInMemory"}
+ASSUME MarkerHandoff \in {"Atomic", "Drained", "Undrained"}
 
 VARIABLES
   localV,        \* [Scopes -> 0..MaxV], current sender head
@@ -144,7 +163,9 @@ VARIABLES
   crashed,       \* BOOLEAN, one receiver crash/restart has happened
   fwdDue,        \* SUBSET Roots, merged heads only the running hub process remembers it owes a forward (lost on crash)
   fwdDirty,      \* SUBSET Scopes, the hub's durable scope markers for its own downstream replicator
-  downV          \* [Scopes -> 0..MaxV], the head the hub's downstream replicator holds
+  downV,         \* [Scopes -> 0..MaxV], the head the hub's downstream replicator holds
+  handoff,       \* SUBSET Scopes, committed heads whose markers are not registered yet
+  senderUp       \* BOOLEAN, the sender's P2P still registers markers
 
 \* The three variables of the hub's downstream hop, for actions that leave it alone.
 fwdVars == <<fwdDue, fwdDirty, downV>>
@@ -152,7 +173,10 @@ fwdVars == <<fwdDue, fwdDirty, downV>>
 vars == <<localV, dirty, payloadLedger, inflight, pending, originBound, qualifiedOffers, qualifiedProvider,
           serveAuth, serveScopes,
           flights, drained, ready, mergeFlights, terminalFlights, fetchExhausted,
-          lostCompletions, mergedV, crashed, fwdDue, fwdDirty, downV>>
+          lostCompletions, mergedV, crashed, fwdDue, fwdDirty, downV, handoff, senderUp>>
+
+\* The sender's commit-to-marker handoff; every receiver action leaves it as is.
+senderVars == <<handoff, senderUp>>
 
 TypeOK ==
   /\ localV \in [Scopes -> 0..MaxV]
@@ -182,6 +206,8 @@ TypeOK ==
   /\ fwdDirty \subseteq Scopes
   \* The downstream replicator holds some version of each scope.
   /\ downV \in [Scopes -> 0..MaxV]
+  /\ handoff \subseteq Scopes
+  /\ senderUp \in BOOLEAN
 
 Init ==
   /\ localV = [s \in Scopes |-> 0]
@@ -209,6 +235,8 @@ Init ==
   /\ fwdDirty = {}
   \* The downstream replicator starts with nothing.
   /\ downV = [s \in Scopes |-> 0]
+  /\ handoff = {}
+  /\ senderUp = TRUE
 
 RecordMarker(s) ==
   IF SenderMode = "DocOnlyMarkers" /\ s \in Cols
@@ -228,7 +256,10 @@ ClearOwned(s, v) ==
   ELSE <<dirty \ {s}, payloadLedger \ {<<s, v>>}>>
 
 \* A local write durably records the scope before its live hint is exposed.
+\* "Atomic" collapses the commit, the marker registration and the writer's
+\* acknowledgement into one step; MarkerHandoff's other modes split them.
 Update(s) ==
+  /\ MarkerHandoff = "Atomic"
   /\ localV[s] < MaxV
   /\ LET v == localV[s] + 1
          clearedPayload == {r \in payloadLedger : r[1] # s}
@@ -249,7 +280,94 @@ Update(s) ==
                           THEN serveScopes \cup {s}
                           ELSE serveScopes
   /\ UNCHANGED <<pending, originBound, qualifiedOffers, qualifiedProvider, flights, drained, ready, mergeFlights, terminalFlights,
-                 fetchExhausted, lostCompletions, mergedV, crashed, fwdVars>>
+                 fetchExhausted, lostCompletions, mergedV, crashed, fwdVars, handoff, senderUp>>
+
+\* The split handoff, in plain words. A transactional write commits its new
+\* head first (Commit). Its scope markers are registered afterwards by a
+\* coordinator background task the commit hands off in commit-receipt order
+\* (RegisterMarker: merge/txn_broadcaster.rs SyncTxnBroadcaster::submit_update,
+\* called from event/emission.rs register_update_event_callback). The commit
+\* call waits for that task and returns when it ends, or when it is dropped
+\* unrun; only then is the writer told the write committed. Two things can
+\* come between the commit and the registration: P2P shutting down
+\* (SenderStop) and the process dying (SenderCrash).
+\*   "Drained": EmbeddedNode::shutdown stops admitting requests and drains the writes
+\*     in flight before P2P shuts down (NodeShutdown.tla
+\*     INV_AdmittedWritesMarked), so no registration is pending when P2P
+\*     stops. A crash drops a pending registration, but its writer was never
+\*     told the write committed.
+\*   "Undrained": P2P shuts down while writes are in flight. Its shutdown
+\*     refuses or aborts the registration tasks still pending, and each
+\*     dropped task returns its commit call: the writer is told the write
+\*     committed although no marker owes its head.
+
+\* A writer commits a new head of scope s while the sender's P2P runs.
+Commit(s) ==
+  /\ MarkerHandoff # "Atomic"                \* only the split handoff
+  /\ senderUp                                \* the sender still runs
+  /\ s \notin handoff                        \* one pending commit per scope
+  /\ localV[s] < MaxV                        \* a newer head exists to commit
+  /\ LET v == localV[s] + 1                  \* the committed head
+     IN /\ localV' = [localV EXCEPT ![s] = v] \* it is the current head now
+        /\ serveAuth' = serveAuth \cup {<<s, v>>} \* it may be served
+        /\ serveScopes' = IF ServeMode = "DurableDerived" \* as Update does
+                          THEN serveScopes \cup {s}
+                          ELSE serveScopes
+  /\ handoff' = handoff \cup {s}             \* its registration is pending
+  /\ UNCHANGED <<dirty, payloadLedger, inflight, pending, originBound,
+                 qualifiedOffers, qualifiedProvider, flights, drained, ready,
+                 mergeFlights, terminalFlights, fetchExhausted,
+                 lostCompletions, mergedV, crashed, senderUp>>
+  /\ UNCHANGED fwdVars
+
+\* The handed-off registration runs: the scope marker becomes durable, the
+\* live hint for the current head goes out, and the writer's commit returns.
+RegisterMarker(s) ==
+  /\ s \in handoff                           \* a commit waits for it
+  /\ senderUp                                \* P2P still registers markers
+  /\ dirty' = RecordMarker(s)                \* the durable scope marker
+  /\ payloadLedger' =                        \* as Update records it
+       IF SenderMode = "PayloadLedger"
+       THEN {r \in payloadLedger : r[1] # s} \cup {<<s, localV[s]>>}
+       ELSE payloadLedger
+  /\ inflight' = inflight \cup {<<s, localV[s]>>} \* the live hint
+  /\ handoff' = handoff \ {s}                \* the commit call returns
+  /\ UNCHANGED <<localV, pending, originBound, qualifiedOffers,
+                 qualifiedProvider, serveAuth, serveScopes, flights, drained,
+                 ready, mergeFlights, terminalFlights, fetchExhausted,
+                 lostCompletions, mergedV, crashed, senderUp>>
+  /\ UNCHANGED fwdVars
+
+\* P2P shuts down gracefully (ManagedP2PSystem::stop_transport, then
+\* SyncShutdownHandle::shutdown). Drained: the writes were drained first.
+\* Undrained: every pending registration is dropped, and its writer is told
+\* the write committed.
+SenderStop ==
+  /\ MarkerHandoff # "Atomic"                \* only the split handoff
+  /\ senderUp                                \* it runs until now
+  /\ MarkerHandoff = "Drained" => handoff = {} \* drained first
+  /\ senderUp' = FALSE                       \* no marker registers any more
+  /\ handoff' = {}                           \* dropped; each commit returns
+  /\ UNCHANGED <<localV, dirty, payloadLedger, inflight, pending, originBound,
+                 qualifiedOffers, qualifiedProvider, serveAuth, serveScopes,
+                 flights, drained, ready, mergeFlights, terminalFlights,
+                 fetchExhausted, lostCompletions, mergedV, crashed>>
+  /\ UNCHANGED fwdVars
+
+\* The sender's process dies between a commit and its registration (a kill,
+\* an out-of-memory kill): the registration is lost, and no writer was told
+\* its write committed.
+SenderCrash ==
+  /\ MarkerHandoff # "Atomic"                \* only the split handoff
+  /\ senderUp                                \* it runs until now
+  /\ handoff # {}                            \* a registration is pending
+  /\ senderUp' = FALSE                       \* the process is gone
+  /\ handoff' = {}                           \* with what it had not done
+  /\ UNCHANGED <<localV, dirty, payloadLedger, inflight, pending, originBound,
+                 qualifiedOffers, qualifiedProvider, serveAuth, serveScopes,
+                 flights, drained, ready, mergeFlights, terminalFlights,
+                 fetchExhausted, lostCompletions, mergedV, crashed>>
+  /\ UNCHANGED fwdVars
 
 \* Marker retry always rederives localV[s].  There is no stored version to
 \* choose.  PayloadLedger is modeled separately as the superseded policy.
@@ -264,6 +382,7 @@ ReHintMarker(s) ==
   /\ UNCHANGED <<localV, dirty, payloadLedger, pending, originBound, qualifiedOffers, qualifiedProvider, flights, drained, ready,
                  mergeFlights, terminalFlights, fetchExhausted, lostCompletions,
                  mergedV, crashed, fwdVars>>
+  /\ UNCHANGED senderVars
 
 \* Current main can retry the CID recorded in its durable delivery ledger.
 ReHintPayload(s, v) ==
@@ -276,6 +395,7 @@ ReHintPayload(s, v) ==
   /\ UNCHANGED <<localV, dirty, payloadLedger, pending, originBound, qualifiedOffers, qualifiedProvider, flights, drained, ready,
                  mergeFlights, terminalFlights, fetchExhausted, lostCompletions,
                  mergedV, crashed, fwdVars>>
+  /\ UNCHANGED senderVars
 
 DropHint(s, v) ==
   /\ <<s, v>> \in inflight
@@ -283,6 +403,7 @@ DropHint(s, v) ==
   /\ UNCHANGED <<localV, dirty, payloadLedger, pending, originBound, qualifiedOffers, qualifiedProvider, serveAuth, serveScopes,
                  flights, drained, ready, mergeFlights, terminalFlights,
                  fetchExhausted, lostCompletions, mergedV, crashed, fwdVars>>
+  /\ UNCHANGED senderVars
 
 \* A success acknowledgement is emitted only after one of these two actions.
 ProcessMerged(s, v) ==
@@ -296,6 +417,7 @@ ProcessMerged(s, v) ==
   /\ UNCHANGED <<localV, pending, originBound, qualifiedOffers, qualifiedProvider, serveScopes, flights, drained, ready,
                  mergeFlights, terminalFlights, fetchExhausted, lostCompletions,
                  mergedV, crashed, fwdVars>>
+  /\ UNCHANGED senderVars
 
 \* The scope's current head (PendingDagRegistry current_by_source_scope and
 \* the durable scope key): its newest registered head.
@@ -356,6 +478,7 @@ ProcessRegister(s, v) ==
      IN /\ dirty' = cleared[1]
         /\ payloadLedger' = cleared[2]
   /\ UNCHANGED <<localV, serveAuth, serveScopes, fetchExhausted, mergedV, crashed, fwdVars>>
+  /\ UNCHANGED senderVars
 
 \* Overflow is an actionable nack: receiver state is unchanged and sender
 \* durable ownership is not cleared.
@@ -369,6 +492,7 @@ ProcessNack(s, v) ==
   /\ UNCHANGED <<localV, dirty, payloadLedger, pending, originBound, qualifiedOffers, qualifiedProvider, serveScopes, flights, drained,
                  ready, mergeFlights, terminalFlights, fetchExhausted,
                  lostCompletions, mergedV, crashed, fwdVars>>
+  /\ UNCHANGED senderVars
 
 \* Replaying an already-registered root is an idempotent announcement. The
 \* green policy retains the origin chosen by the durable ownership transfer;
@@ -382,6 +506,7 @@ SameRootReannounce(s, v) ==
                  serveScopes, flights, drained, ready, mergeFlights,
                  terminalFlights, fetchExhausted, lostCompletions, mergedV,
                  crashed, fwdVars>>
+  /\ UNCHANGED senderVars
 
 \* In a configured A->B->C chain, B may offer A's same root to C only after B
 \* completed its own receiver instance, merged the complete DAG, and crossed
@@ -399,6 +524,7 @@ OfferQualifiedAlternate(s, v) ==
                  qualifiedProvider, serveAuth, serveScopes, flights, drained,
                  ready, mergeFlights, terminalFlights, fetchExhausted,
                  lostCompletions, mergedV, crashed, fwdVars>>
+  /\ UNCHANGED senderVars
 
 \* Durable registration of the authenticated complete-DAG offer extends the
 \* recovery rotation without replacing the bound origin or resetting the
@@ -414,6 +540,7 @@ AddQualifiedAlternate(s, v) ==
                  serveAuth, serveScopes, flights, drained, ready, mergeFlights,
                  terminalFlights, fetchExhausted, lostCompletions, mergedV,
                  crashed, fwdVars>>
+  /\ UNCHANGED senderVars
 
 HasQualifiedProvider(r) ==
   \/ /\ ProviderMode \in {"OriginBound", "OriginRebound"}
@@ -446,6 +573,7 @@ ClaimFetch(s, v) ==
   /\ UNCHANGED <<localV, dirty, payloadLedger, inflight, pending, originBound, qualifiedOffers, qualifiedProvider, serveAuth,
                  serveScopes, ready, mergeFlights, terminalFlights, fetchExhausted,
                  lostCompletions, mergedV, crashed, fwdVars>>
+  /\ UNCHANGED senderVars
 
 \* A provider may fail before the fetch task installs its completion waiter.
 \* Production latches that terminal result, releases the owner, and lets the
@@ -466,6 +594,7 @@ FailFetchBeforeWaiter(s, v) ==
   /\ UNCHANGED <<localV, dirty, payloadLedger, inflight, pending, originBound, qualifiedOffers, qualifiedProvider, serveAuth,
                  serveScopes, ready, mergeFlights, terminalFlights, fetchExhausted,
                  mergedV, crashed, fwdVars>>
+  /\ UNCHANGED senderVars
 
 \* A useful CAR can overlap another response that already owns a shared CID's
 \* storage transition.  This is local coalescing, not evidence that the remote
@@ -486,6 +615,7 @@ ContendedIngest(s, v) ==
   /\ UNCHANGED <<localV, dirty, payloadLedger, inflight, pending, originBound, qualifiedOffers, qualifiedProvider, serveAuth,
                  serveScopes, ready, mergeFlights, terminalFlights,
                  lostCompletions, mergedV, crashed, fwdVars>>
+  /\ UNCHANGED senderVars
 
 \* A provider whose bounded CAR serving lane is full sheds the request and
 \* answers busy (sync/car.rs encode_car_busy, sent by
@@ -527,6 +657,7 @@ ProviderShed(s, v) ==
   /\ UNCHANGED <<localV, dirty, payloadLedger, inflight, pending, originBound, qualifiedOffers, qualifiedProvider, serveAuth,
                  serveScopes, ready, mergeFlights, terminalFlights,
                  lostCompletions, mergedV, crashed, fwdVars>>
+  /\ UNCHANGED senderVars
 
 \* The fleet exposed a second way to make a completed response unobservable:
 \* a bounded spawned-worker dispatcher stopped draining its transport channel
@@ -543,6 +674,7 @@ StarveTransportCompletion(s, v) ==
   /\ UNCHANGED <<localV, dirty, payloadLedger, inflight, pending, originBound, qualifiedOffers, qualifiedProvider, serveAuth,
                  serveScopes, flights, drained, ready, mergeFlights,
                  terminalFlights, fetchExhausted, mergedV, crashed, fwdVars>>
+  /\ UNCHANGED senderVars
 
 \* Completion isolation alone is insufficient when durable ownership
 \* registration and recovery serving consume the same bounded worker set.
@@ -559,6 +691,7 @@ StarveRecoveryServe(s, v) ==
   /\ UNCHANGED <<localV, dirty, payloadLedger, inflight, pending, originBound, qualifiedOffers, qualifiedProvider, serveAuth,
                  serveScopes, flights, drained, ready, mergeFlights,
                  terminalFlights, fetchExhausted, mergedV, crashed, fwdVars>>
+  /\ UNCHANGED senderVars
 
 \* A durable replicator grant is already sufficient serving authority. An
 \* eager implementation that nevertheless waits for an optional reverse DID
@@ -574,6 +707,7 @@ StarveRecoveryAuthorization(s, v) ==
   /\ UNCHANGED <<localV, dirty, payloadLedger, inflight, pending, originBound, qualifiedOffers, qualifiedProvider, serveAuth,
                  serveScopes, flights, drained, ready, mergeFlights,
                  terminalFlights, fetchExhausted, mergedV, crashed, fwdVars>>
+  /\ UNCHANGED senderVars
 
 CompleteFetch(s, v) ==
   /\ <<s, v>> \in pending
@@ -587,6 +721,7 @@ CompleteFetch(s, v) ==
   /\ UNCHANGED <<localV, dirty, payloadLedger, inflight, pending, originBound, qualifiedOffers, qualifiedProvider, serveAuth,
                  serveScopes, mergeFlights, terminalFlights, fetchExhausted,
                  lostCompletions, mergedV, crashed, fwdVars>>
+  /\ UNCHANGED senderVars
 
 \* All production entrypoints share one merge-writer owner. The model claims
 \* one root at a time; a runtime transaction that claims an ordered batch is a
@@ -601,6 +736,7 @@ ClaimMerge(s, v) ==
   /\ UNCHANGED <<localV, dirty, payloadLedger, inflight, pending, originBound, qualifiedOffers, qualifiedProvider, serveAuth,
                  serveScopes, flights, drained, ready, terminalFlights,
                  fetchExhausted, lostCompletions, mergedV, crashed, fwdVars>>
+  /\ UNCHANGED senderVars
 
 CompleteMerge(s, v) ==
   /\ <<s, v>> \in ready
@@ -620,6 +756,7 @@ CompleteMerge(s, v) ==
   /\ UNCHANGED <<localV, dirty, payloadLedger, inflight, pending, originBound, qualifiedOffers, qualifiedProvider, serveAuth,
                  serveScopes, flights, drained, terminalFlights, fetchExhausted,
                  lostCompletions, crashed, fwdDirty, downV>>
+  /\ UNCHANGED senderVars
 
 \* Merge and terminal durable cleanup are separate runtime observations.  A
 \* single metadata writer makes repeated completion idempotent instead of
@@ -657,6 +794,7 @@ ClaimTerminal(s, v) ==
   /\ UNCHANGED <<localV, dirty, payloadLedger, inflight, pending, originBound, qualifiedOffers, qualifiedProvider, serveAuth,
                  serveScopes, flights, drained, ready, mergeFlights,
                  fetchExhausted, lostCompletions, mergedV, crashed, downV>>
+  /\ UNCHANGED senderVars
 
 CompleteTerminal(s, v) ==
   /\ terminalFlights[<<s, v>>] > 0
@@ -676,6 +814,7 @@ CompleteTerminal(s, v) ==
   /\ terminalFlights' = [terminalFlights EXCEPT ![<<s, v>>] = @ - 1]
   /\ UNCHANGED <<localV, dirty, payloadLedger, inflight, serveScopes,
                  fetchExhausted, mergedV, crashed, fwdVars>>
+  /\ UNCHANGED senderVars
 
 Crash ==
   /\ ~crashed
@@ -697,6 +836,7 @@ Crash ==
   \* is another node: the restart touches neither.
   /\ UNCHANGED <<localV, dirty, payloadLedger, inflight, serveScopes,
                  fetchExhausted, mergedV, fwdDirty, downV>>
+  /\ UNCHANGED senderVars
 
 \* Red DischargeBeforeForward only: the handler forwards the head it merged
 \* after its mark has already discharged the upstream record (today's
@@ -719,6 +859,7 @@ ForwardAfterDischarge(s, v) ==
                  qualifiedProvider, serveAuth, serveScopes, flights, drained, ready,
                  mergeFlights, terminalFlights, fetchExhausted, lostCompletions,
                  mergedV, crashed, downV>>
+  /\ UNCHANGED senderVars
 
 \* Red DischargeBeforeForward only: the handler's forward fails after the
 \* discharge. The node is shutting down, the replicator list cannot be read,
@@ -738,6 +879,7 @@ ForwardFail(s, v) ==
                  qualifiedProvider, serveAuth, serveScopes, flights, drained, ready,
                  mergeFlights, terminalFlights, fetchExhausted, lostCompletions,
                  mergedV, crashed, fwdDirty, downV>>
+  /\ UNCHANGED senderVars
 
 \* The downstream hop, abstracted: the hub's scope marker re-announces the
 \* hub's current head and the downstream instance of this same protocol
@@ -755,12 +897,15 @@ DeliverDownstream(s) ==
                  qualifiedProvider, serveAuth, serveScopes, flights, drained, ready,
                  mergeFlights, terminalFlights, fetchExhausted, lostCompletions,
                  mergedV, crashed, fwdDue>>
+  /\ UNCHANGED senderVars
 
 Done == \A s \in Scopes : localV[s] = MaxV /\ mergedV[s] = MaxV
 Terminating == Done /\ UNCHANGED vars
 
 Next ==
   \/ \E s \in Scopes : Update(s) \/ ReHintMarker(s)
+  \/ \E s \in Scopes : Commit(s) \/ RegisterMarker(s)
+  \/ SenderStop \/ SenderCrash
   \/ \E s \in Scopes, v \in 1..MaxV :
        ReHintPayload(s, v) \/ DropHint(s, v) \/ ProcessMerged(s, v)
        \/ ProcessRegister(s, v) \/ ProcessNack(s, v) \/ SameRootReannounce(s, v)
@@ -805,9 +950,29 @@ INV_ObligationConservation ==
   \A s \in Scopes :
     mergedV[s] < localV[s] =>
       \/ s \in dirty
+      \/ s \in handoff
       \/ <<s, localV[s]>> \in payloadLedger
       \/ <<s, localV[s]>> \in inflight
       \/ <<s, localV[s]>> \in pending
+
+\* A commit call returns to its writer only at a step that leaves its head
+\* owed to the receiver: a durable scope marker, or a hint or durable
+\* receiver registration for that head or a newer one, which subsumes it,
+\* unless the receiver already merged it. The steps that return a commit
+\* call are its registration (RegisterMarker) and P2P's shutdown dropping
+\* it unrun (SenderStop); a crash (SenderCrash) returns nothing.
+ACT_AckedWriteOwned ==
+  [][\A s \in handoff :
+       RegisterMarker(s) \/ SenderStop =>
+         \/ mergedV'[s] >= localV[s]
+         \/ s \in dirty'
+         \/ \E v \in localV[s]..MaxV :
+               <<s, v>> \in payloadLedger' \cup inflight' \cup pending']_vars
+
+\* While the sender runs, a head it committed and has not registered yet is
+\* owed by its pending registration, and every other by the markers
+\* INV_ObligationConservation names. A sender crash ends that promise.
+INV_ConservedWhileSenderUp == senderUp => INV_ObligationConservation
 
 INV_SingleFlight == \A r \in Roots : flights[r] <= 1
 

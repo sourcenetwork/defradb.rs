@@ -376,6 +376,8 @@ RUNS=(
   "MC_SyncOwnership_Red_EagerIdentityLookup.cfg SyncOwnership.tla RED" # durable replicator authority is delayed behind an unnecessary reverse identity challenge
   "MC_SyncOwnership_Red_BlockingHostEvent.cfg SyncOwnership.tla RED" # full event delivery blocks the host command needed to reply and release admitted work
   "MC_SyncOwnership_Red_BusyExhaustion.cfg SyncOwnership.tla RED" # local shared-CID ingest contention is deferred, never counted as terminal provider exhaustion
+  "MC_SyncOwnership_Green_MarkerHandoff.cfg SyncOwnership.tla GREEN" # a transactional commit returns after its marker registration; P2P stops only after admitted writes drained
+  "MC_SyncOwnership_Red_UndrainedMarker.cfg SyncOwnership.tla RED" # P2P stops with a marker registration pending and the dropped task acknowledges the commit
   "MC_SyncOwnership_Red_ShedAsStall.cfg SyncOwnership.tla RED" # a provider's busy CAR reply is rotated past and deferred, never counted as a stalled window or terminal exhaustion
   "MC_SyncOwnership_Green_Dispatch.cfg MC_SyncOwnership_Dispatch.tla GREEN" # one attempt per fetch slot, re-armed from its end, acked heads kept: due roots go in order and every acked head merges across a restart
   "MC_SyncOwnership_Red_HeldSlot.cfg MC_SyncOwnership_Dispatch.tla RED" # old rule: a fetch holds its slot through every attempt and starts the next attempt ahead of an acked root (ACT_AttemptsStartInDueOrder)

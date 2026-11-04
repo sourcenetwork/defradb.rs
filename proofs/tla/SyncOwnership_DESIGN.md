@@ -109,6 +109,33 @@ current composite or collection head CIDs with monotone versions.
 
 `Update` records sender durability before exposing the live hint. `ReHintMarker`
 has no stored version to replay and therefore must read `localV[scope]`.
+
+`MarkerHandoff` splits `Update` for a transactional write, whose scope markers
+are registered after its commit by a coordinator task handed off in
+commit-receipt order (`merge/txn_broadcaster.rs`
+`SyncTxnBroadcaster::submit_update`, called from `event/emission.rs`
+`register_update_event_callback`). The commit call waits for that task and
+returns when it ends or is dropped unrun; only then is the writer told the
+write committed.
+
+- `handoff` holds the scopes committed but not yet registered: their
+  `ordered_transaction_broadcast` tasks, each holding the `BroadcastDone` its
+  commit call waits on. It is volatile.
+- `senderUp` is false once the sender's P2P stopped or its process died
+  (`SyncCoordinator::spawn_background_task` no longer accepts tasks).
+- `Commit` makes the new head current; `RegisterMarker` records the marker,
+  sends the hint and returns the commit call.
+- `SenderStop` is P2P's graceful shutdown. Under `Drained`, EmbeddedNode::shutdown
+  drains the requests it admitted before P2P stops (`NodeShutdown.tla`
+  `INV_AdmittedWritesMarked`), so nothing is pending then. Under `Undrained`
+  P2P stops with registrations pending, refuses or aborts them, and each
+  dropped task returns its commit call.
+- `SenderCrash` is a kill between a commit and its registration: the
+  registration is lost, and no writer was told the write committed.
+
+`Atomic` keeps the one-step `Update` for every other configuration: without a
+sender stop or crash between them, no receiver action can observe the step
+between a commit and its registration.
 `ProcessMerged` and `ProcessRegister` are the only success-ack actions.
 `ProcessNack` leaves sender ownership intact. Every failed delivery, including
 an actionable capacity nack, advances the one durable per-peer retry clock on
@@ -374,6 +401,15 @@ state a property: the end of a continuation is the liveness property
 - `INV_ObligationConservation`: when a receiver is behind the sender's current
   head, that exact current obligation is in sender durability, in flight,
   durably registered, or merged.
+- `ACT_AckedWriteOwned`: a step that returns a commit call to its writer
+  (`RegisterMarker`, or `SenderStop` dropping the registration unrun) leaves
+  its head owed to the receiver, by the durable scope marker or a hint or
+  durable registration of it or a newer head, unless already merged. A crash
+  returns no commit call, so a head whose sender crashed before registering
+  it was never acknowledged and is outside the promise.
+- `INV_ConservedWhileSenderUp`: `INV_ObligationConservation`, counting a
+  pending registration, while the sender runs. It does not hold across a
+  crash between a commit and its registration.
 - `INV_SingleFlight`: at most one fetch owner exists for an exact root/CID.
 - `INV_FetchOwnersBounded`: scheduled and running fetch ownership never
   exceeds `FetchCap`, including the receiver-clock event handoff.
@@ -467,6 +503,7 @@ fetch owner is deliberately not expressible.
 | `MC_SyncOwnership_Green_Liveness_IrohRelay.cfg` | GREEN | immutable signed origin plus durable qualified same-root alternate reaches currency |
 | `MC_SyncOwnership_Green_Liveness_Doc.cfg` | GREEN | two-version document supersession eventually reaches currency and quiescence |
 | `MC_SyncOwnership_Green_Liveness_Collection.cfg` | GREEN | two-version collection supersession eventually reaches currency and quiescence |
+| `MC_SyncOwnership_Green_MarkerHandoff.cfg` | GREEN | a transactional commit returns only after its marker registration, P2P stops only after admitted writes drained, and a crash between commit and registration acknowledges nothing |
 | `MC_SyncOwnership_Red_DocOnlyMarkers.cfg` | RED | a collection update is dropped after no collection marker was recorded |
 | `MC_SyncOwnership_Red_PayloadLedger.cfg` | RED | current-main CID/payload-valued sender durability violates marker-only ownership |
 | `MC_SyncOwnership_Red_VolatileRegistration.cfg` | RED | restart destroys the only state behind a success ack |
@@ -503,6 +540,7 @@ fetch owner is deliberately not expressible.
 | `MC_SyncOwnership_Red_RetainedOverflow.cfg` | RED | an acknowledged root never gives its entry up: the never-serving root restored first holds the only entry for good (`LIVE_DurableRootMerged`) |
 | `MC_SyncOwnership_Red_KeyOrderResync.cfg` | RED | the root gives its entry up but the sweep restarts at the first key and re-admits it ahead of the other (`LIVE_DurableRootMerged`) |
 | `MC_SyncOwnership_Red_ImmortalContinuation.cfg` | RED | a local continuation whose turn skips keeps its entry and is re-driven for ever (`LIVE_ContinuationEnds`) |
+| `MC_SyncOwnership_Red_UndrainedMarker.cfg` | RED | P2P stops with a transactional write's marker registration pending; the dropped task returns the commit, which is acknowledged with no marker owing its head |
 | `MC_SyncOwnership_Red_ShedAsStall.cfg` | RED | a provider that sheds a CAR request as busy is read as a stalled window, so repeated shedding by a saturated hub burns the attempt budget into terminal provider exhaustion. `ProviderShed` is the release of an attempt in which every provider shed one batch, or in which a provider shed and none delivered, including a busy hub beside alternates that do not hold the root; like `BusyExhaustion`, this guards the classification, and the provider mix itself is tested in `busy_provider_rotation.rs` |
 
 Each red configuration checks only type safety plus the property it is meant to
