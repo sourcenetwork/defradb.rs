@@ -4,6 +4,8 @@
 //! `registry::PROPERTIES`, and `proofs/README.md`'s *Modeled families* table
 //! lists exactly those. A model that lands without a conformance binding, or a
 //! binding without its README row, fails `readme_lists_exactly_the_modeled_families`.
+//! A Contract or Behavioral tier with no test behind it fails
+//! `every_bound_tier_names_its_tests`.
 
 use crate::registry::{Property, Tier, PROPERTIES};
 
@@ -40,6 +42,30 @@ mod tests {
             untiered.is_empty(),
             "properties with no tier: {:?}",
             untiered.iter().map(|p| p.name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn every_bound_tier_names_its_tests() {
+        let root = crate::anchor::repository_root();
+        let unbound: Vec<String> = PROPERTIES
+            .iter()
+            .filter(|p| p.tiers.iter().any(|&t| t != Tier::Boundary) || !p.bound_by.is_empty())
+            .filter_map(|p| {
+                let problems = crate::anchor::problems(&root, p.bound_by);
+                if p.bound_by.is_empty() {
+                    Some(format!("{}: no bound_by", p.name))
+                } else if !problems.is_empty() {
+                    Some(format!("{}: {}", p.name, problems.join("; ")))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(
+            unbound.is_empty(),
+            "Contract or Behavioral properties whose tests are missing:\n{}",
+            unbound.join("\n")
         );
     }
 
