@@ -436,7 +436,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Retry input and marker fencing",
-        name: "INV_ProviderOncePerContext / INV_NewRegistrationSurvivesOldAck / INV_NewRegistrationSurvivesOldClear",
+        name: "INV_ProviderOncePerContext / INV_NewRegistrationSurvivesOldAck / ACT_NewRegistrationSurvivesOldClear",
         axis: Tla,
         anchor: "crates/db/src/write/autocommit/{create,update,delete}.rs NeedsInput resolver; crates/db/src/write/create.rs NeedsInput waves; crates/query/src/prepared.rs; crates/storage/src/stores/peerstore.rs register/complete/clear retry scope",
         model_ref: "MC_RetryPreparedInputs_{Green,Red_*}.cfg / MC_RetryMarkerGeneration_{Green,Red_*}.cfg",
