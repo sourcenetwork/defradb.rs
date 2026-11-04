@@ -60,4 +60,33 @@ theorem install_preserves_incarnation (current allocated : Nat)
   · contradiction
   · exact Nat.le_of_not_lt ‹¬ allocated < current›
 
+-- A replay status update carries the incarnation chosen by its install.
+structure ReplayRow where
+  incarnation : Nat
+  active : Bool
+  deriving DecidableEq
+
+-- A missing or replaced row is left alone; a matching row becomes inactive.
+def deferReplay (row : Option ReplayRow) (installId : Nat) : Option ReplayRow :=
+  match row with
+  | none => none
+  | some current =>
+      if current.incarnation = installId then some { current with active := false } else row
+
+-- Deferring an installed replay preserves the identity used by finish.
+theorem defer_preserves_incarnation (row : ReplayRow) (id : Nat) :
+    (deferReplay (some row) id).map ReplayRow.incarnation = some row.incarnation := by
+  -- Both a matching update and a rejected update keep the original identity.
+  simp only [deferReplay]
+  split <;> rfl
+
+-- A replay that returns after deletion cannot recreate the peer row.
+theorem defer_does_not_resurrect (id : Nat) : deferReplay none id = none := by
+  rfl
+
+-- A replay from an older install cannot change a replacement's status.
+theorem stale_defer_leaves_replacement (row : ReplayRow) (id : Nat)
+    (h : row.incarnation ≠ id) : deferReplay (some row) id = some row := by
+  simp [deferReplay, h]
+
 end ReplicatorInstall

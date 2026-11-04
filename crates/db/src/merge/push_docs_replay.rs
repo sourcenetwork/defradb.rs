@@ -32,6 +32,9 @@ pub const DEFAULT_REPLAY_SEND_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 pub struct ReplayPushConfig {
+    /// The durable install identity whose replay owns status updates.
+    pub install_incarnation: Option<u64>,
+
     /// Retry schedule shared with live replication after replay fails.
     pub retry_schedule: storage::stores::RetrySchedule,
 
@@ -114,6 +117,7 @@ pub async fn check_retry_admission<S: storage::corekv::Store + 'static>(
 pub async fn persist_replay_failures<S: storage::corekv::Store>(
     peerstore: &storage::stores::Peerstore<S>,
     peer_id: &PeerId,
+    install_incarnation: u64,
     failures: &[ReplayDocumentFailure],
 ) -> Result<(), String> {
     if failures.is_empty() {
@@ -152,12 +156,18 @@ pub async fn persist_replay_failures<S: storage::corekv::Store>(
     {
         match p2p::ReplicatorInfo::from_bytes(&bytes) {
             Ok(mut info) => {
+                let bytes_before = bytes;
                 if info.set_status_if_changed_now(p2p::ReplicatorStatus::Inactive) {
                     let bytes = info.to_bytes().map_err(|error| {
                         format!("failed to encode inactive replicator status: {error}")
                     })?;
                     peerstore
-                        .create_replicator(peer_id.as_str(), &bytes)
+                        .set_replicator_if_incarnation(
+                            peer_id.as_str(),
+                            install_incarnation,
+                            &bytes_before,
+                            &bytes,
+                        )
                         .await
                         .map_err(|error| {
                             format!("failed to persist inactive replicator status: {error}")
@@ -185,6 +195,7 @@ pub async fn persist_replay_failures<S: storage::corekv::Store>(
 impl Default for ReplayPushConfig {
     fn default() -> Self {
         Self {
+            install_incarnation: None,
             retry_schedule: storage::stores::RetrySchedule::default(),
             max_concurrent_document_tasks: MAX_CONCURRENT_REPLAY_TASKS,
             max_concurrent_outbound_pushes: DEFAULT_MAX_CONCURRENT_REPLAY_SENDS,

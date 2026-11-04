@@ -730,12 +730,11 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
         }
 
         if let Some(mut replay) = replay.take() {
-            let collections = replay
-                .plan
-                .as_ref()
-                .expect("new replay owns its plan")
-                .replay
-                .clone();
+            let Some(plan) = replay.plan.as_ref() else {
+                return Err(P2PError::internal("replicator replay has no install plan"));
+            };
+            let collections = plan.replay.clone();
+            let install_incarnation = plan.id;
             if !collections.is_empty() {
                 let push_pusher =
                     Arc::clone(self.doc_pusher.as_ref().expect("replay has a pusher"));
@@ -759,6 +758,7 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                             &push_filters,
                             push_se_key.as_ref().map(|key| key.as_slice()),
                             push_identity.as_deref(),
+                            install_incarnation,
                         )
                         .await;
                     if let Err(ref error) = result {

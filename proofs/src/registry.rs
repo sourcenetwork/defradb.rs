@@ -172,6 +172,22 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "Deferred replay preserves its install identity and cannot recreate or alter a replaced peer",
+        axis: Tla,
+        anchor: "crates/db/src/merge/push_docs_replay.rs persist_replay_failures; crates/p2p-adapter/src/replicator_install_store.rs finish",
+        model_ref: "MC_ReplicatorIncarnation_{Green,Red_Replay*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "defer_preserves_incarnation / defer_does_not_resurrect / stale_defer_leaves_replacement",
+        axis: Lean,
+        anchor: "crates/db/src/merge/push_docs_replay.rs persist_replay_failures",
+        model_ref: "ReplicatorInstall (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
         name: "Install completion is identity-fenced and idempotent; stale allocations re-decide without regressing the incarnation",
         axis: Lean,
         anchor: "crates/p2p-adapter/src/replicator_install_store.rs finish",
