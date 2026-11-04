@@ -38,6 +38,10 @@ pub struct ManagedP2PSystem {
     /// P2P-only peers on behalf of an HTTP caller. Set once during P2P setup
     /// (after the system is built), consumed when wiring `AppState`.
     manage_requester: regolith::sync::OnceCell<Arc<dyn defra_p2p_adapter::ManageRequester>>,
+    /// The iroh transport, for opening stream protocols. Set once during iroh
+    /// setup.
+    #[cfg(feature = "p2p")]
+    iroh_transport: regolith::sync::OnceCell<p2p::iroh::IrohTransport>,
     shutdown: ShutdownHandle,
 }
 
@@ -84,8 +88,20 @@ impl ManagedP2PSystem {
             on_replicator_push_options,
             retry_replicators: regolith::sync::OnceCell::new(),
             manage_requester: regolith::sync::OnceCell::new(),
+            #[cfg(feature = "p2p")]
+            iroh_transport: regolith::sync::OnceCell::new(),
             shutdown,
         }
+    }
+
+    #[cfg(feature = "p2p")]
+    pub(crate) fn set_iroh_transport(&self, transport: p2p::iroh::IrohTransport) {
+        let _ = self.iroh_transport.set(transport);
+    }
+
+    #[cfg(feature = "p2p")]
+    pub(crate) fn iroh_transport(&self) -> Option<&p2p::iroh::IrohTransport> {
+        self.iroh_transport.get()
     }
 
     /// Install the outbound management requester. Set once during P2P setup.

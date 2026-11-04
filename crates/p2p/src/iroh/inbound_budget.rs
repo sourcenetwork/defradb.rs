@@ -237,6 +237,12 @@ const fn share_of(capacity: usize) -> usize {
     capacity / 2
 }
 
+/// The bytes one peer may hold at `priority`: the largest message a service
+/// of that priority can admit.
+pub(super) const fn peer_share_bytes(priority: Priority) -> usize {
+    share_of(BUDGET_BYTES[priority.index()])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

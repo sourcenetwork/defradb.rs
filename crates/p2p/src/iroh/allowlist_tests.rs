@@ -23,7 +23,7 @@ use crate::transport::{P2PTransport, PeerId, TransportEvent};
 
 type Events = DispatchReceiver<TransportEvent<iroh::endpoint::SendStream>>;
 
-fn config(secret_key: SecretKey, allowlist: IrohAllowlistConfig) -> IrohEndpointConfig {
+pub(super) fn config(secret_key: SecretKey, allowlist: IrohAllowlistConfig) -> IrohEndpointConfig {
     IrohEndpointConfig {
         secret_key,
         node_identity: None,
@@ -110,7 +110,10 @@ async fn assert_never_connects(dialer: &IrohTransport, server: &IrohTransport, w
 /// server's refusal cut short shows in the dialer's own view until the close
 /// arrives (its handshake completes locally before the server's allowlist
 /// check, running in the accept path, can close it).
-async fn dial_and_wait_for_local_handshake(dialer: &IrohTransport, server: &IrohTransport) {
+pub(super) async fn dial_and_wait_for_local_handshake(
+    dialer: &IrohTransport,
+    server: &IrohTransport,
+) {
     let addrs = server.listen_addresses().await.unwrap();
     match dialer.dial(server.local_peer_id(), addrs).await {
         Ok(()) | Err(crate::error::Error::Unauthorized(_)) => return,
@@ -134,7 +137,7 @@ async fn dial_and_wait_for_local_handshake(dialer: &IrohTransport, server: &Iroh
     .expect("dial never reached the server");
 }
 
-async fn shutdown_all(
+pub(super) async fn shutdown_all(
     dialer: IrohTransport,
     server: IrohTransport,
     dialer_task: edge::Task<()>,

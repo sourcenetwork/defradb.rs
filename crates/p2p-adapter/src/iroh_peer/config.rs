@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use edge::Edge;
 use p2p::bitswap::AccessMode;
-use p2p::iroh::IrohEndpointConfig;
+use p2p::iroh::{IrohEndpointConfig, StreamHandler, StreamProtocol};
 use p2p::sync::SyncConfig;
 use storage::stores::RetrySchedule;
 
@@ -32,6 +32,8 @@ pub struct IrohPeerConfig {
     pub load_persisted_collections: bool,
     /// Shared replicator push options, for callers that change them at runtime.
     pub replicator_push_options: Option<ReplicatorPushOptionsState>,
+    /// The embedder's stream protocols, each with its handler.
+    pub stream_protocols: Vec<(StreamProtocol, Arc<dyn StreamHandler>)>,
 }
 
 impl IrohPeerConfig {
@@ -52,6 +54,7 @@ impl IrohPeerConfig {
             retry_schedule: RetrySchedule::default(),
             load_persisted_collections: true,
             replicator_push_options: None,
+            stream_protocols: Vec::new(),
         }
     }
 }

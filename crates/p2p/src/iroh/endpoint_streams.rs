@@ -18,6 +18,7 @@ use super::protocols;
 use super::records::{Input as RecordsInput, RecordsHandle, RecordsMessage};
 use super::services::{self, Service};
 use super::solicited::Solicited;
+use super::stream_protocols::{InboundStream, StreamProtocols};
 
 /// QUIC application error code closing a connection refused by the inbound
 /// allowlist. Distinct from the disconnect code (0) used elsewhere.
@@ -147,6 +148,7 @@ pub(super) struct ConnectionStreamContext {
     share: Arc<PeerShare>,
     records: RecordsHandle,
     solicited: Arc<Solicited>,
+    stream_protocols: StreamProtocols,
 }
 
 impl ConnectionStreamContext {
@@ -165,6 +167,7 @@ impl ConnectionStreamContext {
             share: resources.inbound_budget.peer_share(remote_id),
             records: resources.records.clone(),
             solicited: Arc::clone(&resources.solicited),
+            stream_protocols: resources.stream_protocols.clone(),
         }
     }
 }
@@ -192,12 +195,14 @@ pub(super) async fn handle_connection_streams(
         let share = Arc::clone(&context.share);
         let records = context.records.clone();
         let solicited = Arc::clone(&context.solicited);
+        let stream_protocols = context.stream_protocols.clone();
         let _ = spawn_task(&context.spawned_tasks, async move {
             let Some((service, payload, lease)) = admit_stream(
                 &mut recv,
                 &inbound_budget,
                 &share,
                 &solicited,
+                &stream_protocols,
                 replies_on_stream,
                 remote_id,
                 &peer_id,
@@ -216,6 +221,18 @@ pub(super) async fn handle_connection_streams(
                     }),
                     Err(e) => debug!("Undecodable records message from {}: {}", peer_id, e),
                 }
+                drop(lease);
+                return;
+            }
+            if let Some(handler) = stream_protocols.handler(service.tag) {
+                handler
+                    .handle(InboundStream {
+                        peer: remote_id,
+                        request: payload,
+                        send,
+                        recv,
+                    })
+                    .await;
                 drop(lease);
                 return;
             }
@@ -256,20 +273,22 @@ pub(super) async fn handle_connection_streams(
 /// connection whose replies use their request's stream, is a reply nobody
 /// asked this peer for, the message is too large for its tag, or no room
 /// frees up before the deadline.
-pub(super) async fn admit_stream(
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn admit_stream<'a>(
     recv: &mut iroh::endpoint::RecvStream,
     budget: &InboundBudget,
     share: &Arc<PeerShare>,
     solicited: &Solicited,
+    stream_protocols: &'a StreamProtocols,
     replies_on_stream: bool,
     remote_id: EndpointId,
     peer_id: &PeerId,
-) -> Option<(&'static Service, Vec<u8>, InboundLease)> {
+) -> Option<(&'a Service, Vec<u8>, InboundLease)> {
     let tag = protocols::read_stream_tag(recv)
         .await
         .inspect_err(|e| debug!(peer_id = %peer_id, error = %e, "Unreadable stream tag"))
         .ok()?;
-    let Some(service) = services::lookup(&tag) else {
+    let Some(service) = services::lookup(&tag).or_else(|| stream_protocols.service(&tag)) else {
         debug!(peer_id = %peer_id, tag = %String::from_utf8_lossy(&tag), "Unknown stream tag");
         let _ = recv.stop(RESET_UNKNOWN_SERVICE.into());
         return None;

@@ -84,8 +84,8 @@ const fn reply(tag: &'static [u8], priority: Priority, max_message: usize) -> Se
 /// An identity request or reply is a peer ID or a token.
 const MAX_IDENTITY_MSG_SIZE: usize = 64 * 1024;
 
-/// Every stream tag this node accepts. Every other reply comes back on its
-/// request's own stream, which every peer speaking the mux does.
+/// Every stream tag of Defra's own protocols. Every other reply comes back on
+/// its request's own stream, which every peer speaking the mux does.
 pub const SERVICES: &[Service] = &[
     service(STREAM_IDENTITY, Priority::Control, MAX_IDENTITY_MSG_SIZE),
     service(STREAM_MANAGE_REQ, Priority::Control, MAX_MANAGE_MSG_SIZE),
@@ -112,7 +112,7 @@ pub const SERVICES: &[Service] = &[
     service(STREAM_CAR, Priority::Bulk, MAX_MESSAGE_SIZE),
 ];
 
-/// The service a stream tag names, if this node offers it.
+/// The Defra service a stream tag names.
 pub fn lookup(tag: &[u8]) -> Option<&'static Service> {
     SERVICES.iter().find(|service| service.tag == tag)
 }

@@ -62,6 +62,8 @@ pub struct NodeBuilder {
     http_config: Option<HttpConfig>,
     #[cfg(feature = "p2p")]
     access_hooks: Option<AccessHooks>,
+    #[cfg(feature = "p2p")]
+    stream_protocols: Vec<(p2p::iroh::StreamProtocol, Arc<dyn p2p::iroh::StreamHandler>)>,
     #[cfg(feature = "otel")]
     telemetry_handle: Option<TelemetryHandle>,
     crdts: Vec<crdt::Registration>,
@@ -396,11 +398,31 @@ impl NodeBuilder {
         self
     }
 
+    /// Serve `protocol` on the node's iroh connections: a stream a peer opens
+    /// with its tag is admitted as Defra's own are, then handed to `handler`.
+    /// `build` fails unless the transport is iroh, and for a protocol
+    /// [`p2p::iroh::StreamProtocol`] does not allow.
+    #[cfg(feature = "p2p")]
+    pub fn with_stream_protocol(
+        mut self,
+        protocol: p2p::iroh::StreamProtocol,
+        handler: Arc<dyn p2p::iroh::StreamHandler>,
+    ) -> Self {
+        self.stream_protocols.push((protocol, handler));
+        self
+    }
+
     /// Build and start the embedded DefraDB node.
     pub async fn build(mut self) -> Result<Node> {
         let crdts = crdt::Crdts::new(std::mem::take(&mut self.crdts))?;
         #[cfg(feature = "p2p")]
         check_access_hooks(&self.config, self.access_hooks.as_ref())?;
+        #[cfg(feature = "p2p")]
+        if !self.stream_protocols.is_empty()
+            && !matches!(self.config.transport, TransportConfig::Iroh(_))
+        {
+            return Err(Error::StreamProtocolsNeedIroh);
+        }
 
         #[cfg(feature = "http")]
         let (serves_http, transaction_cleanup) = match self.http_config.as_ref() {
@@ -431,6 +453,8 @@ impl NodeBuilder {
             serves_http,
             #[cfg(feature = "p2p")]
             access_hooks: self.access_hooks.take(),
+            #[cfg(feature = "p2p")]
+            stream_protocols: std::mem::take(&mut self.stream_protocols),
             #[cfg(feature = "otel")]
             telemetry: self.telemetry_handle.take(),
         };

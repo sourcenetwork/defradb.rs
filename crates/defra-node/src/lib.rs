@@ -809,6 +809,34 @@ impl Node {
         ops.deny_peer(&peer_id).await.map_err(Error::PeerRevoke)
     }
 
+    /// Open a stream for `protocol` to the iroh peer `peer_id`, a raw
+    /// endpoint ID, and write `request` as its first message. The peer serves
+    /// it if it registered `protocol` with
+    /// [`NodeBuilder::with_stream_protocol`]. Finish the send half once the
+    /// protocol has nothing more to send.
+    ///
+    /// A connection dialled only to carry the stream does not accept the
+    /// peer's own streams, such as an identity request, so connect to the
+    /// peer first with
+    /// [`P2POperations::connect_peer`](defra_p2p_adapter::P2POperations::connect_peer)
+    /// unless it connected to this node.
+    #[cfg(feature = "p2p")]
+    pub async fn open_p2p_stream(
+        &self,
+        peer_id: &str,
+        protocol: &p2p::iroh::StreamProtocol,
+        request: Vec<u8>,
+    ) -> Result<(p2p::iroh::SendStream, p2p::iroh::RecvStream)> {
+        let transport = self
+            .p2p
+            .as_ref()
+            .ok_or(Error::P2pDisabled)?
+            .iroh_transport()
+            .ok_or(Error::StreamProtocolsNeedIroh)?;
+        let peer_id = p2p::iroh::parse_canonical_peer_id(peer_id)?;
+        Ok(transport.open_stream(&peer_id, protocol, request).await?)
+    }
+
     /// Gracefully stop background services owned by this node.
     ///
     /// **The node should not be used after this call.** When the `otel`

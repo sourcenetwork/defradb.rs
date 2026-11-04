@@ -18,8 +18,8 @@ use super::endpoint::{peer_direct_addr, spawn_task, ActiveSync, EndpointResource
 use super::endpoint_rpc::{
     close_peer_connections, connect_mux, handle_block_sync, handle_car_request_response,
     handle_fire_and_forget, handle_reply_on_stream, handle_request_response,
-    handle_two_stream_request, remember_connection, reply_on_stream, BlockSyncResources,
-    REQUEST_RESPONSE_TIMEOUT,
+    handle_two_stream_request, open_protocol_stream, remember_connection, reply_on_stream,
+    BlockSyncResources, REQUEST_RESPONSE_TIMEOUT,
 };
 use super::endpoint_streams::ConnectionStreamContext;
 use super::gossip::{AddrInfo, EventSender, Network};
@@ -242,6 +242,30 @@ pub(super) async fn handle_command(
         }
         IrohCommand::TopicPeers { topic, reply } => {
             let _ = reply.send(Ok(gossip.topic_peers(&topic.to_string())));
+        }
+        IrohCommand::OpenStream {
+            peer_id,
+            protocol,
+            request,
+            reply,
+        } => {
+            let direct_addr = peer_direct_addr(peer_map, &peer_id);
+            let endpoint = endpoint.clone();
+            let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
+            let _ = spawn_task(spawned_tasks, async move {
+                let result = open_protocol_stream(
+                    &endpoint,
+                    &peer_id,
+                    &protocol,
+                    &request,
+                    direct_addr,
+                    &connection_cache,
+                    &admission,
+                )
+                .await;
+                let _ = reply.send(result);
+            });
         }
         IrohCommand::ReplyOnStream {
             send_stream,

@@ -1,6 +1,7 @@
 #![cfg(feature = "p2p")]
 
 use std::net::{IpAddr, Ipv4Addr};
+use std::sync::Arc;
 
 #[path = "support/clock.rs"]
 mod clock;
@@ -10,10 +11,29 @@ mod outcome;
 use clock::sleep;
 use defra_node::{NodeBuilder, P2PConfig};
 use outcome::Result;
+use p2p::iroh::{InboundStream, Priority, StreamHandler, StreamProtocol};
 use std::time::{Duration, Instant};
 
 const BOOK_SDL: &str = "type Book { title: String }";
 const REPLICATED_TITLE: &str = "Replicated over iroh";
+
+const ECHO: StreamProtocol = StreamProtocol {
+    tag: b"/test/echo/0.1",
+    priority: Priority::Sync,
+    max_message: 1024,
+};
+
+/// Replies with the request reversed.
+struct Echo;
+
+#[async_trait::async_trait]
+impl StreamHandler for Echo {
+    async fn handle(&self, mut stream: InboundStream) {
+        let reply: Vec<u8> = stream.request.iter().rev().copied().collect();
+        let _ = stream.send.write_all(&reply).await;
+        let _ = stream.send.finish();
+    }
+}
 
 #[test]
 fn two_embedded_iroh_nodes_connect_and_replicate() -> Result<()> {
@@ -122,6 +142,53 @@ fn an_explicit_allowlist_admits_the_peer_it_is_given() -> Result<()> {
             dialer_p2p.shutdown().await;
             listener.database().close().await?;
             dialer.database().close().await?;
+            Ok(())
+        })
+        .unwrap()
+}
+
+/// The app's stream protocol, served by one node and opened from another,
+/// carries a request and its reply over the connection the two nodes share.
+#[test]
+fn an_apps_stream_protocol_round_trips_between_embedded_nodes() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async {
+            let server = NodeBuilder::default()
+                .with_p2p(test_iroh_config())
+                .with_stream_protocol(ECHO, Arc::new(Echo))
+                .build()
+                .await?;
+            let client = NodeBuilder::default()
+                .with_p2p(test_iroh_config())
+                .build()
+                .await?;
+            let server_p2p = server
+                .p2p_system()
+                .cloned()
+                .expect("server missing p2p system");
+            let client_p2p = client
+                .p2p_system()
+                .cloned()
+                .expect("client missing p2p system");
+
+            let server_peer = server_p2p.ops().local_peer_id().await?;
+            let server_addr = wait_for_connectable_iroh_addr(&server_p2p).await?;
+            client_p2p.ops().connect_peer(&server_addr).await?;
+
+            let (mut send, mut recv) = client
+                .open_p2p_stream(&server_peer, &ECHO, b"ping".to_vec())
+                .await?;
+            send.finish().expect("finish the request");
+            let reply = recv
+                .read_to_end(ECHO.max_message)
+                .await
+                .expect("read the reply");
+            assert_eq!(reply, b"gnip");
+
+            server_p2p.shutdown().await;
+            client_p2p.shutdown().await;
+            server.database().close().await?;
+            client.database().close().await?;
             Ok(())
         })
         .unwrap()

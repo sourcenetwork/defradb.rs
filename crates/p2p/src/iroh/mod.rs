@@ -38,6 +38,9 @@ mod relay_server_tests;
 mod secret_key;
 mod services;
 mod solicited;
+#[cfg(test)]
+mod stream_protocol_tests;
+mod stream_protocols;
 mod task_registry;
 mod transport;
 #[cfg(test)]
@@ -49,8 +52,10 @@ pub use addr::{
     parse_public_peer_addr,
 };
 pub use config::{IrohAllowlistConfig, IrohDiscoveryConfig, IrohRelayModeConfig};
-pub use endpoint::spawn_endpoint;
+pub use endpoint::{spawn_endpoint, spawn_endpoint_with_protocols};
 pub use endpoint_config::{AdmissionAuthority, IrohEndpointConfig};
+pub use iroh::endpoint::{ReadToEndError, RecvStream, SendStream};
+pub use iroh::EndpointId;
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 pub use iroh::SecretKey;
 pub use records::{CollectionKey, NetworkSecret, Role, Service, ServiceProfile, ServiceRecord};
@@ -59,4 +64,6 @@ pub use relay_server::{IrohRelayServer, IrohRelayServerConfig, IrohRelayTlsConfi
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 pub use secret_key::load_or_generate_secret_key;
 pub use secret_key::{generate_secret_key, secret_key_from_bytes};
+pub use services::Priority;
+pub use stream_protocols::{InboundStream, StreamHandler, StreamProtocol};
 pub use transport::IrohTransport;

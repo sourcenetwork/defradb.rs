@@ -12,6 +12,7 @@ use super::mux_tests::spawn_transport;
 use super::protocols;
 use super::services::Priority;
 use super::solicited::Solicited;
+use super::stream_protocols::StreamProtocols;
 use crate::transport::{InboundClassSnapshot, P2PTransport, PeerAddr, PeerId};
 
 const STOPPED: Duration = Duration::from_secs(5);
@@ -172,6 +173,7 @@ async fn admit_one(tag: &[u8], len: u32, body: Body, deadlines: InboundDeadlines
         &budget,
         &share,
         &solicited,
+        &StreamProtocols::default(),
         connection.alpn() == protocols::ALPN_MUX,
         connection.remote_id(),
         &peer_id,

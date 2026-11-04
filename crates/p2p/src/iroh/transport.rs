@@ -29,6 +29,7 @@ use super::command::{CommandSender, EndpointStopped, IrohCommand};
 use super::endpoint_config::AdmissionAuthority;
 use super::peer_map::endpoint_id_to_peer_id;
 use super::records::{ServiceProfile, ServiceRecord};
+use super::stream_protocols::StreamProtocol;
 
 /// Iroh-backed P2P transport.
 ///
@@ -280,6 +281,30 @@ impl IrohTransport {
         let did = identity::Identity::did(&token_identity)
             .map_err(|error| Error::Transport(format!("peer identity DID failed: {error}")))?;
         Ok(Some(did))
+    }
+
+    /// Open a stream to `peer_id` for `protocol` and write `request` as its
+    /// first message. Finish the send half once the protocol has nothing more
+    /// to send.
+    ///
+    /// The stream rides the connection every Defra protocol shares with the
+    /// peer, dialled if there is none. A connection dialled here does not
+    /// accept the peer's own streams, such as an identity request, so dial
+    /// the peer with [`P2PTransport::dial`] first unless it connected to this
+    /// node.
+    pub async fn open_stream(
+        &self,
+        peer_id: &PeerId,
+        protocol: &StreamProtocol,
+        request: Vec<u8>,
+    ) -> Result<(iroh::endpoint::SendStream, iroh::endpoint::RecvStream)> {
+        self.send_command(|reply| IrohCommand::OpenStream {
+            peer_id: peer_id.clone(),
+            protocol: *protocol,
+            request,
+            reply,
+        })
+        .await
     }
 }
 
