@@ -79,6 +79,10 @@ impl MockP2POperations {
 
 #[async_trait]
 impl P2POperations for MockP2POperations {
+    async fn scheduler_diagnostics(&self) -> P2PResult<serde_json::Value> {
+        Ok(serde_json::json!({ "eligible_roots": 3, "dispatch_lane_capacity": 4 }))
+    }
+
     async fn local_peer_id(&self) -> P2PResult<String> {
         Ok(self.peer_id.clone())
     }

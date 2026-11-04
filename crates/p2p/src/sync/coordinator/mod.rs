@@ -65,11 +65,13 @@ mod push_worker;
 mod receive_gate;
 mod replicators;
 mod result_types;
+mod scheduler_diagnostics;
 mod selective_car_access;
 mod subscriptions;
 
 pub use peer_details::{PeerDetails, PendingFetch, QuarantinedRoot};
 pub use result_types::{CreateReplicatorResult, LoadReplicatorsResult};
+pub use scheduler_diagnostics::SchedulerDiagnostics;
 pub use selective_car_access::{HeadHintCarAuthority, HeadHintCarGrant};
 
 use rapidhash::{HashMapExt, RapidHashMap};
@@ -307,6 +309,7 @@ const NON_AUTHORITATIVE_BROADCAST_TASK_LIMIT: usize = 32;
 #[derive(Clone)]
 pub(crate) struct DagFetchLimiter {
     global: Arc<Semaphore>,
+    global_limit: usize,
     per_peer: Arc<HopscotchMap<String, Arc<Semaphore>, rapidhash::fast::RandomState>>,
     /// Set at shutdown: every waiting and later acquire gives up.
     closed: Arc<Event>,
@@ -344,6 +347,7 @@ impl DagFetchLimiter {
         let global_limit = global_limit.max(1);
         Self {
             global: Arc::new(Semaphore::new(global_limit)),
+            global_limit,
             per_peer: Arc::new(HopscotchMap::with_hasher(
                 rapidhash::fast::RandomState::default(),
             )),

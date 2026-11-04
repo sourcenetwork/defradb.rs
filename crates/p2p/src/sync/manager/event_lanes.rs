@@ -9,6 +9,7 @@
 //! re-armed before every receive cannot hold it back. Model:
 //! proofs/tla/MC_SyncOwnership_Dispatch.tla (`DispatchPath`, `LaneTurns`).
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use futures::FutureExt;
@@ -25,6 +26,7 @@ use super::events::SyncEvent;
 pub(crate) struct DispatchLane {
     queue: ArrayQueue<SyncEvent>,
     ready: Notify,
+    queued_or_entering: AtomicUsize,
 }
 
 impl DispatchLane {
@@ -32,6 +34,7 @@ impl DispatchLane {
         Self {
             queue: ArrayQueue::new(slots.max(1)),
             ready: Notify::new(),
+            queued_or_entering: AtomicUsize::new(0),
         }
     }
 
@@ -39,13 +42,19 @@ impl DispatchLane {
         !self.queue.is_full()
     }
 
-    fn capacity(&self) -> usize {
+    pub(crate) fn capacity(&self) -> usize {
         self.queue.capacity()
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.queued_or_entering.load(Ordering::Relaxed)
     }
 
     /// Queues `event`; `false`, dropping it, when the lane is full.
     pub(crate) fn push(&self, event: SyncEvent) -> bool {
+        self.queued_or_entering.fetch_add(1, Ordering::Relaxed);
         if self.queue.push(event).is_err() {
+            self.queued_or_entering.fetch_sub(1, Ordering::Relaxed);
             return false;
         }
         self.ready.notify_one();
@@ -53,12 +62,14 @@ impl DispatchLane {
     }
 
     fn pop(&self) -> Option<SyncEvent> {
-        self.queue.pop()
+        let event = self.queue.pop()?;
+        self.queued_or_entering.fetch_sub(1, Ordering::Relaxed);
+        Some(event)
     }
 
     async fn next(&self) -> SyncEvent {
         loop {
-            if let Some(event) = self.queue.pop() {
+            if let Some(event) = self.pop() {
                 return event;
             }
             self.ready.notified().await;
@@ -159,6 +170,18 @@ mod tests {
             SyncEvent::SyncError { error, .. } => error,
             _ => panic!("expected a sync error"),
         }
+    }
+
+    #[test]
+    fn occupancy_tracks_successful_and_rejected_pushes() {
+        let dispatch = DispatchLane::new(1);
+        assert_eq!((dispatch.len(), dispatch.capacity()), (0, 1));
+        assert!(dispatch.push(event("accepted")));
+        assert_eq!(dispatch.len(), 1);
+        assert!(!dispatch.push(event("rejected")));
+        assert_eq!(dispatch.len(), 1);
+        assert_eq!(label(dispatch.pop().unwrap()), "accepted");
+        assert_eq!(dispatch.len(), 0);
     }
 
     #[test]

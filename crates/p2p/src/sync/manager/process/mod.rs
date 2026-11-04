@@ -348,6 +348,10 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         self.dispatch_lane.has_room()
     }
 
+    pub(crate) fn dispatch_lane_occupancy(&self) -> (usize, usize) {
+        (self.dispatch_lane.len(), self.dispatch_lane.capacity())
+    }
+
     /// Hands a receiver-clock dispatch to the merge loop ahead of its queued
     /// merge work; `false` when the lane is full.
     pub(crate) fn dispatch(&self, event: SyncEvent) -> bool {

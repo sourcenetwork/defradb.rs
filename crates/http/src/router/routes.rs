@@ -150,6 +150,7 @@ pub(crate) fn create_router_with_state_and_body_limits(
     let p2p_routes = Router::new()
         .route("/info", get(handlers::p2p::get_info))
         .route("/sync/status", get(handlers::p2p::sync_status))
+        .route("/sync/scheduler", get(handlers::p2p::scheduler_diagnostics))
         .route(
             "/shareable-address",
             get(handlers::p2p::get_shareable_address),
@@ -511,6 +512,41 @@ mod tests {
 
             assert_eq!(response.status(), axum::http::StatusCode::OK);
         }
+    }
+
+    #[nuclei::test]
+    async fn p2p_scheduler_route_returns_aggregate_diagnostics() {
+        assert_eq!(
+            crate::route_permissions::route_permission(
+                "/api/v0/p2p/sync/scheduler",
+                &axum::http::Method::GET,
+            ),
+            crate::route_permissions::RoutePermission::Required(
+                crate::router::NodePermission::P2pPeerInfo,
+            ),
+        );
+        let executor = Arc::new(MockQueryExecutor::new()) as Arc<dyn QueryExecutor>;
+        let p2p = Arc::new(MockP2POperations::new()) as Arc<dyn P2POperations>;
+        let router = create_router_with_state(
+            AppStateBuilder::new(executor, edge::testing::edge())
+                .with_p2p(p2p)
+                .build(),
+        );
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v0/p2p/sync/scheduler")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(body["eligible_roots"], 3);
+        assert_eq!(body["dispatch_lane_capacity"], 4);
     }
 
     #[nuclei::test]

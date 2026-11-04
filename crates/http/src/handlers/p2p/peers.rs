@@ -66,6 +66,21 @@ pub async fn sync_status(
     Ok(Json(status))
 }
 
+/// Aggregate receiver scheduling state, without root or peer identifiers.
+/// Requires `P2pPeerInfo` permission when NAC is enabled.
+pub async fn scheduler_diagnostics(
+    State(state): State<AppState>,
+    identity: ExtractIdentity,
+) -> Result<Json<serde_json::Value>, HttpError> {
+    require_permission(&state, &identity, NodePermission::P2pPeerInfo).await?;
+    let p2p = bound(state.require_p2p()?, &identity.context());
+    Ok(Json(
+        p2p.scheduler_diagnostics()
+            .await
+            .map_err(map_p2p_internal)?,
+    ))
+}
+
 /// Everything this node knows about one peer, for debugging.
 ///
 /// GET /api/v0/p2p/peers/{peer_id}

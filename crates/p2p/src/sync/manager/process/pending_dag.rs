@@ -342,6 +342,29 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         })
     }
 
+    /// Read-only counts of in-memory roots at the same retry-clock instant.
+    /// A blocker can have been released since its entry was recorded; the
+    /// retry clock clears it on its next pass.
+    pub(crate) fn pending_scheduler_counts(&self) -> (usize, usize, usize, usize, usize) {
+        let now = crate::rt::time::Instant::now();
+        self.pending_dags.read(|pending| {
+            let mut counts = (0, 0, 0, 0, 0);
+            for dag in pending.values() {
+                let due = now >= dag.next_retry_at;
+                counts.0 += usize::from(due);
+                counts.1 +=
+                    usize::from(due && dag.is_recovery_registered && dag.storage_blocker.is_none());
+                counts.2 += usize::from(dag.storage_blocker.is_some());
+                counts.3 += usize::from(
+                    dag.storage_blocker
+                        .is_some_and(|cid| self.process_queue.is_active(&cid)),
+                );
+                counts.4 += usize::from(!dag.is_recovery_registered);
+            }
+            counts
+        })
+    }
+
     /// Drop every entry past its TTL, counting each in the diagnostics.
     fn evict_expired(&self) {
         let now = Instant::now();

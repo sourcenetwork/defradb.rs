@@ -319,6 +319,16 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
             .await
     }
 
+    async fn scheduler_diagnostics(&self) -> P2PResult<serde_json::Value> {
+        self.check_nac(acp::nac::NodePermission::P2pPeerInfo)
+            .await?;
+        let Some(coordinator) = self.sync_coordinator.as_ref() else {
+            return Ok(serde_json::Value::Null);
+        };
+        serde_json::to_value(coordinator.scheduler_diagnostics())
+            .map_err(|error| P2PError::transport(error.to_string()))
+    }
+
     async fn sync_status(&self) -> P2PResult<serde_json::Value> {
         let Some(coordinator) = self.sync_coordinator.as_ref() else {
             return Ok(serde_json::Value::Null);
