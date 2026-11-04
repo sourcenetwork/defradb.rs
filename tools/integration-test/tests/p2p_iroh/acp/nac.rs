@@ -143,812 +143,969 @@ async fn setup_nac_two_nodes() -> (TestCluster, String, String) {
 // --- P2P Peer Info ---
 
 /// Port: TestNAC_GatesP2PPeerInfo_AuthorizedIdentity_AllowAccess
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_peer_info_authorized() {
-    let (cluster, admin_key, _) = setup_nac_node().await;
-    let node = cluster.client(0);
-    let result = node.p2p_info_with_identity(&admin_key);
-    assert!(result.is_ok(), "admin should pass NAC gate for p2p_info");
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_node().await;
+        let node = cluster.client(0);
+        let result = node.p2p_info_with_identity(&admin_key);
+        assert!(result.is_ok(), "admin should pass NAC gate for p2p_info");
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesP2PPeerInfo_NoIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_peer_info_no_identity() {
-    let (cluster, _, _) = setup_nac_node().await;
-    let node = cluster.client(0);
-    let result = node.p2p_info();
-    assert!(
-        result.is_err(),
-        "anonymous should be rejected by NAC for p2p_info"
-    );
+    edge::compat(async move {
+        let (cluster, _, _) = setup_nac_node().await;
+        let node = cluster.client(0);
+        let result = node.p2p_info();
+        assert!(
+            result.is_err(),
+            "anonymous should be rejected by NAC for p2p_info"
+        );
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesP2PPeerInfo_WrongIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_peer_info_wrong_identity() {
-    let (cluster, _, outsider_key) = setup_nac_node().await;
-    let node = cluster.client(0);
-    let result = node.p2p_info_with_identity(&outsider_key);
-    assert!(
-        result.is_err(),
-        "outsider should be rejected by NAC for p2p_info"
-    );
+    edge::compat(async move {
+        let (cluster, _, outsider_key) = setup_nac_node().await;
+        let node = cluster.client(0);
+        let result = node.p2p_info_with_identity(&outsider_key);
+        assert!(
+            result.is_err(),
+            "outsider should be rejected by NAC for p2p_info"
+        );
+    })
+    .await;
 }
 
 // --- P2P Peer Connect ---
 
 /// Port: TestNAC_GatesP2PPeerConnect_AuthorizedIdentity_AllowAccess
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_peer_connect_authorized() {
-    let (cluster, admin_key, _) = setup_nac_two_nodes().await;
-    let addr1 = extract_p2p_addr_with_identity(&cluster, 1, &admin_key);
-    let node = cluster.client(0);
-    let result = node.p2p_connect_with_identity(&[&addr1], &admin_key);
-    assert!(result.is_ok(), "admin should pass NAC gate for p2p_connect");
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_two_nodes().await;
+        let addr1 = extract_p2p_addr_with_identity(&cluster, 1, &admin_key);
+        let node = cluster.client(0);
+        let result = node.p2p_connect_with_identity(&[&addr1], &admin_key);
+        assert!(result.is_ok(), "admin should pass NAC gate for p2p_connect");
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesP2PPeerConnect_NoIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_peer_connect_no_identity() {
-    let (cluster, admin_key, _) = setup_nac_two_nodes().await;
-    let addr1 = extract_p2p_addr_with_identity(&cluster, 1, &admin_key);
-    let node = cluster.client(0);
-    let result = node.p2p_connect(&[&addr1]);
-    assert!(
-        result.is_err(),
-        "anonymous should be rejected by NAC for p2p_connect"
-    );
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_two_nodes().await;
+        let addr1 = extract_p2p_addr_with_identity(&cluster, 1, &admin_key);
+        let node = cluster.client(0);
+        let result = node.p2p_connect(&[&addr1]);
+        assert!(
+            result.is_err(),
+            "anonymous should be rejected by NAC for p2p_connect"
+        );
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesP2PPeerConnect_WrongIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_peer_connect_wrong_identity() {
-    let (cluster, admin_key, outsider_key) = setup_nac_two_nodes().await;
-    let addr1 = extract_p2p_addr_with_identity(&cluster, 1, &admin_key);
-    let node = cluster.client(0);
-    let result = node.p2p_connect_with_identity(&[&addr1], &outsider_key);
-    assert!(
-        result.is_err(),
-        "outsider should be rejected by NAC for p2p_connect"
-    );
+    edge::compat(async move {
+        let (cluster, admin_key, outsider_key) = setup_nac_two_nodes().await;
+        let addr1 = extract_p2p_addr_with_identity(&cluster, 1, &admin_key);
+        let node = cluster.client(0);
+        let result = node.p2p_connect_with_identity(&[&addr1], &outsider_key);
+        assert!(
+            result.is_err(),
+            "outsider should be rejected by NAC for p2p_connect"
+        );
+    })
+    .await;
 }
 
 // --- Active Peers ---
 
 /// Port: TestNAC_GatesActivePeers_AuthorizedIdentity_AllowAccess
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_active_peers_authorized() {
-    let (cluster, admin_key, _) = setup_nac_node().await;
-    let node = cluster.client(0);
-    let result = node.p2p_active_peers_with_identity(&admin_key);
-    assert!(
-        result.is_ok(),
-        "admin should pass NAC gate for active_peers"
-    );
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_node().await;
+        let node = cluster.client(0);
+        let result = node.p2p_active_peers_with_identity(&admin_key);
+        assert!(
+            result.is_ok(),
+            "admin should pass NAC gate for active_peers"
+        );
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesActivePeers_NoIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_active_peers_no_identity() {
-    let (cluster, _, _) = setup_nac_node().await;
-    let node = cluster.client(0);
-    let result = node.p2p_active_peers();
-    assert!(
-        result.is_err(),
-        "anonymous should be rejected by NAC for active_peers"
-    );
+    edge::compat(async move {
+        let (cluster, _, _) = setup_nac_node().await;
+        let node = cluster.client(0);
+        let result = node.p2p_active_peers();
+        assert!(
+            result.is_err(),
+            "anonymous should be rejected by NAC for active_peers"
+        );
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesActivePeers_WrongIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_active_peers_wrong_identity() {
-    let (cluster, _, outsider_key) = setup_nac_node().await;
-    let node = cluster.client(0);
-    let result = node.p2p_active_peers_with_identity(&outsider_key);
-    assert!(
-        result.is_err(),
-        "outsider should be rejected by NAC for active_peers"
-    );
+    edge::compat(async move {
+        let (cluster, _, outsider_key) = setup_nac_node().await;
+        let node = cluster.client(0);
+        let result = node.p2p_active_peers_with_identity(&outsider_key);
+        assert!(
+            result.is_err(),
+            "outsider should be rejected by NAC for active_peers"
+        );
+    })
+    .await;
 }
 
 // --- Collection Add ---
 
 /// Port: TestNAC_GatesP2PCollectionAdd_AuthorizedIdentity_AllowAccess
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_collection_add_authorized() {
-    let (cluster, admin_key, _) = setup_nac_node().await;
-    let node = cluster.client(0);
-    let result = node.p2p_collection_add_with_identity(&["Users"], &admin_key);
-    assert!(
-        result.is_ok(),
-        "admin should pass NAC gate for collection_add"
-    );
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_node().await;
+        let node = cluster.client(0);
+        let result = node.p2p_collection_add_with_identity(&["Users"], &admin_key);
+        assert!(
+            result.is_ok(),
+            "admin should pass NAC gate for collection_add"
+        );
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesP2PCollectionAdd_NoIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_collection_add_no_identity() {
-    let (cluster, _, _) = setup_nac_node().await;
-    let node = cluster.client(0);
-    let result = node.p2p_collection_add(&["Users"]);
-    assert!(
-        result.is_err(),
-        "anonymous should be rejected by NAC for collection_add"
-    );
+    edge::compat(async move {
+        let (cluster, _, _) = setup_nac_node().await;
+        let node = cluster.client(0);
+        let result = node.p2p_collection_add(&["Users"]);
+        assert!(
+            result.is_err(),
+            "anonymous should be rejected by NAC for collection_add"
+        );
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesP2PCollectionAdd_WrongIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_collection_add_wrong_identity() {
-    let (cluster, _, outsider_key) = setup_nac_node().await;
-    let node = cluster.client(0);
-    let result = node.p2p_collection_add_with_identity(&["Users"], &outsider_key);
-    assert!(
-        result.is_err(),
-        "outsider should be rejected by NAC for collection_add"
-    );
+    edge::compat(async move {
+        let (cluster, _, outsider_key) = setup_nac_node().await;
+        let node = cluster.client(0);
+        let result = node.p2p_collection_add_with_identity(&["Users"], &outsider_key);
+        assert!(
+            result.is_err(),
+            "outsider should be rejected by NAC for collection_add"
+        );
+    })
+    .await;
 }
 
 // --- Collection List ---
 
 /// Port: TestNAC_GatesP2PCollectionList_AuthorizedIdentity_AllowAccess
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_collection_list_authorized() {
-    let (cluster, admin_key, _) = setup_nac_node().await;
-    let node = cluster.client(0);
-    let result = node.p2p_collection_list_with_identity(&admin_key);
-    assert!(
-        result.is_ok(),
-        "admin should pass NAC gate for collection_list"
-    );
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_node().await;
+        let node = cluster.client(0);
+        let result = node.p2p_collection_list_with_identity(&admin_key);
+        assert!(
+            result.is_ok(),
+            "admin should pass NAC gate for collection_list"
+        );
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesP2PCollectionList_NoIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_collection_list_no_identity() {
-    let (cluster, _, _) = setup_nac_node().await;
-    let node = cluster.client(0);
-    let result = node.p2p_collection_list();
-    assert!(
-        result.is_err(),
-        "anonymous should be rejected by NAC for collection_list"
-    );
+    edge::compat(async move {
+        let (cluster, _, _) = setup_nac_node().await;
+        let node = cluster.client(0);
+        let result = node.p2p_collection_list();
+        assert!(
+            result.is_err(),
+            "anonymous should be rejected by NAC for collection_list"
+        );
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesP2PCollectionList_WrongIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_collection_list_wrong_identity() {
-    let (cluster, _, outsider_key) = setup_nac_node().await;
-    let node = cluster.client(0);
-    let result = node.p2p_collection_list_with_identity(&outsider_key);
-    assert!(
-        result.is_err(),
-        "outsider should be rejected by NAC for collection_list"
-    );
+    edge::compat(async move {
+        let (cluster, _, outsider_key) = setup_nac_node().await;
+        let node = cluster.client(0);
+        let result = node.p2p_collection_list_with_identity(&outsider_key);
+        assert!(
+            result.is_err(),
+            "outsider should be rejected by NAC for collection_list"
+        );
+    })
+    .await;
 }
 
 // --- Collection Delete ---
 
 /// Port: TestNAC_GatesP2PCollectionDelete_AuthorizedIdentity_AllowAccess
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_collection_delete_authorized() {
-    let (cluster, admin_key, _) = setup_nac_node().await;
-    let node = cluster.client(0);
-    // Add first so we can delete
-    node.p2p_collection_add_with_identity(&["Users"], &admin_key)
-        .expect("add");
-    let result = node.p2p_collection_delete_with_identity(&["Users"], &admin_key);
-    assert!(
-        result.is_ok(),
-        "admin should pass NAC gate for collection_delete"
-    );
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_node().await;
+        let node = cluster.client(0);
+        // Add first so we can delete
+        node.p2p_collection_add_with_identity(&["Users"], &admin_key)
+            .expect("add");
+        let result = node.p2p_collection_delete_with_identity(&["Users"], &admin_key);
+        assert!(
+            result.is_ok(),
+            "admin should pass NAC gate for collection_delete"
+        );
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesP2PCollectionDelete_NoIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_collection_delete_no_identity() {
-    let (cluster, admin_key, _) = setup_nac_node().await;
-    let node = cluster.client(0);
-    node.p2p_collection_add_with_identity(&["Users"], &admin_key)
-        .expect("add");
-    let result = node.p2p_collection_delete(&["Users"]);
-    assert!(
-        result.is_err(),
-        "anonymous should be rejected by NAC for collection_delete"
-    );
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_node().await;
+        let node = cluster.client(0);
+        node.p2p_collection_add_with_identity(&["Users"], &admin_key)
+            .expect("add");
+        let result = node.p2p_collection_delete(&["Users"]);
+        assert!(
+            result.is_err(),
+            "anonymous should be rejected by NAC for collection_delete"
+        );
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesP2PCollectionDelete_WrongIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_collection_delete_wrong_identity() {
-    let (cluster, admin_key, outsider_key) = setup_nac_node().await;
-    let node = cluster.client(0);
-    node.p2p_collection_add_with_identity(&["Users"], &admin_key)
-        .expect("add");
-    let result = node.p2p_collection_delete_with_identity(&["Users"], &outsider_key);
-    assert!(
-        result.is_err(),
-        "outsider should be rejected by NAC for collection_delete"
-    );
+    edge::compat(async move {
+        let (cluster, admin_key, outsider_key) = setup_nac_node().await;
+        let node = cluster.client(0);
+        node.p2p_collection_add_with_identity(&["Users"], &admin_key)
+            .expect("add");
+        let result = node.p2p_collection_delete_with_identity(&["Users"], &outsider_key);
+        assert!(
+            result.is_err(),
+            "outsider should be rejected by NAC for collection_delete"
+        );
+    })
+    .await;
 }
 
 // --- Document Add ---
 
 /// Port: TestNAC_GatesP2PDocumentAdd_AuthorizedIdentity_AllowAccess
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_document_add_authorized() {
-    let (cluster, admin_key, _) = setup_nac_node().await;
-    let node = cluster.client(0);
-    let r = node
-        .query_with_identity(
-            r#"mutation { add_Users(input: {name: "Alice", age: 30}) { _docID } }"#,
-            &admin_key,
-        )
-        .expect("create doc");
-    let doc_id = r["add_Users"][0]["_docID"]
-        .as_str()
-        .expect("missing _docID");
-    let result = node.p2p_document_add_with_identity(&[doc_id], &admin_key);
-    assert!(
-        result.is_ok(),
-        "admin should pass NAC gate for document_add"
-    );
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_node().await;
+        let node = cluster.client(0);
+        let r = node
+            .query_with_identity(
+                r#"mutation { add_Users(input: {name: "Alice", age: 30}) { _docID } }"#,
+                &admin_key,
+            )
+            .expect("create doc");
+        let doc_id = r["add_Users"][0]["_docID"]
+            .as_str()
+            .expect("missing _docID");
+        let result = node.p2p_document_add_with_identity(&[doc_id], &admin_key);
+        assert!(
+            result.is_ok(),
+            "admin should pass NAC gate for document_add"
+        );
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesP2PDocumentAdd_NoIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_document_add_no_identity() {
-    let (cluster, admin_key, _) = setup_nac_node().await;
-    let node = cluster.client(0);
-    let r = node
-        .query_with_identity(
-            r#"mutation { add_Users(input: {name: "Alice", age: 30}) { _docID } }"#,
-            &admin_key,
-        )
-        .expect("create doc");
-    let doc_id = r["add_Users"][0]["_docID"]
-        .as_str()
-        .expect("missing _docID");
-    let result = node.p2p_document_add(&[doc_id]);
-    assert!(
-        result.is_err(),
-        "anonymous should be rejected by NAC for document_add"
-    );
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_node().await;
+        let node = cluster.client(0);
+        let r = node
+            .query_with_identity(
+                r#"mutation { add_Users(input: {name: "Alice", age: 30}) { _docID } }"#,
+                &admin_key,
+            )
+            .expect("create doc");
+        let doc_id = r["add_Users"][0]["_docID"]
+            .as_str()
+            .expect("missing _docID");
+        let result = node.p2p_document_add(&[doc_id]);
+        assert!(
+            result.is_err(),
+            "anonymous should be rejected by NAC for document_add"
+        );
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesP2PDocumentAdd_WrongIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_document_add_wrong_identity() {
-    let (cluster, admin_key, outsider_key) = setup_nac_node().await;
-    let node = cluster.client(0);
-    let r = node
-        .query_with_identity(
-            r#"mutation { add_Users(input: {name: "Alice", age: 30}) { _docID } }"#,
-            &admin_key,
-        )
-        .expect("create doc");
-    let doc_id = r["add_Users"][0]["_docID"]
-        .as_str()
-        .expect("missing _docID");
-    let result = node.p2p_document_add_with_identity(&[doc_id], &outsider_key);
-    assert!(
-        result.is_err(),
-        "outsider should be rejected by NAC for document_add"
-    );
+    edge::compat(async move {
+        let (cluster, admin_key, outsider_key) = setup_nac_node().await;
+        let node = cluster.client(0);
+        let r = node
+            .query_with_identity(
+                r#"mutation { add_Users(input: {name: "Alice", age: 30}) { _docID } }"#,
+                &admin_key,
+            )
+            .expect("create doc");
+        let doc_id = r["add_Users"][0]["_docID"]
+            .as_str()
+            .expect("missing _docID");
+        let result = node.p2p_document_add_with_identity(&[doc_id], &outsider_key);
+        assert!(
+            result.is_err(),
+            "outsider should be rejected by NAC for document_add"
+        );
+    })
+    .await;
 }
 
 // --- Document List ---
 
 /// Port: TestNAC_GatesP2PDocumentList_AuthorizedIdentity_AllowAccess
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_document_list_authorized() {
-    let (cluster, admin_key, _) = setup_nac_node().await;
-    let node = cluster.client(0);
-    let result = node.p2p_document_list_with_identity(&admin_key);
-    assert!(
-        result.is_ok(),
-        "admin should pass NAC gate for document_list"
-    );
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_node().await;
+        let node = cluster.client(0);
+        let result = node.p2p_document_list_with_identity(&admin_key);
+        assert!(
+            result.is_ok(),
+            "admin should pass NAC gate for document_list"
+        );
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesP2PDocumentList_NoIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_document_list_no_identity() {
-    let (cluster, _, _) = setup_nac_node().await;
-    let node = cluster.client(0);
-    let result = node.p2p_document_list();
-    assert!(
-        result.is_err(),
-        "anonymous should be rejected by NAC for document_list"
-    );
+    edge::compat(async move {
+        let (cluster, _, _) = setup_nac_node().await;
+        let node = cluster.client(0);
+        let result = node.p2p_document_list();
+        assert!(
+            result.is_err(),
+            "anonymous should be rejected by NAC for document_list"
+        );
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesP2PDocumentList_WrongIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_document_list_wrong_identity() {
-    let (cluster, _, outsider_key) = setup_nac_node().await;
-    let node = cluster.client(0);
-    let result = node.p2p_document_list_with_identity(&outsider_key);
-    assert!(
-        result.is_err(),
-        "outsider should be rejected by NAC for document_list"
-    );
+    edge::compat(async move {
+        let (cluster, _, outsider_key) = setup_nac_node().await;
+        let node = cluster.client(0);
+        let result = node.p2p_document_list_with_identity(&outsider_key);
+        assert!(
+            result.is_err(),
+            "outsider should be rejected by NAC for document_list"
+        );
+    })
+    .await;
 }
 
 // --- Document Delete ---
 
 /// Port: TestNAC_GatesP2PDocumentDelete_AuthorizedIdentity_AllowAccess
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_document_delete_authorized() {
-    let (cluster, admin_key, _) = setup_nac_node().await;
-    let node = cluster.client(0);
-    let r = node
-        .query_with_identity(
-            r#"mutation { add_Users(input: {name: "Alice", age: 30}) { _docID } }"#,
-            &admin_key,
-        )
-        .expect("create doc");
-    let doc_id = r["add_Users"][0]["_docID"]
-        .as_str()
-        .expect("missing _docID");
-    node.p2p_document_add_with_identity(&[doc_id], &admin_key)
-        .expect("add doc");
-    let result = node.p2p_document_delete_with_identity(&[doc_id], &admin_key);
-    assert!(
-        result.is_ok(),
-        "admin should pass NAC gate for document_delete"
-    );
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_node().await;
+        let node = cluster.client(0);
+        let r = node
+            .query_with_identity(
+                r#"mutation { add_Users(input: {name: "Alice", age: 30}) { _docID } }"#,
+                &admin_key,
+            )
+            .expect("create doc");
+        let doc_id = r["add_Users"][0]["_docID"]
+            .as_str()
+            .expect("missing _docID");
+        node.p2p_document_add_with_identity(&[doc_id], &admin_key)
+            .expect("add doc");
+        let result = node.p2p_document_delete_with_identity(&[doc_id], &admin_key);
+        assert!(
+            result.is_ok(),
+            "admin should pass NAC gate for document_delete"
+        );
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesP2PDocumentDelete_NoIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_document_delete_no_identity() {
-    let (cluster, admin_key, _) = setup_nac_node().await;
-    let node = cluster.client(0);
-    let r = node
-        .query_with_identity(
-            r#"mutation { add_Users(input: {name: "Alice", age: 30}) { _docID } }"#,
-            &admin_key,
-        )
-        .expect("create doc");
-    let doc_id = r["add_Users"][0]["_docID"]
-        .as_str()
-        .expect("missing _docID");
-    node.p2p_document_add_with_identity(&[doc_id], &admin_key)
-        .expect("add doc");
-    let result = node.p2p_document_delete(&[doc_id]);
-    assert!(
-        result.is_err(),
-        "anonymous should be rejected by NAC for document_delete"
-    );
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_node().await;
+        let node = cluster.client(0);
+        let r = node
+            .query_with_identity(
+                r#"mutation { add_Users(input: {name: "Alice", age: 30}) { _docID } }"#,
+                &admin_key,
+            )
+            .expect("create doc");
+        let doc_id = r["add_Users"][0]["_docID"]
+            .as_str()
+            .expect("missing _docID");
+        node.p2p_document_add_with_identity(&[doc_id], &admin_key)
+            .expect("add doc");
+        let result = node.p2p_document_delete(&[doc_id]);
+        assert!(
+            result.is_err(),
+            "anonymous should be rejected by NAC for document_delete"
+        );
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesP2PDocumentDelete_WrongIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_document_delete_wrong_identity() {
-    let (cluster, admin_key, outsider_key) = setup_nac_node().await;
-    let node = cluster.client(0);
-    let r = node
-        .query_with_identity(
-            r#"mutation { add_Users(input: {name: "Alice", age: 30}) { _docID } }"#,
-            &admin_key,
-        )
-        .expect("create doc");
-    let doc_id = r["add_Users"][0]["_docID"]
-        .as_str()
-        .expect("missing _docID");
-    node.p2p_document_add_with_identity(&[doc_id], &admin_key)
-        .expect("add doc");
-    let result = node.p2p_document_delete_with_identity(&[doc_id], &outsider_key);
-    assert!(
-        result.is_err(),
-        "outsider should be rejected by NAC for document_delete"
-    );
+    edge::compat(async move {
+        let (cluster, admin_key, outsider_key) = setup_nac_node().await;
+        let node = cluster.client(0);
+        let r = node
+            .query_with_identity(
+                r#"mutation { add_Users(input: {name: "Alice", age: 30}) { _docID } }"#,
+                &admin_key,
+            )
+            .expect("create doc");
+        let doc_id = r["add_Users"][0]["_docID"]
+            .as_str()
+            .expect("missing _docID");
+        node.p2p_document_add_with_identity(&[doc_id], &admin_key)
+            .expect("add doc");
+        let result = node.p2p_document_delete_with_identity(&[doc_id], &outsider_key);
+        assert!(
+            result.is_err(),
+            "outsider should be rejected by NAC for document_delete"
+        );
+    })
+    .await;
 }
 
 // --- Replicator Add ---
 
 /// Port: TestNAC_GatesP2PReplicatorAdd_AuthorizedIdentity_AllowAccess
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_replicator_add_authorized() {
-    let (cluster, admin_key, _) = setup_nac_two_nodes().await;
-    let addr1 = extract_p2p_addr_with_identity(&cluster, 1, &admin_key);
-    let node = cluster.client(0);
-    node.p2p_collection_add_with_identity(&["Users"], &admin_key)
-        .expect("add collection");
-    let result = node.p2p_replicator_set_with_identity(&["Users"], &addr1, &admin_key);
-    assert!(
-        result.is_ok(),
-        "admin should pass NAC gate for replicator_add"
-    );
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_two_nodes().await;
+        let addr1 = extract_p2p_addr_with_identity(&cluster, 1, &admin_key);
+        let node = cluster.client(0);
+        node.p2p_collection_add_with_identity(&["Users"], &admin_key)
+            .expect("add collection");
+        let result = node.p2p_replicator_set_with_identity(&["Users"], &addr1, &admin_key);
+        assert!(
+            result.is_ok(),
+            "admin should pass NAC gate for replicator_add"
+        );
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesP2PReplicatorAdd_NoIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_replicator_add_no_identity() {
-    let (cluster, admin_key, _) = setup_nac_two_nodes().await;
-    let addr1 = extract_p2p_addr_with_identity(&cluster, 1, &admin_key);
-    let node = cluster.client(0);
-    node.p2p_collection_add_with_identity(&["Users"], &admin_key)
-        .expect("add collection");
-    let result = node.p2p_replicator_set(&["Users"], &addr1);
-    assert!(
-        result.is_err(),
-        "anonymous should be rejected by NAC for replicator_add"
-    );
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_two_nodes().await;
+        let addr1 = extract_p2p_addr_with_identity(&cluster, 1, &admin_key);
+        let node = cluster.client(0);
+        node.p2p_collection_add_with_identity(&["Users"], &admin_key)
+            .expect("add collection");
+        let result = node.p2p_replicator_set(&["Users"], &addr1);
+        assert!(
+            result.is_err(),
+            "anonymous should be rejected by NAC for replicator_add"
+        );
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesP2PReplicatorAdd_WrongIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_replicator_add_wrong_identity() {
-    let (cluster, admin_key, outsider_key) = setup_nac_two_nodes().await;
-    let addr1 = extract_p2p_addr_with_identity(&cluster, 1, &admin_key);
-    let node = cluster.client(0);
-    node.p2p_collection_add_with_identity(&["Users"], &admin_key)
-        .expect("add collection");
-    let result = node.p2p_replicator_set_with_identity(&["Users"], &addr1, &outsider_key);
-    assert!(
-        result.is_err(),
-        "outsider should be rejected by NAC for replicator_add"
-    );
+    edge::compat(async move {
+        let (cluster, admin_key, outsider_key) = setup_nac_two_nodes().await;
+        let addr1 = extract_p2p_addr_with_identity(&cluster, 1, &admin_key);
+        let node = cluster.client(0);
+        node.p2p_collection_add_with_identity(&["Users"], &admin_key)
+            .expect("add collection");
+        let result = node.p2p_replicator_set_with_identity(&["Users"], &addr1, &outsider_key);
+        assert!(
+            result.is_err(),
+            "outsider should be rejected by NAC for replicator_add"
+        );
+    })
+    .await;
 }
 
 // --- Replicator Delete ---
 
 /// Port: TestNAC_GatesP2PReplicatorDelete_AuthorizedIdentity_AllowAccess
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_replicator_delete_authorized() {
-    let (cluster, admin_key, _) = setup_nac_two_nodes().await;
-    let addr1 = extract_p2p_addr_with_identity(&cluster, 1, &admin_key);
-    let node = cluster.client(0);
-    node.p2p_collection_add_with_identity(&["Users"], &admin_key)
-        .expect("add collection");
-    node.p2p_replicator_set_with_identity(&["Users"], &addr1, &admin_key)
-        .expect("add replicator");
-    let result = node.p2p_replicator_delete_with_identity(&["Users"], Some(&addr1), &admin_key);
-    assert!(
-        result.is_ok(),
-        "admin should pass NAC gate for replicator_delete"
-    );
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_two_nodes().await;
+        let addr1 = extract_p2p_addr_with_identity(&cluster, 1, &admin_key);
+        let node = cluster.client(0);
+        node.p2p_collection_add_with_identity(&["Users"], &admin_key)
+            .expect("add collection");
+        node.p2p_replicator_set_with_identity(&["Users"], &addr1, &admin_key)
+            .expect("add replicator");
+        let result = node.p2p_replicator_delete_with_identity(&["Users"], Some(&addr1), &admin_key);
+        assert!(
+            result.is_ok(),
+            "admin should pass NAC gate for replicator_delete"
+        );
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesP2PReplicatorDelete_NoIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_replicator_delete_no_identity() {
-    let (cluster, admin_key, _) = setup_nac_two_nodes().await;
-    let addr1 = extract_p2p_addr_with_identity(&cluster, 1, &admin_key);
-    let node = cluster.client(0);
-    node.p2p_collection_add_with_identity(&["Users"], &admin_key)
-        .expect("add collection");
-    node.p2p_replicator_set_with_identity(&["Users"], &addr1, &admin_key)
-        .expect("add replicator");
-    let result = node.p2p_replicator_delete(&["Users"], Some(&addr1));
-    assert!(
-        result.is_err(),
-        "anonymous should be rejected by NAC for replicator_delete"
-    );
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_two_nodes().await;
+        let addr1 = extract_p2p_addr_with_identity(&cluster, 1, &admin_key);
+        let node = cluster.client(0);
+        node.p2p_collection_add_with_identity(&["Users"], &admin_key)
+            .expect("add collection");
+        node.p2p_replicator_set_with_identity(&["Users"], &addr1, &admin_key)
+            .expect("add replicator");
+        let result = node.p2p_replicator_delete(&["Users"], Some(&addr1));
+        assert!(
+            result.is_err(),
+            "anonymous should be rejected by NAC for replicator_delete"
+        );
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesP2PReplicatorDelete_WrongIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_replicator_delete_wrong_identity() {
-    let (cluster, admin_key, outsider_key) = setup_nac_two_nodes().await;
-    let addr1 = extract_p2p_addr_with_identity(&cluster, 1, &admin_key);
-    let node = cluster.client(0);
-    node.p2p_collection_add_with_identity(&["Users"], &admin_key)
-        .expect("add collection");
-    node.p2p_replicator_set_with_identity(&["Users"], &addr1, &admin_key)
-        .expect("add replicator");
-    let result = node.p2p_replicator_delete_with_identity(&["Users"], Some(&addr1), &outsider_key);
-    assert!(
-        result.is_err(),
-        "outsider should be rejected by NAC for replicator_delete"
-    );
+    edge::compat(async move {
+        let (cluster, admin_key, outsider_key) = setup_nac_two_nodes().await;
+        let addr1 = extract_p2p_addr_with_identity(&cluster, 1, &admin_key);
+        let node = cluster.client(0);
+        node.p2p_collection_add_with_identity(&["Users"], &admin_key)
+            .expect("add collection");
+        node.p2p_replicator_set_with_identity(&["Users"], &addr1, &admin_key)
+            .expect("add replicator");
+        let result =
+            node.p2p_replicator_delete_with_identity(&["Users"], Some(&addr1), &outsider_key);
+        assert!(
+            result.is_err(),
+            "outsider should be rejected by NAC for replicator_delete"
+        );
+    })
+    .await;
 }
 
 // --- Sync Branchable Collection ---
 
 /// Port: TestNAC_GatesSyncBranchableCollection_AuthorizedIdentity_AllowAccess
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_sync_branchable_authorized() {
-    let (cluster, admin_key, _, col_id, _) = setup_nac_node_with_schema_info().await;
-    let node = cluster.client(0);
-    // May fail due to no peers, but should pass NAC gate
-    let result = node.p2p_collection_sync_branchable_with_identity(&col_id, &admin_key);
-    // Success or non-NAC error both mean NAC gate passed
-    if let Err(ref e) = result {
-        let msg = e.to_string().to_lowercase();
-        assert!(
-            !msg.contains("unauthorized") && !msg.contains("forbidden") && !msg.contains("nac"),
-            "admin should pass NAC gate, got: {}",
-            msg
-        );
-    }
+    edge::compat(async move {
+        let (cluster, admin_key, _, col_id, _) = setup_nac_node_with_schema_info().await;
+        let node = cluster.client(0);
+        // May fail due to no peers, but should pass NAC gate
+        let result = node.p2p_collection_sync_branchable_with_identity(&col_id, &admin_key);
+        // Success or non-NAC error both mean NAC gate passed
+        if let Err(ref e) = result {
+            let msg = e.to_string().to_lowercase();
+            assert!(
+                !msg.contains("unauthorized") && !msg.contains("forbidden") && !msg.contains("nac"),
+                "admin should pass NAC gate, got: {}",
+                msg
+            );
+        }
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesSyncBranchableCollection_NoIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_sync_branchable_no_identity() {
-    let (cluster, _, _, col_id, _) = setup_nac_node_with_schema_info().await;
-    let node = cluster.client(0);
-    let result = node.p2p_collection_sync_branchable(&col_id);
-    assert!(
-        result.is_err(),
-        "anonymous should be rejected by NAC for sync_branchable"
-    );
+    edge::compat(async move {
+        let (cluster, _, _, col_id, _) = setup_nac_node_with_schema_info().await;
+        let node = cluster.client(0);
+        let result = node.p2p_collection_sync_branchable(&col_id);
+        assert!(
+            result.is_err(),
+            "anonymous should be rejected by NAC for sync_branchable"
+        );
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesSyncBranchableCollection_WrongIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_sync_branchable_wrong_identity() {
-    let (cluster, _, outsider_key, col_id, _) = setup_nac_node_with_schema_info().await;
-    let node = cluster.client(0);
-    let result = node.p2p_collection_sync_branchable_with_identity(&col_id, &outsider_key);
-    assert!(
-        result.is_err(),
-        "outsider should be rejected by NAC for sync_branchable"
-    );
+    edge::compat(async move {
+        let (cluster, _, outsider_key, col_id, _) = setup_nac_node_with_schema_info().await;
+        let node = cluster.client(0);
+        let result = node.p2p_collection_sync_branchable_with_identity(&col_id, &outsider_key);
+        assert!(
+            result.is_err(),
+            "outsider should be rejected by NAC for sync_branchable"
+        );
+    })
+    .await;
 }
 
 // --- Sync Collection Versions ---
 
 /// Port: TestNAC_GatesSyncCollectionVersions_AuthorizedIdentity_AllowAccess
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_sync_versions_authorized() {
-    let (cluster, admin_key, _, _, version_id) = setup_nac_node_with_schema_info().await;
-    let node = cluster.client(0);
-    let result = node.p2p_collection_sync_versions_with_identity(&[&version_id], &admin_key);
-    // Success or non-NAC error means gate passed
-    if let Err(ref e) = result {
-        let msg = e.to_string().to_lowercase();
-        assert!(
-            !msg.contains("unauthorized") && !msg.contains("forbidden") && !msg.contains("nac"),
-            "admin should pass NAC gate, got: {}",
-            msg
-        );
-    }
+    edge::compat(async move {
+        let (cluster, admin_key, _, _, version_id) = setup_nac_node_with_schema_info().await;
+        let node = cluster.client(0);
+        let result = node.p2p_collection_sync_versions_with_identity(&[&version_id], &admin_key);
+        // Success or non-NAC error means gate passed
+        if let Err(ref e) = result {
+            let msg = e.to_string().to_lowercase();
+            assert!(
+                !msg.contains("unauthorized") && !msg.contains("forbidden") && !msg.contains("nac"),
+                "admin should pass NAC gate, got: {}",
+                msg
+            );
+        }
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesSyncCollectionVersions_NoIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_sync_versions_no_identity() {
-    let (cluster, _, _, _, version_id) = setup_nac_node_with_schema_info().await;
-    let node = cluster.client(0);
-    let result = node.p2p_collection_sync_versions(&[&version_id]);
-    assert!(
-        result.is_err(),
-        "anonymous should be rejected by NAC for sync_versions"
-    );
+    edge::compat(async move {
+        let (cluster, _, _, _, version_id) = setup_nac_node_with_schema_info().await;
+        let node = cluster.client(0);
+        let result = node.p2p_collection_sync_versions(&[&version_id]);
+        assert!(
+            result.is_err(),
+            "anonymous should be rejected by NAC for sync_versions"
+        );
+    })
+    .await;
 }
 
 /// Port: TestNAC_GatesSyncCollectionVersions_WrongIdentity_NotAuthorizedError
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_sync_versions_wrong_identity() {
-    let (cluster, _, outsider_key, _, version_id) = setup_nac_node_with_schema_info().await;
-    let node = cluster.client(0);
-    let result = node.p2p_collection_sync_versions_with_identity(&[&version_id], &outsider_key);
-    assert!(
-        result.is_err(),
-        "outsider should be rejected by NAC for sync_versions"
-    );
+    edge::compat(async move {
+        let (cluster, _, outsider_key, _, version_id) = setup_nac_node_with_schema_info().await;
+        let node = cluster.client(0);
+        let result = node.p2p_collection_sync_versions_with_identity(&[&version_id], &outsider_key);
+        assert!(
+            result.is_err(),
+            "outsider should be rejected by NAC for sync_versions"
+        );
+    })
+    .await;
 }
 
 // --- Admin Relation Tests ---
 // These test that the admin relation (automatically granted to startup identity) works.
 
 /// Port: TestNAC_AdminRelation_CanP2PPeerInfo
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_admin_peer_info() {
-    let (cluster, admin_key, _) = setup_nac_node().await;
-    cluster
-        .client(0)
-        .p2p_info_with_identity(&admin_key)
-        .expect("admin should access p2p_info");
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_node().await;
+        cluster
+            .client(0)
+            .p2p_info_with_identity(&admin_key)
+            .expect("admin should access p2p_info");
+    })
+    .await;
 }
 
 /// Port: TestNAC_AdminRelation_CanP2PPeerConnect
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_admin_peer_connect() {
-    let (cluster, admin_key, _) = setup_nac_two_nodes().await;
-    let addr1 = extract_p2p_addr_with_identity(&cluster, 1, &admin_key);
-    cluster
-        .client(0)
-        .p2p_connect_with_identity(&[&addr1], &admin_key)
-        .expect("admin should connect peers");
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_two_nodes().await;
+        let addr1 = extract_p2p_addr_with_identity(&cluster, 1, &admin_key);
+        cluster
+            .client(0)
+            .p2p_connect_with_identity(&[&addr1], &admin_key)
+            .expect("admin should connect peers");
+    })
+    .await;
 }
 
 /// Port: TestNAC_AdminRelation_CanActivePeers
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_admin_active_peers() {
-    let (cluster, admin_key, _) = setup_nac_node().await;
-    cluster
-        .client(0)
-        .p2p_active_peers_with_identity(&admin_key)
-        .expect("admin should list active peers");
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_node().await;
+        cluster
+            .client(0)
+            .p2p_active_peers_with_identity(&admin_key)
+            .expect("admin should list active peers");
+    })
+    .await;
 }
 
 /// Port: TestNAC_AdminRelation_CanP2PCollectionAdd
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_admin_collection_add() {
-    let (cluster, admin_key, _) = setup_nac_node().await;
-    cluster
-        .client(0)
-        .p2p_collection_add_with_identity(&["Users"], &admin_key)
-        .expect("admin should add collection");
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_node().await;
+        cluster
+            .client(0)
+            .p2p_collection_add_with_identity(&["Users"], &admin_key)
+            .expect("admin should add collection");
+    })
+    .await;
 }
 
 /// Port: TestNAC_AdminRelation_CanP2PCollectionList
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_admin_collection_list() {
-    let (cluster, admin_key, _) = setup_nac_node().await;
-    cluster
-        .client(0)
-        .p2p_collection_list_with_identity(&admin_key)
-        .expect("admin should list collections");
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_node().await;
+        cluster
+            .client(0)
+            .p2p_collection_list_with_identity(&admin_key)
+            .expect("admin should list collections");
+    })
+    .await;
 }
 
 /// Port: TestNAC_AdminRelation_CanP2PCollectionDelete
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_admin_collection_delete() {
-    let (cluster, admin_key, _) = setup_nac_node().await;
-    let node = cluster.client(0);
-    node.p2p_collection_add_with_identity(&["Users"], &admin_key)
-        .expect("add");
-    node.p2p_collection_delete_with_identity(&["Users"], &admin_key)
-        .expect("admin should delete collection");
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_node().await;
+        let node = cluster.client(0);
+        node.p2p_collection_add_with_identity(&["Users"], &admin_key)
+            .expect("add");
+        node.p2p_collection_delete_with_identity(&["Users"], &admin_key)
+            .expect("admin should delete collection");
+    })
+    .await;
 }
 
 /// Port: TestNAC_AdminRelation_CanP2PDocumentAdd
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_admin_document_add() {
-    let (cluster, admin_key, _) = setup_nac_node().await;
-    let node = cluster.client(0);
-    let r = node
-        .query_with_identity(
-            r#"mutation { add_Users(input: {name: "Alice", age: 30}) { _docID } }"#,
-            &admin_key,
-        )
-        .expect("create");
-    let doc_id = r["add_Users"][0]["_docID"].as_str().expect("_docID");
-    node.p2p_document_add_with_identity(&[doc_id], &admin_key)
-        .expect("admin should add document");
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_node().await;
+        let node = cluster.client(0);
+        let r = node
+            .query_with_identity(
+                r#"mutation { add_Users(input: {name: "Alice", age: 30}) { _docID } }"#,
+                &admin_key,
+            )
+            .expect("create");
+        let doc_id = r["add_Users"][0]["_docID"].as_str().expect("_docID");
+        node.p2p_document_add_with_identity(&[doc_id], &admin_key)
+            .expect("admin should add document");
+    })
+    .await;
 }
 
 /// Port: TestNAC_AdminRelation_CanP2PDocumentList
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_admin_document_list() {
-    let (cluster, admin_key, _) = setup_nac_node().await;
-    cluster
-        .client(0)
-        .p2p_document_list_with_identity(&admin_key)
-        .expect("admin should list documents");
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_node().await;
+        cluster
+            .client(0)
+            .p2p_document_list_with_identity(&admin_key)
+            .expect("admin should list documents");
+    })
+    .await;
 }
 
 /// Port: TestNAC_AdminRelation_CanP2PDocumentDelete
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_admin_document_delete() {
-    let (cluster, admin_key, _) = setup_nac_node().await;
-    let node = cluster.client(0);
-    let r = node
-        .query_with_identity(
-            r#"mutation { add_Users(input: {name: "Alice", age: 30}) { _docID } }"#,
-            &admin_key,
-        )
-        .expect("create");
-    let doc_id = r["add_Users"][0]["_docID"].as_str().expect("_docID");
-    node.p2p_document_add_with_identity(&[doc_id], &admin_key)
-        .expect("add");
-    node.p2p_document_delete_with_identity(&[doc_id], &admin_key)
-        .expect("admin should delete document");
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_node().await;
+        let node = cluster.client(0);
+        let r = node
+            .query_with_identity(
+                r#"mutation { add_Users(input: {name: "Alice", age: 30}) { _docID } }"#,
+                &admin_key,
+            )
+            .expect("create");
+        let doc_id = r["add_Users"][0]["_docID"].as_str().expect("_docID");
+        node.p2p_document_add_with_identity(&[doc_id], &admin_key)
+            .expect("add");
+        node.p2p_document_delete_with_identity(&[doc_id], &admin_key)
+            .expect("admin should delete document");
+    })
+    .await;
 }
 
 /// Port: TestNAC_AdminRelation_CanP2PReplicatorAdd
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_admin_replicator_add() {
-    let (cluster, admin_key, _) = setup_nac_two_nodes().await;
-    let addr1 = extract_p2p_addr_with_identity(&cluster, 1, &admin_key);
-    let node = cluster.client(0);
-    node.p2p_collection_add_with_identity(&["Users"], &admin_key)
-        .expect("add collection");
-    node.p2p_replicator_set_with_identity(&["Users"], &addr1, &admin_key)
-        .expect("admin should add replicator");
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_two_nodes().await;
+        let addr1 = extract_p2p_addr_with_identity(&cluster, 1, &admin_key);
+        let node = cluster.client(0);
+        node.p2p_collection_add_with_identity(&["Users"], &admin_key)
+            .expect("add collection");
+        node.p2p_replicator_set_with_identity(&["Users"], &addr1, &admin_key)
+            .expect("admin should add replicator");
+    })
+    .await;
 }
 
 /// Port: TestNAC_AdminRelation_CanP2PReplicatorDelete
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_admin_replicator_delete() {
-    let (cluster, admin_key, _) = setup_nac_two_nodes().await;
-    let addr1 = extract_p2p_addr_with_identity(&cluster, 1, &admin_key);
-    let node = cluster.client(0);
-    node.p2p_collection_add_with_identity(&["Users"], &admin_key)
-        .expect("add collection");
-    node.p2p_replicator_set_with_identity(&["Users"], &addr1, &admin_key)
-        .expect("add replicator");
-    node.p2p_replicator_delete_with_identity(&["Users"], Some(&addr1), &admin_key)
-        .expect("admin should delete replicator");
+    edge::compat(async move {
+        let (cluster, admin_key, _) = setup_nac_two_nodes().await;
+        let addr1 = extract_p2p_addr_with_identity(&cluster, 1, &admin_key);
+        let node = cluster.client(0);
+        node.p2p_collection_add_with_identity(&["Users"], &admin_key)
+            .expect("add collection");
+        node.p2p_replicator_set_with_identity(&["Users"], &addr1, &admin_key)
+            .expect("add replicator");
+        node.p2p_replicator_delete_with_identity(&["Users"], Some(&addr1), &admin_key)
+            .expect("admin should delete replicator");
+    })
+    .await;
 }
 
 /// Port: TestNAC_AdminRelation_CanSyncBranchableCollection
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_admin_sync_branchable() {
-    let (cluster, admin_key, _, col_id, _) = setup_nac_node_with_schema_info().await;
-    let node = cluster.client(0);
-    // May fail due to non-branchable or no peers, but should pass NAC gate
-    let result = node.p2p_collection_sync_branchable_with_identity(&col_id, &admin_key);
-    if let Err(ref e) = result {
-        let msg = e.to_string().to_lowercase();
-        assert!(
-            !msg.contains("unauthorized") && !msg.contains("forbidden") && !msg.contains("nac"),
-            "admin should pass NAC gate for sync_branchable, got: {}",
-            msg
-        );
-    }
+    edge::compat(async move {
+        let (cluster, admin_key, _, col_id, _) = setup_nac_node_with_schema_info().await;
+        let node = cluster.client(0);
+        // May fail due to non-branchable or no peers, but should pass NAC gate
+        let result = node.p2p_collection_sync_branchable_with_identity(&col_id, &admin_key);
+        if let Err(ref e) = result {
+            let msg = e.to_string().to_lowercase();
+            assert!(
+                !msg.contains("unauthorized") && !msg.contains("forbidden") && !msg.contains("nac"),
+                "admin should pass NAC gate for sync_branchable, got: {}",
+                msg
+            );
+        }
+    })
+    .await;
 }
 
 /// Port: TestNAC_AdminRelation_CanSyncCollectionVersions
-#[tokio::test]
+#[nuclei::test]
 #[serial]
 async fn nac_admin_sync_versions() {
-    let (cluster, admin_key, _, _, version_id) = setup_nac_node_with_schema_info().await;
-    let node = cluster.client(0);
-    let result = node.p2p_collection_sync_versions_with_identity(&[&version_id], &admin_key);
-    if let Err(ref e) = result {
-        let msg = e.to_string().to_lowercase();
-        assert!(
-            !msg.contains("unauthorized") && !msg.contains("forbidden") && !msg.contains("nac"),
-            "admin should pass NAC gate for sync_versions, got: {}",
-            msg
-        );
-    }
+    edge::compat(async move {
+        let (cluster, admin_key, _, _, version_id) = setup_nac_node_with_schema_info().await;
+        let node = cluster.client(0);
+        let result = node.p2p_collection_sync_versions_with_identity(&[&version_id], &admin_key);
+        if let Err(ref e) = result {
+            let msg = e.to_string().to_lowercase();
+            assert!(
+                !msg.contains("unauthorized") && !msg.contains("forbidden") && !msg.contains("nac"),
+                "admin should pass NAC gate for sync_versions, got: {}",
+                msg
+            );
+        }
+    })
+    .await;
 }

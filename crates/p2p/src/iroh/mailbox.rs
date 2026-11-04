@@ -103,7 +103,7 @@ where
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn items_queued_before_close_are_still_read() {
         let mailbox = Mailbox::new(2, Wake::default());
         mailbox.try_push(1).unwrap();
@@ -112,7 +112,7 @@ mod tests {
         assert_eq!(mailbox.next().await, None);
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn a_full_mailbox_hands_the_item_back() {
         let mailbox = Mailbox::new(1, Wake::default());
         mailbox.try_push(1).unwrap();

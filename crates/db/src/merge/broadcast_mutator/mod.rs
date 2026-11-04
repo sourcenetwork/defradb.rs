@@ -11,6 +11,9 @@
 
 mod batch;
 pub mod broadcast;
+mod pooled_repusher;
+
+pub use pooled_repusher::pooled_se_repusher;
 
 use async_trait::async_trait;
 use blockstore::Blockstore;

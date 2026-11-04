@@ -6,11 +6,12 @@
 use std::time::Duration;
 
 use cid::Cid;
+use edge::Edge;
 use kovan_channel::unbounded;
 use libp2p::PeerId;
+use nuclei::sync::oneshot;
+use nuclei::time::{interval_at, Instant};
 use rapidhash::RapidHashMap;
-use tokio::sync::oneshot;
-use tokio::time::{interval_at, Instant};
 use tracing::debug;
 
 use super::config::ServerConfig;
@@ -72,6 +73,7 @@ pub(crate) struct Engine<S: Store> {
     store: S,
     network: Network,
     reports: unbounded::Sender<Report>,
+    edge: Edge,
 }
 
 impl<S: Store> Engine<S> {
@@ -80,6 +82,7 @@ impl<S: Store> Engine<S> {
         store: S,
         network: Network,
         reports: unbounded::Sender<Report>,
+        edge: Edge,
     ) -> Self {
         Engine {
             queue: PeerTaskQueue::new(
@@ -99,6 +102,7 @@ impl<S: Store> Engine<S> {
             store,
             network,
             reports,
+            edge,
         }
     }
 
@@ -110,7 +114,7 @@ impl<S: Store> Engine<S> {
     ) {
         let mut ticker = interval_at(Instant::now() + TICK, TICK);
         loop {
-            tokio::select! {
+            nuclei::select! {
                 command = commands.recv_async() => match command {
                     Some(command) => self.handle_command(command),
                     None => return,
@@ -374,7 +378,7 @@ impl<S: Store> Engine<S> {
             }
 
             self.in_flight += 1;
-            tokio::spawn(envelope::run(
+            drop(self.edge.spawn(envelope::run(
                 self.store.clone(),
                 self.network.clone(),
                 self.reports.clone(),
@@ -382,7 +386,7 @@ impl<S: Store> Engine<S> {
                 message,
                 block_wants,
                 tasks,
-            ));
+            )));
         }
     }
 }

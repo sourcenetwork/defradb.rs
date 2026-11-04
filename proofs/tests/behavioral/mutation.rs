@@ -50,7 +50,7 @@ pub async fn execute(cluster: &TestCluster, node: usize, query: &str) -> Result<
             return Ok(data);
         }
         if attempt < 4 {
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            nuclei::time::sleep(Duration::from_millis(50)).await;
         }
     }
     Err(MutationError::Aborted(query.to_owned()))

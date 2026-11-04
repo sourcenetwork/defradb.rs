@@ -261,7 +261,7 @@ where
                 TopicChange::Remove => self.broadcaster.unsubscribe_collection(collection_id).await,
             }
         };
-        let changed = n0_future::time::timeout(COLLECTION_SUBSCRIPTION_TIMEOUT, call)
+        let changed = crate::rt::time::timeout(COLLECTION_SUBSCRIPTION_TIMEOUT, call)
             .await
             .unwrap_or_else(|_| {
                 Err(Error::Transport(format!(

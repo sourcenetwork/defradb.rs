@@ -572,6 +572,41 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // A clock-dispatched fetch gives its slot back after one attempt, its
+        // root is due again a backoff after that attempt ends, and an
+        // acknowledged head never expires, so after a restart catch-up roots
+        // cannot hold every slot while acknowledged heads wait or expire. The
+        // model claims only due roots (next_retry_at passed), and a productive
+        // attempt gives its slot back at its quantum. Fairness is the
+        // scheduler's only: no root has dispatch fairness of its own. The
+        // liveness leg assumes a fetch that can complete eventually does
+        // (strong fairness on some WComplete): reachability alone does not
+        // exclude a provider that answers busy for ever. Dead and Trickle
+        // providers' heads are kept but promised no merge, and do not block
+        // the others.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "ACT_AttemptsStartInDueOrder / ACT_EndedAttemptQueuesBehind / ACT_AckedRootLeavesOwned / LIVE_AckedRootMerged (assumes an eventually serving provider)",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_dag, FetchTaskEnd; crates/p2p/src/sync/coordinator/dag_retry.rs CLOCK_ATTEMPT_QUANTUM; crates/p2p/src/sync/replication/handlers.rs handle_dag_needs_fetch; crates/p2p/src/sync/coordinator/dag_context.rs DagFetchContext::finish_clock_attempt; crates/p2p/src/sync/manager/process/pending_dag.rs try_claim_pending_dag_dispatch, PendingDagLease::finish_attempt, due_pending_dag_retries; crates/p2p/src/sync/manager/pending.rs PendingDag::is_expired; crates/p2p/src/sync/coordinator/mod.rs dispatch_due_pending_dag_fetches",
+        model_ref: "MC_SyncOwnership_{Green_Dispatch,Green_Dispatch_DeadProvider,Green_Dispatch_Trickle,Red_HeldSlot,Red_ClaimTimeRearm,Red_AckedTtl,Red_UnboundedProductive}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // The durable store can hold more acknowledged roots than the
+        // in-memory map. A root that had its dispatches gives its entry up
+        // while a durable root waits (its record stays), and the resync sweep
+        // resumes after the root it admitted last, so never-serving roots
+        // restored first cannot hold the map for good. A local pull-sync
+        // continuation ends at its first turn that does not yield; it is
+        // never an acknowledged obligation and is promised no merge.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "LIVE_DurableRootMerged / LIVE_ContinuationEnds / INV_ContinuationsNeverAcked / INV_MemoryBounded",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/manager/process/pending_dag.rs PendingDagLease::finish_attempt, records_after_resync_cursor, resync_persisted_pending_dags_inner, continue_merge, consume_pending_merge_continuation, MergeTurn; crates/p2p/src/sync/manager/pending.rs PendingOrigin, PENDING_ROTATE_AFTER_DISPATCHES; crates/p2p/src/sync/replication/handlers.rs handle_block_received, process_merge_batch",
+        model_ref: "MC_SyncOwnership_{Green_Memory,Red_RetainedOverflow,Red_KeyOrderResync,Red_ImmortalContinuation}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         // A second PushLog for a CID already being processed joins that
         // processing instead of being nacked: it waits, bounded by a deadline,
         // looks again once the owner lets go, and either acks a block already
@@ -929,6 +964,27 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // A request reaches an explicit transaction when its owner key is the
+        // one the transaction began with. An HTTP registry keys a request by
+        // its identity; the embedded node's registry gives every request one
+        // key, since the embedding process is its only caller (#2335). Either
+        // way the work runs as the request's own identity.
+        family: "Transaction & merge-queue concurrency",
+        name: "INV_FfiReaches / INV_HttpOwnerOnly / INV_ActsAsCaller: the embedder reaches its transactions as any identity, an HTTP caller only its own, and work runs as the request",
+        axis: Tla,
+        anchor: "crates/db/src/txn/registry/mod.rs TxnOwnership, DbTransactionRegistry::caller, DbTransactionRegistry::in_txn; crates/db/src/txn/registry/lifecycle.rs run_as; crates/db/src/txn/owner/table.rs Table::admits; crates/ffi/src/node.rs build_node_state; crates/defra-node/src/node_builder.rs NodeBuilder::with_txn_ownership",
+        model_ref: "MC_TxnAdmission_{Green,Red_IdentityOnFfi,Red_EmbedderOnHttp,Red_ActsAsOwner}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Transaction & merge-queue concurrency",
+        name: "embedder_admits_every / byIdentity_admits_iff / byIdentity_turns_away_stranger / admits_beginner / default_is_byIdentity",
+        axis: Lean,
+        anchor: "crates/db/src/txn/registry/mod.rs TxnOwnership, DbTransactionRegistry::caller; crates/db/src/txn/owner/table.rs Table::admits",
+        model_ref: "TxnAdmission (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Transaction & merge-queue concurrency",
         name: "exactly_one_wins / one_lowering_per_raise / caller_win_means_owner_lowers / uncancelled_owner_wins: the two swaps settle each fence once",
         axis: Lean,
@@ -968,12 +1024,14 @@ pub const PROPERTIES: &[Property] = &[
         // held; or shared, adding one whatever the counter was. After its
         // capped claims alone fail it shares and says so. Its Hold gives back
         // exactly what it raised once the pool and every thread placed
-        // through it are gone.
+        // through it are gone. A network runtime sized from the machine
+        // claims whole cores the same way, alone only, and gives up holding
+        // nothing instead of sharing.
         family: "Worker pool CPU ledger",
         name: "INV_AloneTakesDisjoint / INV_AloneRunsAlone / INV_TakenAlone / INV_AllOrNothing / INV_HeldNeverFree / INV_CountExact / INV_DoneLeavesNothing / LIVE_StartEnds: placed pools never share a CPU unless one of them says it shares",
         axis: Tla,
-        anchor: "crates/workers/src/ledger.rs Ledger::hold, Ledger::share, Hold::drop; crates/workers/src/placement/reserve.rs reserve, shared; crates/workers/src/pool/placer.rs Placer::holding; crates/workers/src/pool/start.rs Pool::start_in",
-        model_ref: "MC_CpuLedger_{Green,Red_SplitTake,Red_NoRollback,Red_ReleaseLoser,Red_ShareUncounted,Red_NoAttemptCap,Red_ReleaseEarly,Red_RunOutsideHold,Red_DoubleRelease,Red_ForgetHold}.cfg",
+        anchor: "crates/workers/src/ledger.rs Ledger::hold, Ledger::share, Hold::drop; crates/workers/src/placement/reserve.rs reserve, shared; crates/workers/src/placement/edge.rs EdgeCores::reserve_on, EdgeCores::reserve; crates/workers/src/pool/placer.rs Placer::holding; crates/workers/src/pool/start.rs Pool::start_in; crates/edge/src/platform/native.rs build",
+        model_ref: "MC_CpuLedger_{Green,Green_Edge,Red_SplitTake,Red_NoRollback,Red_ReleaseLoser,Red_ShareUncounted,Red_NoAttemptCap,Red_ReleaseEarly,Red_RunOutsideHold,Red_DoubleRelease,Red_ForgetHold,Red_EdgeNoCap}.cfg",
         tiers: &[Boundary],
     },
     Property {
@@ -1155,8 +1213,68 @@ pub const PROPERTIES: &[Property] = &[
         family: "Node shutdown order",
         name: "INV_NoStorageAfterClose / INV_NothingDetached / INV_CallerNeverJoinsExporter / LIVE_ShutdownTerminates: no task reaches storage after regolith closes, none outlives shutdown, shutdown returns",
         axis: Tla,
-        anchor: "crates/defra-node/src/lib.rs Node::shutdown; crates/defra-node/src/node_acp.rs gate_external_acp; crates/defra-node/src/managed_p2p.rs ShutdownHandle::stop, stop_services; crates/edge/src/task.rs Service::stopped; crates/edge/src/handle.rs Scope::drain",
+        anchor: "crates/defra-node/src/lib.rs Node::shutdown; crates/defra-node/src/node_acp.rs gate_external_acp; crates/defra-node/src/managed_p2p.rs ShutdownHandle::stop, stop_services; crates/edge/src/task.rs Service::stopped; crates/edge/src/handle.rs Scope::drain; crates/net/src/server.rs serve, until_closing",
         model_ref: "MC_NodeShutdown_{Green,Red_RedriveDetached,Red_ServicesNotAwaited,Red_NoDrainDeadline,Red_FlushOnCaller}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // A network task's completion says how the work ended: its own
+        // handle's abort is Cancelled, the runtime's stop is Closed, a value
+        // is a value. The handle records its abort before it cancels, and the
+        // runtime marks itself stopped before it ends its tasks.
+        family: "Edge completion",
+        name: "INV_AbortSaysCancelled / INV_StopSaysClosed / INV_DoneSaysValue: a completion its handle aborted says Cancelled, one the runtime's stop cut off says Closed, one that finished says its value",
+        axis: Tla,
+        anchor: "crates/edge/src/task.rs Task::poll, Task::abort; crates/edge/src/platform/native.rs the shutdown, Shared::stop",
+        model_ref: "MC_EdgeCompletion_{Green,Red_NoMap,Red_CancelBeforeFlag,Red_CancelBeforeStopMark}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // Work that continues a request already admitted (an outbound
+        // connection's driver) is admitted after the gate closes while
+        // admitted work is in flight; the drain seals before its last look, so
+        // it never says drained while a continuation still runs.
+        family: "Edge gate continuation",
+        name: "INV_NothingAfterDrain / INV_InFlightContinues / INV_NoContinuationWhenIdle: nothing holds a permit once drained, a request in flight gets its continuation, and none starts from an idle closed gate",
+        axis: Tla,
+        anchor: "crates/edge/src/gate.rs Gate::admit, Gate::admit_continuation, Gate::drained; crates/edge/src/handle.rs Edge::spawn_continuation, drain_gate; crates/net/src/rt.rs ClientExecutor::execute",
+        model_ref: "MC_EdgeGateContinuation_{Green,Red_PlainSpawn,Red_NoSeal,Red_NoCas}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // An iroh dial answers from its connection's outcome: a refusal that
+        // already closed the connection is answered Unauthorized, and
+        // connect_peer ends with the dial's answer instead of polling the
+        // connected set until a timeout.
+        family: "Iroh dial outcome",
+        name: "INV_RefusalKnownIsSaid / LIVE_DialAnswered: a dial never answers ok on a connection the peer's refusal already closed, and every dial is answered",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/endpoint_commands.rs handle_dial; crates/p2p-adapter/src/iroh.rs P2PAdapter::connect_peer; crates/p2p/src/iroh/transport.rs poll_until_connected",
+        model_ref: "MC_IrohDialOutcome_{Green,Green_Admitted,Red_Poll,Red_NoCheck}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // A server's connections are tasks the drain waits for: a request in
+        // flight when shutdown begins finishes and is answered, a connection
+        // looks at closing only between requests, and the drain's deadline
+        // stops what is left.
+        family: "Server drain",
+        name: "INV_NoDropBeforeDeadline / INV_NoNewWorkWhenClosing / LIVE_ServerReturns: a request in flight is only stopped at the drain's deadline, no request starts once closing began, the server returns",
+        axis: Tla,
+        anchor: "crates/net/src/server.rs serve, until_closing; crates/net/src/rt.rs Executor::execute; crates/pg-compat/src/lib.rs PgServer::run; crates/pg-compat/src/wire/process.rs serve; crates/edge/src/handle.rs Scope::drain",
+        model_ref: "MC_ServerDrain_{Green,Red_Service,Red_CheckInside,Red_NoCheck,Red_NoDeadline}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // An update on a document's topic is applied only while the node
+        // follows the document or its collection: an unsubscribe clears the
+        // set the gossip handler reads before it returns, so updates queued or
+        // sent after it are dropped.
+        family: "Document topic ingress",
+        name: "INV_NoApplyAfterUnsubscribe / INV_FollowedApplies: no update is applied after the document's unsubscribe returned unless its collection is followed, and none taken while followed is dropped",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/event_handler/gossip.rs handle_gossip_message; crates/p2p/src/sync/coordinator/access.rs is_followed_document; crates/p2p-adapter/src/libp2p.rs P2PAdapter::add_documents, remove_documents; crates/p2p-adapter/src/iroh.rs P2PAdapter::add_documents, remove_documents; crates/defra-node/src/libp2p_recovery.rs restore_libp2p_documents; crates/p2p-adapter/src/iroh_restore.rs restore_iroh_p2p_state",
+        model_ref: "MC_DocTopicIngress_{Green,Red_NoCheck,Red_OwnSet,Red_NoCollection}.cfg",
         tiers: &[Boundary],
     },
     Property {
@@ -1205,6 +1323,38 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        family: "DAG fetch provider ranking",
+        name: "INV_WaitBounded — one attempt waits at most a rotation of stalls plus its free refusals, however many batches",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/dag_fetcher.rs fetch_dag_attempt, poll_fetch_blocks_rotating, window_outcome; crates/p2p/src/sync/coordinator/dag_retry.rs FAST_REFUSAL, MAX_FREE_REFUSALS",
+        model_ref: "MC_DagFetchBudget_{Green,Red_SlowIsRefusal,Red_Uncapped,Red_NoCheck}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "DAG fetch provider ranking",
+        name: "rank_perm / rank_keeps_healthy_source_first / rank_all_healthy / next_delay_in_range / stale_starts_over / forget_keeps_fresh / forget_drops_stale",
+        axis: Lean,
+        anchor: "crates/p2p/src/sync/coordinator/provider_health.rs ProviderHealth::rank, record_fast_failure, forget_stale, Cooldown::is_stale",
+        model_ref: "ProviderHealth (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "DAG fetch arbitration (EWMA)",
+        name: "ArbitrationConstants: VALUE_BITS, TIME_BITS, WEIGHT_ONE, the half-lives, shifts, tick, TIE_BUCKET, BACKOFF_FLOOR, units, floor and WEIGHT_TABLE, with table_is_floor / table_decreasing / table_wraps / packed_word_fits / tie_bucket_le_backoff_floor / useful_floor_is_one_64th / occupancy_half_life_ticks checked on exactly these values",
+        axis: Lean,
+        anchor: "crates/p2p/src/sync/arbitration/mod.rs constants; crates/p2p/src/sync/arbitration/ewma.rs weight_q32; proofs/tests/lean_conformance.rs lean_arbitration_constants_match_rust",
+        model_ref: "Arbitration.Constants (lake build); Conformance.lean ArbitrationConstants",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "DAG fetch arbitration (EWMA)",
+        name: "roll_le_bound / troll_le_bound / record_first / troll_full / iter_monotone_up / iter_stays_below / decay_geometric / troll_decay_up / troll_decay_down / dither_mean / weight_le_one / weight_zero_gap / weight_first_ms / expected_useful_le / bucket_order_any_score / inversion_within_bucket / rearmed_root_goes_behind",
+        axis: Lean,
+        anchor: "crates/p2p/src/sync/arbitration/ewma.rs roll, troll, record_word, PackedEwma; root.rs RootEstimates::observe; occupancy.rs advance; provider.rs ProviderEstimates, expected_useful; due_order.rs tie_break_order; sync::arbitration::tests; tests/unit/estimator_trace_replay.rs; tests/unit/estimators_observe_only.rs",
+        model_ref: "Arbitration (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Gossip connection ownership",
         name: "INV_RevokedHasNoGossip / INV_PathOnLiveConnection / INV_GossipNeverClosesShared / LIVE_HealthyReached / LIVE_AskAnswered",
         axis: Tla,
@@ -1234,6 +1384,22 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/p2p/src/iroh/records/book.rs Book::offer, Book::live; crates/p2p/src/iroh/records/refresh.rs Refresh::check; crates/p2p/src/iroh/records/task.rs Records::renew, Records::on_input, Records::rotate",
         model_ref: "MC_ServiceRecords_Green.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Depth-cut DAG fetch",
+        name: "INV_HistoryNotResent / INV_RoundsLogarithmic / LIVE_Completes",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/car.rs collect_dag_blocks_within; crates/p2p/src/sync/coordinator/closure_depth.rs ClosureDepth::widen; crates/p2p/src/sync/coordinator/dag_fetcher.rs fetch_dag_attempt",
+        model_ref: "MC_DepthCutFetch_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Depth-cut DAG fetch",
+        name: "within_iff_level / deep_block_not_served / within_le / cut_le_cap / cut_ge_pow / cut_reaches",
+        axis: Lean,
+        anchor: "crates/p2p/src/sync/car.rs collect_dag_blocks_within; crates/p2p/src/sync/coordinator/closure_depth.rs ClosureDepth::initial, ClosureDepth::widen",
+        model_ref: "CarClosureDepth (lake build)",
         tiers: &[Boundary],
     },
     Property {
@@ -1393,6 +1559,59 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/query/src/plan/chunk_parent.rs parent_hashes, verified_hash; crates/query/src/plan/chunk_gate.rs ChunkGate::allows, ChunkGate::decide; crates/db/src/chunk/access.rs history_parents, read_owners; crates/p2p-adapter/src/read_gate.rs DbBlockReadGate::may_read, DbBlockClassifier::classify; crates/db/src/block/verify.rs load_authorized_block_signature",
         model_ref: "MC_ChunkRead_Green.cfg / MC_ChunkRead_Red_NoDeletedCheck.cfg / MC_ChunkRead_Red_NoHashCheck.cfg / MC_ChunkRead_Red_SharedMemo.cfg / MC_ChunkRead_Red_NoMergedCheck.cfg / MC_ChunkRead_Red_NoGrantCheck.cfg / MC_ChunkRead_Red_NoListCheck.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // One task serves a pg-compat connection: one deadline read at the
+        // accept bounds the peek, the SSL and GSS refusals and the startup;
+        // an extended-protocol error skips to the Sync; a fatal error or a
+        // cancel request closes it and the loop returns. A copy's CopyDone
+        // leaves the copy, so an Execute copy's Sync reaches on_sync.
+        family: "Postgres wire connection loop",
+        name: "INV_StartupWithinDeadline / INV_StartedNeverTimedOut / INV_NoQueryBeforeStartup / INV_SkipUntilSync / INV_SyncResumes / INV_CopyEnds / INV_NothingAfterEnd / LIVE_Ends: no connection outlives the startup deadline unstarted, nothing but Sync is handled during a skip, nothing is read after the end",
+        axis: Tla,
+        anchor: "crates/pg-compat/src/wire/process.rs serve, run, refuse_ssl, dispatch, report; crates/pg-compat/src/wire/connection.rs Connection::next, Connection::is_closed, Connection::poll_close; crates/pg-compat/src/handler/auth.rs DIDAuthHandler::on_startup",
+        model_ref: "MC_PgWire_{Green_Startup,Green_Protocol,Red_PeekNoDeadline,Red_SslNoDeadline,Red_StartupNoDeadline,Red_FreshDeadline,Red_DeadlineAfterStartup,Red_NoAwaitingSync,Red_HandleWhileSkipping,Red_SyncKeepsSkipping,Red_CopyFlagFromMessage,Red_CopyDoneStays,Red_ExtendedCopyDoneStays,Red_LoopAfterClose,Red_LoopAfterCloseRuns,Red_LoopAfterCloseHangs,Red_FatalStaysOpen,Red_StartupErrorNotFatal}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "HTTP client redirects and body deadline",
+        name: "credentials_stay_with_their_origin / at_most_limit_plus_one_exchanges / endless_redirects_fail / same_origin_redirect_keeps_credentials / cross_origin_redirect_strips_credentials: a credential from the request or the defaults reaches only the request's origin, a proxy credential only its own hop, within eleven exchanges",
+        axis: Lean,
+        anchor: "crates/net/src/http/client.rs Client::execute, Client::follow, Client::exchange, redirect, REDIRECT_LIMIT",
+        model_ref: "HttpClient.Redirect (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "HTTP client redirects and body deadline",
+        name: "ends_after_timeout / at_most_one_timeout / deadline_wins_over_a_ready_piece / never_waits_past_the_deadline / no_timeout_before_the_deadline / no_limit_no_timeout: past the limit a body stream times out once, even with a piece ready, then gives its end and nothing more",
+        axis: Lean,
+        anchor: "crates/net/src/http/response.rs BytesStream::poll_next, Response::bytes_stream",
+        model_ref: "HttpClient.BodyDeadline (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Connect fallback race",
+        name: "INV_OneSocket / INV_FallbackWaits / INV_NeverIdle / INV_ErrorOnlyWhenAllFail / INV_LastError / INV_WithinLimit / LIVE_Ends: one socket comes back, the other family starts after the delay or a failure, an error only once every family failed",
+        axis: Tla,
+        anchor: "crates/net/src/connect.rs first_connected, Connector::socket, FALLBACK_DELAY",
+        model_ref: "MC_ConnectFallback_{Green,Green_NoTimeout,Green_Single,Red_NoDelay,Red_WaitAfterFailure,Red_FirstErrorWins,Red_KeepFirstError,Red_KeepLoser,Red_TimeoutMissesRace,Red_TimeoutMissesRaceHangs}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // The first shutdown caller to swap the flag builds the one drain,
+        // which owns the only completion sender; a closed edge hands the
+        // drain back and the winner runs it in place. The drain waits for
+        // pruners, takes the tracked set, and aborts what outlives its
+        // deadline, so no tracked task keeps the coordinator alive. The
+        // GREEN configurations assume prune_finished_tasks reads the flag
+        // after announcing itself; Red_PrunerIgnoresFlag is the code without
+        // that read.
+        family: "Coordinator shutdown drain",
+        name: "INV_NoLeak / INV_OneDrain / INV_ErrMeansCancelled / LIVE_CallersReturn: one drain runs, no tracked task is left running in the set once it returns, every shutdown caller returns",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/mod.rs SyncShutdownHandle::shutdown, begin_shutdown, drain_background_tasks, spawn_task, spawn_here, register_task, prune_finished_tasks; crates/p2p/src/network.rs Network::try_spawn; crates/edge/src/handle.rs Edge::try_spawn",
+        model_ref: "MC_CoordinatorShutdown_{Green,Green_TwoSpawns,Red_DropRefused,Red_CheckThenSpawn,Red_NoAbort,Red_SenderOutsideDrain,Red_TwoWinners,Red_NoPrunerWait,Red_PrunerIgnoresFlag,Red_NoRecheck}.cfg",
         tiers: &[Boundary],
     },
     Property {

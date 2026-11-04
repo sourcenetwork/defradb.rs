@@ -45,115 +45,118 @@ fn assert_collection_id(commits: &[Value], expected: &str) {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn commits_and_versions_include_collection_id() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    let node = cluster.client(0);
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        let node = cluster.client(0);
 
-    node.schema_add(SCHEMA).expect("add schema");
-    let collection_id = extract_collection_id(
-        &node
-            .collection_describe_version("IncidentReport")
-            .expect("describe collection"),
-    );
+        node.schema_add(SCHEMA).expect("add schema");
+        let collection_id = extract_collection_id(
+            &node
+                .collection_describe_version("IncidentReport")
+                .expect("describe collection"),
+        );
 
-    let created = node
-        .query(
-            r#"mutation {
-                add_IncidentReport(input: {title: "Database alert", status: "open"}) {
+        let created = node
+            .query(
+                r#"mutation {
+                    add_IncidentReport(input: {title: "Database alert", status: "open"}) {
+                        _docID
+                    }
+                }"#,
+            )
+            .expect("create incident report");
+        let doc_id = extract_doc_id(&created);
+
+        let updated = node
+            .query(&format!(
+                r#"mutation {{
+                update_IncidentReport(docID: "{doc_id}", input: {{status: "resolved"}}) {{
                     _docID
-                }
-            }"#,
-        )
-        .expect("create incident report");
-    let doc_id = extract_doc_id(&created);
-
-    let updated = node
-        .query(&format!(
-            r#"mutation {{
-            update_IncidentReport(docID: "{doc_id}", input: {{status: "resolved"}}) {{
-                _docID
-                _version {{
-                    collectionID
-                }}
-            }}
-        }}"#,
-        ))
-        .expect("update incident report");
-    assert_collection_id(
-        extract_versions(&updated, "update_IncidentReport"),
-        &collection_id,
-    );
-
-    let regular_versions = node
-        .query(&format!(
-            r#"query {{
-                IncidentReport(docID: "{doc_id}") {{
                     _version {{
                         collectionID
                     }}
                 }}
             }}"#,
-        ))
-        .expect("query versions by docID");
-    assert_collection_id(
-        extract_versions(&regular_versions, "IncidentReport"),
-        &collection_id,
-    );
+            ))
+            .expect("update incident report");
+        assert_collection_id(
+            extract_versions(&updated, "update_IncidentReport"),
+            &collection_id,
+        );
 
-    let by_doc_id = node
-        .query(&format!(
-            r#"query {{
-                _commits(docID: ["{doc_id}"]) {{
-                    cid
-                    collectionID
-                    fieldName
-                }}
-            }}"#,
-        ))
-        .expect("query commits by docID");
-    let doc_commits = extract_commits(&by_doc_id);
-    assert_collection_id(doc_commits, &collection_id);
-
-    let composite_cid = doc_commits
-        .iter()
-        .find(|commit| commit["fieldName"] == "_C")
-        .and_then(|commit| commit["cid"].as_str())
-        .expect("missing composite commit");
-    let field_cid = doc_commits
-        .iter()
-        .find(|commit| commit["fieldName"] == "status")
-        .and_then(|commit| commit["cid"].as_str())
-        .expect("missing field commit");
-
-    let cid_versions = node
-        .query(&format!(
-            r#"query {{
-                IncidentReport(cid: "{composite_cid}") {{
-                    _version {{
-                        collectionID
+        let regular_versions = node
+            .query(&format!(
+                r#"query {{
+                    IncidentReport(docID: "{doc_id}") {{
+                        _version {{
+                            collectionID
+                        }}
                     }}
-                }}
-            }}"#,
-        ))
-        .expect("query versions by cid");
-    assert_collection_id(
-        extract_versions(&cid_versions, "IncidentReport"),
-        &collection_id,
-    );
+                }}"#,
+            ))
+            .expect("query versions by docID");
+        assert_collection_id(
+            extract_versions(&regular_versions, "IncidentReport"),
+            &collection_id,
+        );
 
-    let by_cid = node
-        .query(&format!(
-            r#"query {{
-                _commits(cid: ["{composite_cid}", "{field_cid}"]) {{
-                    cid
-                    collectionID
-                    fieldName
-                }}
-            }}"#,
-        ))
-        .expect("query composite and field commits by cid");
-    let cid_commits = extract_commits(&by_cid);
-    assert_eq!(cid_commits.len(), 2, "expected both requested commits");
-    assert_collection_id(cid_commits, &collection_id);
+        let by_doc_id = node
+            .query(&format!(
+                r#"query {{
+                    _commits(docID: ["{doc_id}"]) {{
+                        cid
+                        collectionID
+                        fieldName
+                    }}
+                }}"#,
+            ))
+            .expect("query commits by docID");
+        let doc_commits = extract_commits(&by_doc_id);
+        assert_collection_id(doc_commits, &collection_id);
+
+        let composite_cid = doc_commits
+            .iter()
+            .find(|commit| commit["fieldName"] == "_C")
+            .and_then(|commit| commit["cid"].as_str())
+            .expect("missing composite commit");
+        let field_cid = doc_commits
+            .iter()
+            .find(|commit| commit["fieldName"] == "status")
+            .and_then(|commit| commit["cid"].as_str())
+            .expect("missing field commit");
+
+        let cid_versions = node
+            .query(&format!(
+                r#"query {{
+                    IncidentReport(cid: "{composite_cid}") {{
+                        _version {{
+                            collectionID
+                        }}
+                    }}
+                }}"#,
+            ))
+            .expect("query versions by cid");
+        assert_collection_id(
+            extract_versions(&cid_versions, "IncidentReport"),
+            &collection_id,
+        );
+
+        let by_cid = node
+            .query(&format!(
+                r#"query {{
+                    _commits(cid: ["{composite_cid}", "{field_cid}"]) {{
+                        cid
+                        collectionID
+                        fieldName
+                    }}
+                }}"#,
+            ))
+            .expect("query composite and field commits by cid");
+        let cid_commits = extract_commits(&by_cid);
+        assert_eq!(cid_commits.len(), 2, "expected both requested commits");
+        assert_collection_id(cid_commits, &collection_id);
+    })
+    .await;
 }

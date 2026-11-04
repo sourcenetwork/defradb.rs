@@ -1,8 +1,9 @@
 //! A transaction belongs to the identity acting in the context that began it,
-//! and only a request whose context names that identity reaches it again.
+//! and only a request whose context names that identity reaches it again,
+//! unless the registry is an embedder's, which serves every request.
 
 use db::database::DB;
-use db::txn::registry::DbTransactionRegistry;
+use db::txn::registry::{DbTransactionRegistry, TxnOwnership};
 use db::{AutoCommitMutator, DbCollectionProvider, LensedAutoCommitFetcher};
 use defra_core::RequestContext;
 use identity::Did;
@@ -58,6 +59,37 @@ fn only_the_context_that_began_a_transaction_reaches_it() {
 
         assert!(reaches(&registry, &alice, &handle).await);
         registry.commit_as(&alice, &handle).await.unwrap();
+        assert_eq!(registry.active_transaction_count().unwrap(), 0);
+    })
+    .unwrap()
+}
+
+/// An embedder registry serves every request, whatever identity it acts as
+/// and runs each request's work as that request's own identity.
+#[test]
+fn an_embedder_transaction_serves_every_identity_as_itself() {
+    workers::block_on(async {
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        let registry = DbTransactionRegistry::new(db).with_ownership(TxnOwnership::Embedder);
+        let handle = registry.begin_as(&acting(None), false).await.unwrap();
+
+        for did in [None, Some("did:key:alice"), Some("did:key:bob")] {
+            let caller = acting(did);
+            let job = txn_job(|_| {
+                Box::pin(async { defra_core::current_identity::get_effective_identity() })
+            });
+            let acted_as = registry.run_as(&caller, &handle, None, job).await.unwrap();
+            assert_eq!(acted_as.as_deref(), did);
+            assert!(registry
+                .get_collections_in_txn_as(&caller, handle.as_str())
+                .await
+                .is_ok());
+        }
+
+        registry
+            .commit_as(&acting(Some("did:key:bob")), &handle)
+            .await
+            .unwrap();
         assert_eq!(registry.active_transaction_count().unwrap(), 0);
     })
     .unwrap()

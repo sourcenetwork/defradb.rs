@@ -50,8 +50,9 @@ async fn purge_both(cluster: &TestCluster) {
     purge_node(cluster, 1).await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn go_schema_creation_validation_parity() {
+    edge::compat(async move {
     let cluster = TestCluster::builder()
         .rust_nodes(1)
         .go_nodes(1)
@@ -190,10 +191,13 @@ async fn go_schema_creation_validation_parity() {
         assert_outcome(case.validator, case.accepted, &rust_result, &go_result);
         purge_both(&cluster).await;
     }
+})
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn go_schema_patch_validation_parity() {
+    edge::compat(async move {
     let cluster = TestCluster::builder()
         .rust_nodes(1)
         .go_nodes(1)
@@ -378,4 +382,6 @@ async fn go_schema_patch_validation_parity() {
         assert_outcome(case.validator, case.accepted, &rust_result, &go_result);
         purge_both(&cluster).await;
     }
+})
+    .await;
 }

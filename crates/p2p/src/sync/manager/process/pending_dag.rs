@@ -9,10 +9,16 @@ use cid::Cid;
 use blockstore::Blockstore;
 
 use crate::error::{Error, Result};
+use crate::sync::arbitration::AttemptSample;
 use crate::sync::manager::events::SyncEvent;
 use crate::sync::manager::links::{extract_ipld_links, find_all_missing_links};
-use crate::sync::manager::pending::{PendingDag, PENDING_DAG_TTL};
-use crate::sync::pending_store::{PersistedPendingDag, PersistedQuarantinedDag, Registration};
+use crate::sync::manager::pending::{
+    retry_backoff, PendingDag, PendingDagRegistry, PendingOrigin, SharedPendingDags,
+    PENDING_ROTATE_AFTER_DISPATCHES,
+};
+use crate::sync::pending_store::{
+    PersistedPendingDag, PersistedQuarantinedDag, PersistedView, Registration,
+};
 
 use super::SyncManager;
 
@@ -24,16 +30,121 @@ impl Drop for PendingResyncInFlight<'_> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct PendingDagLease {
     root_cid: Cid,
-    pending: Arc<crate::sync::manager::pending::SharedPendingDags>,
+    pending: Arc<SharedPendingDags>,
+    persisted: Arc<PersistedView>,
+    max_pending_dags: usize,
+    max_per_peer: usize,
+}
+
+impl std::fmt::Debug for PendingDagLease {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingDagLease")
+            .field("root_cid", &self.root_cid)
+            .finish_non_exhaustive()
+    }
 }
 
 impl PendingDagLease {
     pub(crate) fn is_current(&self) -> bool {
         self.pending
             .read(|pending| pending.contains_key(&self.root_cid))
+    }
+
+    /// Count an attempt that ended with the DAG still incomplete, returning
+    /// how many such attempts the root has made, or `None` once the root has
+    /// left the map.
+    pub(crate) fn record_incomplete_attempt(&self) -> Option<u32> {
+        self.pending.update(|pending| {
+            let dag = pending.get_mut(&self.root_cid)?;
+            dag.incomplete_attempts = dag.incomplete_attempts.saturating_add(1);
+            Some(dag.incomplete_attempts)
+        })
+    }
+
+    /// The fetch attempt ended and gave its slot back: the root is due again
+    /// one backoff from now, so roots that waited during the attempt go first.
+    /// An attempt `preempted` at its quantum while still making progress is
+    /// due again at once instead: behind every root already due, with no
+    /// backoff, since it did not fail.
+    ///
+    /// A root with a durable record that has had
+    /// `PENDING_ROTATE_AFTER_DISPATCHES` dispatches without merging instead
+    /// gives its in-memory entry up when it holds a contended place (the map
+    /// is full, or its source peer is at its quota) while a durable root has
+    /// no entry. Its record stays, and the resync sweep, which resumes after
+    /// the root it admitted last, brings it back once the others had a turn:
+    /// durable roots past the cap take turns instead of the first ones in key
+    /// order holding the map for good.
+    ///
+    /// `sample` feeds the root's estimates and nothing else: the re-arm is the
+    /// same whatever it says.
+    pub(crate) fn finish_attempt(&self, preempted: bool, sample: AttemptSample) {
+        let now = crate::rt::time::Instant::now();
+        let durable = self.persisted.contains(&self.root_cid);
+        let rotates = durable
+            && self.pending.read(|pending| {
+                pending.get(&self.root_cid).is_some_and(|dag| {
+                    dag.dispatches >= PENDING_ROTATE_AFTER_DISPATCHES
+                        && (pending.len() >= self.max_pending_dags
+                            || dag.source_peer.as_deref().is_some_and(|peer| {
+                                pending.source_count(peer) >= self.max_per_peer
+                            }))
+                }) && self.persisted.len()
+                    > pending
+                        .keys()
+                        .filter(|root| self.persisted.contains(root))
+                        .count()
+            });
+        self.pending.update(|pending| {
+            if rotates {
+                pending.remove(&self.root_cid);
+            } else if let Some(dag) = pending.get_mut(&self.root_cid) {
+                dag.next_retry_at = if preempted {
+                    now
+                } else {
+                    dag.next_retry_at.max(now + retry_backoff(dag.dispatches))
+                };
+                dag.estimates.observe(sample);
+            }
+        });
+        if rotates {
+            tracing::debug!(
+                root_cid = %self.root_cid,
+                "Durable pending root gave its in-memory slot to a waiting one; its record stays"
+            );
+        }
+    }
+}
+
+/// One merge turn of a root. Dropping it ends a local continuation the turn
+/// did not continue.
+#[must_use = "a local continuation ends when its turn drops"]
+pub(crate) struct MergeTurn {
+    root_cid: Cid,
+    local: Option<Arc<SharedPendingDags>>,
+}
+
+impl Drop for MergeTurn {
+    fn drop(&mut self) {
+        let Some(pending) = self.local.take() else {
+            return;
+        };
+        let root = self.root_cid;
+        let ended = |registry: &PendingDagRegistry| {
+            registry.get(&root).is_some_and(|dag| {
+                dag.origin == PendingOrigin::LocalContinuation && !dag.merge_continuation
+            })
+        };
+        if pending.read(ended) {
+            pending.update(|registry| {
+                if ended(registry) {
+                    registry.remove(&root);
+                }
+            });
+        }
     }
 }
 
@@ -71,7 +182,7 @@ fn evict_expired_pending_dags(
 ) -> Vec<(Cid, PendingDag)> {
     let expired: Vec<_> = pending
         .iter()
-        .filter(|(_, dag)| now.duration_since(dag.inserted_at) >= PENDING_DAG_TTL)
+        .filter(|(_, dag)| dag.is_expired(now))
         .map(|(cid, dag)| (*cid, PendingDag::clone(dag)))
         .collect();
 
@@ -87,6 +198,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         PendingDagLease {
             root_cid,
             pending: Arc::clone(&self.pending_dags),
+            persisted: Arc::clone(&self.persisted),
+            max_pending_dags: self.max_pending_dags,
+            max_per_peer: self.max_pending_dags_per_peer(),
         }
     }
     /// Get the pending DAGs count (for testing/monitoring).
@@ -98,12 +212,18 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         (self.max_pending_dags / PENDING_DAG_PEER_CAPACITY_DIVISOR).max(1)
     }
 
-    pub(super) fn is_pending_dag_recovery_registered(&self, root_cid: &Cid) -> bool {
-        self.pending_dags.read(|pending| {
-            pending
-                .get(root_cid)
-                .is_some_and(|dag| dag.is_recovery_registered)
-        })
+    /// Whether this side owns the root's recovery for a sender: its pushed or
+    /// restored entry is registered, or a durable record holds it while it
+    /// has no entry (it gave its entry up past the cap, or the node
+    /// restarted). Either backs a success reply. A local continuation does
+    /// not: it has no record and ends with its merge turn.
+    pub(super) fn is_pending_dag_owned(&self, root_cid: &Cid) -> bool {
+        self.persisted.contains(root_cid)
+            || self.pending_dags.read(|pending| {
+                pending.get(root_cid).is_some_and(|dag| {
+                    dag.is_recovery_registered && dag.origin != PendingOrigin::LocalContinuation
+                })
+            })
     }
 
     pub(super) fn mark_pending_dag_recovery_registered(
@@ -148,7 +268,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// complete DAG awaiting a terminal merge outcome. `None` means no live
     /// receiver obligation is registered.
     pub fn next_pending_retry_in_ms(&self) -> Option<u64> {
-        let now = n0_future::time::Instant::now();
+        let now = crate::rt::time::Instant::now();
         self.pending_dags.read(|pending| {
             pending
                 .values()
@@ -331,16 +451,15 @@ impl<B: Blockstore + 'static> SyncManager<B> {
 
     /// Insert a pending DAG entry, enforcing TTL eviction and capacity limits.
     ///
-    /// Expired entries (older than `PENDING_DAG_TTL`) are removed before checking
+    /// Expired entries (see `PendingDag::is_expired`) are removed before checking
     /// the capacity. If the map is still at `max_pending_dags` after eviction the
     /// new entry is rejected so callers can return a backpressure nack (#1088
     /// W1) instead of acking a discarded registration. A source peer may hold
     /// at most one quarter of the global map so one noisy pusher cannot starve
     /// every other peer (#1088 W2).
-    /// TTL eviction frees the in-memory slot only: a push-originated entry's
-    /// durable record survives (the recovery obligation is discharged solely
-    /// by a successful merge) and is re-driven by restart or the durable
-    /// resync sweep.
+    /// An acknowledged entry never expires: the ack ended the sender's retry
+    /// marker, so it stays until merge, quarantine or a newer scope head, and
+    /// counts against the cap meanwhile.
     /// Admit a registration into the in-memory map, reporting `true` on
     /// success. Callers that need to distinguish the failing limit (to nack
     /// with the right number) use [`Self::try_insert_pending_dag`].
@@ -448,7 +567,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     pub fn try_claim_pending_dag_dispatch(
         &self,
         root_cid: &Cid,
-        now: n0_future::time::Instant,
+        now: crate::rt::time::Instant,
     ) -> bool {
         let eligible = self.pending_dags.read(|pending| {
             pending.get(root_cid).is_some_and(|dag| {
@@ -497,7 +616,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         root_cid: &Cid,
         metadata: Option<&crate::sync::merge::BlockMetadata<'_>>,
     ) -> bool {
-        let next = n0_future::time::Instant::now()
+        let next = crate::rt::time::Instant::now()
             + super::super::pending::PENDING_MERGE_CONTINUATION_DELAY;
         let scheduled = self.pending_dags.update(|pending| {
             if !pending.contains_key(root_cid) {
@@ -534,8 +653,11 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                         last_fetch_error: None,
                         next_retry_at: next,
                         dispatches: 0,
+                        incomplete_attempts: 0,
                         merge_continuation: true,
                         storage_blocker: None,
+                        origin: PendingOrigin::LocalContinuation,
+                        estimates: crate::sync::arbitration::RootEstimates::default(),
                     },
                 );
             }
@@ -554,25 +676,40 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         scheduled
     }
 
-    pub(crate) fn consume_pending_merge_continuation(&self, root_cid: &Cid) {
-        if !self.pending_dags.read(|pending| {
-            pending
-                .get(root_cid)
-                .is_some_and(|dag| dag.merge_continuation)
-        }) {
-            return;
-        }
-        self.pending_dags.update(|pending| {
-            if let Some(dag) = pending.get_mut(root_cid) {
-                dag.merge_continuation = false;
-            }
+    /// A merge turn of `root_cid` starts: consume its scheduled continuation.
+    /// The returned turn ends a local continuation when it drops, unless the
+    /// turn yielded again through `continue_merge`. Nobody else owns such an
+    /// entry, so a turn that merged, skipped or failed leaves nothing behind
+    /// to count against `max_pending_dags` or to be re-driven; the next pull
+    /// or push of the head starts the merge again.
+    pub(crate) fn consume_pending_merge_continuation(&self, root_cid: &Cid) -> MergeTurn {
+        let entry = self.pending_dags.read(|pending| {
+            pending.get(root_cid).map(|dag| {
+                (
+                    dag.merge_continuation,
+                    dag.origin == PendingOrigin::LocalContinuation,
+                )
+            })
         });
+        if entry.is_some_and(|(scheduled, _)| scheduled) {
+            self.pending_dags.update(|pending| {
+                if let Some(dag) = pending.get_mut(root_cid) {
+                    dag.merge_continuation = false;
+                }
+            });
+        }
+        MergeTurn {
+            root_cid: *root_cid,
+            local: entry
+                .is_some_and(|(_, local)| local)
+                .then(|| Arc::clone(&self.pending_dags)),
+        }
     }
 
     /// Make a root promptly due (e.g. a provider just connected) without
     /// resetting its backoff rung. The retry clock performs the dispatch.
     pub fn expedite_pending_dag_retry(&self, root_cid: &Cid) {
-        let now = n0_future::time::Instant::now();
+        let now = crate::rt::time::Instant::now();
         let registered = self.pending_dags.update(|pending| {
             pending.get_mut(root_cid).map(|dag| {
                 dag.next_retry_at = dag.next_retry_at.min(now);
@@ -590,7 +727,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// behind the limiter.
     pub(crate) fn due_pending_dag_retries(
         &self,
-        now: n0_future::time::Instant,
+        now: crate::rt::time::Instant,
     ) -> Vec<(Cid, PendingDag)> {
         self.evict_expired();
         let released: Vec<Cid> = self.pending_dags.read(|pending| {
@@ -629,6 +766,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 .cmp(&right.next_retry_at)
                 .then_with(|| left_cid.to_bytes().cmp(&right_cid.to_bytes()))
         });
+        self.observe_dispatch_pass(now, &due);
         due
     }
 
@@ -637,7 +775,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     #[cfg(test)]
     pub fn claim_due_pending_dag_retries(
         &self,
-        now: n0_future::time::Instant,
+        now: crate::rt::time::Instant,
     ) -> Vec<(Cid, PendingDag)> {
         self.due_pending_dag_retries(now)
             .into_iter()
@@ -789,6 +927,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         // Emit event that DAG is ready for merge
         if self
             .event_tx
+            .clone()
             .send(SyncEvent::DagReady {
                 root_cid: *root_cid,
                 doc_id: info.doc_id.clone(),
@@ -815,10 +954,12 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// Reconcile the in-memory pending map against the durable registrations
     /// (#1099): drop records whose roots merged, and re-register + re-drive
     /// every unmerged record with no live in-memory entry. Runs at startup
-    /// (restore) and as the single-flight sweep behind peer connects, so a
-    /// registration whose in-memory entry was TTL-evicted is recovered
-    /// without a restart. Roots that no longer fit under `max_pending_dags`
-    /// keep their record for the next sweep. Returns the count re-driven.
+    /// (restore), periodically and as the single-flight sweep behind peer
+    /// connects, so a registration whose in-memory entry gave its slot up
+    /// (`PendingDagLease::finish_attempt`) is recovered without a restart.
+    /// Roots that no longer fit under `max_pending_dags` keep their record
+    /// for the next sweep, which resumes after the root this one admitted
+    /// last. Returns the count re-driven.
     pub async fn resync_persisted_pending_dags(&self) -> usize {
         let Some(store) = self.pending_store() else {
             return 0;
@@ -839,11 +980,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             let now = Instant::now();
             let all_live = !roots.is_empty()
                 && self.pending_dags.read(|pending| {
-                    roots.iter().all(|root| {
-                        pending.get(root).is_some_and(|dag| {
-                            now.duration_since(dag.inserted_at) < PENDING_DAG_TTL
-                        })
-                    })
+                    roots
+                        .iter()
+                        .all(|root| pending.get(root).is_some_and(|dag| !dag.is_expired(now)))
                 });
             if all_live {
                 return 0;
@@ -885,15 +1024,15 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         if records.is_empty() {
             return 0;
         }
+        let records = self.records_after_resync_cursor(records);
 
         let mut restored = 0usize;
+        let mut last_admitted = None;
         for (root_cid, mut record) in records {
             let now = Instant::now();
-            let live = self.pending_dags.read(|pending| {
-                pending
-                    .get(&root_cid)
-                    .map(|dag| now.duration_since(dag.inserted_at) < PENDING_DAG_TTL)
-            });
+            let live = self
+                .pending_dags
+                .read(|pending| pending.get(&root_cid).map(|dag| !dag.is_expired(now)));
             match live {
                 Some(true) => continue,
                 Some(false) => {
@@ -901,9 +1040,10 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     // record below re-registers with a fresh TTL and a
                     // recomputed missing set.
                     self.pending_dags.update(|pending| {
-                        if pending.get(&root_cid).is_some_and(|dag| {
-                            now.duration_since(dag.inserted_at) >= PENDING_DAG_TTL
-                        }) {
+                        if pending
+                            .get(&root_cid)
+                            .is_some_and(|dag| dag.is_expired(now))
+                        {
                             pending.remove(&root_cid);
                         }
                     });
@@ -986,10 +1126,13 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 attempts: 0,
                 fetch_failures: 0,
                 last_fetch_error: None,
-                next_retry_at: n0_future::time::Instant::now(),
+                next_retry_at: crate::rt::time::Instant::now(),
                 dispatches: 0,
+                incomplete_attempts: 0,
                 merge_continuation: false,
                 storage_blocker: None,
+                origin: PendingOrigin::Restored,
+                estimates: crate::sync::arbitration::RootEstimates::default(),
             };
 
             let superseded = match self.try_insert_pending_dag(root_cid, dag.clone()) {
@@ -1037,12 +1180,31 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 );
             }
             restored += 1;
+            last_admitted = Some(root_cid);
+        }
+        if last_admitted.is_some() {
+            self.pending_resync_cursor.store(last_admitted);
         }
 
         if restored > 0 {
             tracing::info!(restored, "restored persisted pending DAG registrations");
         }
         restored
+    }
+
+    /// The records in key order (the store's), starting after the root the
+    /// previous sweep admitted last and wrapping around.
+    fn records_after_resync_cursor(
+        &self,
+        mut records: Vec<(Cid, PersistedPendingDag)>,
+    ) -> Vec<(Cid, PersistedPendingDag)> {
+        records.sort_by_cached_key(|(root, _)| root.to_string());
+        if let Some(cursor) = self.pending_resync_cursor.load_clone() {
+            let cursor = cursor.to_string();
+            let start = records.partition_point(|(root, _)| root.to_string() <= cursor);
+            records.rotate_left(start);
+        }
+        records
     }
 
     /// Quarantine a terminally-rejected pending-DAG root (#1128).

@@ -17,7 +17,7 @@ async fn write_with_conflict_retry(client: &DefraClient, query: &str, label: &st
                     Instant::now() < deadline,
                     "{label} remained conflicted until the retry deadline: {message}"
                 );
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                nuclei::time::sleep(Duration::from_millis(50)).await;
             }
         }
     }
@@ -309,7 +309,7 @@ async fn burst_bidirectional_test(cluster: TestCluster) {
             Instant::now() < deadline,
             "burst writes did not converge on both nodes within 60s\nnode0: {node0_docs:#?}\nnode1: {node1_docs:#?}"
         );
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        nuclei::time::sleep(Duration::from_millis(500)).await;
     }
 
     // Post-burst health check: both nodes can still write and query

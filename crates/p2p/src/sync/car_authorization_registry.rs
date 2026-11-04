@@ -29,7 +29,7 @@ struct SavedWalk {
 
 pub(super) struct CursorEntry {
     value: ArrayQueue<SavedWalk>,
-    last_used: n0_future::time::Instant,
+    last_used: crate::rt::time::Instant,
     #[cfg(test)]
     pub(super) snapshot: CursorSnapshot,
 }
@@ -59,7 +59,7 @@ impl CursorEntry {
             .is_ok());
         Self {
             value,
-            last_used: n0_future::time::Instant::now(),
+            last_used: crate::rt::time::Instant::now(),
             #[cfg(test)]
             snapshot,
         }
@@ -100,7 +100,7 @@ impl Flight {
     }
 
     async fn join(&self, budget: Duration) -> Result<RapidHashSet<Cid>> {
-        n0_future::time::timeout(budget, self.done.wait())
+        crate::rt::time::timeout(budget, self.done.wait())
             .await
             .map_err(|_| Error::ResponseTimeout)?;
         match &*self.outcome.load() {

@@ -73,85 +73,97 @@ fn commits(node: &DefraClient, id: &str) -> Vec<String> {
     lines
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn create_and_update_blocks_are_pinned() {
-    let cluster = node().await;
-    let node = cluster.client(0);
-    let id = create(&node, r#"{label: "a", name: "first", hits: 2}"#);
-    assert_eq!(commits(&node, &id), EXPECTED_CREATE);
+    edge::compat(async move {
+        let cluster = node().await;
+        let node = cluster.client(0);
+        let id = create(&node, r#"{label: "a", name: "first", hits: 2}"#);
+        assert_eq!(commits(&node, &id), EXPECTED_CREATE);
 
-    update(&node, &id, r#"{name: "second", hits: 3}"#);
-    let mut after: Vec<String> = commits(&node, &id)
-        .into_iter()
-        .map(|line| match line.split_once(' ') {
-            Some(("2", rest)) if !rest.starts_with("name ") => {
-                format!("2 {} <random>", rest.split(' ').next().unwrap_or_default())
-            }
-            _ => line,
-        })
-        .collect();
-    after.sort();
-    assert_eq!(after, EXPECTED_UPDATE);
+        update(&node, &id, r#"{name: "second", hits: 3}"#);
+        let mut after: Vec<String> = commits(&node, &id)
+            .into_iter()
+            .map(|line| match line.split_once(' ') {
+                Some(("2", rest)) if !rest.starts_with("name ") => {
+                    format!("2 {} <random>", rest.split(' ').next().unwrap_or_default())
+                }
+                _ => line,
+            })
+            .collect();
+        after.sort();
+        assert_eq!(after, EXPECTED_UPDATE);
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_zero_increment_writes_a_block() {
-    let cluster = node().await;
-    let node = cluster.client(0);
-    let id = create(&node, r#"{label: "a", hits: 2}"#);
-    let before = commits(&node, &id).len();
+    edge::compat(async move {
+        let cluster = node().await;
+        let node = cluster.client(0);
+        let id = create(&node, r#"{label: "a", hits: 2}"#);
+        let before = commits(&node, &id).len();
 
-    update(&node, &id, "{hits: 0}");
-    assert_eq!(row(&node, &id)["hits"], 2);
-    assert_eq!(commits(&node, &id).len(), before + ZERO_INCREMENT_BLOCKS);
+        update(&node, &id, "{hits: 0}");
+        assert_eq!(row(&node, &id)["hits"], 2);
+        assert_eq!(commits(&node, &id).len(), before + ZERO_INCREMENT_BLOCKS);
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_same_value_lww_rewrite_writes_no_block() {
-    let cluster = node().await;
-    let node = cluster.client(0);
-    let id = create(&node, r#"{label: "a", name: "x"}"#);
-    let before = commits(&node, &id).len();
+    edge::compat(async move {
+        let cluster = node().await;
+        let node = cluster.client(0);
+        let id = create(&node, r#"{label: "a", name: "x"}"#);
+        let before = commits(&node, &id).len();
 
-    update(&node, &id, r#"{name: "x"}"#);
-    assert_eq!(row(&node, &id)["name"], "x");
-    assert_eq!(commits(&node, &id).len(), before);
+        update(&node, &id, r#"{name: "x"}"#);
+        assert_eq!(row(&node, &id)["name"], "x");
+        assert_eq!(commits(&node, &id).len(), before);
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn less_common_kinds_keep_their_values() {
-    let cluster = node().await;
-    let node = cluster.client(0);
+    edge::compat(async move {
+        let cluster = node().await;
+        let node = cluster.client(0);
 
-    let id = create(&node, r#"{label: "n", n: 1}"#);
-    update(&node, &id, "{n: -3}");
-    assert_eq!(row(&node, &id)["n"], -2, "Int pncounter below zero");
+        let id = create(&node, r#"{label: "n", n: 1}"#);
+        update(&node, &id, "{n: -3}");
+        assert_eq!(row(&node, &id)["n"], -2, "Int pncounter below zero");
 
-    let id = create(&node, r#"{label: "f", f: 1.5}"#);
-    update(&node, &id, "{f: 2.25}");
-    assert_eq!(row(&node, &id)["f"].as_f64(), Some(3.75), "Float pcounter");
+        let id = create(&node, r#"{label: "f", f: 1.5}"#);
+        update(&node, &id, "{f: 2.25}");
+        assert_eq!(row(&node, &id)["f"].as_f64(), Some(3.75), "Float pcounter");
 
-    let id = create(&node, r#"{label: "g", g: 1.5}"#);
-    update(&node, &id, "{g: -0.25}");
-    assert_eq!(
-        row(&node, &id)["g"].as_f64(),
-        Some(1.25),
-        "Float32 pncounter"
-    );
+        let id = create(&node, r#"{label: "g", g: 1.5}"#);
+        update(&node, &id, "{g: -0.25}");
+        assert_eq!(
+            row(&node, &id)["g"].as_f64(),
+            Some(1.25),
+            "Float32 pncounter"
+        );
 
-    let id = create(&node, r#"{label: "s", name: "x"}"#);
-    update(&node, &id, "{name: null}");
-    assert!(row(&node, &id)["name"].is_null(), "LWW set to null");
+        let id = create(&node, r#"{label: "s", name: "x"}"#);
+        update(&node, &id, "{name: null}");
+        assert!(row(&node, &id)["name"].is_null(), "LWW set to null");
 
-    let id = create(&node, r#"{label: "d", hits: 4, n: -1}"#);
-    node.query(&format!(
-        r#"mutation {{ delete_Item(docID: "{id}") {{ _docID }} }}"#
-    ))
-    .expect("delete_Item");
-    let data = node
-        .query(&format!(r#"query {{ Item(docID: "{id}") {{ _docID }} }}"#))
-        .expect("query deleted");
-    assert_eq!(data["Item"].as_array().map(Vec::len), Some(0), "{data}");
+        let id = create(&node, r#"{label: "d", hits: 4, n: -1}"#);
+        node.query(&format!(
+            r#"mutation {{ delete_Item(docID: "{id}") {{ _docID }} }}"#
+        ))
+        .expect("delete_Item");
+        let data = node
+            .query(&format!(r#"query {{ Item(docID: "{id}") {{ _docID }} }}"#))
+            .expect("query deleted");
+        assert_eq!(data["Item"].as_array().map(Vec::len), Some(0), "{data}");
+    })
+    .await;
 }
 
 const EXPECTED_CREATE: &[&str] = &[

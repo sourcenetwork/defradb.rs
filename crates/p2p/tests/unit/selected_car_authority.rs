@@ -9,6 +9,7 @@ async fn coordinator(
     let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
         transport,
         blockstore,
+        crate::network::test_network(),
         SyncConfig::default(),
         AccessMode::Controlled,
         Arc::new(ReplicatorRegistry::new()),
@@ -27,7 +28,7 @@ async fn coordinator(
     coordinator
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn disk_reopen_serves_only_selected_root_descendants_without_subscription_or_acp() {
     let directory = tempfile::tempdir().unwrap();
     let peer = random_peer_id();

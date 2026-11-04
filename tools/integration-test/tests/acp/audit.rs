@@ -177,29 +177,35 @@ async fn cid_time_travel_acp_bypass_test(cluster: TestCluster) {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_cid_time_travel_acp_bypass() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    cid_time_travel_acp_bypass_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        cid_time_travel_acp_bypass_test(cluster).await;
+    })
+    .await;
 }
 
 /// Known upstream bug: Go DefraDB does not filter _commits by ACP.
 /// This test will fail until the Go implementation adds the same fix.
-#[tokio::test]
+#[nuclei::test]
 #[ignore]
 async fn go_cid_time_travel_acp_bypass() {
-    let cluster = TestCluster::builder()
-        .go_nodes(1)
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    cid_time_travel_acp_bypass_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .go_nodes(1)
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        cid_time_travel_acp_bypass_test(cluster).await;
+    })
+    .await;
 }
 
 /// Policy strictness is enforced immediately — no window of stale access.

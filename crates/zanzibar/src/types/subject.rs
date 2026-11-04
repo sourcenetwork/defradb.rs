@@ -14,10 +14,10 @@ pub enum SubjectRestriction {
         resource: String,
     },
     /// An actor: a single entity (DID) or the all-actors wildcard (`*`). This is
-    /// what `types: [actor]` maps to — unlike [`Entity`](Self::Entity), it also
+    /// what `types: [actor]` maps to. Unlike [`Entity`](Self::Entity), it also
     /// admits [`Subject::Wildcard`] so existing all-actors grants stay valid.
     Actor,
-    /// Satisfied if the subject satisfies any inner restriction — how a relation
+    /// Satisfied if the subject satisfies any inner restriction: how a relation
     /// declaring multiple `types:` is enforced.
     AnyOf(Vec<SubjectRestriction>),
     Any,

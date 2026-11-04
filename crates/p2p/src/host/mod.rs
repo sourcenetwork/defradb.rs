@@ -9,6 +9,7 @@ mod event;
 mod handle;
 pub mod libp2p_transport;
 mod p2p_host;
+pub(crate) mod transport;
 
 // Re-export public types
 pub use command::HostCommand;

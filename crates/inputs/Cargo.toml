@@ -25,12 +25,27 @@ rapidhash.workspace = true
 tracing.workspace = true
 # The network runtime round trips run on, through its `Edge` handle.
 edge = { path = "../edge" }
-# The ambient runtime, for a caller with no `Edge`: tokio natively, the
-# browser's event loop on wasm; and the combinators a wait races with.
-n0-future.workspace = true
+# The combinators a wait races with.
+futures-lite.workspace = true
+# Embedding request bodies and answers.
+serde_json.workspace = true
+# One Ollama wave's texts, in flight together.
+futures.workspace = true
+# `EmbeddingCallError`.
+thiserror.workspace = true
 
-[dev-dependencies]
-tokio = { workspace = true, features = ["rt", "macros", "time", "test-util"] }
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# The runtime's clock, which a paused-time test moves, and embedding
+# request deadlines.
+nuclei.workspace = true
+# Embedding requests on nuclei sockets.
+net = { path = "../net" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# The browser's clock, and embedding request deadlines.
+n0-future.workspace = true
+# Embedding requests through the browser's fetch.
+reqwest = { version = "0.12", default-features = false, features = ["json", "charset", "http2"] }
 
 [lints]
 workspace = true

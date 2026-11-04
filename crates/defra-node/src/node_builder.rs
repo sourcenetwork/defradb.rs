@@ -65,6 +65,7 @@ pub struct NodeBuilder {
     #[cfg(feature = "otel")]
     telemetry_handle: Option<TelemetryHandle>,
     crdts: Vec<crdt::Registration>,
+    txn_ownership: db::TxnOwnership,
 }
 
 /// Durability is a separate builder setting, so it is applied over the
@@ -290,8 +291,8 @@ impl NodeBuilder {
     /// calling this twice is a compile error rather than a silent overwrite.
     ///
     /// For a one-call ergonomic version, callers can write
-    /// `.with_telemetry(telemetry::init(cfg)?.0)` — `init` requires a Tokio
-    /// runtime and returns `(TelemetryHandle, SdkTracer)`.
+    /// `.with_telemetry(telemetry::init(cfg, edge)?.0)` — `init` exports on
+    /// the given network `edge` and returns `(TelemetryHandle, SdkTracer)`.
     #[cfg(feature = "otel")]
     pub fn with_telemetry(mut self, handle: TelemetryHandle) -> Self {
         self.telemetry_handle = Some(handle);
@@ -386,6 +387,15 @@ impl NodeBuilder {
         self
     }
 
+    /// Which requests may reach a transaction this node began. Unset, only
+    /// requests acting as the identity that began it;
+    /// [`db::TxnOwnership::Embedder`] suits a node whose embedding process is
+    /// its only caller, such as the one behind the C API.
+    pub fn with_txn_ownership(mut self, ownership: db::TxnOwnership) -> Self {
+        self.txn_ownership = ownership;
+        self
+    }
+
     /// Build and start the embedded DefraDB node.
     pub async fn build(mut self) -> Result<Node> {
         let crdts = crdt::Crdts::new(std::mem::take(&mut self.crdts))?;
@@ -414,6 +424,7 @@ impl NodeBuilder {
             embedding_url: self.embedding_url.take(),
             embedding_model: self.embedding_model.take(),
             embedding_api_key: self.embedding_api_key.take(),
+            txn_ownership: self.txn_ownership,
             #[cfg(feature = "http")]
             transaction_cleanup,
             #[cfg(feature = "http")]
@@ -490,9 +501,9 @@ impl NodeBuilder {
             };
             let addr = http_cfg.address;
             let bound = http_cfg.listener;
-            // The accept loop is a service of the node's scope: shutting the
-            // node down stops it accepting.
-            let service = network.edge().spawn_service(async move {
+            // The server runs in the node's scope: draining it stops the
+            // server accepting and waits for its requests in flight.
+            drop(network.edge().spawn(async move {
                 let served = match bound {
                     Some(listener) => server.serve_on(listener).await,
                     None => server.run().await,
@@ -500,8 +511,7 @@ impl NodeBuilder {
                 if let Err(e) = served {
                     tracing::error!(error = %e, address = %addr, "HTTP server exited with error");
                 }
-            });
-            service.detach();
+            }));
             tracing::info!(address = %addr, "HTTP server started");
         }
         #[cfg(not(feature = "http"))]

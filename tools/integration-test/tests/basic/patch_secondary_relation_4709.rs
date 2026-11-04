@@ -30,8 +30,11 @@ async fn patch_new_field_with_existing_secondary_relation_test(cluster: TestClus
     assert_eq!(data["Publisher"][0]["name"], "Penguin Books");
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_patch_new_field_with_existing_secondary_relation() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    patch_new_field_with_existing_secondary_relation_test(cluster).await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        patch_new_field_with_existing_secondary_relation_test(cluster).await;
+    })
+    .await;
 }

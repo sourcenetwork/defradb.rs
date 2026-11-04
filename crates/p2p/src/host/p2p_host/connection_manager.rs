@@ -8,8 +8,8 @@
 use rapidhash::{HashMapExt, RapidHashMap};
 use std::time::Duration;
 
+use crate::rt::time::Instant;
 use libp2p::{swarm::ConnectionId, PeerId};
-use tokio::time::Instant;
 
 /// How a connection reaches its peer.
 ///

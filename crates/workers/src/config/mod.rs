@@ -123,7 +123,8 @@ pub struct Config {
     /// Each thread class's priority.
     pub priorities: Priorities,
     /// Cores kept for the network edge when sizing [`Workers::Auto`];
-    /// `None` is one per node, at least two.
+    /// `None` is none while a network runtime holds cores of its own
+    /// ([`EdgeCores`](crate::EdgeCores)), else one per node, at least two.
     pub edge_threads: Option<usize>,
     /// Cores kept for regolith's compaction threads when sizing
     /// [`Workers::Auto`].

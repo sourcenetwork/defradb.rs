@@ -14,7 +14,7 @@ mod cache_race;
 /// stands alone: tests only ever read one after its own call completes, so
 /// there is no compound state that needs a single shared guard.
 struct MockProvider {
-    verify_gate: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Semaphore>)>,
+    verify_gate: Option<(Arc<regolith::sync::Notify>, Arc<regolith::sync::Semaphore>)>,
     public_unregistered: bool,
     archive_on_document_delete: bool,
     archive_error: bool,
@@ -229,7 +229,7 @@ impl VeraProvider for MockProvider {
         if call == 0 {
             if let Some((started, resume)) = &self.verify_gate {
                 started.notify_one();
-                resume.acquire().await.unwrap().forget();
+                resume.acquire(1).await.forget();
             }
         }
         Ok(decision)
@@ -249,7 +249,7 @@ impl VeraProvider for MockProvider {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn local_tombstone_preserves_shared_authorization_state() {
     let mut provider = MockProvider::new(vec![true]);
     provider.archive_on_document_delete = false;
@@ -276,7 +276,7 @@ async fn local_tombstone_preserves_shared_authorization_state() {
     assert_eq!(provider.verify_calls(), 1);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn configured_shared_archive_still_runs_and_surfaces_provider_errors() {
     let mut provider = MockProvider::new(vec![]);
     provider.archive_error = true;
@@ -293,7 +293,7 @@ async fn configured_shared_archive_still_runs_and_surfaces_provider_errors() {
     assert_eq!(provider.archive_calls(), 1);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn check_doc_access_does_not_cache_remote_denials() {
     let provider = Arc::new(MockProvider::new(vec![false, true]));
     let acp = VeraDocumentACP::without_access_cache(provider.clone());
@@ -326,7 +326,7 @@ async fn check_doc_access_does_not_cache_remote_denials() {
     assert_eq!(provider.verify_calls(), 2);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn check_doc_access_does_not_cache_denials_when_enabled() {
     let provider = Arc::new(MockProvider::new(vec![false, true]));
     let acp = VeraDocumentACP::new(provider.clone(), Duration::from_secs(300));
@@ -359,7 +359,7 @@ async fn check_doc_access_does_not_cache_denials_when_enabled() {
     assert_eq!(provider.verify_calls(), 2);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn create_access_decision_delegates_to_provider() {
     let provider = Arc::new(MockProvider::new(vec![]));
     let acp = VeraDocumentACP::without_access_cache(provider.clone());
@@ -379,7 +379,7 @@ fn requestor() -> Did {
     Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap()
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn add_relationship_routes_actor_to_set_relationship() {
     let provider = Arc::new(MockProvider::new(vec![]));
     let acp = VeraDocumentACP::without_access_cache(provider.clone());
@@ -411,7 +411,7 @@ async fn add_relationship_routes_actor_to_set_relationship() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn add_relationship_routes_object_edge_to_subject_kind_2() {
     let provider = Arc::new(MockProvider::new(vec![]));
     let acp = VeraDocumentACP::without_access_cache(provider.clone());
@@ -441,7 +441,7 @@ async fn add_relationship_routes_object_edge_to_subject_kind_2() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn add_relationship_routes_userset_to_subject_kind_3() {
     let provider = Arc::new(MockProvider::new(vec![]));
     let acp = VeraDocumentACP::without_access_cache(provider.clone());
@@ -470,7 +470,7 @@ async fn add_relationship_routes_userset_to_subject_kind_3() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn delete_relationship_routes_object_edge_to_subject_kind_2() {
     let provider = Arc::new(MockProvider::new(vec![]));
     let acp = VeraDocumentACP::without_access_cache(provider.clone());
@@ -582,7 +582,7 @@ impl VeraProvider for NoSubjectProvider {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn add_relationship_subject_default_is_unsupported() {
     let provider = Arc::new(NoSubjectProvider);
     let acp = VeraDocumentACP::without_access_cache(provider);
@@ -607,7 +607,7 @@ async fn add_relationship_subject_default_is_unsupported() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn unregistered_read_rules_follow_provider_and_preserve_proof_errors() {
     use acp::read_access::{check_doc_read_access, DirectChecker, ObjectAccessChecker};
     for public in [false, true] {

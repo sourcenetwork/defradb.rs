@@ -11,10 +11,10 @@
 use std::time::Duration;
 
 use defra_core::{Block as DefraBlock, CompositeDeltaPayload, CrdtDelta};
+use nuclei::sync::mpsc::Receiver;
+use nuclei::time::timeout;
 use p2p::testutil::MockBitswapStore;
 use p2p::{HostEvent, P2PHost, P2PHostHandle, QueryId};
-use tokio::sync::mpsc::Receiver;
-use tokio::time::timeout;
 
 fn make_data_block() -> (cid::Cid, Vec<u8>) {
     let payload = CompositeDeltaPayload {
@@ -40,7 +40,7 @@ async fn wait_connected(handle: &P2PHostHandle, target: libp2p::PeerId) {
             start.elapsed() < Duration::from_secs(5),
             "timed out waiting to connect to {target}"
         );
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        nuclei::time::sleep(Duration::from_millis(50)).await;
     }
 }
 
@@ -76,12 +76,9 @@ async fn fetch_to_completion(
     }
 }
 
-// The test counts the tasks of the runtime it runs on.
-#[allow(clippy::disallowed_methods)]
+// The test counts the tasks alive on the runtime's shards.
 fn live_tasks() -> usize {
-    tokio::runtime::Handle::current()
-        .metrics()
-        .num_alive_tasks()
+    nuclei::stats().shards.iter().map(|shard| shard.tasks).sum()
 }
 
 /// Waits for the task census to hold still for `hold`, and returns it.
@@ -94,7 +91,7 @@ async fn settled_live_tasks(hold: Duration) -> usize {
             std::time::Instant::now() < deadline,
             "task census never settled"
         );
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        nuclei::time::sleep(Duration::from_millis(50)).await;
         let now = live_tasks();
         if now != last {
             last = now;
@@ -112,16 +109,20 @@ struct Pair {
 }
 
 async fn connected_pair(cid: cid::Cid, bytes: Vec<u8>) -> Pair {
-    let (producer, producer_handle, _producer_events, _) =
-        P2PHost::new(MockBitswapStore::new().with_block(cid, bytes))
+    let (producer, producer_handle, _producer_events, _) = P2PHost::new(
+        MockBitswapStore::new().with_block(cid, bytes),
+        edge::testing::edge(),
+    )
+    .await
+    .unwrap();
+    let (consumer, consumer_handle, consumer_events, _) =
+        P2PHost::new(MockBitswapStore::new(), edge::testing::edge())
             .await
             .unwrap();
-    let (consumer, consumer_handle, consumer_events, _) =
-        P2PHost::new(MockBitswapStore::new()).await.unwrap();
     let producer_peer = producer.local_peer_id();
     let consumer_peer = consumer.local_peer_id();
-    tokio::spawn(producer.run());
-    tokio::spawn(consumer.run());
+    nuclei::spawn(producer.run()).detach();
+    nuclei::spawn(consumer.run()).detach();
 
     producer_handle
         .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
@@ -143,7 +144,7 @@ async fn connected_pair(cid: cid::Cid, bytes: Vec<u8>) -> Pair {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_completed_bitswap_fetch_leaves_no_tasks_behind() {
     let (cid, bytes) = make_data_block();
     let mut pair = connected_pair(cid, bytes).await;
@@ -183,7 +184,7 @@ async fn a_completed_bitswap_fetch_leaves_no_tasks_behind() {
     pair.producer.shutdown().await.ok();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_completed_bitswap_query_is_no_longer_cancellable() {
     let (cid, bytes) = make_data_block();
     let mut pair = connected_pair(cid, bytes).await;

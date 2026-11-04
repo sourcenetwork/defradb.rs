@@ -26,6 +26,7 @@ pub(crate) struct Extras {
     pub embedding_url: Option<String>,
     pub embedding_model: Option<String>,
     pub embedding_api_key: Option<String>,
+    pub txn_ownership: db::TxnOwnership,
     #[cfg(feature = "http")]
     pub transaction_cleanup: Option<TransactionCleanupConfig>,
     #[cfg(feature = "http")]
@@ -121,7 +122,10 @@ where
     let runs_transport = !matches!(transport, TransportConfig::None);
     let network = NodeEdge::start(
         given_edge,
-        node_identity_did.is_some() || serves_http || runs_transport,
+        node_identity_did.is_some()
+            || serves_http
+            || runs_transport
+            || !matches!(document_acp_config, crate::DocumentAcpConfig::Local),
     )?;
 
     // The data path's worker pool comes before the store, which places its
@@ -239,7 +243,7 @@ where
                 document_acp.clone(),
                 strict_replicated_doc_access,
                 peer_keyring.as_ref(),
-                network.edge(),
+                network.sibling(),
             )
             .await
             .map(Some),
@@ -307,12 +311,14 @@ where
     #[cfg(not(any(feature = "p2p", feature = "libp2p")))]
     let txn_broadcaster: Option<Arc<dyn db::event::emission::TxnBroadcaster>> = None;
 
-    let registry = Arc::new(match txn_broadcaster {
-        Some(broadcaster) => {
-            db::DbTransactionRegistry::with_broadcaster(database.clone(), broadcaster)
-        }
-        None => db::DbTransactionRegistry::new(database.clone()),
-    });
+    let registry = Arc::new(
+        txn_broadcaster
+            .map(|broadcaster| {
+                db::DbTransactionRegistry::with_broadcaster(database.clone(), broadcaster)
+            })
+            .unwrap_or_else(|| db::DbTransactionRegistry::new(database.clone()))
+            .with_ownership(extras.txn_ownership),
+    );
 
     #[cfg(feature = "http")]
     let txn_cleanup_task = extras.transaction_cleanup.map(|cleanup| {

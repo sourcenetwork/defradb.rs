@@ -100,12 +100,14 @@ mod tests {
     fn a_replay_paced_on_a_pool_worker_waits_on_the_edges_clock() {
         let pool = workers::Pool::start(workers::Config::unplaced(1)).unwrap();
         let network = Network::on(edge::testing::edge());
-        let gate = ReplayPushGate::new(ReplayPushConfig {
-            per_peer_rate_limit_burst: 1,
-            per_peer_rate_limit_rate: 20.0,
-            ..Default::default()
-        })
-        .on(network);
+        let gate = ReplayPushGate::new(
+            ReplayPushConfig {
+                per_peer_rate_limit_burst: 1,
+                per_peer_rate_limit_rate: 20.0,
+                ..Default::default()
+            },
+            network,
+        );
         let sent = pool
             .submit_and_wait(workers::Target::Worker(0), move || async move {
                 let peer = PeerId::new("peer-1".to_string());

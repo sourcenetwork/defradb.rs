@@ -7,8 +7,10 @@ use futures::StreamExt;
 use serde_json::json;
 use tower::ServiceExt;
 
-#[tokio::test]
-async fn replay_outcomes_reach_the_event_stream() {
+#[test]
+fn replay_outcomes_reach_the_event_stream() {
+    edge::testing::edge()
+        .block_on(async {
     let bus = Arc::new(ChannelBus::new());
     let state = AppStateBuilder::new(Arc::new(MockQueryExecutor::new()), edge::testing::edge())
         .with_event_bus(bus.clone())
@@ -33,7 +35,7 @@ async fn replay_outcomes_reach_the_event_stream() {
                 error: error.map(str::to_owned),
             },
         ));
-        let frame = tokio::time::timeout(Duration::from_secs(5), stream.next())
+        let frame = nuclei::time::timeout(Duration::from_secs(5), stream.next())
             .await
             .unwrap()
             .unwrap()
@@ -53,7 +55,7 @@ async fn replay_outcomes_reach_the_event_stream() {
         );
     }
     bus.publish(Message::replicator_completed());
-    let frame = tokio::time::timeout(Duration::from_secs(5), stream.next())
+    let frame = nuclei::time::timeout(Duration::from_secs(5), stream.next())
         .await
         .unwrap()
         .unwrap()
@@ -65,4 +67,6 @@ async fn replay_outcomes_reach_the_event_stream() {
         .unwrap();
     let value: serde_json::Value = serde_json::from_str(data).unwrap();
     assert_eq!(value, json!({"name": "replicator-completed", "data": {}}));
+        })
+        .unwrap();
 }

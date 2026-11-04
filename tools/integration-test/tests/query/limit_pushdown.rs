@@ -38,115 +38,127 @@ fn seed_users(
 /// page. This asserts correctness only: the harness runs a real node over
 /// HTTP, so it cannot observe how many documents storage was asked for. The
 /// read count is asserted in `db`'s `limit_pushdown_tests`.
-#[tokio::test]
+#[nuclei::test]
 async fn limit_query_returns_exact_page_from_large_collection() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    let client = cluster.client(0);
-    client.schema_add(USER_SCHEMA).expect("add schema");
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        let client = cluster.client(0);
+        client.schema_add(USER_SCHEMA).expect("add schema");
 
-    seed_users(&client, 2_000, |i| format!(r#"name: "User{i}""#));
+        seed_users(&client, 2_000, |i| format!(r#"name: "User{i}""#));
 
-    let res = client
-        .query("query { User(limit: 10) { name } }")
-        .expect("limit query");
-    let docs = res["User"].as_array().expect("User array");
-    assert_eq!(
-        docs.len(),
-        10,
-        "limit must still return exactly 10 documents"
-    );
+        let res = client
+            .query("query { User(limit: 10) { name } }")
+            .expect("limit query");
+        let docs = res["User"].as_array().expect("User array");
+        assert_eq!(
+            docs.len(),
+            10,
+            "limit must still return exactly 10 documents"
+        );
+    })
+    .await;
 }
 
 /// The negative case the spec requires: a filtered query returns N MATCHING
 /// documents, never N raw rows.
-#[tokio::test]
+#[nuclei::test]
 async fn filtered_limit_returns_matching_not_raw_rows() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    let client = cluster.client(0);
-    client.schema_add(USER_SCHEMA).expect("add schema");
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        let client = cluster.client(0);
+        client.schema_add(USER_SCHEMA).expect("add schema");
 
-    // Spread ~25 matches evenly across 2000 docs (2000 / 80 = 25).
-    seed_users(&client, 2_000, |i| {
-        let tag = if i % 80 == 0 { "match" } else { "nomatch" };
-        format!(r#"name: "User{i}", tag: "{tag}""#)
-    });
+        // Spread ~25 matches evenly across 2000 docs (2000 / 80 = 25).
+        seed_users(&client, 2_000, |i| {
+            let tag = if i % 80 == 0 { "match" } else { "nomatch" };
+            format!(r#"name: "User{i}", tag: "{tag}""#)
+        });
 
-    let res = client
-        .query(r#"query { User(filter: {tag: {_eq: "match"}}, limit: 10) { name tag } }"#)
-        .expect("filtered limit query");
-    let docs = res["User"].as_array().expect("User array");
+        let res = client
+            .query(r#"query { User(filter: {tag: {_eq: "match"}}, limit: 10) { name tag } }"#)
+            .expect("filtered limit query");
+        let docs = res["User"].as_array().expect("User array");
 
-    assert_eq!(docs.len(), 10, "expected 10 MATCHING docs, not 10 raw rows");
-    assert!(docs.iter().all(|d| d["tag"] == "match"));
+        assert_eq!(docs.len(), 10, "expected 10 MATCHING docs, not 10 raw rows");
+        assert!(docs.iter().all(|d| d["tag"] == "match"));
+    })
+    .await;
 }
 
 /// limit+offset on a NON-INDEXED field. No Rust-native test covers this today.
-#[tokio::test]
+#[nuclei::test]
 async fn limit_offset_on_non_indexed_field_is_correct() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    let client = cluster.client(0);
-    client.schema_add(USER_SCHEMA).expect("add schema");
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        let client = cluster.client(0);
+        client.schema_add(USER_SCHEMA).expect("add schema");
 
-    seed_users(&client, 50, |i| format!(r#"name: "User{i}", seq: {i}"#));
+        seed_users(&client, 50, |i| format!(r#"name: "User{i}", seq: {i}"#));
 
-    let all = client
-        .query("query { User(order: {seq: ASC}) { name } }")
-        .expect("all docs query");
-    let all_docs = all["User"].as_array().expect("User array").clone();
+        let all = client
+            .query("query { User(order: {seq: ASC}) { name } }")
+            .expect("all docs query");
+        let all_docs = all["User"].as_array().expect("User array").clone();
 
-    let page = client
-        .query("query { User(order: {seq: ASC}, limit: 10, offset: 5) { name } }")
-        .expect("paged query");
-    let page_docs = page["User"].as_array().expect("User array").clone();
+        let page = client
+            .query("query { User(order: {seq: ASC}, limit: 10, offset: 5) { name } }")
+            .expect("paged query");
+        let page_docs = page["User"].as_array().expect("User array").clone();
 
-    assert_eq!(page_docs.len(), 10);
-    assert_eq!(
-        page_docs,
-        all_docs[5..15],
-        "offset+limit must be a contiguous slice"
-    );
+        assert_eq!(page_docs.len(), 10);
+        assert_eq!(
+            page_docs,
+            all_docs[5..15],
+            "offset+limit must be a contiguous slice"
+        );
+    })
+    .await;
 }
 
 /// Deleted documents interleaved must not shorten a page.
-#[tokio::test]
+#[nuclei::test]
 async fn deleted_documents_do_not_shorten_a_limited_page() {
-    let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    let client = cluster.client(0);
-    client.schema_add(USER_SCHEMA).expect("add schema");
+    edge::compat(async {
+        let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
+        let client = cluster.client(0);
+        client.schema_add(USER_SCHEMA).expect("add schema");
 
-    let doc_ids = seed_users(&client, 100, |i| format!(r#"name: "User{i}""#));
+        let doc_ids = seed_users(&client, 100, |i| format!(r#"name: "User{i}""#));
 
-    // Delete every third document.
-    let to_delete: Vec<String> = doc_ids
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| (i + 1) % 3 == 0)
-        .map(|(_, id)| format!(r#""{id}""#))
-        .collect();
-    client
-        .query(&format!(
-            "mutation {{ delete_User(docIDs: [{}]) {{ _docID }} }}",
-            to_delete.join(", ")
-        ))
-        .expect("delete every third document");
+        // Delete every third document.
+        let to_delete: Vec<String> = doc_ids
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| (i + 1) % 3 == 0)
+            .map(|(_, id)| format!(r#""{id}""#))
+            .collect();
+        client
+            .query(&format!(
+                "mutation {{ delete_User(docIDs: [{}]) {{ _docID }} }}",
+                to_delete.join(", ")
+            ))
+            .expect("delete every third document");
 
-    let res = client
-        .query("query { User(limit: 10) { name } }")
-        .expect("limit query after deletes");
-    let docs = res["User"].as_array().expect("User array");
-    assert_eq!(docs.len(), 10, "a full page must still be returned");
+        let res = client
+            .query("query { User(limit: 10) { name } }")
+            .expect("limit query after deletes");
+        let docs = res["User"].as_array().expect("User array");
+        assert_eq!(docs.len(), 10, "a full page must still be returned");
 
-    // A page of the right length is not enough: a stream that stopped skipping
-    // deletes would still return 10 rows, just the wrong ones.
-    let deleted_names: Vec<String> = (0..100)
-        .filter(|i| (i + 1) % 3 == 0)
-        .map(|i| format!("User{i}"))
-        .collect();
-    for doc in docs {
-        let name = doc["name"].as_str().expect("name field");
-        assert!(
-            !deleted_names.contains(&name.to_string()),
-            "deleted document {name} was returned inside the page"
-        );
-    }
+        // A page of the right length is not enough: a stream that stopped skipping
+        // deletes would still return 10 rows, just the wrong ones.
+        let deleted_names: Vec<String> = (0..100)
+            .filter(|i| (i + 1) % 3 == 0)
+            .map(|i| format!("User{i}"))
+            .collect();
+        for doc in docs {
+            let name = doc["name"].as_str().expect("name field");
+            assert!(
+                !deleted_names.contains(&name.to_string()),
+                "deleted document {name} was returned inside the page"
+            );
+        }
+    })
+    .await;
 }

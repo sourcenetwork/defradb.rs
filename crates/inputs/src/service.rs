@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use n0_future::FutureExt;
+use futures_lite::FutureExt;
 use rapidhash::fast::{RandomState, RapidHashSet};
 use regolith::sync::{HopscotchMap, Semaphore};
 

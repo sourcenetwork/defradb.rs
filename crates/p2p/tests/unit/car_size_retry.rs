@@ -1,7 +1,7 @@
 use super::*;
 use rapidhash::{HashMapExt, RapidHashMap};
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn unservable_batch_does_not_hide_later_servable_blocks() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -58,7 +58,7 @@ async fn unservable_batch_does_not_hide_later_servable_blocks() {
     assert!(rx.try_recv().is_err(), "incomplete DAG reported ready");
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn size_limited_provider_is_not_retried_but_alternate_can_finish() {
     for alternate in [false, true] {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
@@ -90,7 +90,7 @@ async fn size_limited_provider_is_not_retried_but_alternate_can_finish() {
             context = context.with_alternate_providers(vec![PeerId::new("alt-peer".to_owned())]);
         }
         let (tx, mut rx) = mpsc::channel(4);
-        let start = tokio::time::Instant::now();
+        let start = nuclei::time::Instant::now();
         poll_fetch_dag(
             transport.clone(),
             blockstore.clone(),

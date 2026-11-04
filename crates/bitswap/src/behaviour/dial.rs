@@ -5,7 +5,7 @@ use std::time::Instant;
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
 use libp2p::swarm::{DialError, NotifyHandler, ToSwarm};
 use libp2p::PeerId;
-use tokio::sync::oneshot;
+use nuclei::sync::oneshot;
 use tracing::{debug, trace};
 
 use super::{Bitswap, BitswapEvent, DIAL_BACK_OFF};

@@ -61,6 +61,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     async fn emit_sync_error(&self, cid: &Cid, error: &Error) -> Result<()> {
         if self
             .event_tx
+            .clone()
             .send(SyncEvent::SyncError {
                 cid: *cid,
                 error: error.to_string(),
@@ -179,8 +180,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     }
 
     /// Hold the ack contract for a block that carries a document head: success
-    /// means it is merged, registered as pending, or covered by a newer head
-    /// already durable for the same sender scope. The sender stops retrying on
+    /// means it is merged, registered as pending (in memory or by its durable
+    /// record alone), or covered by a newer head already durable for the same
+    /// sender scope. The sender stops retrying on
     /// success, and only those states leave something on this side to finish
     /// the work, so acking without one loses the update for good, silently,
     /// because nothing failed.
@@ -201,7 +203,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         let AnnouncedBlockKind::Head(head_priority) = announced_block_kind(&msg.block) else {
             return Ok(());
         };
-        if self.is_pending_dag_recovery_registered(cid) {
+        if self.is_pending_dag_owned(cid) {
             return Ok(());
         }
         if self.scope_head_is_covered_by_current(
@@ -361,6 +363,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 // Block parsing failed - emit error event and propagate error
                 if self
                     .event_tx
+                    .clone()
                     .send(SyncEvent::SyncError {
                         cid: *cid,
                         error: e.to_string(),
@@ -417,8 +420,12 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             // that durable registration. Do not let a relay or another
             // collection-authorized peer replace its recovery provider, reset
             // its backoff, or rewrite its authorization metadata merely by
-            // replaying the same signed head bytes.
-            if let Some(existing) = self.pending_dag_snapshot(cid) {
+            // replaying the same signed head bytes. A local continuation owns
+            // nothing for a sender: the push registers the root itself below,
+            // replacing that entry, before it is acknowledged.
+            if let Some(existing) = self.pending_dag_snapshot(cid).filter(|dag| {
+                dag.origin != crate::sync::manager::pending::PendingOrigin::LocalContinuation
+            }) {
                 return self
                     .extend_registered_root(
                         cid,
@@ -479,10 +486,13 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                         attempts: 0,
                         fetch_failures: 0,
                         last_fetch_error: None,
-                        next_retry_at: n0_future::time::Instant::now(),
+                        next_retry_at: crate::rt::time::Instant::now(),
                         dispatches: 0,
+                        incomplete_attempts: 0,
                         merge_continuation: false,
                         storage_blocker: None,
+                        origin: crate::sync::manager::pending::PendingOrigin::Push,
+                        estimates: crate::sync::arbitration::RootEstimates::default(),
                     },
                 );
                 // Report the limit that actually tripped so the nack and its
@@ -534,7 +544,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             // ack destroys the pusher's retry record, so an unpersisted
             // registration must fail closed as an error reply instead
             // (#1099; proofs/tla/PendingDagRestart.tla INV_AckBacked).
-            // Durable records outlive TTL-evicted map entries, so they carry
+            // Durable records outlive the map across a restart, so they carry
             // their own larger cap; at the cap the obligation is refused
             // (backpressure nack) while the pusher still owns retry state.
             // The cap, the retirement of the older durable head of the
@@ -768,6 +778,7 @@ pub(super) mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
+    use crate::rt::Notify;
     use async_trait::async_trait;
     use blockstore::DefraBlockstore;
     use bytes::Bytes;
@@ -775,7 +786,6 @@ pub(super) mod tests {
         Block, CollectionDeltaPayload, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload,
     };
     use storage::RegolithStore;
-    use tokio::sync::Notify;
 
     use crate::sync::pending_store::{
         PendingDagStorage, PendingDagStore, PersistedPendingDag, PersistedQuarantinedDag,
@@ -942,7 +952,7 @@ pub(super) mod tests {
     /// newer one from the same sender scope is already registered. Nothing is
     /// lost, the newer head carries the document forward, so nacking it
     /// would put the sender in a retry loop over work already owned.
-    #[tokio::test]
+    #[nuclei::test]
     async fn a_head_superseded_by_a_newer_scope_head_is_acked() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -976,7 +986,7 @@ pub(super) mod tests {
     /// nothing left to finish it, and a success reply would stop the sender
     /// re-pushing it, the shape of the lost update seen in CI, where a node
     /// answered a push and then did nothing at all for the rest of the test.
-    #[tokio::test]
+    #[nuclei::test]
     async fn a_block_left_neither_merged_nor_pending_is_nacked_not_acked() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1006,7 +1016,7 @@ pub(super) mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn process_pushlog_tracks_nested_missing_links_before_merge() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1044,13 +1054,13 @@ pub(super) mod tests {
             manager.pending_dag_missing(&collection_cid),
             vec![field_cid]
         );
-        let due = manager.claim_due_pending_dag_retries(n0_future::time::Instant::now());
+        let due = manager.claim_due_pending_dag_retries(crate::rt::time::Instant::now());
         assert_eq!(due.len(), 1);
         assert_eq!(due[0].0, collection_cid);
         assert_eq!(due[0].1.missing, [field_cid].into_iter().collect());
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn legacy_dependency_pushlog_is_stored_without_becoming_a_head() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1105,7 +1115,7 @@ pub(super) mod tests {
             .await
             .expect("the later composite head should use the stored descendant");
 
-        assert!(manager.try_claim_pending_dag_dispatch(&head_cid, n0_future::time::Instant::now()));
+        assert!(manager.try_claim_pending_dag_dispatch(&head_cid, crate::rt::time::Instant::now()));
         assert!(manager
             .retry_pending_dag(&head_cid)
             .await
@@ -1117,7 +1127,7 @@ pub(super) mod tests {
         assert_eq!(manager.pending_dag_count(), 1);
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn durable_registration_does_not_emit_after_receiver_clock_claims_fetch() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store.clone(), true));
@@ -1135,14 +1145,14 @@ pub(super) mod tests {
         let message = make_broadcast("doc123", root_cid, root_block, "collection1");
 
         let process_manager = Arc::clone(&manager);
-        let process = n0_future::task::spawn(async move {
+        let process = crate::rt::spawn(async move {
             process_manager
                 .process_pushlog(&message, Some("peer-1"), false, None)
                 .await
         });
 
         pending_store.register_entered.notified().await;
-        let claimed = manager.claim_due_pending_dag_retries(n0_future::time::Instant::now());
+        let claimed = manager.claim_due_pending_dag_retries(crate::rt::time::Instant::now());
         assert_eq!(
             claimed.len(),
             0,
@@ -1151,6 +1161,7 @@ pub(super) mod tests {
         pending_store.register_release.notify_one();
 
         process
+            .join()
             .await
             .expect("PushLog task should not panic")
             .expect("durable registration should still succeed");
@@ -1158,12 +1169,12 @@ pub(super) mod tests {
             events.try_recv().is_err(),
             "the PushLog path must not emit outside the receiver clock"
         );
-        let claimed = manager.claim_due_pending_dag_retries(n0_future::time::Instant::now());
+        let claimed = manager.claim_due_pending_dag_retries(crate::rt::time::Instant::now());
         assert_eq!(claimed.len(), 1);
         assert_eq!(claimed[0].0, root_cid);
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn durable_registration_does_not_depend_on_fetch_event_receiver() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1195,13 +1206,13 @@ pub(super) mod tests {
         assert_eq!(manager.pending_dag_count(), 1);
         assert_eq!(
             manager
-                .claim_due_pending_dag_retries(n0_future::time::Instant::now())
+                .claim_due_pending_dag_retries(crate::rt::time::Instant::now())
                 .len(),
             1
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn conformance_same_cid_concurrent_announcements_are_idempotent() {
         const ANNOUNCEMENT_COUNT: usize = 8;
 
@@ -1230,7 +1241,7 @@ pub(super) mod tests {
 
         let owner_manager = Arc::clone(&manager);
         let owner_message = Arc::clone(&message);
-        let owner = n0_future::task::spawn(async move {
+        let owner = crate::rt::spawn(async move {
             owner_manager
                 .process_pushlog(&owner_message, Some("peer-0"), false, None)
                 .await
@@ -1243,7 +1254,7 @@ pub(super) mod tests {
         for peer in 1..ANNOUNCEMENT_COUNT {
             let manager = Arc::clone(&manager);
             let message = Arc::clone(&message);
-            suppressed.push(n0_future::task::spawn(async move {
+            suppressed.push(crate::rt::spawn(async move {
                 let peer = format!("peer-{peer}");
                 manager
                     .process_pushlog(&message, Some(&peer), false, None)
@@ -1251,9 +1262,9 @@ pub(super) mod tests {
             }));
         }
 
-        n0_future::time::timeout(Duration::from_secs(1), async {
+        crate::rt::time::timeout(Duration::from_secs(1), async {
             for task in suppressed {
-                let result = task.await.expect("suppressed task should not panic");
+                let result = task.join().await.expect("suppressed task should not panic");
                 assert!(
                     matches!(
                         result,
@@ -1275,12 +1286,13 @@ pub(super) mod tests {
 
         pending_store.register_release.notify_one();
         owner
+            .join()
             .await
             .expect("owner task should not panic")
             .expect("owner should complete");
 
         assert!(events.try_recv().is_err());
-        let claimed = manager.claim_due_pending_dag_retries(n0_future::time::Instant::now());
+        let claimed = manager.claim_due_pending_dag_retries(crate::rt::time::Instant::now());
         assert_eq!(claimed.len(), 1);
         assert_eq!(claimed[0].0, root_cid);
         assert_eq!(manager.pending_dag_count(), 1);
@@ -1296,7 +1308,7 @@ pub(super) mod tests {
             .expect("an established pending registration can ack a duplicate");
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn explicit_replay_nacks_in_flight_then_succeeds_after_owner_completes() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1327,7 +1339,7 @@ pub(super) mod tests {
             .try_acquire_nowait(&cid)
             .expect("simulate the ordinary announcement owner");
 
-        let replay_result = n0_future::time::timeout(
+        let replay_result = crate::rt::time::timeout(
             Duration::from_secs(1),
             manager.process_pushlog(&message, Some("peer-1"), true, Some(authorization.clone())),
         )
@@ -1358,7 +1370,7 @@ pub(super) mod tests {
         assert_eq!(pending.source_peer.as_deref(), Some("peer-1"));
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn merged_head_exits_before_block_verification_or_registration() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1384,11 +1396,11 @@ pub(super) mod tests {
         assert_eq!(manager.diagnostics().snapshot().already_merged_fast_path, 1);
         assert!(matches!(
             events.try_recv(),
-            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+            Err(crate::rt::mpsc::error::TryRecvError::Empty)
         ));
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn pending_capacity_sheds_unrelated_blocks_but_accepts_missing_dependency() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));

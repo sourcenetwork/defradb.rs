@@ -1,16 +1,14 @@
 //! A timer on the runtime's clock that reports a stopping runtime instead
 //! of polling a timer driver that is going away.
 
-use std::future::Future;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use n0_future::time::{Instant, Sleep};
-
 use crate::error::EdgeError;
+use crate::platform::{Instant, Sleep};
 use crate::shared::Shared;
 
 /// Stands in for "never" when a limit does not fit the clock.
@@ -29,10 +27,6 @@ impl Timer {
         }
     }
 
-    pub(crate) fn reset(&mut self, from: Instant, limit: Duration) {
-        self.sleep.as_mut().reset(deadline_at(from, limit));
-    }
-
     /// Ready once `limit` passed, as the deadline error it counts, or once
     /// the runtime is stopping, as [`EdgeError::Closed`].
     pub(crate) fn poll_limit(&mut self, cx: &mut Context<'_>, limit: Duration) -> Poll<EdgeError> {
@@ -47,13 +41,14 @@ impl Timer {
     }
 
     /// Ready with `true` once the time passed, `false` once the runtime is
-    /// stopping. A stopping runtime's driver panics when polled; the flag
-    /// is checked first, and the catch covers the moment between the two.
+    /// stopping. A timer of a stopping runtime is not polled: the flag is
+    /// checked first, and the catch covers a timer polled while it goes.
     pub(crate) fn poll(&mut self, cx: &mut Context<'_>) -> Poll<bool> {
         if self.shared.is_stopped() {
             return Poll::Ready(false);
         }
-        match catch_unwind(AssertUnwindSafe(|| self.sleep.as_mut().poll(cx))) {
+        let (rt, sleep) = (&self.shared.rt, self.sleep.as_mut());
+        match catch_unwind(AssertUnwindSafe(|| rt.poll_sleep(sleep, cx))) {
             Ok(Poll::Ready(())) => Poll::Ready(true),
             Ok(Poll::Pending) => Poll::Pending,
             Err(_) => Poll::Ready(false),
