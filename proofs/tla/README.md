@@ -6,6 +6,7 @@ grounded facts for B3 live in [DESIGN.md](DESIGN.md); each later slice has its o
 `*_DESIGN.md`. This file is the operational guide: how to run TLC, what each run proves.
 
 **Model families** (all under `proofs/tla/`, run with `./tools/tlc`):
+- **Local fetch permit** — a locally complete fetch releases its peer permit before waiting to enqueue its merge (`LocalFetchPermit.tla`).
 - **B3 filtered replication** — the eight runs below (`DESIGN.md`).
 - **DAG convergence** under partition/restart/eviction (`Convergence_DESIGN.md`) +
   the Lean merge-algebra half under [`../lean/`](../lean/README.md).

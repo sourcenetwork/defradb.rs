@@ -181,6 +181,7 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
             .await
             .is_ok_and(|missing| missing.is_empty())
         {
+            drop(context.take_peer_permit());
             emit_dag_ready(&event_tx, root_cid, &context, &root_data).await;
             return (FetchTaskEnd::Settled, AttemptSample::Complete);
         }
