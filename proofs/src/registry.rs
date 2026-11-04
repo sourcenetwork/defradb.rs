@@ -538,16 +538,19 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Behavioral],
     },
     Property {
-        // Two behavioral legs: live-forward convergence (replication.rs) and
-        // convergence across a real partition (partition.rs) — node1 is restarted
-        // to sever the link, each side writes independently, and both converge to
-        // hold every write once reconnected.
+        // Head rediscovery is embedder-owned. Only sender retry markers and
+        // receiver durable pending records re-drive. A head nobody holds an
+        // obligation for (a gossip drop, a publish while offline, an
+        // acked-then-dropped head) returns only through an explicit
+        // sync_documents/BranchableSync or a replicator re-set. replication.rs
+        // converges under a configured replicator; partition.rs converges after
+        // an explicit replicator re-set.
         family: "DAG convergence (partition / eviction / restart)",
-        name: "INV_Converged — every node receives every delta under eventual connectivity",
+        name: "INV_Converged — every node receives every delta a retry marker or a durable pending record owes it, under eventual connectivity",
         axis: Tla,
-        anchor: "crates/db (merge) merge handler; crates/blockstore",
-        model_ref: "MC_Conv_Eventual.cfg",
-        tiers: &[Behavioral],
+        anchor: "crates/db (merge) merge handler; crates/blockstore; crates/p2p/src/sync/coordinator/event_handler/mod.rs handle_peer_connected; crates/p2p-adapter/src/retry.rs run_retry_pass",
+        model_ref: "MC_Conv_{Eventual,RestartEviction,NoHeadRediscovery}.cfg",
+        tiers: &[Boundary],
     },
     Property {
         family: "CRDT merge laws",
@@ -1860,18 +1863,20 @@ pub const PROPERTIES: &[Property] = &[
         // records, the fetch pool and the hub's forward. The GREENs are the
         // target contract, not main: main violates this today, and REDs
         // F1, F2, F3, F4 and both halves of F5 are main's behaviour.
-        // Behavioral binding is pending: sibling replay and a hub restart,
-        // driven through defra-harness, will promote this row once they exist.
+        // Assumes no kill between a local commit and its marker registration:
+        // the drain before P2P stops covers a graceful stop only, and no
+        // durable state covers that window.
         family: "P2P delivery liveness",
         name: "INV_ObligationOwned — every head merged on a sender stays owed over each edge until the receiver merged it or holds a durable record whose DAG brings it, judged by ancestry",
         axis: Tla,
-        anchor: "crates/p2p/src/sync/head_scope.rs ScopeDecision::of; crates/p2p/src/sync/manager/process/pushlog.rs process_block_inner; crates/p2p/src/sync/coordinator/broadcast.rs admit_replicator_push; crates/p2p/src/sync/replication/handlers.rs handle_block_received; crates/db/src/merge/txn_broadcaster.rs SyncTxnBroadcaster::submit_update; crates/p2p-adapter/src/iroh_peer/peer.rs IrohPeer::assemble",
+        anchor: "crates/p2p/src/sync/head_scope.rs ScopeDecision::of; crates/p2p/src/sync/manager/process/pushlog.rs process_block_inner; crates/p2p/src/sync/coordinator/broadcast.rs admit_replicator_push; crates/p2p/src/sync/replication/handlers.rs handle_block_received; crates/db/src/merge/txn_broadcaster.rs SyncTxnBroadcaster::submit_update; crates/defra-node/src/lib.rs Node::shutdown; crates/p2p-adapter/src/iroh_peer/peer.rs IrohPeer::assemble",
         model_ref: "MC_P2PDelivery_{Green_Receiver,Green_E2E,Red_F1_PriorityCover,Red_F2_MarkerAfterCommit,Red_F3_DischargeBeforeForward,Red_F4_LoopFirst,Red_F5_FanoutAbort,Red_F5_FailedDropped}.cfg",
         tiers: &[Boundary],
     },
     Property {
-        // Fairness goes to the dispatch clock, the resync sweep, the recorder,
-        // the retry sweep and slotted fetch tasks, never to a waiting root.
+        // Fairness goes to the dispatch clock, the backoff timer, the resync
+        // sweep, the recorder, the retry sweep and slotted fetch tasks, never
+        // to a waiting root.
         // The GREENs are the target contract, not main: main violates this
         // today through F8 and F9, which are main's behaviour. The receiver
         // rules #2548 put on main are fixed in the model, and their REDs live
@@ -1879,9 +1884,7 @@ pub const PROPERTIES: &[Property] = &[
         // receiver GREEN keeps one of its two global permits out of the pull
         // fetch's reach, which the code's limiter does not;
         // Finding_AdvisoryPermits is that gap. Eventual connectivity and the
-        // bounded instance stay Boundary for good; delivery after a hub
-        // restart under catch-up load, once the harness can pause and throttle
-        // nodes, is the pending Behavioral leg.
+        // bounded instance are assumed.
         family: "P2P delivery liveness",
         name: "LIVE_HeadDelivered — a deliverable head reaches every node its replicator edges lead to, through any hub, under task-level fairness only",
         axis: Tla,
@@ -1903,7 +1906,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         // The witnesses are integration tests outside this conformance
-        // binary: p2p_admission_restart and issue1154_repro.
+        // binary: p2p_admission_restart and issue1154_repro. Assumes a pending
+        // store is installed: without one the registration, and so the ack, is
+        // backed in memory only. Every production embedding installs one.
         family: "P2P delivery liveness",
         name: "INV_AckBacked — a success ack stays backed across a hub restart by a merge, a resident registration or a durable record",
         axis: Tla,

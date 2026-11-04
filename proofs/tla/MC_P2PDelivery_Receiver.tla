@@ -10,9 +10,9 @@
 \* two backlogs: {u, x} fits the map (two places), {u, t, x} does not, so the
 \* sweep must rotate. Advisory pull fetches read from c, catch-up traffic can
 \* fill h's merge channel, and up to two local merge continuations can take
-\* places in the map. Nothing crashes and no connection drops: the restart
-\* already happened, and this shape asks only how the pool, its permits and
-\* the sweep treat x.
+\* places in the map. Nothing crashes, and one connection may drop and come
+\* back: the restart already happened, and this shape asks only how the
+\* pool, its permits, the backoff timer and the sweep treat x.
 EXTENDS P2PDelivery
 
 \* The hub, its three providers.
