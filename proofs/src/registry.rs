@@ -657,15 +657,17 @@ pub const PROPERTIES: &[Property] = &[
         // The durable store can hold more acknowledged roots than the
         // in-memory map. A root that had its dispatches gives its entry up
         // while a durable root waits (its record stays), and the resync sweep
-        // resumes after the root it admitted last, so never-serving roots
-        // restored first cannot hold the map for good. A local pull-sync
+        // resumes after the place it admitted at last and gives a peer's
+        // places to its roots in turn, so never-serving roots restored first
+        // cannot hold the map, or a peer's quota of it, for good, and a peer
+        // held at its quota does not hold the others back. A local pull-sync
         // continuation ends at its first turn that does not yield; it is
         // never an acknowledged obligation and is promised no merge.
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "LIVE_DurableRootMerged / LIVE_ContinuationEnds / INV_ContinuationsNeverAcked / INV_MemoryBounded",
         axis: Tla,
-        anchor: "crates/p2p/src/sync/manager/process/pending_dag.rs PendingDagLease::finish_attempt, records_after_resync_cursor, resync_persisted_pending_dags_inner, continue_merge, consume_pending_merge_continuation, MergeTurn; crates/p2p/src/sync/manager/pending.rs PendingOrigin, PENDING_ROTATE_AFTER_DISPATCHES; crates/p2p/src/sync/replication/handlers.rs handle_block_received, process_merge_batch",
-        model_ref: "MC_SyncOwnership_{Green_Memory,Red_RetainedOverflow,Red_KeyOrderResync,Red_ImmortalContinuation}.cfg",
+        anchor: "crates/p2p/src/sync/manager/process/pending_dag.rs PendingDagLease::finish_attempt, records_after_resync_cursor, resync_persisted_pending_dags_inner, try_insert_pending_dag, max_pending_dags_per_peer, continue_merge, consume_pending_merge_continuation, MergeTurn; crates/p2p/src/sync/manager/pending.rs PendingOrigin, PENDING_ROTATE_AFTER_DISPATCHES; crates/p2p/src/sync/replication/handlers.rs handle_block_received, process_merge_batch",
+        model_ref: "MC_SyncOwnership_{Green_Memory,Green_Memory_Quota,Red_RetainedOverflow,Red_KeyOrderResync,Red_QuotaPassOver,Red_ImmortalContinuation}.cfg",
         tiers: &[Boundary],
     },
     Property {
