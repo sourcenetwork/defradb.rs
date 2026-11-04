@@ -1,6 +1,7 @@
 //! Generated from the conformance scenarios of tests/integration/net/simple/peer/subscribe/document/with_add_remove_test.go at defradb 137dc624052b.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
+use integration_test::actions::shared::{EventType, Topic};
 use integration_test::actions::{
     AddCollection, AddDoc, AddDocumentSubscription, ConnectPeers, DeleteDocumentSubscription,
     NewNode, Request, UpdateDoc, WaitForPeersEvents, WaitForSync,
@@ -142,10 +143,72 @@ fn p2_p_document_add_and_remove_multiple() {
                 ..Default::default()
             }
             .into(),
+            WaitForPeersEvents {
+                topics: Some(vec![Topic {
+                    topic: Text::reference("doc0_0"),
+                    peers: vec!["db1".into()],
+                }]),
+                event_type: Some(EventType::Joined),
+                millis: Some(5000),
+                common: Common {
+                    node: Some("db0".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            UpdateDoc {
+                collection: "Users".into(),
+                doc_id: Text::reference("doc0_0"),
+                doc_map: json!({ "name": "John Ready" }),
+                expected_data: json!({}),
+                common: Common {
+                    node: Some("db0".into()),
+                    retry: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                common: Common {
+                    node: Some("db0".into()),
+                    capture: captures([("head_subscribed", "/cid")]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            WaitForSync {
+                doc_id: Some(Text::reference("doc0_0")),
+                cid: Some(Text::reference("head_subscribed")),
+                expected_data: json!({}),
+                common: Common {
+                    node: Some("db1".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
             DeleteDocumentSubscription {
                 doc_ids: vec![Text::reference("doc0_0")],
                 common: Common {
                     node: Some("db1".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into(),
+            WaitForPeersEvents {
+                topics: Some(vec![Topic {
+                    topic: Text::reference("doc0_0"),
+                    peers: vec!["db1".into()],
+                }]),
+                event_type: Some(EventType::Left),
+                millis: Some(5000),
+                common: Common {
+                    node: Some("db0".into()),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -236,7 +299,9 @@ fn p2_p_document_add_and_remove_multiple() {
                                     }
                 "#
                 .into(),
-                expected_data: json!({ "Users": [{ "name": "Gillian" }] }),
+                expected_data: json!({
+                    "Users": m::unordered(json!([{ "name": "John Ready" }, { "name": "Gillian" }])),
+                }),
                 common: Common {
                     node: Some("db1".into()),
                     ..Default::default()
