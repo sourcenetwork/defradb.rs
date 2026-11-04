@@ -20,7 +20,7 @@ EXTENDS TLC, Integers, Sequences
 CONSTANTS AdoptRpcDial, PumpBeforeAnnounce, CleanupRefusedPump, HitSkipsAdoption, NarrowRefusal, RestoreSibling
 \* The scenario, fixed at the start: how the connection arose, whether the
 \* allowlist admits the peer, whether tasks can still be spawned, and whether
-\* a sibling exists.
+\* a sibling exists. A later connection may also become the sibling.
 VARIABLES origin, allowed, registryOpen, sibling,
           \* How many of the adopt's steps ran, and whether it was dropped.
           step, cancelled,
@@ -192,11 +192,26 @@ Hit == /\ Finished
        \* Everything else is untouched.
        /\ UNCHANGED <<origin, allowed, registryOpen, sibling, step, cancelled, open, refused, cached, displaced, siblingOpen, pumped, exited>>
 
+\* Another connection takes the shared slot while the RPC connection stays open.
+Replace == /\ Finished /\ origin = "rpc" /\ ~refused /\ open
+           /\ ~sibling /\ cached = "new"
+           /\ sibling' = TRUE /\ siblingOpen' = TRUE /\ cached' = "sibling"
+           /\ UNCHANGED <<origin, allowed, registryOpen, step, cancelled, open, count, refused, displaced, pumped, exited, hit>>
+
+\* Revocation closes every retained handle, including a displaced sibling.
+Revoke == /\ Finished /\ ~refused /\ open
+          /\ open' = FALSE
+          /\ siblingOpen' = FALSE
+          /\ cached' = "none"
+          /\ UNCHANGED <<origin, allowed, registryOpen, sibling, step, cancelled, count, refused, displaced, pumped, exited, hit>>
+
 \* Any of these may happen next, in any order the guards allow.
-Next == Publish \/ Check \/ Spawn \/ Announce \/ Cancel \/ Close \/ PumpExit \/ Hit
+Next == Publish \/ Check \/ Spawn \/ Announce \/ Cancel \/ Close \/ PumpExit \/ Hit \/ Replace \/ Revoke
 \* The whole behavior: start, then take steps.
 Spec == Init /\ [][Next]_vars
 
+\* Every open new connection remains counted even after a sibling takes the shared slot.
+OpenIsCounted == open => count >= 1
 \* Once the adopt stops changing the slot, an open shared path has a pump serving it.
 Served == (cached = "new" /\ open /\ Idle) => pumped
 \* A closed connection with no pump left to run holds no count and no cache entry.

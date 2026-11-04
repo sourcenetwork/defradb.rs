@@ -489,6 +489,63 @@ fn repeated_cache_hits_reuse_one_adopted_connection() {
 }
 
 #[test]
+fn displaced_rpc_dialed_connection_is_closed_by_revoke() {
+    edge::testing::edge()
+        .block_on(edge::compat(async {
+            let (local, _events) = adopting_resources(
+                tests::localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await,
+                AllowlistState::AcceptAll,
+            );
+            let peer = tests::localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+            let id = PeerId::new(peer.id().to_string());
+            let direct = peer.addr().ip_addrs().next().copied();
+            let (dialed, _dialed_remote) = futures::join!(
+                connect_with_cache(
+                    &local.endpoint,
+                    &id,
+                    direct,
+                    &local.connection_cache,
+                    &local.admission
+                ),
+                async { peer.accept().await.unwrap().await.unwrap() },
+            );
+            let dialed = dialed.unwrap();
+            let (_incoming_remote, incoming) = connect(&peer, &local.endpoint).await;
+            adopt(&local, &incoming, ConnectionDirection::Inbound)
+                .await
+                .unwrap();
+            assert_eq!(open_connections(&local, &peer), 2);
+            assert_eq!(
+                cached_connection(&local.connection_cache, &id)
+                    .unwrap()
+                    .unwrap()
+                    .stable_id(),
+                incoming.stable_id()
+            );
+            assert!(dialed.close_reason().is_none());
+
+            assert!(local.admission.revoke(peer.id()));
+            close_peer_connections(&local.peer_map, &local.connection_cache, &peer.id());
+            assert!(
+                dialed.close_reason().is_some(),
+                "revocation must close the displaced RPC connection"
+            );
+            assert!(
+                incoming.close_reason().is_some(),
+                "revocation must close the cached connection"
+            );
+            wait_until(
+                || open_connections(&local, &peer) == 0,
+                "both connections to drain",
+            )
+            .await;
+            shutdown(&local).await;
+            peer.close().await;
+        }))
+        .unwrap();
+}
+
+#[test]
 fn closed_registry_refuses_adoption_and_balances_the_peer_map() {
     edge::testing::edge()
         .block_on(edge::compat(async {

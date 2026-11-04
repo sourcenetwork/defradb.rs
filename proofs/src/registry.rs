@@ -284,6 +284,14 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Peer connection observation",
+        name: "Open RPC connections stay counted after cache displacement and close on revoke",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/endpoint_rpc.rs close_peer_connections; crates/p2p/tests/iroh/shared_connection.rs displaced_rpc_dialed_connection_is_closed_by_revoke",
+        model_ref: "MC_ConnectionAdoption_Green.cfg; MC_ConnectionAdoption_Red_OpenUncounted.cfg",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "Peer connection observation",
         name: "SharedRpc replacement identity, legacy reuse, modern preference, revoked refusal, stable-id eviction and refused-publish restore",
         axis: Lean,
         anchor: "crates/p2p/src/iroh/endpoint_rpc.rs remember_connection, restore_displaced_connection, connect_with_cache and evict_connection; endpoint_streams.rs adopt_new_connection",

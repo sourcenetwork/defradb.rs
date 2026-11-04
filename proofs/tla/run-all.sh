@@ -128,6 +128,7 @@ RUNS=(
   "MC_SharedRpcConnection_Red_WrongMux.cfg SharedRpcConnection.tla RED"
   "MC_SharedRpcConnection_Red_RetainedClosed.cfg SharedRpcConnection.tla RED"
   "MC_ConnectionAdoption_Green.cfg ConnectionAdoption.tla GREEN"
+  "MC_ConnectionAdoption_Red_OpenUncounted.cfg ConnectionAdoption.tla RED"
   "MC_ConnectionAdoption_Red_NoRpcAdoption.cfg ConnectionAdoption.tla RED"
   "MC_ConnectionAdoption_Red_PumpLate.cfg ConnectionAdoption.tla RED"
   "MC_ConnectionAdoption_Red_NoCleanup.cfg ConnectionAdoption.tla RED"
