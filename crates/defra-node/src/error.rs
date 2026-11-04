@@ -13,6 +13,15 @@ pub enum Error {
     /// The database rejected the operation.
     #[error(transparent)]
     Db(#[from] db::Error),
+    /// Database close failed during node shutdown.
+    #[error("node shutdown failed: {0}")]
+    Shutdown(#[source] std::sync::Arc<db::Error>),
+    /// An independent shutdown owner could not start.
+    #[error("could not start node shutdown owner: {0}")]
+    ShutdownOwner(#[source] edge::EdgeError),
+    /// Shutdown stopped before all resources were closed.
+    #[error("node shutdown owner stopped before teardown completed")]
+    ShutdownInterrupted,
     /// A DID or identity key was rejected.
     #[error(transparent)]
     Identity(#[from] identity::Error),

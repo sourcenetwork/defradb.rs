@@ -111,6 +111,11 @@ impl NodeEdge {
         .await;
     }
 
+    /// Start stopping an owned runtime without awaiting it.
+    pub(crate) fn release_owned(&self) {
+        drop(self.owned.pop());
+    }
+
     /// Shuts down the runtime the node started, if it started one.
     pub(crate) async fn stop_owned(&self) {
         let Some(runtime) = self.owned.pop() else {

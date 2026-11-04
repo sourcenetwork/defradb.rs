@@ -1,9 +1,6 @@
 //! The one node assembly, which [`crate::NodeBuilder::build`] ends in.
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-
-use regolith::sync::Notify;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::background_tasks::BackgroundTasks;
@@ -504,6 +501,21 @@ where
     #[cfg(all(feature = "managed-p2p", not(any(feature = "p2p", feature = "libp2p"))))]
     let p2p: Option<Arc<crate::ManagedP2PSystem>> = None;
 
+    let network = network.map(Arc::new);
+    let teardown = Arc::new(crate::shutdown::Teardown::new(
+        Arc::clone(&database),
+        Arc::clone(&registry),
+        network.clone(),
+        #[cfg(feature = "http")]
+        txn_cleanup_task,
+        #[cfg(not(target_arch = "wasm32"))]
+        Arc::clone(&background_tasks),
+        #[cfg(feature = "managed-p2p")]
+        p2p.clone(),
+        #[cfg(feature = "otel")]
+        extras.telemetry,
+    ));
+
     Ok(Node {
         database,
         txn_registry: registry,
@@ -522,21 +534,15 @@ where
         node_identity_did,
         node_query_identity,
         network,
+        teardown,
         pool,
         remote_acp,
         #[cfg(not(target_arch = "wasm32"))]
         transaction_stats,
-        #[cfg(feature = "http")]
-        txn_cleanup_task: crate::single_slot(txn_cleanup_task),
         #[cfg(not(target_arch = "wasm32"))]
         background_tasks,
         #[cfg(feature = "managed-p2p")]
         p2p,
-        shutdown_started: AtomicBool::new(false),
-        shutdown_finished: AtomicBool::new(false),
-        shutdown_notify: Notify::new(),
-        #[cfg(feature = "otel")]
-        telemetry: crate::single_slot(extras.telemetry),
     })
 }
 

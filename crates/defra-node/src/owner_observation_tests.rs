@@ -71,7 +71,7 @@ fn node_transaction_visibility_uses_actor_dac_and_node_nac() {
         let missing = node.observe_document_visibility_in_txn(&handle, "Users", &["missing".into()], Did::new(B).unwrap()).await.unwrap();
         assert!(!missing[0].visible);
         node.runner().discard_txn_as(&node_context, &handle).await.unwrap();
-        node.shutdown().await;
+        node.shutdown().await.unwrap();
     }).unwrap();
 }
 
