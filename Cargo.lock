@@ -35,7 +35,7 @@ dependencies = [
 [[package]]
 name = "acp-light-client"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=81fceca2ef6eaacf1353a09536004fa1b1ebe27c#81fceca2ef6eaacf1353a09536004fa1b1ebe27c"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=71a49b06a3bd992cb84359473de4b3f038df1196#71a49b06a3bd992cb84359473de4b3f038df1196"
 dependencies = [
  "alloy-primitives",
  "commonware-codec",
@@ -3972,7 +3972,7 @@ dependencies = [
 [[package]]
 name = "defra-harness"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=81fceca2ef6eaacf1353a09536004fa1b1ebe27c#81fceca2ef6eaacf1353a09536004fa1b1ebe27c"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=71a49b06a3bd992cb84359473de4b3f038df1196#71a49b06a3bd992cb84359473de4b3f038df1196"
 dependencies = [
  "eyre",
  "futures",
@@ -3986,7 +3986,7 @@ dependencies = [
  "test-infra",
  "tokio",
  "tracing",
- "vera-harness 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=81fceca2ef6eaacf1353a09536004fa1b1ebe27c)",
+ "vera-harness 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=71a49b06a3bd992cb84359473de4b3f038df1196)",
 ]
 
 [[package]]
@@ -12628,7 +12628,7 @@ dependencies = [
 [[package]]
 name = "test-infra"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=81fceca2ef6eaacf1353a09536004fa1b1ebe27c#81fceca2ef6eaacf1353a09536004fa1b1ebe27c"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=71a49b06a3bd992cb84359473de4b3f038df1196#71a49b06a3bd992cb84359473de4b3f038df1196"
 dependencies = [
  "eyre",
  "futures",
@@ -13825,7 +13825,7 @@ dependencies = [
 [[package]]
 name = "vera-harness"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=81fceca2ef6eaacf1353a09536004fa1b1ebe27c#81fceca2ef6eaacf1353a09536004fa1b1ebe27c"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=71a49b06a3bd992cb84359473de4b3f038df1196#71a49b06a3bd992cb84359473de4b3f038df1196"
 dependencies = [
  "cosmrs",
  "eyre",
