@@ -172,7 +172,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
-        name: "Deferred replay preserves its install identity and cannot recreate or alter a replaced peer",
+        name: "Deferred replay preserves its install identity and cannot recreate or alter a replaced peer row",
         axis: Tla,
         anchor: "crates/db/src/merge/push_docs_replay.rs persist_replay_failures; crates/p2p-adapter/src/replicator_install_store.rs finish",
         model_ref: "MC_ReplicatorIncarnation_{Green,Red_Replay*}.cfg",
