@@ -118,7 +118,9 @@ pub use zeroize::Zeroizing;
 
 use network::NodeEdge;
 #[cfg(not(target_arch = "wasm32"))]
-use signed_query::{execute_with_signing_context, unavailable_node_signer_response};
+use signed_query::{
+    execute_signed, execute_with_signing_context, unavailable_node_signer_response,
+};
 
 /// Type-erased schema operations so we can store DB<S> without leaking the Store generic.
 #[async_trait::async_trait]
@@ -747,10 +749,44 @@ impl Node {
     }
 
     /// [`Self::execute`] as `context` serves, rather than as the node.
+    ///
+    /// On a signing node, a `context` without a signing config signs with its
+    /// identity when that identity is registered locally, and with the node
+    /// identity otherwise, as Go's `contextForSigning` does.
     pub async fn execute_as(&self, context: &RequestContext, query_str: &str) -> QueryResponse {
-        self.runner
-            .execute(QueryRequest::new(query_str).with_context(context.clone()))
-            .await
+        let request = QueryRequest::new(query_str).with_context(context.clone());
+        let node_identity_did = match self.node_identity_did.as_deref() {
+            Some(did) if context.signing().is_none() => did,
+            _ => return self.runner.execute(request).await,
+        };
+
+        #[cfg(target_arch = "wasm32")]
+        return QueryResponse::error(format!(
+            "configured node signing identity {node_identity_did} cannot execute queries on wasm32"
+        ));
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let Some(signing_config) = defra_core::signing::resolve_signing_config_with_flag(
+            context.identity(),
+            Some(node_identity_did),
+            true,
+        ) else {
+            return unavailable_node_signer_response(node_identity_did);
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let Some(network) = self.network.as_ref() else {
+            return unavailable_node_signer_response(node_identity_did);
+        };
+
+        #[cfg(not(target_arch = "wasm32"))]
+        execute_signed(
+            network.edge(),
+            self.runner.clone(),
+            request,
+            None,
+            signing_config,
+        )
+        .await
     }
 
     /// Add an equality encrypted (searchable-encryption) index on `field_name`

@@ -169,6 +169,16 @@ impl RequestContext {
         self
     }
 
+    /// This context signing with `signing`, collecting the CIDs of the blocks
+    /// it commits into the batch session keyed by the signer's public key.
+    #[must_use]
+    pub fn with_signing_session(self, signing: Option<SigningConfig>) -> Self {
+        let session = signing
+            .as_ref()
+            .map(|signing| signing.public_key_hex.clone());
+        self.with_signing(signing).with_batch_session(session)
+    }
+
     /// The batch signing session the CIDs of the blocks this request commits
     /// are collected into (see [`crate::batch_signing`]), if it runs in one.
     pub fn batch_session(&self) -> Option<&str> {
@@ -289,6 +299,24 @@ mod tests {
         let shown = format!("{context:?}");
         assert!(shown.contains("Ed25519"));
         assert!(!shown.contains("171"), "{shown}");
+    }
+
+    #[test]
+    fn with_signing_session_keys_the_batch_session_by_the_signer() {
+        let signed = RequestContext::default().with_signing_session(Some(SigningConfig {
+            key_type: crate::signing::SigningKeyType::Ed25519,
+            private_key_bytes: vec![0xAB; 32],
+            public_key_bytes: Vec::new(),
+            public_key_hex: "public".to_string(),
+            remote_signer: None,
+            signing_authorization: None,
+        }));
+        assert!(signed.signing().is_some());
+        assert_eq!(signed.batch_session(), Some("public"));
+
+        let unsigned = signed.with_signing_session(None);
+        assert!(unsigned.signing().is_none());
+        assert!(unsigned.batch_session().is_none());
     }
 
     #[test]
