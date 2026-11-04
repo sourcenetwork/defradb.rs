@@ -131,6 +131,7 @@ pub struct SyncDiagnostics {
     car_served_cids: AtomicU64,
     car_filtered_cids: AtomicU64,
     provider_rotations: AtomicU64,
+    provider_lookup_timed_out_total: AtomicU64,
     provider_demotions: AtomicU64,
     provider_cooldown_skips: AtomicU64,
     missing_link_retries: AtomicU64,
@@ -165,6 +166,7 @@ pub struct SyncDiagnosticsSnapshot {
     pub car_served_cids: u64,
     pub car_filtered_cids: u64,
     pub provider_rotations: u64,
+    pub provider_lookup_timed_out_total: u64,
     pub provider_demotions: u64,
     pub provider_cooldown_skips: u64,
     pub missing_link_retries: u64,
@@ -207,6 +209,9 @@ impl SyncDiagnostics {
             car_served_cids: self.car_served_cids.load(Ordering::Relaxed),
             car_filtered_cids: self.car_filtered_cids.load(Ordering::Relaxed),
             provider_rotations: self.provider_rotations.load(Ordering::Relaxed),
+            provider_lookup_timed_out_total: self
+                .provider_lookup_timed_out_total
+                .load(Ordering::Relaxed),
             provider_demotions: self.provider_demotions.load(Ordering::Relaxed),
             provider_cooldown_skips: self.provider_cooldown_skips.load(Ordering::Relaxed),
             missing_link_retries: self.missing_link_retries.load(Ordering::Relaxed),
@@ -319,6 +324,11 @@ impl SyncDiagnostics {
 
     pub fn record_pending_dag_capacity_shed(&self) {
         self.pending_dag_capacity_shed
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_provider_lookup_timed_out(&self) {
+        self.provider_lookup_timed_out_total
             .fetch_add(1, Ordering::Relaxed);
     }
 

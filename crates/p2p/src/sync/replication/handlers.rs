@@ -2,6 +2,7 @@
 
 use blockstore::Blockstore;
 use cid::Cid;
+use std::time::Duration;
 
 use super::config::ReplicationConfig;
 use super::result::ReplicationResult;
@@ -221,25 +222,37 @@ where
             .into_iter()
             .map(crate::transport::PeerId::new)
             .collect();
-        crate::sync::coordinator::dag_fetcher::add_collection_providers(
-            &transport,
-            &collection_id,
-            &source_peer,
-            &mut alternate_providers,
-        )
-        .await;
-        let context = DagFetchContext::new(doc_id, collection_id, creator, source_peer)
-            .with_alternate_providers(alternate_providers)
-            .with_explicit_replicator(is_explicit_replicator)
-            .with_explicit_replay_authorization(explicit_replay_authorization)
-            .with_pending_lease(coordinator.manager().pending_dag_lease(root_cid))
-            .with_peer_permit(peer_permit)
-            .with_block_sync_completions(coordinator.manager().block_sync_completion_tracker())
-            .with_rooted_car_completions(coordinator.manager().rooted_car_completion_tracker())
-            .with_rooted_provider_discovery();
+        let pending_lease = coordinator.manager().pending_dag_lease(root_cid);
+        let block_sync_completions = coordinator.manager().block_sync_completion_tracker();
+        let rooted_car_completions = coordinator.manager().rooted_car_completion_tracker();
 
-        let attempt = context.clone();
         coordinator.spawn_pending_dag_fetch_task(root_cid, "pushlog_fetch_dag", async move {
+            // Discovery is advisory: never hold the merge loop or a fetch slot indefinitely.
+            if crate::rt::time::timeout(
+                Duration::from_secs(1),
+                crate::sync::coordinator::dag_fetcher::add_collection_providers(
+                    &transport,
+                    &collection_id,
+                    &source_peer,
+                    &mut alternate_providers,
+                ),
+            )
+            .await
+            .is_err()
+            {
+                diagnostics.record_provider_lookup_timed_out();
+                tracing::debug!("Collection provider lookup timed out; using known providers");
+            }
+            let context = DagFetchContext::new(doc_id, collection_id, creator, source_peer)
+                .with_alternate_providers(alternate_providers)
+                .with_explicit_replicator(is_explicit_replicator)
+                .with_explicit_replay_authorization(explicit_replay_authorization)
+                .with_pending_lease(pending_lease)
+                .with_peer_permit(peer_permit)
+                .with_block_sync_completions(block_sync_completions)
+                .with_rooted_car_completions(rooted_car_completions)
+                .with_rooted_provider_discovery();
+            let attempt = context.clone();
             let (end, sample) = crate::sync::coordinator::dag_fetcher::poll_fetch_dag(
                 transport,
                 blockstore,
