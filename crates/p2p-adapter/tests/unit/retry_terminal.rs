@@ -7,8 +7,10 @@ use p2p::transport::PeerId;
 use query::DocMutator;
 use std::sync::{atomic::Ordering, Arc};
 
-#[tokio::test]
-async fn purged_doc_marker_is_cleared_by_sweep() {
+/// The markers left for a replicator after one due sweep, once the marked
+/// document has left this node. The pin has no purge, so a document leaves
+/// it through truncate.
+async fn markers_after_sweep() -> Vec<String> {
     let db = Arc::new(db::DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap());
     db.create_collection(schema::CollectionVersion::new(
         "Users",
@@ -67,23 +69,26 @@ async fn purged_doc_marker_is_cleared_by_sweep() {
         .observe_push_head(peer.as_str(), &doc_id, "collection-users")
         .await
         .unwrap();
-    db.purge_by_doc_ids("Users", std::slice::from_ref(&created.doc_id), None)
-        .await
-        .unwrap();
+    db.truncate_collection("Users", None).await.unwrap();
 
     let pusher: Arc<dyn TransportDocPusher> = Arc::new(pusher);
     crate::retry::run_retry_pass(&peerstore, &transport, &pusher, None, true).await;
 
-    let left: Vec<String> = peerstore
+    assert_eq!(transport.sends.load(Ordering::SeqCst), 0);
+    peerstore
         .get_retry_documents(peer.as_str())
         .await
         .unwrap()
         .into_iter()
         .map(|marker| marker.doc_id)
-        .collect();
+        .collect()
+}
+
+#[tokio::test]
+async fn truncated_doc_marker_is_cleared_by_sweep() {
+    let left = markers_after_sweep().await;
     assert!(
         left.is_empty(),
-        "the marker of a purged document survived a due sweep: {left:?}"
+        "the marker of a truncated document survived a due sweep: {left:?}"
     );
-    assert_eq!(transport.sends.load(Ordering::SeqCst), 0);
 }

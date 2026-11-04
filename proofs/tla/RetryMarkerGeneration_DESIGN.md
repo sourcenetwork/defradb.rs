@@ -17,7 +17,7 @@ replicator peer. The model checks three things about those markers:
 | `Observe`, `Ack` | `complete_retry_scope` compare-deletes only the generation the worker saw |
 | `Forget`, `Readd` | `delete_replicator`, `create_replicator`: the incarnation changes |
 | `BeginClear`, `FinishClear` | `clear_retry_peer_for_incarnation` reads the replicator row and incarnation in the transaction that clears retry state |
-| `Vanish` | `purge_by_doc_ids`, `truncate_collection`: the document's DocID mapping is deleted |
+| `Vanish` | `truncate_collection` (the pin has no purge): the document's DocID mapping is deleted |
 | `Tick` | `crates/p2p-adapter/src/retry.rs` `run_retry_pass`: a one-marker probe (`Peerstore::get_retry_page(peer, 1)`) answers "any markers?" and "due?"; only a due peer loads `get_retry_page(peer, MAX_MARKERS_PER_PEER_PASS + 1)` |
 | `NewPage`, `Rotation` | `Peerstore::load_scope_markers`: the scopes after `RetryInfo::dispatch_after`, then wrapping round, in key order |
 | `Step` | `retry_doc` in `crates/db/src/merge/push_docs.rs`; a document with no DocID mapping goes to `complete_document_retry_if_absent` before its collection is resolved |
