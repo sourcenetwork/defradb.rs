@@ -163,7 +163,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         }
 
         let short_id = collection.resolved_root_id();
-        match IndexManager::from_collection(short_id, collection.schema()) {
+        let index_manager =
+            IndexManager::from_collection(short_id, collection.schema(), collection.crdts())
+                .map(|manager| manager.with_drains(Some(&self.db.deferred_drains)));
+        match index_manager {
             Ok(index_manager) if !doc_is_tombstoned => {
                 // Merge-path index maintenance resolves live unique conflicts
                 // deterministically (smallest public DocID wins) instead of
@@ -294,7 +297,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     .map_err(MergeError::Database)?;
                 let short_id = collection.resolved_root_id();
                 if let Ok(index_manager) =
-                    IndexManager::from_collection(short_id, collection.schema())
+                    IndexManager::from_collection(short_id, collection.schema(), collection.crdts())
+                        .map(|manager| manager.with_drains(Some(&self.db.deferred_drains)))
                 {
                     if let Err(e) = index_manager
                         .on_document_delete(

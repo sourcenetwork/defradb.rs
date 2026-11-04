@@ -37,6 +37,7 @@ mod fulltext;
 mod in_iterator;
 mod iterator;
 mod matcher;
+mod overlay;
 mod range_iterator;
 mod simple;
 mod traits;
@@ -53,6 +54,7 @@ pub use matcher::{
     EqMatcher, GtMatcher, InMatcher, IndexMatcher, LikeMatcher, LtMatcher, NeMatcher, NinMatcher,
     NlikeMatcher,
 };
+pub use overlay::{IndexOverlay, OverlayReader};
 pub use range_iterator::RangeIterator;
 pub use simple::SimpleIndex;
 pub use traits::CollectionIndex;

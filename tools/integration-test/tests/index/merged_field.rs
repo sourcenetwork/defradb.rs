@@ -208,3 +208,58 @@ fn a_json_index_follows_merged_edits() {
     }
     .execute();
 }
+
+#[test]
+#[mantra_macros::req_test("defra.index.counter")]
+fn a_counter_index_follows_local_increments() {
+    let actions: Vec<Actions> = vec![
+        AddCollection {
+            sdl: "type Note { count: Int @crdt(type: pcounter) @index }".into(),
+            ..Default::default()
+        }
+        .into(),
+        AddDoc {
+            collection: "Note".into(),
+            doc_map: Some(json!({ "count": 1 })),
+            common: Common {
+                capture: captures([("doc", "/docID")]),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+        .into(),
+        update("db", json!({ "count": 2 })),
+        update("db", json!({ "count": 3 })),
+        fetches("db", "{count: {_eq: 6}}", 1),
+        fetches("db", "{count: {_gt: 4}}", 1),
+        fetches("db", "{count: {_eq: 1}}", 0),
+        fetches("db", "{count: {_eq: 3}}", 0),
+    ];
+    TestCase::from_actions(actions).execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.index.counter")]
+fn a_counter_index_follows_merged_increments() {
+    let mut actions = apart(
+        "type Note { count: Int @crdt(type: pcounter) @index }",
+        json!({ "count": 1 }),
+    );
+    actions.push(update("db0", json!({ "count": 2 })));
+    actions.push(update("db1", json!({ "count": 3 })));
+    actions.extend(rejoin());
+    for node in NODES {
+        actions.push(merged(node, "{count: {_eq: 6}}"));
+        actions.push(fetches(node, "{count: {_eq: 6}}", 1));
+        for stale in [1, 3, 4] {
+            actions.push(fetches(node, &format!("{{count: {{_eq: {stale}}}}}"), 0));
+        }
+    }
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: actions.into_iter().map(Into::into).collect(),
+        without_db: true,
+        ..Default::default()
+    }
+    .execute();
+}

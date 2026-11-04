@@ -348,6 +348,7 @@ async fn seed_old_user(
     let index_manager = db::index::IndexManager::from_collection(
         collection.resolved_root_id(),
         collection.schema(),
+        &crdt::Crdts::default(),
     )
     .unwrap();
     let mut doc = document::Document::new(collection.schema_arc());
@@ -391,6 +392,7 @@ async fn verified_index_count(db: &Arc<DB<RegolithStore>>) -> usize {
     let index_manager = db::index::IndexManager::from_collection(
         collection.resolved_root_id(),
         collection.schema(),
+        &crdt::Crdts::default(),
     )
     .unwrap();
     let index = index_manager.get_index("idx_verified").unwrap();

@@ -306,12 +306,16 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
 
         // Get the index
-        let index = index_manager.get_index(&params.index_name).ok_or_else(|| {
-            query::error::QueryError::execution(format!(
-                "index '{}' not found on collection '{}'",
-                params.index_name, collection_name
-            ))
-        })?;
+        let index = index_manager
+            .read_index(&datastore, &collection, &params.index_name)
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))?
+            .ok_or_else(|| {
+                query::error::QueryError::execution(format!(
+                    "index '{}' not found on collection '{}'",
+                    params.index_name, collection_name
+                ))
+            })?;
 
         // Extract limit/offset for early termination optimization
         let limit = params.limit;
@@ -588,13 +592,17 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
         params: &IndexScanParams,
         cap: u64,
     ) -> query::error::Result<Option<u64>> {
-        let (_, datastore, _, index_manager) =
+        let (collection, datastore, _, index_manager) =
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
-        let Some(index) = index_manager.get_index(&params.index_name) else {
+        let Some(index) = index_manager
+            .read_index(&datastore, &collection, &params.index_name)
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))?
+        else {
             return Ok(None);
         };
         let count = crate::read::index_count::count_index_scan(
-            index,
+            &index,
             &datastore,
             &params.scan_type,
             usize::try_from(cap).unwrap_or(usize::MAX),

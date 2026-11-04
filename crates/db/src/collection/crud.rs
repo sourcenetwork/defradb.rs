@@ -78,6 +78,43 @@ impl Collection {
         fields: &rapidhash::RapidHashSet<String>,
         version: Option<String>,
     ) -> Result<Option<Document>> {
+        let Some(mut doc) = self
+            .fields_at(datastore, doc_short_id, fields, version.as_deref())
+            .await?
+        else {
+            return Ok(None);
+        };
+        doc.set_id(doc_id.clone());
+        if let Some(version) = version {
+            doc.set_collection_version_id(version);
+        }
+        Ok(Some(doc))
+    }
+
+    /// The live document for a decision on none of its fields: only the
+    /// deletion marker and the stored version are validated.
+    pub(crate) async fn read_hint(
+        &self,
+        datastore: &NamespaceView,
+        doc_short_id: u64,
+    ) -> Result<Option<Document>> {
+        let version = self.load_version(datastore, doc_short_id).await?;
+        self.fields_at(
+            datastore,
+            doc_short_id,
+            &rapidhash::RapidHashSet::default(),
+            version.as_deref(),
+        )
+        .await
+    }
+
+    async fn fields_at(
+        &self,
+        datastore: &NamespaceView,
+        doc_short_id: u64,
+        fields: &rapidhash::RapidHashSet<String>,
+        version: Option<&str>,
+    ) -> Result<Option<Document>> {
         let deleted_key = self.deleted_key(doc_short_id);
         if datastore.has(&deleted_key).await.map_err(Error::Storage)? {
             return Ok(None);
@@ -93,7 +130,7 @@ impl Collection {
             .transpose()
         };
         // No fields is a read no decision rests on, never validated.
-        let doc = match (version.as_deref() == Some(self.version_id()), parts) {
+        let doc = match (version == Some(self.version_id()), parts) {
             (true, Some(parts)) => {
                 let projected = datastore
                     .get_parts(&key, &parts)
@@ -115,12 +152,7 @@ impl Collection {
             }
             _ => whole(datastore.get(&key).await.map_err(Error::Storage)?)?,
         };
-        let Some(mut doc) = doc else { return Ok(None) };
-        doc.set_id(doc_id.clone());
-        if let Some(version) = version {
-            doc.set_collection_version_id(version);
-        }
-        Ok(Some(doc))
+        Ok(doc)
     }
 
     /// Get a document by its public DocID, resolving the short ID through

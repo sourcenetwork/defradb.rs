@@ -326,6 +326,7 @@ impl storage::corekv::RetryAttemptFn for FinishIndexAttempt {
                 let manager = IndexManager::from_collection(
                     collection.schema().resolved_root_id(),
                     collection.schema(),
+                    collection.crdts(),
                 )?;
                 manager.build_index(&datastore, &self.index_name).await?;
                 Ok(())
@@ -530,8 +531,11 @@ async fn index_batch(
     source: &mut MigratingSource,
     max_docs: usize,
 ) -> Result<BatchIndexResult> {
-    let manager =
-        IndexManager::from_collection(collection.schema().resolved_root_id(), collection.schema())?;
+    let manager = IndexManager::from_collection(
+        collection.schema().resolved_root_id(),
+        collection.schema(),
+        collection.crdts(),
+    )?;
     let batch = manager
         .index_batch_from(
             datastore,

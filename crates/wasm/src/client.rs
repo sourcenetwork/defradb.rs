@@ -66,6 +66,7 @@ pub struct DefraClient {
     pub(crate) document_acp: Arc<dyn acp::DocumentACP>,
     pub(crate) p2p: Option<P2PRuntime>,
     pub(crate) identity: Option<ClientIdentity>,
+    deferred_drain: futures::future::AbortHandle,
     closed: bool,
 }
 
@@ -303,6 +304,13 @@ impl DefraClient {
             .map_err(|e| WasmError::Storage(format!("Failed to load collections: {}", e)))?;
 
         let db = Arc::new(db);
+        let (deferred_drain, registration) = futures::future::AbortHandle::new_pair();
+        wasm_bindgen_futures::spawn_local({
+            let drain = DB::run_deferred_index_drain(Arc::downgrade(&db));
+            async move {
+                let _ = futures::future::Abortable::new(drain, registration).await;
+            }
+        });
         let document_acp: Arc<dyn acp::DocumentACP> =
             Arc::new(acp::ZanzibarDocumentACP::new(Arc::new(
                 acp::PersistentZanzibarStore::from_store(Arc::clone(db.store())),
@@ -324,6 +332,7 @@ impl DefraClient {
             document_acp,
             p2p: None,
             identity,
+            deferred_drain,
             closed: false,
         })
     }
@@ -535,6 +544,7 @@ impl DefraClient {
 
         // Drop runner first — it holds Arc<DB> refs via fetcher, mutator, and provider
         self.runner = None;
+        self.deferred_drain.abort();
 
         if let Some(db) = self.db.take() {
             match Arc::try_unwrap(db) {

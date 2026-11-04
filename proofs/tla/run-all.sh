@@ -336,6 +336,12 @@ RUNS=(
   "MC_MergedFieldIndex_Red_ReadAfterPart.cfg MergedFieldIndex.tla RED" # the index update starts from the value the field merge already wrote (INV_IndexMatchesValue)
   "MC_MergedFieldIndex_Green_Clear.cfg MergedFieldIndex.tla GREEN" # a field write drops the kept read instead of updating it
   "MC_MergedFieldIndex_Red_StaleCache.cfg MergedFieldIndex.tla RED" # a field write leaves the kept read stale, so the next block loses an edit (INV_NoLostEdit)
+  "MC_DeferredIndex_Green.cfg DeferredIndex.tla GREEN" # reads through a deferred index are exact while drains catch up
+  "MC_DeferredIndex_Green_Drains.cfg DeferredIndex.tla GREEN" # every owed document is eventually drained
+  "MC_DeferredIndex_Red_NoOverlay.cfg DeferredIndex.tla RED" # a read trusts stale stored entries (INV_ReadExact)
+  "MC_DeferredIndex_Red_NoOwnAppends.cfg DeferredIndex.tla RED" # a transaction misses its own increments (INV_TxReadExact)
+  "MC_DeferredIndex_Red_UnvalidatedRecord.cfg DeferredIndex.tla RED" # two drains leave an entry behind (INV_RecordMatchesIndex)
+  "MC_DeferredIndex_Red_TruncateHead.cfg DeferredIndex.tla RED" # a drain drops work appended after its plan (INV_ReadExact)
   "MC_DocumentMaterialization_Red_Overwrite.cfg DocumentMaterialization.tla RED" # active rematerialization must not clear delete marker
   "MC_DocumentMaterialization_Green.cfg DocumentMaterialization.tla GREEN" # deletion marker is componentwise/absorbing
   "MC_PushLogAdmission_Green.cfg MC_PushLogAdmission_Common.tla GREEN" # #1088 W1: capacity overflow nacks -> success implies registered-or-merged + all docs merge

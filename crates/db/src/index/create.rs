@@ -174,6 +174,7 @@ impl<S: Store> DB<S> {
             let mut manager = IndexManager::from_collection(
                 collection.schema().resolved_root_id(),
                 collection.schema(),
+                collection.crdts(),
             )?;
             let index = manager
                 .create_index_of_kind(
@@ -182,7 +183,6 @@ impl<S: Store> DB<S> {
                     name.unwrap_or("").to_string(),
                     fields,
                     kind,
-                    &collection.schema().fields,
                 )
                 .await?;
             let mut schema = collection.schema().clone();

@@ -352,15 +352,20 @@ pub async fn get_collection_with_index_manager<S: Store + 'static>(
     // Create an IndexManager from the collection schema, sharing the
     // database's DiskANN quantizers so a write does not rebuild one.
     let short_id = collection.resolved_root_id();
-    let index_manager =
-        IndexManager::from_indexes(short_id, collection.schema(), collection.write_indexes())
-            .map_err(|e| {
-                query::error::QueryError::execution(format!(
-                    "failed to create index manager for collection '{}': {}",
-                    collection_name, e
-                ))
-            })?
-            .with_vector_caches(txn.vector_codes());
+    let index_manager = IndexManager::from_indexes(
+        short_id,
+        collection.schema(),
+        collection.write_indexes(),
+        collection.crdts(),
+    )
+    .map_err(|e| {
+        query::error::QueryError::execution(format!(
+            "failed to create index manager for collection '{}': {}",
+            collection_name, e
+        ))
+    })?
+    .with_vector_caches(txn.vector_codes())
+    .with_drains(txn.deferred_drains());
 
     Ok((collection, datastore, systemstore, index_manager))
 }

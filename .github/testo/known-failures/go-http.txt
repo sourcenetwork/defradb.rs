@@ -16,3 +16,11 @@ encryption_scenarios encryption::field_commit::doc_encryption_field_with_encrypt
 index index::range_filter::a_closed_range_fetches_only_the_range #2527
 index index::range_filter::an_empty_range_fetches_nothing #2527
 index index::range_filter::an_open_range_on_a_descending_index_fetches_only_the_range #2527
+index index::crdt::index_new_with_collection_level_index_on_pn_counter_should_succeed #2579
+index index::crdt::index_new_with_composite_index_including_pn_counter_should_succeed #2579
+index index::crdt::index_new_with_p_counter_field_should_succeed #2579
+index index::crdt::index_new_with_p_counter_field_via_directive_should_succeed #2579
+index index::crdt::index_new_with_pn_counter_field_should_succeed #2579
+index index::crdt::index_new_with_pn_counter_field_via_directive_should_succeed #2579
+index index::crdt::index_new_with_pn_counter_float_field_should_succeed #2579
+index index::crdt::index_new_with_unique_index_on_pn_counter_should_succeed #2579

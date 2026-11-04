@@ -22,6 +22,13 @@ With a unique index on `User.name` and a stored `{"name":"alice","age":1}`, addi
 
 For a field whose CRDT merges by value (text, JSON), the index holds only the current value. After a local edit, or after two nodes edit the field concurrently and replicate to each other, a filter on the merged value fetches one index entry and one document, and a filter on any earlier value fetches none.
 
+# `defra.index.counter`: An index on a counter follows its total
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::merged_field::a_counter_index_follows_local_increments", "index::merged_field::a_counter_index_follows_merged_increments", "index::crdt::index_new_with_collection_level_index_on_pn_counter_should_succeed", "index::crdt::index_new_with_composite_index_including_pn_counter_should_succeed", "index::crdt::index_new_with_p_counter_field_should_succeed", "index::crdt::index_new_with_p_counter_field_via_directive_should_succeed", "index::crdt::index_new_with_pn_counter_field_should_succeed", "index::crdt::index_new_with_pn_counter_field_via_directive_should_succeed", "index::crdt::index_new_with_pn_counter_float_field_should_succeed", "index::crdt::index_new_with_unique_index_on_pn_counter_should_succeed"]
+
+A counter field can be indexed. After local increments, or after two nodes increment concurrently and replicate to each other, an equality or range filter on the total fetches one index entry and one document, and a filter on any earlier total fetches none. An index on a counter can be created through the index API or `@index`, alone, in a composite, unique or collection-level index. Go rejects an index on a counter field.
+
 # `defra.collection`: Collection-wide operations
 
 - **Parents:** ["defra"]
