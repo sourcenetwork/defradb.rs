@@ -323,7 +323,8 @@ WClaim(s, v) ==
 
 \* The merge loop takes the clock's lane before its channel: always under
 \* Always, and under Bounded while the lane has turns left or no merge work
-\* waits.
+\* waits. At zero turns, SyncEventReceiver::try_recv checks the work channel
+\* first; an empty or closed channel leaves the lane available.
 LaneGoes == lane # <<>> /\ (fifo = <<>> \/ LaneTurns = "Always" \/ turns > 0)
 
 \* The merge loop takes its next event, once the merge it is on is done and
