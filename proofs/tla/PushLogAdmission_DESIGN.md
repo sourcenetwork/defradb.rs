@@ -76,10 +76,19 @@ The model gives heads a `Parent` relation, a priority and a sender scope, and a
   (`Processed::DurablyRegistered`); `GuardMode = "View"` reads only the view (`Publish`
   is when it learns of the record) and nacks a head whose record is durable.
 
+`INV_PeerQuota` — **the pushing peer never holds more durable records than its share**
+(`max_persisted_pending_per_peer`, `Quota`). The docs are one peer's pushes. `QuotaMode =
+"Store"` checks the share against the durable records in the registration's own
+transaction (`pending_store/shares.rs`, `store.rs` `take_new`); `QuotaMode = "View"` checks
+it against the view and leaves the store to write the record, so two pushes of the peer
+both pass it before the view shows either record.
+
 ## Abstractions
 
-- **Pusher identity is only the scope**: the pusher is one per-head ack/retry record,
-  and heads of different scopes are independent.
+- **The heads are one peer's pushes**: its share and the global capacity both bound
+  them, and other peers' pushes contend only for the global capacity, so they are left
+  out. The pusher is one per-head ack/retry record, and heads of different scopes are
+  independent.
 - **Merging a head merges its DAG**, so the pending records of its ancestors go with it;
   in the code the receiver clock or the resync sweep finds them merged and discharges
   them.
@@ -95,11 +104,13 @@ The model gives heads a `Parent` relation, a priority and a sender scope, and a
 
 | Config | Knobs | Heads | Verdict | Meaning |
 |--------|-------|-------|---------|---------|
-| `MC_PushLogAdmission_Green.cfg` | `NackOnFull`, `Parent`, `Committed` | 3 independent, 1 slot | GREEN | W1 fix: overflow nacks; a nack never hits a registered head; the invariants + liveness hold |
-| `MC_PushLogAdmission_Red_SuccessOnFull.cfg` | `SuccessOnFull`, `Parent`, `Committed` | 3 independent, 1 slot | RED | overflow acks success → `INV_SuccessImpliesRegisteredOrMerged` violated |
-| `MC_PushLogAdmission_Green_Siblings.cfg` | `NackOnFull`, `Parent`, `Committed` | base + 2 siblings, one scope, 2 slots | GREEN | F1 fix: each sibling keeps its registration; `INV_AckedHeadReachable` + liveness hold |
-| `MC_PushLogAdmission_Red_PriorityCover.cfg` | `NackOnFull`, `Priority`, `Committed` | base + 2 siblings, one scope, 2 slots | RED | old rule: sibling 3 retires sibling 2 (or 2 is covered by 3) → `INV_AckedHeadReachable` violated |
-| `MC_PushLogAdmission_Red_ViewGuard.cfg` | `NackOnFull`, `Parent`, `View` | 3 independent, 1 slot | RED | the guard reads only the view: a head registered on its durable record alone is nacked before the view shows the record (`INV_NackImpliesUnregistered`) |
+| `MC_PushLogAdmission_Green.cfg` | `NackOnFull`, `Parent`, `Committed`, `Store` | 3 independent, 1 slot | GREEN | W1 fix: overflow nacks; a nack never hits a registered head; the invariants + liveness hold |
+| `MC_PushLogAdmission_Red_SuccessOnFull.cfg` | `SuccessOnFull`, `Parent`, `Committed`, `Store` | 3 independent, 1 slot | RED | overflow acks success → `INV_SuccessImpliesRegisteredOrMerged` violated |
+| `MC_PushLogAdmission_Green_Siblings.cfg` | `NackOnFull`, `Parent`, `Committed`, `Store` | base + 2 siblings, one scope, 2 slots | GREEN | F1 fix: each sibling keeps its registration; `INV_AckedHeadReachable` + liveness hold |
+| `MC_PushLogAdmission_Red_PriorityCover.cfg` | `NackOnFull`, `Priority`, `Committed`, `Store` | base + 2 siblings, one scope, 2 slots | RED | old rule: sibling 3 retires sibling 2 (or 2 is covered by 3) → `INV_AckedHeadReachable` violated |
+| `MC_PushLogAdmission_Red_ViewGuard.cfg` | `NackOnFull`, `Parent`, `View`, `Store` | 3 independent, 1 slot | RED | the guard reads only the view: a head registered on its durable record alone is nacked before the view shows the record (`INV_NackImpliesUnregistered`) |
+| `MC_PushLogAdmission_Green_PeerShare.cfg` | `NackOnFull`, `Parent`, `Committed`, `Store` | 3 independent, 2 slots, `Quota=1` | GREEN | the store holds the share in the registration's transaction: invariants + liveness hold |
+| `MC_PushLogAdmission_Red_ViewShare.cfg` | `NackOnFull`, `Parent`, `Committed`, `View` | 3 independent, 2 slots, `Quota=1` | RED | the share is checked against the lagging view: two pushes of the peer are registered (`INV_PeerQuota`) |
 
 ## Conformance fence
 
