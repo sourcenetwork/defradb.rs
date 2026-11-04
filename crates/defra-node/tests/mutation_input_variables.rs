@@ -1,10 +1,10 @@
-use defra_node::{EmbeddedNode, QueryRequest};
+use defra_node::{Node, QueryRequest};
 use serde_json::json;
 
 #[test]
 fn update_and_upsert_resolve_object_variables() {
     workers::block_on(async {
-    let node = EmbeddedNode::builder().build().await.unwrap();
+    let node = Node::builder().build().await.unwrap();
     node.add_collection("type Probe { key: String @index(unique: true) label: String payload: JSON }")
         .await
         .unwrap();
@@ -42,7 +42,7 @@ fn update_and_upsert_resolve_object_variables() {
         stored.data.unwrap()["Probe"][0],
         json!({"label": "after", "payload": {"nested": [1, null, true]}})
     );
-    node.shutdown().await;
+    node.shutdown().await.unwrap();
 })
     .unwrap()
 }

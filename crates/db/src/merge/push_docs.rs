@@ -207,7 +207,7 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
     car_authority: &p2p::sync::HeadHintCarAuthority,
     allowlist: Option<&[(String, String)]>,
 ) -> Result<(), String> {
-    let network = db.network();
+    let network = db.network().map_err(|error| error.to_string())?;
     super::push_docs_network::wait_for_peer(&network, transport, peer_id).await?;
 
     let local_peer_id = transport.local_peer_id().to_string();
@@ -251,7 +251,7 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
     let selected = matches!(&ownership, PushOwnership::Selected(_));
     let mut failures: RapidHashMap<(String, String), String> = RapidHashMap::new();
     let mut push_handles = Vec::new();
-    let replay_gate = Arc::new(ReplayPushGate::new(replay_config).on(network.clone()));
+    let replay_gate = Arc::new(ReplayPushGate::new(replay_config, network.clone()));
     let allowlist_by_collection = allowlist_index(allowlist);
 
     let preparation: Result<(), String> = async {
@@ -842,7 +842,7 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
     matcher: &dyn p2p::replicator::ReplicationFilterMatcher,
     car_authority: &p2p::sync::HeadHintCarAuthority,
 ) -> Result<(), String> {
-    let network = db.network();
+    let network = db.network().map_err(|error| error.to_string())?;
     let local_peer_id = transport.local_peer_id().to_string();
     let resolved_collection;
     let collection_id = if collection_id.is_empty() {
@@ -1009,7 +1009,7 @@ pub async fn retry_collection_commit<S: Store + 'static, T: P2PTransport>(
     marker_generation: u64,
     car_authority: &p2p::sync::HeadHintCarAuthority,
 ) -> Result<(), String> {
-    let network = db.network();
+    let network = db.network().map_err(|error| error.to_string())?;
     let creator = transport.local_peer_id().to_string();
     let txn = db
         .new_txn(true)

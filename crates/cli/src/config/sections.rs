@@ -5,7 +5,10 @@ use std::net::SocketAddr;
 use db::{DEFAULT_TRANSACTION_CLEANUP_INTERVAL, DEFAULT_TRANSACTION_IDLE_TIMEOUT};
 use serde::{Deserialize, Serialize};
 
-use query::{DEFAULT_MAX_FILTER_DEPTH, DEFAULT_MAX_QUERY_DEPTH, DEFAULT_MAX_QUERY_WIDTH};
+use query::{
+    DEFAULT_MAX_FILTER_DEPTH, DEFAULT_MAX_FRAGMENT_NESTING, DEFAULT_MAX_QUERY_DEPTH,
+    DEFAULT_MAX_QUERY_WIDTH,
+};
 use storage::backends::DurabilityMode;
 
 use super::iroh_relay_server::IrohRelayServerConfig;
@@ -86,6 +89,10 @@ pub struct ApiConfig {
     /// Max recursive filter nesting depth (0 = unlimited). Default: 50.
     #[serde(default = "default_query_max_filter_depth")]
     pub query_max_filter_depth: usize,
+    /// Max fragments one spread chain nests, from 1 to what a query thread's
+    /// stack holds (checked at startup). Default: 32.
+    #[serde(default = "default_query_max_fragment_nesting")]
+    pub query_max_fragment_nesting: usize,
     /// Cache the built introspection schema for the committed collection
     /// set, instead of rebuilding it per query. Default: true.
     #[serde(default = "default_introspection_cache")]
@@ -128,6 +135,10 @@ fn default_query_max_filter_depth() -> usize {
     DEFAULT_MAX_FILTER_DEPTH
 }
 
+fn default_query_max_fragment_nesting() -> usize {
+    DEFAULT_MAX_FRAGMENT_NESTING
+}
+
 fn default_introspection_cache() -> bool {
     true
 }
@@ -150,6 +161,7 @@ impl Default for ApiConfig {
             query_max_depth: default_query_max_depth(),
             query_max_width: default_query_max_width(),
             query_max_filter_depth: default_query_max_filter_depth(),
+            query_max_fragment_nesting: default_query_max_fragment_nesting(),
             introspection_cache: default_introspection_cache(),
             #[cfg(feature = "postgres")]
             pg_address: String::new(),
@@ -169,6 +181,13 @@ impl ApiConfig {
         if has_pub != has_priv {
             return Err(Error::IncompleteTlsConfig);
         }
+
+        query::QueryLimits {
+            max_fragment_nesting: self.query_max_fragment_nesting,
+            ..query::QueryLimits::default()
+        }
+        .check_fragment_nesting()
+        .map_err(|e| Error::InvalidConfig(e.to_string()))?;
 
         if self.transaction_idle_timeout > 0 && self.transaction_cleanup_interval == 0 {
             return Err(Error::InvalidConfig(
@@ -327,6 +346,18 @@ pub struct NetConfig {
     /// Max established connections per peer. Default: 4.
     #[serde(default = "default_max_connections_per_peer")]
     pub max_connections_per_peer: u32,
+    /// libp2p's whole memory budget in MiB, in place of half of system
+    /// memory, which inside a container is the host's. Default: unset.
+    #[serde(default)]
+    pub resource_memory_mib: Option<u64>,
+    /// libp2p's file descriptor budget, used with a memory budget; 512 when
+    /// unset.
+    #[serde(default)]
+    pub resource_file_descriptors: Option<u64>,
+    /// Inbound streams one peer may run at once; a stream past it is reset.
+    /// Default: unset, no cap.
+    #[serde(default)]
+    pub max_streams_per_peer: Option<usize>,
     #[serde(default)]
     pub transport: TransportType,
     /// Custom relay URL for iroh transport (overrides default N0 relay).
@@ -488,6 +519,9 @@ impl Default for NetConfig {
             connection_manager_high_water: default_connection_manager_high_water(),
             connection_manager_grace_period_ms: default_connection_manager_grace_period_ms(),
             max_connections_per_peer: default_max_connections_per_peer(),
+            resource_memory_mib: None,
+            resource_file_descriptors: None,
+            max_streams_per_peer: None,
             transport: TransportType::default(),
             iroh_relay_url: None,
             iroh_relay_mode: None,

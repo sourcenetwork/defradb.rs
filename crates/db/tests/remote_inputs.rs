@@ -671,7 +671,7 @@ impl ServerApart {
 #[test]
 fn a_database_given_no_network_runtime_embeds_from_a_thread_without_one() {
     let server = ServerApart::start();
-    let created = n0_future::future::block_on(async {
+    let created = futures_lite::future::block_on(async {
         let db = embedded_database(&server.url).await;
         AutoCommitMutator::new(db)
             .create("Texts", text_document("alpha"))
@@ -696,7 +696,7 @@ fn set_embedding_and_a_hybrid_query_embed_from_a_thread_without_a_runtime() {
     use query::QueryExecutor;
 
     let server = ServerApart::start();
-    n0_future::future::block_on(async {
+    futures_lite::future::block_on(async {
         let description = schema::VectorEmbeddingDescription {
             field_name: "vector".to_string(),
             fields: vec!["text".to_string()],

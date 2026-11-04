@@ -12,15 +12,16 @@ use rapidhash::HashMapExt;
 use blockstore::{verify_block_cid, Blockstore};
 
 use crate::error::{Error, Result};
+use crate::transport::FetchFailureCause;
 use crate::QueryId;
 
 use super::SyncManager;
 
 /// A completion sender parked in a queue so whoever resolves the query can
 /// take ownership of it.
-type CompletionSlot = Arc<SegQueue<tokio::sync::oneshot::Sender<FetchCompletion>>>;
+type CompletionSlot = Arc<SegQueue<crate::rt::oneshot::Sender<FetchCompletion>>>;
 
-fn completion_slot(sender: tokio::sync::oneshot::Sender<FetchCompletion>) -> CompletionSlot {
+fn completion_slot(sender: crate::rt::oneshot::Sender<FetchCompletion>) -> CompletionSlot {
     let slot = SegQueue::new();
     slot.push(sender);
     Arc::new(slot)
@@ -32,11 +33,15 @@ fn completion_slot(sender: tokio::sync::oneshot::Sender<FetchCompletion>) -> Com
 /// CAR, but another storage owner currently owns one of its CIDs. It releases
 /// the fetch lease without consuming provider-failure attempts; the durable
 /// per-root clock remains the only redrive owner.
+///
+/// `ProviderBusy`: every provider asked shed the request. Neither a failure
+/// nor a stalled window, so the owner rotates without spending stall budget.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FetchCompletion {
     Success,
-    Failure,
+    Failure(FetchFailureCause),
     Deferred,
+    ProviderBusy,
     SizeLimit(Cid),
 }
 
@@ -45,7 +50,7 @@ impl FetchCompletion {
         if success {
             Self::Success
         } else {
-            Self::Failure
+            Self::Failure(FetchFailureCause::Error)
         }
     }
 }
@@ -152,7 +157,7 @@ impl std::fmt::Debug for RootedCarCompletionTracker {
 
 struct RootedCarWaiter {
     peer: crate::transport::PeerId,
-    completion: SegQueue<tokio::sync::oneshot::Sender<FetchCompletion>>,
+    completion: SegQueue<crate::rt::oneshot::Sender<FetchCompletion>>,
 }
 
 impl RootedCarCompletionTracker {
@@ -160,8 +165,8 @@ impl RootedCarCompletionTracker {
         &self,
         root_cid: Cid,
         peer_id: crate::transport::PeerId,
-    ) -> tokio::sync::oneshot::Receiver<FetchCompletion> {
-        let (tx, rx) = tokio::sync::oneshot::channel();
+    ) -> crate::rt::oneshot::Receiver<FetchCompletion> {
+        let (tx, rx) = crate::rt::oneshot::channel();
         let completion = SegQueue::new();
         completion.push(tx);
         self.waiters.insert(
@@ -243,8 +248,8 @@ impl BlockSyncCompletionTracker {
     pub(crate) fn register(
         &self,
         query_id: QueryId,
-    ) -> tokio::sync::oneshot::Receiver<FetchCompletion> {
-        let (tx, rx) = tokio::sync::oneshot::channel();
+    ) -> crate::rt::oneshot::Receiver<FetchCompletion> {
+        let (tx, rx) = crate::rt::oneshot::channel();
         let slot = completion_slot(tx);
         let early = self.update(|state| {
             let early = state.remove_early(query_id);
@@ -261,6 +266,7 @@ impl BlockSyncCompletionTracker {
         rx
     }
 
+    #[cfg(test)]
     pub(crate) fn complete(&self, query_id: QueryId, success: bool) -> bool {
         self.complete_with(query_id, FetchCompletion::from_success(success))
     }
@@ -269,11 +275,15 @@ impl BlockSyncCompletionTracker {
         self.complete_with(query_id, FetchCompletion::Deferred)
     }
 
+    pub(crate) fn provider_busy(&self, query_id: QueryId) -> bool {
+        self.complete_with(query_id, FetchCompletion::ProviderBusy)
+    }
+
     pub(crate) fn size_limit(&self, query_id: QueryId, cid: Cid) -> bool {
         self.complete_with(query_id, FetchCompletion::SizeLimit(cid))
     }
 
-    fn complete_with(&self, query_id: QueryId, completion: FetchCompletion) -> bool {
+    pub(crate) fn complete_with(&self, query_id: QueryId, completion: FetchCompletion) -> bool {
         // Iroh allocates and dispatches the transport query before
         // sync_blocks returns its ID. A fast failure can therefore arrive
         // before the poll owner installs its waiter. Latch the terminal
@@ -418,7 +428,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
 mod completion_tracker_tests {
     use super::*;
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn poll_owner_observes_transport_completion_exactly_once() {
         let tracker = BlockSyncCompletionTracker::default();
         let query_id = QueryId(42);
@@ -427,12 +437,12 @@ mod completion_tracker_tests {
         assert!(tracker.complete(query_id, false));
         assert_eq!(
             receiver.await.expect("completion sender alive"),
-            FetchCompletion::Failure
+            FetchCompletion::Failure(FetchFailureCause::Error)
         );
         assert!(!tracker.complete(query_id, true));
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn completion_before_waiter_registration_is_latched() {
         let tracker = BlockSyncCompletionTracker::with_capacity(1);
         let query_id = QueryId(44);
@@ -442,12 +452,12 @@ mod completion_tracker_tests {
 
         assert_eq!(
             receiver.await.expect("latched completion sender alive"),
-            FetchCompletion::Failure
+            FetchCompletion::Failure(FetchFailureCause::Error)
         );
         assert!(tracker.take_early(query_id).is_none());
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn unclaimed_completion_latch_is_bounded() {
         let tracker = BlockSyncCompletionTracker::with_capacity(1);
         let first = QueryId(45);
@@ -460,7 +470,7 @@ mod completion_tracker_tests {
         assert_eq!(tracker.take_early(second), Some(FetchCompletion::Success));
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn cancelled_poll_owner_does_not_retain_a_completion_waiter() {
         let tracker = BlockSyncCompletionTracker::default();
         let query_id = QueryId(43);
@@ -471,7 +481,7 @@ mod completion_tracker_tests {
         assert!(!tracker.complete(query_id, false));
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn contended_ingest_has_a_distinct_deferred_completion() {
         let tracker = BlockSyncCompletionTracker::default();
         let query_id = QueryId(47);

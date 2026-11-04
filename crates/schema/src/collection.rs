@@ -65,11 +65,7 @@ pub struct CollectionVersion {
     pub query: Option<QuerySource>,
 
     /// Path to the previous collection version (for schema migrations).
-    #[serde(
-        rename = "PreviousVersion",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(rename = "PreviousVersion", default)]
     pub previous_version: Option<CollectionSource>,
 
     /// Fields in this collection

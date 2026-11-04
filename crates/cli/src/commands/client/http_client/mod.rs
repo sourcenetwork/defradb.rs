@@ -3,7 +3,7 @@
 use regolith::sync::OnceCell;
 use std::time::Duration;
 
-use reqwest::{Client, RequestBuilder, Response, StatusCode};
+use net::http::{Client, RequestBuilder, Response, StatusCode};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value as JsonValue;
 use url::Url;
@@ -18,12 +18,14 @@ mod acp;
 mod backup;
 mod block;
 mod collection;
+mod definitions;
+mod documents;
 mod dump;
 mod encrypted_index;
 mod graphql;
 mod index;
-mod lens;
 mod p2p;
+mod peer;
 mod transaction;
 mod types;
 mod view;
@@ -31,10 +33,8 @@ mod view;
 pub use acp::{AcpAddPolicyRequest, AcpAddPolicyResponse, AcpPolicy, NacRelationshipRequest};
 pub use encrypted_index::EncryptedIndexInfo;
 pub use index::{IndexFieldInfo, IndexInfo};
-pub use lens::LensSetMigrationResponse;
 pub use p2p::{
-    mint_manage_token, ManageQueryResultResponse, P2pCollectionRequest, P2pConnectRequest,
-    P2pDocumentRequest, P2pInfo, P2pReplicatorInfo, P2pReplicatorRequest,
+    mint_manage_token, ManageQueryResultResponse, P2pReplicatorInfo, P2pReplicatorRequest,
 };
 pub use types::{ErrorResponse, GraphQLError, GraphQLRequest, GraphQLResponse, TxBeginResponse};
 pub use view::{AddViewRequest, ViewRefreshSelectors};
@@ -57,9 +57,9 @@ pub const RETRYABLE_STATUS_CODES: &[u16] = &[408, 429, 500, 502, 503, 504];
 /// Global shared HTTP client for connection reuse across commands
 static SHARED_CLIENT: OnceCell<std::result::Result<Client, String>> = OnceCell::new();
 
-fn get_shared_client() -> Result<&'static Client> {
+fn get_shared_client(edge: &edge::Edge) -> Result<&'static Client> {
     let result = SHARED_CLIENT.get_or_init_racy(|| {
-        Client::builder()
+        Client::builder(edge.clone())
             .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
             .connect_timeout(Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS))
             .pool_max_idle_per_host(5)
@@ -104,11 +104,12 @@ pub struct HttpClient {
 }
 
 impl HttpClient {
-    /// Create a new HTTP client with the given base URL.
+    /// Create a new HTTP client with the given base URL, its connections on
+    /// `edge`.
     ///
     /// Uses a shared connection pool with configured timeouts for efficiency.
     /// Returns an error if the URL is invalid or the HTTP client fails to initialize.
-    pub fn new(base_url: &str) -> Result<Self> {
+    pub fn new(base_url: &str, edge: &edge::Edge) -> Result<Self> {
         let normalized_url = base_url.trim_end_matches('/');
 
         // Validate the URL format
@@ -116,7 +117,7 @@ impl HttpClient {
             .map_err(|e| Error::InvalidUrl(normalized_url.to_string(), e.to_string()))?;
 
         Ok(Self {
-            client: get_shared_client()?,
+            client: get_shared_client(edge)?,
             base_url: normalized_url.to_string(),
             auth_token: None,
             verbose: false,
@@ -180,7 +181,7 @@ impl HttpClient {
     }
 
     /// Check if an error is retryable (connection errors, timeouts)
-    fn is_retryable_error(error: &reqwest::Error) -> bool {
+    fn is_retryable_error(error: &net::http::Error) -> bool {
         error.is_connect() || error.is_timeout()
     }
 
@@ -201,7 +202,7 @@ impl HttpClient {
                     "Warning: Request failed, retry attempt {}/{} after {}ms delay...",
                     attempt, MAX_RETRIES, backoff_ms
                 );
-                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                nuclei::time::sleep(Duration::from_millis(backoff_ms)).await;
                 backoff_ms *= 2; // Exponential backoff
             }
 
@@ -302,14 +303,19 @@ impl HttpClient {
         }))
     }
 
-    /// Extract error details from a failed response and return an error.
+    /// Extract error details from a failed response and return an error: the
+    /// server's `{"error": …}` text unchanged, as Go's client returns it, or
+    /// the status and raw body when the body is not that shape.
     async fn extract_error(response: Response) -> Error {
         let status = response.status();
         let body = response
             .text()
             .await
             .unwrap_or_else(|e| format!("[failed to read body: {}]", e));
-        Error::Server(format!("HTTP {}: {}", status, body.trim()))
+        match serde_json::from_str::<types::ErrorResponse>(&body) {
+            Ok(parsed) => Error::Server(parsed.error),
+            Err(_) => Error::Server(format!("HTTP {}: {}", status, body.trim())),
+        }
     }
 
     /// Helper for POST requests with plain text body
@@ -427,11 +433,6 @@ impl HttpClient {
     endpoint!(action_list, GET "/api/v0/actions" => Vec<defra_core::ActionExecution>);
 
     // P2P
-    endpoint!(p2p_info,            GET  "/api/v0/p2p/info"           => Vec<String>);
-    endpoint!(p2p_replicator_list, GET  "/api/v0/p2p/replicators"     => Vec<P2pReplicatorInfo>);
-    endpoint!(p2p_collection_list, GET  "/api/v0/p2p/collections"    => Vec<String>);
-    endpoint!(p2p_active_peers,    GET  "/api/v0/p2p/active-peers"   => JsonValue);
-    endpoint!(p2p_document_list,   GET  "/api/v0/p2p/documents"      => JsonValue);
     endpoint!(collection_versions, GET  "/api/v0/collections?get_inactive=true" => Vec<schema::CollectionVersion>);
     // ACP / NAC
     endpoint!(acp_list_policies,   GET  "/api/v0/acp/policy"         => Vec<AcpPolicy>);
@@ -440,8 +441,6 @@ impl HttpClient {
     endpoint!(nac_re_enable,       POST "/api/v0/acp/node/re-enable" => JsonValue);
 
     // Lens
-    endpoint!(lens_list,           GET  "/api/v0/lens"               => JsonValue);
-    endpoint!(lens_reload,         POST "/api/v0/lens/reload");
 
     // Node
     endpoint!(node_identity,       GET  "/api/v0/node/identity"      => JsonValue);

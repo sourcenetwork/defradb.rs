@@ -20,8 +20,9 @@ use std::time::{Duration, Instant};
 use integration_test::identity::generate_identity;
 use integration_test::TestCluster;
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_rust_encrypted_p2p_replication() {
+    edge::compat(async move {
     let cluster = TestCluster::builder()
         .rust_nodes(2)
         .with_p2p()
@@ -99,8 +100,10 @@ async fn rust_rust_encrypted_p2p_replication() {
             Instant::now() < deadline,
             "encrypted doc did not replicate within timeout"
         );
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        nuclei::time::sleep(Duration::from_millis(200)).await;
     }
+})
+    .await;
 }
 
 /// Go↔Rust KMS interop over libp2p.
@@ -216,7 +219,7 @@ async fn go_rust_kms_interop(writer_idx: usize, reader_idx: usize) {
             Instant::now() < deadline,
             "encrypted doc did not replicate+decrypt within timeout (doc_id={doc_id})"
         );
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        nuclei::time::sleep(Duration::from_millis(200)).await;
     }
 }
 
@@ -255,10 +258,13 @@ async fn go_rust_kms_interop(writer_idx: usize, reader_idx: usize) {
 /// usable reply on `encryption`. Diagnosing this requires Go-side KMS trace
 /// logging (out of scope: RUST-ONLY) and is beyond the encryption-topic-mesh
 /// scope of #976. See the design/976-kms work and `crates/p2p/src/kms/`.
-#[tokio::test]
+#[nuclei::test]
 async fn go_to_rust_encrypted_p2p_replication() {
-    // index 0 = Rust (reader), index 1 = Go (writer)
-    go_rust_kms_interop(1, 0).await;
+    edge::compat(async move {
+        // index 0 = Rust (reader), index 1 = Go (writer)
+        go_rust_kms_interop(1, 0).await;
+    })
+    .await;
 }
 
 /// Rust writes an encrypted doc; Go replicates it and must fetch the DEK from
@@ -266,8 +272,11 @@ async fn go_to_rust_encrypted_p2p_replication() {
 /// server against a Go KMS requester. The Rust KMS serves the DEK from its
 /// blockstore-backed KeyStore (#976), so the Go reader's
 /// `FetchEncryptionKeyRequest` is answered for any encrypted write.
-#[tokio::test]
+#[nuclei::test]
 async fn go_rust_encrypted_p2p_replication_rust_writer() {
-    // index 0 = Rust (writer), index 1 = Go (reader)
-    go_rust_kms_interop(0, 1).await;
+    edge::compat(async move {
+        // index 0 = Rust (writer), index 1 = Go (reader)
+        go_rust_kms_interop(0, 1).await;
+    })
+    .await;
 }

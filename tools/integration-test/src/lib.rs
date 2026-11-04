@@ -1,11 +1,21 @@
 use std::path::PathBuf;
 
+pub mod actions;
+mod client_type;
+pub mod clients;
 mod cross_runtime;
+pub mod export;
 mod feature_binaries;
+mod go_node;
+pub mod nodes;
 mod purge;
+pub mod scenario;
+pub mod test_case;
+
+pub use scenario::m;
 
 pub use cross_runtime::{assert_query_equivalent, query_both};
-pub use feature_binaries::{build_cli_variant, vera_cli_binary};
+pub use feature_binaries::{build_cli_variant, listing_tests, vera_cli_binary, TestBuild};
 pub use purge::purge_node;
 
 // Re-export modules from defra-harness
@@ -71,11 +81,12 @@ pub fn workspace_root() -> PathBuf {
         .expect("failed to canonicalize workspace root")
 }
 
-/// Return the configured Rust CLI binary, falling back to Cargo's debug output.
+/// Return the configured Rust CLI binary, falling back to the CLI built on
+/// the tests' own profile.
 pub fn rust_binary() -> PathBuf {
     std::env::var_os("DEFRA_RUST_BINARY")
         .map(PathBuf::from)
-        .unwrap_or_else(|| workspace_root().join("target/debug/defra"))
+        .unwrap_or_else(|| TestBuild::current(&workspace_root()).out_dir.join("defra"))
 }
 
 /// Generate `rust_<name>` and `go_<name>` test wrappers for a single-node test.
@@ -86,35 +97,47 @@ pub fn rust_binary() -> PathBuf {
 macro_rules! for_each_runtime {
     ($name:ident, $inner:ident) => {
         ::paste::paste! {
-            #[tokio::test]
+            #[nuclei::test]
             async fn [<rust_ $name>]() {
-                let _root = $crate::workspace_root();
-                let cluster = $crate::TestCluster::builder().rust_nodes(1).build().await.unwrap();
-                $inner(cluster).await;
+                ::edge::compat(async {
+                    let _root = $crate::workspace_root();
+                    let cluster = $crate::TestCluster::builder().rust_nodes(1).build().await.unwrap();
+                    $inner(cluster).await;
+                })
+                .await;
             }
 
-            #[tokio::test]
+            #[nuclei::test]
             async fn [<go_ $name>]() {
-                let _root = $crate::workspace_root();
-                let cluster = $crate::TestCluster::builder().go_nodes(1).build().await.unwrap();
-                $inner(cluster).await;
+                ::edge::compat(async {
+                    let _root = $crate::workspace_root();
+                    let cluster = $crate::TestCluster::builder().go_nodes(1).build().await.unwrap();
+                    $inner(cluster).await;
+                })
+                .await;
             }
         }
     };
     ($name:ident, $inner:ident, $($modifier:tt)+) => {
         ::paste::paste! {
-            #[tokio::test]
+            #[nuclei::test]
             async fn [<rust_ $name>]() {
-                let _root = $crate::workspace_root();
-                let cluster = $crate::TestCluster::builder().rust_nodes(1) $($modifier)+ .build().await.unwrap();
-                $inner(cluster).await;
+                ::edge::compat(async {
+                    let _root = $crate::workspace_root();
+                    let cluster = $crate::TestCluster::builder().rust_nodes(1) $($modifier)+ .build().await.unwrap();
+                    $inner(cluster).await;
+                })
+                .await;
             }
 
-            #[tokio::test]
+            #[nuclei::test]
             async fn [<go_ $name>]() {
-                let _root = $crate::workspace_root();
-                let cluster = $crate::TestCluster::builder().go_nodes(1) $($modifier)+ .build().await.unwrap();
-                $inner(cluster).await;
+                ::edge::compat(async {
+                    let _root = $crate::workspace_root();
+                    let cluster = $crate::TestCluster::builder().go_nodes(1) $($modifier)+ .build().await.unwrap();
+                    $inner(cluster).await;
+                })
+                .await;
             }
         }
     };
@@ -128,25 +151,34 @@ macro_rules! for_each_runtime {
 macro_rules! for_each_p2p_topology {
     ($name:ident, $inner:ident, $($modifier:tt)+) => {
         ::paste::paste! {
-            #[tokio::test]
+            #[nuclei::test]
             async fn [<rust_rust_ $name>]() {
-                let _root = $crate::workspace_root();
-                let cluster = $crate::TestCluster::builder().rust_nodes(2) $($modifier)+ .build().await.unwrap();
-                $inner(cluster).await;
+                ::edge::compat(async {
+                    let _root = $crate::workspace_root();
+                    let cluster = $crate::TestCluster::builder().rust_nodes(2) $($modifier)+ .build().await.unwrap();
+                    $inner(cluster).await;
+                })
+                .await;
             }
 
-            #[tokio::test]
+            #[nuclei::test]
             async fn [<go_go_ $name>]() {
-                let _root = $crate::workspace_root();
-                let cluster = $crate::TestCluster::builder().go_nodes(2) $($modifier)+ .build().await.unwrap();
-                $inner(cluster).await;
+                ::edge::compat(async {
+                    let _root = $crate::workspace_root();
+                    let cluster = $crate::TestCluster::builder().go_nodes(2) $($modifier)+ .build().await.unwrap();
+                    $inner(cluster).await;
+                })
+                .await;
             }
 
-            #[tokio::test]
+            #[nuclei::test]
             async fn [<go_rust_ $name>]() {
-                let _root = $crate::workspace_root();
-                let cluster = $crate::TestCluster::builder().rust_nodes(1).go_nodes(1) $($modifier)+ .build().await.unwrap();
-                $inner(cluster).await;
+                ::edge::compat(async {
+                    let _root = $crate::workspace_root();
+                    let cluster = $crate::TestCluster::builder().rust_nodes(1).go_nodes(1) $($modifier)+ .build().await.unwrap();
+                    $inner(cluster).await;
+                })
+                .await;
             }
         }
     };
@@ -160,25 +192,34 @@ macro_rules! for_each_p2p_topology {
 macro_rules! for_each_p2p_topology_3 {
     ($name:ident, $inner:ident, $($modifier:tt)+) => {
         ::paste::paste! {
-            #[tokio::test]
+            #[nuclei::test]
             async fn [<rust_rust_ $name>]() {
-                let _root = $crate::workspace_root();
-                let cluster = $crate::TestCluster::builder().rust_nodes(3) $($modifier)+ .build().await.unwrap();
-                $inner(cluster).await;
+                ::edge::compat(async {
+                    let _root = $crate::workspace_root();
+                    let cluster = $crate::TestCluster::builder().rust_nodes(3) $($modifier)+ .build().await.unwrap();
+                    $inner(cluster).await;
+                })
+                .await;
             }
 
-            #[tokio::test]
+            #[nuclei::test]
             async fn [<go_go_ $name>]() {
-                let _root = $crate::workspace_root();
-                let cluster = $crate::TestCluster::builder().go_nodes(3) $($modifier)+ .build().await.unwrap();
-                $inner(cluster).await;
+                ::edge::compat(async {
+                    let _root = $crate::workspace_root();
+                    let cluster = $crate::TestCluster::builder().go_nodes(3) $($modifier)+ .build().await.unwrap();
+                    $inner(cluster).await;
+                })
+                .await;
             }
 
-            #[tokio::test]
+            #[nuclei::test]
             async fn [<go_rust_ $name>]() {
-                let _root = $crate::workspace_root();
-                let cluster = $crate::TestCluster::builder().rust_nodes(2).go_nodes(1) $($modifier)+ .build().await.unwrap();
-                $inner(cluster).await;
+                ::edge::compat(async {
+                    let _root = $crate::workspace_root();
+                    let cluster = $crate::TestCluster::builder().rust_nodes(2).go_nodes(1) $($modifier)+ .build().await.unwrap();
+                    $inner(cluster).await;
+                })
+                .await;
             }
         }
     };
@@ -192,28 +233,37 @@ macro_rules! for_each_p2p_topology_3 {
 macro_rules! for_each_p2p_topology_ignored {
     ($name:ident, $inner:ident, $($modifier:tt)+) => {
         ::paste::paste! {
-            #[tokio::test]
+            #[nuclei::test]
             #[ignore]
             async fn [<rust_rust_ $name>]() {
-                let _root = $crate::workspace_root();
-                let cluster = $crate::TestCluster::builder().rust_nodes(2) $($modifier)+ .build().await.unwrap();
-                $inner(cluster).await;
+                ::edge::compat(async {
+                    let _root = $crate::workspace_root();
+                    let cluster = $crate::TestCluster::builder().rust_nodes(2) $($modifier)+ .build().await.unwrap();
+                    $inner(cluster).await;
+                })
+                .await;
             }
 
-            #[tokio::test]
+            #[nuclei::test]
             #[ignore]
             async fn [<go_go_ $name>]() {
-                let _root = $crate::workspace_root();
-                let cluster = $crate::TestCluster::builder().go_nodes(2) $($modifier)+ .build().await.unwrap();
-                $inner(cluster).await;
+                ::edge::compat(async {
+                    let _root = $crate::workspace_root();
+                    let cluster = $crate::TestCluster::builder().go_nodes(2) $($modifier)+ .build().await.unwrap();
+                    $inner(cluster).await;
+                })
+                .await;
             }
 
-            #[tokio::test]
+            #[nuclei::test]
             #[ignore]
             async fn [<go_rust_ $name>]() {
-                let _root = $crate::workspace_root();
-                let cluster = $crate::TestCluster::builder().rust_nodes(1).go_nodes(1) $($modifier)+ .build().await.unwrap();
-                $inner(cluster).await;
+                ::edge::compat(async {
+                    let _root = $crate::workspace_root();
+                    let cluster = $crate::TestCluster::builder().rust_nodes(1).go_nodes(1) $($modifier)+ .build().await.unwrap();
+                    $inner(cluster).await;
+                })
+                .await;
             }
         }
     };
@@ -227,29 +277,48 @@ macro_rules! for_each_p2p_topology_ignored {
 macro_rules! for_each_p2p_topology_3_ignored {
     ($name:ident, $inner:ident, $($modifier:tt)+) => {
         ::paste::paste! {
-            #[tokio::test]
+            #[nuclei::test]
             #[ignore]
             async fn [<rust_rust_ $name>]() {
-                let _root = $crate::workspace_root();
-                let cluster = $crate::TestCluster::builder().rust_nodes(3) $($modifier)+ .build().await.unwrap();
-                $inner(cluster).await;
+                ::edge::compat(async {
+                    let _root = $crate::workspace_root();
+                    let cluster = $crate::TestCluster::builder().rust_nodes(3) $($modifier)+ .build().await.unwrap();
+                    $inner(cluster).await;
+                })
+                .await;
             }
 
-            #[tokio::test]
+            #[nuclei::test]
             #[ignore]
             async fn [<go_go_ $name>]() {
-                let _root = $crate::workspace_root();
-                let cluster = $crate::TestCluster::builder().go_nodes(3) $($modifier)+ .build().await.unwrap();
-                $inner(cluster).await;
+                ::edge::compat(async {
+                    let _root = $crate::workspace_root();
+                    let cluster = $crate::TestCluster::builder().go_nodes(3) $($modifier)+ .build().await.unwrap();
+                    $inner(cluster).await;
+                })
+                .await;
             }
 
-            #[tokio::test]
+            #[nuclei::test]
             #[ignore]
             async fn [<go_rust_ $name>]() {
-                let _root = $crate::workspace_root();
-                let cluster = $crate::TestCluster::builder().rust_nodes(2).go_nodes(1) $($modifier)+ .build().await.unwrap();
-                $inner(cluster).await;
+                ::edge::compat(async {
+                    let _root = $crate::workspace_root();
+                    let cluster = $crate::TestCluster::builder().rust_nodes(2).go_nodes(1) $($modifier)+ .build().await.unwrap();
+                    $inner(cluster).await;
+                })
+                .await;
             }
         }
     };
+}
+
+/// The path of the enclosing test function, for naming an exported scenario.
+#[macro_export]
+macro_rules! scenario_id {
+    () => {{
+        fn here() {}
+        let name = ::std::any::type_name_of_val(&here);
+        &name[..name.len() - "::here".len()]
+    }};
 }

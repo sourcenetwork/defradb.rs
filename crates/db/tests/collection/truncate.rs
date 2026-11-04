@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
-use db::{AutoCommitFetcher, AutoCommitMutator, DB};
+use db::{AutoCommitFetcher, AutoCommitMutator, TruncateError, DB};
+use defra_core::{RequestContext, TxnId};
 use document::{DocID, Document, NormalValue};
-use query::{DocFetcher, DocMutator, Filter};
+use query::documents::Filter;
+use query::{DocFetcher, DocMutator};
 use schema::{CollectionVersion, FieldDescription, FieldKind, IndexDescription};
 use storage::corekv::Key;
 use storage::keys::DatastoreSE;
@@ -32,9 +34,7 @@ fn users_schema() -> CollectionVersion {
 }
 
 fn age_filter(age: i64) -> Filter {
-    let mut conditions = serde_json::Map::new();
-    conditions.insert("age".into(), serde_json::json!({"_eq": age}));
-    Filter::from_conditions(conditions)
+    serde_json::json!({"age": {"_eq": age}}).into()
 }
 
 async fn create_user(mutator: &AutoCommitMutator<RegolithStore>, name: &str, age: i64) -> DocID {
@@ -54,7 +54,7 @@ fn filtered_truncate_removes_only_matching_documents_and_indexes() {
         let alice = create_user(&mutator, "Alice", 30).await;
         create_user(&mutator, "Bob", 40).await;
 
-        db.truncate_collection_with_filter("Users", age_filter(30), None)
+        db.truncate_collection_as(&RequestContext::ambient(), "Users", Some(&age_filter(30)))
             .await
             .unwrap();
 
@@ -96,7 +96,7 @@ fn filtered_truncate_includes_soft_deleted_documents() {
         let created = mutator.create("Users", doc).await.unwrap();
         mutator.delete("Users", &created.doc_id).await.unwrap();
 
-        db.truncate_collection_with_filter("Users", age_filter(30), None)
+        db.truncate_collection_as(&RequestContext::ambient(), "Users", Some(&age_filter(30)))
             .await
             .unwrap();
         create_user(&mutator, "Alice", 31).await;
@@ -122,14 +122,11 @@ fn filtered_truncate_rejects_branchable_collections() {
             .unwrap();
 
         let error = db
-            .truncate_collection_with_filter("Users", age_filter(30), None)
+            .truncate_collection_as(&RequestContext::ambient(), "Users", Some(&age_filter(30)))
             .await
             .unwrap_err();
 
-        assert!(matches!(
-            error,
-            db::Error::FilteredTruncateBranchableCollection
-        ));
+        assert!(matches!(error, TruncateError::FilteredBranchable));
     })
     .unwrap()
 }
@@ -154,7 +151,7 @@ fn filtered_truncate_removes_only_matching_searchable_encryption_records() {
         drop(datastore);
         txn.commit().await.unwrap();
 
-        db.truncate_collection_with_filter("Users", age_filter(30), None)
+        db.truncate_collection_as(&RequestContext::ambient(), "Users", Some(&age_filter(30)))
             .await
             .unwrap();
 
@@ -194,7 +191,7 @@ fn filtered_truncate_processes_more_than_one_chunk() {
             mutator.create("Users", doc).await.unwrap();
         }
 
-        db.truncate_collection_with_filter("Users", age_filter(30), None)
+        db.truncate_collection_as(&RequestContext::ambient(), "Users", Some(&age_filter(30)))
             .await
             .unwrap();
 
@@ -203,6 +200,186 @@ fn filtered_truncate_processes_more_than_one_chunk() {
             .await
             .unwrap()
             .is_empty());
+    })
+    .unwrap()
+}
+
+#[test]
+fn filtered_truncate_in_a_transaction_is_refused_and_removes_nothing() {
+    workers::block_on(async {
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        db.create_collection(users_schema()).await.unwrap();
+        create_user(&AutoCommitMutator::new(db.clone()), "Alice", 30).await;
+        let in_txn = RequestContext::ambient().with_txn(Some(TxnId(1)));
+
+        let error = db
+            .truncate_collection_as(&in_txn, "Users", Some(&age_filter(30)))
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "filtered truncate cannot run in a transaction"
+        );
+        assert_eq!(
+            AutoCommitFetcher::new(db)
+                .get_all("Users")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn unfiltered_truncate_in_a_transaction_applies_at_once() {
+    workers::block_on(async {
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        db.create_collection(users_schema()).await.unwrap();
+        create_user(&AutoCommitMutator::new(db.clone()), "Alice", 30).await;
+        let in_txn = RequestContext::ambient().with_txn(Some(TxnId(1)));
+
+        db.truncate_collection_as(&in_txn, "Users", None)
+            .await
+            .unwrap();
+
+        assert!(AutoCommitFetcher::new(db)
+            .get_all("Users")
+            .await
+            .unwrap()
+            .is_empty());
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_filter_that_is_not_one_is_refused_with_go_text() {
+    workers::block_on(async {
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        db.create_collection(users_schema()).await.unwrap();
+        create_user(&AutoCommitMutator::new(db.clone()), "Alice", 30).await;
+
+        for (filter, expected) in [
+            (Filter::Source("  ".into()), "filter cannot be empty"),
+            (
+                Filter::from(serde_json::json!(4)),
+                "unsupported filter type",
+            ),
+            (
+                Filter::from(serde_json::json!(null)),
+                "unsupported filter type",
+            ),
+        ] {
+            let error = db
+                .truncate_collection_as(&RequestContext::ambient(), "Users", Some(&filter))
+                .await
+                .unwrap_err();
+            assert_eq!(error.to_string(), expected);
+        }
+        assert_eq!(
+            AutoCommitFetcher::new(db)
+                .get_all("Users")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_source_text_filter_truncates_what_it_matches() {
+    workers::block_on(async {
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        db.create_collection(users_schema()).await.unwrap();
+        let mutator = AutoCommitMutator::new(db.clone());
+        create_user(&mutator, "Alice", 30).await;
+        create_user(&mutator, "Bob", 40).await;
+
+        db.truncate_collection_as(
+            &RequestContext::ambient(),
+            "Users",
+            Some(&Filter::Source("{age: {_eq: 30}}".into())),
+        )
+        .await
+        .unwrap();
+
+        let docs = AutoCommitFetcher::new(db).get_all("Users").await.unwrap();
+        assert_eq!(docs.len(), 1);
+        assert_eq!(
+            docs[0].get("name"),
+            Some(&NormalValue::String("Bob".into()))
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn truncating_a_missing_collection_names_it() {
+    workers::block_on(async {
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+
+        let error = db
+            .truncate_collection_as(&RequestContext::ambient(), "Users", None)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            TruncateError::Db(db::Error::CollectionNotFound(name)) if name == "Users"
+        ));
+    })
+    .unwrap()
+}
+
+/// Truncate removes a document's DocID mapping and its blocks' ownership:
+/// before it the genesis field block is owned by the DocID, after it the
+/// DocID resolves to nothing and the block has no owner.
+#[test]
+#[mantra_macros::req_test("defra.collection.truncate_ownership")]
+fn truncate_removes_doc_id_mappings_and_block_ownership() {
+    workers::block_on(async {
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        db.create_collection(users_schema()).await.unwrap();
+        let mut doc = Document::new(users_schema());
+        doc.set("name", NormalValue::String("Alice".to_owned()))
+            .unwrap();
+        doc.set("age", NormalValue::Int(30)).unwrap();
+        let created = AutoCommitMutator::new(db.clone())
+            .create("Users", doc)
+            .await
+            .unwrap();
+        let composite =
+            defra_core::Block::from_dag_cbor(created.commit_block.as_ref().unwrap()).unwrap();
+        let field = composite.links.unwrap()[0].link.to_string();
+        let doc_id = created.doc_id.to_string();
+
+        let lookups = || {
+            let db = db.clone();
+            let (field, doc_id) = (field.clone(), doc_id.clone());
+            async move {
+                let txn = db.new_txn(true).await.unwrap();
+                let systemstore = txn.systemstore().unwrap();
+                let owners = db::docid::map::get_doc_ids_for_block(&systemstore, &field)
+                    .await
+                    .unwrap();
+                let resolves = db::docid::map::get_doc_ref(&systemstore, &doc_id)
+                    .await
+                    .unwrap()
+                    .is_some();
+                drop(systemstore);
+                let _ = txn.discard();
+                (owners, resolves)
+            }
+        };
+        assert_eq!(lookups().await, (vec![doc_id.clone()], true));
+        db.truncate_collection_as(&RequestContext::ambient(), "Users", None)
+            .await
+            .unwrap();
+        assert_eq!(lookups().await, (Vec::<String>::new(), false));
     })
     .unwrap()
 }

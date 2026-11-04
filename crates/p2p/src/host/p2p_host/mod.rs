@@ -12,24 +12,24 @@ use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::rt::{
+    mpsc,
+    time::{self, Instant, MissedTickBehavior},
+};
 use ::bitswap::Store;
 use futures::StreamExt;
 use libp2p::{
     identity::Keypair,
     multiaddr::Protocol,
-    noise, request_response,
+    request_response,
     swarm::{
         behaviour::toggle::Toggle,
         dial_opts::{DialOpts, PeerCondition},
         DialError,
     },
-    tcp, yamux, Multiaddr, PeerId, Swarm, SwarmBuilder,
+    Multiaddr, PeerId, Swarm,
 };
 use sysinfo::{MemoryRefreshKind, RefreshKind, System};
-use tokio::{
-    sync::mpsc,
-    time::{self, Instant, MissedTickBehavior},
-};
 use tracing::{debug, info, warn};
 
 use crate::behaviour::DefraBehaviour;
@@ -75,6 +75,23 @@ const GO_RESOURCE_MANAGER_SYSTEM_MEMORY_DIVISOR: u64 = 2;
 /// Go's transient ResourceManager scope is capped at 25% of the system scope.
 const GO_RESOURCE_MANAGER_TRANSIENT_MEMORY_DIVISOR: u64 = 4;
 
+/// The file descriptor budget when a memory budget is set without one.
+const DEFAULT_RESOURCE_FILE_DESCRIPTORS: u64 = 512;
+
+/// Operator overrides for the libp2p resource budget: the node config's
+/// `net.resource_memory_mib`, `net.resource_file_descriptors` and
+/// `net.max_streams_per_peer`. `None` keeps the detected default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ResourceLimits {
+    /// The whole memory budget in MiB, in place of half of system memory,
+    /// which inside a container is the host's and not the container's.
+    pub memory_mib: Option<u64>,
+    /// The file descriptor budget with a memory budget; 512 when unset.
+    pub file_descriptors: Option<u64>,
+    /// Inbound streams one peer may run at once; a stream past it is reset.
+    pub max_streams_per_peer: Option<usize>,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ResourceManagerRuntimeLimits {
     fd_limit: u64,
@@ -82,7 +99,15 @@ struct ResourceManagerRuntimeLimits {
 }
 
 impl ResourceManagerRuntimeLimits {
-    fn detect() -> Result<Self> {
+    fn detect(limits: ResourceLimits) -> Result<Self> {
+        if let Some(mib) = limits.memory_mib {
+            return Ok(Self {
+                fd_limit: limits
+                    .file_descriptors
+                    .unwrap_or(DEFAULT_RESOURCE_FILE_DESCRIPTORS),
+                system_memory_budget_bytes: mib.saturating_mul(1024 * 1024),
+            });
+        }
         let fd_limit = current_fd_limit()?;
         let system_memory_budget_bytes =
             total_system_memory_bytes() / GO_RESOURCE_MANAGER_SYSTEM_MEMORY_DIVISOR;
@@ -217,6 +242,8 @@ pub struct P2PHostConfig {
     /// are filtered per-peer against the shared `ReplicatorRegistry`,
     /// matching Go's `WithPeerBlockRequestFilter` wiring. Default: `Open`.
     pub access_mode: AccessMode,
+    /// Resource budget overrides. Default: none, the detected budget.
+    pub resource_limits: ResourceLimits,
 }
 
 impl Default for P2PHostConfig {
@@ -233,6 +260,7 @@ impl Default for P2PHostConfig {
             connection_manager_grace_period: DEFAULT_CONNECTION_MANAGER_GRACE_PERIOD,
             max_connections_per_peer: 4,
             access_mode: AccessMode::Open,
+            resource_limits: ResourceLimits::default(),
         }
     }
 }
@@ -240,7 +268,7 @@ impl Default for P2PHostConfig {
 /// One in-flight Bitswap query: its abort handle and the fetch id.
 #[derive(Clone)]
 pub(super) struct BitswapQuery {
-    pub(super) abort: tokio::task::AbortHandle,
+    pub(super) abort: futures::future::AbortHandle,
     pub(super) fetch_id: ::bitswap::FetchId,
 }
 
@@ -257,7 +285,7 @@ pub struct P2PHost<S: Store> {
     shutdown_requested: bool,
     pub(super) pending_requests: RapidHashMap<
         request_response::OutboundRequestId,
-        tokio::sync::oneshot::Sender<Result<PushLogReply>>,
+        crate::rt::oneshot::Sender<Result<PushLogReply>>,
     >,
     /// Replicator registry for access control
     pub(super) replicators: Arc<ReplicatorRegistry>,
@@ -267,13 +295,17 @@ pub struct P2PHost<S: Store> {
     /// Receiver for two-stream events
     pub(super) two_stream_event_rx: mpsc::Receiver<crate::two_stream::TwoStreamEvent>,
     /// Tracked spawned tasks for graceful shutdown
-    pub(super) spawned_tasks: tokio::task::JoinSet<()>,
+    pub(super) spawned_tasks: edge::TaskSet<()>,
     /// Bitswap queries, for cancellation and session teardown. Shared with
     /// each fetch task, which removes its own entry when it completes.
     pub(super) bitswap_queries: BitswapQueries,
     /// Per-peer addresses learned from connections and identify protocol.
     /// Used by ActivePeers to return full multiaddrs (Go-compatible).
     pub(super) peer_addrs: RapidHashMap<PeerId, Multiaddr>,
+    /// Disconnect replies held until the peer's last connection closes, so
+    /// `ActivePeers` after `Disconnect` no longer lists it, as in Go.
+    pub(super) pending_disconnects:
+        RapidHashMap<PeerId, Vec<crate::rt::oneshot::Sender<Result<()>>>>,
     /// Optional local DEFRA identity used for Go-compatible identity exchange.
     pub(super) node_identity: Option<Arc<identity::RawIdentity>>,
     /// Tracks established connections and actively prunes them after the
@@ -284,6 +316,8 @@ pub struct P2PHost<S: Store> {
     /// by `HostCommand::RegisterPubsubRpcTopic` when the coordinator wires
     /// up a `pubsub_rpc::TopicHandler` (#828).
     pub(super) pubsub_rpc_topics: RapidHashSet<String>,
+    /// The network runtime the host's background tasks run on.
+    pub(super) edge: edge::Edge,
 }
 
 impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
@@ -292,6 +326,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
     /// # Arguments
     ///
     /// * `bitswap_store` - The blockstore for Bitswap block exchange
+    /// * `edge` - The network runtime the host's background tasks run on
     ///
     /// # Returns
     ///
@@ -299,6 +334,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
     /// The ReplicatorRegistry is shared and can be used for access control decisions.
     pub async fn new(
         bitswap_store: S,
+        edge: edge::Edge,
     ) -> Result<(
         Self,
         P2PHostHandle,
@@ -306,13 +342,14 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
         Arc<ReplicatorRegistry>,
     )> {
         let keypair = Keypair::generate_ed25519();
-        Self::with_keypair(keypair, bitswap_store).await
+        Self::with_keypair(keypair, bitswap_store, edge).await
     }
 
     /// Create a new P2P host with the given config options.
     pub async fn with_config(
         bitswap_store: S,
         config: P2PHostConfig,
+        edge: edge::Edge,
     ) -> Result<(
         Self,
         P2PHostHandle,
@@ -320,7 +357,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
         Arc<ReplicatorRegistry>,
     )> {
         let keypair = Keypair::generate_ed25519();
-        Self::with_keypair_and_config(keypair, bitswap_store, config).await
+        Self::with_keypair_and_config(keypair, bitswap_store, config, edge).await
     }
 
     /// Create a new P2P host with the given keypair and blockstore.
@@ -331,19 +368,16 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
     ///
     /// * `keypair` - The identity keypair for this node
     /// * `bitswap_store` - The blockstore for Bitswap block exchange
+    /// * `edge` - The network runtime the host's background tasks run on
     ///
     /// # Returns
     ///
     /// A tuple of (P2PHost, P2PHostHandle, HostEvent receiver, ReplicatorRegistry).
     /// The ReplicatorRegistry is shared and can be used for access control decisions.
-    ///
-    /// # Note
-    ///
-    /// This must be called within a tokio runtime context as Bitswap spawns
-    /// background tasks for operations.
     pub async fn with_keypair(
         keypair: Keypair,
         bitswap_store: S,
+        edge: edge::Edge,
     ) -> Result<(
         Self,
         P2PHostHandle,
@@ -355,6 +389,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
             bitswap_store,
             P2PHostConfig::default(),
             None,
+            edge,
         )
         .await
     }
@@ -370,13 +405,14 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
         keypair: Keypair,
         bitswap_store: S,
         config: P2PHostConfig,
+        edge: edge::Edge,
     ) -> Result<(
         Self,
         P2PHostHandle,
         mpsc::Receiver<HostEvent>,
         Arc<ReplicatorRegistry>,
     )> {
-        Self::with_keypair_and_config_and_identity(keypair, bitswap_store, config, None).await
+        Self::with_keypair_and_config_and_identity(keypair, bitswap_store, config, None, edge).await
     }
 
     /// Create a new P2P host with the given keypair, blockstore, config, and optional DEFRA identity.
@@ -385,6 +421,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
         bitswap_store: S,
         config: P2PHostConfig,
         node_identity: Option<Arc<identity::RawIdentity>>,
+        edge: edge::Edge,
     ) -> Result<(
         Self,
         P2PHostHandle,
@@ -398,6 +435,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
             node_identity,
             Arc::new(DefaultBlockClassifier),
             Arc::new(LateBoundServeAcp::new()),
+            edge,
         )
         .await
     }
@@ -411,6 +449,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
         node_identity: Option<Arc<identity::RawIdentity>>,
         classifier: Arc<dyn BlockClassifier>,
         serve_acp: Arc<LateBoundServeAcp>,
+        edge: edge::Edge,
     ) -> Result<(
         Self,
         P2PHostHandle,
@@ -425,7 +464,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
 
         info!("Local peer ID: {}", local_peer_id);
 
-        let resource_limits = ResourceManagerRuntimeLimits::detect()?;
+        let resource_limits = ResourceManagerRuntimeLimits::detect(config.resource_limits)?;
         info!(
             fd_limit = resource_limits.fd_limit,
             system_memory_budget_mib = resource_limits.system_memory_budget_bytes / 1024 / 1024,
@@ -452,51 +491,19 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
             config.enable_pubsub,
             &config,
             resource_limits.system_memory_budget_usize(),
+            edge.clone(),
         )
         .await?;
 
-        let tcp_config = tcp::Config::default();
-
-        // Two builder paths required: libp2p's SwarmBuilder uses a typestate
-        // pattern where `.with_relay_client()` transitions to a different builder
-        // type (different `.with_behaviour()` closure signature), so it cannot be
-        // called conditionally on a single builder chain.
-        let swarm = if config.enable_relay {
-            SwarmBuilder::with_existing_identity(keypair.clone())
-                .with_tokio()
-                .with_tcp(tcp_config, noise::Config::new, yamux::Config::default)
-                .map_err(|e| Error::Transport(e.to_string()))?
-                .with_quic()
-                .with_dns()
-                .map_err(|e| Error::Transport(e.to_string()))?
-                .with_websocket(noise::Config::new, yamux::Config::default)
-                .await
-                .map_err(|e| Error::Transport(e.to_string()))?
-                .with_relay_client(noise::Config::new, yamux::Config::default)
-                .map_err(|e| Error::Transport(e.to_string()))?
-                .with_behaviour(|_key, relay_client| {
-                    behaviour.relay = Toggle::from(Some(relay_client));
-                    behaviour
-                })
-                .expect("behaviour already constructed")
-                .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(IDLE_CONNECTION_TIMEOUT))
-                .build()
-        } else {
-            SwarmBuilder::with_existing_identity(keypair.clone())
-                .with_tokio()
-                .with_tcp(tcp_config, noise::Config::new, yamux::Config::default)
-                .map_err(|e| Error::Transport(e.to_string()))?
-                .with_quic()
-                .with_dns()
-                .map_err(|e| Error::Transport(e.to_string()))?
-                .with_websocket(noise::Config::new, yamux::Config::default)
-                .await
-                .map_err(|e| Error::Transport(e.to_string()))?
-                .with_behaviour(|_key| behaviour)
-                .expect("behaviour already constructed")
-                .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(IDLE_CONNECTION_TIMEOUT))
-                .build()
-        };
+        let (transport, relay_client) = super::transport::build(&keypair, config.enable_relay)?;
+        behaviour.relay = Toggle::from(relay_client);
+        let swarm = Swarm::new(
+            transport,
+            behaviour,
+            local_peer_id,
+            libp2p::swarm::Config::with_executor(super::transport::Executor::new(edge.clone()))
+                .with_idle_connection_timeout(IDLE_CONNECTION_TIMEOUT),
+        );
 
         let (command_tx, command_rx) = mpsc::channel(256);
         let (event_tx, event_rx) = mpsc::channel(256);
@@ -591,8 +598,10 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
             config.max_car_size,
             config.stream_timeout,
             config.max_p2p_tasks,
+            config.resource_limits.max_streams_per_peer,
+            edge.clone(),
         );
-        tokio::spawn(runner.run());
+        edge.spawn_service(runner.run()).detach();
 
         let host = Self {
             swarm,
@@ -604,11 +613,12 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
             replicators: Arc::clone(&replicators),
             two_stream_handler,
             two_stream_event_rx,
-            spawned_tasks: tokio::task::JoinSet::new(),
+            spawned_tasks: edge::TaskSet::new(edge.clone()),
             bitswap_queries: Arc::new(kovan_map::HopscotchMap::with_hasher(
                 rapidhash::fast::RandomState::default(),
             )),
             peer_addrs: RapidHashMap::new(),
+            pending_disconnects: RapidHashMap::new(),
             node_identity,
             connection_manager: ActiveConnectionManager::new(
                 config.connection_manager_low_water,
@@ -616,6 +626,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
                 config.connection_manager_grace_period,
             ),
             pubsub_rpc_topics: RapidHashSet::new(),
+            edge,
         };
 
         Ok((host, handle, event_rx, replicators))
@@ -642,7 +653,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
         let mut event = Some(event);
         loop {
             let event_tx = self.event_tx.clone();
-            tokio::select! {
+            crate::rt::select! {
                 permit = event_tx.reserve_owned() => {
                     let Ok(permit) = permit else {
                         return false;
@@ -671,7 +682,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
         }
     }
 
-    fn report_spawned_task(result: Option<std::result::Result<(), tokio::task::JoinError>>) {
+    fn report_spawned_task(result: Option<std::result::Result<(), edge::EdgeError>>) {
         if let Some(Err(error)) = result {
             tracing::warn!(%error, "P2P host task failed");
         }
@@ -680,7 +691,13 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
     /// Run the P2P host event loop.
     ///
     /// This method runs until shutdown is requested.
-    pub async fn run(mut self) {
+    pub async fn run(self) {
+        // The swarm polls libp2p's QUIC and DNS transports, which bind tokio
+        // sockets and timers.
+        crate::rt::compat(self.drive()).await
+    }
+
+    async fn drive(mut self) {
         let mut bootstrap_scheduler = BootstrapScheduler::new(DHT_BOOTSTRAP_DEBOUNCE);
         let mut bootstrap_deadline = Box::pin(time::sleep(DHT_BOOTSTRAP_DEBOUNCE));
         let mut bootstrap_interval = time::interval(DHT_BOOTSTRAP_INTERVAL);
@@ -694,7 +711,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
             // Biased select: process swarm events before commands.
             // This ensures ConnectionEstablished events (which update peer_addrs)
             // are processed before PeerAddresses commands read them.
-            tokio::select! {
+            crate::rt::select! {
                 biased;
 
                 event = self.swarm.select_next_some() => {
@@ -893,6 +910,25 @@ mod tests {
         .expect("Go minimum FD and memory limits must be accepted");
     }
 
+    #[test]
+    fn a_configured_memory_budget_replaces_the_detected_one() {
+        let limits = ResourceManagerRuntimeLimits::detect(ResourceLimits {
+            memory_mib: Some(64),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(limits.system_memory_budget_bytes, 64 * 1024 * 1024);
+        assert_eq!(limits.fd_limit, DEFAULT_RESOURCE_FILE_DESCRIPTORS);
+
+        let limits = ResourceManagerRuntimeLimits::detect(ResourceLimits {
+            memory_mib: Some(2048),
+            file_descriptors: Some(4096),
+            max_streams_per_peer: None,
+        })
+        .unwrap();
+        assert_eq!(limits.fd_limit, 4096);
+    }
+
     /// `sysinfo::total_memory` reports bytes; a unit or refresh-kind regression
     /// would be orders of magnitude off and skew the Go-parity memory divisor.
     #[test]
@@ -929,10 +965,12 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn saturated_event_delivery_still_services_host_commands() {
         let (mut host, handle, mut events, _) =
-            P2PHost::new(MockBitswapStore::new()).await.unwrap();
+            P2PHost::new(MockBitswapStore::new(), edge::testing::edge())
+                .await
+                .unwrap();
         let expected_peer_id = host.local_peer_id();
         let address: Multiaddr = "/memory/1".parse().unwrap();
 
@@ -943,7 +981,7 @@ mod tests {
                 .try_send(HostEvent::Listening(address.clone()))
             {
                 Ok(()) => filled += 1,
-                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => break,
+                Err(crate::rt::mpsc::error::TrySendError::Full(_)) => break,
                 Err(error) => panic!("event receiver unexpectedly closed: {error}"),
             }
         }
@@ -951,8 +989,8 @@ mod tests {
 
         let mut command = Box::pin(handle.local_peer_id());
         let mut forward = Box::pin(host.forward_event(HostEvent::Listening(address)));
-        let resolved_peer_id = tokio::time::timeout(Duration::from_secs(1), async {
-            tokio::select! {
+        let resolved_peer_id = crate::rt::time::timeout(Duration::from_secs(1), async {
+            crate::rt::select! {
                 result = &mut command => result.unwrap(),
                 _ = &mut forward => panic!("event forwarding cannot finish while the channel is full"),
             }

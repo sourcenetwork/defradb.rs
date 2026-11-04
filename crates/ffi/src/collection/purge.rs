@@ -1,19 +1,13 @@
 use std::ffi::c_char;
 
-use acp::nac::NodePermission;
+use serde_json::json;
 
-use crate::helpers::{get_node_database, require_c_str};
-use crate::nac_check::check_nac_for_node;
+use crate::helpers::require_c_str;
 use crate::types::{c_str_to_string, FfiResult};
 use crate::{ffi_async, ffi_entry, try_ffi};
 
-use db::write::autocommit::AutoCommitMutator;
-use document::DocID;
-
-/// Delete multiple documents by their docIDs.
-///
-/// Takes a collection name and a JSON array of docID strings,
-/// deletes each document, and returns the count of deleted documents.
+/// Delete documents by their docIDs, through the core's filtered delete on
+/// the node's request path.
 ///
 /// # Arguments
 ///
@@ -38,40 +32,22 @@ pub unsafe extern "C" fn delete_documents(
     doc_ids_json: *const c_char,
 ) -> FfiResult {
     ffi_entry! {
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::DocumentDelete
-        ));
-
-        // The caller acts in the call's context, so the NAC checks the body
-        // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(c_str_to_string(identity_did).filter(|s| !s.is_empty()));
-
+        let identity = c_str_to_string(identity_did);
         let col_name = try_ffi!(require_c_str(collection_name, "collection_name"));
         let ids_json = try_ffi!(require_c_str(doc_ids_json, "doc_ids_json"));
-        let database = try_ffi!(get_node_database(node_ptr));
-
-        // Parse JSON array of docID strings
-        let doc_id_strings: Vec<String> = try_ffi!(serde_json::from_str(&ids_json)
+        let doc_ids: Vec<String> = try_ffi!(serde_json::from_str(&ids_json)
             .map_err(|e| FfiResult::error(format!("invalid doc_ids_json: {}", e))));
 
-        ffi_async!(node_ptr, {
-            let mutator = AutoCommitMutator::new(database.clone());
-
-            let doc_ids: Vec<DocID> = doc_id_strings
-                .iter()
-                .map(|s| DocID::from_string(s).map_err(|e| format!("invalid docID '{}': {}", s, e)))
-                .collect::<Result<Vec<_>, _>>()?;
-
-            let results = mutator
-                .delete_many_impl_as(&context, &col_name, &doc_ids)
+        ffi_async!(caller, {
+            if doc_ids.is_empty() {
+                return Ok(json!({"deleted": 0}).to_string());
+            }
+            let filter = query::documents::Filter::from(json!({"_docID": {"_in": doc_ids}}));
+            let run = |mutation| crate::query::run_mutation(node_ptr, identity, None, mutation);
+            let deleted = query::documents::delete_with_filter(run, &col_name, &filter)
                 .await
-                .map_err(|e| format!("batch delete failed: {}", e))?;
-
-            let deleted: u64 = results.iter().filter(|r| r.existed).count() as u64;
-
-            Ok(format!("{{\"deleted\":{}}}", deleted))
+                .map_err(|e| e.to_string())?;
+            Ok(json!({"deleted": deleted.count}).to_string())
         })
     }
 }
@@ -135,6 +111,7 @@ mod tests {
         let result = unsafe {
             exec_request(
                 node,
+                std::ptr::null(),
                 std::ptr::null(),
                 mutation.as_ptr(),
                 std::ptr::null(),

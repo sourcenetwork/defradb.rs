@@ -63,7 +63,7 @@ async fn sleep_until(timestamp: DateTime<Utc>) {
         .to_std()
         .unwrap_or_default();
     if !delay.is_zero() {
-        tokio::time::sleep(delay).await;
+        nuclei::time::sleep(delay).await;
     }
 }
 
@@ -247,13 +247,13 @@ async fn wait_for_rollup(
             );
         }
 
-        tokio::time::sleep(POLL_INTERVAL).await;
+        nuclei::time::sleep(POLL_INTERVAL).await;
     }
 }
 
 async fn run_view_gc(api_url: &str, name: &str) {
     let body = serde_json::json!({ "Names": [name] });
-    let response = reqwest::Client::new()
+    let response = net::http::Client::new(edge::testing::edge())
         .post(format!("{api_url}/api/v0/views/gc"))
         .json(&body)
         .send()
@@ -485,24 +485,30 @@ async fn downsample_gc_test(cluster: TestCluster, encrypt_secret: bool) {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_downsample_gc_prunes_retained_source_history() {
-    let _root = workspace_root();
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .build()
-        .await
-        .expect("build cluster");
-    downsample_gc_test(cluster, false).await;
+    edge::compat(async {
+        let _root = workspace_root();
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .build()
+            .await
+            .expect("build cluster");
+        downsample_gc_test(cluster, false).await;
+    })
+    .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_downsample_gc_keeps_encrypted_source_writable() {
-    let _root = workspace_root();
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .build()
-        .await
-        .expect("build cluster");
-    downsample_gc_test(cluster, true).await;
+    edge::compat(async {
+        let _root = workspace_root();
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .build()
+            .await
+            .expect("build cluster");
+        downsample_gc_test(cluster, true).await;
+    })
+    .await;
 }

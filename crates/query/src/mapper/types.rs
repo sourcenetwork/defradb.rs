@@ -127,6 +127,24 @@ impl GroupBy {
         self.fields.is_empty()
     }
 
+    /// Whether a scalar field may be selected at group level: a grouped field
+    /// or the ID field of a grouped relation (`_authorID` for `author`).
+    /// Mirrors Go's `Select.isFieldInGroupBy`.
+    pub fn allows_field(&self, name: &str) -> bool {
+        self.fields
+            .iter()
+            .any(|group| name == group || name == format!("_{group}ID"))
+    }
+
+    /// Whether a relation sub-select may appear at group level: the grouped
+    /// relation itself, or the relation whose ID field is grouped. Mirrors Go's
+    /// `Select.isSelectInGroupBy`.
+    pub fn allows_select(&self, name: &str) -> bool {
+        self.fields
+            .iter()
+            .any(|group| name == group || format!("_{name}ID") == *group)
+    }
+
     /// Group fields under the names the planner actually stores them by.
     ///
     /// A single relation is stored as its ID field, so grouping by `author`

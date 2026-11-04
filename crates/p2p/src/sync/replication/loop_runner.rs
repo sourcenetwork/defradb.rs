@@ -20,8 +20,8 @@
 
 use std::sync::Arc;
 
+use crate::rt::mpsc;
 use blockstore::Blockstore;
-use tokio::sync::mpsc;
 
 use super::config::ReplicationConfig;
 use super::handlers::{
@@ -40,7 +40,7 @@ use crate::transport::P2PTransport;
 ///
 /// ```ignore
 /// // Create coordinator and get event receiver
-/// let (coordinator, events) = SyncCoordinator::new(host, blockstore, config).await?;
+/// let (coordinator, events) = SyncCoordinator::new(host, blockstore, network, config).await?;
 ///
 /// // Create merge handler (database layer)
 /// let handler = MyMergeHandler::new(db);

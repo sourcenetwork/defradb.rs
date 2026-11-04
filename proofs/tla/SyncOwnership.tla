@@ -23,7 +23,7 @@
 \*   CompletionMode = "LatchedDrain" | "EdgeTriggered" |
 \*                    "WorkerSaturated" | "BlockingHostEvent" |
 \*                    "SharedServeWorkers" | "EagerIdentityLookup" |
-\*                    "BusyExhaustion"
+\*                    "BusyExhaustion" | "ShedAsStall"
 \*   PendingMode = "ScopeCurrent" | "EveryRoot"
 \*   MergeMode = "SerializedBatch" | "ParallelWriters" |
 \*               "DuplicateTerminal"
@@ -92,7 +92,8 @@ ASSUME FetchMode \in {"RootThenSelective", "SelectiveMissing", "RecursiveFirst"}
 ASSUME StreamMode \in {"DrainResponse", "CancelOnProgress"}
 ASSUME CompletionMode \in {"LatchedDrain", "EdgeTriggered", "WorkerSaturated",
                             "BlockingHostEvent", "SharedServeWorkers",
-                            "EagerIdentityLookup", "BusyExhaustion"}
+                            "EagerIdentityLookup", "BusyExhaustion",
+                            "ShedAsStall"}
 ASSUME PendingMode \in {"ScopeCurrent", "EveryRoot"}
 ASSUME MergeMode \in {"SerializedBatch", "ParallelWriters", "DuplicateTerminal"}
 
@@ -433,6 +434,47 @@ ContendedIngest(s, v) ==
                  serveScopes, ready, mergeFlights, terminalFlights,
                  lostCompletions, mergedV, crashed>>
 
+\* A provider whose bounded CAR serving lane is full sheds the request and
+\* answers busy (sync/car.rs encode_car_busy, sent by
+\* event_handler/mod.rs reject_car_fetch). Busy says the provider is alive and
+\* holds the DAG but cannot serve now; it is not evidence that the provider
+\* failed. The receiver rotates past a busy provider without spending stall
+\* budget and skips it for the rest of the attempt. An attempt releases the
+\* fetch lease as shed when every provider shed one batch, even after earlier
+\* batches delivered, or when some provider shed and none delivered a block
+\* because the rest did not hold the root yet. Either way the durable root
+\* returns at once to the same paced per-root clock, whose backoff paces the
+\* retry (dag_fetcher.rs FetchBatchOutcome::ProviderBusy or
+\* incomplete_or_shed -> FetchAttemptOutcome::ProviderBusy -> poll_fetch_dag).
+\* Only a reply-driven fetch, which has no clock, retries a shed attempt once
+\* in place.
+\* Providers are not modelled one by one, so this single action is that shed
+\* release for every mix. The red policy ShedAsStall reads the busy reply as a stalled provider
+\* window, the way a zero-byte rejection was read before busy existed, so
+\* repeated shedding burns the attempt budget into terminal provider
+\* exhaustion.
+ProviderShed(s, v) ==
+  \* Only a root the receiver durably owns can have a fetch in flight.
+  /\ <<s, v>> \in pending
+  \* A fetch owner is currently asking a provider for this root.
+  /\ flights[<<s, v>>] > 0
+  \* The owner drains the provider's reply, which here is the busy notice.
+  /\ <<s, v>> \in drained
+  \* Green: shedding is not failure. Red: it is counted as exhaustion.
+  /\ fetchExhausted' = IF CompletionMode = "ShedAsStall"
+                       THEN fetchExhausted \cup {<<s, v>>}
+                       ELSE fetchExhausted
+  \* Either way the fetch lease is released back to the per-root clock.
+  /\ flights' = [flights EXCEPT ![<<s, v>>] = @ - 1]
+  \* The last flight for this root no longer has a response to drain.
+  /\ drained' = IF flights[<<s, v>>] = 1
+                THEN drained \ {<<s, v>>}
+                ELSE drained
+  \* The durable obligation and every other piece of state stay as they were.
+  /\ UNCHANGED <<localV, dirty, payloadLedger, inflight, pending, originBound, qualifiedOffers, qualifiedProvider, serveAuth,
+                 serveScopes, ready, mergeFlights, terminalFlights,
+                 lostCompletions, mergedV, crashed>>
+
 \* The fleet exposed a second way to make a completed response unobservable:
 \* a bounded spawned-worker dispatcher stopped draining its transport channel
 \* while every worker was occupied, leaving the CAR completion behind queued
@@ -577,6 +619,7 @@ Next ==
        \/ OfferQualifiedAlternate(s, v) \/ AddQualifiedAlternate(s, v)
        \/ ClaimFetch(s, v) \/ FailFetchBeforeWaiter(s, v)
        \/ ContendedIngest(s, v)
+       \/ ProviderShed(s, v)
        \/ StarveTransportCompletion(s, v)
        \/ StarveRecoveryServe(s, v)
        \/ StarveRecoveryAuthorization(s, v)
@@ -634,6 +677,10 @@ INV_FetchCompletionObservable == lostCompletions = {}
 \* A local single-flight collision is not a terminal statement about provider
 \* availability. It may only release this claim and re-arm the durable clock.
 INV_ContendedIngestDoesNotExhaust == fetchExhausted = {}
+
+\* A provider that sheds a request as busy is alive and holds the DAG, so
+\* however often it sheds, the root is never written off as exhausted.
+INV_ProviderShedDoesNotExhaust == fetchExhausted = {}
 
 INV_ReceiverQueueBounded == Cardinality(pending) <= Cap
 

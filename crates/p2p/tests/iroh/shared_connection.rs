@@ -10,17 +10,17 @@ use super::super::task_registry::TaskRegistry;
 #[test]
 fn disconnect_closes_replacement_despite_stale_cleanup() {
     edge::testing::edge()
-        .block_on(async {
+        .block_on(edge::compat(async {
             for alpn in [protocols::ALPN_MUX, protocols::ALPN_MUX_V1] {
                 let endpoint = tests::localhost_endpoint(vec![]).await;
                 let peer = tests::localhost_endpoint(vec![alpn.to_vec()]).await;
                 let (old, accepted_old) =
-                    tokio::join!(endpoint.connect(peer.addr(), alpn), async {
+                    futures::join!(endpoint.connect(peer.addr(), alpn), async {
                         peer.accept().await.unwrap().await.unwrap()
                     },);
                 let old = old.unwrap();
                 let (replacement, accepted_replacement) =
-                    tokio::join!(endpoint.connect(peer.addr(), alpn), async {
+                    futures::join!(endpoint.connect(peer.addr(), alpn), async {
                         peer.accept().await.unwrap().await.unwrap()
                     },);
                 let replacement = replacement.unwrap();
@@ -47,27 +47,27 @@ fn disconnect_closes_replacement_despite_stale_cleanup() {
                 endpoint.close().await;
                 peer.close().await;
             }
-        })
+        }))
         .unwrap();
 }
 
 #[test]
 fn legacy_only_peer_reuses_and_refreshes_its_shared_rpc_path() {
     edge::testing::edge()
-        .block_on(async {
+        .block_on(edge::compat(async {
             let endpoint = tests::localhost_endpoint(vec![]).await;
             let peer = tests::localhost_endpoint(vec![protocols::ALPN_MUX_V1.to_vec()]).await;
             let id = PeerId::new(peer.id().to_string());
             let direct = peer.addr().ip_addrs().next().copied();
             let cache = new_connection_cache(GossipHandle::new());
             let admission = PeerAdmission::new(AllowlistState::AcceptAll);
-            let (first, accepted_first) = tokio::join!(
+            let (first, accepted_first) = futures::join!(
                 connect_with_cache(&endpoint, &id, direct, &cache, &admission),
                 async { peer.accept().await.unwrap().await.unwrap() },
             );
             let first = first.unwrap();
             assert_eq!(first.alpn(), protocols::ALPN_MUX_V1);
-            let reused = tokio::time::timeout(
+            let reused = crate::rt::time::timeout(
                 std::time::Duration::from_secs(2),
                 connect_with_cache(&endpoint, &id, direct, &cache, &admission),
             )
@@ -76,7 +76,7 @@ fn legacy_only_peer_reuses_and_refreshes_its_shared_rpc_path() {
             .unwrap();
             assert_eq!(first.stable_id(), reused.stable_id());
 
-            let (replacement, accepted_replacement) = tokio::join!(
+            let (replacement, accepted_replacement) = futures::join!(
                 endpoint.connect(peer.addr(), protocols::ALPN_MUX_V1),
                 async { peer.accept().await.unwrap().await.unwrap() },
             );
@@ -93,7 +93,7 @@ fn legacy_only_peer_reuses_and_refreshes_its_shared_rpc_path() {
             drop((accepted_first, accepted_replacement));
             endpoint.close().await;
             peer.close().await;
-        })
+        }))
         .unwrap();
 }
 
@@ -117,7 +117,7 @@ async fn reverse_rpc_uses_inbound(retain_old: bool) {
         gossip: gossip.clone(),
         peer_map: Arc::new(SharedPeerMap::new()),
         connection_cache: new_connection_cache(gossip),
-        spawned_tasks: Arc::new(TaskRegistry::default()),
+        spawned_tasks: Arc::new(TaskRegistry::new(edge::testing::edge())),
         node_identity: None,
         admission: Arc::new(PeerAdmission::new(AllowlistState::AcceptAll)),
         inbound_budget: Arc::default(),
@@ -129,7 +129,7 @@ async fn reverse_rpc_uses_inbound(retain_old: bool) {
     let peer = PeerId::new(key.public().to_string());
     let old = if retain_old {
         let old_peer = peer_endpoint(key.clone()).await;
-        let (outbound, inbound) = tokio::join!(
+        let (outbound, inbound) = futures::join!(
             endpoint.connect(old_peer.addr(), protocols::ALPN_MUX),
             async { old_peer.accept().await.unwrap().await.unwrap() },
         );
@@ -146,7 +146,7 @@ async fn reverse_rpc_uses_inbound(retain_old: bool) {
     };
     let restarted = peer_endpoint(key).await;
     let (events, mut received) = crate::sync::dispatch_queue(8);
-    let (incoming, ()) = tokio::join!(
+    let (incoming, ()) = futures::join!(
         restarted.connect(endpoint.addr(), protocols::ALPN_MUX),
         async {
             let incoming = endpoint.accept().await.unwrap();
@@ -179,15 +179,15 @@ async fn reverse_rpc_uses_inbound(retain_old: bool) {
     .await
     .unwrap();
     assert_eq!(shared.stable_id(), cached.stable_id());
-    let reply = tokio::spawn(async move {
+    let reply = crate::rt::spawn(edge::compat(async move {
         let (mut send, mut recv) = incoming.accept_bi().await.unwrap();
         let request = recv.read_to_end(32).await.unwrap();
         send.write_all(&request).await.unwrap();
         send.finish().unwrap();
         // The peer's last connection handle must outlive acknowledgement of its reply.
         assert!(send.stopped().await.unwrap().is_none());
-    });
-    let response = n0_future::time::timeout(std::time::Duration::from_secs(2), async {
+    }));
+    let response = crate::rt::time::timeout(std::time::Duration::from_secs(2), async {
         let (mut send, mut recv) = shared.open_bi().await.unwrap();
         send.write_all(b"reverse-rpc").await.unwrap();
         send.finish().unwrap();
@@ -196,9 +196,9 @@ async fn reverse_rpc_uses_inbound(retain_old: bool) {
     .await
     .expect("reverse RPC must reach the accepted connection");
     assert_eq!(response, b"reverse-rpc");
-    reply.await.unwrap();
+    reply.join().await.unwrap();
     if !retain_old {
-        n0_future::time::timeout(std::time::Duration::from_secs(2), async {
+        crate::rt::time::timeout(std::time::Duration::from_secs(2), async {
             while let Some(event) = received.recv().await {
                 if matches!(event, TransportEvent::PeerDisconnected(ref id) if id == &peer) {
                     return;
@@ -230,25 +230,25 @@ async fn reverse_rpc_uses_inbound(retain_old: bool) {
 #[test]
 fn accepted_inbound_connection_serves_reverse_rpc_without_another_dial() {
     edge::testing::edge()
-        .block_on(async {
+        .block_on(edge::compat(async {
             reverse_rpc_uses_inbound(false).await;
-        })
+        }))
         .unwrap();
 }
 
 #[test]
 fn authenticated_reconnection_replaces_an_open_old_rpc_path() {
     edge::testing::edge()
-        .block_on(async {
+        .block_on(edge::compat(async {
             reverse_rpc_uses_inbound(true).await;
-        })
+        }))
         .unwrap();
 }
 
 #[test]
 fn legacy_mux_does_not_replace_the_modern_shared_rpc_handle() {
     edge::testing::edge()
-        .block_on(async {
+        .block_on(edge::compat(async {
             let endpoint = tests::localhost_endpoint(vec![]).await;
             let peer = tests::localhost_endpoint(vec![
                 protocols::ALPN_MUX.to_vec(),
@@ -256,13 +256,13 @@ fn legacy_mux_does_not_replace_the_modern_shared_rpc_handle() {
             ])
             .await;
             let (modern, accepted_modern) =
-                tokio::join!(endpoint.connect(peer.addr(), protocols::ALPN_MUX), async {
+                futures::join!(endpoint.connect(peer.addr(), protocols::ALPN_MUX), async {
                     peer.accept().await.unwrap().await.unwrap()
                 },);
             let modern = modern.unwrap();
             let cache = new_connection_cache(GossipHandle::new());
             remember_connection(&cache, &modern);
-            let (legacy, accepted_legacy) = tokio::join!(
+            let (legacy, accepted_legacy) = futures::join!(
                 endpoint.connect(peer.addr(), protocols::ALPN_MUX_V1),
                 async { peer.accept().await.unwrap().await.unwrap() },
             );
@@ -283,6 +283,6 @@ fn legacy_mux_does_not_replace_the_modern_shared_rpc_handle() {
             assert!(cache.legacy_connections.get(&peer.id()).is_none());
             endpoint.close().await;
             peer.close().await;
-        })
+        }))
         .unwrap();
 }

@@ -1,0 +1,730 @@
+[
+  {
+    "id": "go.acp.dac.policy.resources",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/policy_validation.rs::acp_add_policy_basic_yaml_valid",
+      "tools/integration-test/tests/acp/policy_validation.rs::acp_add_policy_no_resources_accepted",
+      "tools/integration-test/tests/acp/policy_validation.rs::acp_add_policy_multiple_resources_succeeds",
+      "tools/integration-test/tests/acp/link_collection.rs::acp_link_collection_managed_relation_accept"
+    ],
+    "evidence": "policy_validation.rs:91 asserts PolicyID returned for a basic YAML policy; :132 no-resources policy accepted; :354 multi-resource policy accepted; link_collection.rs:420 policy with a relation that manages another is added and linked",
+    "note": "Not asserted: a policy with one empty resource, the `resources` label with no entries, no/empty `relations`, and unused relations."
+  },
+  {
+    "id": "go.acp.dac.policy.permissions",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/policy_validation.rs::acp_add_policy_extra_relations_allowed",
+      "tools/integration-test/tests/acp/link_collection.rs::acp_link_collection_extra_permissions_accept",
+      "tools/integration-test/tests/acp/link_collection.rs::acp_link_collection_managed_relation_accept"
+    ],
+    "evidence": "policy_validation.rs:469 extra relations accepted; link_collection.rs:390 policy with an extra permission is added and linked; link_collection.rs:420 policy whose delete/update permissions have no expr is accepted",
+    "note": "Not asserted: a policy with no `permissions` key at all (owner only, or relations only), and an explicit empty `expr`. 'DRI compliance only checked at link time' is only tolerated (link_collection.rs:937-948 accepts rejection at add time too)."
+  },
+  {
+    "id": "go.acp.dac.policy.ids",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/policy_counter_restart.rs::policy_counter_advances_in_session_test",
+      "tools/integration-test/tests/acp/policy_validation.rs::acp_add_policy_multiple_policies_succeed",
+      "tools/integration-test/tests/acp/link_collection.rs::acp_link_collection_multi_dris_accept",
+      "crates/defra-node/src/dac_api_tests.rs::concurrent_identical_policy_adds_get_distinct_ids_across_a_restart"
+    ],
+    "evidence": "policy_counter_restart.rs asserts identical YAML added twice gets distinct ids (assert_ne in policy_counter_advances_in_session_test); policy_validation.rs:427 distinct policies get distinct ids; link_collection.rs:617 same policy by two creators gets distinct ids; dac_api_tests.rs:505 N identical adds get N ids",
+    "note": "Not asserted: the exact Go ids (1239a044...ab81, 166758b3...d850) for the first and second policy, and YAML-vs-JSON of the same policy. Go-Bug-Suspect: Rust matches Go's 'fresh id, no error' behaviour, so no divergence is asserted."
+  },
+  {
+    "id": "go.acp.dac.policy.missing-input",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/defra-node/src/dac_api_tests.rs::add_dac_policy_rejects_empty_identity_and_policy",
+      "tools/integration-test/tests/acp/policy_validation.rs::acp_add_policy_empty_data_errors"
+    ],
+    "evidence": "dac_api_tests.rs:87 asserts 'policy creator can not be empty'; :89 asserts 'policy data can not be empty' (embedded API)",
+    "note": "Not asserted: both creator and data empty (expect creator error), and a whitespace-only policy failing with 'name required'. The HTTP-level test (policy_validation.rs:105) accepts any error containing 'empty'."
+  },
+  {
+    "id": "go.acp.dac.policy.invalid",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/policy_validation.rs::acp_add_policy_expr_references_owner_errors",
+      "tools/integration-test/tests/acp/policy_validation.rs::acp_add_policy_expr_invalid_symbol_errors",
+      "tools/integration-test/tests/acp/policy_validation.rs::acp_add_policy_expr_undeclared_relation_errors"
+    ],
+    "evidence": "policy_validation.rs:253 owner-referencing expr rejected with 'owner' in the error; :210 invalid symbol rejected (lenient match on token/invalid/expression/symbol); :292 undeclared relation rejected (lenient match)",
+    "note": "Not asserted on the add-policy surface: duplicate permission/relation keys ('key \"read\" already set in map') and a resource using another resource's relation ('resource does not have relation'). Unit tests crates/acp/src/policy_yaml/parse.rs:240,281 and validate.rs:163,186,230 assert the exact strings, but check_duplicate_yaml_keys and validate_policy_expressions have no non-test caller, so they do not exercise the add path."
+  },
+  {
+    "id": "go.acp.dac.link.accepted",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/link_collection.rs::acp_link_collection_basic_accept",
+      "tools/integration-test/tests/acp/link_collection.rs::acp_link_collection_extra_permissions_accept",
+      "tools/integration-test/tests/acp/link_collection.rs::acp_link_collection_managed_relation_accept",
+      "tools/integration-test/tests/acp/link_collection.rs::acp_link_collection_multiple_resources_accept",
+      "tools/integration-test/tests/acp/link_collection.rs::acp_link_collection_multiple_resources_both_used_accept",
+      "tools/integration-test/tests/acp/link_collection.rs::acp_link_collection_multi_dris_accept",
+      "tools/integration-test/tests/acp/link_collection.rs::acp_link_collection_same_resource_diff_collections_accept"
+    ],
+    "evidence": "link_collection.rs:360,390,420,480,517-518,629-638,668-669 assert the linked types exist in introspection after each accepted @policy schema",
+    "note": "Introspection checks type existence only, not the field list Go asserts."
+  },
+  {
+    "id": "go.acp.dac.link.owner-implicit",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/link_collection.rs::acp_link_collection_owner_bad_update_accept",
+      "tools/integration-test/tests/acp/link_collection.rs::acp_link_collection_owner_bad_read_accept",
+      "tools/integration-test/tests/acp/link_collection.rs::acp_link_collection_owner_bad_delete_accept"
+    ],
+    "evidence": "link_collection.rs:545,572,599 assert the collection is accepted when update/read/delete expr names a non-owner relation (`ownerBad`), the same policies the Go tests use",
+    "note": "Owner access after the link is not asserted; the Go tests do not assert it either."
+  },
+  {
+    "id": "go.acp.dac.link.bad-arguments",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/link_collection.rs::acp_link_collection_empty_args_reject",
+      "tools/integration-test/tests/acp/link_collection.rs::acp_link_collection_missing_id_arg_reject",
+      "tools/integration-test/tests/acp/link_collection.rs::acp_link_collection_missing_resource_arg_reject",
+      "tools/integration-test/tests/acp/link_collection.rs::acp_link_collection_invalid_arg_type_reject"
+    ],
+    "evidence": "link_collection.rs:718,750,780,830 assert no collection is created for empty/missing/mistyped @policy args",
+    "note": "Error text is effectively unasserted: the matches include catch-alls such as contains(\"id\"), contains(\"resource\"), contains(\"type\") or 'bad_input' (link_collection.rs:693-697,740-746,772-776,800-806), so 'missing policy arguments, must have both id and resource', 'policyID must not be empty', 'resource name must not be empty' and 'Argument \"id\" has invalid value 123' are unverified."
+  },
+  {
+    "id": "go.acp.dac.link.bad-policy",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/link_collection.rs::acp_link_collection_nonexistent_policy_reject",
+      "tools/integration-test/tests/acp/link_collection.rs::acp_link_collection_nonexistent_resource_reject",
+      "tools/integration-test/tests/acp/link_collection.rs::acp_link_collection_missing_read_perm_reject",
+      "tools/integration-test/tests/acp/link_collection.rs::acp_link_collection_missing_update_perm_reject",
+      "tools/integration-test/tests/acp/link_collection.rs::acp_link_collection_missing_delete_perm_reject"
+    ],
+    "evidence": "link_collection.rs:862 'does not exist with acp'; :907 'resource does not exist on the specified policy'; :958,998,1038 'missing required permission' plus the permission name; :867,913,963,1003,1043 no collection created",
+    "note": ""
+  },
+  {
+    "id": "go.acp.dac.ownership.read",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/register_ops.rs::acp_register_anon_read_anon_can_read",
+      "tools/integration-test/tests/acp/register_ops.rs::acp_register_anon_read_owner_can_read",
+      "tools/integration-test/tests/acp/register_ops.rs::acp_register_owner_read_owner_can_read",
+      "tools/integration-test/tests/acp/register_ops.rs::acp_register_owner_read_anon_cannot_read",
+      "tools/integration-test/tests/acp/register_ops.rs::acp_register_owner_read_wrong_identity_cannot_read"
+    ],
+    "evidence": "register_ops.rs:187,203,219 public/owner reads return the doc; :235,252 anonymous and wrong identity get an empty result (assert_no_users at :120)",
+    "note": ""
+  },
+  {
+    "id": "go.acp.dac.ownership.update",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/register_ops.rs::acp_register_anon_update_anon_can_update",
+      "tools/integration-test/tests/acp/register_ops.rs::acp_register_anon_update_owner_can_update",
+      "tools/integration-test/tests/acp/register_ops.rs::acp_register_owner_update_owner_can_update",
+      "tools/integration-test/tests/acp/register_ops.rs::acp_register_owner_update_anon_cannot_update",
+      "tools/integration-test/tests/acp/register_ops.rs::acp_register_owner_update_wrong_identity_cannot_update"
+    ],
+    "evidence": "register_ops.rs:270,288,306 updates land; :324,343 the private doc is unchanged after anonymous/wrong-identity updates",
+    "note": "Denials run through GraphQL and update_user (register_ops.rs:137-150) accepts Err or Ok, so the collection-API error 'document not found or not authorized to access' is never asserted (no Rust test matches that string)."
+  },
+  {
+    "id": "go.acp.dac.ownership.update-gql",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/register_ops.rs::acp_register_owner_update_anon_cannot_update",
+      "tools/integration-test/tests/acp/register_ops.rs::acp_register_owner_update_wrong_identity_cannot_update",
+      "tools/integration-test/tests/acp/negative.rs::mutation_denial_precise_test"
+    ],
+    "evidence": "register_ops.rs:324,343 and negative.rs:197-204 assert the private doc is unchanged after a non-owner update_* mutation",
+    "note": "The 'no error' half is unasserted: both helpers accept Err or Ok (register_ops.rs:137-150, negative.rs:179-189). Code at crates/query/src/runner/mutation.rs:492-494 skips unreadable docs silently, so Rust looks Go-like, but no test pins it."
+  },
+  {
+    "id": "go.acp.dac.ownership.delete",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/register_ops.rs::acp_register_anon_delete_anon_can_delete",
+      "tools/integration-test/tests/acp/register_ops.rs::acp_register_anon_delete_owner_can_delete",
+      "tools/integration-test/tests/acp/register_ops.rs::acp_register_owner_delete_owner_can_delete",
+      "tools/integration-test/tests/acp/register_ops.rs::acp_register_owner_delete_anon_cannot_delete",
+      "tools/integration-test/tests/acp/register_ops.rs::acp_register_owner_delete_wrong_identity_cannot_delete"
+    ],
+    "evidence": "register_ops.rs:361,379,397 deletes remove the doc; :415,434 the private doc survives anonymous/wrong-identity deletes",
+    "note": "The 'document not found or not authorized to access' error is not asserted: delete_user (register_ops.rs:164-177) accepts Err or Ok."
+  },
+  {
+    "id": "go.acp.dac.query.aggregates",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/relation_queries.rs::acp_count_documents",
+      "tools/integration-test/tests/acp/relation_queries.rs::acp_count_related_objects",
+      "tools/integration-test/tests/acp/relation_queries.rs::acp_avg_documents"
+    ],
+    "evidence": "relation_queries.rs:176,183,190 COUNT(Employee) 2/4/2; :205-227 COUNT(employees) per company; :255-257 AVG 15000/25000/15000",
+    "note": ""
+  },
+  {
+    "id": "go.acp.dac.query.relations",
+    "verdict": "covered",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/relation_queries.rs::acp_many_to_one_relation_objects",
+      "tools/integration-test/tests/acp/relation_queries.rs::acp_one_to_many_relation_objects"
+    ],
+    "evidence": "relation_queries.rs:280-304 unreadable company comes back null for anonymous/wrong identity, owner sees all; :331-369 unreadable employees omitted",
+    "note": ""
+  },
+  {
+    "id": "go.acp.dac.query.indexed",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/index.rs::acp_index_anon_query_sees_only_public",
+      "tools/integration-test/tests/acp/index.rs::acp_index_owner_query_sees_both",
+      "tools/integration-test/tests/acp/index.rs::acp_index_wrong_identity_sees_only_public",
+      "tools/integration-test/tests/acp/index.rs::acp_index_filtered_query_respects_acp"
+    ],
+    "evidence": "index.rs:207,223,239 single-collection queries on an @index collection; :258-279 filter on the indexed field hides the private doc from anonymous/wrong identity",
+    "note": "Not asserted: index-served filters across one-to-many and many-to-one relations."
+  },
+  {
+    "id": "go.acp.dac.query.index-maintenance",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/index.rs::acp_index_create_with_field_directive",
+      "tools/integration-test/tests/acp/index.rs::acp_index_create_via_separate_request"
+    ],
+    "evidence": "index.rs:137-141 @index on a policy-linked collection deploys; :160-163 createIndex on it succeeds",
+    "note": "Not asserted: a non-creator updater changing an indexed field with the index staying correct, a reader-only delete denied with index entries intact, and truncating a soft-deleted uniquely-indexed doc freeing the unique value."
+  },
+  {
+    "id": "go.acp.dac.query.shared-cid",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/audit.rs::cid_time_travel_acp_bypass_test",
+      "tools/integration-test/tests/query/multi_cid_vectors.rs::multi_cid_commits_filters_unreadable_cid_test"
+    ],
+    "evidence": "audit.rs:134 a stranger gets no doc from User(cid:) of a private doc; multi_cid_vectors.rs:354 _commits(cid: [public, private]) returns only the public CID",
+    "note": "The shared-block case is untested: no test has two private docs of different owners with an identical field block CID."
+  },
+  {
+    "id": "go.acp.dac.query.subscription",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/events_sse.rs::acp_events_sse_filters_unauthorized_subscribers_test"
+    ],
+    "evidence": "events_sse.rs:158 an unauthorized identity gets no update events; :169 the owner gets the protected doc's event",
+    "note": "Uses the /events SSE stream, not a GraphQL subscription. Not asserted: GraphQL subscription filtering, create events, a `reader` grantee receiving events, and anonymous getting an empty stream."
+  },
+  {
+    "id": "go.acp.dac.commits.listing",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched acp/, nac/, query/, verars/ and crates/*/tests for _commits without docID/cid filters under a policy; every ACP _commits test filters by docID, cid or fieldName. No test asserts the 3/6 commit counts across public and private docs or across two private collections."
+  },
+  {
+    "id": "go.acp.dac.commits.filtered",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/negative.rs::commits_acp_denied_test",
+      "tools/integration-test/tests/query/multi_cid_vectors.rs::multi_cid_commits_filters_unreadable_cid_test",
+      "crates/defra-node/src/dac_api_tests.rs::node_identity_does_not_bypass_protected_history_reads"
+    ],
+    "evidence": "negative.rs:52,71 _commits(docID:) non-empty for owner, empty for another identity; multi_cid_vectors.rs:354 _commits(cid:) drops the private CID for anonymous; dac_api_tests.rs:365 _commits(docID, fieldName:_C) empty for a non-owner",
+    "note": "Not asserted: _commits(depth: 1), the exact 5 commits after an update, and anonymous on the docID filter."
+  },
+  {
+    "id": "go.acp.dac.commits.version-and-grants",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/verars/p2p_acp.rs::rust_verars_p2p_acp"
+    ],
+    "evidence": "verars/p2p_acp.rs:105 _commits(docID:) empty for an ungranted identity; :120 after a reader grant the identity's _commits equal the owner's",
+    "note": "The _version sub-select is not tested under ACP (no test pairs _version with an identity). Grant coverage runs on vera.rs, not Local DAC."
+  },
+  {
+    "id": "go.acp.dac.branchable.commits",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/query/tests/cross_object_read_path.rs::overlay_checker_applies_branchable_collection_fallback",
+      "crates/db/tests/collection/acp.rs::branchable_permissioned_with_identity_registers_collection_object_owned_by_creator",
+      "crates/db/tests/collection/acp.rs::branchable_permissioned_no_identity_registers_nothing_public"
+    ],
+    "evidence": "cross_object_read_path.rs:166-169 a public doc in a private branchable collection is denied to a stranger through the collection object; collection/acp.rs:243-247 a branchable collection created with identity registers a collection object owned by the creator",
+    "note": "No query-level test: the commit counts (owner 4, stranger 0), a collection `reader` grant revealing public docs' commits while private docs stay hidden, and an identity-less branchable collection being public are not asserted."
+  },
+  {
+    "id": "go.acp.dac.branchable.mutation",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched for @branchable plus @policy with a stranger update/delete or a non-owner collection-relationship add; only events_sse.rs and encryption/acp.rs combine them, and neither asserts mutation denial."
+  },
+  {
+    "id": "go.acp.dac.branchable.p2p",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/encryption/acp.rs::rust_encrypted_branchable_collection_grant_merges_on_peer"
+    ],
+    "evidence": "encryption/acp.rs:262-273 once node1's identity holds `reader` on the collection object, the encrypted branchable doc merges on node1",
+    "note": "Not asserted: no sync before the grant, the owner reading every commit on the peer, strangers seeing nothing, and a stranger granted collection read on all nodes reading the DAG."
+  },
+  {
+    "id": "go.acp.dac.relationship.missing-args",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/relationship.rs::acp_rel_add_missing_collection_errors",
+      "tools/integration-test/tests/acp/relationship.rs::acp_rel_add_missing_doc_id_errors",
+      "tools/integration-test/tests/acp/relationship.rs::acp_rel_add_missing_relation_errors",
+      "tools/integration-test/tests/acp/relationship.rs::acp_rel_add_missing_target_errors",
+      "tools/integration-test/tests/acp/relationship.rs::acp_rel_delete_missing_collection_errors",
+      "tools/integration-test/tests/acp/relationship.rs::acp_rel_delete_missing_relation_errors"
+    ],
+    "evidence": "relationship.rs:517,544,570,595 add with empty collection/docID/relation/target errors; :767,788 delete with empty collection/relation errors",
+    "note": "Error text is lenient (e.g. contains(\"doc\") or 'bad_request', relationship.rs:546-550), so 'missing a required argument needed to add doc actor relationship.' and 'collection name can't be empty' are unverified. Not tested: missing requesting identity (add and delete), and delete with an empty docID or target."
+  },
+  {
+    "id": "go.acp.dac.relationship.not-applicable",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/defra-node/src/dac_api_tests.rs::dac_relationship_requires_a_collection_policy"
+    ],
+    "evidence": "dac_api_tests.rs:265,273 add/delete on a collection without a policy fail with 'operation requires ACP, but collection has no policy'",
+    "note": "Not asserted: add/delete on a public doc (created without identity) failing with 'failed to add/delete document actor relationship with acp'."
+  },
+  {
+    "id": "go.acp.dac.relationship.dummy-relation",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/relationship.rs::acp_rel_add_dummy_defined_is_noop",
+      "tools/integration-test/tests/acp/relationship.rs::acp_rel_add_undefined_relation_errors"
+    ],
+    "evidence": "relationship.rs:464 granting a policy-declared no-op relation leaves the doc hidden; :492 granting an undefined relation errors",
+    "note": "Not asserted: deleting the dummy relation, the delete-side error, and the 'failed to add document actor relationship with acp' text (only is_err)."
+  },
+  {
+    "id": "go.acp.dac.relationship.reader",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/relationship.rs::acp_rel_add_reader_grants_read",
+      "tools/integration-test/tests/acp/relationship.rs::acp_rel_add_reader_owner_still_reads",
+      "tools/integration-test/tests/acp/relationship.rs::acp_rel_add_reader_cannot_update",
+      "tools/integration-test/tests/acp/relationship.rs::acp_rel_add_reader_twice_is_noop"
+    ],
+    "evidence": "relationship.rs:148 grantee reads after the grant; :174 owner still reads; :218 reader's update does not land; :340-349 second grant reports ExistedAlready=true",
+    "note": "Not asserted: the reader's delete being denied, and the 'document not found or not authorized to access' error on update (the result is discarded at relationship.rs:212)."
+  },
+  {
+    "id": "go.acp.dac.relationship.updater",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/relationship.rs::acp_rel_add_updater_can_update"
+    ],
+    "evidence": "relationship.rs:248 updater reads; :266 the updater's update lands",
+    "note": "Not asserted: the owner still updating after the grant, a second grant reporting existence, the pre-grant update failing with 'document not found or not authorized to access', and update rights without an explicit read permission."
+  },
+  {
+    "id": "go.acp.dac.relationship.deleter",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/relationship.rs::acp_rel_add_deleter_can_delete"
+    ],
+    "evidence": "relationship.rs:308 the doc is gone after the deleter deletes it",
+    "note": "Not asserted: delete without explicit read permission, the owner still deleting, the pre-grant failure with its error, and a second grant reporting existence."
+  },
+  {
+    "id": "go.acp.dac.relationship.manager",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/relationship.rs::acp_rel_manager_grants_reader",
+      "tools/integration-test/tests/acp/relationship.rs::acp_rel_manager_cannot_grant_unmanaged",
+      "tools/integration-test/tests/acp/relationship.rs::acp_rel_non_owner_cannot_grant"
+    ],
+    "evidence": "relationship.rs:381 a reader granted by an admin reads; :410 granting an unmanaged relation errors; :434 a non-owner non-manager grant errors",
+    "note": "Not asserted: a manager granting itself relations, a bare manager having no read/update/delete rights, and the 'UNAUTHORIZED' / 'failed to add document actor relationship with acp' texts (only is_err). acp_rel_cannot_add_owner_relation is labelled as a port of the self-grant test but tests owner-relation rejection instead."
+  },
+  {
+    "id": "go.acp.dac.relationship.all-actors",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/defra-node/src/dac_api_tests.rs::dac_wildcard_grant_opens_document_to_every_actor"
+    ],
+    "evidence": "dac_api_tests.rs:247 after granting reader to '*', an anonymous query sees the doc",
+    "note": "Not asserted: other identities reading, update/delete still denied, revoking the wildcard, and explicitly granted actors keeping access afterwards."
+  },
+  {
+    "id": "go.acp.dac.relationship.revoke",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/relationship.rs::acp_rel_delete_reader_revokes_access",
+      "tools/integration-test/tests/acp/relationship.rs::acp_rel_delete_updater_revokes_update",
+      "crates/defra-node/src/dac_api_tests.rs::dac_share_journey_grant_and_revoke",
+      "tools/integration-test/tests/acp/revoke_lifecycle.rs::acp_revoke_lifecycle_test"
+    ],
+    "evidence": "relationship.rs:661 no read after the reader revoke; :747 a revoked updater's update does not land; dac_api_tests.rs:203 a second revoke returns false (record not found)",
+    "note": "Not asserted: deleter revocation, revocation by a managing admin, revoking an admin stopping it from granting, and the collection-API error on the revoked update."
+  },
+  {
+    "id": "go.acp.dac.relationship.revoke-forbidden",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/defra-node/src/dac_api_tests.rs::dac_relationship_rejects_owner_relation"
+    ],
+    "evidence": "dac_api_tests.rs:229 deleting an `owner` relation fails with 'OPERATION_FORBIDDEN: cannot delete owner relation'",
+    "note": "That test has the owner revoke `owner` from another DID. Not tested: an admin revoking the owner's relation, the owner revoking its own ownership, and an admin revoking its own admin (Go expects 'failed to delete document actor relationship with acp' for the last two)."
+  },
+  {
+    "id": "go.acp.dac.p2p.remote-dac",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/acp/dac.rs::create_private_docs_different_nodes",
+      "tools/integration-test/tests/p2p_iroh/acp/dac.rs::update_private_docs_different_nodes",
+      "tools/integration-test/tests/p2p_iroh/acp/dac.rs::delete_private_docs_different_nodes",
+      "tools/integration-test/tests/verars/p2p_acp.rs::rust_verars_p2p_acp"
+    ],
+    "evidence": "verars/p2p_acp.rs:99-105 the replicated doc is readable by the owner on both nodes and hidden from anonymous and an ungranted identity; p2p_iroh/acp/dac.rs:584 anonymous cannot see the replicated update; deletion replication is polled at dac.rs:638-664",
+    "note": "Not asserted: a subscribing node whose identity lacks access receiving nothing, then syncing after its node identity gets `reader`. The p2p_iroh Vera tests return early with only an eprintln when verad is missing (dac.rs:79-81)."
+  },
+  {
+    "id": "go.acp.dac.p2p.relationship-sync",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/verars/p2p_acp.rs::rust_verars_p2p_acp",
+      "tools/integration-test/tests/p2p_iroh/acp/dac.rs::replicator_with_doc_actor_relationship"
+    ],
+    "evidence": "verars/p2p_acp.rs:120 after a grant on node0 the grantee reads the doc and its commits on both nodes; p2p_iroh/acp/dac.rs:878-886 the grantee sees the doc on both nodes",
+    "note": "Not asserted: re-adding on the other node reporting existence (dac.rs:860 discards the result), deleting again reporting not found, and the multi-block non-creator case."
+  },
+  {
+    "id": "go.acp.dac.p2p.local-dac",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/acp/p2p_lifecycle.rs::acp_p2p_subscribe_add_get_single_with_permissioned_collection_test",
+      "tools/integration-test/tests/acp/p2p_lifecycle.rs::acp_p2p_one_to_one_replicator_with_permissioned_collection_test"
+    ],
+    "evidence": "p2p_lifecycle.rs:180 ListP2PCollections shows the subscribed policy-linked collection; :227 the replicator delivers the protected doc to node1",
+    "note": "Not asserted: an update authored against a collection version that is no longer root or active syncing to a peer granted `reader`."
+  },
+  {
+    "id": "go.acp.dac.p2p.shared-block",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched for shared/identical block CIDs combined with ACP in tools/integration-test/tests and crates/p2p, crates/db tests; shared-CID tests (commits_suite.rs::shared_field_cid_fans_out_to_every_owner, block/cleanup.rs) carry no ACP or peer grant."
+  },
+  {
+    "id": "go.acp.dac.p2p.non-creator-update",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched for a non-creator updater editing a replicated doc on the receiving node, and for 'corrupted index'. p2p_iroh/acp/dac/strict_updates.rs covers the owner editing through a relay, not a non-creator grantee, and has no indexed field."
+  },
+  {
+    "id": "go.acp.nac.lifecycle.start",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/ffi/src/acp/nac.rs::test_get_nac_status",
+      "crates/ffi/src/acp/nac.rs::test_enable_nac",
+      "crates/acp/tests/nac_tests.rs::test_nac_starts_not_configured",
+      "crates/defra-node/tests/nac_embedded_test.rs::node_acp_requires_node_identity"
+    ],
+    "evidence": "ffi/src/acp/nac.rs:442 status is 'not configured' by default; :469-470 after enable it reports enabled with the owner DID; nac_embedded_test.rs:184 enabling NAC without a node identity fails",
+    "note": "Not asserted: the status call denied without identity when NAC is on, and status with an identity while NAC is disabled. Rust's no-identity error is 'node ACP requires a node identity', not Go's 'can not start nac without identity'."
+  },
+  {
+    "id": "go.acp.nac.lifecycle.restart",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/acp/tests/nac_tests.rs::test_load_existing_state"
+    ],
+    "evidence": "nac_tests.rs:221-222 a fresh NodeACP over the same store loads Enabled with the original owner",
+    "note": "Unit-level on an in-memory store only. No node restart test: restarting with no NAC args, the same identity, or a different identity keeping the original owner."
+  },
+  {
+    "id": "go.acp.nac.lifecycle.disable",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/ffi/src/acp/nac.rs::test_disable_and_re_enable_nac",
+      "crates/acp/tests/nac_tests.rs::test_disable_and_re_enable"
+    ],
+    "evidence": "ffi/src/acp/nac.rs:501 the owner disables and status reads 'disabled temporarily'; nac_tests.rs:109 status DisabledTemporarily",
+    "note": "Not asserted: 'node acp is not configured' when never configured, the non-owner/anonymous denial with permission disable-nac, 'node acp is already disabled', and the disabled state surviving a restart."
+  },
+  {
+    "id": "go.acp.nac.lifecycle.re-enable",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/ffi/src/acp/nac.rs::test_re_enable_nac_checks_authorization_before_enabled_state",
+      "crates/ffi/src/acp/nac.rs::test_disable_and_re_enable_nac",
+      "crates/acp/tests/nac_tests.rs::test_disable_and_re_enable"
+    ],
+    "evidence": "ffi/src/acp/nac.rs:541-544 anonymous and wrong identity get 'not authorized to perform operation. Permission: re-enable-nac' when already enabled; :551 the owner gets 'node acp is already enabled'; nac_tests.rs:119-125 re-enable restores gating",
+    "note": "Not asserted: 'node acp is not configured', non-owner re-enable denied while temporarily disabled, and re-enabled state across a restart."
+  },
+  {
+    "id": "go.acp.nac.relationship.add",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/nac/relation_admin.rs::nac_relation_admin_test",
+      "crates/acp/tests/nac_tests.rs::test_wildcard_admin_grants_all_permissions",
+      "crates/acp/tests/nac_tests.rs::test_write_operations_blocked_when_disabled"
+    ],
+    "evidence": "relation_admin.rs:85,95,114 after the owner grants `admin`, the identity adds schema, reads and creates an index; nac_tests.rs:296-305 a '*' admin grant gives any identity permissions; :242 add_admin fails while disabled",
+    "note": "Not asserted: 'node acp is not configured', 'operation requires ACP, but ACP not available', unauthorized requestor denied with add-nac-relation, unknown relation 'relation not in resource', and identity-less requests rejected with 'node acp relationship operation requires identity'."
+  },
+  {
+    "id": "go.acp.nac.relationship.delete",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/nac/relation_admin.rs::nac_relation_admin_test",
+      "tools/integration-test/tests/nac/dac_access_matrix.rs::nac_revoke_admin_removes_access",
+      "crates/acp/tests/nac_tests.rs::test_remove_admin"
+    ],
+    "evidence": "relation_admin.rs:127-162 after revoking `admin` the identity is denied schema_add and index_create again; nac_tests.rs:169 a revoked admin loses DacBypass",
+    "note": "Not asserted: the not-configured/disabled errors, unauthorized requestor with delete-nac-relation, 'relation not in resource', revoking a '*' grant, and the identity-less error."
+  },
+  {
+    "id": "go.acp.nac.gates.collection-schema",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/db/tests/access/enforcement.rs::create_collection_denied_for_non_owner",
+      "crates/db/tests/access/enforcement.rs::delete_collection_gated_by_nac",
+      "crates/db/tests/access/enforcement.rs::set_active_collection_version_denied_for_non_owner",
+      "tools/integration-test/tests/nac/core_operations.rs::nac_core_operations_gate_test"
+    ],
+    "evidence": "enforcement.rs:174-177 create_collection denied with NotAuthorized for a non-owner and not persisted; delete_collection denied then allowed for the owner; set_active_collection_version denied; core_operations.rs:75-83 truncate denied for anonymous and outsider",
+    "note": "Collection patch is not gated in any test. Owner add/delete is checked only at db level. Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix. Rust maps truncate to truncate-collection, not Go's get-collection (crates/http/tests/route_permissions.rs::all_registered_routes_return_expected_permission)."
+  },
+  {
+    "id": "go.acp.nac.gates.collection-read",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/nac/core_operations.rs::nac_core_operations_gate_test"
+    ],
+    "evidence": "core_operations.rs:54 the NAC owner lists collections; :69 the owner describes a collection",
+    "note": "Denials are not asserted: anonymous/outsider list and describe only eprintln a warning on success (core_operations.rs:41-50,60-68). Get by ID, get by version and 'collection not found' for an unknown version are untested."
+  },
+  {
+    "id": "go.acp.nac.gates.documents",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/nac/core_operations.rs::nac_core_operations_gate_test",
+      "tools/integration-test/tests/nac/dac_access_matrix.rs::nac_anonymous_rejected",
+      "tools/integration-test/tests/acp/negative.rs::nac_graphql_enforcement_test"
+    ],
+    "evidence": "core_operations.rs:140-190 collection create/update/delete denied for anonymous and outsider, allowed for the owner; dac_access_matrix.rs:244 anonymous GraphQL read sees nothing; negative.rs:335 owner reads",
+    "note": "Not asserted: update with a filter. GraphQL read denials accept 'error or empty' (negative.rs:348-360). Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix. Rust requires update-document/delete-document/read-document where Go requires get-collection (route_permissions.rs)."
+  },
+  {
+    "id": "go.acp.nac.gates.signature",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test calls block verify-signature with NAC on. Only crates/http/tests/route_permissions.rs maps /api/v0/block/verify-signature to SignatureVerify, which checks the route table, not a deny/allow outcome."
+  },
+  {
+    "id": "go.acp.nac.gates.indexes",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/nac/core_operations.rs::nac_core_operations_gate_test"
+    ],
+    "evidence": "core_operations.rs:88-135 index create/list/delete denied for anonymous and outsider, allowed for the NAC owner",
+    "note": "Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix. Rust maps these to new-index/list-index/delete-index rather than Go's get-collection (route_permissions.rs)."
+  },
+  {
+    "id": "go.acp.nac.gates.encrypted-indexes",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/nac/operations.rs::nac_operations_gate_test"
+    ],
+    "evidence": "operations.rs:43-83 encrypted index add/list/delete denied for anonymous and outsider, allowed for the owner",
+    "note": "Listing all encrypted indexes (list-all-encrypted-index) is untested. Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix."
+  },
+  {
+    "id": "go.acp.nac.gates.dac-admin",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/defra-node/src/dac_api_tests.rs::add_dac_policy_is_gated_by_node_access_control"
+    ],
+    "evidence": "dac_api_tests.rs:407-410 a non-owner adding a DAC policy gets 'not authorized to perform operation. Permission: add-dac-policy'; the node identity succeeds",
+    "note": "Not asserted: add/delete document actor relationship gated by add-dac-relation/delete-dac-relation, and the anonymous policy add."
+  },
+  {
+    "id": "go.acp.nac.gates.lens",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/nac/operations.rs::nac_operations_gate_test"
+    ],
+    "evidence": "operations.rs:88-97 lens list denied for anonymous/outsider and allowed for the owner; :103-111 lens add and :127-141 set-migration denied for anonymous/outsider",
+    "note": "The owner's lens add and set-migration only have to avoid errors containing unauthorized/forbidden/nac (operations.rs:114-120,143-150), so success is not asserted. Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix."
+  },
+  {
+    "id": "go.acp.nac.gates.views",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/nac/operations.rs::nac_operations_gate_test"
+    ],
+    "evidence": "operations.rs:157-176 view add and :181-190 view refresh denied for anonymous/outsider, allowed for the owner",
+    "note": "Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix."
+  },
+  {
+    "id": "go.acp.nac.gates.p2p-peers",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_peer_info_authorized",
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_peer_info_no_identity",
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_peer_info_wrong_identity",
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_peer_connect_authorized",
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_peer_connect_no_identity",
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_peer_connect_wrong_identity",
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_active_peers_authorized",
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_active_peers_no_identity",
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_active_peers_wrong_identity"
+    ],
+    "evidence": "p2p_iroh/acp/nac.rs:152,161-164,174-177 peer info allowed for the owner, denied without identity and with a wrong identity; the same three cases for connect and active peers",
+    "note": "Peer disconnect is untested. Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix."
+  },
+  {
+    "id": "go.acp.nac.gates.p2p-replicators",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_replicator_add_authorized",
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_replicator_add_no_identity",
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_replicator_add_wrong_identity",
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_replicator_delete_authorized",
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_replicator_delete_no_identity",
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_replicator_delete_wrong_identity",
+      "tools/integration-test/tests/nac/p2p_management.rs::nac_p2p_management_gate_test"
+    ],
+    "evidence": "p2p_iroh/acp/nac.rs replicator add/delete: is_ok for the owner, is_err without identity and with a wrong identity; p2p_management.rs:151-158 replicator list denied for anonymous/outsider",
+    "note": "The owner's replicator list only eprintlns on failure (p2p_management.rs:160-162), so the allow case is unasserted. Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix."
+  },
+  {
+    "id": "go.acp.nac.gates.p2p-collections",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/nac/p2p_management.rs::nac_p2p_management_gate_test",
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_collection_add_authorized",
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_collection_add_no_identity",
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_collection_add_wrong_identity"
+    ],
+    "evidence": "p2p_management.rs:40-79 P2P collection add/list/delete denied for anonymous and outsider, allowed for the owner",
+    "note": "Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix."
+  },
+  {
+    "id": "go.acp.nac.gates.p2p-documents",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/nac/p2p_management.rs::nac_p2p_management_gate_test",
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_document_add_authorized",
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_document_add_no_identity",
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_document_add_wrong_identity"
+    ],
+    "evidence": "p2p_management.rs:84-123 P2P document add/list/delete denied for anonymous and outsider, allowed for the owner",
+    "note": "Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix."
+  },
+  {
+    "id": "go.acp.nac.gates.p2p-sync",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/nac/p2p_management.rs::nac_p2p_management_gate_test",
+      "tools/integration-test/tests/nac/operations.rs::nac_p2p_operations_gate_test",
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_sync_versions_no_identity",
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_sync_branchable_no_identity"
+    ],
+    "evidence": "p2p_management.rs:129-136 document sync denied for anonymous/outsider; operations.rs:269-300 sync collection versions and sync branchable denied for anonymous/outsider",
+    "note": "The owner's sync calls only have to avoid errors containing unauthorized/forbidden/nac (p2p_management.rs:138-145, operations.rs:279-308), so success is not asserted. Rust tests assert only is_err for anonymous/outsider; the 'not authorized to perform operation. Permission: <perm>' text is never asserted. The HTTP NAC guard (crates/http/src/nac_guard.rs:61,74) returns 'not authorized to perform operation' with no permission suffix."
+  },
+  {
+    "id": "go.acp.nac.dac.nac-on",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/nac/dac_access_matrix.rs::nac_node_owner_reads_foreign_dac_doc",
+      "tools/integration-test/tests/nac/dac_access_matrix.rs::nac_non_admin_identity_rejected",
+      "tools/integration-test/tests/nac/dac_access_matrix.rs::nac_anonymous_rejected"
+    ],
+    "evidence": "dac_access_matrix.rs:141 the node owner reads a private doc owned by another identity; :199 a DAC owner without NAC admin sees no data; :244 anonymous sees no data",
+    "note": "Denials accept 'error or empty' (saw_no_data, dac_access_matrix.rs:86-94), so refusal with 'not authorized to perform operation. Permission: get-collection' is not asserted. Owner reading public docs and its own private docs is not checked separately."
+  },
+  {
+    "id": "go.acp.nac.dac.nac-off",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test disables NAC and then checks DAC alone. nac/document_acp.rs:146-167 calls acp_node_disable without checking the result, then asserts only that the owner still reads its own doc. acp/node_access.rs ignores disable/status errors. should_bypass_dac (crates/acp/src/nac/dac_bypass.rs:22) returns false unless Enabled, but no test covers the disabled case, the node owner getting no bypass, or other identities' empty results."
+  },
+  {
+    "id": "go.acp.nac.admin.dac-bypass",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/http/src/query_context.rs::a_nac_admin_with_bypass_dac_carries_the_bypass_and_identity_in_its_request",
+      "tools/integration-test/tests/nac/dac_access_matrix.rs::nac_revoke_admin_removes_access"
+    ],
+    "evidence": "query_context.rs:597 a granted DacBypass identity's request carries dac_bypass=true; dac_access_matrix.rs:305 after admin revoke the identity sees no data",
+    "note": "No end-to-end test of a granted (non-owner) admin reading another identity's private doc, and no test of an admin under disabled NAC getting empty results for others' private docs."
+  },
+  {
+    "id": "go.acp.nac.admin.nac-admin",
+    "verdict": "partial",
+    "rust_tests": [
+      "crates/acp/tests/nac_tests.rs::test_add_admin"
+    ],
+    "evidence": "nac_tests.rs:145 a granted admin holds every NodePermission, including the NAC ones",
+    "note": "Unit-level permission check only. No API test of a granted admin getting status, adding/deleting NAC relationships, disabling and re-enabling, or of the pre-grant denials with their permission names."
+  },
+  {
+    "id": "go.acp.nac.admin.dac-relationships",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Searched for 'not a manager of relation' and for NAC admin plus acp_relationship_add/delete by a non-manager; nac/document_acp.rs only has the NAC owner (also the DAC owner) grant relationships."
+  },
+  {
+    "id": "go.acp.nac.admin.collections",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/nac/relation_admin.rs::nac_relation_admin_test"
+    ],
+    "evidence": "relation_admin.rs:35-38 outsider denied schema_add before the grant; :85 adds a schema after the grant; :98-103 lists collections after the grant",
+    "note": "Not asserted for a granted admin: delete, patch, get by ID/name/version, truncate, set active version, and 'collection not found' for an unknown version. Pre-grant list denial is soft (relation_admin.rs:56-58 eprintln)."
+  },
+  {
+    "id": "go.acp.nac.admin.documents",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/nac/relation_admin.rs::nac_relation_admin_test"
+    ],
+    "evidence": "relation_admin.rs:42-53 outsider sees no data before the grant; :95 reads documents after the grant",
+    "note": "Add, update and delete by a granted admin, and verify-signature before/after the grant, are untested."
+  },
+  {
+    "id": "go.acp.nac.admin.indexes",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/nac/relation_admin.rs::nac_relation_admin_test"
+    ],
+    "evidence": "relation_admin.rs:61-70 outsider denied index_create before the grant; :107-114 creates an index after the grant",
+    "note": "Index delete/list and encrypted index operations (including list-all) by a granted admin are untested."
+  },
+  {
+    "id": "go.acp.nac.admin.schema-tools",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "No test grants `admin` to a second identity and then adds a DAC policy, lens or migration, or adds/refreshes views. nac/operations.rs exercises these only for the startup owner and outsiders."
+  },
+  {
+    "id": "go.acp.nac.admin.p2p",
+    "verdict": "partial",
+    "rust_tests": [
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_admin_peer_info",
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_admin_replicator_add",
+      "tools/integration-test/tests/p2p_iroh/acp/nac.rs::nac_peer_info_wrong_identity"
+    ],
+    "evidence": "p2p_iroh/acp/nac.rs nac_admin_* tests: each P2P operation succeeds for the startup identity; nac_peer_info_wrong_identity: an ungranted identity is denied",
+    "note": "The 'AdminRelation' ports run as the startup owner (setup_nac_node, p2p_iroh/acp/nac.rs:37-40); no test grants `admin` to another identity and checks P2P access before and after."
+  }
+]

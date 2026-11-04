@@ -668,4 +668,17 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                 query::error::QueryError::execution(format!("get_for_update error: {}", e))
             })
     }
+
+    async fn is_deleted(
+        &self,
+        collection_name: &str,
+        doc_id: &DocID,
+    ) -> query::error::Result<bool> {
+        let (collection, datastore, systemstore) =
+            get_collection_with_lazy_load(&*self.shared_txn()?, collection_name).await?;
+        collection
+            .is_deleted_by_doc_id(&datastore, &systemstore, doc_id)
+            .await
+            .map_err(|e| query::error::QueryError::execution(format!("is_deleted error: {}", e)))
+    }
 }

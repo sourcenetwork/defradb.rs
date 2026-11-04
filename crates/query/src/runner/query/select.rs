@@ -2,7 +2,7 @@
 
 use acp::{DocumentPermission, Identity};
 use identity::Did;
-use serde_json::{Map, Value as JsonValue};
+use serde_json::Value as JsonValue;
 
 use crate::error::{QueryError, Result};
 use crate::executor::GqlWarning;
@@ -36,9 +36,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         }
         // Handle encrypted search queries (encrypted_<Collection>)
         if select.is_encrypted {
-            return self
-                .execute_encrypted_select(select, fetcher, caller_identity)
-                .await;
+            return self.execute_encrypted_select(select, caller_identity).await;
         }
 
         // Handle _commits system collection specially
@@ -358,16 +356,31 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         }
     }
 
+    /// The SE transport that answers `encrypted_<collection>`. Go only generates
+    /// that field when searchable encryption is enabled; here that is a wired
+    /// SE transport, so without one the field does not exist.
+    pub(crate) fn encrypted_search_transport(
+        &self,
+        collection: &str,
+    ) -> Result<std::sync::Arc<dyn super::super::SeQueryTransport>> {
+        self.se_transport.clone().ok_or_else(|| {
+            QueryError::execution(format!(
+                "Cannot query field \"encrypted_{collection}\" on type \"Query\"."
+            ))
+        })
+    }
+
     /// Execute an encrypted search query (`encrypted_<Collection>`).
     ///
-    /// Validates encrypted index exists, then fetches documents, applies _eq filter
-    /// conditions, filters through ACP, and returns Go-compatible `[{"docIDs": [...]}]` format.
+    /// Validates encrypted index exists, fans the `_eq` filter conditions out to
+    /// replicators, filters through ACP, and returns Go-compatible `[{"docIDs": [...]}]` format.
     async fn execute_encrypted_select(
         &self,
         select: &Select,
-        fetcher: &dyn DocFetcher,
         caller_identity: Option<Did>,
     ) -> Result<JsonValue> {
+        let transport = self.encrypted_search_transport(&select.collection_name)?;
+
         // Get collection to check for encrypted indexes
         let collection = self.get_collection(&select.collection_name).await?;
 
@@ -395,64 +408,28 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             }
         }
 
-        // Remote-only SE path (Go semantics): when a transport is wired, fan the
-        // search tags out to replicators instead of scanning local plaintext.
-        // The querying node is the document owner; replicators serve docIDs from
-        // the artifacts the owner pushed. Zero replicators yields empty.
-        if let Some(transport) = self.se_transport.clone() {
-            let eq_conditions = select
-                .filter
-                .as_ref()
-                .map(Self::extract_eq_conditions)
-                .unwrap_or_default();
+        // Remote-only SE path (Go semantics): fan the search tags out to
+        // replicators. The querying node is the document owner; replicators serve
+        // docIDs from the artifacts the owner pushed. Zero replicators yields empty.
+        let eq_conditions = select
+            .filter
+            .as_ref()
+            .map(Self::extract_eq_conditions)
+            .unwrap_or_default();
 
-            let ids = super::super::se_transport::query_with_prepared_inputs(
-                transport.as_ref(),
-                self.retry_inputs.as_ref(),
-                super::super::se_transport::PreparedEncryptedSearch {
-                    collection_id: collection.collection_id.clone(),
-                    eq_conditions,
-                    caller_identity: caller_identity.as_ref().map(ToString::to_string),
-                },
-            )
-            .await?;
+        let ids = super::super::se_transport::query_with_prepared_inputs(
+            transport.as_ref(),
+            self.retry_inputs.as_ref(),
+            super::super::se_transport::PreparedEncryptedSearch {
+                collection_id: collection.collection_id.clone(),
+                eq_conditions,
+                caller_identity: caller_identity.as_ref().map(ToString::to_string),
+            },
+        )
+        .await?;
 
-            let filtered_ids = self
-                .filter_ids_by_acp(&ids, &collection, caller_identity.clone())
-                .await?;
-            let filtered_ids = self
-                .app_readable_ids(caller_identity.as_ref(), &collection, filtered_ids)
-                .await?;
-
-            return Ok(serde_json::json!([{"docIDs": filtered_ids}]));
-        }
-
-        let docs = fetcher.get_all(&select.collection_name).await?;
-
-        let matching_ids: Vec<String> = if let Some(ref filter) = select.filter {
-            let mut ids = Vec::new();
-            for doc in &docs {
-                let json_map = doc
-                    .to_map()
-                    .map_err(|e| QueryError::internal(e.to_string()))?;
-                let json_obj =
-                    JsonValue::Object(json_map.into_iter().collect::<Map<String, JsonValue>>());
-                if filter.matches_json_object(&json_obj)? {
-                    if let Some(id) = doc.id() {
-                        ids.push(id.to_string());
-                    }
-                }
-            }
-            ids
-        } else {
-            docs.iter()
-                .filter_map(|doc| doc.id().map(|id| id.to_string()))
-                .collect()
-        };
-
-        // Apply ACP filtering: remove document IDs the caller cannot read.
         let filtered_ids = self
-            .filter_ids_by_acp(&matching_ids, &collection, caller_identity.clone())
+            .filter_ids_by_acp(&ids, &collection, caller_identity.clone())
             .await?;
         let filtered_ids = self
             .app_readable_ids(caller_identity.as_ref(), &collection, filtered_ids)

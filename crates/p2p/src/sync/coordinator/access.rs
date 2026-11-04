@@ -7,6 +7,8 @@
 //! expect, and layer in local collection-subscription ingress where the sync
 //! API explicitly opts this node into receiving collection updates.
 
+use std::sync::Arc;
+
 use blockstore::Blockstore;
 
 use super::authorizer::AccessAuthorizer;
@@ -19,6 +21,15 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// Returns true when this node has joined the collection's sync topic.
     pub(super) fn is_locally_subscribed_collection(&self, collection_id: &str) -> bool {
         self.subscriptions.collections.is_live(collection_id)
+    }
+
+    /// The shared set of documents this node follows.
+    pub fn followed_documents(&self) -> Arc<super::FollowedDocuments> {
+        Arc::clone(&self.access.followed_documents)
+    }
+
+    pub(super) fn is_followed_document(&self, doc_id: &str) -> bool {
+        self.access.followed_documents.contains_key(doc_id)
     }
 
     /// Check if a peer (by string ID) has direct PushLog access to sync a collection.

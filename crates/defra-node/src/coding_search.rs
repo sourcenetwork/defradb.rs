@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 
 use crate::dense_search::{require_success, DenseHybridSearchRequest};
-use crate::EmbeddedNode;
+use crate::Node;
 
 const DEFAULT_LIMIT: usize = 10;
 const DEFAULT_CANDIDATE_LIMIT: usize = 0;
@@ -154,7 +154,7 @@ pub struct CodingHybridSearchResponse {
     pub hits: Vec<CodingHybridSearchHit>,
 }
 
-impl EmbeddedNode {
+impl Node {
     /// Run hybrid BM25 + dense retrieval over the coding benchmark corpus.
     pub async fn hybrid_search_coding(
         &self,
@@ -188,7 +188,7 @@ impl EmbeddedNode {
     }
 }
 
-async fn lookup_session_doc_id(node: &EmbeddedNode, session_id: &str) -> Result<String> {
+async fn lookup_session_doc_id(node: &Node, session_id: &str) -> Result<String> {
     let query = format!(
         r#"{{
   CodingSession(filter: {{ session_id: {{ _eq: "{session_id}" }} }}, limit: 1) {{

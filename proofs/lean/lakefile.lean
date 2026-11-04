@@ -10,6 +10,9 @@ lean_lib HttpRouterComposition where
 lean_lib EndpointBind where
 
 @[default_target]
+lean_lib DocKeyScopes where
+
+@[default_target]
 lean_lib DefraConvergence where
 
 @[default_target]
@@ -73,7 +76,13 @@ lean_lib ByteBudget where
 lean_lib FetchStats where
 
 @[default_target]
+lean_lib ProviderHealth where
+
+@[default_target]
 lean_lib GossipFrame where
+
+@[default_target]
+lean_lib OrphanMarker where
 
 @[default_target]
 lean_lib ServiceRecord where
@@ -86,6 +95,9 @@ lean_lib WalkCutoff where
 
 @[default_target]
 lean_lib PqFourSums where
+
+@[default_target]
+lean_lib FragmentNesting where
 
 @[default_target]
 lean_lib TextCrdt where
@@ -116,3 +128,24 @@ lean_lib SelectedCarAuthority where
 
 @[default_target]
 lean_lib RetrySchedule where
+
+@[default_target]
+lean_lib TxnId where
+
+@[default_target]
+lean_lib LensListing where
+
+@[default_target]
+lean_lib JsonSubPathCut where
+
+@[default_target]
+lean_lib CarClosureDepth where
+
+@[default_target]
+lean_lib TxnAdmission where
+
+@[default_target]
+lean_lib HttpClient where
+
+@[default_target]
+lean_lib Arbitration where

@@ -16,12 +16,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use defra_core::thread_bounds::MaybeBoxFuture;
+use inputs::embeddings::{
+    call_embeddings, normalized_embedding_url, Client, EmbeddingCallError, EMBEDDING_TIMEOUT,
+};
 use sha2::{Digest, Sha256};
 
-use crate::search::embedding::{
-    call_embeddings, normalized_embedding_url, EmbeddingCallError, EmbeddingInput,
-    EMBEDDING_TIMEOUT,
-};
+use crate::search::embedding::EmbeddingInput;
 
 /// One embedding: what it is keyed by, and the request that makes it.
 #[derive(Clone)]
@@ -97,7 +97,20 @@ pub(crate) struct Endpoint {
     api_key: Arc<str>,
 }
 
-pub(crate) struct Embeddings;
+/// The embedding source, with the client its requests go out on, or why
+/// there is none.
+pub(crate) struct Embeddings {
+    client: Result<Client, EmbeddingCallError>,
+}
+
+impl Embeddings {
+    /// Requests on `edge`'s connections.
+    pub(crate) fn on(edge: &edge::Edge) -> Self {
+        Self {
+            client: Ok(inputs::embeddings::client(edge)),
+        }
+    }
+}
 
 pub(super) fn config() -> inputs::Config {
     inputs::Config {
@@ -136,8 +149,10 @@ impl inputs::Source for Embeddings {
         keys: &'a [Embedding],
     ) -> MaybeBoxFuture<'a, inputs::Answers<Arc<[f64]>, EmbeddingCallError>> {
         Box::pin(async move {
+            let client = self.client.as_ref().map_err(Clone::clone)?;
             let texts: Vec<&str> = keys.iter().map(|key| key.input.text.as_str()).collect();
             let vectors = call_embeddings(
+                client,
                 &endpoint.provider,
                 &endpoint.url,
                 &endpoint.model,
@@ -190,7 +205,10 @@ pub(crate) fn shared() -> inputs::Service<Embeddings> {
 }
 
 fn on_demand() -> inputs::Service<Embeddings> {
-    inputs::Service::new(Embeddings, config(), inputs::Runtime::on_demand())
+    let embeddings = Embeddings {
+        client: inputs::embeddings::shared_client(),
+    };
+    inputs::Service::new(embeddings, config(), inputs::Runtime::on_demand())
 }
 
 /// Why a service could not embed a text, as the embedding call reports it.

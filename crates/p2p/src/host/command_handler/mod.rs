@@ -286,7 +286,7 @@ impl<S: Store> P2PHost<S> {
                 break;
             }
             // Try to join tasks with a short timeout
-            match tokio::time::timeout(
+            match crate::rt::time::timeout(
                 std::time::Duration::from_millis(100),
                 self.spawned_tasks.join_next(),
             )

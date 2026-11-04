@@ -164,43 +164,52 @@ async fn p2p_trust_boundary_test(cluster: TestCluster) {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rust_rust_p2p_trust_boundary() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(2)
-        .with_p2p()
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    p2p_trust_boundary_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(2)
+            .with_p2p()
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        p2p_trust_boundary_test(cluster).await;
+    })
+    .await;
 }
 
 /// Go does not carry owner DID in PushLog Creator field.
-#[tokio::test]
+#[nuclei::test]
 #[ignore]
 async fn go_go_p2p_trust_boundary() {
-    let cluster = TestCluster::builder()
-        .go_nodes(2)
-        .with_p2p()
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    p2p_trust_boundary_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .go_nodes(2)
+            .with_p2p()
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        p2p_trust_boundary_test(cluster).await;
+    })
+    .await;
 }
 
 /// Go does not carry owner DID in PushLog Creator field.
-#[tokio::test]
+#[nuclei::test]
 #[ignore]
 async fn go_rust_p2p_trust_boundary() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .go_nodes(1)
-        .with_p2p()
-        .with_acp_local()
-        .build()
-        .await
-        .unwrap();
-    p2p_trust_boundary_test(cluster).await;
+    edge::compat(async {
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .go_nodes(1)
+            .with_p2p()
+            .with_acp_local()
+            .build()
+            .await
+            .unwrap();
+        p2p_trust_boundary_test(cluster).await;
+    })
+    .await;
 }

@@ -33,13 +33,13 @@ pub async fn retry_intervals_test(builder: TestClusterBuilder) {
     sender
         .query(r#"mutation { add_RetryDoc(input: {name: "pending"}) { _docID } }"#)
         .unwrap();
-    let client = reqwest::Client::builder()
+    let client = net::http::Client::builder(edge::testing::edge())
         .timeout(Duration::from_secs(5))
         .build()
         .unwrap();
     let url = format!("{}/api/v0/p2p/sync/status", cluster.api_url(0));
     let mut last_status = serde_json::Value::Null;
-    let result = tokio::time::timeout(Duration::from_secs(30), async {
+    let result = nuclei::time::timeout(Duration::from_secs(30), async {
         loop {
             last_status = client
                 .get(&url)
@@ -66,7 +66,7 @@ pub async fn retry_intervals_test(builder: TestClusterBuilder) {
                     }
                 }
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            nuclei::time::sleep(Duration::from_millis(100)).await;
         }
     })
     .await;

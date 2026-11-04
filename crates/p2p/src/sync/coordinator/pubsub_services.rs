@@ -330,7 +330,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn handler_for_topic_routes_doc_sync_base() {
         let peer = a_libp2p_peer();
         let services = PubsubServices::try_new(
@@ -354,7 +354,7 @@ mod tests {
         assert!(services.handler_for_topic("doc-syncoid").is_none());
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn try_new_returns_none_for_non_libp2p_peer_id() {
         let services = PubsubServices::try_new(
             "iroh-node-12345",
@@ -364,7 +364,7 @@ mod tests {
         assert!(services.is_none());
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn services_start_not_ready_until_all_topics_subscribe() {
         let peer = a_libp2p_peer();
         let services = PubsubServices::try_new(
@@ -381,7 +381,7 @@ mod tests {
         assert!(!services.is_ready());
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn doc_sync_handler_returns_heads_for_known_doc() {
         use async_trait::async_trait;
         use cid::Cid;
@@ -440,7 +440,7 @@ mod tests {
     // bounded deserialization → head lookup → reply encode
     // (fxamacker/cbor ↔ ciborium) → dag-cbor envelope (ipld.Marshal ↔
     // ciborium canonical order) → per-peer response topic naming.
-    #[tokio::test]
+    #[nuclei::test]
     async fn go_parity_doc_sync_round_trip() {
         use async_trait::async_trait;
         use cid::Cid;
@@ -523,7 +523,7 @@ mod tests {
     // docSyncReply) must decode cleanly on the Rust side and yield the
     // expected DocSyncReply struct. This validates the receiving half
     // of the parity claim (caller-side of a pubsub_rpc exchange).
-    #[tokio::test]
+    #[nuclei::test]
     async fn go_parity_doc_sync_envelope_decodes_on_rust() {
         use crate::pubsub_rpc::InternalResponse;
 
@@ -555,7 +555,7 @@ mod tests {
         assert_eq!(head.codec(), 0x55, "head is CIDv1 raw");
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn doc_sync_handler_restricted_rejects_non_replicator() {
         let peer = a_libp2p_peer();
         let services = PubsubServices::try_new(
@@ -591,7 +591,7 @@ mod tests {
     /// version that only consulted `ReplicatorRegistry`/`PeerStateTracker`
     /// directly would reject this request; delegating to the authorizer
     /// must not.
-    #[tokio::test]
+    #[nuclei::test]
     async fn doc_sync_handler_accepts_via_authorizer_transport_fallback() {
         let peer = a_libp2p_peer();
         let authorizer = Arc::new(RecordingAuthorizer::new(true, false));
@@ -628,7 +628,7 @@ mod tests {
     /// `get_replicator` fallback (used by `check_access_str`) also closes
     /// the registry cache-miss window on this path. A peer that only the
     /// authorizer recognises as a replicator must be accepted.
-    #[tokio::test]
+    #[nuclei::test]
     async fn branchable_sync_handler_accepts_via_authorizer_collection_fallback() {
         let peer = a_libp2p_peer();
         let authorizer = Arc::new(RecordingAuthorizer::new(false, true));
@@ -670,7 +670,7 @@ mod tests {
     /// branchable-sync heads for collections we haven't subscribed to as
     /// long as the authorizer lets the caller through. Per-document ACP
     /// (a separate layer) decides whether specific content surfaces.
-    #[tokio::test]
+    #[nuclei::test]
     async fn branchable_sync_handler_serves_unsubscribed_collection_when_authorized() {
         let peer = a_libp2p_peer();
         let services = PubsubServices::try_new(

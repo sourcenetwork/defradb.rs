@@ -4,6 +4,7 @@ use rapidhash::RapidHashMap;
 use std::sync::Arc;
 
 use bytes::Bytes;
+use futures::FutureExt;
 use tracing::{debug, warn};
 
 use crate::bitswap::ReplicatorRegistry;
@@ -97,6 +98,22 @@ pub(super) async fn handle_command(
         IrohCommand::ConnectedPeers { reply } => {
             let _ = reply.send(Ok(peer_map.connected_peers()));
         }
+        IrohCommand::WaitConnected { peer_id, mut reply } => match parse_endpoint_id(&peer_id) {
+            Ok(id) => {
+                let peer_map = Arc::clone(peer_map);
+                let _ = spawn_task(spawned_tasks, async move {
+                    futures::select_biased! {
+                        _ = reply.closed().fuse() => {}
+                        () = peer_map.wait_connected(&id).fuse() => {
+                            let _ = reply.send(Ok(()));
+                        }
+                    }
+                });
+            }
+            Err(error) => {
+                let _ = reply.send(Err(error));
+            }
+        },
         IrohCommand::InboundBudget { reply } => {
             let _ = reply.send(Ok(resources.inbound_budget.snapshot().to_vec()));
         }
@@ -543,12 +560,14 @@ pub(super) async fn handle_command(
             root,
             providers,
             missing,
+            max_depth,
             reply,
         } => {
             let query_id = QueryId(*next_query_id);
             *next_query_id += 1;
 
             let resources = BlockSyncResources::new(
+                spawned_tasks.edge().clone(),
                 endpoint.clone(),
                 Arc::clone(peer_map),
                 Arc::clone(connection_cache),
@@ -557,7 +576,7 @@ pub(super) async fn handle_command(
                 Arc::clone(&resources.fetch_stats),
             );
             let task = spawn_task(spawned_tasks, async move {
-                handle_block_sync(resources, query_id, root, providers, missing).await;
+                handle_block_sync(resources, query_id, root, providers, missing, max_depth).await;
             });
             if let Some(abort_handle) = task {
                 active_syncs.insert(query_id.0, ActiveSync { abort_handle });
@@ -747,6 +766,7 @@ async fn handle_dial(
     // leave the count stuck above zero, which is worse than the race it was
     // meant to close: the revoked peer would sit in `connected_peers` forever,
     // looking connected when it holds nothing.
+    let refused = super::endpoint_streams::closed_by_refusal(&connection);
     let stream_context =
         ConnectionStreamContext::new(&ctx.resources, endpoint_id, ctx.event_tx.clone());
     let _ = spawn_task(&ctx.resources.spawned_tasks, async move {
@@ -758,6 +778,15 @@ async fn handle_dial(
         return Err(crate::error::Error::Dial(format!(
             "dial to {peer_id} raced a revoke: connection closed"
         )));
+    }
+
+    // The peer's allowlist may refuse this node right after the handshake. A
+    // refusal that already arrived is the answer; one that arrives later
+    // stays the disconnect path's.
+    if refused {
+        return Err(crate::error::Error::Unauthorized(
+            "peer refused the connection: not authorized".into(),
+        ));
     }
 
     Ok(())

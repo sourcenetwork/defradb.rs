@@ -1,7 +1,7 @@
 //! Cross-runtime parity checks for Go-only, Rust-only, and mixed clusters.
 //!
 //! Requires the harness-compatible Go `defradb` on PATH (the binary the
-//! integration tests use — its CLI has `client collection add`, unlike some
+//! integration tests use - its CLI has `client collection add`, unlike some
 //! branch builds which use `client schema add`):
 //!   PATH=<go-repo>/build:$PATH   (i.e. .../sourcenetwork/defradb/build/defradb)
 //! Run:
@@ -19,7 +19,7 @@
 //! convergence contract: `parity_unique_twins_rust_rust` asserts #1126's
 //! canonical-pick semantics (both twins persist, smallest docID owns the
 //! unique slot). `parity_unique_twins_go_go` asserts current upstream Go
-//! behavior — a unique-index twin merge is rejected atomically inside the
+//! behavior - a unique-index twin merge is rejected atomically inside the
 //! merge transaction (`internal/db/index.go` `saveUniqueKey` /
 //! `internal/db/merge.go`), and the sender silently treats the rejection as
 //! success because `message.Send` checks the request's `GetErrMessage()`
@@ -39,8 +39,8 @@
 //! deliberately excluded from CI and requires its original Go binary.
 //! Upstream Go tracking
 //! issues: sourcenetwork/defradb#5059 (unique-index x CRDT-merge
-//! convergence — the divergence these probes pin) and
-//! sourcenetwork/defradb#5058 (sender never sees error replies — why the Go
+//! convergence - the divergence these probes pin) and
+//! sourcenetwork/defradb#5058 (sender never sees error replies - why the Go
 //! mode is silent). See defradb.rs#1134.
 
 #[path = "mutation.rs"]
@@ -116,7 +116,7 @@ async fn poll_all_user_name(
         if Instant::now() >= deadline {
             return false;
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        nuclei::time::sleep(Duration::from_millis(300)).await;
     }
 }
 
@@ -137,7 +137,7 @@ async fn poll_user_names_agree(
         if Instant::now() >= deadline {
             return None;
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        nuclei::time::sleep(Duration::from_millis(300)).await;
     }
 }
 
@@ -181,7 +181,7 @@ fn has_active_peer(node: &DefraClient, peer_id: &str) -> bool {
 }
 
 /// Poll-dial both directions until each node lists the other as an active
-/// peer — one best-effort dial races the peer's listener.
+/// peer - one best-effort dial races the peer's listener.
 async fn await_user_peers_connected(cluster: &TestCluster) {
     let (a0, a1) = (node_addr(cluster, 0), node_addr(cluster, 1));
     let (peer0, peer1) = (peer_id_from_addr(&a0), peer_id_from_addr(&a1));
@@ -216,7 +216,7 @@ async fn await_user_peers_connected(cluster: &TestCluster) {
             Instant::now() < deadline,
             "P2P connect timed out: node0->{peer1} last dial={last_dial0}; node1->{peer0} last dial={last_dial1}"
         );
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        nuclei::time::sleep(Duration::from_millis(300)).await;
     }
 }
 
@@ -247,7 +247,7 @@ async fn wire_user_bidirectional(cluster: &TestCluster) {
 /// re-set idempotent on a node whose replicator config persisted across the
 /// restart; when it did not, the delete finds nothing and the set stands
 /// alone. The re-subscribe is equally best-effort (a persisted subscription
-/// may reject the duplicate) — a failure there resurfaces as the convergence
+/// may reject the duplicate) - a failure there resurfaces as the convergence
 /// deadline in `poll_user_dags_converged_after_heal`, which prints the dial
 /// and sync state.
 async fn rewire_user_bidirectional(cluster: &TestCluster) {
@@ -388,59 +388,68 @@ async fn run_lww_tie_partition_probe(cluster: TestCluster, label: &str, expected
 }
 
 #[ignore = "parity instrumentation; run with --ignored"]
-#[tokio::test]
+#[nuclei::test]
 async fn parity_lww_tie_partition_rust_rust() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(2)
-        .with_p2p()
-        .with_store("regolith")
-        .with_keyring()
-        .with_rust_binary(support::release_binary())
-        .build()
-        .await
-        .expect("rust-rust cluster");
-    run_lww_tie_partition_probe(cluster, "lww_tie_partition_rust_rust", "alice").await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .rust_nodes(2)
+            .with_p2p()
+            .with_store("regolith")
+            .with_keyring()
+            .with_rust_binary(support::release_binary())
+            .build()
+            .await
+            .expect("rust-rust cluster");
+        run_lww_tie_partition_probe(cluster, "lww_tie_partition_rust_rust", "alice").await;
+    })
+    .await
 }
 
 #[ignore = "parity instrumentation; needs Go binary on PATH; run with --ignored"]
-#[tokio::test]
+#[nuclei::test]
 async fn parity_lww_tie_partition_go_go() {
-    let cluster = TestCluster::builder()
-        .go_nodes(2)
-        .with_p2p()
-        .with_store("badger")
-        .with_keyring()
-        .with_development()
-        .build()
-        .await
-        .expect("go-go cluster");
-    run_lww_tie_partition_probe(cluster, "lww_tie_partition_go_go", "alice").await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .go_nodes(2)
+            .with_p2p()
+            .with_store("badger")
+            .with_keyring()
+            .with_development()
+            .build()
+            .await
+            .expect("go-go cluster");
+        run_lww_tie_partition_probe(cluster, "lww_tie_partition_go_go", "alice").await;
+    })
+    .await
 }
 
 #[ignore = "parity instrumentation; needs Go binary on PATH; run with --ignored"]
-#[tokio::test]
+#[nuclei::test]
 async fn parity_lww_tie_partition_mixed() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .go_nodes(1)
-        .with_p2p()
-        .with_keyring()
-        .with_development()
-        .with_rust_binary(support::release_binary())
-        .build()
-        .await
-        .expect("mixed cluster");
-    run_lww_tie_partition_probe(cluster, "lww_tie_partition_mixed(rust0,go1)", "alice").await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .go_nodes(1)
+            .with_p2p()
+            .with_keyring()
+            .with_development()
+            .with_rust_binary(support::release_binary())
+            .build()
+            .await
+            .expect("mixed cluster");
+        run_lww_tie_partition_probe(cluster, "lww_tie_partition_mixed(rust0,go1)", "alice").await;
+    })
+    .await
 }
 
 /// Mixed Rust(node0)/Go(node1) cluster with per-node native disk stores
 /// (`with_node_store`: Rust=regolith, Go=badger) so EACH node persists across a
-/// restart — the only way to make a mixed cluster restartable at all, since a
+/// restart - the only way to make a mixed cluster restartable at all, since a
 /// cluster-wide store cannot satisfy both implementations. The persistent
 /// keyring is load-bearing: under `--no-keyring` both implementations derive
 /// an EPHEMERAL libp2p peer-id, so a restart silently changes it and the
 /// peer's replicator can never re-target the new id (observed as the restarted
-/// node never re-receiving the concurrent write — a test-mode artifact, not a
+/// node never re-receiving the concurrent write - a test-mode artifact, not a
 /// product bug: a production node persists its keyring, keeps a stable
 /// peer-id across the process boundary, and the connection simply reconnects,
 /// which is the behavior under test here).
@@ -488,7 +497,7 @@ async fn poll_all_user_age_city(
         if Instant::now() >= deadline {
             return false;
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        nuclei::time::sleep(Duration::from_millis(300)).await;
     }
 }
 
@@ -496,7 +505,7 @@ async fn poll_all_user_age_city(
 /// document, restart `restart` to sever the link, then node0 updates `age`
 /// while node1 updates `city`, heal, and require BOTH fields on BOTH nodes.
 /// Each node's final state can only materialize by merging the other node's
-/// write — node0 never sees `city` locally, node1 never sees `age` — so the
+/// write - node0 never sees `city` locally, node1 never sees `age` - so the
 /// assertion cannot pass vacuously.
 async fn run_samedoc_restart_parity(mut cluster: TestCluster, label: &str, restart: usize) {
     let schema = "type User { name: String  age: Int  city: String }";
@@ -544,20 +553,23 @@ async fn run_samedoc_restart_parity(mut cluster: TestCluster, label: &str, resta
 }
 
 /// Mixed Rust(node0)<->Go(node1) same-doc concurrent edits with the RUST node
-/// (node0) restarted mid-flight — the only restart coverage on a mixed
+/// (node0) restarted mid-flight - the only restart coverage on a mixed
 /// cluster: both sides must survive the process boundary (persisted DAG
 /// reload, replicator re-target, stable peer-id) and still converge
 /// cross-impl. The mixed twin of the restart-partition convergence tests in
 /// `partition.rs`, which run Rust-only.
 #[ignore = "parity (asserting); needs Go binary on PATH; run with --ignored"]
-#[tokio::test]
+#[nuclei::test]
 async fn parity_samedoc_mixed_restart_rust() {
-    run_samedoc_restart_parity(
-        mixed_disk_cluster().await,
-        "samedoc_mixed_restart_rust(rust0,go1)",
-        0,
-    )
-    .await;
+    edge::compat(async move {
+        run_samedoc_restart_parity(
+            mixed_disk_cluster().await,
+            "samedoc_mixed_restart_rust(rust0,go1)",
+            0,
+        )
+        .await;
+    })
+    .await
 }
 
 fn user_doc_ids(node: &DefraClient) -> BTreeSet<String> {
@@ -580,7 +592,7 @@ async fn poll_user_doc_absent(node: &DefraClient, doc_id: &str, timeout: Duratio
         if Instant::now() >= deadline {
             return false;
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        nuclei::time::sleep(Duration::from_millis(300)).await;
     }
 }
 
@@ -591,7 +603,7 @@ async fn poll_user_doc_absent(node: &DefraClient, doc_id: &str, timeout: Duratio
 /// P2P-synced update explicitly does not undelete a locally-tombstoned
 /// document (`internal/core/crdt/composite.go`); Rust pins the same outcome
 /// Rust-only in `partition::convergence_delete_update_race_preserves_tombstone`.
-/// Holding the two implementations to it TOGETHER is the point — if either
+/// Holding the two implementations to it TOGETHER is the point - if either
 /// revived the document, a mixed cluster would keep permanently divergent
 /// views of it.
 ///
@@ -637,7 +649,7 @@ async fn run_delete_update_parity(mut cluster: TestCluster, label: &str) {
     );
 
     // Identical DAGs prove node0 holds the update and node1 the tombstone, so
-    // an absent document on either side is the merged outcome — not a document
+    // an absent document on either side is the merged outcome - not a document
     // that never arrived.
     for n in [0usize, 1] {
         assert!(
@@ -648,31 +660,37 @@ async fn run_delete_update_parity(mut cluster: TestCluster, label: &str) {
     }
 }
 
-/// Go<->Go delete-vs-update (badger) — the parity target.
+/// Go<->Go delete-vs-update (badger) - the parity target.
 #[ignore = "parity (asserting); needs Go binary on PATH; run with --ignored"]
-#[tokio::test]
+#[nuclei::test]
 async fn parity_delete_update_go_go() {
-    let cluster = TestCluster::builder()
-        .go_nodes(2)
-        .with_p2p()
-        .with_store("badger")
-        .with_keyring()
-        .with_development()
-        .build()
-        .await
-        .expect("go-go cluster");
-    run_delete_update_parity(cluster, "delete_update_go_go").await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .go_nodes(2)
+            .with_p2p()
+            .with_store("badger")
+            .with_keyring()
+            .with_development()
+            .build()
+            .await
+            .expect("go-go cluster");
+        run_delete_update_parity(cluster, "delete_update_go_go").await;
+    })
+    .await
 }
 
 /// Mixed Rust(node0, deletes)<->Go(node1, updates) delete-vs-update resolution.
 #[ignore = "parity (asserting); needs Go binary on PATH; run with --ignored"]
-#[tokio::test]
+#[nuclei::test]
 async fn parity_delete_update_mixed() {
-    run_delete_update_parity(
-        mixed_disk_cluster().await,
-        "delete_update_mixed(rust0_del,go1_upd)",
-    )
-    .await;
+    edge::compat(async move {
+        run_delete_update_parity(
+            mixed_disk_cluster().await,
+            "delete_update_mixed(rust0_del,go1_upd)",
+        )
+        .await;
+    })
+    .await
 }
 
 fn tally_hits(node: &DefraClient) -> i64 {
@@ -695,12 +713,12 @@ async fn poll_all_tally_hits(
         if Instant::now() >= deadline {
             return false;
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        nuclei::time::sleep(Duration::from_millis(300)).await;
     }
 }
 
 /// THREE-node PCounter parity (ASSERTING): three fully-meshed nodes each `+10`
-/// must converge to `30` on every node. Go is the parity target — `go_go` must
+/// must converge to `30` on every node. Go is the parity target - `go_go` must
 /// converge to 30, and a mixed Rust/Go mesh must agree. This is the cross-impl
 /// twin of `partition::convergence_concurrent_counter_3node_full_mesh_sum`: it
 /// confirms Rust's two-store counter reconcile produces the same accumulation Go
@@ -766,36 +784,42 @@ async fn run_counter_3node_parity(cluster: TestCluster, label: &str) {
     );
 }
 
-/// Go<->Go<->Go 3-node counter (badger) — the parity target.
+/// Go<->Go<->Go 3-node counter (badger) - the parity target.
 #[ignore = "parity (asserting); needs Go binary on PATH; run with --ignored"]
-#[tokio::test]
+#[nuclei::test]
 async fn parity_counter_3node_go_go() {
-    let cluster = TestCluster::builder()
-        .go_nodes(3)
-        .with_p2p()
-        .with_store("badger")
-        .with_development()
-        .build()
-        .await
-        .expect("go-go-go cluster");
-    run_counter_3node_parity(cluster, "counter_3node_go_go").await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .go_nodes(3)
+            .with_p2p()
+            .with_store("badger")
+            .with_development()
+            .build()
+            .await
+            .expect("go-go-go cluster");
+        run_counter_3node_parity(cluster, "counter_3node_go_go").await;
+    })
+    .await
 }
 
-/// Mixed Rust(node0)<->Go(node1,node2) 3-node counter — a Rust creator with two
+/// Mixed Rust(node0)<->Go(node1,node2) 3-node counter - a Rust creator with two
 /// Go peers in a full mesh; all must agree with Go's accumulation.
 #[ignore = "parity (asserting); needs Go binary on PATH; run with --ignored"]
-#[tokio::test]
+#[nuclei::test]
 async fn parity_counter_3node_mixed() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .go_nodes(2)
-        .with_p2p()
-        .with_development()
-        .with_rust_binary(support::release_binary())
-        .build()
-        .await
-        .expect("mixed 3-node cluster");
-    run_counter_3node_parity(cluster, "counter_3node_mixed(rust0,go1,go2)").await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .go_nodes(2)
+            .with_p2p()
+            .with_development()
+            .with_rust_binary(support::release_binary())
+            .build()
+            .await
+            .expect("mixed 3-node cluster");
+        run_counter_3node_parity(cluster, "counter_3node_mixed(rust0,go1,go2)").await;
+    })
+    .await
 }
 
 fn mixed_fields_state(node: &DefraClient) -> (String, i64) {
@@ -863,7 +887,7 @@ async fn poll_all_mixed_fields_state(
         if Instant::now() >= deadline {
             return false;
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        nuclei::time::sleep(Duration::from_millis(300)).await;
     }
 }
 
@@ -893,7 +917,7 @@ async fn poll_mixed_fields_dags_converged(
         for n in 0..nodes {
             let _ = cluster.client(n).p2p_document_sync("Mixed", &[doc_id]);
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        nuclei::time::sleep(Duration::from_millis(300)).await;
     }
 }
 
@@ -1065,57 +1089,66 @@ async fn run_mixed_fields_3node_probe(
 
 /// Rust<->Rust<->Rust mixed-field control for the asserting parity probe.
 #[ignore = "parity (asserting); run with --ignored"]
-#[tokio::test]
+#[nuclei::test]
 async fn parity_mixed_fields_3node_rust_rust() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(3)
-        .with_p2p()
-        .with_store("regolith")
-        .with_keyring()
-        .with_rust_binary(support::release_binary())
-        .build()
-        .await
-        .expect("rust-rust-rust cluster");
-    run_mixed_fields_3node_probe(cluster, "mixed_fields_3node_rust_rust", "alice", 17).await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .rust_nodes(3)
+            .with_p2p()
+            .with_store("regolith")
+            .with_keyring()
+            .with_rust_binary(support::release_binary())
+            .build()
+            .await
+            .expect("rust-rust-rust cluster");
+        run_mixed_fields_3node_probe(cluster, "mixed_fields_3node_rust_rust", "alice", 17).await;
+    })
+    .await
 }
 
 /// Go<->Go<->Go mixed-field control. Go is the parity target; Rust and mixed
 /// clusters must match this materialized state exactly.
 #[ignore = "parity (asserting); needs Go binary on PATH; run with --ignored"]
-#[tokio::test]
+#[nuclei::test]
 async fn parity_mixed_fields_3node_go_go() {
-    let cluster = TestCluster::builder()
-        .go_nodes(3)
-        .with_p2p()
-        .with_store("badger")
-        .with_development()
-        .build()
-        .await
-        .expect("go-go-go cluster");
-    run_mixed_fields_3node_probe(cluster, "mixed_fields_3node_go_go", "alice", 17).await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .go_nodes(3)
+            .with_p2p()
+            .with_store("badger")
+            .with_development()
+            .build()
+            .await
+            .expect("go-go-go cluster");
+        run_mixed_fields_3node_probe(cluster, "mixed_fields_3node_go_go", "alice", 17).await;
+    })
+    .await
 }
 
 /// Mixed Rust(node0)<->Go(node1,node2) mixed-field control. The cross-impl mesh
 /// must agree with Go's materialized LWW value and exact counter sum.
 #[ignore = "parity (asserting); needs Go binary on PATH; run with --ignored"]
-#[tokio::test]
+#[nuclei::test]
 async fn parity_mixed_fields_3node_mixed() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .go_nodes(2)
-        .with_p2p()
-        .with_development()
-        .with_rust_binary(support::release_binary())
-        .build()
-        .await
-        .expect("mixed 3-node cluster");
-    run_mixed_fields_3node_probe(
-        cluster,
-        "mixed_fields_3node_mixed(rust0,go1,go2)",
-        "alice",
-        17,
-    )
-    .await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .go_nodes(2)
+            .with_p2p()
+            .with_development()
+            .with_rust_binary(support::release_binary())
+            .build()
+            .await
+            .expect("mixed 3-node cluster");
+        run_mixed_fields_3node_probe(
+            cluster,
+            "mixed_fields_3node_mixed(rust0,go1,go2)",
+            "alice",
+            17,
+        )
+        .await;
+    })
+    .await
 }
 
 async fn poll_index_resolved(node: &DefraClient, timeout: Duration) -> bool {
@@ -1131,19 +1164,19 @@ async fn poll_index_resolved(node: &DefraClient, timeout: Duration) -> bool {
         if Instant::now() >= deadline {
             return false;
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        nuclei::time::sleep(Duration::from_millis(300)).await;
     }
 }
 
 /// INDEXED-LWW parity (ASSERTING): an `@index`'d LWW field updated concurrently
 /// (node0 -> 20, node1 -> 99) must, on both impls, materialize 99 AND resolve
-/// ONLY 99 through the index — no stale entry for the seed (10) or the loser
+/// ONLY 99 through the index - no stale entry for the seed (10) or the loser
 /// (20). Cross-impl twin of `index::index_reconciles_lww_merge_after_restart`:
 /// it confirms Rust's index maintenance follows the reconciled merge exactly as
 /// Go's does.
 ///
 /// `rust_explain_node` names the Rust node (when the cluster has one) on which to
-/// assert the filter actually plans an index scan — otherwise a broken index that
+/// assert the filter actually plans an index scan - otherwise a broken index that
 /// silently fell back to a full collection scan would still return the right
 /// counts and the assertions would prove nothing. We only check the Rust node
 /// (the regression target); Go is the trusted reference, and Go/Rust print
@@ -1217,7 +1250,7 @@ async fn run_indexed_lww_parity(
             Instant::now() < seed_deadline,
             "[{label}] seed (age=10) did not reach node1 via index"
         );
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        nuclei::time::sleep(Duration::from_millis(300)).await;
     }
 
     // Concurrent same-field LWW: node0 -> 20, node1 -> 99. Higher value wins (99).
@@ -1240,7 +1273,7 @@ async fn run_indexed_lww_parity(
     // MERGE PROOF: node1 locally wrote the winner (99), so its index-resolved
     // check is satisfied by its own write; require the identical commit DAG on
     // both impls first, so node1's leg only passes once it has actually MERGED
-    // node0's delta (and node0 received node1's) — not from a local write alone.
+    // node0's delta (and node0 received node1's) - not from a local write alone.
     assert!(
         support::poll_dags_converged(
             &cluster.client(0),
@@ -1278,57 +1311,66 @@ async fn run_indexed_lww_parity(
     }
 }
 
-/// Go<->Go indexed-LWW (badger) — the parity target.
+/// Go<->Go indexed-LWW (badger) - the parity target.
 #[ignore = "parity (asserting); needs Go binary on PATH; run with --ignored"]
-#[tokio::test]
+#[nuclei::test]
 async fn parity_indexed_lww_go_go() {
-    let cluster = TestCluster::builder()
-        .go_nodes(2)
-        .with_p2p()
-        .with_store("badger")
-        .with_development()
-        .build()
-        .await
-        .expect("go-go cluster");
-    run_indexed_lww_parity(cluster, "indexed_lww_go_go", None).await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .go_nodes(2)
+            .with_p2p()
+            .with_store("badger")
+            .with_development()
+            .build()
+            .await
+            .expect("go-go cluster");
+        run_indexed_lww_parity(cluster, "indexed_lww_go_go", None).await;
+    })
+    .await
 }
 
-/// Mixed Rust(node0)<->Go(node1) indexed-LWW, live — Rust seeds/loses, Go wins;
+/// Mixed Rust(node0)<->Go(node1) indexed-LWW, live - Rust seeds/loses, Go wins;
 /// both impls must resolve the winner through the index.
 #[ignore = "parity (asserting); needs Go binary on PATH; run with --ignored"]
-#[tokio::test]
+#[nuclei::test]
 async fn parity_indexed_lww_mixed() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .go_nodes(1)
-        .with_p2p()
-        .with_development()
-        .with_rust_binary(support::release_binary())
-        .build()
-        .await
-        .expect("mixed cluster");
-    run_indexed_lww_parity(cluster, "indexed_lww_mixed(rust0,go1)", Some(0)).await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .go_nodes(1)
+            .with_p2p()
+            .with_development()
+            .with_rust_binary(support::release_binary())
+            .build()
+            .await
+            .expect("mixed cluster");
+        run_indexed_lww_parity(cluster, "indexed_lww_mixed(rust0,go1)", Some(0)).await;
+    })
+    .await
 }
 
-/// Go<->Go<->Go same-doc counter STORM — the parity target. Confirms the upstream
+/// Go<->Go<->Go same-doc counter STORM - the parity target. Confirms the upstream
 /// Go binary converges to the exact sum under the identical concurrent-burst storm
 /// that exposed the Rust #1021 under-count (it does; Go's single value key + merge
 /// queue serialize it). Uses the cluster-agnostic `support::run_counter_storm`.
 #[ignore = "parity (asserting); needs Go binary on PATH; run with --ignored"]
-#[tokio::test]
+#[nuclei::test]
 async fn parity_counter_storm_go_go() {
-    let cluster = TestCluster::builder()
-        .go_nodes(3)
-        .with_p2p()
-        .with_store("badger")
-        .with_development()
-        .build()
-        .await
-        .expect("go-go-go cluster");
-    support::run_counter_storm(&cluster, "pcounter", "Int", &[1.0, 1.0, 1.0], 3, 4).await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .go_nodes(3)
+            .with_p2p()
+            .with_store("badger")
+            .with_development()
+            .build()
+            .await
+            .expect("go-go-go cluster");
+        support::run_counter_storm(&cluster, "pcounter", "Int", &[1.0, 1.0, 1.0], 3, 4).await;
+    })
+    .await
 }
 
-/// Mixed Rust(node0)<->Go(node1,node2) same-doc counter STORM — every node (Rust AND
+/// Mixed Rust(node0)<->Go(node1,node2) same-doc counter STORM - every node (Rust AND
 /// the two Go peers) must converge to the exact accumulation under concurrent
 /// same-doc bursts across a mixed mesh (the cross-impl twin of
 /// `partition::convergence_concurrent_same_doc_merge_storm`).
@@ -1337,7 +1379,7 @@ async fn parity_counter_storm_go_go() {
 /// go-compat CI leg. Investigation (link-level DAG dumps + instrumented Go binary)
 /// established: all three nodes hold a byte-identical commit DAG, Rust materializes
 /// the EXACT sum, and the two Go peers intermittently materialize +k too high. The
-/// miscount is a timing-sensitive DOUBLE-APPLY on the Go reference side — Go's
+/// miscount is a timing-sensitive DOUBLE-APPLY on the Go reference side - Go's
 /// `coreblock.ProcessBlock` runs `incrementValue` (RMW) unconditionally with no
 /// per-block `IsMerged` guard (dedup is purely structural via `loadComposites`),
 /// whereas Rust's counter merge guards on `is_merged(cid)`. It never reproduces in
@@ -1345,18 +1387,21 @@ async fn parity_counter_storm_go_go() {
 /// delivery timing (`RUST_LOG=info`), and is suppressed by Go-side instrumentation.
 /// Tracked in #1043; promote back into the blocking leg once resolved.
 #[ignore = "known-failing diagnostic (Go-side double-apply, #1043); needs Go binary on PATH; run with --ignored"]
-#[tokio::test]
+#[nuclei::test]
 async fn parity_counter_storm_mixed() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .go_nodes(2)
-        .with_p2p()
-        .with_development()
-        .with_rust_binary(support::release_binary())
-        .build()
-        .await
-        .expect("mixed 3-node cluster");
-    support::run_counter_storm(&cluster, "pcounter", "Int", &[1.0, 1.0, 1.0], 3, 4).await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .go_nodes(2)
+            .with_p2p()
+            .with_development()
+            .with_rust_binary(support::release_binary())
+            .build()
+            .await
+            .expect("mixed 3-node cluster");
+        support::run_counter_storm(&cluster, "pcounter", "Int", &[1.0, 1.0, 1.0], 3, 4).await;
+    })
+    .await
 }
 
 // ---- #1134: unique-index twin merge divergence pin ----
@@ -1367,7 +1412,7 @@ async fn parity_counter_storm_mixed() {
 // id(TWIN_SEED_SMALL) < id(TWIN_SEED_LARGE) is re-verified at runtime by an
 // ordering fence in `setup_unique_twins` rather than assumed blindly. This
 // keeps the fixture assignment (node0 = smaller docID) deterministic across
-// runs instead of branching on whichever docID happens to sort first — see
+// runs instead of branching on whichever docID happens to sort first - see
 // #1134.
 const UNIQUE_TWIN_SCHEMA: &str = "type Account { handle: String @index(unique: true)  seed: Int }";
 const TWIN_SEED_SMALL: i64 = 5;
@@ -1401,7 +1446,7 @@ fn create_account(node: &DefraClient, label: &str, handle: &str, seed: i64) -> S
     );
 }
 
-/// Full collection scan (docID-level presence — bypasses the unique index
+/// Full collection scan (docID-level presence - bypasses the unique index
 /// entirely, so it proves whether a twin persisted at all, independent of
 /// which one the index resolved to).
 fn account_scan_ids(node: &DefraClient) -> Vec<String> {
@@ -1416,7 +1461,7 @@ fn account_scan_ids(node: &DefraClient) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Unique-indexed lookup on the shared `handle` value — the resolved
+/// Unique-indexed lookup on the shared `handle` value - the resolved
 /// owner(s) of the unique slot, as opposed to everything physically present
 /// (`account_scan_ids`).
 fn account_indexed_owner(node: &DefraClient) -> Vec<String> {
@@ -1432,7 +1477,7 @@ fn account_indexed_owner(node: &DefraClient) -> Vec<String> {
 }
 
 /// `account_scan_ids` as an order-insensitive set (scan row order is not part
-/// of any pin here — membership is).
+/// of any pin here - membership is).
 fn account_scan_set(node: &DefraClient) -> BTreeSet<String> {
     account_scan_ids(node).into_iter().collect()
 }
@@ -1461,7 +1506,7 @@ async fn poll_account_scan_count(node: &DefraClient, want: usize, timeout: Durat
         if Instant::now() >= deadline {
             return false;
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        nuclei::time::sleep(Duration::from_millis(300)).await;
     }
 }
 
@@ -1486,7 +1531,7 @@ async fn poll_replicators_all_status(node: &DefraClient, want: i64, timeout: Dur
         if Instant::now() >= deadline {
             return false;
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        nuclei::time::sleep(Duration::from_millis(300)).await;
     }
 }
 
@@ -1558,7 +1603,7 @@ async fn setup_unique_twins(cluster: &TestCluster, label: &str) -> (String, Stri
     assert!(
         id0 < id1,
         "[{label}] ordering fence: node0's fixture (seed={TWIN_SEED_SMALL}) must stay \
-         the lexicographically smaller docID — content-addressing appears to have \
+         the lexicographically smaller docID - content-addressing appears to have \
          changed (got node0={id0} node1={id1}); recompute the fixed TWIN_SEED_* \
          fixtures rather than adjusting downstream assertions"
     );
@@ -1583,50 +1628,53 @@ async fn witness_account_replication(cluster: &TestCluster, label: &str) -> [Str
         assert!(
             Instant::now() < deadline,
             "[{label}] canary witness failed: replication is not live in both directions \
-             (node0 sees canary1: {crossed_0}, node1 sees canary0: {crossed_1}) — the \
+             (node0 sees canary1: {crossed_0}, node1 sees canary0: {crossed_1}) - the \
              twin-absence pin would be vacuous"
         );
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        nuclei::time::sleep(Duration::from_millis(300)).await;
     }
 }
 
 /// Rust<->Rust control (#1134): pins #1126's canonical-pick semantics for
-/// this exact scenario shape — both independently-created twins persist, and
+/// this exact scenario shape - both independently-created twins persist, and
 /// the unique slot converges to the lexicographically smallest docID
 /// identically on both replicas. This is the "Rust is internally consistent"
 /// anchor the Go and mixed divergence pins are measured against.
 #[ignore = "parity (asserting); run with --ignored"]
-#[tokio::test]
+#[nuclei::test]
 async fn parity_unique_twins_rust_rust() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(2)
-        .with_p2p()
-        .with_store("regolith")
-        .with_keyring()
-        .with_rust_binary(support::release_binary())
-        .build()
-        .await
-        .expect("rust-rust cluster");
-    let label = "unique_twins_rust_rust";
-    let (id0, _id1) = setup_unique_twins(&cluster, label).await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .rust_nodes(2)
+            .with_p2p()
+            .with_store("regolith")
+            .with_keyring()
+            .with_rust_binary(support::release_binary())
+            .build()
+            .await
+            .expect("rust-rust cluster");
+        let label = "unique_twins_rust_rust";
+        let (id0, _id1) = setup_unique_twins(&cluster, label).await;
 
-    for n in [0usize, 1] {
-        assert!(
-            poll_account_scan_count(&cluster.client(n), 2, Duration::from_secs(40)).await,
-            "[{label}] node{n} did not converge to both twins scan-visible; ids={:?}",
-            account_scan_ids(&cluster.client(n))
-        );
-    }
+        for n in [0usize, 1] {
+            assert!(
+                poll_account_scan_count(&cluster.client(n), 2, Duration::from_secs(40)).await,
+                "[{label}] node{n} did not converge to both twins scan-visible; ids={:?}",
+                account_scan_ids(&cluster.client(n))
+            );
+        }
 
-    for n in [0usize, 1] {
-        assert_eq!(
-            account_indexed_owner(&cluster.client(n)),
-            vec![id0.clone()],
-            "[{label}] node{n} unique index must resolve to the smallest docID (#1126 canonical pick)"
-        );
-    }
+        for n in [0usize, 1] {
+            assert_eq!(
+                account_indexed_owner(&cluster.client(n)),
+                vec![id0.clone()],
+                "[{label}] node{n} unique index must resolve to the smallest docID (#1126 canonical pick)"
+            );
+        }
 
-    assert_rust_explain_uses_index(&cluster.client(0), label);
+        assert_rust_explain_uses_index(&cluster.client(0), label);
+    })
+    .await
 }
 
 /// Go<->Go KNOWN-DIVERGENCE pin (#1134): current upstream Go behavior for
@@ -1643,10 +1691,10 @@ async fn parity_unique_twins_rust_rust() {
 /// either retry queue to re-drive).
 ///
 /// This test MUST start failing the moment upstream Go changes this
-/// behavior — that failure is the signal to update or remove this pin, not
+/// behavior - that failure is the signal to update or remove this pin, not
 /// to patch the assertions blind. The Go v1.0.0 mixed topology is pinned by
 /// `parity_unique_twins_mixed`; the historical pre-v1 delivery artifact is
-/// retained separately — see the module header.
+/// retained separately - see the module header.
 ///
 /// Anti-vacuity witness (mirrors the fork characterization
 /// `TestIndexP2P_UniqueConflictIsDroppedByReplicatorRetryQueue`, which pairs
@@ -1655,7 +1703,7 @@ async fn parity_unique_twins_rust_rust() {
 /// or never-started push would pass a bare sleep-then-assert vacuously.
 /// After wiring, each node therefore creates a NON-conflicting canary doc
 /// (distinct unique values) and the test blocks until both canaries cross in
-/// BOTH directions — proving replication is live over the same collection
+/// BOTH directions - proving replication is live over the same collection
 /// and replicator wiring. The twin-attempt ordering holds by generous timing
 /// margin (the twin's catch-up push is dispatched at wiring time, long before
 /// the canaries exist), NOT by protocol-level serialization: Go's catch-up
@@ -1666,69 +1714,74 @@ async fn parity_unique_twins_rust_rust() {
 /// #5302 and #5307: the sender sees the peer's rejection instead of draining its
 /// retry queue as if the push had succeeded (the #5058 silent ack).
 #[ignore = "parity (asserting); needs Go binary on PATH; run with --ignored"]
-#[tokio::test]
+#[nuclei::test]
 async fn parity_unique_twins_go_go() {
-    let cluster = TestCluster::builder()
-        .go_nodes(2)
-        .with_p2p()
-        .with_store("badger")
-        .with_development()
-        .build()
-        .await
-        .expect("go-go cluster");
-    let label = "unique_twins_go_go";
-    let (id0, id1) = setup_unique_twins(&cluster, label).await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .go_nodes(2)
+            .with_p2p()
+            .with_store("badger")
+            .with_development()
+            .build()
+            .await
+            .expect("go-go cluster");
+        let label = "unique_twins_go_go";
+        let (id0, id1) = setup_unique_twins(&cluster, label).await;
 
-    // Positive delivery witness: canaries created AFTER wiring must cross in
-    // both directions through the live replicator/subscription channels.
-    let [canary0, canary1] = witness_account_replication(&cluster, label).await;
+        // Positive delivery witness: canaries created AFTER wiring must cross in
+        // both directions through the live replicator/subscription channels.
+        let [canary0, canary1] = witness_account_replication(&cluster, label).await;
 
-    // The divergence pin, asserted only now that the witness proves the
-    // channel delivered: the remote twin is still absent on each node, and
-    // each node's unique index resolves its own twin. Re-checked after a
-    // short settle so a merely-in-flight twin can't sneak past the witness.
-    let expect_scan_0: BTreeSet<String> = [id0.clone(), canary0.clone(), canary1.clone()].into();
-    let expect_scan_1: BTreeSet<String> = [id1.clone(), canary0.clone(), canary1.clone()].into();
-    for pass in 0..2 {
-        if pass == 1 {
-            tokio::time::sleep(Duration::from_secs(3)).await;
+        // The divergence pin, asserted only now that the witness proves the
+        // channel delivered: the remote twin is still absent on each node, and
+        // each node's unique index resolves its own twin. Re-checked after a
+        // short settle so a merely-in-flight twin can't sneak past the witness.
+        let expect_scan_0: BTreeSet<String> =
+            [id0.clone(), canary0.clone(), canary1.clone()].into();
+        let expect_scan_1: BTreeSet<String> =
+            [id1.clone(), canary0.clone(), canary1.clone()].into();
+        for pass in 0..2 {
+            if pass == 1 {
+                nuclei::time::sleep(Duration::from_secs(3)).await;
+            }
+            assert_eq!(
+                account_scan_set(&cluster.client(0)),
+                expect_scan_0,
+                "[{label}] (pass {pass}) node0 must hold its own twin + both canaries, and NOT \
+                 the peer's twin - Go silently drops the rejected twin push"
+            );
+            assert_eq!(
+                account_scan_set(&cluster.client(1)),
+                expect_scan_1,
+                "[{label}] (pass {pass}) node1 must hold its own twin + both canaries, and NOT \
+                 the peer's twin - Go silently drops the rejected twin push"
+            );
+            assert_eq!(
+                account_indexed_owner(&cluster.client(0)),
+                vec![id0.clone()],
+                "[{label}] (pass {pass}) node0's unique index must resolve to its own local twin"
+            );
+            assert_eq!(
+                account_indexed_owner(&cluster.client(1)),
+                vec![id1.clone()],
+                "[{label}] (pass {pass}) node1's unique index must resolve to its own local twin"
+            );
         }
-        assert_eq!(
-            account_scan_set(&cluster.client(0)),
-            expect_scan_0,
-            "[{label}] (pass {pass}) node0 must hold its own twin + both canaries, and NOT \
-             the peer's twin — Go silently drops the rejected twin push"
-        );
-        assert_eq!(
-            account_scan_set(&cluster.client(1)),
-            expect_scan_1,
-            "[{label}] (pass {pass}) node1 must hold its own twin + both canaries, and NOT \
-             the peer's twin — Go silently drops the rejected twin push"
-        );
-        assert_eq!(
-            account_indexed_owner(&cluster.client(0)),
-            vec![id0.clone()],
-            "[{label}] (pass {pass}) node0's unique index must resolve to its own local twin"
-        );
-        assert_eq!(
-            account_indexed_owner(&cluster.client(1)),
-            vec![id1.clone()],
-            "[{label}] (pass {pass}) node1's unique index must resolve to its own local twin"
-        );
-    }
 
-    // Go #5302 (peer rejections are reported without blocking replication) and
-    // #5307 (collection blocks are retried in the replicator) replaced the
-    // #5058 silent ack: the sender no longer reports its replicator Active after
-    // a rejected push, it reports it Inactive.
-    for n in [0usize, 1] {
-        assert!(
-            poll_replicators_all_status(&cluster.client(n), 1, Duration::from_secs(15)).await,
-            "[{label}] node{n} replicator must report Inactive after the rejected twin \
-             push (Go #5302, #5307); got {:?}",
-            cluster.client(n).p2p_replicator_list()
-        );
-    }
+        // Go #5302 (peer rejections are reported without blocking replication) and
+        // #5307 (collection blocks are retried in the replicator) replaced the
+        // #5058 silent ack: the sender no longer reports its replicator Active after
+        // a rejected push, it reports it Inactive.
+        for n in [0usize, 1] {
+            assert!(
+                poll_replicators_all_status(&cluster.client(n), 1, Duration::from_secs(15)).await,
+                "[{label}] node{n} replicator must report Inactive after the rejected twin \
+                 push (Go #5302, #5307); got {:?}",
+                cluster.client(n).p2p_replicator_list()
+            );
+        }
+    })
+    .await
 }
 
 /// Rust<->Go KNOWN-DIVERGENCE pin (#1134) at the Go v1.0.0 compatibility
@@ -1744,66 +1797,69 @@ async fn parity_unique_twins_go_go() {
 /// changes the merge semantics, prompting this compatibility pin to be
 /// updated rather than silently preserving obsolete behavior.
 #[ignore = "parity (asserting); needs Go v1.0.0 binary on PATH; run with --ignored"]
-#[tokio::test]
+#[nuclei::test]
 async fn parity_unique_twins_mixed() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .go_nodes(1)
-        .with_p2p()
-        .with_development()
-        .with_rust_binary(support::release_binary())
-        .build()
-        .await
-        .expect("mixed cluster");
-    let label = "unique_twins_mixed(rust0,go1)";
-    let (id0, id1) = setup_unique_twins(&cluster, label).await;
-    let [canary0, canary1] = witness_account_replication(&cluster, label).await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .go_nodes(1)
+            .with_p2p()
+            .with_development()
+            .with_rust_binary(support::release_binary())
+            .build()
+            .await
+            .expect("mixed cluster");
+        let label = "unique_twins_mixed(rust0,go1)";
+        let (id0, id1) = setup_unique_twins(&cluster, label).await;
+        let [canary0, canary1] = witness_account_replication(&cluster, label).await;
 
-    assert!(
-        poll_account_scan_count(&cluster.client(0), 4, Duration::from_secs(40)).await,
-        "[{label}] Rust node0 did not converge to both twins and both canaries; ids={:?}",
-        account_scan_ids(&cluster.client(0))
-    );
+        assert!(
+            poll_account_scan_count(&cluster.client(0), 4, Duration::from_secs(40)).await,
+            "[{label}] Rust node0 did not converge to both twins and both canaries; ids={:?}",
+            account_scan_ids(&cluster.client(0))
+        );
 
-    let rust_scan: BTreeSet<String> =
-        [id0.clone(), id1.clone(), canary0.clone(), canary1.clone()].into();
-    let go_scan: BTreeSet<String> = [id1.clone(), canary0, canary1].into();
+        let rust_scan: BTreeSet<String> =
+            [id0.clone(), id1.clone(), canary0.clone(), canary1.clone()].into();
+        let go_scan: BTreeSet<String> = [id1.clone(), canary0, canary1].into();
 
-    for pass in 0..2 {
-        if pass == 1 {
-            tokio::time::sleep(Duration::from_secs(3)).await;
+        for pass in 0..2 {
+            if pass == 1 {
+                nuclei::time::sleep(Duration::from_secs(3)).await;
+            }
+            assert_eq!(
+                account_scan_set(&cluster.client(0)),
+                rust_scan,
+                "[{label}] (pass {pass}) Rust node0 must retain both twins and both canaries"
+            );
+            assert_eq!(
+                account_scan_set(&cluster.client(1)),
+                go_scan,
+                "[{label}] (pass {pass}) Go node1 must atomically reject the Rust twin while \
+                 retaining its local twin and both canaries"
+            );
+            assert_eq!(
+                account_indexed_owner(&cluster.client(0)),
+                vec![id0.clone()],
+                "[{label}] (pass {pass}) Rust node0's unique index must resolve the smaller Rust twin"
+            );
+            assert_eq!(
+                account_indexed_owner(&cluster.client(1)),
+                vec![id1.clone()],
+                "[{label}] (pass {pass}) Go node1's unique index must resolve its local twin"
+            );
         }
-        assert_eq!(
-            account_scan_set(&cluster.client(0)),
-            rust_scan,
-            "[{label}] (pass {pass}) Rust node0 must retain both twins and both canaries"
-        );
-        assert_eq!(
-            account_scan_set(&cluster.client(1)),
-            go_scan,
-            "[{label}] (pass {pass}) Go node1 must atomically reject the Rust twin while \
-             retaining its local twin and both canaries"
-        );
-        assert_eq!(
-            account_indexed_owner(&cluster.client(0)),
-            vec![id0.clone()],
-            "[{label}] (pass {pass}) Rust node0's unique index must resolve the smaller Rust twin"
-        );
-        assert_eq!(
-            account_indexed_owner(&cluster.client(1)),
-            vec![id1.clone()],
-            "[{label}] (pass {pass}) Go node1's unique index must resolve its local twin"
-        );
-    }
 
-    assert!(
-        support::commit_cids(&cluster.client(1), &id0).is_empty(),
-        "[{label}] Go node1 must not expose merged commits for the atomically rejected Rust twin"
-    );
-    assert_rust_explain_uses_index(&cluster.client(0), label);
+        assert!(
+            support::commit_cids(&cluster.client(1), &id0).is_empty(),
+            "[{label}] Go node1 must not expose merged commits for the atomically rejected Rust twin"
+        );
+        assert_rust_explain_uses_index(&cluster.client(0), label);
+    })
+    .await
 }
 
-/// CHARACTERIZATION of an upstream Go finding (#1134) — NOT a parity
+/// CHARACTERIZATION of an upstream Go finding (#1134) - NOT a parity
 /// contract, and deliberately NOT in the go-compat CI allowlist: this test is
 /// a runnable repro artifact for the upstream report (cite it by name and run
 /// it with the pinned Go binary on PATH plus `--ignored`). The decision on
@@ -1821,109 +1877,112 @@ async fn parity_unique_twins_mixed() {
 /// The final composite merge then rejects on the unique index and only THAT
 /// transaction rolls back. Net result on the Go peer: a scan-visible (the
 /// fetcher iterates committed datastore value keys), unindexed partial
-/// document with no composite in `_commits` — and `ExistsDocument` false —
+/// document with no composite in `_commits` - and `ExistsDocument` false:
 /// that no retry repairs. A third outcome distinct from both #1126
 /// canonical-pick and go_go's atomic drop. NOTE for pin bumps: on Go
 /// develop past #4838 (genesis-CID docIDs), a standalone field-delta merge
 /// root is REJECTED (`initCRDTForType` requires a composite parent), so
-/// this exact window closes there — re-characterize when the pin advances.
+/// this exact window closes there - re-characterize when the pin advances.
 /// Pin-bump implications tracked in defradb.rs#1136.
 ///
 /// The assertions are positive pins of the observed state, so ANY behavior
 /// change breaks this test loudly: an upstream Go fix (rollback or
 /// acceptance of the partial doc) breaks the scan/commit-subset pins, and
 /// the #1116 stage-3 sender change (single-DAG delivery) breaks the
-/// partial-materialization signature — both are signals to revisit this
+/// partial-materialization signature - both are signals to revisit this
 /// characterization, not to patch it blind.
 ///
 /// Tracking: defradb.rs#1134; upstream context sourcenetwork/defradb#5058 /
 /// sourcenetwork/defradb#5059 (Go tracking issue: filed as follow-up to
-/// #5058/#5059 — number added when filed).
+/// #5058/#5059 - number added when filed).
 #[ignore = "historical characterization; requires pre-v1 Go 6c874754 binary on PATH; intentionally not CI-enforced"]
-#[tokio::test]
+#[nuclei::test]
 async fn characterize_unique_twins_pre_v1_partial_materialization() {
-    let cluster = TestCluster::builder()
-        .rust_nodes(1)
-        .go_nodes(1)
-        .with_p2p()
-        .with_development()
-        .with_rust_binary(support::release_binary())
-        .build()
-        .await
-        .expect("mixed cluster");
-    let label = "unique_twins_mixed_partial_materialization(rust0,go1)";
-    let (id0, id1) = setup_unique_twins(&cluster, label).await;
+    edge::compat(async move {
+        let cluster = TestCluster::builder()
+            .rust_nodes(1)
+            .go_nodes(1)
+            .with_p2p()
+            .with_development()
+            .with_rust_binary(support::release_binary())
+            .build()
+            .await
+            .expect("mixed cluster");
+        let label = "unique_twins_mixed_partial_materialization(rust0,go1)";
+        let (id0, id1) = setup_unique_twins(&cluster, label).await;
 
-    // Rust (node0) accepts Go's twin per #1126: both twins scan-visible.
-    assert!(
-        poll_account_scan_count(&cluster.client(0), 2, Duration::from_secs(40)).await,
-        "[{label}] Rust node0 did not converge to both twins scan-visible; ids={:?}",
-        account_scan_ids(&cluster.client(0))
-    );
+        // Rust (node0) accepts Go's twin per #1126: both twins scan-visible.
+        assert!(
+            poll_account_scan_count(&cluster.client(0), 2, Duration::from_secs(40)).await,
+            "[{label}] Rust node0 did not converge to both twins scan-visible; ids={:?}",
+            account_scan_ids(&cluster.client(0))
+        );
 
-    // Go (node1) partial materialization: the Rust twin's field deltas landed
-    // in committed per-block merge txns, so it becomes scan-visible on Go too
-    // even though its composite merge was rejected.
-    assert!(
-        poll_account_scan_count(&cluster.client(1), 2, Duration::from_secs(40)).await,
-        "[{label}] Go node1 did not materialize the partial Rust twin (scan count != 2); \
-         ids={:?} — if this is the ATOMIC-drop outcome instead, the delivery shape has \
-         changed (post-#1116-stage-3 sender?) and this characterization must be revisited",
-        account_scan_ids(&cluster.client(1))
-    );
+        // Go (node1) partial materialization: the Rust twin's field deltas landed
+        // in committed per-block merge txns, so it becomes scan-visible on Go too
+        // even though its composite merge was rejected.
+        assert!(
+            poll_account_scan_count(&cluster.client(1), 2, Duration::from_secs(40)).await,
+            "[{label}] Go node1 did not materialize the partial Rust twin (scan count != 2); \
+             ids={:?} - if this is the ATOMIC-drop outcome instead, the delivery shape has \
+             changed (post-#1116-stage-3 sender?) and this characterization must be revisited",
+            account_scan_ids(&cluster.client(1))
+        );
 
-    // The stable end state, re-checked after a settle window (observed stable
-    // for >= 40s in the original reproduction; not a transition artifact).
-    let expect_scan: BTreeSet<String> = [id0.clone(), id1.clone()].into();
-    for pass in 0..2 {
-        if pass == 1 {
-            tokio::time::sleep(Duration::from_secs(10)).await;
+        // The stable end state, re-checked after a settle window (observed stable
+        // for >= 40s in the original reproduction; not a transition artifact).
+        let expect_scan: BTreeSet<String> = [id0.clone(), id1.clone()].into();
+        for pass in 0..2 {
+            if pass == 1 {
+                nuclei::time::sleep(Duration::from_secs(10)).await;
+            }
+            assert_eq!(
+                account_scan_set(&cluster.client(0)),
+                expect_scan,
+                "[{label}] (pass {pass}) Rust node0 must hold both twins (#1126 canonical pick)"
+            );
+            assert_eq!(
+                account_scan_set(&cluster.client(1)),
+                expect_scan,
+                "[{label}] (pass {pass}) Go node1 must hold both twins scan-visible - the \
+                 partial-materialization signature"
+            );
+            assert_eq!(
+                account_indexed_owner(&cluster.client(0)),
+                vec![id0.clone()],
+                "[{label}] (pass {pass}) Rust node0's unique index must resolve the smallest \
+                 docID (its own local twin)"
+            );
+            assert_eq!(
+                account_indexed_owner(&cluster.client(1)),
+                vec![id1.clone()],
+                "[{label}] (pass {pass}) Go node1's unique index must resolve ONLY its own \
+                 local twin - the partial doc is scan-visible but unindexed"
+            );
         }
-        assert_eq!(
-            account_scan_set(&cluster.client(0)),
-            expect_scan,
-            "[{label}] (pass {pass}) Rust node0 must hold both twins (#1126 canonical pick)"
-        );
-        assert_eq!(
-            account_scan_set(&cluster.client(1)),
-            expect_scan,
-            "[{label}] (pass {pass}) Go node1 must hold both twins scan-visible — the \
-             partial-materialization signature"
-        );
-        assert_eq!(
-            account_indexed_owner(&cluster.client(0)),
-            vec![id0.clone()],
-            "[{label}] (pass {pass}) Rust node0's unique index must resolve the smallest \
-             docID (its own local twin)"
-        );
-        assert_eq!(
-            account_indexed_owner(&cluster.client(1)),
-            vec![id1.clone()],
-            "[{label}] (pass {pass}) Go node1's unique index must resolve ONLY its own \
-             local twin — the partial doc is scan-visible but unindexed"
-        );
-    }
 
-    // Partial-DAG pin: Go holds the field-delta commits for the Rust twin but
-    // NOT its composite (that merge txn rolled back), while Rust merged the
-    // Go twin's DAG completely.
-    let rust_id0_cids = support::commit_cids(&cluster.client(0), &id0);
-    let go_id0_cids = support::commit_cids(&cluster.client(1), &id0);
-    assert!(
-        !go_id0_cids.is_empty()
-            && go_id0_cids.is_subset(&rust_id0_cids)
-            && go_id0_cids.len() < rust_id0_cids.len(),
-        "[{label}] Go node1 must hold a non-empty strict subset of the Rust twin's commit \
-         DAG (field deltas committed, composite rejected); rust={rust_id0_cids:?} \
-         go={go_id0_cids:?}"
-    );
-    let rust_id1_cids = support::commit_cids(&cluster.client(0), &id1);
-    let go_id1_cids = support::commit_cids(&cluster.client(1), &id1);
-    assert!(
-        !go_id1_cids.is_empty() && rust_id1_cids == go_id1_cids,
-        "[{label}] the Go twin's DAG must be identical on both nodes (Rust merged it \
-         completely); rust={rust_id1_cids:?} go={go_id1_cids:?}"
-    );
+        // Partial-DAG pin: Go holds the field-delta commits for the Rust twin but
+        // NOT its composite (that merge txn rolled back), while Rust merged the
+        // Go twin's DAG completely.
+        let rust_id0_cids = support::commit_cids(&cluster.client(0), &id0);
+        let go_id0_cids = support::commit_cids(&cluster.client(1), &id0);
+        assert!(
+            !go_id0_cids.is_empty()
+                && go_id0_cids.is_subset(&rust_id0_cids)
+                && go_id0_cids.len() < rust_id0_cids.len(),
+            "[{label}] Go node1 must hold a non-empty strict subset of the Rust twin's commit \
+             DAG (field deltas committed, composite rejected); rust={rust_id0_cids:?} \
+             go={go_id0_cids:?}"
+        );
+        let rust_id1_cids = support::commit_cids(&cluster.client(0), &id1);
+        let go_id1_cids = support::commit_cids(&cluster.client(1), &id1);
+        assert!(
+            !go_id1_cids.is_empty() && rust_id1_cids == go_id1_cids,
+            "[{label}] the Go twin's DAG must be identical on both nodes (Rust merged it \
+             completely); rust={rust_id1_cids:?} go={go_id1_cids:?}"
+        );
 
-    assert_rust_explain_uses_index(&cluster.client(0), label);
+        assert_rust_explain_uses_index(&cluster.client(0), label);
+    })
+    .await
 }

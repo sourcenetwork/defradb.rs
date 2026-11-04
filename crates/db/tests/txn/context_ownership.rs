@@ -1,8 +1,9 @@
 //! A transaction belongs to the identity acting in the context that began it,
-//! and only a request whose context names that identity reaches it again.
+//! and only a request whose context names that identity reaches it again,
+//! unless the registry is an embedder's, which serves every request.
 
 use db::database::DB;
-use db::txn::registry::DbTransactionRegistry;
+use db::txn::registry::{DbTransactionRegistry, TxnOwnership};
 use db::{AutoCommitMutator, DbCollectionProvider, LensedAutoCommitFetcher};
 use defra_core::RequestContext;
 use identity::Did;
@@ -63,6 +64,37 @@ fn only_the_context_that_began_a_transaction_reaches_it() {
     .unwrap()
 }
 
+/// An embedder registry serves every request, whatever identity it acts as
+/// and runs each request's work as that request's own identity.
+#[test]
+fn an_embedder_transaction_serves_every_identity_as_itself() {
+    workers::block_on(async {
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        let registry = DbTransactionRegistry::new(db).with_ownership(TxnOwnership::Embedder);
+        let handle = registry.begin_as(&acting(None), false).await.unwrap();
+
+        for did in [None, Some("did:key:alice"), Some("did:key:bob")] {
+            let caller = acting(did);
+            let job = txn_job(|_| {
+                Box::pin(async { defra_core::current_identity::get_effective_identity() })
+            });
+            let acted_as = registry.run_as(&caller, &handle, None, job).await.unwrap();
+            assert_eq!(acted_as.as_deref(), did);
+            assert!(registry
+                .get_collections_in_txn_as(&caller, handle.as_str())
+                .await
+                .is_ok());
+        }
+
+        registry
+            .commit_as(&acting(Some("did:key:bob")), &handle)
+            .await
+            .unwrap();
+        assert_eq!(registry.active_transaction_count().unwrap(), 0);
+    })
+    .unwrap()
+}
+
 /// REST operations serve the request they are bound to: in a transaction that
 /// request began they read and write it, and bound to any other caller they
 /// find no transaction.
@@ -87,17 +119,22 @@ fn rest_operations_reach_the_transaction_of_the_request_they_serve() {
         let alice = acting(Some(alice_did.as_str()));
         let handle = registry.begin_as(&alice, false).await.unwrap();
 
-        for stranger in [acting(None), acting(Some("did:key:bob"))] {
+        let add = |name: &str, identity: Option<&str>| {
+            let mutation =
+                format!(r#"mutation {{ add_Users(input: {{name: "{name}"}}) {{ _docID }} }}"#);
+            runner.execute_in_txn(
+                QueryRequest::new(mutation).with_context(acting(identity)),
+                &handle,
+            )
+        };
+        for stranger in [None, Some("did:key:bob")] {
             let foreign = rest
-                .bind_request(&stranger)
+                .bind_request(&acting(stranger))
                 .unwrap()
                 .with_transaction(handle.clone())
                 .unwrap();
             assert!(foreign.list_collections().await.is_err());
-            assert!(foreign
-                .add_document("Users", serde_json::json!({ "name": "stranger" }), None)
-                .await
-                .is_err());
+            assert!(!add("stranger", stranger).await.errors.is_empty());
         }
 
         let owner = rest
@@ -106,14 +143,8 @@ fn rest_operations_reach_the_transaction_of_the_request_they_serve() {
             .with_transaction(handle.clone())
             .unwrap();
         assert_eq!(owner.list_collections().await.unwrap(), vec!["Users"]);
-        owner
-            .add_document(
-                "Users",
-                serde_json::json!({ "name": "alice" }),
-                Some(&alice_did),
-            )
-            .await
-            .unwrap();
+        let added = add("alice", Some(alice_did.as_str())).await;
+        assert!(added.errors.is_empty(), "{:?}", added.errors);
         registry.commit_as(&alice, &handle).await.unwrap();
 
         let read = runner

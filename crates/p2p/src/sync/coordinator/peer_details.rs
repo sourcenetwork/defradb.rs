@@ -47,6 +47,10 @@ pub struct PendingFetch {
     pub fetch_failures: u32,
     pub last_fetch_error: Option<String>,
     pub next_retry_in_ms: u64,
+    /// The root's estimates: a slow attempt's duration, and how often its
+    /// attempts leave it as it was. Measured only.
+    pub attempt_ewma_ms: Option<u64>,
+    pub no_progress_ppm: Option<u64>,
 }
 
 /// One root from the peer that will not merge until its cause is fixed.
@@ -90,7 +94,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             .into_iter()
             .find(|entry| entry.peer_id == peer);
 
-        let now = n0_future::time::Instant::now();
+        let now = crate::rt::time::Instant::now();
         let mut pending = self.manager.pending_dags_from(peer);
         pending.sort_by_key(|(_, dag)| dag.next_retry_at);
         let pending_fetch_count = pending.len();
@@ -107,6 +111,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 last_fetch_error: dag.last_fetch_error,
                 next_retry_in_ms: dag.next_retry_at.saturating_duration_since(now).as_millis()
                     as u64,
+                attempt_ewma_ms: dag.estimates.attempt_ms.map(u64::from),
+                no_progress_ppm: dag.estimates.no_progress_ppm(),
             })
             .collect();
 

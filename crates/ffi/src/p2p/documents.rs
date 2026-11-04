@@ -8,7 +8,7 @@ use crate::nac_check::check_nac_for_node;
 use crate::state::NODES;
 use crate::try_ffi;
 use crate::types::FfiResult;
-use defra_http::router::P2pDocumentRequest;
+use defra_p2p_adapter::peer;
 
 use super::{into_ffi_ok, into_ffi_result, parse_doc_ids_json, FfiP2PError};
 
@@ -42,14 +42,6 @@ pub unsafe extern "C" fn p2p_add_documents(
             Err(error) => return FfiResult::error(error.message),
         };
 
-        let docs = doc_ids
-            .into_iter()
-            .map(|doc_id| P2pDocumentRequest {
-                collection: String::new(),
-                doc_id,
-            })
-            .collect();
-
         let result = NODES
             .get(node_ptr, |state| {
                 let p2p = match &state.p2p {
@@ -58,9 +50,7 @@ pub unsafe extern "C" fn p2p_add_documents(
                 };
 
                 crate::helpers::block_on(rt, async {
-                    p2p.system
-                        .ops_for(&context)
-                        .add_documents(docs)
+                    peer::add_p2p_documents(&*p2p.system.ops_for(&context), &doc_ids)
                         .await
                         .map_err(FfiP2PError::from)
                 })
@@ -102,14 +92,6 @@ pub unsafe extern "C" fn p2p_delete_documents(
             Err(error) => return FfiResult::error(error.message),
         };
 
-        let docs = doc_ids
-            .into_iter()
-            .map(|doc_id| P2pDocumentRequest {
-                collection: String::new(),
-                doc_id,
-            })
-            .collect();
-
         let result = NODES
             .get(node_ptr, |state| {
                 let p2p = match &state.p2p {
@@ -118,9 +100,7 @@ pub unsafe extern "C" fn p2p_delete_documents(
                 };
 
                 crate::helpers::block_on(rt, async {
-                    p2p.system
-                        .ops_for(&context)
-                        .remove_documents(docs)
+                    peer::delete_p2p_documents(&*p2p.system.ops_for(&context), &doc_ids)
                         .await
                         .map_err(FfiP2PError::from)
                 })
@@ -163,14 +143,8 @@ pub unsafe extern "C" fn p2p_list_documents(
                 };
 
                 crate::helpers::block_on(rt, async {
-                    let documents = p2p
-                        .system
-                        .ops_for(&context)
-                        .get_documents()
-                        .await
-                        .map_err(FfiP2PError::from)?;
-                    let mut doc_ids: Vec<String> =
-                        documents.into_iter().map(|doc| doc.doc_id).collect();
+                    let mut doc_ids =
+                        peer::list_p2p_documents(&*p2p.system.ops_for(&context)).await?;
                     doc_ids.sort();
                     serde_json::to_string(&doc_ids)
                         .map_err(|error| {

@@ -13,6 +13,7 @@
 //! This matches Go's architecture where p2p calls db.Merge().
 
 mod bitswap;
+mod estimates;
 mod join;
 mod pending_dag;
 mod pushlog;
@@ -20,12 +21,12 @@ mod pushlog;
 pub(crate) use bitswap::{BlockSyncCompletionTracker, FetchCompletion, RootedCarCompletionTracker};
 pub(crate) use pending_dag::PendingDagLease;
 
+use crate::rt::mpsc;
 use crate::QueryId;
 use cid::Cid;
 use kovan_map::HopscotchMap;
 use rapidhash::fast::RandomState;
 use std::sync::Arc;
-use tokio::sync::mpsc;
 
 use blockstore::Blockstore;
 
@@ -88,6 +89,9 @@ pub struct SyncManager<B: Blockstore> {
     /// Coalesced wakeup for the sole bounded receiver dispatch owner.
     pub(super) pending_dag_ready: regolith::sync::Notify,
 
+    /// How much of the pending map each source peer holds, over minutes.
+    pub(super) pending_occupancy: crate::sync::arbitration::PendingOccupancy,
+
     /// Maps Bitswap QueryId → root CID for tracking completions.
     pub(super) query_to_root: HopscotchMap<QueryId, Cid, RandomState>,
 
@@ -99,6 +103,10 @@ pub struct SyncManager<B: Blockstore> {
 
     /// Observability counters (see `SyncDiagnostics`).
     pub(crate) diagnostics: Arc<SyncDiagnostics>,
+
+    /// The node's check on pushed documents before their blocks are
+    /// fetched or stored, if it has one.
+    pub(crate) receive_gate: regolith::sync::OnceCell<crate::sync::receive_gate::SharedReceiveGate>,
 
     /// Capacity of `pending_dags`; overflow is rejected with a backpressure nack.
     pub(super) max_pending_dags: usize,
@@ -118,13 +126,18 @@ pub struct SyncManager<B: Blockstore> {
     /// Resync invocation counter; every Nth sweep skips the steady-state
     /// early-exit so store/set desyncs from rare races self-heal.
     pub(super) pending_resync_tick: std::sync::atomic::AtomicUsize,
+
+    /// The durable root the last resync sweep admitted. The next sweep
+    /// resumes after it in key order, so roots past the in-memory cap take
+    /// turns instead of the first keys being admitted every time.
+    pub(super) pending_resync_cursor: kovan::Atom<Option<Cid>>,
 }
 
 /// Every Nth resync is a forced full sweep (see `pending_resync_tick`).
 pub(super) const PENDING_RESYNC_FORCED_TICK: usize = 10;
 
-/// Durable registrations may outlive their in-memory pending entries (TTL
-/// eviction frees the map slot but not the recovery obligation), so the
+/// Durable registrations may outlive their in-memory pending entries (a
+/// restart empties the map and the resync restores what fits), so the
 /// durable set gets its own, larger cap. At the cap new registrations are
 /// nacked, the hub refuses the obligation while the pusher still owns its
 /// retry state, rather than accepting and later dropping it.
@@ -203,7 +216,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         peer_state: Arc<PeerStateTracker>,
         config: SyncConfig,
     ) -> (Self, mpsc::Receiver<SyncEvent>) {
-        let (event_tx, event_rx) = mpsc::channel(config.event_buffer_size);
+        let (event_tx, event_rx) = mpsc::channel(config.event_buffer_size.max(1));
 
         let manager = Self {
             blockstore,
@@ -212,12 +225,14 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             peer_state,
             pending_dags: Arc::new(SharedPendingDags::default()),
             pending_dag_ready: regolith::sync::Notify::new(),
+            pending_occupancy: crate::sync::arbitration::PendingOccupancy::default(),
             query_to_root: HopscotchMap::with_hasher(RandomState::default()),
             block_sync_completions: BlockSyncCompletionTracker::with_capacity(
                 config.max_pending_dags.max(1),
             ),
             rooted_car_completions: RootedCarCompletionTracker::default(),
             diagnostics: Arc::new(SyncDiagnostics::default()),
+            receive_gate: regolith::sync::OnceCell::new(),
             // A zero cap would reject every missing-link push forever
             // (permanent admission outage); normalize to a 1-slot map.
             max_pending_dags: config.max_pending_dags.max(1),
@@ -225,6 +240,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             persisted: Arc::new(PersistedView::default()),
             pending_resync_in_flight: std::sync::atomic::AtomicBool::new(false),
             pending_resync_tick: std::sync::atomic::AtomicUsize::new(0),
+            pending_resync_cursor: kovan::Atom::new(None),
         };
 
         (manager, event_rx)
@@ -282,10 +298,10 @@ impl<B: Blockstore + 'static> SyncManager<B> {
 
     /// Sole successful-merge cleanup transition; the caller has established
     /// the durable merged bit. A root with a durable record has a pending
-    /// entry from its registration until this cleanup or a TTL eviction, or
-    /// is in the view, so this pays a transaction only for such a root; one
-    /// missed after an eviction is discharged by the resync sweep, which
-    /// finds it merged.
+    /// entry from its registration until this cleanup or a restart, or is in
+    /// the view, so this pays a transaction only for such a root; one missed
+    /// after a restart is discharged by the resync sweep, which finds it
+    /// merged.
     pub(super) async fn discharge_merged(&self, cid: &Cid) {
         let had_entry = self.clear_pending_dag(cid);
         if (had_entry || self.persisted.contains(cid)) && self.remove_persisted_pending(cid).await {

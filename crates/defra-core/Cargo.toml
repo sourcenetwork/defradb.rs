@@ -17,7 +17,7 @@ bench = false
 # Test-only: keeps the thread-local request state tests set the old way and
 # lets a call that arrives without a RequestContext run in it. Enable it from
 # dev-dependencies only, never from a production dependency.
-ambient = ["dep:tokio"]
+ambient = ["dep:nuclei"]
 
 [dependencies]
 # Error handling
@@ -60,10 +60,10 @@ tracing.workspace = true
 # The task-locals the test-only `ambient` feature keeps (see src/ambient.rs).
 # Not needed on wasm, which is single-threaded.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { workspace = true, features = ["rt"], optional = true }
+nuclei = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-tokio = { workspace = true, features = ["rt"] }
+nuclei.workspace = true
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 sha2 = { workspace = true, features = ["asm"] }

@@ -150,8 +150,9 @@ where
             .with_rooted_car_completions(coordinator.manager().rooted_car_completion_tracker())
             .with_rooted_provider_discovery();
 
+        let attempt = context.clone();
         coordinator.spawn_pending_dag_fetch_task(root_cid, "pushlog_fetch_dag", async move {
-            crate::sync::coordinator::dag_fetcher::poll_fetch_dag(
+            let (end, sample) = crate::sync::coordinator::dag_fetcher::poll_fetch_dag(
                 transport,
                 blockstore,
                 event_tx,
@@ -161,6 +162,7 @@ where
                 diagnostics,
             )
             .await;
+            attempt.finish_clock_attempt(end, sample);
         });
 
         return ReplicationResult::DagFetchStarted { root_cid };
@@ -205,16 +207,19 @@ where
                 let result = match completion {
                     crate::sync::manager::FetchCompletion::Success => {
                         coordinator
-                            .handle_bitswap_complete(query_id, true, None)
+                            .handle_bitswap_complete(query_id, Ok(()), None)
                             .await
                     }
-                    crate::sync::manager::FetchCompletion::Failure => {
+                    crate::sync::manager::FetchCompletion::Failure(cause) => {
                         coordinator
-                            .handle_bitswap_complete(query_id, false, None)
+                            .handle_bitswap_complete(query_id, Err(cause), None)
                             .await
                     }
                     crate::sync::manager::FetchCompletion::Deferred => {
                         coordinator.handle_bitswap_deferred(query_id).await
+                    }
+                    crate::sync::manager::FetchCompletion::ProviderBusy => {
+                        coordinator.handle_bitswap_provider_busy(query_id).await
                     }
                     crate::sync::manager::FetchCompletion::SizeLimit(cid) => {
                         coordinator.handle_car_size_limit(query_id, cid).await
@@ -260,7 +265,7 @@ where
 {
     // Load block from blockstore
     let _pending_owner = coordinator.pending_dag_merge_guard(cid);
-    coordinator
+    let _turn = coordinator
         .manager()
         .consume_pending_merge_continuation(&cid);
     let block_data = match coordinator.blockstore().get(&cid).await {
@@ -639,10 +644,10 @@ where
         .filter_map(event_merge_cid)
         .map(|cid| {
             let owner = coordinator.pending_dag_merge_guard(cid);
-            coordinator
+            let turn = coordinator
                 .manager()
                 .consume_pending_merge_continuation(&cid);
-            owner
+            (owner, turn)
         })
         .collect();
 

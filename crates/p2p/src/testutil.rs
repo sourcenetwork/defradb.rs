@@ -96,7 +96,7 @@ pub static BITSWAP_REGISTER_STALL_MS: std::sync::atomic::AtomicU64 =
 pub async fn stall_before_query_registration() {
     let ms = BITSWAP_REGISTER_STALL_MS.load(std::sync::atomic::Ordering::Relaxed);
     if ms > 0 {
-        tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+        crate::rt::time::sleep(std::time::Duration::from_millis(ms)).await;
     }
 }
 
@@ -120,7 +120,7 @@ mod tests {
     use super::*;
     use ::bitswap::Store;
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn test_mock_store_basic_operations() {
         let store = MockBitswapStore::new();
         assert!(store.is_empty());

@@ -98,6 +98,7 @@ mod tests {
         let result = unsafe {
             exec_request(
                 node,
+                std::ptr::null(),
                 ptr::null(),
                 mutation.as_ptr(),
                 ptr::null(),
@@ -163,6 +164,7 @@ mod tests {
         let result = unsafe {
             exec_request(
                 node2,
+                std::ptr::null(),
                 ptr::null(),
                 query_str.as_ptr(),
                 ptr::null(),
@@ -211,6 +213,7 @@ mod tests {
         let result = unsafe {
             exec_request(
                 node,
+                std::ptr::null(),
                 ptr::null(),
                 mutation.as_ptr(),
                 ptr::null(),
@@ -228,6 +231,7 @@ mod tests {
         let result = unsafe {
             exec_request(
                 node,
+                std::ptr::null(),
                 ptr::null(),
                 mutation.as_ptr(),
                 ptr::null(),

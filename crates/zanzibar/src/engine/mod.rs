@@ -312,8 +312,8 @@ mod check_blocking_tests {
         Did::new("did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH").unwrap()
     }
 
-    // A plain `#[test]`, deliberately not `#[tokio::test]`: there is no async
-    // runtime present. This is the consensus-evaluation contract — `check_blocking`
+    // A plain `#[test]`, deliberately not an async test: there is no async
+    // runtime present. This is the consensus-evaluation contract: `check_blocking`
     // must drive an all-Ready, side-effect-free store to a decision synchronously,
     // with no reactor, so independent validators reach the same answer.
     #[test]
@@ -329,7 +329,7 @@ mod check_blocking_tests {
         let rel = Relationship::with_entity("document", "doc1", "owner", owner.clone());
         futures::executor::block_on(store.store_relationship("policy1", &rel)).unwrap();
 
-        // Same decisions `check` would return — owner granted, stranger denied —
+        // Same decisions `check` would return (owner granted, stranger denied),
         // produced synchronously.
         assert!(engine
             .check_blocking("policy1", "document", "doc1", "owner", &owner)

@@ -62,14 +62,19 @@ pub enum Error {
     #[error("invalid document: {0}")]
     InvalidDocument(String),
 
+    /// A local write of a value a unique index already holds, naming the
+    /// writer ([`crate::index::Error::UniqueViolation`]).
+    #[error("{0}")]
+    UniqueViolation(String),
+
     #[error("invalid collection name: {0}")]
     InvalidCollectionName(String),
 
-    #[error("filtered truncate is not supported for branchable collections")]
-    FilteredTruncateBranchableCollection,
-
     #[error("database is closed")]
     DatabaseClosed,
+
+    #[error("the database has no network runtime: set one before P2P work")]
+    NetworkNotSet,
 
     #[error("action already in progress. CollectionID: {collection_id}, Action: {action}")]
     ActionInProgress { collection_id: String, action: u16 },
@@ -161,6 +166,8 @@ impl From<crate::index::Error> for Error {
                 Error::InvalidDocument(other.to_string())
             }
             crate::index::Error::Other(msg) => Error::Other(msg),
+            other @ (crate::index::Error::UniqueViolation { .. }
+            | crate::index::Error::UpdateIndex { .. }) => Error::UniqueViolation(other.to_string()),
         }
     }
 }
@@ -193,6 +200,7 @@ impl Error {
 
     pub fn is_unique_constraint_violation(&self) -> bool {
         matches!(self, Error::Storage(source) if source.is_unique_constraint_violation())
+            || matches!(self, Error::UniqueViolation(_))
     }
 
     pub fn is_storage_full(&self) -> bool {
@@ -234,7 +242,9 @@ impl Error {
 }
 
 pub fn index_write_query_error(operation: &str, error: Error) -> query::error::QueryError {
-    if error.is_unique_constraint_violation() {
+    if let Error::UniqueViolation(message) = error {
+        query::error::QueryError::execution(message)
+    } else if error.is_unique_constraint_violation() {
         query::error::QueryError::execution(storage::corekv::UNIQUE_CONSTRAINT_VIOLATION_MESSAGE)
     } else {
         storage_query_error(error, &format!("{operation} error"))

@@ -31,14 +31,6 @@ const DEPTH: usize = 16;
 
 type BenchHandler = DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>;
 
-fn runtime() -> tokio::runtime::Runtime {
-    tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(1)
-        .enable_all()
-        .build()
-        .unwrap()
-}
-
 fn collection() -> CollectionVersion {
     CollectionVersion::new(
         COLLECTION,
@@ -161,7 +153,7 @@ async fn seed(dag: &Dag, indexed: bool) -> BenchHandler {
 }
 
 fn bench_merge_indexed(c: &mut Criterion) {
-    let rt = runtime();
+    let rt = common::runtime(0);
     let dag = rt.block_on(build_dag());
     let mut group = c.benchmark_group("merge_indexed");
     group.sample_size(20);
