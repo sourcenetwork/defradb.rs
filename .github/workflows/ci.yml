@@ -84,7 +84,7 @@ jobs:
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -141,7 +141,7 @@ jobs:
               cargo check -p db --no-default-features --features native
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -160,7 +160,7 @@ jobs:
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: mozilla-actions/sccache-action@v0.0.11
       - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
@@ -209,16 +209,16 @@ jobs:
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Restore Go DefraDB
         id: go-defradb
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/defra-harness
           key: go-defradb-${{ runner.os }}-${{ hashFiles('crates/defra-version/src/lib.rs') }}
       - name: Install Go toolchain
         if: steps.go-defradb.outputs.cache-hit != 'true'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           # The pinned GO_COMPAT_COMMIT declares `go 1.26.10`, so an older
           # toolchain cannot build it.
@@ -260,11 +260,11 @@ jobs:
           echo "branch=$GO_BRANCH" >> "$GITHUB_OUTPUT"
       - name: Save Go DefraDB
         if: env.SAVE_CACHE == 'true' && steps.go-defradb.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/.cache/defra-harness
           key: ${{ steps.go-defradb.outputs.cache-primary-key }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: go-defradb
           path: ${{ steps.prepare.outputs.dir }}/defradb
@@ -273,7 +273,7 @@ jobs:
       # DEFRADB_GO_REPO, at the same pin as the Go binary.
       - name: Restore Go lens modules
         id: go-lenses
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/defra-lenses
           key: go-lenses-${{ runner.os }}-${{ hashFiles('crates/defra-version/src/lib.rs') }}
@@ -301,11 +301,11 @@ jobs:
           find "$OUT" -name '*.wasm' | sort
       - name: Save Go lens modules
         if: env.SAVE_CACHE == 'true' && steps.go-lenses.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/.cache/defra-lenses
           key: ${{ steps.go-lenses.outputs.cache-primary-key }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: go-lenses
           path: ~/.cache/defra-lenses
@@ -318,7 +318,7 @@ jobs:
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: mozilla-actions/sccache-action@v0.0.11
@@ -334,7 +334,7 @@ jobs:
           cp target/super-dev/defra artifacts/ci/defra
           cargo build -p cli --profile super-dev --features iroh
           cp target/super-dev/defra artifacts/ci/defra-iroh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: defra-ci-binaries
           path: artifacts/ci
@@ -363,7 +363,7 @@ jobs:
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@v2
         with:
@@ -386,7 +386,7 @@ jobs:
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -438,12 +438,12 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
@@ -456,7 +456,7 @@ jobs:
           shared-key: lean-conformance
           save-if: ${{ env.SAVE_CACHE == 'true' }}
       - name: Build Lean proofs
-        uses: leanprover/lean-action@38fbc41a8c28c4cbaec22d7f7de508ec2e7c0dd9 # v1
+        uses: leanprover/lean-action@fe408643ea7367d8c0404a8be3975bb145f5fb64 # v1
         with:
           lake-package-directory: proofs/lean
           auto-config: false
@@ -498,7 +498,7 @@ jobs:
       DEFRA_NUCLEI_RECV_BUFFERS: ${{ matrix.io.recv }}
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@v2
         with:
@@ -510,7 +510,7 @@ jobs:
         with:
           shared-key: integration
           save-if: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: defra-ci-binaries
           path: target/ci
@@ -519,7 +519,7 @@ jobs:
         run: cargo nextest run --cargo-profile super-dev -p conformance --lib --test tla_conformance
       - name: Upload harness node logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: conformance-e2e-logs${{ matrix.io.suffix }}
           path: target/e2e/**/logs/*.log
@@ -543,7 +543,7 @@ jobs:
       RUST_LOG: info
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -557,7 +557,7 @@ jobs:
         with:
           shared-key: integration
           save-if: ${{ env.SAVE_CACHE == 'true' && matrix.suite == 'go-compat' }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: defra-ci-binaries
           path: target/ci
@@ -567,14 +567,14 @@ jobs:
           target/ci/defra version --format json
       - name: Install Go toolchain
         if: matrix.suite == 'go-compat'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           # The pinned GO_COMPAT_COMMIT declares `go 1.26.10`, so an older
           # toolchain cannot build it.
           go-version: '1.26'
       - name: Download Go DefraDB
         if: matrix.needs_go
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: go-defradb
           path: target/go
@@ -673,7 +673,7 @@ jobs:
             peer::create::head_hint_fanout_above_car_worker_bound_quiesces
       - name: Upload harness node logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: integration-${{ matrix.suite }}-e2e-logs
           path: target/e2e/**/logs/*.log
@@ -703,7 +703,7 @@ jobs:
       DEFRA_NUCLEI_RECV_BUFFERS: ${{ matrix.io.recv }}
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@v2
         with:
@@ -715,7 +715,7 @@ jobs:
         with:
           shared-key: integration
           save-if: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: defra-ci-binaries
           path: target/ci
@@ -738,7 +738,7 @@ jobs:
       # profiling harness whose gates are opt-in DEFRA_PUSH_STORM_* variables.
       - name: Upload harness node logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: p2p-linux-e2e-logs${{ matrix.io.suffix }}
           path: target/e2e/**/logs/*.log
@@ -796,7 +796,7 @@ jobs:
       GO_HTTP_FILTER: "& not test(=collection::deterministic_ids::a_collection_beside_a_longer_namesake_gets_one_id)"
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@v2
         with:
@@ -808,15 +808,15 @@ jobs:
         with:
           shared-key: integration
           save-if: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: defra-ci-binaries
           path: target/ci
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: go-defradb
           path: target/go
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: go-lenses
           path: target/go-repo
@@ -874,7 +874,7 @@ jobs:
             echo "::error::nextest exited $STATUS without a failing test"
             exit 1
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: testo-report-${{ matrix.client }}-${{ matrix.shard }}
@@ -891,8 +891,8 @@ jobs:
       contents: read
       issues: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: testo-report-*
           path: testo-report
