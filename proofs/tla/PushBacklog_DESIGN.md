@@ -8,7 +8,8 @@ audit **F24**):
   (which job a free worker takes next: the per-peer cap, the parked peers, the
   unreachable peers' shared cap, and which job is a probe), `BacklogOwner::park_peer`,
   `BacklogOwner::park_peer_unreachable`, `BacklogOwner::peer_answered`,
-  `BacklogOwner::take_queued_for_peer`, `BacklogOwner::job_done`.
+  `BacklogOwner::retire_idle_cooldowns`, `BacklogOwner::take_queued_for_peer`,
+  `BacklogOwner::job_done`.
 - `crates/p2p/src/sync/coordinator/push_worker.rs`: `spawn_push_workers` (the fixed
   pool) and `run_push_job` (send with `send_timeout`, park the peer on a capacity nack,
   a `retry_after` or a transport failure, demote its queued jobs to the retry ledger,
@@ -63,10 +64,9 @@ Five knobs; each RED value breaks one rule:
 - `INV_UnreachableLeaveAWorker` — jobs started for peers already known to be
   unreachable (probes) never hold every worker. Violated by `RetryUnreachable`: two dead
   peers each take a freed worker back after their timeouts.
-- `INV_DemoteAfterFailedProbe` — a peer's queued jobs move to the ledger only once one of
-  its probes has timed out in its current spell. With `MaxGlitches = 1` a healthy peer is
-  never demoted. Violated by `DemoteEveryTimeout`: a healthy peer's one timeout hands its
-  queue to the ledger although it answers its next send.
+- `ACT_DemoteAfterFailedProbe` (a property of each step) — a step that moves a peer's
+  queued jobs to the ledger ends one of its probes. Violated by `DemoteEveryTimeout`: a
+  healthy peer's first timeout hands its queue to the ledger before any probe ran.
 - `LIVE_HealthyProgress` (under `FairSpec`) — every job admitted for a healthy peer
   leaves the queue (its reply, or the ledger after a transient timeout).
 
@@ -85,18 +85,19 @@ GREEN liveness result is not vacuous.
 - **Payload size is a per-peer constant** (`Weight`) so the byte cap is exercised
   independently of the item cap.
 - **Dead peers (`SlowPeers`) never reply; their sends always time out.** A send to a
-  healthy peer may also time out, at most `MaxGlitches` times in all, so a peer that
-  answers again (and leaves the shared cap) is covered.
+  healthy peer gets a reply or times out, so a peer that answers again (and leaves the
+  shared cap) is covered.
 - **The park's cooldown is a timer the model lets elapse at any moment**, the worst
   case for the bounds. The real cooldown escalates from 2 s up to 64 s (plus jitter)
   while sends keep failing; it only spaces the probes out.
-- **`probes` is a ghost**: running jobs started during the peer's current unreachable
-  spell. A reply ends the spell, and the peer's leftover jobs become ordinary jobs. The
-  code knows which job is a probe: `pop_eligible` stamps each job with the spell it was
-  started in (`PushJobSpec::probe_of`), and `park_peer_unreachable` demotes only for a
-  probe of the current spell.
-- **`probeTimedOut` and `demoted` are ghosts**: the peers one of whose probes timed out,
-  and the peers whose queued jobs moved to the ledger, in the current spell.
+- **Every variable is code state** (the mapping is in the module header). `unreachable`
+  is the peers whose `peer_cooldowns` entry has a spell; `probes[p]` is p's running jobs
+  whose `PushJobSpec::probe_of` (stamped by `pop_eligible`) is that spell. A reply ends
+  the spell, and the peer's leftover jobs become ordinary jobs; `park_peer_unreachable`
+  demotes only for a probe of the current spell.
+- **Idle parking state may be retired at any time.** The code keeps at most
+  `item_capacity + worker_count` entries and retires an idle peer's first; the model
+  lets an unreachable peer with nothing queued or running lose its state at any moment.
 - **Rejected, timed-out and demoted jobs are terminal ledger entries.** The re-push
   loop they feed is `Replicator.tla`'s subject.
 - **Round-robin order is not modeled** — the scheduler may give a free worker to any
@@ -113,7 +114,7 @@ GREEN liveness result is not vacuous.
 | `MC_PushBacklog_Green_TwoDead.cfg` | all GREEN knobs | GREEN | F24 fix: two dead peers, 2 workers, cap 1 — a worker always remains for the healthy peer |
 | `MC_PushBacklog_Green_SharedCap.cfg` | all GREEN knobs | GREEN | F24 fix with 3 workers, cap 2 (the real pool's shape): several probes per peer, a reply mid-probe |
 | `MC_PushBacklog_Red_TwoDead.cfg` | `ParkMode="RetryUnreachable"` | RED | the code before F24: dead peers take freed workers back → `INV_UnreachableLeaveAWorker` violated |
-| `MC_PushBacklog_Red_DemoteEveryTimeout.cfg` | `ParkMode="DemoteEveryTimeout"` | RED | two healthy peers, one timeout: its queue goes to the ledger → `INV_DemoteAfterFailedProbe` violated |
+| `MC_PushBacklog_Red_DemoteEveryTimeout.cfg` | `ParkMode="DemoteEveryTimeout"` | RED | two healthy peers, one timeout: its queue goes to the ledger → `ACT_DemoteAfterFailedProbe` violated |
 | `MC_PushBacklog_Red_SpawnPerItem.cfg` | `AdmissionMode="SpawnPerItem"` | RED | spawn before the semaphore → `INV_QueueBounded` violated |
 | `MC_PushBacklog_Red_PermitLeak.cfg` | `ReleaseMode="Leak"` | RED | a finished job keeps its worker slot → `INV_PermitConservation` violated |
 | `MC_PushBacklog_Red_RetainHandles.cfg` | `HandleMode="RetainAll"` | RED | `SyncShutdownHandle` retention → `INV_HandlesBounded` violated |
@@ -126,7 +127,8 @@ so the failure is attributable.
 
 The Rust-side fence is the `crates/p2p/src/sync/push_backlog.rs` unit tests (queue
 caps, coalescing, explicit rejection, parks, `unreachable_peers_share_one_peer_cap`,
-`only_a_failed_probe_demotes_an_unreachable_peer`), the worker tests in
+`only_a_failed_probe_demotes_an_unreachable_peer`,
+`idle_parking_state_is_retired_past_the_bound`), the worker tests in
 `crates/p2p/src/sync/coordinator/push_worker_tests.rs`
 (`slow_peer_does_not_starve_healthy_peers`,
 `two_stalled_replicators_do_not_starve_healthy_peer` and
