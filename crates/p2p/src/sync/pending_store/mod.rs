@@ -13,7 +13,8 @@
 //!
 //! Every transition is one engine transaction of the [`PendingDagStorage`]:
 //! registering a root, with the retirement of the parent it supersedes as its
-//! sender scope's current head and a slot under the durable cap ([`slots`]); discharging it after a merge;
+//! sender scope's current head, a slot under the durable cap ([`slots`]) and a
+//! charge to its announcing peer's share ([`shares`]); discharging it after a merge;
 //! quarantining it; and the sweep that reads every record. Concurrent
 //! transitions that touch the same keys settle in the engine, so no lock
 //! orders them. Each one updates the [`PersistedView`], the in-memory view of
@@ -25,6 +26,7 @@
 //! recoverable by re-issuing the pull.
 
 mod pooled;
+mod shares;
 mod slots;
 mod store;
 #[cfg(test)]
@@ -156,6 +158,8 @@ pub struct Registration<'a> {
     pub record: &'a PersistedPendingDag,
     /// Durable registrations allowed at once: the number of slots.
     pub capacity: usize,
+    /// Durable registrations one announcing peer may hold at once: its share.
+    pub peer_capacity: usize,
 }
 
 /// How a registration ended.
@@ -167,6 +171,8 @@ pub enum Admission {
     Registered,
     /// Every slot is held: nothing was written.
     AtCapacity,
+    /// The root's announcing peer holds its share: nothing was written.
+    AtPeerCapacity,
 }
 
 /// The durable registrations. Each method that changes them is one engine
@@ -178,20 +184,20 @@ pub trait PendingDagStorage: MaybeSendSync {
     /// Registers a root: its record, the retirement of its sender scope's
     /// durable current head when the root links it as a parent, and, for a
     /// root new to the store that retires none, a free slot under the
-    /// capacity.
+    /// capacity and a charge to its peer's share.
     async fn register(
         &self,
         registration: Registration<'_>,
         view: &Arc<PersistedView>,
     ) -> Result<Admission>;
 
-    /// Deletes a root's record and frees its slot. Returns whether it had a
-    /// record.
+    /// Deletes a root's record, frees its slot and gives its charge back.
+    /// Returns whether it had a record.
     async fn remove(&self, root_cid: &Cid, view: &Arc<PersistedView>) -> Result<bool>;
 
     /// Moves a terminally rejected root to the quarantine keyspace: its
-    /// quarantine record, and the deletion of its live record and slot.
-    /// Returns whether it was quarantined before.
+    /// quarantine record, and the deletion of its live record, slot and
+    /// charge. Returns whether it was quarantined before.
     async fn quarantine(
         &self,
         root_cid: &Cid,
