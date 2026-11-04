@@ -5,4 +5,7 @@ EXTENDS RetrySchedule
 \* rungs are the fewest on which a peer can fail two passes in a row and still
 \* have a longer rung to climb to.
 mcLadder == <<1, 2, 4>>
+\* A backward step of the wall clock that stays within the longest rung, and
+\* one that passes it.
+mcSteps == {1, 4}
 ====

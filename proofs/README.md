@@ -304,13 +304,15 @@ is queued. `Red_FanOutAbort` aborts the fan-out on the first rejection. This
 finite model does not verify the Rust implementation.
 
 `RetrySchedule.tla` models the one retry clock a sender keeps per peer. An
-acknowledged delivery, live or replayed, returns it to the first rung, never
-later than it was, so a push that fails after a live acknowledgement, or a
-timeout after a pass the cap cut short, is not charged the rung an outage
-earned; a new marker and a reconnect keep the rung, so a peer that keeps
-failing still climbs the ladder. Its negative variants keep the escalated clock
-after any delivery or after a replayed one, or restart it on a new marker or a
-reconnect.
+acknowledged delivery, live, fenced by a newer marker generation, or replayed,
+returns it to the first rung, never later than it was, so a push that fails
+after an acknowledgement, or a timeout after a pass the cap cut short, is not
+charged the rung an outage earned; a new marker and a reconnect keep the rung,
+so a peer that keeps failing still climbs the ladder; and the sweep reads a
+deadline past the longest rung, which only a backward step of the wall clock
+leaves, as due. Its negative variants keep the escalated clock after any
+delivery, a fenced one or a replayed one, restart it on a new marker or a
+reconnect, or honor the stepped-back deadline.
 `RetrySchedule.Delivery` proves the restart's arithmetic in Lean. Time is
 abstract and which marker a bounded pass reaches first is out of scope.
 
