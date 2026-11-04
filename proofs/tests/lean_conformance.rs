@@ -10,6 +10,7 @@ use conformance::lean_contract::{load_contract, ContractSnapshot};
 /// the Lean Conformance job sets, makes a missing `lake` a failure.
 fn lake_available() -> bool {
     let available = std::process::Command::new("lake")
+        .current_dir(conformance::lean_contract::lean_dir())
         .arg("--version")
         .output()
         .map(|o| o.status.success())
