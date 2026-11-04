@@ -17,6 +17,8 @@
 //!   any number of dead peers hold the workers of one slow peer at most. Its
 //!   queued jobs move to the retry ledger only when a probe (a job started
 //!   after the park's cooldown ran out) fails on transport too.
+//! - at most `item_capacity + worker_count` peers keep parking state; past
+//!   that, a peer with nothing queued or running gives its state up first.
 //! - every admission has an explicit outcome; rejection is counted and the
 //!   caller reports it to the persisted retry ladder. Nothing is silently
 //!   dropped and no waiting task is allocated.
@@ -189,14 +191,16 @@ pub enum JobCompletion {
     Retired,
 }
 
-/// Peer-wide parking state for a saturated or unreachable receiver.
+/// Peer-wide parking state for a saturated or unreachable receiver. The entry
+/// outlives `until`, so the next park escalates from `consecutive`; a success
+/// after the park ran out removes it.
 #[derive(Debug, Clone)]
 struct PeerCooldown {
     until: Instant,
     consecutive: u32,
     /// The unreachable spell the peer is in: its last send failed on transport
-    /// and it has not answered since. The entry outlives `until` and keeps the
-    /// peer within the unreachable peers' shared cap until it answers again.
+    /// and it has not answered since. Until it answers again, the peer stays
+    /// within the unreachable peers' shared cap.
     unreachable: Option<u64>,
 }
 
@@ -881,7 +885,8 @@ impl BacklogOwner {
             std::hash::Hash::hash(&(&peer_key, consecutive), &mut hasher);
             std::hash::Hasher::finish(&hasher) % 500
         };
-        let cooldown = retry_after.unwrap_or_else(|| base + (base * jitter_bp as u32) / 1000);
+        let jittered = base + (base * jitter_bp as u32) / 1000;
+        let cooldown = retry_after.map_or(jittered, |hint| hint.max(jittered));
         let until = (Instant::now() + cooldown).max(
             inner
                 .peer_cooldowns
@@ -898,6 +903,33 @@ impl BacklogOwner {
         );
         if !unreachable {
             inner.peer_capacity_parks_total = inner.peer_capacity_parks_total.saturating_add(1);
+        }
+        self.retire_idle_cooldowns();
+    }
+
+    /// Keep `peer_cooldowns` within `item_capacity + worker_count` entries,
+    /// which is at least the number of peers with queued or running work. A
+    /// peer with neither gives its entry up first, the one whose park ended
+    /// earliest.
+    fn retire_idle_cooldowns(&mut self) {
+        let bound = self
+            .limits
+            .item_capacity
+            .saturating_add(self.limits.worker_count);
+        let inner = &mut self.inner;
+        while inner.peer_cooldowns.len() > bound {
+            let Some(idle) = inner
+                .peer_cooldowns
+                .iter()
+                .filter(|(peer_key, _)| {
+                    !inner.queues.contains_key(*peer_key) && !inner.active.contains_key(*peer_key)
+                })
+                .min_by_key(|(_, cooldown)| cooldown.until)
+                .map(|(peer_key, _)| peer_key.clone())
+            else {
+                return;
+            };
+            inner.peer_cooldowns.remove(&idle);
         }
     }
 
@@ -965,10 +997,15 @@ impl BacklogOwner {
     ) -> std::result::Result<PushJobSpec, Option<Instant>> {
         let mut next_wake: Option<Instant> = None;
         let unreachable_active: usize = inner
-            .peer_cooldowns
+            .active
             .iter()
-            .filter(|(_, cooldown)| cooldown.unreachable.is_some())
-            .filter_map(|(peer_key, _)| inner.active.get(peer_key))
+            .filter(|(peer_key, _)| {
+                inner
+                    .peer_cooldowns
+                    .get(*peer_key)
+                    .is_some_and(|cooldown| cooldown.unreachable.is_some())
+            })
+            .map(|(_, count)| count)
             .sum();
         for _ in 0..inner.ready.len() {
             let Some(peer_key) = inner.ready.pop_front() else {
@@ -996,15 +1033,12 @@ impl BacklogOwner {
                 }
                 // Unreachable peers together stay within one peer's cap; a
                 // job_done wakes the waiters again.
-                match cooldown.unreachable {
-                    None => {
-                        inner.peer_cooldowns.remove(&peer_key);
-                    }
-                    Some(_) if unreachable_active >= per_peer_active_cap => {
+                if let Some(spell) = cooldown.unreachable {
+                    if unreachable_active >= per_peer_active_cap {
                         inner.ready.push_back(peer_key);
                         continue;
                     }
-                    Some(spell) => probe_of = Some(spell),
+                    probe_of = Some(spell);
                 }
             }
             let queue = inner
@@ -1059,6 +1093,14 @@ impl BacklogOwner {
         }
         match completion {
             JobCompletion::Succeeded => {
+                if self
+                    .inner
+                    .peer_cooldowns
+                    .get(&peer_key)
+                    .is_some_and(|cooldown| cooldown.until <= Instant::now())
+                {
+                    self.inner.peer_cooldowns.remove(&peer_key);
+                }
                 self.counters
                     .completed_total
                     .fetch_add(1, Ordering::Relaxed);
@@ -1204,14 +1246,18 @@ mod tests {
         backlog.job_done(&healthy, JobCompletion::Succeeded).await;
         tokio::time::advance(Duration::from_secs(44)).await;
         backlog.park_peer_with_retry_after(&peer, Some(Duration::from_millis(1)));
-        assert_eq!(cooldown_remaining_ms(&backlog, "limited").await, 1000);
+        let remaining = cooldown_remaining_ms(&backlog, "limited").await;
+        assert!(
+            (4_000..6_000).contains(&remaining),
+            "a shorter hint cut the escalated park to {remaining}ms"
+        );
         let waiting = tokio::spawn({
             let backlog = backlog.clone();
             async move { backlog.next_job().await }
         });
         tokio::task::yield_now().await;
         assert!(!waiting.is_finished());
-        tokio::time::advance(Duration::from_secs(1)).await;
+        tokio::time::advance(Duration::from_millis(remaining)).await;
         assert_eq!(waiting.await.unwrap().unwrap().peer_id.as_str(), "limited");
         backlog.close();
     }
@@ -1275,6 +1321,70 @@ mod tests {
             "a peer that stays saturated must be backed off further"
         );
         assert_eq!(backlog.snapshot().await.peer_capacity_parks_total, 2);
+    }
+
+    /// Audit F26: a capacity park outlives its cooldown, so a peer nacked again
+    /// after the park ran out is backed off further, and a receiver's shorter
+    /// `retry_after` hint does not cut that escalation. A success after the park
+    /// ran out ends it.
+    #[tokio::test(start_paused = true)]
+    async fn capacity_park_escalates_across_pops_until_a_success() {
+        let backlog = PushBacklog::new(64, usize::MAX, 1, 2);
+        let peer = PeerId::new("peer".to_string());
+        for seed in [b"1", b"2"] {
+            assert_eq!(
+                backlog.try_enqueue(job("peer", seed)).await,
+                EnqueueOutcome::Enqueued
+            );
+        }
+
+        backlog.park_peer_at_capacity(&peer);
+        let first = cooldown_remaining_ms(&backlog, "peer").await;
+        tokio::time::advance(Duration::from_millis(first)).await;
+        let nacked = backlog.next_job().await.unwrap();
+        backlog.park_peer_with_retry_after(&peer, Some(Duration::from_millis(1)));
+        backlog.job_done(&nacked, JobCompletion::Failed).await;
+        let escalated = cooldown_remaining_ms(&backlog, "peer").await;
+        assert!(
+            (4_000..6_000).contains(&escalated),
+            "a nack after the park ran out got {escalated}ms, the first park was {first}ms"
+        );
+
+        tokio::time::advance(Duration::from_millis(escalated)).await;
+        let acked = backlog.next_job().await.unwrap();
+        backlog.job_done(&acked, JobCompletion::Succeeded).await;
+        backlog.park_peer_at_capacity(&peer);
+        assert_eq!(cooldown_remaining_ms(&backlog, "peer").await, first);
+        backlog.close();
+    }
+
+    /// Parking state outlives the park, so it is bounded: past `item_capacity +
+    /// worker_count` peers, a peer with nothing queued or running gives its
+    /// entry up first, and a peer with queued work keeps it.
+    #[tokio::test(start_paused = true)]
+    async fn idle_parking_state_is_retired_past_the_bound() {
+        let backlog = PushBacklog::new(2, usize::MAX, 1, 2);
+        assert_eq!(
+            backlog.try_enqueue(job("busy", b"1")).await,
+            EnqueueOutcome::Enqueued
+        );
+        backlog.park_peer_at_capacity(&PeerId::new("busy".to_string()));
+        for departed in 0..8 {
+            let departed = job(&format!("departed-{departed}"), b"0");
+            assert!(backlog.park_peer_unreachable(&departed).await.is_empty());
+            tokio::time::advance(Duration::from_secs(4)).await;
+        }
+
+        let parked: Vec<_> = backlog
+            .snapshot()
+            .await
+            .per_peer
+            .into_iter()
+            .filter(|peer| peer.consecutive_failures > 0)
+            .map(|peer| peer.peer_id)
+            .collect();
+        assert_eq!(parked, ["busy", "departed-5", "departed-6", "departed-7"]);
+        backlog.close();
     }
 
     async fn drain_eligible(backlog: &PushBacklog) -> Vec<String> {
