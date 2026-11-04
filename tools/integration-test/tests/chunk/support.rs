@@ -1,9 +1,12 @@
 //! Shared helpers for the chunk tests.
-#![allow(dead_code)]
 
-use integration_test::actions::{Actions, AddCollection};
-use integration_test::DefraClient;
-use serde_json::Value;
+use integration_test::actions::{
+    Actions, AddCollection, AddCollectionSubscription, AddDoc, AddReplicator, NewNode, Request,
+    WaitForPeersEvents,
+};
+use integration_test::scenario::{captures, Common, Eventually};
+use integration_test::test_case::TestCase;
+use serde_json::{json, Value};
 
 pub const SCHEMA: &str = r#"type Article {
     title: String
@@ -12,95 +15,17 @@ pub const SCHEMA: &str = r#"type Article {
 
 pub const CHUNKS: &str = "Article__body_chunk";
 
-/// A body of `n` short paragraphs about `topic`, escaped for a GraphQL string.
+/// A body of `n` short paragraphs about `topic`.
 pub fn body(n: usize, topic: &str) -> String {
     (0..n)
         .map(|i| format!("Paragraph {i} is about {topic} and nothing else."))
         .collect::<Vec<_>>()
-        .join("\\n\\n")
+        .join("\n\n")
 }
 
-pub fn create(client: &DefraClient, body: &str) -> String {
-    let data = client
-        .query(&format!(
-            r#"mutation {{ add_Article(input: {{title: "t", body: "{body}"}}) {{ _docID }} }}"#
-        ))
-        .expect("create article");
-    data["add_Article"][0]["_docID"]
-        .as_str()
-        .expect("docID")
-        .to_string()
-}
-
-pub fn update(client: &DefraClient, doc_id: &str, body: &str) {
-    client
-        .query(&format!(
-            r#"mutation {{ update_Article(docID: "{doc_id}", input: {{body: "{body}"}}) {{ _docID }} }}"#
-        ))
-        .expect("update article");
-}
-
-/// The parent's chunk list: entry 0 is the text's hash, then the chunk hashes.
-pub fn list_of(client: &DefraClient, doc_id: &str, identity: Option<&str>) -> Vec<String> {
-    let query = format!(r#"query {{ Article(docID: "{doc_id}") {{ _body_chunks }} }}"#);
-    let data = match identity {
-        Some(key) => client.query_with_identity(&query, key),
-        None => client.query(&query),
-    }
-    .expect("read list");
-    data["Article"][0]["_body_chunks"]
-        .as_array()
-        .map(|list| {
-            list.iter()
-                .map(|h| h.as_str().unwrap().to_string())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// The distinct chunk hashes a parent's list names, sorted.
-pub fn listed(client: &DefraClient, doc_id: &str, identity: Option<&str>) -> Vec<String> {
-    let mut hashes: Vec<String> = list_of(client, doc_id, identity)
-        .into_iter()
-        .skip(1)
-        .collect();
-    hashes.sort();
-    hashes.dedup();
-    hashes
-}
-
-/// The visible chunks as (docID, hash), sorted by hash.
-pub fn visible(client: &DefraClient, identity: Option<&str>) -> Vec<(String, String)> {
-    let query = format!("query {{ {CHUNKS} {{ _docID hash }} }}");
-    let data = match identity {
-        Some(key) => client.query_with_identity(&query, key),
-        None => client.query(&query),
-    }
-    .expect("read chunks");
-    let mut chunks: Vec<(String, String)> = data[CHUNKS]
-        .as_array()
-        .expect("chunks array")
-        .iter()
-        .map(|c| {
-            (
-                c["_docID"].as_str().unwrap().to_string(),
-                c["hash"].as_str().unwrap().to_string(),
-            )
-        })
-        .collect();
-    chunks.sort_by(|a, b| a.1.cmp(&b.1));
-    chunks
-}
-
-pub fn visible_hashes(client: &DefraClient, identity: Option<&str>) -> Vec<String> {
-    visible(client, identity)
-        .into_iter()
-        .map(|(_, h)| h)
-        .collect()
-}
-
-pub fn first_doc_id(data: &Value, key: &str) -> String {
-    data[key][0]["_docID"].as_str().expect("docID").to_string()
+/// `body` escaped for a GraphQL string.
+pub fn gql(body: &str) -> String {
+    body.replace('\n', "\\n")
 }
 
 pub fn add_article_collection() -> Actions {
@@ -109,4 +34,176 @@ pub fn add_article_collection() -> Actions {
         ..Default::default()
     }
     .into()
+}
+
+pub fn on(node: Option<&str>) -> Common {
+    Common {
+        node: node.map(str::to_owned),
+        ..Default::default()
+    }
+}
+
+/// Adds an article with `body`, naming its docID `capture`.
+pub fn add_article(body: &str, capture: &str) -> Actions {
+    add_article_on(body, capture, None)
+}
+
+pub fn add_article_on(body: &str, capture: &str, node: Option<&str>) -> Actions {
+    let mut common = on(node);
+    common.retry = true;
+    common.capture = captures([(capture, "/docID")]);
+    AddDoc {
+        collection: "Article".into(),
+        doc_map: Some(json!({ "title": "t", "body": body })),
+        common,
+        ..Default::default()
+    }
+    .into()
+}
+
+/// Reads the parent's chunk list, which holds the text's hash and then `n`
+/// chunk hashes, and names them `<prefix>0` to `<prefix><n>`.
+pub fn read_list(prefix: &str, n: usize, node: Option<&str>) -> Actions {
+    let names: Vec<(String, String)> = (0..=n)
+        .map(|i| {
+            (
+                format!("{prefix}{i}"),
+                format!("/data/Article/0/_body_chunks/{i}"),
+            )
+        })
+        .collect();
+    let mut common = on(node);
+    common.capture = names.into_iter().collect();
+    Request {
+        request: "query { Article { _body_chunks } }".into(),
+        expected_data: json!({ "Article": [{ "_body_chunks": integration_test::m::length(n as u64 + 1) }] }),
+        common,
+        ..Default::default()
+    }
+    .into()
+}
+
+/// The visible chunks are exactly the `n` hashes `read_list` named.
+pub fn chunks_are_listed(prefix: &str, n: usize, node: Option<&str>) -> Actions {
+    let hashes: Vec<Value> = (1..=n)
+        .map(|i| json!({ "hash": integration_test::m::r(&format!("{prefix}{i}")) }))
+        .collect();
+    let mut common = on(node);
+    common.unordered = vec![format!("/data/{CHUNKS}")];
+    Request {
+        request: format!("query {{ {CHUNKS} {{ hash }} }}").into(),
+        expected_data: json!({ CHUNKS: hashes }),
+        common,
+        ..Default::default()
+    }
+    .into()
+}
+
+pub fn no_chunks(node: Option<&str>) -> Actions {
+    Request {
+        request: format!("query {{ {CHUNKS} {{ hash }} }}").into(),
+        expected_data: json!({ CHUNKS: [] }),
+        common: on(node),
+        ..Default::default()
+    }
+    .into()
+}
+
+/// The parent's chunk list is the one `read_list` named.
+pub fn list_is(prefix: &str, n: usize, node: Option<&str>) -> Actions {
+    let list: Vec<Value> = (0..=n)
+        .map(|i| integration_test::m::r(&format!("{prefix}{i}")))
+        .collect();
+    Request {
+        request: "query { Article { _body_chunks } }".into(),
+        expected_data: json!({ "Article": [{ "_body_chunks": list }] }),
+        common: on(node),
+        ..Default::default()
+    }
+    .into()
+}
+
+/// Polls a read until the peer has caught up.
+pub fn eventually(action: Actions) -> Actions {
+    match action {
+        Actions::Request(mut request) => {
+            request.common.eventually = Some(Eventually::default());
+            request.into()
+        }
+        other => other,
+    }
+}
+
+/// Two networked nodes, `db0` pushing `collections` to `db1`, both with the Article collection.
+pub fn replicated_pair(collections: &[&str]) -> Vec<Actions> {
+    let names: Vec<String> = collections.iter().map(|name| (*name).to_owned()).collect();
+    let mut actions: Vec<Actions> = Vec::new();
+    for node in ["db0", "db1"] {
+        actions.push(
+            NewNode {
+                network: true,
+                common: on(Some(node)),
+                ..Default::default()
+            }
+            .into(),
+        );
+    }
+    for node in ["db0", "db1"] {
+        actions.push(
+            AddCollection {
+                sdl: SCHEMA.into(),
+                common: on(Some(node)),
+                ..Default::default()
+            }
+            .into(),
+        );
+    }
+    for node in ["db0", "db1"] {
+        actions.push(
+            WaitForPeersEvents {
+                start: true,
+                common: on(Some(node)),
+                ..Default::default()
+            }
+            .into(),
+        );
+    }
+    for node in ["db0", "db1"] {
+        actions.push(
+            AddCollectionSubscription {
+                collections: names.clone(),
+                common: on(Some(node)),
+                ..Default::default()
+            }
+            .into(),
+        );
+    }
+    actions.push(
+        AddReplicator {
+            target: "db1".into(),
+            collections: names,
+            common: on(Some("db0")),
+            ..Default::default()
+        }
+        .into(),
+    );
+    actions
+}
+
+/// A case whose nodes are all named by its actions.
+pub fn without_default_node(actions: Vec<Actions>) -> TestCase {
+    let mut case = TestCase::from_actions(actions);
+    case.without_db = true;
+    case
+}
+
+/// Runs a read as client identity `seed`.
+pub fn as_identity(action: Actions, seed: u64) -> Actions {
+    match action {
+        Actions::Request(mut request) => {
+            request.common.identity_seed = Some(seed);
+            request.into()
+        }
+        other => other,
+    }
 }

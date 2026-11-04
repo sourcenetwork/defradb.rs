@@ -2,7 +2,7 @@
 mod acp_tuning;
 #[path = "vera/chunk_access.rs"]
 mod chunk_access;
-#[path = "chunk/support.rs"]
+#[path = "vera/chunk_support.rs"]
 mod chunk_support;
 #[path = "vera/compartments.rs"]
 mod compartments;
