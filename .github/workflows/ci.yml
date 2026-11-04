@@ -774,7 +774,7 @@ jobs:
       DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,warn
       # basic holds legacy tests and one testo module, txn_context.
       TESTO: >-
-        --test acp_scenarios --test backup_scenarios --test collection
+        --test acp_scenarios --test backup_scenarios --test chunk --test collection
         --test collection_version --test encryption_scenarios --test explain
         --test index --test issues --test mutation --test net --test node
         --test query_scenarios --test searchable_encryption --test signature
