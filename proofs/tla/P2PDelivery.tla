@@ -11,7 +11,8 @@
 \*     pool of fetch slots and transport permits fetches their blocks, and a
 \*     resync sweep brings durable records back into the map;
 \*   - a hub that merges a head forwards it, which starts the same chain on its
-\*     own outgoing edges.
+\*     own outgoing edges. Until the forward's markers exist, the hub's own
+\*     durable record for the head is what still owes it downstream.
 \*
 \* The world can crash a node between two steps, drop and restore
 \* connections, keep a provider away for good ("dead"), let a provider send
@@ -20,18 +21,18 @@
 \* start local merge continuations that hold places in the in-memory map.
 \*
 \* What must never happen:
-\*   - a head merged on a sender is owed by nobody: no marker or registration
-\*     intent on the sender covers it, and the receiver has neither merged it
-\*     nor holds a durable record whose DAG brings it (INV_ObligationOwned;
-\*     "covers" is judged by ancestry, never by priority);
+\*   - a head merged on a sender is owed by nobody: no marker, registration in
+\*     flight or durable record on the sender covers it, and the receiver has
+\*     neither merged it nor holds a durable record whose DAG brings it
+\*     (INV_ObligationOwned; "covers" is judged by ancestry, never by priority);
 \*   - a node sends a request on a connection whose other side does not serve
 \*     it (INV_ReverseBorrowServed);
 \*   - a head that can be delivered is never delivered (LIVE_HeadDelivered).
-\*     Fairness goes to each task (the dispatch clock, the resync sweep, the
-\*     recorder, the retry sweep, a fetch task that already holds its slot,
-\*     a request's timeout), never to a root waiting for a slot or a place, so
-\*     such a root is delivered only if the dispatch order, the quantum and the
-\*     rotation get it there.
+\*     Fairness goes to each task (the dispatch clock, the backoff timer, the
+\*     resync sweep, the recorder, the retry sweep, a fetch task that already
+\*     holds its slot, a request's timeout), never to a root waiting for a
+\*     slot or a place, so such a root is delivered only if the dispatch
+\*     order, the quantum and the rotation get it there.
 \* INV_Bounded checks the model's own bookkeeping (slots, permits, the map,
 \* the quota, the durable cap): every action enforces those bounds by
 \* construction and no knob breaks them.
@@ -44,6 +45,23 @@
 \* INV_ObligationOwned (F1, F2, F3, F4, F5), LIVE_HeadDelivered (F8, F9) and
 \* INV_ReverseBorrowServed (F27).
 \*
+\* Every variable is state the code holds, except the fault budgets
+\* (crashes, regFails, discs, contMade), which bound the world:
+\*   merged   the heads the database has applied (merge_handler; the h/p/ head publication)
+\*   owed     peerstore retry markers (peerstore.rs register_scope_marker, complete_retry_scope)
+\*   outbox   registrations still running in memory: the commit's broadcast
+\*            task (txn_broadcaster.rs) and, on main, the forward that runs
+\*            after mark_as_merged (handlers.rs push_to_replicators_with_creator)
+\*   pendDur  durable pending records (pending_store, PendingDagStore::register)
+\*   queue, back  in-memory pending entries whose next_retry_at has passed, or not yet
+\*   slot     fetch slots (reserve_pending_dag_fetch) and limiter permits (DagFetchLimiter)
+\*   cursor   the resync cursor (records_after_resync_cursor)
+\*   known    whether startup restored the replicator list (restore_iroh_p2p_state)
+\*   conn     the transport's connection per pair (connect_with_cache, handle_incoming)
+\*   pull     limiter permits held by an advisory pull fetch (doc_sync.rs)
+\*   flood    the merge loop's channel is full (try_reserve fails)
+\*   contLive merge continuation entries in the map (continue_merge)
+\*
 \* The receiver rules #2548 put on main are fixed here, not knobs, and their
 \* REDs live in MC_SyncOwnership_Dispatch and MC_SyncOwnership_Memory: a clock
 \* dispatch makes one attempt and gives its slot back (Red_HeldSlot), its root
@@ -55,6 +73,7 @@
 \*
 \* Code it models, on origin/main d23a8cf47 (P2PDelivery_DESIGN.md has the line map):
 \*   crates/db/src/merge/txn_broadcaster.rs         SyncTxnBroadcaster::submit_update (Commit)
+\*   crates/defra-node/src/lib.rs                   Node::shutdown (Crash: stop_transport before the drain)
 \*   crates/p2p/src/sync/coordinator/broadcast.rs   admit_replicator_push (Register, RegFail)
 \*   crates/p2p-adapter/src/retry.rs                run_retry_pass; crates/db/src/merge/push_docs.rs retry_doc (Push)
 \*   crates/p2p/src/sync/manager/process/pushlog.rs process_block_inner (Push: the admission)
@@ -100,8 +119,8 @@ CONSTANTS
   MaxDisc,          \* disconnects the world may cause
   MaxCont,          \* local merge continuations the world may start per receiver
   CoverRule,        \* "Ancestry" | "Priority": what makes a pushed head covered         (F1)
-  MarkerMode,       \* "Durable" | "AfterCommit": a local commit's marker intent         (F2)
-  ForwardMode,      \* "WithMerge" | "AfterDischarge": a hub merge's forward intent     (F3)
+  ShutdownOrder,    \* "DrainFirst" | "StopFirst": writes drain before P2P stops         (F2)
+  ForwardMode,      \* "BeforeMark" | "AfterDischarge": the hub forwards, then marks    (F3)
   StartupOrder,     \* "RestoreFirst" | "LoopFirst": replicators before the loops       (F4)
   FailedIntent,     \* "Kept" | "Dropped": a failed registration's own intent           (F5)
   FanoutMode,       \* "PerPeer" | "AbortOnFirstFail": the other peers' intents         (F5)
@@ -111,8 +130,8 @@ CONSTANTS
 
 \* The mode constants take only their named values.
 ASSUME CoverRule \in {"Ancestry", "Priority"}
-ASSUME MarkerMode \in {"Durable", "AfterCommit"}
-ASSUME ForwardMode \in {"WithMerge", "AfterDischarge"}
+ASSUME ShutdownOrder \in {"DrainFirst", "StopFirst"}
+ASSUME ForwardMode \in {"BeforeMark", "AfterDischarge"}
 ASSUME StartupOrder \in {"RestoreFirst", "LoopFirst"}
 ASSUME FailedIntent \in {"Kept", "Dropped"}
 ASSUME FanoutMode \in {"PerPeer", "AbortOnFirstFail"}
@@ -127,7 +146,7 @@ ASSUME {K, Permits, PeerPermits, MemCap, PeerQuota, DurCap} \subseteq Nat \ {0}
 VARIABLES
   merged,    \* [Nodes -> SUBSET Heads]: heads merged on each node (durable, closed under parents)
   owed,      \* [Repl -> SUBSET Heads]: the sender's retry markers per edge (durable)
-  outbox,    \* [Repl -> SUBSET Heads]: commit or forward intents not yet turned into markers
+  outbox,    \* [Repl -> SUBSET Heads]: registrations running in memory, not yet markers (volatile)
   pendDur,   \* [Nodes -> SUBSET Heads]: the receiver's durable pending records
   queue,     \* [Nodes -> Seq(Heads)]: resident roots that are due, in the order they became due
   back,      \* [Nodes -> Seq(Heads)]: resident roots waiting out a backoff, in the order they will be due
@@ -181,9 +200,6 @@ SrcOf == [r \in Nodes, hd \in Heads |->
             ELSE IF \E s \in Nodes : <<s, r>> \in Repl                        \* else, if anyone replicates to r,
                  THEN CHOOSE s \in Nodes : <<s, r>> \in Repl                  \* the node that does
                  ELSE None]                                                   \* r receives nothing
-\* Whether a crash keeps a node's intent for head hd: its own commit's intent
-\* follows MarkerMode, a forwarded head's follows ForwardMode.
-Durable(n, hd) == IF Author[hd] = n THEN MarkerMode = "Durable" ELSE ForwardMode = "WithMerge"
 \* Heads that can be delivered: written during the run or in a backlog, their
 \* provider not dead, their DAG finite.
 Deliverable == {hd \in Heads \ Base : hd \notin Trickle /\ Author[hd] \notin Dead}
@@ -278,8 +294,9 @@ Superseded(r, s, hd) ==
 \* Sender actions.
 
 \* Node n writes head hd on top of exactly its parents. The commit leaves one
-\* intent per outgoing edge; a crash keeps it only if it is durable
-\* (MarkerMode). The node serves no write until startup has restored its
+\* registration per outgoing edge running in memory (the broadcast task the
+\* commit waits on); nothing durable backs it until the recorder writes the
+\* marker. The node serves no write until startup has restored its
 \* replicators: assemble awaits setup_iroh, which restores them, before it
 \* returns the node.
 Commit(n, hd) ==
@@ -394,33 +411,58 @@ EndAttempt(r, hd, where) ==
                    /\ UNCHANGED queue                                         \* due list untouched
 
 \* The provider sends blocks of hd. A trickle root's attempt becomes
-\* productive and never ends by itself. Any other root's DAG completes: the
-\* merge commits the DAG, discharges the durable records it covers and, if the
-\* node knows its replicators, leaves a forward intent on every outgoing edge.
-\* With the forward in the merge (target) a crash keeps that intent; after
-\* the discharge (main) it is volatile (F3). A node that has not restored its
-\* replicators forwards to nobody (F4).
+\* productive and never ends by itself. Any other root's DAG completes and
+\* the merge handler runs: the merge commits the DAG (or finds it applied
+\* already, on a re-drive), and the forward goes to every outgoing edge the
+\* node knows. Forward before the mark (target, #2556): the forward's
+\* markers are registered, then mark_as_merged discharges the durable
+\* records the DAG covers. After the discharge (main): the records are
+\* discharged first and the forward is left running in memory (F3). A node
+\* that has not restored its replicators forwards to nobody (F4).
 Progress(r, hd) ==
   LET done == Reach({hd})                                          \* the DAG the fetch brings
+      fwd == {e \in Out(r) : known[r]}                             \* the edges the forward reaches
   IN
   /\ slot[r][hd] = "run"                                           \* the attempt runs
   /\ Fetchable(r, hd)                                              \* the provider serves it
   /\ IF hd \in Trickle                                                        \* a DAG that never ends
        THEN /\ slot' = [slot EXCEPT ![r][hd] = "prod"]             \* productive, not done
-            /\ UNCHANGED <<merged, pendDur, outbox, queue, back>>             \* nothing merged
+            /\ UNCHANGED <<merged, pendDur, owed, outbox, queue, back>>       \* nothing merged
        ELSE /\ merged' = [merged EXCEPT ![r] = @ \cup done]        \* merged
-            /\ pendDur' = [pendDur EXCEPT ![r] = @ \ done]         \* records discharged
+            /\ pendDur' = [pendDur EXCEPT ![r] = @ \ done]         \* records discharged by the mark
             /\ Unload(r, done)                                     \* merged roots leave memory
-            /\ outbox' = [e \in Repl |-> IF e \in Out(r) /\ known[r] \* one forward intent per
-                                          THEN outbox[e] \cup {hd}   \* known outgoing edge
-                                          ELSE outbox[e]]                     \* other edges unchanged
-  /\ UNCHANGED <<known, owed, cursor, envVars>>                               \* nothing else moves
+            /\ IF ForwardMode = "BeforeMark"                                  \* forward, then mark
+                 THEN /\ owed' = [e \in Repl |-> IF e \in fwd THEN owed[e] \cup {hd} ELSE owed[e]] \* markers first
+                      /\ UNCHANGED outbox                                     \* nothing left running
+                 ELSE /\ outbox' = [e \in Repl |-> IF e \in fwd THEN outbox[e] \cup {hd} ELSE outbox[e]] \* forward still running
+                      /\ UNCHANGED owed                                       \* no marker yet
+  /\ UNCHANGED <<known, cursor, envVars>>                                     \* nothing else moves
+
+\* Forward before the mark only: the merge commits but the forward fails (a
+\* recorder or storage error, a registration P2P's shutdown refuses, or a
+\* crash between the two). The handler returns MergedButBroadcastFailed and
+\* leaves the root unmarked, so its durable records stay and the clock
+\* re-drives it after a backoff; the re-drive finds the DAG applied and
+\* forwards (forward_owed). It counts as a failed registration.
+ForwardFail(r, hd) ==
+  /\ ForwardMode = "BeforeMark"                                    \* the mark waits for the forward
+  /\ slot[r][hd] = "run"                                           \* the attempt runs
+  /\ Fetchable(r, hd)                                              \* the provider serves it
+  /\ hd \notin Trickle                                             \* the DAG completes
+  /\ known[r] /\ Out(r) # {}                                       \* there is a forward to fail
+  /\ regFails < MaxRegFail                                         \* the world still may fail one
+  /\ regFails' = regFails + 1                                      \* counted
+  /\ merged' = [merged EXCEPT ![r] = @ \cup Reach({hd})]           \* the merge commits
+  /\ EndAttempt(r, hd, "back")                                     \* slot back, re-driven later
+  /\ UNCHANGED <<pendDur, known, senderVars, cursor, conn, pull, flood, contLive, contMade, crashes, discs>> \* records stay
 
 \* The provider cannot serve hd (gone, dead, or a connection it does not
-\* answer on): the attempt ends and hd is due after a backoff.
+\* answer on): the attempt ends and hd is due after a backoff. A dispatch
+\* parked for its permits whose provider is not connected ends the same way,
+\* without the permits: poll_fetch_dag defers before it awaits the limiter.
 Stall(r, hd) ==
-  /\ slot[r][hd] \in {"run", "prod"}                               \* the attempt runs
-  /\ ~Fetchable(r, hd)                                             \* and gets nothing
+  /\ \/ slot[r][hd] \in {"run", "prod"} /\ ~Fetchable(r, hd)       \* the attempt gets nothing
+     \/ slot[r][hd] = "wait" /\ ~FetchOk(r, SrcOf[r, hd])          \* or no provider is connected
   /\ EndAttempt(r, hd, "back")                                     \* slot back, due later
   /\ UNCHANGED <<merged, pendDur, known, senderVars, cursor, envVars>>        \* nothing else moves
 
@@ -459,22 +501,27 @@ Resync(r) ==
 \* --------------------------------------------------------------------------
 \* The world.
 
-\* Node n crashes and starts again. Memory, volatile intents, connections and
-\* the node's own pull fetches and continuations are gone; merged heads,
-\* markers, durable intents and durable records stay. Replicators restored
-\* before the loops start (target) are known at once; loops first (main) run
-\* with none until the restore (F4).
+\* Node n stops and starts again. Memory, running registrations, connections
+\* and the node's own pull fetches and continuations are gone; merged heads,
+\* markers and durable records stay. Drain first (target, #2559): the stop
+\* lets every write in flight finish, its marker registration included,
+\* before P2P stops, so it never lands between a commit and its markers.
+\* Stop first (main): P2P stops before the drain and a write can commit with
+\* nobody left to register its markers (F2). A kill inside that window is
+\* outside the contract either way. Replicators restored before the loops
+\* start (target) are known at once; loops first (main) run with none until
+\* the restore (F4).
 Crash(n) ==
   /\ n \in Crashable                                                     \* may crash
   /\ crashes < MaxCrash                                                  \* within the budget
+  /\ ShutdownOrder = "DrainFirst" =>                                     \* draining first,
+       \A e \in Out(n) : \A hd \in outbox[e] : Author[hd] # n                 \* no own write is still registering
   /\ crashes' = crashes + 1                                              \* counted
   /\ queue' = [queue EXCEPT ![n] = <<>>]                                 \* memory gone
   /\ back' = [back EXCEPT ![n] = <<>>]                                        \* no backoff
   /\ slot' = [slot EXCEPT ![n] = [hd \in Heads |-> "none"]]                   \* no fetch slot held
   /\ cursor' = [cursor EXCEPT ![n] = None]                                    \* the sweep starts at the top
-  /\ outbox' = [e \in Repl |-> IF e \in Out(n)                           \* volatile intents gone
-                                THEN {hd \in outbox[e] : Durable(n, hd)}      \* keep only durable intents
-                                ELSE outbox[e]]                               \* other nodes' intents unchanged
+  /\ outbox' = [e \in Repl |-> IF e \in Out(n) THEN {} ELSE outbox[e]]   \* running registrations gone
   /\ known' = [known EXCEPT ![n] = StartupOrder = "RestoreFirst"]        \* replicators known?
   /\ conn' = [p \in Pairs |-> IF n \in p THEN "down" ELSE conn[p]]       \* connections dropped
   /\ pull' = [pull EXCEPT ![n] = FALSE]                                  \* pull fetches gone
@@ -599,15 +646,12 @@ Next ==
        \/ Schedule(r) \/ BecomeDue(r) \/ Resync(r)                            \* clock and sweep
        \/ \E hd \in Heads :                                                   \* fetch tasks
             \/ Acquire(r, hd) \/ Progress(r, hd) \/ Stall(r, hd) \/ Preempt(r, hd) \* permit, blocks, watchdog, quantum
+            \/ ForwardFail(r, hd)                                             \* a forward the world fails
        \/ PullStart(r) \/ PullEnd(r) \/ FloodOn(r) \/ FloodOff(r)             \* pull fetches and storms
        \/ StartCont(r) \/ EndCont(r)                                          \* local continuations
   \/ \E n \in Nodes : Crash(n) \/ RestoreReplicators(n)                       \* crashes and startup
   \/ \E p \in Pairs : Disconnect(p) \/ Reconnect(p) \/ RetireTimedOut(p)      \* connections
 
-\* The dispatch clock: a backoff ends, or a due root is handed out. One
-\* condition for the whole clock, so which root goes next is the clock's
-\* order alone.
-ClockStep(r) == Schedule(r) \/ BecomeDue(r)
 \* The fetch task a dispatch spawned for hd: a permit is granted, blocks
 \* arrive, the watchdog fires, the quantum runs out. Only a root that already
 \* holds a slot has a task.
@@ -625,17 +669,21 @@ SenderStep(n) ==
 \* Fairness for each task only. No root, scope or job is promised a dispatch
 \* of its own: the clock, the sweep, the recorder and the retry sweep each get
 \* one condition, so a root waiting for a slot or a place gets one only if the
-\* dispatch order, the quantum and the rotation give it one. A fetch task that
-\* already holds its slot runs like any spawned task, and its provider, if it
-\* serves, sends blocks. A request's timeout fires. Writes, crashes,
-\* disconnects, failed registrations, pull fetches, storms and continuations
-\* are the world's and are not fair. Reconnect is fair for every pair without
-\* a dead node: eventual connectivity, assumed.
+\* dispatch order, the quantum and the rotation give it one. The backoff timer
+\* is its own condition: a backoff ends when its deadline passes, whatever the
+\* clock dispatches meanwhile, and it ends the oldest backoff, not a chosen
+\* root. A fetch task that already holds its slot runs like any spawned task,
+\* and its provider, if it serves, sends blocks. A request's timeout fires.
+\* Writes, crashes, disconnects, failed registrations and forwards, pull
+\* fetches, storms and continuations are the world's and are not fair.
+\* Reconnect is fair for every pair without a dead node: eventual
+\* connectivity, assumed.
 Fairness ==
   /\ \A n \in Nodes : WF_vars(SenderStep(n))                     \* the recorder drains, startup ends
   /\ \A e \in Repl : WF_vars(\E hd \in Heads : Push(e, hd))       \* the retry sweep runs
   /\ \A r \in Receivers :                                                     \* for each receiver,
-       /\ WF_vars(ClockStep(r))                                  \* the dispatch clock runs
+       /\ WF_vars(Schedule(r))                                   \* the dispatch clock runs
+       /\ WF_vars(BecomeDue(r))                                  \* backoffs run out
        /\ WF_vars(Resync(r))                                     \* the resync sweep runs
        /\ WF_vars(MergeLoopStep(r))                              \* the merge loop runs
        /\ \A hd \in Heads : WF_vars(FetchTask(r, hd))            \* a spawned fetch task runs
@@ -661,11 +709,14 @@ INV_TypeOK ==
   /\ conn \in [Pairs -> {"down", "full"} \cup Nodes]                          \* connections
   /\ crashes \in 0..MaxCrash /\ regFails \in 0..MaxRegFail /\ discs \in 0..MaxDisc \* fault budgets
 
-\* Some party still owes head hd over edge e: a marker or intent on the sender
-\* whose DAG brings hd, or the receiver has merged it or holds a durable record
-\* whose DAG brings it. Ancestry decides, both sides.
+\* Some party still owes head hd over edge e: a marker or a running
+\* registration on the sender whose DAG brings hd, or a durable record on the
+\* sender whose DAG brings it (a hub forwards a root when it merges it, and
+\* with the forward before the mark, while the record stands), or the
+\* receiver has merged it or holds a durable record whose DAG brings it.
+\* Ancestry decides, both sides.
 Owned(e, hd) ==
-  \/ hd \in Reach(owed[e] \cup outbox[e])                                     \* the sender still owes it
+  \/ hd \in Reach(owed[e] \cup outbox[e] \cup pendDur[e[1]])                  \* the sender still owes it
   \/ hd \in Reach(merged[e[2]] \cup pendDur[e[2]])                            \* or the receiver owns it
 
 \* Promise: every head merged on a sender is owed to each of its receivers

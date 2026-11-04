@@ -176,7 +176,7 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 | Family | Binding | Where |
 |---|---|---|
 | B3 filtered replication | Behavioral | `replication.rs` |
-| DAG convergence | Behavioral | `replication.rs` (live-forward) + `partition.rs` (partition heal; concurrent same-doc merge — the bug it found+fixed) |
+| DAG convergence | Boundary | `replication.rs` (live-forward under a configured replicator) + `partition.rs` (converges after an explicit replicator re-set; concurrent same-doc merge — the bug it found+fixed). Head rediscovery is embedder-owned |
 | Replicator lifecycle | Behavioral | `replicator_lifecycle.rs` (backfill no-loss + resume across node restart) |
 | Sync ownership transfer | Boundary + external integration | deterministic full-DAG/head-hint A/B fence; `p2p_admission_restart`; `p2p_backlog` (outbound push backlog with a SIGSTOPped replicator); marker migration/storage tests; mixed Go/Rust PushLog fixture. These run in repository CI, not this conformance binary's `tests/behavioral/` harness. |
 | ACP soundness + revocation + commits | Behavioral + Contract | `acp.rs`; `RelationExpression` vocab |
@@ -229,8 +229,9 @@ Read this before trusting a verdict; it states the model's honest reach.
   fetch, a datum on a block), not quantity-sensitive — but this is exhaustive over the
   bound, not a proof for all deployments.
 - **Environment assumptions (encoded, not proven):** `ProviderAvailable` (a fetch needs a
-  reachable holder of the block); **eventual connectivity** + fair head rediscovery for
-  the convergence liveness results; weak fairness on protocol actions; an **eventually
+  reachable holder of the block); **eventual connectivity**, with the heads owed by a
+  retry marker or a durable pending record, for the convergence liveness results (head
+  rediscovery is the embedder's); weak fairness on protocol actions; an **eventually
   serving provider** (strong fairness on some completed fetch) for the SyncOwnership
   dispatch and memory liveness results, whose `Dead` and `Trickle` providers get no
   merge promise. Those results give fairness to the scheduler only, never to a root; the
