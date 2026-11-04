@@ -47,7 +47,7 @@ pub use coordinator::Libp2pSyncCoordinator;
 pub use coordinator::{
     CreateReplicatorResult, FollowedDocuments, HeadHintCarAuthority, HeadHintCarGrant,
     LoadReplicatorsResult, PeerDetails, PendingFetch, PushFailure, PushFailureReceiver,
-    QuarantinedRoot, SyncCoordinator, SyncShutdownHandle, SyncStatus,
+    QuarantinedRoot, SchedulerDiagnostics, SyncCoordinator, SyncShutdownHandle, SyncStatus,
 };
 pub use dag_sync::{DagSync, DagSyncConfig, DagSyncState, NeedsFetchData, SyncPlan};
 pub use dispatch_queue::{

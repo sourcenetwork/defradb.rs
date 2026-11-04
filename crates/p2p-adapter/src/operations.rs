@@ -229,6 +229,11 @@ pub trait P2POperations: defra_core::thread_bounds::MaybeSendSync {
         Ok(serde_json::Value::Null)
     }
 
+    /// Bounded aggregate receiver scheduler diagnostics, without identifiers.
+    async fn scheduler_diagnostics(&self) -> P2PResult<serde_json::Value> {
+        Ok(serde_json::Value::Null)
+    }
+
     /// Everything this node knows about one peer, for debugging: connection
     /// path and traffic, connect history, per-direction sync outcomes with
     /// the last error, push queue and durable retries, pending and

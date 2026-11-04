@@ -80,6 +80,30 @@ fn pending_dag(doc_id: &str, inserted_at: Instant) -> PendingDag {
 }
 
 #[test]
+fn scheduler_counts_distinguish_due_eligible_and_storage_owners() {
+    let manager = test_manager();
+    let blocker = test_cid(901);
+    let owner = manager.process_queue.try_acquire_nowait(&blocker).unwrap();
+    let now = Instant::now();
+    let eligible = pending_dag("eligible", now);
+    let mut blocked = pending_dag("blocked", now);
+    blocked.storage_blocker = Some(blocker);
+    let unregistered = pending_dag_from("unregistered", Some("peer"), now);
+    let mut future = pending_dag("future", now);
+    future.next_retry_at = crate::rt::time::Instant::now() + Duration::from_secs(60);
+    manager.pending_dags.update(|pending| {
+        pending.insert(test_cid(902), eligible.clone());
+        pending.insert(test_cid(903), blocked.clone());
+        pending.insert(test_cid(904), unregistered.clone());
+        pending.insert(test_cid(905), future.clone());
+    });
+    assert_eq!(manager.pending_scheduler_counts(), (3, 1, 1, 1, 1));
+    drop(owner);
+    // Observation does not alter the stored blocker; the retry clock owns that.
+    assert_eq!(manager.pending_scheduler_counts(), (3, 1, 1, 0, 1));
+}
+
+#[test]
 fn linked_dag_providers_require_positive_missing_cid_evidence() {
     let manager = test_manager();
     let root = test_cid(800);
