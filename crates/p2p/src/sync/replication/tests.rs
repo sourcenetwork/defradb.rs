@@ -3748,3 +3748,104 @@ async fn stalled_provider_lookup_does_not_block_unrelated_merge() {
     );
     coordinator.shutdown().await;
 }
+
+#[nuclei::test(threads = 0)]
+async fn shutdown_cancels_stalled_provider_lookup_and_releases_reserved_permit() {
+    use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink};
+
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let transport = NoopTransport::new();
+    transport.hang_provider_lookup.store(true, Ordering::SeqCst);
+    let observer = transport.clone();
+    let (coordinator, mut events) = crate::sync::coordinator::SyncCoordinator::with_access_control(
+        transport,
+        blockstore,
+        crate::network::test_network(),
+        crate::sync::SyncConfig {
+            max_concurrent_dag_fetches: 2,
+            ..Default::default()
+        },
+        AccessMode::Open,
+        Arc::new(crate::ReplicatorRegistry::new()),
+        Arc::new(crate::sync::collection_store::MemoryCollectionStorage::default()),
+        Arc::new(EqOnlyFilterMatcher),
+    )
+    .await
+    .unwrap();
+    let block = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            collection_version_id: "schema1".into(),
+            priority: 1,
+            status: 1,
+        }),
+        vec![],
+        vec![DAGLink::new("missing", make_cid(b"cancel-missing"))],
+    );
+    let root = block.generate_cid().unwrap();
+    coordinator
+        .handle_transport_event(TransportEvent::TwoStreamRequest {
+            peer_id: PeerId::new("source-peer".into()),
+            request: PushLogRequest::new(
+                "pending".into(),
+                bytes::Bytes::from(root.to_bytes()),
+                "col1".into(),
+                "creator".into(),
+                bytes::Bytes::from(block.to_dag_cbor().unwrap()),
+            ),
+            token: None,
+            is_explicit_replicator: true,
+            explicit_replay_authorization: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        coordinator.dispatch_due_pending_dag_fetches_for_test(crate::rt::time::Instant::now()),
+        1
+    );
+    assert_eq!(coordinator.pending_dag_work_count(), 1);
+    assert_eq!(
+        coordinator.available_peer_fetch_permits_for_test("source-peer"),
+        0
+    );
+    let handler = TestMergeHandler::new(true, false);
+    let result = ReplicationLoop::process_next(
+        &coordinator,
+        &mut events,
+        &handler,
+        &ReplicationConfig::default(),
+    )
+    .await;
+    assert!(matches!(result, ReplicationResult::DagFetchStarted { root_cid } if root_cid == root));
+    crate::rt::time::timeout(Duration::from_secs(2), async {
+        while observer.provider_lookups.load(Ordering::SeqCst) == 0 {
+            crate::rt::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("provider lookup must start");
+    assert_eq!(
+        coordinator.available_peer_fetch_permits_for_test("source-peer"),
+        0
+    );
+    coordinator.shutdown().await;
+    assert_eq!(coordinator.pending_dag_work_count(), 0);
+    assert_eq!(
+        coordinator.available_peer_fetch_permits_for_test("source-peer"),
+        1
+    );
+    crate::rt::time::sleep(Duration::from_millis(1100)).await;
+    assert_eq!(
+        observer.car_requests.load(Ordering::SeqCst),
+        0,
+        "cancelled work must not issue a late fetch"
+    );
+    assert_eq!(
+        coordinator
+            .manager()
+            .diagnostics()
+            .snapshot()
+            .provider_lookup_timed_out_total,
+        0
+    );
+}
