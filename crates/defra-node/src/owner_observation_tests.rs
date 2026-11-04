@@ -682,6 +682,8 @@ fn enabled_node_acp_gates_http_and_allows_granted_document_access() {
         let policy = node.add_dac_policy(&runtime_did, POLICY).await.unwrap();
         node.add_collection(&format!("type Users @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}")).await.unwrap();
         let user = identity::RawIdentity::from_private_key(crypto::generate_ed25519().unwrap()).unwrap();
+        assert!(node.add_collection_as("type UserSchemaDenied { name: String }", Some(user.did().unwrap())).await.is_err());
+        node.add_collection("type RuntimeSchemaAllowed { name: String }").await.unwrap();
         let token = |who: &identity::RawIdentity| String::from_utf8(identity::new_token(who, Duration::from_secs(60), Some(address.to_string()), None).unwrap()).unwrap();
         let client = reqwest::Client::builder().no_proxy().build().unwrap();
         let base = format!("http://{address}/api/v0");

@@ -515,6 +515,16 @@ impl EmbeddedNode {
         }
     }
 
+    fn schema_context(&self, actor: Option<identity::Did>) -> RequestContext {
+        match actor {
+            Some(actor) => self
+                .node_context()
+                .with_identity(Some(actor.to_string()))
+                .with_dac_bypass(false),
+            None => self.node_context(),
+        }
+    }
+
     /// DID used as the embedded node identity for signing, when configured.
     pub fn node_identity_did(&self) -> Option<&str> {
         self.node_identity_did.as_deref()
@@ -561,10 +571,15 @@ impl EmbeddedNode {
 
     /// Add a schema from a GraphQL SDL type definition.
     pub async fn add_collection(&self, sdl: &str) -> Result<()> {
+        self.add_collection_as(sdl, None).await
+    }
+
+    /// Schema operation as an explicitly authenticated in-process actor.
+    pub async fn add_collection_as(&self, sdl: &str, actor: Option<identity::Did>) -> Result<()> {
         let (ops, sdl, context) = (
             Arc::clone(&self.schema_ops),
             sdl.to_owned(),
-            self.node_context(),
+            self.schema_context(actor),
         );
         self.on_pool(move || async move { ops.add_collection(&context, &sdl).await.map(|_| ()) })
             .await
@@ -594,7 +609,17 @@ impl EmbeddedNode {
     /// `target_sdl` is the SDL for the view collection (may include directives
     /// like `@downsample` that are forward-declared for future defradb.rs support).
     pub async fn add_view(&self, source_query: &str, target_sdl: &str) -> Result<()> {
-        let (ops, context) = (Arc::clone(&self.schema_ops), self.node_context());
+        self.add_view_as(source_query, target_sdl, None).await
+    }
+
+    /// Create a view as an explicitly authenticated in-process actor.
+    pub async fn add_view_as(
+        &self,
+        source_query: &str,
+        target_sdl: &str,
+        actor: Option<identity::Did>,
+    ) -> Result<()> {
+        let (ops, context) = (Arc::clone(&self.schema_ops), self.schema_context(actor));
         let (query, sdl) = (source_query.to_owned(), target_sdl.to_owned());
         self.on_pool(move || async move { ops.add_view(&context, &query, &sdl).await })
             .await
@@ -613,7 +638,17 @@ impl EmbeddedNode {
         collection_name: &str,
         patch: &str,
     ) -> Result<CollectionVersion> {
-        let (ops, context) = (Arc::clone(&self.schema_ops), self.node_context());
+        self.patch_collection_as(collection_name, patch, None).await
+    }
+
+    /// Patch a schema as an explicitly authenticated in-process actor.
+    pub async fn patch_collection_as(
+        &self,
+        collection_name: &str,
+        patch: &str,
+        actor: Option<identity::Did>,
+    ) -> Result<CollectionVersion> {
+        let (ops, context) = (Arc::clone(&self.schema_ops), self.schema_context(actor));
         let (name, patch) = (collection_name.to_owned(), patch.to_owned());
         self.on_pool(move || async move { ops.patch_collection(&context, &name, &patch).await })
             .await
@@ -625,7 +660,17 @@ impl EmbeddedNode {
     /// collection-name pointer to resolve to this version. If migrations are
     /// registered, documents are reindexed through them.
     pub async fn set_active_collection_version(&self, version_id: &str) -> Result<()> {
-        let (ops, context) = (Arc::clone(&self.schema_ops), self.node_context());
+        self.set_active_collection_version_as(version_id, None)
+            .await
+    }
+
+    /// Activate a schema as an explicitly authenticated in-process actor.
+    pub async fn set_active_collection_version_as(
+        &self,
+        version_id: &str,
+        actor: Option<identity::Did>,
+    ) -> Result<()> {
+        let (ops, context) = (Arc::clone(&self.schema_ops), self.schema_context(actor));
         let version = version_id.to_owned();
         self.on_pool(
             move || async move { ops.set_active_collection_version(&context, &version).await },
@@ -642,7 +687,16 @@ impl EmbeddedNode {
     /// Requires the `wasmtime-runtime` feature (on by default). Without it this
     /// returns an explicit error instead of registering a no-op transform.
     pub async fn set_migration(&self, config: LensConfig) -> Result<TransformId> {
-        let (ops, context) = (Arc::clone(&self.schema_ops), self.node_context());
+        self.set_migration_as(config, None).await
+    }
+
+    /// Register a schema migration as an explicitly authenticated in-process actor.
+    pub async fn set_migration_as(
+        &self,
+        config: LensConfig,
+        actor: Option<identity::Did>,
+    ) -> Result<TransformId> {
+        let (ops, context) = (Arc::clone(&self.schema_ops), self.schema_context(actor));
         self.on_pool(move || async move { ops.set_migration(&context, config).await })
             .await
     }
@@ -652,7 +706,16 @@ impl EmbeddedNode {
     /// Returns the number of documents advanced to the active version. This is a
     /// datastore-only operation and does not create or broadcast document commits.
     pub async fn materialize_collection(&self, collection_name: &str) -> Result<usize> {
-        let (ops, context) = (Arc::clone(&self.schema_ops), self.node_context());
+        self.materialize_collection_as(collection_name, None).await
+    }
+
+    /// Materialize a schema as an explicitly authenticated in-process actor.
+    pub async fn materialize_collection_as(
+        &self,
+        collection_name: &str,
+        actor: Option<identity::Did>,
+    ) -> Result<usize> {
+        let (ops, context) = (Arc::clone(&self.schema_ops), self.schema_context(actor));
         let name = collection_name.to_owned();
         self.on_pool(move || async move { ops.materialize_collection(&context, &name).await })
             .await
