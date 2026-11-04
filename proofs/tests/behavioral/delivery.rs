@@ -147,6 +147,7 @@ async fn wait_for_ack(cluster: &TestCluster, hub_peer: &str, before: u64, within
 /// A: a hub restarted under catch-up load still delivers a new document from
 /// an unthrottled desktop within the bound.
 #[nuclei::test(threads = 2)]
+#[ignore = "its load does not reliably hold the hub's fetch slots: CAR ingest deferred behind a storage owner gives them back, so the precondition can fail (#2571); run with --ignored"]
 async fn hub_restart_under_catchup_delivers_new_doc_within_bound() {
     edge::compat(async move {
         let mut cluster = start(3, |builder| builder).await;
