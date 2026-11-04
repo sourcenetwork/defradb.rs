@@ -63,6 +63,31 @@ impl<S: Store + 'static> DB<S> {
         Ok(())
     }
 
+    /// The drain on wasm, run on the page's event loop because the database
+    /// is not `Send` there. Holding it only while draining lets it close.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn run_deferred_index_drain(db: std::sync::Weak<Self>) {
+        let Some(requests) = db.upgrade().map(|db| db.deferred_drains.clone()) else {
+            return;
+        };
+        let settled = match db.upgrade() {
+            Some(db) => db.drain_deferred_indexes().await,
+            None => return,
+        };
+        if let Err(error) = settled {
+            tracing::warn!(%error, "deferred index settle at open failed");
+        }
+        loop {
+            requests.requested().await;
+            let Some(db) = db.upgrade() else {
+                return;
+            };
+            if let Err(error) = db.drain_requested().await {
+                tracing::warn!(%error, "deferred index drain failed; the next write retries");
+            }
+        }
+    }
+
     /// Starts the deferred index drain on the database's pool: everything
     /// owed at open first, then each request, and a sweep when none came.
     #[cfg(not(target_arch = "wasm32"))]
