@@ -605,6 +605,59 @@ fn transactional_resource_links_propagate_parent_authority() {
     }).unwrap();
 }
 
+#[test]
+fn inherited_manager_grant_conflicts_with_concurrent_parent_revocation() {
+    workers::block_on(async {
+        let node = EmbeddedNode::builder().build().await.unwrap();
+        let yaml = "name: Managed parent links\nresources:\n  - name: nodes\n    permissions:\n      - name: read\n      - name: update\n      - name: delete\n  - name: agents\n    relations:\n      - name: parent\n        types: [nodes]\n      - name: reader\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader + parent->read\n      - name: update\n      - name: delete\n        expr: parent->delete\n      - name: manage\n        expr: parent->delete\n        manages: [reader]\n  - name: sessions\n    relations:\n      - name: parent\n        types: [agents]\n      - name: reader\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader + parent->read\n      - name: update\n      - name: delete\n        expr: parent->delete\n      - name: manage\n        expr: parent->manage\n        manages: [reader]\n";
+        let policy = node.add_dac_policy(A, yaml).await.unwrap();
+        for (collection, resource) in [("Nodes", "nodes"), ("Agents", "agents"), ("Sessions", "sessions")] {
+            node.add_collection(&format!("type {collection} @policy(id: \"{policy}\", resource: \"{resource}\") {{ name: String }}")).await.unwrap();
+        }
+        let created = node.execute_request(query::QueryRequest::new("mutation { add_Nodes(input: {name: \"home\"}) { _docID } }").with_identity(Some(Did::new(A).unwrap()))).await;
+        let node_doc = created.data.unwrap()["add_Nodes"][0]["_docID"].as_str().unwrap().to_owned();
+        let executor = node.runner();
+        let agent = actor(B);
+        let txn = executor.begin_txn_as(&agent, false).await.unwrap();
+        let create = |collection: &str| query::QueryRequest::new(format!("mutation {{ add_{collection}(input: {{name: \"row\"}}) {{ _docID }} }}")).with_context(agent.clone()).with_identity(Some(Did::new(B).unwrap()));
+        let agent_doc = executor.execute_in_txn(create("Agents"), &txn).await.data.unwrap()["add_Agents"][0]["_docID"].as_str().unwrap().to_owned();
+        executor.add_relationship_in_txn(agent.clone(), &txn, Did::new(B).unwrap(), "Agents", &agent_doc, "parent", acp::Subject::entity_set("nodes", &node_doc, "")).await.unwrap();
+        let session_doc = executor.execute_in_txn(create("Sessions"), &txn).await.data.unwrap()["add_Sessions"][0]["_docID"].as_str().unwrap().to_owned();
+        let parent = acp::Subject::entity_set("agents", &agent_doc, "");
+        executor.add_relationship_in_txn(agent.clone(), &txn, Did::new(B).unwrap(), "Sessions", &session_doc, "parent", parent.clone()).await.unwrap();
+        executor.commit_txn_as(&agent, &txn).await.unwrap();
+        let manager = actor(A);
+        let reader = Did::new("did:key:z6MkeiwEAT7UhjgNfrqjRmGX1be3oD7f78zdveaZ4o9QuZ5D").unwrap();
+        let outsider = actor(reader.as_str());
+        let denied = executor.begin_txn_as(&outsider, false).await.unwrap();
+        assert!(executor.add_actor_relationship_in_txn(outsider.clone(), &denied, reader.clone(), "Sessions", &session_doc, "reader", reader.clone()).await.is_err());
+        executor.discard_txn_as(&outsider, &denied).await.unwrap();
+        let granted = executor.begin_txn_as(&manager, false).await.unwrap();
+        executor.add_actor_relationship_in_txn(manager.clone(), &granted, Did::new(A).unwrap(), "Sessions", &session_doc, "reader", reader.clone()).await.unwrap();
+        executor.commit_txn_as(&manager, &granted).await.unwrap();
+        let visible = node.execute_request(query::QueryRequest::new("{ Sessions { _docID } }").with_identity(Some(reader.clone()))).await;
+        assert_eq!(visible.data.unwrap()["Sessions"][0]["_docID"], session_doc);
+        let revoke = executor.begin_txn_as(&manager, false).await.unwrap();
+        assert!(executor.delete_actor_relationship_in_txn(manager.clone(), &revoke, Did::new(A).unwrap(), "Sessions", &session_doc, "reader", reader.clone()).await.unwrap());
+        executor.discard_txn_as(&manager, &revoke).await.unwrap();
+        let visible = node.execute_request(query::QueryRequest::new("{ Sessions { _docID } }").with_identity(Some(reader.clone()))).await;
+        assert_eq!(visible.data.unwrap()["Sessions"][0]["_docID"], session_doc);
+        let revoke = executor.begin_txn_as(&manager, false).await.unwrap();
+        assert!(executor.delete_actor_relationship_in_txn(manager.clone(), &revoke, Did::new(A).unwrap(), "Sessions", &session_doc, "reader", reader.clone()).await.unwrap());
+        executor.commit_txn_as(&manager, &revoke).await.unwrap();
+        let hidden = node.execute_request(query::QueryRequest::new("{ Sessions { _docID } }").with_identity(Some(reader.clone()))).await;
+        assert_eq!(hidden.data.unwrap()["Sessions"].as_array().unwrap().len(), 0);
+        let txn = executor.begin_txn_as(&manager, false).await.unwrap();
+        executor.add_actor_relationship_in_txn(manager.clone(), &txn, Did::new(A).unwrap(), "Sessions", &session_doc, "reader", reader.clone()).await.unwrap();
+        node.document_acp().delete_relationship(&Did::new(B).unwrap(), parent, &policy, "sessions", &session_doc, "parent", &[]).await.unwrap();
+        assert!(executor.commit_txn_as(&manager, &txn).await.is_err(), "a revoked manager must not commit its stale grant");
+        let fresh = executor.begin_txn_as(&manager, false).await.unwrap();
+        assert!(executor.add_actor_relationship_in_txn(manager.clone(), &fresh, Did::new(A).unwrap(), "Sessions", &session_doc, "reader", reader).await.is_err());
+        executor.discard_txn_as(&manager, &fresh).await.unwrap();
+        node.shutdown().await;
+    }).unwrap();
+}
+
 #[cfg(feature = "http")]
 #[test]
 fn http_relationship_uses_authenticated_transaction_owner() {
@@ -652,6 +705,21 @@ fn http_relationship_uses_authenticated_transaction_owner() {
             .bearer_auth(&reader_token).json(&serde_json::json!({"query":"{ Users { _docID name } }"}))
             .send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
         assert_eq!(visible["data"]["Users"][0]["_docID"], doc);
+        let revoke: serde_json::Value = client.post(format!("{base}/tx")).bearer_auth(&user_token)
+            .send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+        let revoke = revoke["id"].as_u64().unwrap().to_string();
+        let denied = client.delete(format!("{base}/acp/document/relationship"))
+            .bearer_auth(&reader_token).header("x-defradb-tx", &revoke).json(&grant).send().await.unwrap();
+        assert!(!denied.status().is_success());
+        client.delete(format!("{base}/acp/document/relationship"))
+            .bearer_auth(&user_token).header("x-defradb-tx", &revoke).json(&grant)
+            .send().await.unwrap().error_for_status().unwrap();
+        client.delete(format!("{base}/tx/{revoke}")).bearer_auth(&user_token)
+            .send().await.unwrap().error_for_status().unwrap();
+        let still_visible: serde_json::Value = client.post(format!("{base}/graphql"))
+            .bearer_auth(&reader_token).json(&serde_json::json!({"query":"{ Users { _docID } }"}))
+            .send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+        assert_eq!(still_visible["data"]["Users"][0]["_docID"], doc);
         node.shutdown().await;
     }).unwrap();
 }

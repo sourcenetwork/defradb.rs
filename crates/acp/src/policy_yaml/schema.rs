@@ -48,6 +48,18 @@ pub(super) fn validate(policy: &ParsedPolicy) -> Result<()> {
     names.insert("actor", relation_names(&policy.actor.relations, false)?);
     for resource in &policy.resources {
         validate_references(&resource.relations, &names)?;
+        for permission in &resource.permissions {
+            for managed in &permission.manages {
+                if managed == "owner"
+                    || !resource
+                        .relations
+                        .iter()
+                        .any(|relation| relation.name == *managed)
+                {
+                    return Err(invalid(format!("invalid managed relation '{managed}'")));
+                }
+            }
+        }
     }
     validate_references(&policy.actor.relations, &names)
 }

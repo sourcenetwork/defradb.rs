@@ -543,6 +543,22 @@ impl EmbeddedNode {
         .await
     }
 
+    /// Grant full native node administration. The acting DID must already be
+    /// a node administrator; this includes native DAC-bypass capability.
+    pub async fn grant_node_admin_as(
+        &self,
+        actor: identity::Did,
+        target: identity::Did,
+    ) -> Result<bool> {
+        let nac = self.nac_manager.clone().ok_or(Error::NodeAcpUnavailable)?;
+        self.on_pool(move || async move {
+            nac.add_admin(&actor, &target)
+                .await
+                .map_err(Error::NodeAcpGrant)
+        })
+        .await
+    }
+
     /// DID used as the embedded node identity for signing, when configured.
     pub fn node_identity_did(&self) -> Option<&str> {
         self.node_identity_did.as_deref()

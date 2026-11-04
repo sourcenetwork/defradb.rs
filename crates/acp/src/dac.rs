@@ -172,6 +172,23 @@ pub trait DocumentACP: MaybeSendSync {
         doc_id: &str,
     ) -> Result<bool>;
 
+    /// Evaluate a named policy expression on a registered object. Callers that
+    /// make a write contingent on this decision must use a transaction-bound
+    /// provider so the decision and write share conflict validation.
+    async fn check_named_permission(
+        &self,
+        identity: &Identity,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+        permission: &str,
+    ) -> Result<bool> {
+        let _ = (identity, policy_id, resource_name, doc_id, permission);
+        Err(Error::InvalidPolicy(
+            "named permissions are unsupported".into(),
+        ))
+    }
+
     /// Create a persisted access decision for a caller/object/permission check.
     ///
     /// Vera-backed ACP can use this to mint a decision that downstream

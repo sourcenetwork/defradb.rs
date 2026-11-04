@@ -240,7 +240,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         relation: &str,
         target: identity::Did,
     ) -> Result<bool> {
-        self.add_relation(
+        self.mutate_relation(
             context,
             handle,
             actor,
@@ -248,6 +248,30 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
             doc_id,
             relation,
             acp::Subject::Entity(target),
+            false,
+        )
+        .await
+    }
+
+    async fn delete_actor_relationship_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        actor: identity::Did,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+        target: identity::Did,
+    ) -> Result<bool> {
+        self.mutate_relation(
+            context,
+            handle,
+            actor,
+            collection,
+            doc_id,
+            relation,
+            acp::Subject::Entity(target),
+            true,
         )
         .await
     }
@@ -262,8 +286,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         relation: &str,
         target: acp::Subject,
     ) -> Result<bool> {
-        self.add_relation(context, handle, actor, collection, doc_id, relation, target)
-            .await
+        self.mutate_relation(
+            context, handle, actor, collection, doc_id, relation, target, false,
+        )
+        .await
     }
 
     async fn observe_document_visibility_in_txn(

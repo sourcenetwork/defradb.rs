@@ -166,17 +166,11 @@ impl<S: ZanzibarStore + ?Sized + 'static> ZanzibarDocumentACP<S> {
 
         let managers = policy.get_managers_for_relation(resource_name, target_relation);
         let has_managers = !managers.is_empty();
+        let engine = self.ensure_policy(policy_id, resource_name).await?;
 
         for manager_relation in managers {
-            let has_manager = self
-                .store
-                .check_permission_direct(
-                    policy_id,
-                    resource_name,
-                    doc_id,
-                    manager_relation,
-                    subject,
-                )
+            let has_manager = engine
+                .check(policy_id, resource_name, doc_id, manager_relation, subject)
                 .await?;
 
             if has_manager {

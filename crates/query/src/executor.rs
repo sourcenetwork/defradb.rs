@@ -498,6 +498,23 @@ pub trait QueryExecutor: MaybeSendSync {
         ))
     }
 
+    /// Remove an actor relationship in the same transaction as related writes.
+    async fn delete_actor_relationship_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        actor: Did,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+        target: Did,
+    ) -> Result<bool> {
+        let _ = (context, handle, actor, collection, doc_id, relation, target);
+        Err(crate::error::QueryError::execution(
+            "transaction-bound relationship writes are unsupported",
+        ))
+    }
+
     /// Add a policy-declared subject relationship in an existing transaction.
     async fn add_relationship_in_txn(
         &self,

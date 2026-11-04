@@ -157,7 +157,7 @@ where
             .await
             .map_err(|error| QueryError::execution(error.to_string()))?
     }
-    pub(super) async fn add_relation(
+    pub(super) async fn mutate_relation(
         &self,
         context: RequestContext,
         handle: &TransactionHandle,
@@ -166,6 +166,7 @@ where
         doc_id: &str,
         relation: &str,
         target: acp::Subject,
+        delete: bool,
     ) -> Result<bool> {
         if collection.is_empty() || doc_id.is_empty() || relation.is_empty() {
             return Err(QueryError::parse(
@@ -174,11 +175,18 @@ where
         }
         if !self
             .nac
-            .check_permission(&actor, acp::nac::NodePermission::DacRelationAdd)
+            .check_permission(
+                &actor,
+                if delete {
+                    acp::nac::NodePermission::DacRelationDelete
+                } else {
+                    acp::nac::NodePermission::DacRelationAdd
+                },
+            )
             .await
         {
             return Err(QueryError::execution(
-                "node permission for relationship creation denied",
+                "node permission for relationship mutation denied",
             ));
         }
         let context = context.or_ambient();
@@ -252,8 +260,8 @@ where
                             ));
                         }
                     }
-                    let added = acp
-                        .add_relationship(
+                    let changed = if delete {
+                        acp.delete_relationship(
                             &actor,
                             target,
                             &policy.id,
@@ -263,11 +271,23 @@ where
                             &[],
                         )
                         .await
-                        .map_err(|error| QueryError::execution(error.to_string()))?;
-                    if added {
+                    } else {
+                        acp.add_relationship(
+                            &actor,
+                            target,
+                            &policy.id,
+                            &policy.resource_name,
+                            &doc_id,
+                            &relation,
+                            &[],
+                        )
+                        .await
+                    }
+                    .map_err(|error| QueryError::execution(error.to_string()))?;
+                    if changed {
                         ctx.notify_relationship_on_commit(&definition.collection_id, &doc_id)?;
                     }
-                    Ok(added)
+                    Ok(changed)
                 }
                 .await;
                 turn.end_statement(result.is_ok())

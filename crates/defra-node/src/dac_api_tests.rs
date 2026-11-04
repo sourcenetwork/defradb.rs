@@ -461,6 +461,24 @@ fn policy_id_reproducible_with_explicit_counter() {
     .unwrap()
 }
 
+#[test]
+fn concurrent_colliding_policy_registrations_never_replace_the_winner() {
+    workers::block_on(async {
+        let node = EmbeddedNode::builder().build().await.unwrap();
+        let one = "name: collision\nresources:\n  - name: users\n    relations:\n      - name: reader\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader\n      - name: manage\n        expr: reader\n        manages: [reader]\n";
+        let two = "name: collision\nresources:\n  - name: users\n    relations:\n      - name: reader\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader\n      - name: manage\n        expr: reader\n";
+        let first = acp::policy_yaml::parse_policy_yaml(one).unwrap();
+        let second = acp::policy_yaml::parse_policy_yaml(two).unwrap();
+        assert_eq!(acp::policy_yaml::generate_policy_id(&first, 0), acp::policy_yaml::generate_policy_id(&second, 0));
+        let (a, b) = futures::join!(node.add_dac_policy_with_counter(DID_A, one, 0), node.add_dac_policy_with_counter(DID_A, two, 0));
+        assert_ne!(a.is_ok(), b.is_ok(), "exactly one policy must register: {a:?}, {b:?}");
+        let (winner, loser) = if a.is_ok() { (one, two) } else { (two, one) };
+        assert!(node.add_dac_policy_with_counter(DID_A, loser, 0).await.is_err());
+        assert!(node.add_dac_policy_with_counter(DID_A, winner, 0).await.is_ok());
+        node.shutdown().await;
+    }).unwrap();
+}
+
 /// N identical policies added at once through the embedded API get N distinct
 /// IDs, and IDs stay distinct after the node restarts over the same store.
 #[test]

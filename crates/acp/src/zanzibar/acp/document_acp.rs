@@ -256,6 +256,50 @@ impl<S: ZanzibarStore + ?Sized + 'static> DocumentACP for ZanzibarDocumentACP<S>
         Ok(granted)
     }
 
+    async fn check_named_permission(
+        &self,
+        identity: &Identity,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+        permission: &str,
+    ) -> Result<bool> {
+        if let Some(scope) = self.store.begin_scope(true).await? {
+            let scoped = self.scoped(scope.store());
+            let result = scoped
+                .check_named_permission(identity, policy_id, resource_name, doc_id, permission)
+                .await?;
+            drop(scoped);
+            scope.commit().await?;
+            return Ok(result);
+        }
+        let policy = self
+            .store
+            .get_policy(policy_id)
+            .await?
+            .ok_or_else(|| Error::PolicyNotFound(policy_id.to_owned()))?;
+        if policy.get_relation(resource_name, permission).is_none() {
+            return Err(Error::RelationNotFound {
+                resource: resource_name.to_owned(),
+                relation: permission.to_owned(),
+            });
+        }
+        if !self
+            .is_doc_registered(policy_id, resource_name, doc_id)
+            .await?
+        {
+            return Ok(false);
+        }
+        let subject = match identity {
+            Identity::Authenticated(did) => did.clone(),
+            Identity::Anonymous => Did::wildcard(),
+        };
+        let engine = self.ensure_policy(policy_id, resource_name).await?;
+        Ok(engine
+            .check(policy_id, resource_name, doc_id, permission, &subject)
+            .await?)
+    }
+
     async fn add_actor_relationship(
         &self,
         requestor: &Did,

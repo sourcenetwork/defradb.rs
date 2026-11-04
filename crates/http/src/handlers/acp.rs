@@ -397,6 +397,7 @@ pub async fn add_doc_relationships(
 pub async fn remove_doc_relationship(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
     Json(body): Json<DocRelationshipRequest>,
 ) -> Result<Json<DocRelationshipResponse>, HttpError> {
     require_permission(&state, &identity, NodePermission::DacRelationDelete).await?;
@@ -422,6 +423,29 @@ pub async fn remove_doc_relationship(
         ));
     }
 
+    if let Some(txn_id) = crate::handlers::txn_header::txn_id_from_headers(&headers)? {
+        let handle = txn_id
+            .parse()
+            .map_err(|_| HttpError::BadRequest("invalid transaction id".into()))?;
+        let target = identity::Did::new(&body.target_actor)
+            .map_err(|error| HttpError::BadRequest(error.to_string()))?;
+        let removed = state
+            .executor
+            .delete_actor_relationship_in_txn(
+                identity.context(),
+                &handle,
+                requestor.clone(),
+                &body.collection,
+                &body.doc_id,
+                &body.relation,
+                target,
+            )
+            .await
+            .map_err(|error| HttpError::BadRequest(error.to_string()))?;
+        return Ok(Json(DocRelationshipResponse {
+            existed_already: !removed,
+        }));
+    }
     let doc_acp = bound(state.require_doc_acp()?, &identity.context());
 
     let was_removed = doc_acp

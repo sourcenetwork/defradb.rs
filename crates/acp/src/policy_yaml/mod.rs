@@ -94,6 +94,8 @@ pub struct PolicyPermission {
     pub doc: String,
     #[serde(default)]
     pub expr: String,
+    #[serde(default)]
+    pub manages: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -257,6 +259,7 @@ pub fn build_policy(parsed: &ParsedPolicy, counter: u64) -> crate::error::Result
             }
             let mut relation = Relation::computed(&perm.name, expression);
             relation.description = perm.doc.clone();
+            relation.manages = perm.manages.clone();
             relations.push(relation);
         }
 

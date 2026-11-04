@@ -38,7 +38,14 @@ impl Default for MemoryZanzibarStore {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl ZanzibarStore for MemoryZanzibarStore {
     async fn store_policy(&self, policy: &Policy) -> Result<()> {
-        self.policies.insert(policy.id.clone(), policy.clone());
+        if let Some(existing) = self
+            .policies
+            .insert_if_absent(policy.id.clone(), policy.clone())
+        {
+            if serde_json::to_vec(&existing)? != serde_json::to_vec(policy)? {
+                return Err(crate::error::Error::PolicyAlreadyExists(policy.id.clone()));
+            }
+        }
         Ok(())
     }
 
