@@ -86,6 +86,7 @@ pub trait TransportDocPusher: defra_core::thread_bounds::MaybeSendSync {
         &self,
         _peer_id: &PeerId,
         _docs: &[(String, String)],
+        _stop: &db::merge::SelectedPushStop,
     ) -> P2PResult<()> {
         Err(P2PError::unsupported(
             "push_existing_docs_by_id is not implemented",
@@ -336,6 +337,7 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
         &self,
         peer_id: &PeerId,
         docs: &[(String, String)],
+        stop: &db::merge::SelectedPushStop,
     ) -> P2PResult<()> {
         db::merge::push_existing_docs_by_id(
             &self.transport,
@@ -351,6 +353,7 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
             },
             &replication_filter::QueryReplicationFilterMatcher::new(),
             &self.car_authority,
+            stop,
         )
         .await
         .map_err(P2PError::from)

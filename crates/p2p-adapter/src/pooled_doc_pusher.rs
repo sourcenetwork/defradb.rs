@@ -178,11 +178,15 @@ impl TransportDocPusher for PooledDocPusher {
         &self,
         peer_id: &PeerId,
         docs: &[(String, String)],
+        stop: &db::merge::SelectedPushStop,
     ) -> P2PResult<()> {
-        let (peer_id, docs) = (peer_id.clone(), docs.to_vec());
-        self.on_pool(
-            move |inner| async move { inner.push_existing_docs_by_id(&peer_id, &docs).await },
-        )
+        let (peer_id, docs, worker_stop) = (peer_id.clone(), docs.to_vec(), stop.clone());
+        let _stop_on_drop = stop.stop_on_drop();
+        self.on_pool(move |inner| async move {
+            inner
+                .push_existing_docs_by_id(&peer_id, &docs, &worker_stop)
+                .await
+        })
         .await
     }
 
@@ -311,11 +315,17 @@ mod tests {
 
     /// Records whether its last storage call ran on a pool worker.
     #[derive(Default)]
-    struct WhereCalled(AtomicBool);
+    struct WhereCalled {
+        on_worker: AtomicBool,
+        stopped: AtomicBool,
+        entered: Option<regolith::sync::BoundedSender<()>>,
+        release: Option<regolith::sync::BoundedReceiver<()>>,
+        completed: Option<regolith::sync::BoundedSender<()>>,
+    }
 
     impl WhereCalled {
         fn note(&self) -> P2PResult<()> {
-            self.0.store(workers::on_worker(), Ordering::SeqCst);
+            self.on_worker.store(workers::on_worker(), Ordering::SeqCst);
             Ok(())
         }
     }
@@ -331,6 +341,25 @@ mod tests {
             _: Option<&[u8]>,
         ) -> P2PResult<()> {
             self.note()
+        }
+        async fn push_existing_docs_by_id(
+            &self,
+            _: &PeerId,
+            _: &[(String, String)],
+            stop: &db::merge::SelectedPushStop,
+        ) -> P2PResult<()> {
+            self.note()?;
+            if let Some(entered) = &self.entered {
+                let _ = entered.try_send(());
+            }
+            if let Some(release) = &self.release {
+                release.recv_async().await;
+            }
+            self.stopped.store(stop.is_stopped(), Ordering::SeqCst);
+            if let Some(completed) = &self.completed {
+                let _ = completed.try_send(());
+            }
+            Ok(())
         }
         async fn retry_doc(&self, _: &PeerId, _: &str, _: &str, _: u64) -> P2PResult<()> {
             self.note()
@@ -377,6 +406,37 @@ mod tests {
     }
 
     #[test]
+    fn dropping_a_selected_push_stops_the_detached_pool_call() {
+        let pool = workers::Pool::start(workers::Config::unplaced(1)).unwrap();
+        let (entered_tx, entered_rx) = regolith::sync::bounded(1);
+        let (release_tx, release_rx) = regolith::sync::bounded(1);
+        let (completed_tx, completed_rx) = regolith::sync::bounded(1);
+        let inner = Arc::new(WhereCalled {
+            entered: Some(entered_tx),
+            release: Some(release_rx),
+            completed: Some(completed_tx),
+            ..Default::default()
+        });
+        let pusher = pooled(inner.clone(), Some(&pool));
+        let peer = PeerId::new("peer-1".to_string());
+        let stop = db::merge::SelectedPushStop::new();
+        workers::block_on(async {
+            let operation = Box::pin(pusher.push_existing_docs_by_id(&peer, &[], &stop));
+            let entered = Box::pin(entered_rx.recv_async());
+            match futures::future::select(operation, entered).await {
+                futures::future::Either::Right((Some(()), operation)) => drop(operation),
+                _ => panic!("selected push ended before the worker started"),
+            }
+            release_tx.try_send(()).unwrap();
+            assert!(completed_rx.recv_async().await.is_some());
+        })
+        .unwrap();
+        assert!(inner.on_worker.load(Ordering::SeqCst));
+        assert!(inner.stopped.load(Ordering::SeqCst));
+        pool.shutdown_blocking().unwrap();
+    }
+
+    #[test]
     fn a_retry_called_off_the_pool_runs_on_a_worker() {
         let pool = workers::Pool::start(workers::Config::unplaced(1)).unwrap();
         let inner = Arc::new(WhereCalled::default());
@@ -386,7 +446,10 @@ mod tests {
             pusher.retry_doc(&peer, "bae-1", "c1", 1).await.unwrap();
         })
         .unwrap();
-        assert!(inner.0.load(Ordering::SeqCst), "the retry ran on a worker");
+        assert!(
+            inner.on_worker.load(Ordering::SeqCst),
+            "the retry ran on a worker"
+        );
         workers::block_on(async {
             pusher
                 .persist_p2p_documents(&["bae-1".to_string()])
@@ -394,7 +457,10 @@ mod tests {
                 .unwrap();
         })
         .unwrap();
-        assert!(inner.0.load(Ordering::SeqCst), "so does its persistence");
+        assert!(
+            inner.on_worker.load(Ordering::SeqCst),
+            "so does its persistence"
+        );
         pool.shutdown_blocking().unwrap();
     }
 }

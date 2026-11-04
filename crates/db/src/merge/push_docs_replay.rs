@@ -200,7 +200,9 @@ pub enum ReplayPushSendError {
     Backpressure { retry_after: Duration },
     Persistence(String),
     SemaphoreClosed,
+    Stopped,
     Timeout { timeout: Duration },
+    HeadTimeout { timeout: Duration },
     Transport(p2p::Error),
 }
 
@@ -220,6 +222,12 @@ impl fmt::Display for ReplayPushSendError {
                 retry_after.as_millis()
             ),
             Self::SemaphoreClosed => f.write_str("replay send semaphore closed"),
+            Self::Stopped => f.write_str("not sent: the selected push stopped"),
+            Self::HeadTimeout { timeout } => write!(
+                f,
+                "selected head exceeded its fixed {}ms delivery deadline",
+                timeout.as_millis()
+            ),
             Self::Timeout { timeout } => {
                 write!(f, "replay PushLog timed out after {}s", timeout.as_secs())
             }
@@ -312,21 +320,25 @@ impl ReplayPushGate {
             })?
             .map_err(ReplayPushSendError::Transport)?;
         if let Some(delay) = reply.retry_after() {
-            let bucket = self.peer_pacer.bucket(peer_id.as_str());
-            loop {
-                let current = bucket.load();
-                let mut next = *current;
-                next.blocked_until = Some(
-                    next.blocked_until
-                        .unwrap_or_else(Instant::now)
-                        .max(Instant::now() + delay),
-                );
-                if bucket.compare_and_swap(&current, next).is_ok() {
-                    break;
-                }
-            }
+            self.pause_peer_for(peer_id, delay);
         }
         Ok(reply)
+    }
+
+    pub(crate) fn pause_peer_for(&self, peer_id: &PeerId, delay: Duration) {
+        let bucket = self.peer_pacer.bucket(peer_id.as_str());
+        loop {
+            let current = bucket.load();
+            let mut next = *current;
+            next.blocked_until = Some(
+                next.blocked_until
+                    .unwrap_or_else(Instant::now)
+                    .max(Instant::now() + delay),
+            );
+            if bucket.compare_and_swap(&current, next).is_ok() {
+                break;
+            }
+        }
     }
 }
 
