@@ -49,6 +49,22 @@ use Tier::{Behavioral, Boundary, Contract};
 
 pub const PROPERTIES: &[Property] = &[
     Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "LocalFetchPermit.released_before_send / release_preserves_queue",
+        axis: Lean,
+        anchor: "crates/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_dag",
+        model_ref: "LocalFetchPermit (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "NoPermitWhileSending / OnePermit — locally complete fetch releases its peer permit before queueing merge",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_dag; crates/p2p/src/sync/coordinator/dag_fetcher_tests.rs local_complete_fetch_releases_peer_permit_before_waiting_to_send",
+        model_ref: "MC_LocalFetchPermit_{Green,Red_Hold}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "HTTP router composition",
         name: "WholeRouter / SingleConstructor / NoBypass / ForwardingPreserved",
         axis: Tla,

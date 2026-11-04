@@ -7,6 +7,8 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # rows: <cfg> <module> <GREEN|RED>
 RUNS=(
+  "MC_LocalFetchPermit_Green.cfg LocalFetchPermit.tla GREEN"
+  "MC_LocalFetchPermit_Red_Hold.cfg LocalFetchPermit.tla RED"
   "MC_HttpRouterComposition_Green.cfg HttpRouterComposition.tla GREEN"
   "MC_HttpRouterComposition_Red_Early.cfg HttpRouterComposition.tla RED"
   "MC_HttpRouterComposition_Red_Fallback.cfg HttpRouterComposition.tla RED"
