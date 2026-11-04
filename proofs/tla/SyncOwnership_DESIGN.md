@@ -517,13 +517,13 @@ the shared peer's after the others: the worst case for a key-order sweep.
   the sender sees only the acknowledgement. The models promise such a head
   an eventual merge (`LIVE_WrittenHeadMerged`), not a bound.
 - `OverflowMode = "Rotate"`: a root whose `dispatches` reached `RotateAfter`
-  (`PENDING_ROTATE_AFTER_DISPATCHES`; 1 in the configurations) gives its
-  entry up once its attempt has ended, while a durable root waits and the map
-  is full or its peer is at its quota, keeping its record (`Yield`;
-  `PendingDagLease::finish_attempt`). The sweep visits the places in key order
-  after the place at which it admitted last, gives a peer's places to that
-  peer's roots in key order after the one it admitted last, and admits the
-  first waiting root that fits, passing the others
+  (`PENDING_ROTATE_AFTER_DISPATCHES`; 1 in the configurations) gives its entry
+  up as its attempt ends, while a durable root waits and the map is full or
+  its peer is at its quota, keeping its record (`EndAttempt`, part of `MFail`
+  and `MComplete`; `PendingDagLease::finish_attempt`). The sweep visits the
+  places in key order after the place at which it admitted last, gives a
+  peer's places to that peer's roots in key order after the one it admitted
+  last, and admits the first waiting root that fits, passing the others
   (`records_after_resync_cursor`). `"PassOver"`, the rule before, gives each
   place its own root: a root left waiting on its peer's quota is passed by the
   places after it, and when the peer's place is free a root of the same peer
@@ -563,10 +563,9 @@ never-serving scope, since such a root can hold its peer's quota.
 The in-memory quota checks use three
 documents, `d1` and `d2` from one peer, `d1` and `d3` dead, key order `d3`,
 `d1`, `d2`, and a map of two after the restart, so the peer's quota is one
-entry. Giving an entry up is per root, like an attempt's windows: `finish_attempt`
-does it at the end of every attempt once the root is spent and contended.
-With that fairness on the disjunction over roots, a lasso keeps `d1` in the
-peer's place for ever while `d3` gives its entry up, which the code cannot do.
+entry. Giving an entry up has no fairness of its own: it is part of the end
+of an attempt, as in `finish_attempt`, so a spent root that holds a contended
+place gives it up when its attempt ends.
 
 ## Checked properties
 
