@@ -43,6 +43,10 @@ pub struct Property {
     pub model_ref: &'static str,
     /// How this property is bound to the implementation.
     pub tiers: &'static [Tier],
+    /// The tests that bind a Contract or Behavioral property, in anchor
+    /// syntax: each file and the test functions in it. Empty for a property
+    /// that is only a Boundary.
+    pub bound_by: &'static str,
 }
 
 use Axis::{Lean, Tla};
@@ -72,6 +76,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/http/src/server.rs Server::router, Server::serve; router_transform_tests.rs forwarding_filter_matches_executed_model; crates/defra-node/src/router_transform_tests.rs",
         model_ref: "MC_HttpRouterComposition_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "HTTP router composition",
@@ -80,6 +85,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/http/src/server.rs Server::router; router_transform_tests.rs forwarding_filter_matches_executed_model",
         model_ref: "HttpRouterComposition (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // Disconnect answers only once the peer's last connection closed, so
@@ -90,6 +96,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/host/command_handler/network.rs handle_disconnect; crates/p2p/src/host/p2p_host/swarm.rs handle_connection_closed; tools/integration-test/tests/net/info/disconnect_peers.rs",
         model_ref: "MC_PeerDisconnect_{Green,Red_EarlyAck}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // iroh answers Disconnect once the close has started, the Red_EarlyAck
@@ -102,6 +109,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/iroh/endpoint_commands.rs handle_disconnect; crates/p2p-adapter/src/iroh.rs connected_peers, connect_peer",
         model_ref: "MC_PeerDisconnect_Red_EarlyAck.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Peer connection observation",
@@ -110,6 +118,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/iroh/endpoint_config.rs apply_bind_config; endpoint_config/bind_tests.rs native_bindings_match_executed_model, native_port_mapping_configuration_matches_executed_model, loopback_endpoint_does_not_open_wildcard_gateway_discovery_listeners",
         model_ref: "MC_EndpointBind_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Peer connection observation",
@@ -118,6 +127,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/iroh/endpoint_config.rs apply_bind_config; endpoint_config/bind_tests.rs model_cases, native_port_mapping_configuration_matches_executed_model",
         model_ref: "EndpointBind (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
@@ -126,6 +136,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/coordinator/selective_car_access.rs register, reclaim_completed and allows_root",
         model_ref: "MC_SelectiveCarCapacity_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
@@ -134,6 +145,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/coordinator/selective_car_access.rs register, reclaim_completed and allows_root",
         model_ref: "SelectiveCarCapacity (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
@@ -142,6 +154,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/merge/push_docs.rs push_existing_docs_by_id",
         model_ref: "MC_DocumentPush_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // Revoke is API-only: revoke_selected_car_root has no production
@@ -155,6 +168,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/storage/src/stores/peerstore/selected_car.rs revoke_selected_car_root; crates/p2p/src/sync/coordinator/event_handler/car.rs",
         model_ref: "MC_SelectedCarAuthority_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
@@ -163,6 +177,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/merge/push_docs.rs push_existing_docs_by_id",
         model_ref: "MC_SelectedPushIsolation_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // As above: nothing in production revokes, so revoked_denied is about
@@ -173,6 +188,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/storage/src/stores/peerstore/selected_car.rs",
         model_ref: "SelectedCarAuthority (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
@@ -181,6 +197,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/merge/push_docs.rs; crates/db/tests/merge/push_docs_selection.rs",
         model_ref: "DocumentPush.lean; selected_document_transfers_match_executed_model",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
@@ -189,6 +206,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/car_authorization.rs; car_authorization_registry.rs walk_with_limits; crates/p2p/tests/unit/car_authorization_limits.rs",
         model_ref: "MC_RootedAuthorization_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
@@ -197,6 +215,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/car_authorization_budget.rs; car_authorization_registry.rs",
         model_ref: "RootedAuthorization (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
@@ -205,6 +224,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p-adapter/src/replicator_install_store.rs; crates/p2p-adapter/src/replicator_installs.rs",
         model_ref: "MC_ReplicatorInstall_{Green,Red_*}.cfg; MC_ReplicatorIncarnation_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
@@ -213,6 +233,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p-adapter/src/replicator_install_store.rs finish",
         model_ref: "ReplicatorInstall (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
@@ -221,6 +242,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/replication/handlers.rs::process_one_event; crates/p2p/src/sync/replication/continuation_tests.rs::already_merged_duplicate_continuation_releases_reservation_without_handler",
         model_ref: "MC_ContinuationSlot_{Green,Red_LateClaim}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
@@ -229,6 +251,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/coordinator/mod.rs::claim_pending_dag_merge; crates/p2p/src/sync/replication/handlers.rs::process_one_event",
         model_ref: "HistoryTurns.owned_slot_released (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
@@ -237,6 +260,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/merge/merge_handler/history.rs::reject_history; crates/db/tests/merge/history_cursor.rs",
         model_ref: "MC_RetryMarkerGeneration_{Green,Red_StaleAck,Red_Readd}.cfg (incarnation-fenced retirement abstraction)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
@@ -245,6 +269,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/merge/merge_handler/history.rs; history_registry.rs; dispatch.rs; crates/db/src/merge/replication.rs; crates/db/tests/merge/collection_history_control.rs",
         model_ref: "MC_HistoryTurns_{Green,Red_*}.cfg; MC_HistoryDriver_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
@@ -253,6 +278,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/merge/merge_handler/history.rs",
         model_ref: "HistoryTurns (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Storage failure classification",
@@ -261,6 +287,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/storage/src/corekv/errors.rs; crates/db/src/error/mod.rs; crates/query/src/runner/turn.rs; crates/query/src/executor.rs; crates/http/src/error.rs",
         model_ref: "MC_StorageFailure_Green.cfg / MC_StorageFailure_Red_LostCause.cfg / MC_StorageFailure_Red_Text.cfg / MC_StorageFailure_Red_Retry.cfg",
         tiers: &[Contract],
+        bound_by: "crates/query/tests/storage_failure.rs storage_failure_classification_matches_executed_model",
     },
     Property {
         family: "Storage failure classification",
@@ -269,6 +296,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/storage/src/corekv/io_failure.rs; crates/storage/src/backends/regolith/transaction.rs map_txn_error; crates/query/src/executor.rs QueryResponseError::from_query_error; crates/query/tests/storage_failure.rs",
         model_ref: "StorageFailure.lean",
         tiers: &[Contract],
+        bound_by: "crates/query/tests/storage_failure.rs storage_failure_classification_matches_executed_model",
     },
     Property {
         family: "ACP soundness + revocation + dual-path commits",
@@ -277,6 +305,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/query/src/runner/owners.rs; crates/db/src/read/lensed/fetcher/mod.rs",
         model_ref: "MC_OwnerObservation_Green.cfg / MC_OwnerObservation_Red_*.cfg",
         tiers: &[Contract],
+        bound_by: "crates/db/tests/read/owner_observation.rs owner_observation_rejects_a_claim_without_a_bound_transaction_view; crates/query/src/runner/owners_tests.rs owner_observation_rejects_a_fetcher_without_a_transaction_view",
     },
     Property {
         family: "ACP soundness + revocation + dual-path commits",
@@ -285,6 +314,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/query/src/runner/owners.rs",
         model_ref: "Acp.OwnerObservation",
         tiers: &[Contract],
+        bound_by: "crates/db/tests/read/owner_observation.rs owner_observation_rejects_a_claim_without_a_bound_transaction_view; crates/query/src/runner/owners_tests.rs owner_observation_rejects_a_fetcher_without_a_transaction_view",
     },
     Property {
         family: "Peer connection observation",
@@ -293,6 +323,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/coordinator/authorizer.rs RuntimeAuthorizer::peer_connected; access_tests.rs live_connection_allows_pull_before_lifecycle_notification_without_granting_push",
         model_ref: "MC_PeerConnection_Green.cfg / MC_PeerConnection_Red_StaleObservation.cfg",
         tiers: &[Contract],
+        bound_by: "crates/p2p/src/sync/coordinator/access_tests.rs live_connection_allows_pull_before_lifecycle_notification_without_granting_push",
     },
     Property {
         family: "Peer connection observation",
@@ -301,6 +332,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/coordinator/authorizer.rs RuntimeAuthorizer::peer_connected",
         model_ref: "PeerConnection.lean",
         tiers: &[Contract],
+        bound_by: "crates/p2p/src/sync/coordinator/access_tests.rs live_connection_allows_pull_before_lifecycle_notification_without_granting_push",
     },
     Property {
         family: "Peer connection observation",
@@ -309,6 +341,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/iroh/endpoint_streams.rs handle_incoming; endpoint_rpc.rs remember_connection, connect_with_cache and evict_connection; crates/p2p/tests/iroh/shared_connection.rs",
         model_ref: "MC_SharedRpcConnection_{Green,Red_*}.cfg; MC_LegacyRpcCache_{Green,Red_*}.cfg; MC_RpcCacheEviction_{Green,Red_*}.cfg",
         tiers: &[Contract],
+        bound_by: "crates/p2p/tests/iroh/shared_connection.rs disconnect_closes_replacement_despite_stale_cleanup, legacy_only_peer_reuses_and_refreshes_its_shared_rpc_path, accepted_inbound_connection_serves_reverse_rpc_without_another_dial, authenticated_reconnection_replaces_an_open_old_rpc_path",
     },
     Property {
         // When the cached RPC handle closes, its slot is left empty and the
@@ -321,6 +354,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/iroh/endpoint_rpc.rs connect_with_cache, evict_connection; crates/p2p/src/iroh/endpoint_streams.rs handle_connection_streams",
         model_ref: "MC_SharedRpcConnection_{Green,Red_NoAdoption}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Peer connection observation",
@@ -329,6 +363,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/iroh/endpoint_rpc.rs remember_connection, connect_with_cache and evict_connection; endpoint_streams.rs handle_incoming",
         model_ref: "PeerConnection.SharedRpc",
         tiers: &[Contract],
+        bound_by: "crates/p2p/tests/iroh/shared_connection.rs authenticated_reconnection_replaces_an_open_old_rpc_path, legacy_only_peer_reuses_and_refreshes_its_shared_rpc_path, legacy_mux_does_not_replace_the_modern_shared_rpc_handle, disconnect_closes_replacement_despite_stale_cleanup",
     },
     Property {
         family: "Schema publication completion",
@@ -337,6 +372,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/storage/src/corekv/callbacks.rs OnCommit::OrderedAndWait; crates/db/tests/collection/schema_publication.rs",
         model_ref: "MC_SchemaPublication_Green.cfg / MC_SchemaPublication_Red_EarlyReply.cfg",
         tiers: &[Contract],
+        bound_by: "crates/db/tests/collection/schema_publication.rs schema_success_waits_for_its_ordered_cache_publication",
     },
     Property {
         family: "Schema publication completion",
@@ -345,6 +381,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/storage/src/corekv/callbacks.rs OnCommit::OrderedAndWait; crates/db/tests/collection/schema_publication.rs",
         model_ref: "SchemaPublication.lean",
         tiers: &[Contract],
+        bound_by: "crates/db/tests/collection/schema_publication.rs schema_success_waits_for_its_ordered_cache_publication",
     },
     Property {
         family: "DiskANN pending cache",
@@ -353,6 +390,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/index/vector/engine/diskann/graph.rs pending_candidates; crates/db/src/index/vector/engine/diskann/pending_cache.rs PendingCache; crates/db/src/index/vector/engine/diskann/mod.rs insert, delete; crates/db/src/index/vector/engine/diskann/merge.rs merge_plan, merge",
         model_ref: "MC_PendingCache_Green.cfg (GREEN) / MC_PendingCache_Red_NoGeneration.cfg / MC_PendingCache_Red_OwnWrites.cfg / MC_PendingCache_Red_TruncateThroughHead.cfg (RED)",
         tiers: &[Contract],
+        bound_by: "crates/db/tests/vector/diskann_pending_cache.rs later_inserts_catch_the_copy_up_without_a_reload, a_transaction_finds_its_own_uncommitted_insert, a_merge_truncates_the_log_it_absorbed, an_insert_during_a_merge_stays_pending",
     },
     Property {
         family: "DiskANN pending cache",
@@ -361,6 +399,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/index/vector/engine/diskann/pending_cache.rs PendingCache; crates/db/src/index/vector/engine/diskann/mod.rs insert; crates/db/src/index/vector/engine/diskann/merge.rs merge_plan, merge",
         model_ref: "PendingCache.Covers.prefix_covered / catch_up_in_steps / merge_keeps_every_vector / truncate_through_head_loses",
         tiers: &[Contract],
+        bound_by: "crates/db/tests/vector/diskann_pending_cache.rs later_inserts_catch_the_copy_up_without_a_reload, a_catch_up_past_the_cap_is_refused, a_merge_truncates_the_log_it_absorbed",
     },
     Property {
         family: "DiskANN pending cache",
@@ -369,6 +408,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/index/vector/engine/diskann/graph.rs pending_candidates, snapshot_pending; crates/db/src/index/vector/engine/diskann/pending_cache.rs Copy::for_each_latest_through, Copy::caught_up, Segment::push, Segment::supersede",
         model_ref: "MC_PendingCache_Green.cfg (GREEN) / MC_PendingCache_Red_EveryVersion.cfg / MC_PendingCache_Red_FutureVersion.cfg / MC_PendingCache_Red_HeadBlindMarks.cfg / MC_PendingCache_Red_NoGapCheck.cfg / MC_PendingCache_Red_NoGeneration.cfg (RED)",
         tiers: &[Contract],
+        bound_by: "crates/db/tests/vector/diskann_pending_cache.rs an_updated_vector_is_scored_by_its_latest_code, a_transaction_scores_its_own_update_by_its_latest_code, a_snapshot_behind_the_copy_scores_the_codes_it_can_see, a_superseded_marker_respects_the_readers_head",
     },
     Property {
         family: "DiskANN pending cache",
@@ -377,6 +417,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/index/vector/engine/diskann/graph.rs pending_candidates; crates/db/src/index/vector/engine/diskann/pending_cache.rs Copy::for_each_latest_through",
         model_ref: "PendingCache.Latest.scored_is_last / scored_append / cut_scores_snapshot / uncut_scores_future",
         tiers: &[Contract],
+        bound_by: "crates/db/tests/vector/diskann_pending_cache.rs an_updated_vector_is_scored_by_its_latest_code, a_snapshot_behind_the_copy_scores_the_codes_it_can_see",
     },
     Property {
         family: "DiskANN pending cache",
@@ -385,6 +426,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/index/vector/engine/diskann/pending_cache.rs Segment::push, Segment::supersede, Copy::for_each_latest_through",
         model_ref: "PendingCache.Marks.kept_is_newest / newest_is_kept / one_kept_per_vector / next_decides / head_blind_marker_hides",
         tiers: &[Contract],
+        bound_by: "crates/db/tests/vector/diskann_pending_cache.rs a_superseded_marker_respects_the_readers_head, racing_catch_ups_agree_on_markers, a_folded_copy_keeps_one_entry_per_vector",
     },
     Property {
         family: "DiskANN pending cache",
@@ -393,6 +435,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/index/vector/engine/diskann/cache.rs CodeCaches::evict, evict_collection; crates/db/src/collection/ops/delete.rs delete_collection_as; crates/db/src/collection/ops/version.rs delete_collection_version_as",
         model_ref: "MC_PendingCache_Green_Evict.cfg (GREEN)",
         tiers: &[Contract],
+        bound_by: "crates/db/tests/vector/diskann_pending_cache.rs evicting_drops_only_the_named_caches",
     },
     Property {
         family: "DiskANN shared quantizer",
@@ -401,6 +444,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/index/vector/engine/diskann/mod.rs DiskAnn::quantizer; crates/db/src/index/vector/engine/diskann/cache.rs CodeCache::quantizer, CodeCache::share_quantizer; crates/db/src/index/vector/engine/diskann/build.rs train_and_build",
         model_ref: "MC_SharedQuantizer_Green.cfg (GREEN) / MC_SharedQuantizer_Red_NoTagCheck.cfg / MC_SharedQuantizer_Red_TagPerRequest.cfg / MC_SharedQuantizer_Red_OneSlot.cfg (RED)",
         tiers: &[Contract],
+        bound_by: "crates/db/tests/vector/diskann_shared_quantizer.rs a_write_shares_the_quantizer_under_its_training, a_quantizer_under_another_training_is_not_used, writers_straddling_a_rebuild_keep_both_quantizers",
     },
     Property {
         family: "DiskANN shared quantizer",
@@ -409,6 +453,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/index/vector/engine/diskann/codec.rs encode_trained, decode_trained; crates/db/src/index/vector/engine/diskann/cache.rs CodeCache::quantizer, CodeCache::share_quantizer",
         model_ref: "SharedQuantizer.Tagged.decode_encode / lookup_is_books / share_keeps_consistent / reused_tag_serves_other_books / share_keeps_previous / one_slot_evicts",
         tiers: &[Contract],
+        bound_by: "crates/db/tests/vector/diskann_shared_quantizer.rs trained_record_reads_back_with_and_without_its_training, a_quantizer_under_another_training_is_not_used",
     },
     Property {
         family: "RobustPrune blocked covered checks",
@@ -417,6 +462,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/index/vector/engine/select/robust_prune.rs RobustPrune::select; crates/defra-core/src/vector/kernel/mod.rs squared_euclidean_block",
         model_ref: "RobustPruneBlocks.blocked_eq_sequential / no_since_keeps_a_covered_edge",
         tiers: &[Contract],
+        bound_by: "crates/db/tests/vector/edge_selection.rs robust_prune_keeps_the_edges_one_at_a_time_checking_keeps",
     },
     Property {
         family: "DiskANN back-edges in place",
@@ -425,6 +471,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/index/vector/engine/diskann/codec.rs add_edges; crates/db/src/index/vector/engine/diskann/graph.rs add_back_edges",
         model_ref: "BackEdgesInPlace.in_place_eq_decoded / stale_search_duplicates_an_edge",
         tiers: &[Contract],
+        bound_by: "crates/db/tests/vector/diskann_back_edges.rs adding_edges_in_place_writes_what_decoding_and_encoding_would",
     },
     Property {
         family: "Vector index link maintenance",
@@ -433,6 +480,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/storage/src/backends/regolith/merge/vector.rs; crates/db/src/index/vector/engine/hnsw/insert.rs; crates/db/tests/vector/concurrent_hnsw.rs",
         model_ref: "MC_VectorLinks_Green.cfg / MC_VectorLinks_Red_Puts.cfg / MC_VectorLinks_Red_Prune.cfg",
         tiers: &[Contract],
+        bound_by: "crates/db/tests/vector/concurrent_hnsw.rs overlapping_inserts_keep_shared_links_and_metadata_counts, structural_pruning_conflicts_with_a_new_link",
     },
     Property {
         // Two writers appending to one collection without seeing each other must
@@ -449,6 +497,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/block/builder/collection.rs write_collection_block; crates/db/src/block/heads.rs publish_collection_block; crates/storage/src/backends/regolith/transaction.rs; crates/db/tests/block/heads.rs overlapping_appends_both_commit",
         model_ref: "MC_HeadSet_Green.cfg (GREEN) / MC_HeadSet_Red_EagerDelete.cfg (RED) / MC_HeadSet_Red_PerKeyScan.cfg (RED)",
         tiers: &[Behavioral],
+        bound_by: "crates/db/tests/block/heads.rs overlapping_appends_both_commit",
     },
     Property {
         // A replicated block is published into its document's head set once:
@@ -462,6 +511,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/block/heads/document.rs publish/was_published; crates/storage/src/backends/regolith/merge/head_set.rs part/touches; crates/db/tests/block/document_heads.rs, crates/db/tests/merge/head_publication.rs",
         model_ref: "MC_HeadPublication_Green.cfg (GREEN) / MC_HeadPublication_Red_{NoRecord,OwnUnvalidated,NoPartRead,WholeSet}.cfg (RED)",
         tiers: &[Contract],
+        bound_by: "crates/db/tests/block/document_heads.rs replay_of_a_superseded_parent_cannot_resurrect_it, holding_a_parent_ahead_conflicts_with_its_publication, an_unrelated_publication_does_not_turn_away_a_hold; crates/db/tests/merge/head_publication.rs a_replayed_create_after_a_local_update_stays_superseded",
     },
     Property {
         // The algebra the temporal model rests on, for the per-key design:
@@ -476,6 +526,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/block/heads.rs live_collection_heads, publish_collection_block; crates/db/src/block/builder/collection.rs write_collection_block; crates/db/tests/block/head_conformance.rs head_queries_match_executable_lean",
         model_ref: "HeadSet.Core (lake build)",
         tiers: &[Contract],
+        bound_by: "crates/db/tests/block/head_conformance.rs head_queries_match_executable_lean",
     },
     Property {
         family: "Commit-ordered document arrivals",
@@ -484,6 +535,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/event/arrivals.rs record; crates/storage/src/backends/regolith/transaction.rs append; crates/db/tests/read/arrival_transactions.rs",
         model_ref: "regolith@e844baefe838f3af76403afd46c4b42f1a0b98a5 proofs/tla/CommitOrderedAppend.tla (GREEN Groups/Pipeline/Faults, RED Counter/OnceFromView/AssignBeforeValidation)",
         tiers: &[Behavioral],
+        bound_by: "crates/db/tests/read/arrival_transactions.rs reversed_concurrent_commits_receive_cursors_in_commit_order, rollback_is_atomic_and_duplicate_arrivals_do_not_advance, cursor_survives_database_reopen",
     },
     Property {
         family: "Retry input and marker fencing",
@@ -492,6 +544,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/query/src/error.rs QueryError::NeedsInput; crates/db/src/write/autocommit/create.rs create_many_with_resolved_inputs; update.rs update_with_projected_resolved_inputs; delete.rs delete_with_resolved_inputs; crates/db/src/write/create.rs embed, compute_many; crates/query/src/prepared.rs; crates/storage/src/stores/peerstore.rs register/complete/clear retry scope",
         model_ref: "MC_RetryPreparedInputs_{Green,Red_*}.cfg / MC_RetryMarkerGeneration_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Retry input and marker fencing",
@@ -500,6 +553,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p-adapter/src/retry.rs run_retry_pass; crates/storage/src/stores/peerstore.rs get_retry_page, load_scope_markers, reschedule_retry_peer_for_incarnation; crates/db/src/merge/push_docs.rs retry_doc; crates/db/src/merge/push_docs_common.rs complete_document_retry_if_absent",
         model_ref: "MC_RetryMarkerGeneration_{Green,Red_UnboundedReads,Red_KeepVanished,Red_NoRotation}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Retry input and marker fencing",
@@ -508,6 +562,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/storage/src/stores/peerstore.rs admit_push_scope; crates/p2p-adapter/src/retry.rs spawn_failure_recorder; crates/p2p/src/sync/coordinator/push_worker.rs run_push_job",
         model_ref: "MC_RetryPushAdmission_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Retry input and marker fencing",
@@ -516,6 +571,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/storage/src/stores/peerstore.rs RegisterScopeMarkerAttempt; create_replicator",
         model_ref: "MC_RetryRegistrationFence_{Green,Red_NoEpoch,Red_NoOrder}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Retry input and marker fencing",
@@ -524,6 +580,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/coordinator/broadcast.rs admit_replicator_push; broadcast_tests.rs fanout_registration_failure_is_peer_local",
         model_ref: "MC_RetryRegistrationFence_{Green,Red_FanOutAbort}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // One retry clock per peer serves all of its markers. An acknowledged
@@ -539,6 +596,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/storage/src/stores/retry_info.rs RetryInfo::restart_after_delivery, RetryInfo::bounded_by, RetryInfo::bump_with_schedule; crates/storage/src/stores/peerstore.rs PeerstoreRetryAttempt::{CompleteMarker, Reschedule, Restart, Activate}, RegisterScopeMarkerAttempt, Peerstore::load_scope_markers; crates/p2p-adapter/src/retry.rs run_retry_pass, record_failure; crates/p2p/src/sync/coordinator/push_worker.rs run_push_job; crates/db/src/merge/push_docs_common.rs complete_document_retry_if_current",
         model_ref: "MC_RetrySchedule_{Green,Red_KeepRung,Red_SupersededKeepsRung,Red_ReplayKeepsRung,Red_RegisterRestarts,Red_ActivateRestarts,Red_ClockBackHolds}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Retry input and marker fencing",
@@ -547,6 +605,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/storage/src/stores/retry_info.rs RetryInfo::restart_after_delivery, RetryInfo::bump_with_schedule",
         model_ref: "RetrySchedule (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Collection schema-version OCC",
@@ -555,6 +614,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/txn/mod.rs validate_collection_for_write; crates/db/src/write/autocommit/{create,update,delete}.rs; crates/db/src/definition structural updates",
         model_ref: "MC_CollectionVersionOCC_Green.cfg / MC_CollectionVersionOCC_Red_NoValidation.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Explicit transaction statement atomicity",
@@ -563,6 +623,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/query/src/runner/mutation.rs explicit transaction mutation execution; crates/db/src/txn/mod.rs statement savepoint; crates/storage/src/backends/regolith/transaction.rs savepoint callbacks",
         model_ref: "MC_StatementAtomicity_Green.cfg / MC_StatementAtomicity_Red_*.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "B3 filtered replication",
@@ -571,6 +632,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p filtered replication; crates/db (merge)",
         model_ref: "MC_S4_ModelB.cfg / M1Convergence.cfg",
         tiers: &[Behavioral],
+        bound_by: "proofs/tests/behavioral/replication.rs two_node_replication_converges",
     },
     Property {
         // Head rediscovery is embedder-owned. Only sender retry markers and
@@ -586,6 +648,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db (merge) merge handler; crates/blockstore; crates/p2p/src/sync/coordinator/event_handler/mod.rs handle_peer_connected; crates/p2p-adapter/src/retry.rs run_retry_pass",
         model_ref: "MC_Conv_{Eventual,RestartEviction,NoHeadRediscovery}.cfg",
         tiers: &[Boundary],
+        bound_by: "proofs/tests/behavioral/replication.rs two_node_replication_converges; partition.rs convergence_partition_both_directions_merge, convergence_concurrent_same_doc_writes_merge",
     },
     Property {
         // Only sender retry markers and receiver durable pending records
@@ -600,6 +663,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/coordinator/event_handler/mod.rs handle_peer_connected; crates/p2p-adapter/src/retry.rs run_retry_pass",
         model_ref: "MC_Conv_NoHeadRediscovery.cfg (RED)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "CRDT merge laws",
@@ -619,6 +683,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/crdt/src/field/lww.rs LwwField::merge; crates/crdt/src/field/counter.rs CounterField::merge; crates/crdt/src/stored.rs StoredDocument::apply componentwise field merge",
         model_ref: "DefraConvergence.MixedField (lake build); MC_MixedFieldMaterialization_Green.cfg",
         tiers: &[Contract, Behavioral],
+        bound_by: "proofs/tests/lean_conformance.rs lean_merge_result_vocab_matches_rust; proofs/tests/behavioral/partition.rs convergence_concurrent_mixed_lww_and_counter_fields_merge, convergence_concurrent_pncounter_signed_deltas_sum",
     },
     Property {
         family: "CRDT merge laws",
@@ -627,6 +692,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/crdt/src/field/counter.rs CounterField::op; crates/crdt/tests/field_contract.rs only_the_positive_counter_refuses_a_negative_value",
         model_ref: "DefraConvergence.PCounterGuard.run_ge (lake build)",
         tiers: &[Contract],
+        bound_by: "crates/crdt/tests/field_contract.rs only_the_positive_counter_refuses_a_negative_value",
     },
     Property {
         // Two behavioral legs: backfill (a write that pre-dates the replicator is
@@ -642,6 +708,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/replicator.rs; crates/db/src/merge/push_docs.rs push_existing_docs, retry_doc",
         model_ref: "MC_Replicator_Resumable_Green.cfg",
         tiers: &[Behavioral],
+        bound_by: "proofs/tests/behavioral/replicator_lifecycle.rs replicator_backfill_no_loss, replicator_resume_across_restart",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
@@ -653,6 +720,7 @@ pub const PROPERTIES: &[Property] = &[
         // integration-test crate, outside this conformance binary's behavioral
         // harness. Keep this binding honest until that harness drives them.
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // A transactional write's markers are registered after its commit;
@@ -664,6 +732,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/merge/txn_broadcaster.rs SyncTxnBroadcaster::submit_update; crates/db/src/event/emission.rs register_update_event_callback; crates/defra-node/src/lib.rs Node::shutdown",
         model_ref: "MC_SyncOwnership_{Green_MarkerHandoff,Red_UndrainedMarker}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
@@ -672,6 +741,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync coordinator + pending DAG clock; crates/db (merge) document marker rederive",
         model_ref: "MC_SyncOwnership_Green_Liveness_Doc.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
@@ -680,6 +750,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync coordinator + pending DAG clock; crates/db (merge) collection marker rederive",
         model_ref: "MC_SyncOwnership_Green_Liveness_Collection.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
@@ -688,6 +759,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/manager/process/pushlog.rs; crates/p2p/src/sync/pending_store/mod.rs; crates/p2p/src/sync/coordinator/mod.rs",
         model_ref: "MC_SyncOwnership_Green_Liveness_IrohRelay.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // A clock-dispatched fetch gives its slot back after one attempt, its
@@ -713,6 +785,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_dag, FetchTaskEnd; crates/p2p/src/sync/coordinator/dag_retry.rs CLOCK_ATTEMPT_QUANTUM; crates/p2p/src/sync/replication/handlers.rs handle_dag_needs_fetch; crates/p2p/src/sync/coordinator/dag_context.rs DagFetchContext::finish_clock_attempt; crates/p2p/src/sync/manager/process/pending_dag.rs try_claim_pending_dag_dispatch, PendingDagLease::finish_attempt, due_pending_dag_retries; crates/p2p/src/sync/manager/pending.rs PendingDag::is_expired; crates/p2p/src/sync/manager/config.rs SyncConfig::pending_dag_ttl; crates/p2p/src/sync/manager/pending.rs PENDING_DAG_TTL; crates/p2p/src/sync/coordinator/mod.rs dispatch_due_pending_dag_fetches, DagFetchLimiter::try_reserve_peer, DagFetchLimiter::acquire",
         model_ref: "MC_SyncOwnership_{Green_Dispatch,Green_Dispatch_DeadProvider,Green_Dispatch_Trickle,Green_Dispatch_PeerPermits,Green_Dispatch_PullPermit,Red_HeldSlot,Red_ClaimTimeRearm,Red_AckedTtl,Red_UnboundedProductive,Red_SlotBeforePermit}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // The clock hands its dispatches to the merge loop on a lane of their
@@ -731,6 +804,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/manager/event_lanes.rs DispatchLane, SyncEventReceiver::recv; crates/p2p/src/sync/coordinator/mod.rs dispatch_due_pending_dag_fetches; crates/p2p/src/sync/manager/process/pending_dag.rs retry_pending_dag",
         model_ref: "MC_SyncOwnership_{Green_Dispatch_Storm,Green_Dispatch_LaneTurns,Red_MergeFifoDispatch,Red_BlockingHandlerSend,Red_LoopWaitsOnItself,Red_LaneAlwaysFirst}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // The durable store can hold more acknowledged roots than the
@@ -753,6 +827,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/manager/process/pending_dag.rs PendingDagLease::finish_attempt, records_after_resync_cursor, resync_persisted_pending_dags_inner, try_insert_pending_dag, max_pending_dags_per_peer, continue_merge, consume_pending_merge_continuation, MergeTurn; crates/p2p/src/sync/manager/pending.rs PendingOrigin, PENDING_ROTATE_AFTER_DISPATCHES; crates/p2p/src/sync/replication/handlers.rs handle_block_received, process_merge_batch",
         model_ref: "MC_SyncOwnership_{Green_Memory,Green_Memory_Quota,Red_RetainedOverflow,Red_KeyOrderResync,Red_QuotaPassOver,Red_ImmortalContinuation}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // A hub that merges an upstream head forwards it to its own
@@ -768,6 +843,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/replication/handlers.rs forward_merged, forward_owed, handle_block_received, process_merge_batch; crates/defra-core/src/merge.rs MergeOutcome::skip_reason_is_applied; crates/p2p/src/sync/replication/forward_tests.rs; crates/db/tests/merge/head_publication.rs",
         model_ref: "MC_SyncOwnership_{Green,Green_Liveness_Doc,Red_DischargeBeforeForward,Red_OwedInMemory}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // The pusher's outbound head hints wait in one bounded queue drained by
@@ -784,6 +860,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/push_backlog.rs BacklogOwner::enqueue, pop_eligible, park_peer, park_peer_unreachable, peer_answered, retire_idle_cooldowns, take_queued_for_peer; crates/p2p/src/sync/coordinator/push_worker.rs spawn_push_workers, run_push_job",
         model_ref: "MC_PushBacklog_{Green,Green_TwoDead,Green_SharedCap,Red_TwoDead,Red_DemoteEveryTimeout,Red_NoPeerCap,Red_SpawnPerItem,Red_PermitLeak,Red_RetainHandles}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // Admission has two tiers: a head the full map has no entry for is
@@ -801,6 +878,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/manager/process/pushlog.rs process_block_inner; crates/p2p/src/sync/manager/process/pending_dag.rs durable_share_admits, admits_durable_only, max_persisted_pending_per_peer, try_insert_pending_dag; crates/p2p/src/sync/pending_store/store.rs take_new",
         model_ref: "MC_SyncOwnership_{Green_Memory,Green_TwoTierQuota,Red_MemoryOnlyAdmission,Red_NoDurablePeerQuota}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // A durable record ends only when its root merges or is quarantined:
@@ -819,6 +897,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/pending_store/store.rs register, take_new; crates/p2p/src/sync/pending_store/shares.rs; crates/p2p/src/sync/manager/process/pending_dag.rs restored_root_fits, resync_persisted_pending_dags_inner",
         model_ref: "MC_SyncOwnership_Green_TwoTierQuota.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // A success reply means the head is merged or registered, and a nack
@@ -833,6 +912,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/manager/process/pushlog.rs process_pushlog_with_provider_evidence, assert_pushlog_left_durable_state, process_block_inner, Processed; crates/p2p/src/sync/pending_store/store.rs register; crates/p2p/src/sync/pending_store/view.rs PersistedView::registered",
         model_ref: "MC_PushLogAdmission_{Green,Red_SuccessOnFull,Red_ViewGuard}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // The store counts a peer's durable records in the registration's own
@@ -845,6 +925,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/pending_store/store.rs register, take_new; crates/p2p/src/sync/pending_store/shares.rs held, charge, hand_over, give_back; crates/p2p/src/sync/manager/process/pending_dag.rs durable_share_admits",
         model_ref: "MC_PushLogAdmission_{Green_PeerShare,Red_ViewShare}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // A second PushLog for a CID already being processed joins that
@@ -857,6 +938,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/manager/process/pushlog.rs process_pushlog_with_provider_evidence; join.rs join_in_flight, needs_nothing_more; crates/p2p/src/sync/queue.rs ProcessQueue::try_acquire",
         model_ref: "MC_PushLogJoin_{Green,Red_NoRecheck,Red_NoGuard,Red_NoDeadline}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
@@ -865,6 +947,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/queue.rs ProcessQueue::try_acquire, release_sync; crates/p2p/src/sync/manager/process/join.rs join_in_flight; crates/p2p/src/sync/coordinator/mod.rs DagFetchLimiter::claim_root, RootClaim::drop",
         model_ref: "SingleFlight.Join (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // A success reply ends the pusher's retry record, so every acked head
@@ -879,6 +962,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/head_scope.rs ScopeDecision::of; crates/p2p/src/sync/manager/process/pushlog.rs process_block_inner, assert_pushlog_left_durable_state; crates/p2p/src/sync/manager/process/pending_dag.rs try_insert_pending_dag; crates/p2p/src/sync/pending_store/store.rs register",
         model_ref: "MC_PushLogAdmission_{Green,Green_Siblings,Red_SuccessOnFull,Red_PriorityCover}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // A live ack clears its scope's marker only when the acked head is the
@@ -893,6 +977,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/push_backlog.rs BacklogOwner::enqueue; crates/p2p/src/sync/coordinator/push_worker.rs run_push_job, is_whole_frontier; crates/storage/src/stores/peerstore.rs refresh_push_failure_with_generation, complete_retry_scope, record_acknowledged_heads",
         model_ref: "MC_PushCoalescing_{Green,Green_Siblings,Red_AppendEvery,Red_StaleRetry,Red_SiblingClear,Red_UnfencedAck}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // Rejected is assumed content-determined. Under strict (Vera) ACP a
@@ -905,6 +990,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/merge/acp_merge_handler.rs on_protected_update; crates/p2p/src/sync/coordinator/merge_state.rs quarantine_pending_dag",
         model_ref: "MC_PendingDagQuarantine_{Green,Red_OvereagerQuarantine,Red_RetryForever}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // With no pending store installed a success ack is backed only in
@@ -916,6 +1002,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/manager/process/pushlog.rs process_block_inner, extend_registered_root; crates/p2p/src/sync/pending_store/mod.rs",
         model_ref: "MC_PendingDagRestart_{Green,Red_ProcessLocal}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // Per-field LWW is the DefraDB data model: fields are not atomic across
@@ -927,6 +1014,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/crdt/src/field/lww.rs LwwField::merge; gents:crates/gents/src/request/lifecycle/claim.rs claim_inner (foreign substrate, not the defradb.rs binary)",
         model_ref: "MC_Claim_Filtered_Eventual.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // Verify-before-merge fires only on the P2P merge path; injecting a
@@ -939,6 +1027,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db (merge) sig verify; crates/defra-core/src/batch_signing.rs",
         model_ref: "MC_Integrity_Green.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // The unauthorized-denied leg is now observable: a serve-side
@@ -953,6 +1042,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/kms/src/defra_kms.rs serve_request; crates/kms/src/nac_dac_policy.rs",
         model_ref: "MC_Kms_Green.cfg",
         tiers: &[Behavioral, Boundary],
+        bound_by: "proofs/tests/behavioral/kms.rs kms_unauthorized_dek_release_denied",
     },
     Property {
         // A merge that needs a DEK fetches it inline on the serial merge
@@ -966,6 +1056,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/merge/merge_handler/dispatch.rs merge_with_retries; crates/p2p/src/kms/pubsub_transport.rs RESPONSE_TIMEOUT, SUBSCRIBER_WAIT_TIMEOUT",
         model_ref: "MC_EncryptedLwwReplay_Green.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // A write asks the KMS once per key scope: every field under document
@@ -978,6 +1069,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/write/prepare.rs KMS key preparation (`generated` memo)",
         model_ref: "DocKeyScopes (lake build)",
         tiers: &[Behavioral],
+        bound_by: "tools/integration-test/tests/encryption_scenarios/field_commit.rs doc_encryption_field_with_doc_and_field_encryption_should_use_dedicated_enc_key_for_individual_fields",
     },
     Property {
         // Encryption reuses PriorityReconcile.lwwCM unchanged: ciphertext and
@@ -991,6 +1083,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/merge/push_docs.rs; crates/p2p/src/sync/coordinator/selective_car_access.rs; crates/crdt/src/field/lww.rs",
         model_ref: "MC_EncryptedLwwReplay_Green.cfg",
         tiers: &[Behavioral],
+        bound_by: "proofs/tests/behavioral/partition.rs convergence_encrypted_lww_restart_merge",
     },
     Property {
         // The model and focused KMS/merge unit tests cover the retry mechanics,
@@ -1002,6 +1095,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/merge/merge_handler/composite_fields.rs; crates/p2p/src/sync/pending_store/mod.rs",
         model_ref: "MC_EncryptedLwwReplay_Green.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Management-channel auth (NAC gate)",
@@ -1010,6 +1104,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/http manage channel; crates/db (nac)",
         model_ref: "MC_Auth_Green.cfg",
         tiers: &[Behavioral],
+        bound_by: "proofs/tests/behavioral/nac.rs nac_management_requires_admin",
     },
     Property {
         family: "ACP soundness + revocation + dual-path commits",
@@ -1018,6 +1113,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/acp; crates/zanzibar; crates/query dag-scan",
         model_ref: "MC_Acp_Green.cfg / MC_Commits_Green.cfg",
         tiers: &[Behavioral, Contract],
+        bound_by: "proofs/tests/behavioral/acp.rs acp_dual_path_gating_and_revocation; proofs/tests/lean_conformance.rs lean_relation_expression_vocab_matches_rust",
     },
     Property {
         // The light client checks an answer at the newest root it has
@@ -1031,6 +1127,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/vera/src/vera_rs/provider/verified.rs verified, ATTEMPTS; crates/vera/src/vera_rs/provider.rs create_policy, query_policy, query_object_owner, verify_access, create_access_decision; backbone:acp-light-client HeaderChain::accept_response",
         model_ref: "MC_VerifiedRead_{Green,Green_Exhausted,Red_AcceptStale,Red_NoRetry,Red_Uncapped}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // Registrations of one document that race each write their own owner
@@ -1045,6 +1142,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/acp/src/persistent.rs PersistentAcpStore::register_doc_atomic, delete_doc_tuples; crates/acp/src/store.rs AcpStore::register_doc_atomic",
         model_ref: "MC_RegisterDocOnce_{Green,Red_NoValidation,Red_Sentinel}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // Peers that merged the same blocks show the same text, a peer's text
@@ -1060,6 +1158,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/crdt/src/fugue.rs Tree::apply, Tree::attach, replay, merge_text; crates/crdt/src/field/text.rs TextField (block_data, CausalCrdt diff, block_op, replay, merge_from, check_version, nil_heads); crates/db/src/merge/merge_handler/field_causal.rs merge_field_causal, critical_block, causal_history; crates/db/src/write/autocommit/helpers.rs apply_field_ops; crates/db/src/definition/migration/helpers.rs changes_block_state; crates/crdt/src/fugue_tests.rs, crates/crdt/src/field/testing.rs check_causal, crates/db/tests/merge/text_merge.rs, crates/db/tests/definition/migration_suite/text_lens.rs",
         model_ref: "MC_TextCrdt_{Green,Red_ArrivalOrder,Red_NoCausalBuffer,Red_CurrentText,Red_NextNode,Red_CommonAncestor,Red_NullLast}.cfg",
         tiers: &[Contract],
+        bound_by: "crates/db/tests/merge/text_merge.rs concurrent_edits_of_one_text_keep_both_on_every_node; crates/crdt/src/fugue_tests.rs concurrent_inserts_at_one_spot_keep_each_run_whole_in_id_order, an_edit_concurrent_with_a_delete_still_finds_its_spot",
     },
     Property {
         // Fugue's rule puts an inserted character right after its left origin
@@ -1073,6 +1172,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/crdt/src/fugue.rs Tree::apply, Tree::attach, Tree::traverse, Tree::split",
         model_ref: "TextCrdt.{Fugue,Span} (lake build)",
         tiers: &[Contract],
+        bound_by: "crates/crdt/src/fugue_tests.rs a_linear_history_is_its_ops_applied_in_turn, concurrent_inserts_at_one_spot_keep_each_run_whole_in_id_order, concurrent_deletes_of_one_character_remove_it_once",
     },
     Property {
         // The JSON CRDT (#2129). Each path is a register: racing edits resolve
@@ -1088,6 +1188,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/defra-core/src/json_crdt.rs Frontier::delta, Frontier::compose, Frontier::materialize, Frontier::conflicts, replay; crates/crdt/src/field/json.rs JsonField (TaggedCrdt: write_data, effect, replay), block_ops, settle_earlier, apply_ops, landed, mismatch; crates/defra-core/src/json_crdt.rs encode_write, decode_ops; crates/crdt/src/field/tagged.rs local_write, land; crates/db/src/merge/merge_handler/field_tagged.rs merge_field_tagged, tagged_past; crates/db/src/write/autocommit/helpers.rs prepare_tagged_writes; crates/db/src/definition/migration/helpers.rs changes_block_state; crates/defra-core/src/json_crdt_tests.rs, crates/crdt/tests/json_field.rs, crates/db/tests/merge/json_merge.rs, tools/integration-test/tests/p2p/json_crdt.rs",
         model_ref: "MC_JsonCrdt_{Green_FirstValueOrMap,Green_FirstListOrDelete,Green_MultiPath,Red_DeleteWins,Red_NoCid,Red_DeleteImpliesMap,Red_SharedId,Red_NoAnchor,Red_NoSettle,Red_DeleteMakesParent,Red_MapKeepsBelow}.cfg",
         tiers: &[Contract],
+        bound_by: "crates/db/tests/merge/json_merge.rs equal_concurrent_json_edits_from_two_signers_converge_in_any_order; crates/crdt/tests/json_field.rs json_meets_the_contract; crates/defra-core/src/json_crdt_tests.rs disjoint_keys_both_survive_in_any_order, an_update_beats_a_concurrent_delete_above_it",
     },
     Property {
         // A path's register keeps the same winner whatever order edits arrive
@@ -1100,6 +1201,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/defra-core/src/json_crdt.rs beats, encode_path, decode_path, Frontier::under, Frontier::at",
         model_ref: "JsonCrdt.{Lww,Path} (lake build)",
         tiers: &[Contract],
+        bound_by: "crates/defra-core/src/json_crdt_tests.rs diff_then_merge_gives_the_new_value, disjoint_keys_both_survive_in_any_order, one_path_resolves_by_priority_then_block_and_lists_the_loser",
     },
     Property {
         // Custom CRDT types (#2183). A node without a registered type merges
@@ -1117,6 +1219,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/crdt/src/field/registry.rs Crdts::delta, Crdts::field, Crdts::part; crates/db/src/merge/merge_handler/field.rs merge_field_delta_in_txn; crates/db/src/merge/merge_handler/composite_fields.rs process_linked_field_blocks; crates/db/src/merge/merge_handler/composite_persist.rs persist_merged_document; crates/db/src/merge/merge_handler/parked.rs park, replay_parked, replay_in_txn, DB::start_parked_replay; crates/db/src/merge/merge_handler/error.rs MergeError::fails_block, MergeError::needs_key; crates/db/src/merge/merge_handler/merge_keys.rs with_local_history_keys; crates/db/src/database/stored_crdts.rs record, DB::check_stored_crdts; crates/defra-node/tests/custom_crdt/replication.rs, crates/db/tests/merge/parked_errors.rs",
         model_ref: "MC_UnknownCrdt_{Green,Red_DropDeferral,Red_DoubleReplay,Red_Lww,Red_RemoveStored,Red_NoDocument,Red_FailStall}.cfg",
         tiers: &[Contract],
+        bound_by: "crates/defra-node/tests/custom_crdt/replication.rs a_node_without_the_type_parks_its_blocks_until_it_has_the_type; crates/db/tests/merge/parked_errors.rs a_parked_block_fails_only_for_an_error_of_its_own",
     },
     Property {
         // Every existing type keeps its definition bytes (code, no name), so
@@ -1129,6 +1232,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/schema/src/ctype.rs CType::to_u8, CType::custom_name, CType::from_definition; crates/schema/src/cid.rs field_to_delta_with_priority; crates/defra-core/src/block_delta.rs FieldDefinitionDeltaPayload; crates/defra-node/tests/definition_cids.rs",
         model_ref: "CustomCrdtCode (lake build)",
         tiers: &[Contract],
+        bound_by: "crates/defra-node/tests/definition_cids.rs native_definitions_keep_their_ids",
     },
     Property {
         // A write pushes each document's heads to every replicator that should
@@ -1142,6 +1246,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/ack_scope.rs AckScope::new; crates/p2p/src/replicator.rs ReplicatorInfo::ack_scope; crates/p2p/src/sync/coordinator/broadcast.rs SyncCoordinator::push_jobs; crates/db/src/merge/replication_ack.rs replication_acknowledged",
         model_ref: "MC_ReplicationAckScope_{Green,Red_MainRule,Red_PushToFiltered}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // A transaction ID travels in the request context. Only the caller
@@ -1155,6 +1260,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/txn/registry/lifecycle.rs begin_as, run_as, commit_as, discard_as; crates/db/src/txn/owner/mod.rs Owners::run, Owners::finish; crates/defra-node/src/ops/request.rs txn_begin, txn_commit, txn_discard; crates/query/src/runner/turn.rs read-only rejection; tools/integration-test/tests/basic/txn_context.rs",
         model_ref: "MC_TxnContext_{Green,Red_NoOwnerCheck,Red_ReadOnlyWrites,Red_RunAfterEnd,Red_DiscardLeaks,Red_NoConflictCheck}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // Collection patch, set-active, set-migration, add/list lens and get
@@ -1167,6 +1273,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/txn/registry/lifecycle.rs get_collections_as, patch_collection_as, set_active_collection_version_as, set_migration_as, add_lens_as, list_lenses_as; crates/defra-node/src/ops/collection.rs; crates/http/src/handlers/{collections,lens}.rs",
         model_ref: "MC_CoreDispatch_{Green,Red_NoNac,Red_IgnoreTxn}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // Listing lenses returns every module of every lens, in order, as
@@ -1177,6 +1284,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/lens/src/wasm.rs WasmTransformStore::list; crates/lens/src/store.rs list; crates/db/src/txn/registry/lifecycle.rs list_lenses_as",
         model_ref: "LensListing (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // An explicit transaction's ID is `sequence * workers + worker`. The
@@ -1190,6 +1298,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/txn/owner/id.rs TxnId::new, TxnId::owner; crates/db/src/txn/owner/tests.rs",
         model_ref: "TxnId (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Storage transaction validation",
@@ -1198,6 +1307,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/storage/src/backends/regolith/transaction.rs; proofs/tests/behavioral/ssi.rs",
         model_ref: "regolith@e844baefe838f3af76403afd46c4b42f1a0b98a5 proofs/tla/DefraLevel.tla",
         tiers: &[Behavioral, Boundary],
+        bound_by: "proofs/tests/behavioral/ssi.rs ssi_write_skew_prevented",
     },
     Property {
         // The replay-capability gate lives inside the P2P replication wire
@@ -1209,6 +1319,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p capability replay gate",
         model_ref: "MC_Capability_Green.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // The pending entry, its durable record across a restart, and the
@@ -1222,6 +1333,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/merge/merge_handler/authorization.rs validate_explicit_replay_authorization; crates/p2p/src/explicit_replay.rs",
         model_ref: "MC_Capability_Green.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "NAC lifecycle privilege-escalation",
@@ -1230,6 +1342,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db (nac) lifecycle",
         model_ref: "MC_Nac_Green.cfg",
         tiers: &[Behavioral],
+        bound_by: "proofs/tests/behavioral/nac_lifecycle.rs nac_lifecycle_no_escalation",
     },
     Property {
         // No-loss / no-double-apply under concurrent same-document mutation is now
@@ -1251,6 +1364,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/merge/merge_handler/field_ops.rs apply_field_op_once; crates/db/src/write/doc.rs; crates/db/tests/merge/merge_handler_tests.rs; crates/db txn registry",
         model_ref: "MC_TxnRegistry_Green.cfg / MC_TwoStoreCounter_Green.cfg / MC_MixedFieldMaterialization_Green.cfg",
         tiers: &[Behavioral, Boundary],
+        bound_by: "proofs/tests/behavioral/partition.rs convergence_concurrent_same_doc_merge_storm, convergence_concurrent_pncounter_same_doc_merge_storm, convergence_concurrent_mixed_lww_and_counter_fields_merge",
     },
     Property {
         // A counter block that arrives on its own before its document has a
@@ -1265,6 +1379,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/merge/merge_handler/field_ops.rs apply_field_op_once; crates/db/src/merge/merge_handler/batch.rs process_block_in_txn; crates/db/src/merge/merge_handler/composite_fields.rs; crates/db/tests/merge/merge_handler_tests.rs",
         model_ref: "MC_TwoStoreCounter_{Green,Red_LostDeferral}.cfg",
         tiers: &[Contract],
+        bound_by: "crates/db/tests/merge/merge_handler_tests.rs counter_merge_of_an_unmaterialized_document_waits_for_its_composite, counter_merge_marks_cid_merged",
     },
     Property {
         // A commit begins when it is handed to its transaction's owner, or,
@@ -1282,6 +1397,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/txn/fence.rs CommitFences, Fence::abandon, Fence::finish; crates/db/src/txn/owner/mod.rs Owners::run, Owners::finish, FenceOnDrop; crates/db/src/txn/owner/actor.rs own; crates/db/src/database/mod.rs DB::new_txn",
         model_ref: "MC_CommitFence_{Green,Red_RaiseAfterSwap,Red_OwnerNoSwap,Red_ReaderNoWait,Red_ForgetFailed,Red_UndoNoWake,Red_SkipBegun,Red_RunAbandoned}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // A request reaches an explicit transaction when its owner key is the
@@ -1295,6 +1411,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/txn/registry/mod.rs TxnOwnership, DbTransactionRegistry::caller, DbTransactionRegistry::in_txn; crates/db/src/txn/registry/lifecycle.rs run_as; crates/db/src/txn/owner/table.rs Table::admits; crates/ffi/src/node.rs build_node_state; crates/defra-node/src/node_builder.rs NodeBuilder::with_txn_ownership",
         model_ref: "MC_TxnAdmission_{Green,Red_IdentityOnFfi,Red_EmbedderOnHttp,Red_ActsAsOwner}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Transaction & merge-queue concurrency",
@@ -1303,6 +1420,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/txn/registry/mod.rs TxnOwnership, DbTransactionRegistry::caller; crates/db/src/txn/owner/table.rs Table::admits",
         model_ref: "TxnAdmission (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Transaction & merge-queue concurrency",
@@ -1311,6 +1429,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/txn/fence.rs Fence::abandon, Fence::finish",
         model_ref: "CommitFence.Swap (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // Every open store exports its engine's commit and policy tickers. A
@@ -1328,6 +1447,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/telemetry/src/engine_tickers.rs Source::publish, EngineTickerExport::drop, engine_ticker_totals; crates/storage/src/backends/shared.rs TransactionMetrics",
         model_ref: "MC_EngineTickers_{Green,Green_TwoSources,Red_Backward,Red_BlindStore,Red_GiveUp,Red_StaleSeen,Red_RemoveFirst,Red_WeakClose,Red_Reset,Red_SharedStats,Red_CountAfterClose,Finding_ClaimGap}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Engine ticker export",
@@ -1336,6 +1456,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/telemetry/src/engine_tickers.rs Source::publish",
         model_ref: "EngineTickers.Mark, EngineTickers.Race (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // A placed pool claims its CPUs in the process's ledger, one counter
@@ -1353,6 +1474,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/workers/src/ledger.rs Ledger::hold, Ledger::share, Hold::drop; crates/workers/src/placement/reserve.rs reserve, shared; crates/workers/src/placement/edge.rs EdgeCores::reserve_on, EdgeCores::reserve; crates/workers/src/pool/placer.rs Placer::holding; crates/workers/src/pool/start.rs Pool::start_in; crates/edge/src/platform/native.rs build",
         model_ref: "MC_CpuLedger_{Green,Green_Edge,Red_SplitTake,Red_NoRollback,Red_ReleaseLoser,Red_ShareUncounted,Red_NoAttemptCap,Red_ReleaseEarly,Red_RunOutsideHold,Red_DoubleRelease,Red_ForgetHold,Red_EdgeNoCap}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Worker pool CPU ledger",
@@ -1361,6 +1483,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/workers/src/ledger.rs Ledger::hold, Ledger::share, Hold::drop",
         model_ref: "CpuLedger.{Hold,Count,Exclusive} (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // `default_pool()` answers the first registered pool that still runs,
@@ -1375,6 +1498,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/workers/src/pool/default.rs default_pool, Pool::make_default, DefaultPool::register, DefaultPool::get, DefaultPool::started; crates/workers/src/pool/mod.rs Pool::stop; crates/workers/src/pool/deadline.rs delay_on",
         model_ref: "MC_DefaultPool_{Green,Red_AnswerYes,Red_BlindRegister,Red_FailKeepsTurn,Red_NoClosingCheck,Red_NoRecheck,Red_NoRetry,Red_NoTurn,Red_RacyCell,Red_RegisterClosing,Red_RegisterOverwrites,Red_ShutStarted,Red_StartedFirst,Red_StopAsksFirst,Red_StrongSlot,Red_WorkerRefusedFirst,Red_WorkerWaits}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Worker default pool",
@@ -1383,6 +1507,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/workers/src/pool/default.rs DefaultPool::register, DefaultPool::get",
         model_ref: "DefaultPool.{Slot,Cell,Get} (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // `partition::convergence_delete_update_race_preserves_tombstone`
@@ -1397,6 +1522,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/merge/merge_handler/composite_persist.rs handle_deletion / persist_merged_document; crates/defra-core/src/block_delta.rs CompositeDeltaPayload status",
         model_ref: "MC_DocumentMaterialization_Green.cfg; DefraConvergence.DocumentMaterialization.delete_active_age_converge",
         tiers: &[Behavioral],
+        bound_by: "proofs/tests/behavioral/partition.rs convergence_delete_update_race_preserves_tombstone",
     },
     Property {
         // The DID-binding half (a distinct identity cannot impersonate another)
@@ -1410,6 +1536,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/identity token verification",
         model_ref: "MC_Jwt_Green.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "CID content-addressing determinism + Block canonicalization",
@@ -1418,6 +1545,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/defra-core/src/block.rs Block::generate_cid",
         model_ref: "Cid (lake build)",
         tiers: &[Behavioral, Contract],
+        bound_by: "proofs/tests/behavioral/cid.rs cid_determinism_same_content_same_docid",
     },
     Property {
         family: "Deferred-ACP overlay consistency",
@@ -1426,6 +1554,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/query/src/txn/context.rs; crates/db/src/write/autocommit/batch.rs",
         model_ref: "MC_DeferredAcp_Green.cfg",
         tiers: &[Behavioral],
+        bound_by: "proofs/tests/behavioral/deferred_acp.rs deferred_acp_txn_local_gating",
     },
     Property {
         // Lean marker values (mNull=0..mIntMax=253) verified to match the live
@@ -1439,6 +1568,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/storage/src/encoding/mod.rs type-marker constants",
         model_ref: "OrderEncoding (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // `sort_in_key_order` is private to the planner, so no contract test
@@ -1450,6 +1580,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/query/src/planner/index_selection/filter_to_scan.rs filter_to_index_scan, sort_in_key_order",
         model_ref: "OrderEncoding.InLookup (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // The flat code table is a pure in-memory structure loaded once per
@@ -1461,14 +1592,17 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/index/vector/engine/diskann/cache.rs Codes::insert, Codes::get",
         model_ref: "DiskAnnCodes (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
+        // No test binds graph.rs walk to WalkCutoff.
         family: "DiskANN walk cutoff",
         name: "cut_step_eq_step — skipping neighbours ranked after a full frontier's last place leaves the frontier the full step would",
         axis: Lean,
         anchor: "crates/db/src/index/vector/engine/diskann/graph.rs walk, each_edge, by_distance",
         model_ref: "WalkCutoff.cut_step_eq_step / distance_only_cutoff_drops_a_tie",
-        tiers: &[Contract],
+        tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // Pure functions over the schema; the Rust side is exercised by
@@ -1480,6 +1614,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/query/src/planner/joins/relation_paths.rs Planner::relation_filter_paths, Planner::relation_prefix",
         model_ref: "JsonSubPathCut.cut_eq_longest / longest_allRel / longest_max / cut_idem / cut_of_allRel / relationPaths_of_allRel",
         tiers: &[Contract],
+        bound_by: "crates/query/src/planner/joins/relation_paths_tests.rs json_sub_path_is_not_a_relation_path, relation_path_stops_at_json_field, json_sub_path_filter_through_relation_plans",
     },
     Property {
         family: "Filter relation paths and scalar leaves",
@@ -1488,6 +1623,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/query/src/runner/plan_validation.rs validate_select; crates/query/src/planner/joins/selection_join.rs Planner::apply_selection_relation_join",
         model_ref: "JsonSubPathCut.leafOk_false_iff / newValidate_false_iff / newValidate_of_main / newRun_eq_mainRun",
         tiers: &[Contract],
+        bound_by: "crates/query/src/planner/joins/relation_paths_tests.rs sub_selection_on_json_field_is_go_validation_error, json_sub_path_filter_plans_without_index",
     },
     Property {
         family: "PQ distance four sums",
@@ -1496,6 +1632,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/index/vector/quantize/pq.rs ProductQuantizer::distance",
         model_ref: "PqFourSums.four_eq_sum / dropped_tail_loses_lookups",
         tiers: &[Contract],
+        bound_by: "crates/db/tests/vector/quantize_pq.rs the_lookup_table_agrees_with_the_reconstruction",
     },
     Property {
         family: "Query fragment nesting bound",
@@ -1504,6 +1641,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/query/src/query_parse/limits.rs FragmentPath::check_nesting; crates/query/src/subscription.rs collect_root_fields",
         model_ref: "FragmentNesting.reach_le / walk_none_iff / off_by_one_accepts_too_deep",
         tiers: &[Contract],
+        bound_by: "crates/query/tests/fragment_stack.rs a_long_fragment_chain_is_refused_on_a_small_stack, a_chain_at_the_default_limit_still_parses",
     },
     Property {
         family: "Index-maintenance consistency",
@@ -1512,6 +1650,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db (index) index maintenance",
         model_ref: "IndexMaintenance (lake build)",
         tiers: &[Behavioral, Contract],
+        bound_by: "proofs/tests/behavioral/index.rs index_no_stale_no_missing",
     },
     Property {
         // `index::index_reconciles_lww_merge_after_restart` drives a restart
@@ -1524,6 +1663,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db (merge) LWW materialization; crates/db (index) on_document_update",
         model_ref: "MC_IndexReconciliation_Green.cfg",
         tiers: &[Behavioral],
+        bound_by: "proofs/tests/behavioral/index.rs index_reconciles_lww_merge_after_restart",
     },
     Property {
         // A node's shutdown aborts every task it holds and waits for each to
@@ -1539,6 +1679,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/defra-node/src/lib.rs Node::shutdown, Node::as_request; crates/defra-node/src/ops/request.rs Node::txn_begin, Node::txn_commit; crates/defra-node/src/network.rs NodeEdge::drain_requests; crates/http/src/server.rs Server::router; crates/defra-node/src/node_acp.rs gate_external_acp; crates/defra-node/src/managed_p2p.rs ShutdownHandle::stop, stop_services; crates/edge/src/task.rs Service::stopped; crates/edge/src/handle.rs Scope::drain; crates/net/src/server.rs serve, until_closing",
         model_ref: "MC_NodeShutdown_{Green,Red_RedriveDetached,Red_ServicesNotAwaited,Red_NoDrainDeadline,Red_FlushOnCaller,Red_RequestsDuringP2P,Red_CommitNotAdmitted,Red_OpenTransaction}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // A signed query or transformed route keeps a request-scope permit
@@ -1591,6 +1732,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/edge/src/task.rs Task::poll, Task::abort; crates/edge/src/platform/native.rs the shutdown; crates/edge/src/shared.rs Shared::stop",
         model_ref: "MC_EdgeCompletion_{Green,Red_NoMap,Red_CancelBeforeFlag,Red_CancelBeforeStopMark}.cfg",
         tiers: &[Boundary],
+        bound_by: "crates/edge/src/tests/task_set.rs aborting_a_set_stops_its_tasks_and_hands_each_back_cancelled; shutdown.rs shutdown_stops_accepting_drains_then_stops_the_rest; spawn.rs a_spawned_task_hands_back_its_value",
     },
     Property {
         // Work that continues a request already admitted (an outbound
@@ -1603,6 +1745,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/edge/src/gate.rs Gate::admit, Gate::admit_continuation, Gate::drained; crates/edge/src/handle.rs Edge::spawn_continuation, drain_gate; crates/net/src/rt.rs ClientExecutor::execute",
         model_ref: "MC_EdgeGateContinuation_{Green,Red_PlainSpawn,Red_NoSeal,Red_NoCas}.cfg",
         tiers: &[Boundary],
+        bound_by: "crates/edge/tests/continuation.rs a_continuation_is_admitted_after_close_while_admitted_work_runs, a_continuation_is_refused_after_close_when_nothing_is_in_flight, the_drain_waits_for_a_running_continuation, a_continuation_is_refused_after_the_drain_completed_even_with_plain_spawns_racing; crates/net/tests/server.rs a_closing_client_finishes_the_request_in_flight_and_frees_its_idle_connections, a_request_in_flight_at_close_opens_a_fresh_connection_and_finishes",
     },
     Property {
         // An iroh dial answers from its connection's outcome: a refusal that
@@ -1615,6 +1758,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/iroh/endpoint_commands.rs handle_dial; crates/p2p-adapter/src/iroh.rs IrohP2PAdapter::connect_peer; crates/p2p/src/iroh/transport.rs poll_until_connected",
         model_ref: "MC_IrohDialOutcome_{Green,Green_Admitted,Red_Poll,Red_NoCheck}.cfg",
         tiers: &[Boundary],
+        bound_by: "crates/p2p/src/iroh/allowlist_tests.rs closed_by_refusal_reads_the_remote_close_code, poll_until_connected_wakes_on_the_connection_and_times_out_without_one",
     },
     Property {
         // A server's connections are tasks the drain waits for: a request in
@@ -1627,6 +1771,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/net/src/server.rs serve, until_closing; crates/net/src/rt.rs Executor::execute; crates/pg-compat/src/lib.rs PgServer::run; crates/pg-compat/src/wire/process.rs serve; crates/edge/src/handle.rs Scope::drain",
         model_ref: "MC_ServerDrain_{Green,Red_Service,Red_CheckInside,Red_NoCheck,Red_NoDeadline}.cfg",
         tiers: &[Boundary],
+        bound_by: "crates/net/tests/server.rs a_closing_server_finishes_the_requests_in_flight_then_returns; crates/pg-compat/tests/wire.rs a_query_in_flight_when_the_edge_starts_closing_completes_and_the_connection_closes, an_idle_connection_closes_at_once_when_the_edge_starts_closing",
     },
     Property {
         // An update on a document's topic is applied only while the node
@@ -1639,6 +1784,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/coordinator/event_handler/gossip.rs handle_gossip_message; crates/p2p/src/sync/coordinator/access.rs is_followed_document; crates/p2p-adapter/src/libp2p.rs P2PAdapter::add_documents, remove_documents; crates/p2p-adapter/src/iroh.rs IrohP2PAdapter::add_documents, remove_documents; crates/defra-node/src/libp2p_recovery.rs restore_libp2p_documents; crates/p2p-adapter/src/iroh_restore.rs restore_iroh_p2p_state",
         model_ref: "MC_DocTopicIngress_{Green,Red_NoCheck,Red_OwnSet,Red_NoCollection}.cfg",
         tiers: &[Boundary],
+        bound_by: "crates/p2p/src/sync/coordinator/access_tests.rs gossip_document_topic_dropped_after_document_unfollowed; crates/p2p-adapter/tests/libp2p/followed_documents.rs remove_documents_clears_the_shared_followed_set",
     },
     Property {
         // A node checks its config before it opens anything, hands
@@ -1652,6 +1798,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/defra-node/src/assemble.rs assemble; crates/defra-node/src/libp2p_runtime.rs setup_libp2p, assemble_libp2p; crates/defra-node/src/p2p_runtime.rs setup_iroh; crates/defra-node/src/node_acp.rs create_nac_manager",
         model_ref: "MC_NodeStartup_{Green,Red_IrohDefaultLadder,Red_ListenLeak,Red_LateNacCheck,Red_NacUnowned,Red_DialBeforeNac,Red_BootstrapFatal}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Node startup",
@@ -1660,6 +1807,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/storage/src/stores/retry_info.rs RetrySchedule::new, RetrySchedule::cap, RETRY_INTERVALS_SECS",
         model_ref: "RetrySchedule (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Inbound stream admission",
@@ -1668,6 +1816,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/iroh/endpoint_streams.rs admit_stream; crates/p2p/src/iroh/inbound_budget.rs InboundBudget::admit, InboundBudget::peer_share, InboundDeadlines::body; crates/p2p/src/sync/dispatch_queue.rs dispatch_queue; crates/p2p/src/sync/event_dispatcher.rs run_event_dispatcher",
         model_ref: "MC_InboundAdmission_Green.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // A request shed while every rejection worker is busy is dropped. Its
@@ -1681,6 +1830,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/event_dispatcher.rs run_event_dispatcher, MAX_ACTIVE_REJECTIONS; crates/p2p/src/iroh/endpoint_rpc.rs CarFetchOutcome",
         model_ref: "MC_InboundAdmission_Green.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Inbound stream admission",
@@ -1689,6 +1839,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/iroh/inbound_budget.rs InboundBudget::admit, InboundLease",
         model_ref: "ByteBudget (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Peer fetch stats",
@@ -1697,6 +1848,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/iroh/fetch_stats.rs PeerCounters::record, roll",
         model_ref: "FetchStats (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "DAG fetch provider ranking",
@@ -1705,6 +1857,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/coordinator/dag_fetcher.rs fetch_dag_attempt, poll_fetch_blocks_rotating, window_outcome; crates/p2p/src/sync/coordinator/dag_retry.rs FAST_REFUSAL, MAX_FREE_REFUSALS",
         model_ref: "MC_DagFetchBudget_{Green,Red_SlowIsRefusal,Red_Uncapped,Red_NoCheck}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "DAG fetch provider ranking",
@@ -1713,6 +1866,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/coordinator/provider_health.rs ProviderHealth::rank, record_fast_failure, forget_stale, Cooldown::is_stale",
         model_ref: "ProviderHealth (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "DAG fetch arbitration (EWMA)",
@@ -1721,6 +1875,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/arbitration/mod.rs VALUE_BITS, TIME_BITS, WEIGHT_ONE, WEIGHT_TABLE, PROVIDER_HALF_LIFE; crates/p2p/src/sync/arbitration/ewma.rs weight_q32; proofs/tests/lean_conformance.rs lean_arbitration_constants_match_rust",
         model_ref: "Arbitration.Constants (lake build); Conformance.lean ArbitrationConstants",
         tiers: &[Contract],
+        bound_by: "proofs/tests/lean_conformance.rs lean_arbitration_constants_match_rust",
     },
     Property {
         family: "DAG fetch arbitration (EWMA)",
@@ -1729,6 +1884,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/arbitration/ewma.rs roll, troll, record_word, PackedEwma; root.rs RootEstimates::observe; occupancy.rs advance; provider.rs ProviderEstimates, expected_useful; due_order.rs tie_break_order; tests.rs; tests/unit/estimator_trace_replay.rs; tests/unit/estimators_observe_only.rs",
         model_ref: "Arbitration (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Gossip connection ownership",
@@ -1737,6 +1893,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/iroh/gossip/driver.rs Driver::send, Driver::connected, Driver::forget; crates/p2p/src/iroh/gossip/mod.rs GossipHandle::connected; crates/p2p/src/iroh/endpoint_rpc.rs connect_with_cache; crates/p2p/src/iroh/endpoint_commands.rs handle_deny_peer",
         model_ref: "MC_GossipOwnership_Green.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Gossip connection ownership",
@@ -1745,6 +1902,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/iroh/gossip/inbox.rs Inbox::push, Inbox::offer, Inbox::next; crates/p2p/src/iroh/gossip/driver.rs read_stream, Driver::emit; crates/p2p/src/iroh/records/task.rs RecordsHandle::push_change, RecordsHandle::push, RecordsHandle::next",
         model_ref: "MC_GossipInbox_Green.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Gossip connection ownership",
@@ -1753,6 +1911,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/iroh/gossip/frame.rs write_gossip_frame, read_gossip_frame; crates/p2p/src/iroh/protocols.rs write_stream_tag, read_stream_tag",
         model_ref: "GossipFrame (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Iroh service records",
@@ -1761,6 +1920,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/iroh/records/book.rs Book::offer, Book::live; crates/p2p/src/iroh/records/refresh.rs Refresh::check; crates/p2p/src/iroh/records/task.rs Records::renew, Records::on_input, Records::rotate",
         model_ref: "MC_ServiceRecords_Green.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // A node publishes a service record only after its embedder sets a
@@ -1772,6 +1932,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/iroh/records/task.rs Records::renew; crates/cli/src/commands/start/server_p2p/iroh.rs",
         model_ref: "MC_ServiceRecords_Green.cfg / MC_ProviderLookup_Green.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Depth-cut DAG fetch",
@@ -1780,6 +1941,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/car.rs collect_dag_blocks_within; crates/p2p/src/sync/coordinator/closure_depth.rs ClosureDepth::widen; crates/p2p/src/sync/coordinator/dag_fetcher.rs fetch_dag_attempt",
         model_ref: "MC_DepthCutFetch_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Depth-cut DAG fetch",
@@ -1788,6 +1950,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/car.rs collect_dag_blocks_within; crates/p2p/src/sync/coordinator/closure_depth.rs ClosureDepth::initial, ClosureDepth::widen",
         model_ref: "CarClosureDepth (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // libp2p CAR bodies have one fixed total read deadline. A response
@@ -1799,6 +1962,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/two_stream/handler/car.rs read_stream; crates/p2p/src/two_stream/runner.rs TwoStreamRunner::new",
         model_ref: "MC_DepthCutFetch_Green.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // Clock and PushLog fetches single-flight per root in
@@ -1811,6 +1975,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/coordinator/mod.rs DagFetchLimiter::claim_root, RootKey, RootClaim, PendingDagFetchTask; crates/p2p/src/sync/coordinator/event_handler/doc_sync.rs handle_doc_sync_reply; crates/p2p/src/sync/coordinator/event_handler/branchable_sync.rs handle_branchable_sync_reply; crates/p2p/src/sync/coordinator/event_handler/car.rs CarIngestDisposition::StorageContended; crates/p2p/src/sync/manager/process/mod.rs try_acquire_car_storage_owners",
         model_ref: "MC_RootSingleFlight_Green.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // Pull fetches are best-effort. A reply that cannot claim its root is
@@ -1824,6 +1989,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/coordinator/dag_context.rs DagFetchContext::with_alternate_providers; crates/p2p/src/sync/pending_store/mod.rs MAX_PENDING_DAG_ALTERNATE_PROVIDERS; crates/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_dag",
         model_ref: "MC_RootSingleFlight_Green.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Iroh service records",
@@ -1832,6 +1998,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/iroh/records/task.rs Records::providers, Records::on_message",
         model_ref: "MC_ProviderLookup_Green.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // A lookup asks only when the book has no live record for the
@@ -1843,6 +2010,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/iroh/records/task.rs Records::providers, Records::on_message",
         model_ref: "MC_ProviderLookup_Green.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // Dropping an index while its backfill runs: the drop's commit takes
@@ -1857,6 +2025,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/index/drop.rs DB::drop_index, DropIndexAttempt, DropPage, DB::remove_dropped_entries, DB::resume_index_drops; crates/db/src/index/manager/mod.rs index_id_floor; crates/db/src/index/backfill.rs BackfillPage::index, DB::backfill_index, FailBackfillAttempt, DB::resume_index_backfills",
         model_ref: "MC_IndexDropBackfill_{Green,Red_KeepRecord,Red_BlindFail,Red_SameTxn,Red_Forget,Red_ReuseId}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // Purging documents by DocID: values, index entries, the primary
@@ -1872,6 +2041,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/collection/ops/purge.rs DB::purge_by_doc_ids_as, DB::purge_documents; crates/db/src/txn/attempt.rs DB::transact_db; crates/db/src/collection/ops/truncate/filtered.rs DB::truncate_filtered_chunk; crates/db/src/txn/registry/purge.rs DbTransactionRegistry::purge_by_doc_ids_as; crates/db/src/block/cleanup.rs delete_owned_dag_for_owners, drop_dag_owners; crates/db/src/docid/map.rs block_has_owners",
         model_ref: "MC_Purge_{Green_Prune,Green_Branchable,Red_Blind,Red_PruneBranchable,Red_KeepEdges,Red_KeepIndex,Red_CountRequests,Red_CountAttempt,Red_Fail,Red_PlainScan}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // The orphan block sweep: a fetched block's to-merge mark
@@ -1886,6 +2056,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/storage/src/stores/blockstore.rs BlockWritesAttempt::run, marker_value, marker_time; crates/db/src/block/orphan_gc.rs DB::reclaim_orphan_blocks, DB::decide_orphans; crates/db/src/merge/merge_handler/doc_identity.rs record_block_ownership",
         model_ref: "MC_OrphanGc_{Green,Red_SnapshotRead,Red_NoOwnerCheck,Red_BlindRefresh,Red_ReclaimLegacy,Red_SigMarked,Red_SigUnowned}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // The sweep does not read the pending-DAG store, so it reclaims the
@@ -1898,6 +2069,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/block/orphan_gc.rs DB::decide_orphans, OrphanSweepConfig::TTL",
         model_ref: "MC_OrphanGc_Green.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Orphan block sweep",
@@ -1906,6 +2078,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/storage/src/stores/blockstore.rs marker_value, marker_time",
         model_ref: "OrphanMarker (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // The replication filter (#2451): asked between the merge's phases,
@@ -1921,6 +2094,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/merge/merge_handler/composite_fields.rs process_linked_field_blocks; crates/db/src/replication_filter.rs add_field_values; crates/db/src/merge/merge_handler/batch.rs try_batch_merge",
         model_ref: "MC_ReplicationFilter_{Green,Green_Branchable,Red_AfterPersist,Red_WholeBatch,Red_Retry,Red_FilterBranchable,Red_Alone}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Document write pipeline",
@@ -1929,6 +2103,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/write/create.rs embed, identity, seed_identity, memo_identity, prepare_keys, compute, compute_many, persist; crates/db/src/write/autocommit/create.rs create_many_with_resolved_inputs, create_impl, run_create_attempt; crates/db/src/write/autocommit/batch.rs BatchMutator::create_as (with a memo); crates/db/src/write/doc.rs DbDocMutator::create_as, next_create_identity; crates/db/src/write/update.rs write_local, write_blocks; crates/db/src/write/autocommit/update.rs run_update_attempt; crates/db/src/write/autocommit/batch.rs BatchMutator::update_as (with a memo); crates/db/src/write/doc.rs DbDocMutator::update_as; crates/db/src/block/builder/write.rs build_document_blocks, encrypt_with_new_key",
         model_ref: "MC_WritePipeline_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Add collection",
@@ -1937,6 +2112,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/collection/ops/add/mod.rs DB::add_collection, prepare_new_collections, check_policies, check_collection_patch; crates/db/src/txn/registry/schemas.rs add_collection_in_txn_as; crates/db/src/collection/ops/create.rs create_collections_atomic_inner",
         model_ref: "MC_AddCollection_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Collection truncate",
@@ -1945,6 +2121,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/collection/ops/truncate/mod.rs DB::truncate_collection_as, DB::truncate_parsed_as, DB::truncate_target, conditions, DB::truncate; crates/db/src/collection/ops/truncate/all.rs DB::truncate_all; crates/db/src/collection/ops/truncate/filtered.rs DB::truncate_matching",
         model_ref: "MC_Truncate_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Add DAC policy",
@@ -1953,6 +2130,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/access/dac/mod.rs DB::add_dac_policy_as, DB::add_policy, parse, build; crates/db/src/access/dac/policies.rs DacPolicies::keep, DacPolicies::get; crates/acp/src/policy_lookup.rs RemotePolicies::add_policy",
         model_ref: "MC_DacPolicyAdd_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Iroh solicited replies",
@@ -1961,6 +2139,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/iroh/solicited.rs Solicited::expect, Solicited::take, Solicited::prune; crates/p2p/src/iroh/endpoint_streams.rs admit_stream, dispatch_stream; crates/p2p/src/iroh/endpoint_commands.rs handle_command; crates/p2p/src/iroh/endpoint_rpc.rs handle_reply_on_stream",
         model_ref: "MC_SolicitedReplies_Green.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // Reply expectations are keyed by (peer, tag) across all of the peer's
@@ -1974,6 +2153,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/iroh/solicited.rs Solicited::expect, Solicited::take; crates/p2p/src/iroh/endpoint_streams.rs admit_stream",
         model_ref: "MC_SolicitedReplies_Green.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Iroh service records",
@@ -1982,6 +2162,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/iroh/records/verify.rs verify; crates/p2p/src/iroh/records/book.rs Book::offer, Book::live; crates/p2p/src/iroh/records/key.rs blind, advertised_key, CollectionKey::encode; crates/p2p/src/iroh/records/pointer.rs Pointer::print, Pointer::parse; crates/p2p/src/iroh/records/task.rs Records::providers, rank",
         model_ref: "ServiceRecord (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // One task serves a pg-compat connection: one deadline read at the
@@ -1995,6 +2176,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/pg-compat/src/wire/process.rs serve, run, refuse_ssl, dispatch, report; crates/pg-compat/src/wire/connection.rs Connection::next, Connection::is_closed, Connection::poll_close; crates/pg-compat/src/handler/auth.rs DIDAuthHandler::on_startup",
         model_ref: "MC_PgWire_{Green_Startup,Green_Protocol,Red_PeekNoDeadline,Red_SslNoDeadline,Red_StartupNoDeadline,Red_FreshDeadline,Red_DeadlineAfterStartup,Red_NoAwaitingSync,Red_HandleWhileSkipping,Red_SyncKeepsSkipping,Red_CopyFlagFromMessage,Red_CopyDoneStays,Red_ExtendedCopyDoneStays,Red_LoopAfterClose,Red_LoopAfterCloseRuns,Red_LoopAfterCloseHangs,Red_FatalStaysOpen,Red_StartupErrorNotFatal}.cfg",
         tiers: &[Boundary],
+        bound_by: "crates/pg-compat/tests/wire.rs ssl_is_refused_then_queries_run_and_a_fatal_error_closes_the_connection, a_client_that_starts_tls_directly_is_closed, a_client_that_sends_nothing_is_closed_at_the_startup_deadline",
     },
     Property {
         family: "HTTP client redirects and body deadline",
@@ -2003,6 +2185,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/net/src/http/client.rs Client::execute, Client::follow, Client::exchange, redirect, REDIRECT_LIMIT",
         model_ref: "HttpClient.Redirect (lake build)",
         tiers: &[Boundary],
+        bound_by: "crates/net/tests/client.rs redirects_are_followed_and_change_the_method_as_the_status_says, credentials_follow_a_redirect_only_to_the_same_origin",
     },
     Property {
         family: "HTTP client redirects and body deadline",
@@ -2011,6 +2194,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/net/src/http/response.rs BytesStream::poll_next, Response::bytes_stream",
         model_ref: "HttpClient.BodyDeadline (lake build)",
         tiers: &[Boundary],
+        bound_by: "crates/net/tests/body_deadline.rs a_stalled_body_stream_gives_one_timeout_then_ends, every_chunk_read_past_the_limit_times_out_at_once, a_piece_ready_past_the_limit_gives_the_timeout",
     },
     Property {
         family: "Connect fallback race",
@@ -2019,6 +2203,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/net/src/connect.rs first_connected, Connector::socket, FALLBACK_DELAY",
         model_ref: "MC_ConnectFallback_{Green,Green_NoTimeout,Green_Single,Red_NoDelay,Red_WaitAfterFailure,Red_FirstErrorWins,Red_KeepFirstError,Red_KeepLoser,Red_TimeoutMissesRace,Red_TimeoutMissesRaceHangs}.cfg",
         tiers: &[Boundary],
+        bound_by: "crates/net/tests/connect.rs the_other_family_connects_when_the_first_is_silent_past_the_delay, the_other_family_is_tried_when_the_first_refuses, when_both_families_refuse_the_last_refusal_comes_back",
     },
     Property {
         // The first shutdown caller to swap the flag builds the one drain,
@@ -2035,6 +2220,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/coordinator/mod.rs SyncShutdownHandle::shutdown, begin_shutdown, drain_background_tasks, spawn_task, spawn_here, register_task, prune_finished_tasks; crates/p2p/src/network.rs Network::try_spawn; crates/edge/src/handle.rs Edge::try_spawn",
         model_ref: "MC_CoordinatorShutdown_{Green,Green_TwoSpawns,Red_DropRefused,Red_CheckThenSpawn,Red_NoAbort,Red_SenderOutsideDrain,Red_TwoWinners,Red_NoPrunerWait,Red_PrunerIgnoresFlag,Red_NoRecheck}.cfg",
         tiers: &[Boundary],
+        bound_by: "crates/p2p/tests/coordinator/shutdown.rs concurrent_shutdown_callers_wait_for_task_completion, shutdown_rejects_new_tasks_without_spawning_them, task_registration_racing_shutdown_does_not_leave_resources_alive, shutdown_on_a_closed_edge_runs_the_drain_and_releases_tracked_tasks",
     },
     Property {
         family: "Per-peer stream cap",
@@ -2043,6 +2229,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/two_stream/peer_streams.rs PeerStreams::admit, StreamAdmission; crates/p2p/src/two_stream/runner.rs TwoStreamRunner::run",
         model_ref: "MC_PeerStreamCap_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // Replies to this node's own requests arrive as inbound streams and
@@ -2055,6 +2242,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/two_stream/runner.rs TwoStreamRunner::run; crates/p2p/src/two_stream/peer_streams.rs PeerStreams::admit",
         model_ref: "MC_PeerStreamCap_Green.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // The receive gate: a replication filter asked when a push arrives,
@@ -2066,6 +2254,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/coordinator/receive_gate.rs SyncCoordinator::gate_arrival, SyncCoordinator::gate_fetched; crates/db/src/receive_gate.rs DbReceiveGate::allows",
         model_ref: "MC_ReceiveGate_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // Composes the sender's markers, the receiver's admission and durable
@@ -2081,6 +2270,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/head_scope.rs ScopeDecision::of; crates/p2p/src/sync/manager/process/pushlog.rs process_block_inner; crates/p2p/src/sync/coordinator/broadcast.rs admit_replicator_push; crates/p2p/src/sync/replication/handlers.rs handle_block_received; crates/db/src/merge/txn_broadcaster.rs SyncTxnBroadcaster::submit_update; crates/defra-node/src/lib.rs Node::shutdown; crates/p2p-adapter/src/iroh_peer/peer.rs IrohPeer::assemble",
         model_ref: "MC_P2PDelivery_{Green_Receiver,Green_E2E,Red_F1_PriorityCover,Red_F2_MarkerAfterCommit,Red_F3_DischargeBeforeForward,Red_F4_LoopFirst,Red_F5_FanoutAbort,Red_F5_FailedDropped}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // Fairness goes to the dispatch clock, the backoff timer, the resync
@@ -2100,6 +2290,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/coordinator/mod.rs dispatch_due_pending_dag_fetches, DagFetchLimiter; crates/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_dag, fetch_dag_attempt; crates/p2p/src/sync/coordinator/dag_retry.rs CLOCK_ATTEMPT_QUANTUM; crates/p2p/src/sync/coordinator/dag_context.rs DagFetchContext::finish_clock_attempt; crates/p2p/src/sync/manager/process/pending_dag.rs PendingDagLease::finish_attempt, due_pending_dag_retries, resync_persisted_pending_dags, records_after_resync_cursor, consume_pending_merge_continuation; crates/p2p/src/sync/manager/pending.rs PendingDag::is_expired, PENDING_ROTATE_AFTER_DISPATCHES; crates/p2p-adapter/src/retry.rs run_retry_pass; crates/db/src/merge/push_docs.rs retry_doc",
         model_ref: "MC_P2PDelivery_{Green_Receiver,Green_E2E,Red_F8_SlotBeforePermit,Red_F9_MergeFifo,Finding_AdvisoryPermits}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // Main violates this (F27): connect_with_cache does not adopt the
@@ -2112,6 +2303,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/iroh/endpoint_rpc.rs connect_with_cache, retire_timed_out_connection, REQUEST_RESPONSE_TIMEOUT; crates/p2p/src/iroh/endpoint_streams.rs handle_incoming",
         model_ref: "MC_P2PDelivery_{Green_E2E,Red_F27_HalfRegistered}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // The binary built with `model-trace` logs one event per model
@@ -2126,6 +2318,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/model_trace.rs Event; proofs/src/model_trace.rs Trace::abstracted, replay; proofs/tests/behavioral/model_trace.rs two_node_push_replays_through_p2p_delivery, hub_relay_replays_through_p2p_delivery",
         model_ref: "Trace_P2PDelivery.tla; MC_P2PDelivery_Trace_{TwoNode,HubRelay,Red_*}.cfg",
         tiers: &[Behavioral],
+        bound_by: "proofs/tests/behavioral/model_trace.rs two_node_push_replays_through_p2p_delivery, hub_relay_replays_through_p2p_delivery",
     },
     Property {
         // The witnesses are integration tests outside this conformance
@@ -2138,6 +2331,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/manager/process/pushlog.rs process_block_inner; crates/p2p/src/sync/manager/process/pending_dag.rs resync_persisted_pending_dags; tools/integration-test/tests/p2p_admission_restart.rs",
         model_ref: "MC_PendingDagRestart_{Green,Red_ProcessLocal}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // The witness is the p2p_admission integration test, outside this
@@ -2148,6 +2342,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/manager/process/pushlog.rs process_block_inner; tools/integration-test/tests/p2p_admission.rs fan_in_pushlog_admission_no_silent_divergence",
         model_ref: "MC_PushLogAdmission_{Green,Red_SuccessOnFull}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // gate_fetched judges only roots with a resident pending record. Pulls
@@ -2159,5 +2354,6 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/sync/coordinator/receive_gate.rs SyncCoordinator::gate_fetched",
         model_ref: "MC_ReceiveGate_Green.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
 ];

@@ -6,13 +6,19 @@ use conformance::lean_contract::{load_contract, ContractSnapshot};
 /// The Lean drift-check builds the contract via `lake`. Environments without a
 /// Lean toolchain (default CI `cargo test --workspace`) can't run it, so skip
 /// gracefully there; it still runs wherever `lake` is installed (local dev,
-/// `proofs/verify-all.sh`, a Lean-equipped job).
+/// `proofs/verify-all.sh`, a Lean-equipped job). `DEFRA_REQUIRE_LAKE=1`, which
+/// the Lean Conformance job sets, makes a missing `lake` a failure.
 fn lake_available() -> bool {
-    std::process::Command::new("lake")
+    let available = std::process::Command::new("lake")
         .arg("--version")
         .output()
         .map(|o| o.status.success())
-        .unwrap_or(false)
+        .unwrap_or(false);
+    assert!(
+        available || std::env::var("DEFRA_REQUIRE_LAKE").as_deref() != Ok("1"),
+        "DEFRA_REQUIRE_LAKE=1 and lake is not runnable"
+    );
+    available
 }
 
 /// Mirrors `crates/crdt/src/field/mod.rs` `enum MergeResult`. If a variant is
