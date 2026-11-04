@@ -400,9 +400,9 @@ RUNS=(
   "MC_PushBacklog_Red_PermitLeak.cfg MC_PushBacklog_Common.tla RED" # completing job keeps its worker slot -> pool decays (INV_PermitConservation)
   "MC_PushBacklog_Red_RetainHandles.cfg MC_PushBacklog_Common.tla RED" # SyncShutdownHandle retains every completed JoinHandle (INV_HandlesBounded)
   "MC_PushBacklog_Red_NoPeerCap.cfg MC_PushBacklog_Common.tla RED" # no per-peer cap: slow peer's stuck sends hold every worker -> healthy peers starve (LIVE_HealthyProgress)
-  "MC_PushCoalescing_Green.cfg MC_PushCoalescing_Common.tla GREEN" # #1102: latest head retained while queued/persisted predecessors retire
+  "MC_PushCoalescing_Green.cfg MC_PushCoalescing_Common.tla GREEN" # #1102: latest head retained while queued predecessors retire
   "MC_PushCoalescing_Red_AppendEvery.cfg MC_PushCoalescing_Common.tla RED" # no live coalescing -> two heads occupy one (doc,peer) queue
-  "MC_PushCoalescing_Red_StaleRetry.cfg MC_PushCoalescing_Common.tla RED" # failed superseded active head re-enters persisted retry
+  "MC_PushCoalescing_Red_StaleRetry.cfg MC_PushCoalescing_Common.tla RED" # superseded failure registers the marker afresh, taking it from the newest job (INV_NoStaleRetry)
   "MC_PushCoalescing_Green_Siblings.cfg MC_PushCoalescing_Common.tla GREEN" # F1: a live ack clears the marker only for the whole frontier -> siblings reach the ladder
   "MC_PushCoalescing_Red_SiblingClear.cfg MC_PushCoalescing_Common.tla RED" # F1: the newest generation's ack clears the marker over a retired sibling (INV_ClearedScopeDelivered)
   "MC_PushCoalescing_Red_UnfencedAck.cfg MC_PushCoalescing_Common.tla RED" # F1: a sibling's live ack reported without its generation overwrites the ladder's acked frontier (INV_AckRecordCurrent)
