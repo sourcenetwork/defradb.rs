@@ -7,7 +7,7 @@ use integration_test::{poll_until, setup_two_node_replicated};
 
 use super::support::{body, create, listed, update, visible, SCHEMA};
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_peer_has_the_same_chunk_documents() {
     let (cluster, _addr) =
         setup_two_node_replicated(SCHEMA, &["Article", "Article__body_chunk"]).await;
@@ -36,7 +36,7 @@ async fn a_peer_has_the_same_chunk_documents() {
     .await;
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_parent_delete_replicates_with_its_chunks() {
     let (cluster, _addr) =
         setup_two_node_replicated(SCHEMA, &["Article", "Article__body_chunk"]).await;
@@ -73,7 +73,7 @@ async fn a_parent_delete_replicates_with_its_chunks() {
     assert!(visible(&node1, None).is_empty());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_replicator_of_the_parent_ships_its_chunks() {
     let (cluster, _addr) = setup_two_node_replicated(SCHEMA, &["Article"]).await;
     let (node0, node1) = (cluster.client(0), cluster.client(1));

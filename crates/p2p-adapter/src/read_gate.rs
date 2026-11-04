@@ -522,7 +522,7 @@ mod tests {
             .to_vec()
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn a_chunk_block_is_served_as_its_parents_to_the_parents_readers_only() {
         let (db, created) = article_with_chunks().await;
         let parent = created.doc_id.to_string();
@@ -564,7 +564,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn a_chunk_block_is_denied_until_its_parent_has_merged() {
         let (source, created) = article_with_chunks().await;
         let chunk = &created.derived[0];

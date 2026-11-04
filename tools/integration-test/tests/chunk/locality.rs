@@ -20,7 +20,7 @@ fn book(typo: bool) -> String {
         .join("\\n\\n")
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn editing_one_paragraph_changes_one_chunk() {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);

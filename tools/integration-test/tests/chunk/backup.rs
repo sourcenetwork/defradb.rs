@@ -27,7 +27,7 @@ fn backup(cluster: &TestCluster, node: usize, args: &[&str]) {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_backup_round_trip_rebuilds_the_chunks() {
     let cluster = TestCluster::builder()
         .rust_nodes(2)

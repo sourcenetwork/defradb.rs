@@ -45,7 +45,7 @@ fn update_mutation(doc_id: &str, i: usize) -> String {
     )
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn concurrent_updates_leave_the_chunks_of_the_winning_text() {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);
@@ -79,7 +79,7 @@ async fn concurrent_updates_leave_the_chunks_of_the_winning_text() {
     assert_eq!(visible_hashes(&client, None), listed);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn concurrent_updates_and_a_delete_leave_no_stray_chunk() {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);

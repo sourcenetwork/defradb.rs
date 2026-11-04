@@ -147,7 +147,7 @@ async fn first_delivered(acp_enabled: bool, message: Message) -> String {
     bus.publish(message);
     bus.publish(update("Plain", SENTINEL));
     let mut body = response.into_body().into_data_stream();
-    let bytes = tokio::time::timeout(Duration::from_secs(2), body.next())
+    let bytes = nuclei::time::timeout(Duration::from_secs(2), body.next())
         .await
         .expect("the ungated event must be delivered")
         .unwrap()
@@ -161,7 +161,7 @@ async fn first_delivered(acp_enabled: bool, message: Message) -> String {
     json["data"]["doc_id"].as_str().unwrap().to_string()
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_chunk_event_reaches_only_those_who_can_read_it_with_acp_on() {
     assert_eq!(
         first_delivered(true, update("Users__body_chunk", "readable")).await,
@@ -173,7 +173,7 @@ async fn a_chunk_event_reaches_only_those_who_can_read_it_with_acp_on() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_chunk_event_is_still_gated_with_acp_off() {
     assert_eq!(
         first_delivered(false, update("Users__body_chunk", "readable")).await,
@@ -185,7 +185,7 @@ async fn a_chunk_event_is_still_gated_with_acp_off() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn an_ungated_collection_event_needs_no_read_check() {
     for acp_enabled in [false, true] {
         assert_eq!(

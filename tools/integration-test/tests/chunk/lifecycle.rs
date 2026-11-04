@@ -10,7 +10,7 @@ async fn node() -> TestCluster {
     cluster
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn graphql_create_update_and_delete_keep_chunks_exact() {
     let cluster = node().await;
     let client = cluster.client(0);
@@ -33,7 +33,7 @@ async fn graphql_create_update_and_delete_keep_chunks_exact() {
     assert!(visible_hashes(&client, None).is_empty());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn an_explicit_transaction_writes_chunks_on_commit() {
     let cluster = node().await;
     let client = cluster.client(0);
@@ -60,7 +60,7 @@ async fn an_explicit_transaction_writes_chunks_on_commit() {
     assert_eq!(visible_hashes(&client, None), list);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn document_api_writes_keep_chunks_exact() {
     let cluster = node().await;
     let client = cluster.client(0);
@@ -93,7 +93,7 @@ async fn document_api_writes_keep_chunks_exact() {
     assert!(visible_hashes(&client, None).is_empty());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn truncating_the_parent_empties_its_chunks() {
     let cluster = node().await;
     let client = cluster.client(0);

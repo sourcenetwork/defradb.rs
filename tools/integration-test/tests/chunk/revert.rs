@@ -4,7 +4,7 @@ use integration_test::TestCluster;
 
 use super::support::{body, create, update, visible, SCHEMA};
 
-#[tokio::test]
+#[nuclei::test]
 async fn reverting_the_text_reuses_the_original_chunks() {
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
     let client = cluster.client(0);

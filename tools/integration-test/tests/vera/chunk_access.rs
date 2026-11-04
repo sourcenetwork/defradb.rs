@@ -19,7 +19,7 @@ fn schema(policy_id: &str) -> String {
     )
 }
 
-#[tokio::test]
+#[nuclei::test]
 #[serial_test::serial]
 async fn a_peer_shows_chunks_only_to_readers_of_the_parent() {
     let binary = vera_cli_binary();
@@ -48,7 +48,7 @@ async fn a_peer_shows_chunks_only_to_readers_of_the_parent() {
         .schema_add_with_identity(&schema(&policy_id), jack_key)
         .unwrap();
     node1.acp_policy_add(USER_ACP_POLICY, jack_key).unwrap();
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    nuclei::time::sleep(Duration::from_secs(2)).await;
     node1
         .schema_add_with_identity(&schema(&policy_id), jack_key)
         .unwrap();

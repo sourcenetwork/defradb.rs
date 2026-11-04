@@ -13,7 +13,7 @@ fn schema(policy_id: &str) -> String {
     )
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn chunks_follow_their_parents_access() {
     let cluster = TestCluster::builder()
         .rust_nodes(1)
