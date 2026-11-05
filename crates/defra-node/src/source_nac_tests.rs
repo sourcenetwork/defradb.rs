@@ -256,3 +256,30 @@ fn source_graph_survives_restart() {
     })
     .unwrap();
 }
+
+#[test]
+fn cyclic_source_graph_does_not_grant_an_unrelated_actor() {
+    workers::block_on(async {
+        let node = Node::builder()
+            .with_node_acp_owner(OWNER)
+            .build()
+            .await
+            .unwrap();
+        let owner = context(OWNER);
+        let (handle, tx) = begin(&node, &owner).await;
+        for item in [
+            edge(None, "source", "a", false),
+            edge(Some("a"), "source", "b", false),
+            edge(Some("b"), "source", "a", false),
+        ] {
+            assert!(node
+                .change_nac_source_permission_as(&tx, &item)
+                .await
+                .unwrap());
+        }
+        node.runner().commit_txn_as(&owner, &handle).await.unwrap();
+        assert!(!allowed(&node, ACTOR).await);
+        node.shutdown().await.unwrap();
+    })
+    .unwrap();
+}
