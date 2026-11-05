@@ -21,6 +21,7 @@ structure Input where
   claimedActor : String
   verified : Bool
   nativeAuthorized : Bool
+  waveConsumed : Bool
   commit : Bool
   deriving FromJson, ToJson
 
@@ -28,7 +29,7 @@ def accepts (input : Input) : Bool :=
   input.verified && input.claimedActor == input.approved.signer && input.approved == input.offered
 
 def creates (input : Input) : Bool :=
-  accepts input && input.nativeAuthorized && input.commit
+  accepts input && input.nativeAuthorized && input.waveConsumed && input.commit
 
 theorem signature_evidence_is_not_authority (input : Input) (h : input.nativeAuthorized = false) :
     creates input = false := by simp [creates, h]
@@ -37,6 +38,9 @@ theorem wrong_actor_is_rejected (input : Input) (h : input.claimedActor ≠ inpu
     accepts input = false := by simp [accepts, h]
 
 theorem failed_transaction_publishes_nothing (input : Input) (h : input.commit = false) :
+    creates input = false := by simp [creates, h]
+
+theorem unconsumed_graph_publishes_nothing (input : Input) (h : input.waveConsumed = false) :
     creates input = false := by simp [creates, h]
 
 def evaluate (json : Json) : Except String Json := do

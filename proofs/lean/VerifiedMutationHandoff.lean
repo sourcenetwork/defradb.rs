@@ -38,6 +38,11 @@ def publishes (input : Input) : Bool :=
 theorem stale_wave_does_not_publish (input : Input) (h : input.waveMatches = false) :
     publishes input = false := by simp [publishes, h]
 
+/-- A successful response is not proof that an update consumed a signing wave:
+an unchanged row can be returned without writing any block. -/
+theorem unconsumed_wave_does_not_publish (input : Input) (h : input.waveMatches = false) :
+    publishes input = false := by simp [publishes, h]
+
 theorem evidence_is_not_authority (input : Input) (h : input.nativeAuthorized = false) :
     publishes input = false := by simp [publishes, h]
 
