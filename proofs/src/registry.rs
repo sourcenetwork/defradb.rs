@@ -184,6 +184,22 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        family: "HTTP client-signed update",
+        name: "fixed intent, live signing, relevant field and deciding authorization",
+        axis: Tla,
+        anchor: "proposed: crates/http client signing; crates/db block builder and update transactions",
+        model_ref: "MC_ClientSignedUpdate_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "HTTP client-signed update",
+        name: "signed_document / signed_changes / signed_exact_wave",
+        axis: Lean,
+        anchor: "proposed: crates/db block builder and crates/http client signing",
+        model_ref: "ClientSignedUpdate (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "SSE loss and error delivery",
         name: "INV_DetectedLossEnds / INV_ErrorForwarded / LossEndsStream",
         axis: Tla,

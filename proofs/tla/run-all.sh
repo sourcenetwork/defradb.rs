@@ -34,6 +34,12 @@ RUNS=(
   "MC_ClientSignedCreate_Red_Acp.cfg ClientSignedCreate.tla RED" # a revoked actor commits (INV_Acp)
   "MC_ClientSignedCreate_Red_Inside.cfg ClientSignedCreate.tla RED" # the client is awaited inside an attempt (INV_Outside)
   "MC_ClientSignedCreate_Red_Reclaim.cfg ClientSignedCreate.tla RED" # expiry leaves its capsule allocated forever (LIVE_Reaped)
+  "MC_ClientSignedUpdate_Green.cfg ClientSignedUpdate.tla GREEN" # fixed intent, relevant field and transactional authorization
+  "MC_ClientSignedUpdate_Disjoint.cfg ClientSignedUpdate.tla RED" # a disjoint write commits beside the signed update
+  "MC_ClientSignedUpdate_Red_CheckIntent.cfg ClientSignedUpdate.tla RED" # a wrong graph receives a signature
+  "MC_ClientSignedUpdate_Red_CheckLive.cfg ClientSignedUpdate.tla RED" # a cancelled conversation receives a signature
+  "MC_ClientSignedUpdate_Red_ValidateHeads.cfg ClientSignedUpdate.tla RED" # a changed written field commits unseen
+  "MC_ClientSignedUpdate_Red_ValidateAcp.cfg ClientSignedUpdate.tla RED" # a revoked actor commits unseen
   "MC_SseDelivery_Green.cfg SseDelivery.tla GREEN"
   "MC_SseDelivery_Red_Overflow.cfg SseDelivery.tla RED"
   "MC_SseDelivery_Red_Error.cfg SseDelivery.tla RED"
