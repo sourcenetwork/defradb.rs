@@ -1603,6 +1603,8 @@ mod transactional_relationship_tests;
 
 #[cfg(test)]
 mod delegated_relationship_tests;
+#[cfg(test)]
+mod administrative_relationship_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod verified_create_tests;
