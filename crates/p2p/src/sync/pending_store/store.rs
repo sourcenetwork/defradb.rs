@@ -108,6 +108,7 @@ impl<S: Store + 'static> PendingDagStorage for PendingDagStore<S> {
             .await
             .map_err(|e| Error::Storage(e.to_string()))?;
         let root = registration.root;
+        let parents = registration.parents.to_vec();
         let record = registration.record.clone();
         let capacity = registration.capacity;
         let view = Arc::clone(view);
@@ -115,6 +116,7 @@ impl<S: Store + 'static> PendingDagStorage for PendingDagStore<S> {
             Box::pin(register(
                 txn,
                 root,
+                parents.clone(),
                 record.clone(),
                 capacity,
                 ticket,
@@ -251,12 +253,14 @@ impl<S: Store + 'static> PendingDagStorage for PendingDagStore<S> {
     }
 }
 
-/// Registers `root`: decides against the durable current head of its scope,
-/// retires an older one, takes a slot, and writes the record and the scope's
+/// Registers `root`, which links `parents`: decides against the durable
+/// current head of its scope, retires it when `root` links it, takes a slot,
+/// and writes the record and, unless the scope keeps a newer one, the scope's
 /// new head.
 async fn register(
     txn: &mut BasicTxn,
     root: Cid,
+    parents: Vec<Cid>,
     record: PersistedPendingDag,
     capacity: usize,
     ticket: u64,
@@ -264,12 +268,12 @@ async fn register(
 ) -> AttemptResult {
     let systemstore = txn.systemstore();
     let head = scope_head(root, &record);
+    let mut current = None;
     let retired = match &head {
         None => None,
         Some((scope, version)) => {
-            let current = read_head(&systemstore, &scope.key(SCOPE_PREFIX)).await?;
-            match ScopeDecision::of(*version, current) {
-                ScopeDecision::CoveredByCurrent => return Ok(Box::new(Admission::Covered)),
+            current = read_head(&systemstore, &scope.key(SCOPE_PREFIX)).await?;
+            match ScopeDecision::of(*version, &parents, current) {
                 ScopeDecision::Supersedes(older) => Some(older),
                 ScopeDecision::Current | ScopeDecision::Independent => None,
             }
@@ -306,9 +310,11 @@ async fn register(
         .set(&record_key(&root), &encode(&record, slot)?)
         .await?;
     if let Some((scope, version)) = &head {
-        systemstore
-            .set(&scope.key(SCOPE_PREFIX), &version.to_bytes())
-            .await?;
+        if retired.is_some() || current.is_none_or(|current| *version >= current) {
+            systemstore
+                .set(&scope.key(SCOPE_PREFIX), &version.to_bytes())
+                .await?;
+        }
     }
     drop(systemstore);
     on_commit(txn, view.registered(root, &record, retired))?;

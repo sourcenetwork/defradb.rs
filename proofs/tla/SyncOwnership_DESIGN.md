@@ -170,10 +170,15 @@ independently authenticated direct announcer becomes serviceable only after it
 owns the complete DAG, and `ClaimFetch` cannot run until that qualified
 provider is durable.
 
-`ProcessRegister` rejects an arriving version already covered by an equal or
-newer pending head. Both green configurations use `MaxV = 2`, so supersession,
-late arrival of the stale lower version, and stale-ack protection are reachable
-rather than vacuously excluded by the model constants.
+`ProcessRegister` acks a root already pending as it is. Any other head
+registers on its own, and retires the scope's current head (`ScopeHead`, the
+newest registered) only when it links it: each write links the head before
+it, so `<<s, v - 1>>` is the one parent. Nothing is acked on another head's
+strength, so a stale lower version that arrives after its child takes its own
+registration until the child merges. Both green configurations use
+`MaxV = 2`, so supersession, late arrival of the stale lower version, and
+stale-ack protection are reachable rather than vacuously excluded by the model
+constants.
 
 The two full green configurations check the cross-scope safety product. The
 fairness checks are split into document, collection, and Iroh relay-chain
@@ -236,8 +241,8 @@ their scope markers on the success reply.
   deadline the claim set: it can pass while the attempt runs, and when the
   attempt fails the root is due ahead of every head acknowledged meanwhile.
 - `ExpiryMode = "AckRetained"`: an acknowledged entry never expires
-  (`PendingDag::is_expired`); it leaves on merge, quarantine or a newer head of
-  its scope and counts against `max_pending_dags` meanwhile, whose overflow
+  (`PendingDag::is_expired`); it leaves on merge, quarantine or a head of its
+  scope that links it and counts against `max_pending_dags` meanwhile, whose overflow
   nacks so the sender keeps its marker. `"WallClockTtl"` lets `Expire` drop an
   acknowledged root that has not been fetched. The model does not credit the
   durable resync: with a pending store it re-registers such a root within a
@@ -352,9 +357,9 @@ state a property: the end of a continuation is the liveness property
   complete-DAG offer has been durably admitted. `qualifiedProvider` abstracts
   a non-empty bounded candidate set; the exact three-alternate cap and
   principal identities are enforced by Rust conformance tests.
-- `INV_OnePendingHeadPerScope`: one sender retains only its current durable
-  receiver obligation for a document or collection scope; a newer causal head
-  atomically supersedes that sender's older root.
+- `ACT_LinkingHeadRetiresScopeHead`: a head registered while its parent is
+  the scope's current head atomically takes over that registration, so heads
+  that arrive in order keep one durable obligation per scope.
 - `INV_PendingServiceable`: every success-acked pending root retains a
   restart-safe CAR-serving path.
 - `INV_PendingHasRoutableProvider`: every success-acked root retains the

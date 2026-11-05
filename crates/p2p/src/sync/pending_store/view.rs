@@ -74,25 +74,11 @@ impl PersistedView {
         self.quarantined.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// What a head is to the durable current head of its scope.
-    pub(crate) fn scope_decision(
-        &self,
-        root: Cid,
-        source_peer: Option<&str>,
-        collection_id: &str,
-        doc_id: &str,
-        head_priority: Option<u64>,
-    ) -> ScopeDecision {
-        match Scope::of(root, source_peer, collection_id, doc_id, head_priority) {
-            None => ScopeDecision::Independent,
-            Some((scope, version)) => ScopeDecision::of(version, self.scope_heads.get(&scope)),
-        }
-    }
-
-    /// Whether the head is its scope's durable current head, or newer.
+    /// Whether the head is its scope's durable current head, or links it.
     pub(crate) fn refreshes_or_supersedes(
         &self,
         root: Cid,
+        parents: &[Cid],
         source_peer: Option<&str>,
         collection_id: &str,
         doc_id: &str,
@@ -100,7 +86,11 @@ impl PersistedView {
     ) -> bool {
         Scope::of(root, source_peer, collection_id, doc_id, head_priority).is_some_and(
             |(scope, version)| {
-                ScopeDecision::refreshes_or_supersedes(version, self.scope_heads.get(&scope))
+                ScopeDecision::refreshes_or_supersedes(
+                    version,
+                    parents,
+                    self.scope_heads.get(&scope),
+                )
             },
         )
     }

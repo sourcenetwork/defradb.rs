@@ -336,6 +336,8 @@ RUNS=(
   "MC_DocumentMaterialization_Green.cfg DocumentMaterialization.tla GREEN" # deletion marker is componentwise/absorbing
   "MC_PushLogAdmission_Green.cfg MC_PushLogAdmission_Common.tla GREEN" # #1088 W1: capacity overflow nacks -> success implies registered-or-merged + all docs merge
   "MC_PushLogAdmission_Red_SuccessOnFull.cfg MC_PushLogAdmission_Common.tla RED" # fa4a84f7 regression: overflow drops registration but acks success (INV_SuccessImpliesRegisteredOrMerged)
+  "MC_PushLogAdmission_Green_Siblings.cfg MC_PushLogAdmission_Common.tla GREEN" # F1: a head retires only the scope head it links -> sibling heads each keep a registration + all merge
+  "MC_PushLogAdmission_Red_PriorityCover.cfg MC_PushLogAdmission_Common.tla RED" # F1: (priority, CID) covers or supersedes a sibling (INV_AckedHeadReachable)
   "MC_PushLogJoin_Green.cfg PushLogJoin.tla GREEN" # same-CID PushLog joins the in-flight owner: success implies durable, one processor, every join ends
   "MC_PushLogJoin_Red_NoRecheck.cfg PushLogJoin.tla RED" # waiter acks when the owner lets go without looking again (INV_SuccessImpliesDurable)
   "MC_PushLogJoin_Red_NoGuard.cfg PushLogJoin.tla RED" # waiter processes its copy without the CID guard (INV_OneProcessor)
@@ -398,9 +400,12 @@ RUNS=(
   "MC_PushBacklog_Red_PermitLeak.cfg MC_PushBacklog_Common.tla RED" # completing job keeps its worker slot -> pool decays (INV_PermitConservation)
   "MC_PushBacklog_Red_RetainHandles.cfg MC_PushBacklog_Common.tla RED" # SyncShutdownHandle retains every completed JoinHandle (INV_HandlesBounded)
   "MC_PushBacklog_Red_NoPeerCap.cfg MC_PushBacklog_Common.tla RED" # no per-peer cap: slow peer's stuck sends hold every worker -> healthy peers starve (LIVE_HealthyProgress)
-  "MC_PushCoalescing_Green.cfg MC_PushCoalescing_Common.tla GREEN" # #1102: latest head retained while queued/persisted predecessors retire
+  "MC_PushCoalescing_Green.cfg MC_PushCoalescing_Common.tla GREEN" # #1102: latest head retained while queued predecessors retire
   "MC_PushCoalescing_Red_AppendEvery.cfg MC_PushCoalescing_Common.tla RED" # no live coalescing -> two heads occupy one (doc,peer) queue
-  "MC_PushCoalescing_Red_StaleRetry.cfg MC_PushCoalescing_Common.tla RED" # failed superseded active head re-enters persisted retry
+  "MC_PushCoalescing_Red_StaleRetry.cfg MC_PushCoalescing_Common.tla RED" # superseded failure registers the marker afresh, taking it from the newest job (INV_NoStaleRetry)
+  "MC_PushCoalescing_Green_Siblings.cfg MC_PushCoalescing_Common.tla GREEN" # F1: a live ack clears the marker only for the whole frontier -> siblings reach the ladder
+  "MC_PushCoalescing_Red_SiblingClear.cfg MC_PushCoalescing_Common.tla RED" # F1: the newest generation's ack clears the marker over a retired sibling (INV_ClearedScopeDelivered)
+  "MC_PushCoalescing_Red_UnfencedAck.cfg MC_PushCoalescing_Common.tla RED" # F1: a sibling's live ack reported without its generation overwrites the ladder's acked frontier (INV_AckRecordCurrent)
   "MC_PendingDagRestart_Green.cfg MC_PendingDagRestart_Common.tla GREEN" # #1099: pending-DAG registrations persisted + restored after crash -> acks stay backed, all docs merge
   "MC_PendingDagRestart_Red_ProcessLocal.cfg MC_PendingDagRestart_Common.tla RED" # process-local registrations: hub crash after success-ack -> silent permanent loss (INV_AckBacked)
   "MC_SyncOwnership_Green.cfg SyncOwnership.tla GREEN" # #1116 stage 3: one head hint transfers durable completion ownership to the receiver

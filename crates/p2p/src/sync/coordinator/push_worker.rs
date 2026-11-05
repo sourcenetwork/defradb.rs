@@ -15,6 +15,7 @@ use kovan::AtomOption;
 use super::{PushFailure, SyncShutdownHandle};
 use crate::message::PushLogRequest;
 use crate::signing::sign_with_transport;
+use crate::sync::head_provider::DocumentHeadProvider;
 use crate::sync::peer_state::PeerStateTracker;
 use crate::sync::push_backlog::{HeadHintFailureReason, JobCompletion, PushBacklog, PushJobSpec};
 use crate::transport::P2PTransport;
@@ -26,6 +27,8 @@ pub(super) struct PushWorkerContext<T> {
     pub(super) failure_tx: Arc<AtomOption<crate::rt::mpsc::Sender<PushFailure>>>,
     pub(super) send_timeout: Duration,
     pub(super) peer_state: Arc<PeerStateTracker>,
+    /// The local heads of a scope, read before an ack may clear its marker.
+    pub(super) head_provider: Arc<dyn DocumentHeadProvider>,
 }
 
 /// Hand a failed/rejected push to the persisted retry ladder. Losslessly:
@@ -100,6 +103,25 @@ pub(super) async fn report_push_ack(
     )
     .await
     .is_some()
+}
+
+/// Whether `job`'s head is the whole current frontier of its scope. A marker
+/// stands for every head registered under it, and the live path sends only
+/// the latest; with a sibling head beside this one, only the retry ladder,
+/// which sends every current head, may complete the scope, and this head's
+/// ack is not reported: without its generation the recorder would record it
+/// unfenced, over the frontier the ladder records. A failed lookup, or one that
+/// finds no heads (`NoOpHeadProvider` finds none), leaves the marker in place.
+async fn is_whole_frontier<T>(context: &PushWorkerContext<T>, job: &PushJobSpec) -> bool {
+    let heads = if job.doc_id.is_empty() {
+        context
+            .head_provider
+            .get_collection_heads(&job.collection_id)
+            .await
+    } else {
+        context.head_provider.get_document_heads(&job.doc_id).await
+    };
+    heads.is_ok_and(|heads| heads == [job.root_cid])
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -332,7 +354,9 @@ where
         .await;
         JobCompletion::Failed
     } else if context.backlog.is_current(job).await {
-        let _ = report_push_ack(&context.failure_tx, job).await;
+        if job.marker_generation.is_none() || is_whole_frontier(context, job).await {
+            let _ = report_push_ack(&context.failure_tx, job).await;
+        }
         JobCompletion::Succeeded
     } else {
         JobCompletion::Retired
