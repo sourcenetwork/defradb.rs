@@ -159,7 +159,17 @@ substrate) — so a green run never reads as "this was proven against the
 artifact." The modeled families are the registry's families, so adding a model
 is one `PROPERTIES` entry and one row above;
 `matrix::readme_lists_exactly_the_modeled_families` names any family that has
-one without the other.
+one without the other. `anchor::every_registry_anchor_resolves` resolves each
+anchor's files and symbols against the tree, so a rename that moves modeled code
+fails until its anchor follows it. A `Contract` or `Behavioral` row names the
+tests that bind it in `bound_by`, and `matrix::every_bound_tier_names_its_tests`
+fails when one names none or names a test that is not declared.
+
+[`src/constants.rs`](src/constants.rs) states once each P2P constant the models
+depend on: the Rust constant that sets it, and the model constants that restate
+it exactly or check a scaled-down instance of it.
+`constants::every_constant_agrees` fails when the code, a restating model or the
+table disagree.
 
 ### Realized status — all 21 families bound
 

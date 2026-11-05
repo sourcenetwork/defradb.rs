@@ -29,7 +29,7 @@ pending map; see *In-memory pending map* below.
 current composite or collection head CIDs with monotone versions.
 
 - `dirty` is the permitted sender durability: a set of scopes only.
-- `payloadLedger` is the current-main countermodel: sender durability contains
+- `payloadLedger` is the superseded-policy countermodel: sender durability contains
   a scope plus a particular CID/version.
 - `inflight` contains idempotent head hints.
 - `pending` is the receiver's bounded durable want queue (`Cap`). `FetchCap`
@@ -694,7 +694,7 @@ fetch owner is deliberately not expressible.
 | `MC_SyncOwnership_Green_Liveness_Collection.cfg` | GREEN | two-version collection supersession eventually reaches currency and quiescence |
 | `MC_SyncOwnership_Green_MarkerHandoff.cfg` | GREEN | a transactional commit returns only after its marker registration, P2P stops only after admitted writes drained, and a crash between commit and registration acknowledges nothing |
 | `MC_SyncOwnership_Red_DocOnlyMarkers.cfg` | RED | a collection update is dropped after no collection marker was recorded |
-| `MC_SyncOwnership_Red_PayloadLedger.cfg` | RED | current-main CID/payload-valued sender durability violates marker-only ownership |
+| `MC_SyncOwnership_Red_PayloadLedger.cfg` | RED | superseded CID/payload-valued sender durability violates marker-only ownership |
 | `MC_SyncOwnership_Red_VolatileRegistration.cfg` | RED | restart destroys the only state behind a success ack |
 | `MC_SyncOwnership_Red_DuplicateFetch.cfg` | RED | two triggers claim the same root concurrently |
 | `MC_SyncOwnership_Red_StaleAckClears.cfg` | RED | an old ack clears the marker for a newer head |

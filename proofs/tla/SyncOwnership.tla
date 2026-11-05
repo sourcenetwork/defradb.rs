@@ -384,7 +384,7 @@ ReHintMarker(s) ==
                  mergedV, crashed, fwdVars>>
   /\ UNCHANGED senderVars
 
-\* Current main can retry the CID recorded in its durable delivery ledger.
+\* The superseded policy retried the CID recorded in its durable delivery ledger.
 ReHintPayload(s, v) ==
   /\ <<s, v>> \in payloadLedger
   /\ inflight' = inflight \cup {<<s, v>>}

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Every `*.rs` filename named in proofs/ or SURVEY.md must resolve to a tracked
-# file. Anchors are prose, not code, so nothing else catches them when a rename
-# moves the thing being modelled: proofs/src/registry.rs treats `anchor` as free
-# text, and a fully-qualified-path grep misses the bare filenames that most
-# anchors actually use.
+# file. Registry anchors are resolved, symbols included, by the conformance test
+# `anchor::every_registry_anchor_resolves`; this script covers the remaining
+# prose under proofs/, SURVEY.md and backticked rustdoc names, where a
+# fully-qualified-path grep misses the bare filenames most references use.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 

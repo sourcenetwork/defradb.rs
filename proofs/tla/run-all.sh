@@ -438,7 +438,7 @@ RUNS=(
   "MC_SyncOwnership_Green_Liveness_Doc.cfg SyncOwnership.tla GREEN" # document supersession eventually reaches currency and quiescence
   "MC_SyncOwnership_Green_Liveness_Collection.cfg SyncOwnership.tla GREEN" # collection supersession eventually reaches currency and quiescence
   "MC_SyncOwnership_Red_DocOnlyMarkers.cfg SyncOwnership.tla RED" # no collection marker loses a dropped collection-head obligation
-  "MC_SyncOwnership_Red_PayloadLedger.cfg SyncOwnership.tla RED" # current main stores CID/version delivery state instead of scope markers
+  "MC_SyncOwnership_Red_PayloadLedger.cfg SyncOwnership.tla RED" # superseded policy: CID/version delivery state instead of scope markers
   "MC_SyncOwnership_Red_VolatileRegistration.cfg SyncOwnership.tla RED" # success ack followed by restart loses a volatile receiver obligation
   "MC_SyncOwnership_Red_DuplicateFetch.cfg SyncOwnership.tla RED" # alternate triggers claim two fetch owners for one root
   "MC_SyncOwnership_Red_StaleAckClears.cfg SyncOwnership.tla RED" # stale ack clears the marker for a newer current head
@@ -553,16 +553,16 @@ RUNS=(
   "MC_HeadPublication_Red_WholeSet.cfg       HeadPublication.tla RED"   # touches that says yes to every part: an unrelated publication turns the reader away (INV_NoUnrelatedAbort)
   "MC_InboundAdmission_Green.cfg MC_InboundAdmission_Common.tla GREEN" # #2076: bodies stay within their class budget, a healthy control message is handled, no wait is endless
   "MC_InboundAdmission_Red_SharedBudget.cfg MC_InboundAdmission_Common.tla RED" # one budget for all classes: stuck bulk bodies starve control (LIVE_HealthyHandled)
-  "MC_InboundAdmission_Red_SharedDrain.cfg MC_InboundAdmission_Common.tla RED" # current main: one queue, a blocked completion head starves control (LIVE_HealthyHandled)
+  "MC_InboundAdmission_Red_SharedDrain.cfg MC_InboundAdmission_Common.tla RED" # pre-#2076: one queue, a blocked completion head starves control (LIVE_HealthyHandled)
   "MC_InboundAdmission_Red_NoShare.cfg MC_InboundAdmission_Common.tla RED" # no per-peer share: one peer holds a whole class (INV_ShareBound)
   "MC_InboundAdmission_Red_PerConnection.cfg MC_InboundAdmission_Common.tla RED" # a share per connection: a peer with two connections holds a whole class (INV_ShareBound)
   "MC_InboundAdmission_Red_ReleaseOnQueue.cfg MC_InboundAdmission_Common.tla RED" # lease dropped on enqueue: memory exceeds the budget (INV_ResidentWithinBudget)
-  "MC_InboundAdmission_Red_ReadFirst.cfg MC_InboundAdmission_Common.tla RED" # current main: body read before admission (INV_ResidentWithinBudget)
+  "MC_InboundAdmission_Red_ReadFirst.cfg MC_InboundAdmission_Common.tla RED" # pre-#2076: body read before admission (INV_ResidentWithinBudget)
   "MC_InboundAdmission_Red_NoDeadline.cfg MC_InboundAdmission_Common.tla RED" # no deadline: a stream waits for budget forever (LIVE_WaitEnds)
   "MC_InboundAdmission_Red_NoReadDeadline.cfg MC_InboundAdmission_Common.tla RED" # no read deadline: a stalled body holds control forever (LIVE_HealthyHandled)
   "MC_InboundAdmission_Red_IdleOnly.cfg MC_InboundAdmission_Common.tla RED" # idle deadline only: a trickling body holds control forever (LIVE_HealthyHandled)
   "MC_GossipOwnership_Green.cfg MC_GossipOwnership_Common.tla GREEN" # #2078: gossip rides the mux connection; a revoked peer has no gossip, gossip never closes a shared connection
-  "MC_GossipOwnership_Red_OwnConnection.cfg MC_GossipOwnership_Common.tla RED" # current main: gossip dials its own connection and re-reaches a revoked peer (INV_RevokedHasNoGossip)
+  "MC_GossipOwnership_Red_OwnConnection.cfg MC_GossipOwnership_Common.tla RED" # former design: gossip dials its own connection and re-reaches a revoked peer (INV_RevokedHasNoGossip)
   "MC_GossipOwnership_Red_NoRecheck.cfg MC_GossipOwnership_Common.tla RED" # no admission check after connecting: a revoke during the dial is missed (INV_RevokedHasNoGossip)
   "MC_GossipOwnership_Red_GossipCloses.cfg MC_GossipOwnership_Common.tla RED" # forgetting a peer closes the shared connection (INV_GossipNeverClosesShared)
   "MC_GossipOwnership_Red_ForgetForever.cfg MC_GossipOwnership_Common.tla RED" # gossip may drop the healthy peer forever: it is never reached (LIVE_HealthyReached)

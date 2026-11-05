@@ -22,12 +22,12 @@
 \*   3. a request that joined waits forever - LIVE_EveryJoinEnds.
 \*
 \* Correspondence with the Rust code, crates/p2p/src/sync/manager/process/pushlog.rs
-\* unless named otherwise:
+\* and join.rs unless named otherwise:
 \*
 \*   | Model        | Rust                                                                     |
 \*   |--------------|--------------------------------------------------------------------------|
 \*   | Arrive       | process_pushlog_with_provider_evidence: process_queue.try_acquire_nowait |
-\*   | Check        | join_in_flight: in_flight_pushlog_is_durable (recovery registered,       |
+\*   | Check        | join_in_flight: needs_nothing_more (recovery registered,                 |
 \*   |              | then blockstore.is_merged)                                               |
 \*   | Acquire      | join_in_flight: process_queue.try_acquire                                |
 \*   | Wake         | join_in_flight: ProcessWait::released (sync/queue.rs), the owner's Event |
