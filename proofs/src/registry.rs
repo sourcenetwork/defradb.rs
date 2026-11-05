@@ -72,6 +72,22 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/p2p/src/sync/coordinator/dag_fetcher_tests.rs local_complete_fetch_releases_peer_permit_before_waiting_to_send",
     },
     Property {
+        family: "Explicit embedded signing",
+        name: "admitted_binds",
+        axis: Lean,
+        anchor: "crates/defra-node/src/embedded_signer.rs; crates/defra-node/src/lib.rs execute_request_with_signer",
+        model_ref: "EmbeddedSigner (lake build); embedded_signer::native_admission_matches_executed_lean_model",
+        tiers: &[Boundary, Contract],
+    },
+    Property {
+        family: "Explicit embedded signing",
+        name: "INV_Bound",
+        axis: Tla,
+        anchor: "crates/defra-node/src/embedded_signer.rs; crates/defra-node/src/lib.rs execute_request_in_txn_with_signer",
+        model_ref: "MC_EmbeddedSigner_{Green,Red_*}.cfg",
+        tiers: &[Boundary, Contract],
+    },
+    Property {
         family: "Transactional document relationships",
         name: "INV_ActorAuthority / actor_nac_required / actor_dac_required",
         axis: Tla,

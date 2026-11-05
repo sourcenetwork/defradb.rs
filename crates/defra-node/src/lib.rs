@@ -37,6 +37,7 @@ pub mod config;
 mod dac_api_tests;
 mod db_impls;
 pub mod dense_search;
+mod embedded_signer;
 mod error;
 #[cfg(feature = "http")]
 mod http_acp;
@@ -101,6 +102,7 @@ pub use config::{P2PConfig, PeerKeySource};
 #[cfg(feature = "managed-p2p")]
 pub use defra_p2p_adapter::{ReplicatorPushOptions, ReplicatorPushOptionsState};
 pub use dense_search::{DenseHybridSearchHit, DenseHybridSearchRequest, DenseHybridSearchResponse};
+pub use embedded_signer::{EmbeddedSigner, EmbeddedSignerError};
 pub use error::{Error, Result};
 pub use events::EventName;
 pub use keyring;
@@ -305,6 +307,76 @@ impl Node {
     ) -> QueryResponse {
         self.execute_prepared_request(request, Some(handle.clone()))
             .await
+    }
+
+    /// Execute using a locally held signer whose DID must be the explicit actor.
+    ///
+    /// This trusted embedded capability does not authenticate an HTTP caller;
+    /// it preserves the normal actor authorization and prepared-write boundary.
+    pub async fn execute_request_with_signer(
+        &self,
+        request: QueryRequest,
+        signer: &EmbeddedSigner,
+    ) -> QueryResponse {
+        self.execute_with_embedded_signer(request, None, signer)
+            .await
+    }
+
+    /// Execute in the node-owned transaction, authorizing and signing as the
+    /// explicit request actor. The node remains the transaction principal.
+    pub async fn execute_request_in_txn_with_signer(
+        &self,
+        request: QueryRequest,
+        handle: &TransactionHandle,
+        signer: &EmbeddedSigner,
+    ) -> QueryResponse {
+        self.execute_with_embedded_signer(request, Some(handle.clone()), signer)
+            .await
+    }
+
+    async fn execute_with_embedded_signer(
+        &self,
+        request: QueryRequest,
+        txn_handle: Option<TransactionHandle>,
+        signer: &EmbeddedSigner,
+    ) -> QueryResponse {
+        if request.context.dac_bypass() {
+            return QueryResponse::error("explicit embedded signing does not allow DAC bypass");
+        }
+        if request
+            .identity
+            .as_ref()
+            .map(ToString::to_string)
+            .as_deref()
+            != Some(signer.did())
+        {
+            return QueryResponse::error("explicit signing key must match the selected actor");
+        }
+        let Some(node_identity_did) = self.node_identity_did.as_deref() else {
+            return QueryResponse::error(
+                "explicit embedded signing requires a configured node identity",
+            );
+        };
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (node_identity_did, txn_handle);
+            QueryResponse::error("explicit embedded signing is unavailable on wasm32")
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let Some(network) = self.network.as_ref() else {
+                return unavailable_node_signer_response(node_identity_did);
+            };
+            execute_with_signing_context(
+                network.edge(),
+                self.runner.clone(),
+                request,
+                txn_handle,
+                signer.config(),
+                node_identity_did.to_string(),
+            )
+            .await
+        }
     }
 
     async fn execute_request_once(&self, request: QueryRequest) -> QueryResponse {

@@ -13,6 +13,13 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 RUNS=(
   "MC_LocalFetchPermit_Green.cfg LocalFetchPermit.tla GREEN"
   "MC_LocalFetchPermit_Red_Hold.cfg LocalFetchPermit.tla RED"
+  "MC_EmbeddedSigner_Green.cfg EmbeddedSigner.tla GREEN"
+  "MC_EmbeddedSigner_Red_Actor.cfg EmbeddedSigner.tla RED"
+  "MC_EmbeddedSigner_Red_Match.cfg EmbeddedSigner.tla RED"
+  "MC_EmbeddedSigner_Red_Key.cfg EmbeddedSigner.tla RED"
+  "MC_EmbeddedSigner_Red_Owner.cfg EmbeddedSigner.tla RED"
+  "MC_EmbeddedSigner_Red_Acp.cfg EmbeddedSigner.tla RED"
+  "MC_EmbeddedSigner_Red_Bypass.cfg EmbeddedSigner.tla RED"
   "MC_SigningAdmission_Green.cfg SigningAdmission.tla GREEN" # bounded connections release expired slots
   "MC_SigningAdmission_Red_Capacity.cfg SigningAdmission.tla RED" # admission without a cap (INV_Capacity)
   "MC_SigningAdmission_Red_Cleanup.cfg SigningAdmission.tla RED" # expiration leaks a slot (LIVE_Reaped)
