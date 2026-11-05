@@ -236,6 +236,15 @@ impl NodeBuilder {
         self
     }
 
+    /// Enable Node Access Control (NAC) owned by `owner`, the identity
+    /// starting the node, as Go's `start` with NAC enabled does. A node whose
+    /// NAC was set up before keeps its owner.
+    pub fn with_node_acp_owner(mut self, owner: impl Into<String>) -> Self {
+        self.config.node_acp_enabled = true;
+        self.config.node_acp_owner = Some(owner.into());
+        self
+    }
+
     /// Set the query execution timeout.
     ///
     /// `Duration::ZERO` disables query execution timeouts.

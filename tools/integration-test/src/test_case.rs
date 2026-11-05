@@ -109,6 +109,35 @@ impl State {
         self.nodes.0.insert(name.to_owned(), slot);
     }
 
+    /// Start stopped node `name` again with NAC options, as Go's `Start`:
+    /// `enable_nac` turns NAC on, owned by `owner` when it was never set up.
+    /// A start the node refuses leaves it stopped, with the refusal.
+    pub fn start_node_with_nac(
+        &mut self,
+        name: &str,
+        enable_nac: bool,
+        owner: Option<String>,
+    ) -> Result<(), Failure> {
+        if self.client_type() == ClientType::GoHttp {
+            return Err(Failure::unsupported("Start on a Go node"));
+        }
+        let mut spec = self
+            .slot(name)
+            .map(|slot| slot.spec.clone())
+            .unwrap_or_default();
+        spec.enable_nac = enable_nac;
+        spec.nac_owner = owner;
+        self.stop_node(name, true);
+        let node =
+            TestNode::try_start(self.client_type(), spec.clone()).map_err(Failure::operation)?;
+        let slot = Slot {
+            spec,
+            node: Some(Arc::new(node)),
+        };
+        self.nodes.0.insert(name.to_owned(), slot);
+        Ok(())
+    }
+
     /// Stop node `name`; with `keep` its data and addresses stay for a restart.
     pub fn stop_node(&mut self, name: &str, keep: bool) {
         let Some(slot) = self.nodes.0.remove(name) else {
