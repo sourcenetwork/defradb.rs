@@ -72,6 +72,22 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/p2p/src/sync/coordinator/dag_fetcher_tests.rs local_complete_fetch_releases_peer_permit_before_waiting_to_send",
     },
     Property {
+        family: "HTTP client-signed create",
+        name: "original actor and context, verified waves, live operation, deciding ACP, outside-attempt interaction, and eventual cleanup",
+        axis: Tla,
+        anchor: "proposed: crates/http request-scoped signature continuation; crates/query prepared inputs; crates/db create preparation",
+        model_ref: "MC_ClientSignedCreate_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "HTTP client-signed create",
+        name: "accepted_live / accepted_exact_blocks / signed_exact_blocks",
+        axis: Lean,
+        anchor: "proposed: crates/http signature continuation and client create-wave validation",
+        model_ref: "ClientSignedCreate (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "SSE loss and error delivery",
         name: "INV_DetectedLossEnds / INV_ErrorForwarded / LossEndsStream",
         axis: Tla,

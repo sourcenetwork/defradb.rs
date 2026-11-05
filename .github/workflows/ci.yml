@@ -468,6 +468,8 @@ jobs:
           build: true
           test: false
           use-mathlib-cache: false
+      - name: Check client-signed create model cases
+        run: python3 proofs/lean/test_client_signed_create.py
       - name: Check storage failure model binding
         run: cargo test -p query --test storage_failure -- --ignored
       - name: Check native listener model binding
