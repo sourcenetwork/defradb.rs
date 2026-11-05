@@ -49,6 +49,22 @@ use Tier::{Behavioral, Boundary, Contract};
 
 pub const PROPERTIES: &[Property] = &[
     Property {
+        family: "Deleted document history authorization",
+        name: "retained history remains protected and revocation and recreation do not reuse authority",
+        axis: Tla,
+        anchor: "proposed: crates/db/src/write/autocommit/helpers.rs unregister_deleted_doc; crates/acp/src/read_access.rs DirectChecker",
+        model_ref: "MC_DeletedHistory_{Green*,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Deleted document history authorization",
+        name: "delete_keeps_access / protected_foreign_denied / revoked_reader_denied",
+        axis: Lean,
+        anchor: "proposed: crates/db/src/write/autocommit/helpers.rs unregister_deleted_doc; crates/defra-node/src/dac_api_tests.rs deleted_history_access_and_revocation_match_the_model",
+        model_ref: "DeletedHistory (lake build); deleted_history_access_and_revocation_match_the_model",
+        tiers: &[Boundary, Contract],
+    },
+    Property {
         family: "HTTP client-signed create",
         name: "full_refused / expired_has_no_lifetime / lifetime_bounded / lifetime_before_expiration",
         axis: Lean,

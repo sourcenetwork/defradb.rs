@@ -23,6 +23,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 ### Modeled families
 | Family | Tool | Crates it covers |
 |---|---|---|
+| Deleted document history authorization | TLA+ / Lean | acp, db, query, defra-node (proposed; implementation red) |
 | HTTP client-signed create | TLA+ / Lean | http, query, db (proposed; implementation unbound) |
 | SSE loss and error delivery | TLA+ / Lean | events, http, query |
 | Storage failure classification | TLA+ / Lean | storage, db, query, http |

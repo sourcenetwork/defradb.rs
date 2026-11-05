@@ -86,6 +86,222 @@ async fn visible_users(node: &Node, identity: Option<identity::Did>) -> usize {
 }
 
 #[test]
+fn deleted_protected_document_does_not_expose_historical_commits_or_blocks() {
+    workers::block_on(async {
+        let node = Node::builder().enable_signing().build().await.unwrap();
+        let owner = identity::Did::new(DID_A).unwrap();
+        let foreign = identity::Did::new(DID_B).unwrap();
+        let policy_id = node
+            .add_dac_policy_as(
+                &defra_core::RequestContext::default().with_identity(Some(DID_A.to_owned())),
+                POLICY_YAML,
+            )
+            .await
+            .unwrap();
+        node.add_collection(&format!(
+            "type Users @policy(id: \"{policy_id}\", resource: \"users\") {{ name: String }}"
+        ))
+        .await
+        .unwrap();
+        let created = node
+            .execute_request(
+                query::QueryRequest::new(
+                    "mutation { add_Users(input: {name: \"secret\"}) { _docID } }",
+                )
+                .with_identity(Some(owner.clone())),
+            )
+            .await;
+        assert!(!created.has_errors(), "{:?}", created.errors);
+        let doc_id = created.data.unwrap()["add_Users"][0]["_docID"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let query = format!(
+            r#"query {{ _commits(docID: "{doc_id}", filter: {{fieldName: {{_eq: "_C"}}}}) {{ cid }} }}"#
+        );
+        let read_commits = |identity: identity::Did| {
+            query::QueryRequest::new(&query).with_identity(Some(identity))
+        };
+        let owner_before = node.execute_request(read_commits(owner.clone())).await;
+        assert!(!owner_before.has_errors(), "{:?}", owner_before.errors);
+        let cid = owner_before.data.unwrap()["_commits"][0]["cid"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let foreign_before = node.execute_request(read_commits(foreign.clone())).await;
+        assert!(!foreign_before.has_errors(), "{:?}", foreign_before.errors);
+        assert!(foreign_before.data.unwrap()["_commits"].as_array().unwrap().is_empty());
+        assert!(node.authorized_signed_block_bytes(&cid, Some(DID_A)).await.is_ok());
+        assert!(node.authorized_signed_block_bytes(&cid, Some(DID_B)).await.is_err());
+
+        let deleted = node
+            .execute_request(
+                query::QueryRequest::new(format!(
+                    "mutation {{ delete_Users(docID: \"{doc_id}\") {{ _docID }} }}"
+                ))
+                .with_identity(Some(owner)),
+            )
+            .await;
+        assert!(!deleted.has_errors(), "{:?}", deleted.errors);
+        let foreign_after = node.execute_request(read_commits(foreign)).await;
+        assert!(!foreign_after.has_errors(), "{:?}", foreign_after.errors);
+        let visible_commits = foreign_after.data.unwrap()["_commits"]
+            .as_array()
+            .unwrap()
+            .len();
+        let visible_signed_block = node.authorized_signed_block_bytes(&cid, Some(DID_B)).await.is_ok();
+        node.shutdown().await.unwrap();
+        assert!(
+            visible_commits == 0 && !visible_signed_block,
+            "foreign actor sees {visible_commits} historical commits; signed block readable: {visible_signed_block}"
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+#[ignore = "Requires Lean; run in the Lean Conformance job"]
+fn deleted_history_access_and_revocation_match_the_model() {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let observed = workers::block_on(async {
+        let node = Node::builder().enable_signing().build().await.unwrap();
+        let owner = identity::Did::new(DID_A).unwrap();
+        let reader = identity::Did::new(DID_B).unwrap();
+        let foreign = RawIdentity::from_private_key(crypto::generate_ed25519().unwrap())
+            .unwrap().did().unwrap();
+        let policy = node.add_dac_policy_as(
+            &defra_core::RequestContext::default().with_identity(Some(DID_A.to_owned())),
+            POLICY_YAML,
+        ).await.unwrap();
+        node.add_collection(&format!("type Users @policy(id: \"{policy}\", resource: \"users\") {{ name: String }}")).await.unwrap();
+        let create = node.execute_request(query::QueryRequest::new(
+            "mutation { add_Users(input: {name: \"secret\"}) { _docID } }"
+        ).with_identity(Some(owner.clone()))).await;
+        assert!(!create.has_errors(), "{:?}", create.errors);
+        let doc = create.data.unwrap()["add_Users"][0]["_docID"].as_str().unwrap().to_owned();
+        node.add_dac_actor_relationship(DID_A, "Users", &doc, "reader", DID_B).await.unwrap();
+        let query = format!(r#"query {{ _commits(docID: "{doc}", filter: {{fieldName: {{_eq: "_C"}}}}) {{ cid }} }}"#);
+        let owner_before = node.execute_request(query::QueryRequest::new(&query).with_identity(Some(owner.clone()))).await;
+        assert!(!owner_before.has_errors(), "{:?}", owner_before.errors);
+        let cid = owner_before.data.unwrap()["_commits"][0]["cid"].as_str().unwrap().to_owned();
+        let deleted = node.execute_request(query::QueryRequest::new(format!(
+            "mutation {{ delete_Users(docID: \"{doc}\") {{ _docID }} }}"
+        )).with_identity(Some(owner.clone()))).await;
+        assert!(!deleted.has_errors(), "{:?}", deleted.errors);
+        let mut actual = Vec::new();
+        for actor in [&owner, &reader, &foreign] {
+            let result = node.execute_request(query::QueryRequest::new(&query).with_identity(Some(actor.clone()))).await;
+            assert!(!result.has_errors(), "{:?}", result.errors);
+            let commits = !result.data.unwrap()["_commits"].as_array().unwrap().is_empty();
+            let block = node.authorized_signed_block_bytes(&cid, Some(actor.as_str())).await.is_ok();
+            actual.push((commits, block));
+        }
+        let revoked = node.delete_dac_actor_relationship(DID_A, "Users", &doc, "reader", DID_B).await.is_ok();
+        let result = node.execute_request(query::QueryRequest::new(&query).with_identity(Some(reader.clone()))).await;
+        assert!(!result.has_errors(), "{:?}", result.errors);
+        let commits = !result.data.unwrap()["_commits"].as_array().unwrap().is_empty();
+        let block = node.authorized_signed_block_bytes(&cid, Some(reader.as_str())).await.is_ok();
+        actual.push((commits, block));
+        node.shutdown().await.unwrap();
+        (actual, revoked)
+    }).unwrap();
+
+    let live =
+        serde_json::json!({"live":true, "history":true, "registered":true, "readerGranted":true});
+    let deleted =
+        serde_json::json!({"live":false, "history":true, "registered":true, "readerGranted":true});
+    let inputs = serde_json::json!([
+        {"state":live, "actor":"owner", "action":"delete", "retainsHistory":true},
+        {"state":live, "actor":"reader", "action":"delete", "retainsHistory":true},
+        {"state":live, "actor":"foreign", "action":"delete", "retainsHistory":true},
+        {"state":deleted, "actor":"reader", "action":"revoke", "retainsHistory":true}
+    ]);
+    let mut child = Command::new("lake")
+        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../proofs/lean"))
+        .args(["env", "lean", "--run", "DeletedHistory.lean"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writeln!(child.stdin.take().unwrap(), "{inputs}").unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let expected: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let pairs = expected
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|case| {
+            let allowed = case["read"].as_bool().unwrap();
+            (allowed, allowed)
+        })
+        .collect::<Vec<_>>();
+    assert!(observed.1, "revocation of retained history must succeed");
+    assert_eq!(observed.0, pairs);
+}
+
+#[test]
+fn purged_document_must_not_reuse_retained_reader_grants() {
+    workers::block_on(async {
+        let (node, doc_id) = node_with_protected_users().await;
+        let owner = identity::Did::new(DID_A).unwrap();
+        let reader = identity::Did::new(DID_B).unwrap();
+        let schema = node.get_collection("Users").unwrap().unwrap();
+        let policy = schema.policy.as_ref().unwrap();
+        node.add_dac_actor_relationship(DID_A, "Users", &doc_id, "reader", DID_B)
+            .await
+            .unwrap();
+        let deleted = node
+            .execute_request(
+                query::QueryRequest::new(format!(
+                    "mutation {{ delete_Users(docID: \"{doc_id}\") {{ _docID }} }}"
+                ))
+                .with_identity(Some(owner.clone())),
+            )
+            .await;
+        assert!(!deleted.has_errors(), "{:?}", deleted.errors);
+
+        // Model the candidate soft-delete fix while leaving production code unchanged.
+        let acp = node.document_acp();
+        acp.register_doc_object(&owner, &policy.id, &policy.resource_name, &doc_id)
+            .await
+            .unwrap();
+        node.add_dac_actor_relationship(DID_A, "Users", &doc_id, "reader", DID_B)
+            .await
+            .unwrap();
+        let purged = node
+            .database()
+            .purge_by_doc_ids(
+                "Users",
+                &[document::DocID::from_string(&doc_id).unwrap()],
+                Some(&owner),
+            )
+            .await
+            .unwrap();
+        assert_eq!(purged, 1);
+        let recreated = node
+            .execute_request(
+                query::QueryRequest::new(
+                    "mutation { add_Users(input: {name: \"secret\"}) { _docID } }",
+                )
+                .with_identity(Some(owner)),
+            )
+            .await;
+        assert!(!recreated.has_errors(), "{:?}", recreated.errors);
+        assert_eq!(recreated.data.unwrap()["add_Users"][0]["_docID"], doc_id);
+        let visible = visible_users(&node, Some(reader)).await;
+        node.shutdown().await.unwrap();
+        assert_eq!(
+            visible, 0,
+            "a recreated document inherited a previous reader grant"
+        );
+    })
+    .unwrap()
+}
+
+#[test]
 fn add_dac_policy_rejects_empty_identity_and_policy() {
     workers::block_on(async {
         let node = Node::builder().build().await.unwrap();

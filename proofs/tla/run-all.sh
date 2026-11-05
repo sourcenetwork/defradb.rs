@@ -7,6 +7,12 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # rows: <cfg> <module> <GREEN|RED>
 RUNS=(
+  "MC_DeletedHistory_Green.cfg DeletedHistory.tla GREEN"
+  "MC_DeletedHistory_Green_Pruned.cfg DeletedHistory.tla GREEN"
+  "MC_DeletedHistory_Red_Unregister.cfg DeletedHistory.tla RED"
+  "MC_DeletedHistory_Red_Revocation.cfg DeletedHistory.tla RED"
+  "MC_DeletedHistory_Red_Reuse.cfg DeletedHistory.tla RED"
+  "MC_DeletedHistory_Red_Stale.cfg DeletedHistory.tla RED"
   "MC_SigningAdmission_Green.cfg SigningAdmission.tla GREEN" # bounded connections release expired slots
   "MC_SigningAdmission_Red_Capacity.cfg SigningAdmission.tla RED" # admission without a cap (INV_Capacity)
   "MC_SigningAdmission_Red_Cleanup.cfg SigningAdmission.tla RED" # expiration leaks a slot (LIVE_Reaped)
