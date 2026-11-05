@@ -2,3 +2,9 @@
 
 #[path = "shinzo/kv_snapshot.rs"]
 mod kv_snapshot;
+
+#[path = "shinzo/cursor.rs"]
+mod cursor;
+
+#[path = "shinzo/merge.rs"]
+mod merge;

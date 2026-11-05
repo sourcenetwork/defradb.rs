@@ -44,6 +44,7 @@ bytes = { workspace = true }
 sha2 = { workspace = true, features = ["asm"] }
 
 [dev-dependencies]
+mantra-macros = "0.9"
 futures.workspace = true
 multihash = { workspace = true }
 sha2 = { workspace = true }
