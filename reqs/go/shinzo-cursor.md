@@ -10,52 +10,17 @@ A `_cursor { <Collection>(first|after|last|before, order, filter, groupBy) { …
 
 The opaque string handed out as `startCursor`/`endCursor` and accepted as `after`/`before`.
 
-# `go.shinzo.cursor.token.encoding`: A token is unpadded base64url of `{"d": docID, "k": keys}`
-
-- **Parents:** ["go.shinzo.cursor.token"]
-- **Go-Tests:** ["internal/cursor/cursor_test.go::TestEncodeDecode_RoundtripWithKeys", "internal/cursor/cursor_test.go::TestEncodeDecode_RoundtripWithoutKeys", "internal/cursor/cursor_test.go::TestEncodeDecode_RoundtripDocIDOnly", "internal/cursor/cursor_test.go::TestEncode_URLSafeCharacters", "internal/cursor/cursor_test.go::TestEncodeDecode_VeryLongDocID", "internal/cursor/cursor_test.go::TestEncodeDecode_SpecialCharactersInKeys", "internal/cursor/cursor_test.go::TestEncodeDecode_NumericKeysPreservation", "internal/cursor/cursor_test.go::TestEncodeDecode_EmptyKeysVsNilKeys"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-- **Interop:** "cursor token bytes: a token issued by a Go Shinzo node must decode on a Rust node and the reverse, so clients can page across either"
-
-A token is the JSON object `{"d":"<docID>","k":{<order field>: <value>, …}}`, encoded with base64url without padding (Go `base64.RawURLEncoding`), so it never contains `+`, `/` or `=`. `k` is omitted when there are no key values: an empty or absent key map decodes as no keys, and a non-empty one decodes to the same entries. Decoding returns exactly what was encoded: a 504-character docID (`"bae-"` plus 500 characters), key strings with Unicode (`Café 中文`), newlines, tabs and quotes, and numeric keys `25`, `3.14`, `0`, `-42.5` and `9007199254740991` all round-trip unchanged.
-
-# `go.shinzo.cursor.token.keys`: Returned tokens carry the order field values of their row
-
-- **Parents:** ["go.shinzo.cursor.token"]
-- **Go-Tests:** ["query/cursor/with_first_after_test.go::TestCursorWithFirstAfter_CursorsAreNonEmptyStrings", "query/cursor/with_first_after_test.go::TestCursorWithFirstAfter_CursorsEncodeIndexKeyValues"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-- **Interop:** "the `k` map names each order field by its field name and holds its JSON value (Int as a JSON number, DateTime as an RFC 3339 string)"
-- **Go-Bug-Suspect:** "Go decodes `k` values as JSON float64 and converts back with int64(float) only for nillable Int and parses RFC 3339 only for nillable DateTime fields (internal/planner/scan.go buildCursorSeekKey): an Int beyond 2^53 resumes at the wrong index position, and a non-nillable Int!/DateTime! order field gets a float or string seek value. Untested in Go; write the right behaviour (exact values for every kind)."
-
-With User `{name: String, age: Int @index}` holding Alice 25, Bob 30, Carol 35, `User(first: 2, order: {age: ASC})` returns `startCursor` and `endCursor` as non-empty tokens with a non-empty `d` whose `k` holds `{"age": 25}` and `{"age": 30}`: the first and last rows actually returned, not the input cursor.
-
 # `go.shinzo.cursor.forward`: `first` and `after`
 
 - **Parents:** ["go.shinzo.cursor"]
 
 Forward pagination in the requested order.
 
-# `go.shinzo.cursor.forward.filter`: A filter applies before paging
-
-- **Parents:** ["go.shinzo.cursor.forward"]
-- **Go-Tests:** ["query/cursor/with_multi_round_trip_test.go::TestCursorMultiRoundTrip_FilteredSubset", "query/cursor/with_multi_round_trip_test.go::TestCursorMultiRoundTrip_FilteredFewResults", "query/cursor/with_multi_round_trip_test.go::TestCursorMultiRoundTrip_FilterInUsesCursorBoundary"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-
-`User(first: 2, filter: {age: {_geq: 40}}, order: {age: ASC})` over ages 15…75 returns [45, 55] then, with `after`, [65, 75] and `hasNext: false`; over ages 10…100 with `_geq: 80` it returns [80, 90] then [100]. With `filter: {age: {_in: [55, 25, 45, 35]}}` over ages 25…65 the pages are [25, 35] and [45, 55], so the cursor boundary holds even when the filter's values are unsorted, and 65 never appears.
-
 # `go.shinzo.cursor.backward`: `last` and `before`
 
 - **Parents:** ["go.shinzo.cursor"]
 
 Backward pagination: the page is taken from the end, and rows still come back in the requested order.
-
-# `go.shinzo.cursor.deleted_docs`: Deleted documents and cursors
-
-- **Parents:** ["go.shinzo.cursor"]
-- **Go-Tests:** ["query/cursor/with_edge_cases_test.go::TestCursorEdgeCase_DeletedCursorDocContinuesToNext", "query/cursor/with_edge_cases_test.go::TestCursorEdgeCase_DeletedResultDocExcludedFromResults", "query/cursor/with_edge_cases_test.go::TestCursorEdgeCase_AllRemainingDocsDeletedReturnsEmpty"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-
-A deleted document never appears in a page, and a cursor whose row was deleted still marks a position. Over ages 25, 30, 35: deleting Bob (30) after taking his `endCursor` makes `first: 2, after` that cursor return [35] with `hasNext: false`, `hasPrev: true`; deleting Bob and Carol after taking Alice's cursor makes `first: 10, after` it return `[]`, `hasNext: false`, `hasPrev: true`, null cursors. Deleting Carol (35) from ages 25…45 makes `first: 5` return [25, 30, 40, 45] with `hasNext: false`. A `before` token whose row was deleted is not specified here: Go then reports `hasNext: false` and defradb.rs `hasNext: true` (`reqs/not-applying/shinzo.md`).
 
 # `go.shinzo.cursor.index`: Index use and index requirements
 

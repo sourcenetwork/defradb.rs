@@ -12,9 +12,9 @@ use std::collections::BTreeMap;
 /// (alphabetically ordered) for index-backed seeking.
 ///
 /// Field order and serde attributes mirror Go's `cursor.CursorPayload`
-/// (`d`, `k` with omitempty, `o` always present) so encoded tokens match
-/// Go byte-for-byte. `direction` (`o`) is part of Go's payload but Go never
-/// populates it (always `""`); we keep it for byte-exact parity.
+/// (`d`, `k` with omitempty) so encoded tokens match
+/// Go Shinzo byte-for-byte. A token from an older build that carries an
+/// empty `o` still decodes: unknown fields are ignored.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Cursor {
     #[serde(rename = "d")]
@@ -22,9 +22,6 @@ pub struct Cursor {
 
     #[serde(rename = "k", default, skip_serializing_if = "BTreeMap::is_empty")]
     pub keys: BTreeMap<String, serde_json::Value>,
-
-    #[serde(rename = "o", default)]
-    pub direction: String,
 }
 
 impl Cursor {
@@ -35,12 +32,11 @@ impl Cursor {
         Self {
             doc_id: doc_id.into(),
             keys: BTreeMap::new(),
-            direction: String::new(),
         }
     }
 
-    /// Encode to a base64url-no-pad token: `base64url(json{d, k, o})`.
-    /// Matches Go's `internal/cursor.Encode` byte-for-byte.
+    /// Encode to a base64url-no-pad token: `base64url(json{d, k})`.
+    /// Matches Go Shinzo's `internal/cursor.Encode` byte-for-byte.
     pub fn encode(&self) -> String {
         let json = serde_json::to_vec(self).expect("Cursor serialization cannot fail");
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&json)

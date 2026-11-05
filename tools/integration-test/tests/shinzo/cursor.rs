@@ -110,7 +110,6 @@ fn run(actions: Vec<Actions>) {
 #[test]
 #[mantra_macros::req_test("go.shinzo.cursor.token.keys")]
 #[mantra_macros::req_test("go.shinzo.cursor.token.encoding")]
-#[ignore = "#2481: Rust tokens carry an empty `o`, Go Shinzo tokens do not"]
 fn shinzo_cursor_tokens_carry_their_rows_order_values() {
     let mut actions = aged(&[]);
     actions.extend([
@@ -278,7 +277,6 @@ fn shinzo_after_resumes_page_by_page() {
 
 #[test]
 #[mantra_macros::req_test("go.shinzo.cursor.forward.filter")]
-#[ignore = "#2481: an unsorted _in filter breaks the cursor order"]
 fn shinzo_a_filter_applies_before_paging() {
     let mut actions = aged(&[15, 25, 35, 45, 55, 65, 75]);
     let geq = "first: 2, filter: {age: {_geq: 40}}, order: {age: ASC}";
@@ -493,19 +491,31 @@ fn shinzo_deleted_documents_leave_pages_but_keep_positions() {
 
     let mut five = aged(&[25, 30, 35, 40, 45]);
     five.extend([
-        page(
-            &format!("first: 5, {order}"),
-            None,
-            "age",
-            rows(ages(&[25, 30, 35, 40, 45]), false, false),
-        )
-        .into(),
+        captured(
+            page(
+                &format!("first: 5, {order}"),
+                None,
+                "age",
+                rows(ages(&[25, 30, 35, 40, 45]), false, false),
+            ),
+            "eve",
+        ),
         delete("u35"),
         page(
             &format!("first: 5, {order}"),
             None,
             "age",
             rows(ages(&[25, 30, 40, 45]), false, false),
+        )
+        .into(),
+        delete("u45"),
+        // A page with a `before` token has a next page whether or not the
+        // token's row is still there (Go says it has none once the row is gone).
+        page(
+            &format!("last: 2, {order}"),
+            Some(("before", "eve_end")),
+            "age",
+            rows(ages(&[30, 40]), true, true),
         )
         .into(),
     ]);
@@ -907,4 +917,34 @@ fn shinzo_a_page_reads_only_the_rows_it_needs_from_the_index() {
         .into(),
     ]);
     run(before);
+}
+
+/// An unsorted `_in` filter keeps the requested order with no cursor at
+/// all, on an indexed and an unindexed field.
+#[test]
+#[mantra_macros::req_test("go.shinzo.cursor.forward.filter")]
+fn shinzo_an_unsorted_in_filter_keeps_the_order_without_a_cursor() {
+    for sdl in [
+        USERS,
+        "type User { name: String age: Int @index(direction: DESC) }",
+        "type User { name: String age: Int }",
+    ] {
+        for (order, want) in [("ASC", [25, 35, 45, 55]), ("DESC", [55, 45, 35, 25])] {
+            let mut actions = vec![collection(sdl)];
+            actions.extend(
+                [25, 35, 45, 55, 65]
+                    .map(|age| doc(json!({ "name": format!("u{age}"), "age": age }), None)),
+            );
+            actions.push(
+                Request {
+                    request: format!("query {{ User(filter: {{age: {{_in: [55, 25, 45, 35]}}}}, order: {{age: {order}}}) {{ age }} }}")
+                        .into(),
+                    expected_data: json!({ "User": ages(&want) }),
+                    ..Default::default()
+                }
+                .into(),
+            );
+            run(actions);
+        }
+    }
 }

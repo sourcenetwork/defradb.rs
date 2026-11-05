@@ -2103,6 +2103,18 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // Cursor tokens (#2481): the token's members. Tokens are pinned byte
+        // for byte by crates/cursor/tests/go_fixtures.rs; no conformance-binary
+        // test reaches them. Boundary.
+        family: "Cursor pagination",
+        name: "encode_has_no_o / decode_encode / decode_legacy_o — a token is {d, k}",
+        axis: Lean,
+        anchor: "crates/cursor/src/lib.rs Cursor::encode, Cursor::decode",
+        model_ref: "CursorParity (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // The retention floor (#2450): the merge judges the alive document a
         // pushed head's walk ends with, in a covered, non-branchable
         // collection; a refusal is the head's own Rejected outcome, its whole
