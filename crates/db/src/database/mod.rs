@@ -4,6 +4,7 @@
 /// It manages the root store, creates transactions, and provides
 /// access to collections.
 use crate::error::{Error, Result};
+use crate::event::emission::LocalCommitRelease;
 pub use crate::search::EmbeddingClientConfig;
 use crate::txn::DbTxn;
 use crate::NacManagerApi;
@@ -239,12 +240,11 @@ pub struct DB<S: Store> {
     /// `?Send`, so wrapping it in an `Arc` would be an `Arc` over a value that
     /// is neither `Send` nor `Sync`.
     #[cfg(feature = "governed-collections")]
-    merge_governance: regolith::sync::OnceCell<crate::merge::governance::MergeGovernance>,
+    pub(crate) merge_governance:
+        regolith::sync::OnceCell<crate::merge::governance::MergeGovernance>,
     /// Told about each composite a local write commits, so composites deferred
     /// awaiting what the write created are released.
-    #[cfg(feature = "governed-collections")]
-    local_commit_release:
-        regolith::sync::OnceCell<Arc<dyn crate::merge::governance::LocalCommitRelease>>,
+    local_commit_release: regolith::sync::OnceCell<Arc<dyn LocalCommitRelease>>,
     /// Process-local document short-ID range allocator.
     doc_short_id_allocator: crate::docid::map::DocShortIdAllocator<S>,
     /// Process-local claims for collection-wide actions.
@@ -299,7 +299,6 @@ impl<S: Store> DB<S> {
             dac_policies: regolith::sync::OnceCell::new(),
             #[cfg(feature = "governed-collections")]
             merge_governance: regolith::sync::OnceCell::new(),
-            #[cfg(feature = "governed-collections")]
             local_commit_release: regolith::sync::OnceCell::new(),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
             replication_runtime: Arc::default(),
@@ -372,7 +371,6 @@ impl<S: Store> DB<S> {
             dac_policies: regolith::sync::OnceCell::new(),
             #[cfg(feature = "governed-collections")]
             merge_governance: regolith::sync::OnceCell::new(),
-            #[cfg(feature = "governed-collections")]
             local_commit_release: regolith::sync::OnceCell::new(),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
             replication_runtime: Arc::default(),
@@ -575,37 +573,14 @@ impl<S: Store> DB<S> {
         let _ = self.nac_manager.set(nac);
     }
 
-    /// Install app merge governance. First call wins; install it before any
-    /// replication starts so no composite of a claimed collection merges
-    /// ungoverned.
-    #[cfg(feature = "governed-collections")]
-    pub fn set_merge_governance(&self, governance: crate::merge::governance::MergeGovernance) {
-        let _ = self.merge_governance.set(governance);
-    }
-
-    #[cfg(feature = "governed-collections")]
-    pub fn merge_governance(&self) -> Option<&crate::merge::governance::MergeGovernance> {
-        self.merge_governance.get()
-    }
-
     /// Install the hook that releases deferred composites awaiting what a
     /// local write creates. First call wins.
-    #[cfg(feature = "governed-collections")]
-    pub fn set_local_commit_release(
-        &self,
-        release: Arc<dyn crate::merge::governance::LocalCommitRelease>,
-    ) {
+    pub fn set_local_commit_release(&self, release: Arc<dyn LocalCommitRelease>) {
         let _ = self.local_commit_release.set(release);
     }
 
-    #[cfg(feature = "governed-collections")]
-    pub(crate) fn local_commit_release(&self) -> Option<&crate::event::emission::CommitRelease> {
+    pub(crate) fn local_commit_release(&self) -> Option<&Arc<dyn LocalCommitRelease>> {
         self.local_commit_release.get()
-    }
-
-    #[cfg(not(feature = "governed-collections"))]
-    pub(crate) fn local_commit_release(&self) -> Option<&crate::event::emission::CommitRelease> {
-        None
     }
 
     /// Get the NAC manager, if one has been installed.

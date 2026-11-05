@@ -13,14 +13,6 @@ use storage::corekv::{OnCommit, Store};
 use crate::error::Result;
 use crate::txn::DbTxn;
 
-/// What a committed write tells so deferred composites awaiting it are released.
-#[cfg(feature = "governed-collections")]
-pub(crate) type CommitRelease = Arc<dyn crate::merge::governance::LocalCommitRelease>;
-/// Without governed collections nothing is ever deferred, so there is never a
-/// release to hold.
-#[cfg(not(feature = "governed-collections"))]
-pub(crate) type CommitRelease = std::convert::Infallible;
-
 /// Per-mutation broadcast payload, mirroring Go's sendUpdate call.
 #[derive(Debug, Clone)]
 pub struct TxnBroadcastEvent {
@@ -52,6 +44,18 @@ pub trait TxnBroadcaster: defra_core::thread_bounds::MaybeSendSync {
     fn submit_update(&self, event: TxnBroadcastEvent, done: BroadcastDone);
 }
 
+/// Told about each composite a local write commits. The merge handler installs
+/// one so composites deferred awaiting what the write created are released:
+/// waiters are otherwise released only from the merge path, which a local
+/// write bypasses.
+pub trait LocalCommitRelease: defra_core::thread_bounds::MaybeSendSync {
+    /// `cid` and `block_data` are the composite the write committed.
+    ///
+    /// Called in commit-receipt order from the ordered event dispatch, which
+    /// must not wait, so any work this triggers runs off the caller's task.
+    fn committed(&self, cid: Cid, block_data: Bytes);
+}
+
 /// Tells a committing transaction that its broadcast was handled; set on drop.
 pub struct BroadcastDone(Arc<regolith::sync::Event>);
 
@@ -76,7 +80,7 @@ pub(crate) fn register_update_event_callback<S>(
     txn: &DbTxn<S>,
     bus: Option<&Arc<dyn Bus>>,
     broadcaster: Option<&Arc<dyn TxnBroadcaster>>,
-    release: Option<&CommitRelease>,
+    release: Option<&Arc<dyn LocalCommitRelease>>,
     collection_name: String,
     collection_id: String,
     doc_id: String,
@@ -94,7 +98,7 @@ where
     }
     let bus = bus.map(Arc::clone);
     let broadcaster = broadcaster.map(Arc::clone);
-    let release = release.cloned();
+    let release = release.map(Arc::clone);
     let delivered = broadcaster
         .is_some()
         .then(|| Arc::new(regolith::sync::Event::new()));
@@ -131,13 +135,8 @@ where
                 )));
             }
         }
-        #[cfg(feature = "governed-collections")]
         if let Some(release) = &release {
             release.committed(event.doc_cid, event.doc_block.clone());
-        }
-        #[cfg(not(feature = "governed-collections"))]
-        if let Some(never) = &release {
-            match *never {}
         }
         if let (Some(broadcaster), Some(handed)) = (&broadcaster, &handed) {
             broadcaster.submit_update(event.clone(), BroadcastDone(Arc::clone(handed)));

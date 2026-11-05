@@ -10,6 +10,8 @@ use schema::CollectionVersion;
 use super::signature::SignatureStatus;
 use super::verdict::MergeVerdict;
 use super::view::MergeView;
+use crate::database::DB;
+use storage::corekv::Store;
 
 /// One composite arriving over replication into a governed collection.
 ///
@@ -90,5 +92,21 @@ impl MergeGovernance {
 
     pub fn validator(&self) -> Option<&Arc<dyn MergeValidator>> {
         self.validator.as_ref()
+    }
+}
+
+impl<S> DB<S>
+where
+    S: Store,
+{
+    /// Install app merge governance. First call wins; install it before any
+    /// replication starts so no composite of a claimed collection merges
+    /// ungoverned.
+    pub fn set_merge_governance(&self, governance: MergeGovernance) {
+        let _ = self.merge_governance.set(governance);
+    }
+
+    pub fn merge_governance(&self) -> Option<&MergeGovernance> {
+        self.merge_governance.get()
     }
 }

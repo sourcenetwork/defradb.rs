@@ -17,7 +17,7 @@
 \*                  MAX_DEFERRED_COMPOSITES, REDRIVE_BUDGET; in memory
 \*   judge.rs       judge_governed maps the verdict; index_deferred files a Defer
 \*   sweep.rs       sweep_unmerged_governed walks the blockstore's unmerged set
-\*   merge_handler/dispatch.rs   redrive_deferred drains the ready queue
+\*   redrive.rs     redrive_deferred drains the ready queue
 \*
 \* Sibling models of the same machinery from other angles:
 \*   PendingDagRestart.tla    -- pending-DAG registrations are process-local

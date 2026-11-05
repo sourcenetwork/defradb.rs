@@ -5,15 +5,31 @@
 use cid::Cid;
 use defra_core::block::{Block, CompositeDeltaPayload};
 use defra_core::merge::{BlockMetadata, MergeOutcome};
+use schema::CollectionVersion;
 use storage::corekv::Store;
 
-use super::{DbMergeHandler, MergeError};
+use super::{DbMergeHandler, GovernedFrame, Judgement, MergeError};
+
+/// The handler keeps nothing for governed collections.
+#[derive(Clone, Default)]
+pub(crate) struct GovernanceState;
 
 impl<S, B> DbMergeHandler<S, B>
 where
     S: Store,
     B: blockstore::Blockstore,
 {
+    pub(crate) fn is_governed(&self, _collection: &CollectionVersion) -> bool {
+        false
+    }
+
+    pub(crate) async fn judge_governed(
+        &self,
+        _frame: GovernedFrame<'_>,
+    ) -> Result<Judgement, MergeError> {
+        Ok(Judgement::Ungoverned)
+    }
+
     pub(crate) async fn release_merged_composite(&self, _cid: &Cid, _block: Option<&Block>) {}
 
     /// An unidentifiable document is an error: only a validator defers it.
