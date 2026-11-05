@@ -7,6 +7,8 @@ use std::sync::Arc;
 use defra_core::RequestContext;
 use identity::Did;
 
+mod transactional;
+
 #[async_trait::async_trait]
 pub(crate) trait AcpOps: Send + Sync {
     #[cfg(feature = "http")]
@@ -41,6 +43,7 @@ pub(crate) trait AcpOps: Send + Sync {
 
 pub(crate) struct DbAcpOps<S: storage::corekv::Store + 'static> {
     database: Arc<db::DB<S>>,
+    registry: Arc<db::DbTransactionRegistry<S>>,
     document_acp: Arc<dyn acp::DocumentACP>,
     event_bus: Arc<dyn events::Bus>,
 }
@@ -57,11 +60,13 @@ struct RelationshipTarget {
 impl<S: storage::corekv::Store + 'static> DbAcpOps<S> {
     pub(crate) fn new(
         database: Arc<db::DB<S>>,
+        registry: Arc<db::DbTransactionRegistry<S>>,
         document_acp: Arc<dyn acp::DocumentACP>,
         event_bus: Arc<dyn events::Bus>,
     ) -> Self {
         Self {
             database,
+            registry,
             document_acp,
             event_bus,
         }
@@ -198,6 +203,21 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
         relation: &str,
         target: &str,
     ) -> Result<bool> {
+        if context.txn().is_some() {
+            return self
+                .relationship_in_txn(
+                    context,
+                    identity,
+                    transactional::Relationship {
+                        collection,
+                        doc_id,
+                        relation,
+                        target,
+                    },
+                    false,
+                )
+                .await;
+        }
         let requestor = self
             .authorize(identity, acp::nac::NodePermission::DacRelationAdd)
             .await?;
@@ -241,6 +261,21 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
         relation: &str,
         target: &str,
     ) -> Result<bool> {
+        if context.txn().is_some() {
+            return self
+                .relationship_in_txn(
+                    context,
+                    identity,
+                    transactional::Relationship {
+                        collection,
+                        doc_id,
+                        relation,
+                        target,
+                    },
+                    true,
+                )
+                .await;
+        }
         let requestor = self
             .authorize(identity, acp::nac::NodePermission::DacRelationDelete)
             .await?;

@@ -1290,6 +1290,9 @@ mod p2p_tests;
 #[cfg(test)]
 mod owner_observation_tests;
 
+#[cfg(test)]
+mod transactional_relationship_tests;
+
 #[cfg(all(test, feature = "http"))]
 mod http_signing_tests;
 

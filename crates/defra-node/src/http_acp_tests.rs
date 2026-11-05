@@ -239,6 +239,250 @@ fn embedded_http_relationships_use_native_caller_and_authorization() {
         .unwrap();
 }
 
+async fn exercise_transactional_http_relationships() {
+    let _serial = crate::tests::SIGNING_STORE_GUARD.lock().await;
+    let owner = identity();
+    let owner_did = owner.did().unwrap();
+    let target = identity();
+    let target_did = target.did().unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let node = Node::builder()
+        .with_http(HttpConfig::with_listener(listener).unwrap())
+        .build()
+        .await
+        .unwrap();
+    let context = defra_core::RequestContext::default().with_identity(Some(owner_did.to_string()));
+    let policy = node.add_dac_policy_as(&context, POLICY).await.unwrap();
+    node.add_collection(&format!(
+        "type Record @policy(id: \"{policy}\", resource: \"records\") {{ value: String }}"
+    ))
+    .await
+    .unwrap();
+    let created = node
+        .execute_request(
+            query::QueryRequest::new(
+                r#"mutation { add_Record(input: {value: "secret"}) { _docID } }"#,
+            )
+            .with_identity(Some(owner_did.clone())),
+        )
+        .await;
+    assert!(!created.has_errors(), "{:?}", created.errors);
+    let doc = created.data.unwrap()["add_Record"][0]["_docID"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let client = net::http::Client::builder(edge::testing::edge())
+        .no_proxy()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let auth = bearer(&owner, &address.to_string());
+    let other_auth = bearer(&target, &address.to_string());
+    let tx_url = format!("http://{address}/api/v0/tx");
+    let relationship_url = format!("http://{address}/api/v0/acp/document/relationship");
+    let ownership_url = format!("http://{address}/api/v0/acp/document/is-owner");
+    let relationship = json!({"collection":"Record", "doc_id":doc, "relation":"reader", "target_actor":target_did.as_str()});
+    let ownership = json!({"collection":"Record", "doc_ids":[doc]});
+
+    let missing_tx = client
+        .post(&ownership_url)
+        .header("Authorization", auth.as_str())
+        .json(&ownership)
+        .send()
+        .await
+        .unwrap();
+    assert!(!missing_tx.status().is_success());
+    let anonymous = client
+        .post(&ownership_url)
+        .json(&ownership)
+        .send()
+        .await
+        .unwrap();
+    assert!(!anonymous.status().is_success());
+
+    let response = client
+        .post(&tx_url)
+        .header("Authorization", other_auth.as_str())
+        .send()
+        .await
+        .unwrap();
+    let other_tx = response.json::<Value>().await.unwrap()["id"]
+        .as_u64()
+        .unwrap()
+        .to_string();
+    let hidden = client
+        .post(&ownership_url)
+        .header("Authorization", other_auth.as_str())
+        .header("x-defradb-tx", other_tx.as_str())
+        .json(&ownership)
+        .send()
+        .await
+        .unwrap();
+    assert!(hidden.status().is_success());
+    let hidden: Value = hidden.json().await.unwrap();
+    assert_eq!(hidden["documents"][0]["visible"], false);
+    assert_eq!(hidden["documents"][0]["is_owner"], false);
+    assert!(client
+        .delete(format!("{tx_url}/{other_tx}"))
+        .header("Authorization", other_auth.as_str())
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .is_success());
+
+    for commit in [false, true] {
+        let response = client
+            .post(&tx_url)
+            .header("Authorization", auth.as_str())
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status().is_success());
+        let body: Value = response.json().await.unwrap();
+        let tx = body["id"].as_u64().unwrap().to_string();
+        let owner_result = client
+            .post(&ownership_url)
+            .header("Authorization", auth.as_str())
+            .header("x-defradb-tx", tx.as_str())
+            .json(&ownership)
+            .send()
+            .await
+            .unwrap();
+        assert!(owner_result.status().is_success());
+        let body: Value = owner_result.json().await.unwrap();
+        assert_eq!(body["documents"][0]["visible"], true);
+        assert_eq!(body["documents"][0]["is_owner"], true);
+        assert!(body["documents"][0].get("owner").is_none());
+        let wrong_actor = client
+            .post(&ownership_url)
+            .header("Authorization", other_auth.as_str())
+            .header("x-defradb-tx", tx.as_str())
+            .json(&ownership)
+            .send()
+            .await
+            .unwrap();
+        assert!(!wrong_actor.status().is_success());
+        let forged_actor = client
+            .post(&ownership_url)
+            .header("Authorization", auth.as_str())
+            .header("x-defradb-tx", tx.as_str())
+            .json(&json!({"collection":"Record", "doc_ids":[doc], "actor":target_did.as_str()}))
+            .send()
+            .await
+            .unwrap();
+        assert!(!forged_actor.status().is_success());
+
+        let grant = client
+            .post(&relationship_url)
+            .header("Authorization", auth.as_str())
+            .header("x-defradb-tx", tx.as_str())
+            .json(&relationship)
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            grant.status().is_success(),
+            "grant failed: {}",
+            grant.status()
+        );
+        let read = node
+            .execute_request(
+                query::QueryRequest::new("{ Record { value } }")
+                    .with_identity(Some(target_did.clone())),
+            )
+            .await;
+        assert_eq!(read.data.unwrap()["Record"].as_array().unwrap().len(), 0);
+        let final_url = format!("{tx_url}/{tx}");
+        let final_result = if commit {
+            client
+                .post(&final_url)
+                .header("Authorization", auth.as_str())
+                .send()
+                .await
+                .unwrap()
+        } else {
+            client
+                .delete(&final_url)
+                .header("Authorization", auth.as_str())
+                .send()
+                .await
+                .unwrap()
+        };
+        assert!(final_result.status().is_success());
+    }
+    let read = node
+        .execute_request(
+            query::QueryRequest::new("{ Record { value } }")
+                .with_identity(Some(target_did.clone())),
+        )
+        .await;
+    assert_eq!(read.data.unwrap()["Record"].as_array().unwrap().len(), 1);
+    let response = client
+        .post(&tx_url)
+        .header("Authorization", other_auth.as_str())
+        .send()
+        .await
+        .unwrap();
+    let other_tx = response.json::<Value>().await.unwrap()["id"]
+        .as_u64()
+        .unwrap()
+        .to_string();
+    let nonowner = client
+        .post(&ownership_url)
+        .header("Authorization", other_auth.as_str())
+        .header("x-defradb-tx", other_tx.as_str())
+        .json(&ownership)
+        .send()
+        .await
+        .unwrap();
+    assert!(nonowner.status().is_success());
+    let nonowner: Value = nonowner.json().await.unwrap();
+    assert_eq!(nonowner["documents"][0]["visible"], true);
+    assert_eq!(nonowner["documents"][0]["is_owner"], false);
+    assert!(client
+        .delete(format!("{tx_url}/{other_tx}"))
+        .header("Authorization", other_auth.as_str())
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .is_success());
+    node.shutdown().await.unwrap();
+}
+
+#[test]
+fn http_relationships_and_owner_observation_use_the_authenticated_transaction() {
+    edge::testing::edge()
+        .block_on(exercise_transactional_http_relationships())
+        .unwrap();
+}
+
+#[test]
+fn http_cannot_use_the_embedder_only_transaction_registry() {
+    edge::testing::edge()
+        .block_on(async {
+            let local = Node::builder()
+                .with_txn_ownership(db::TxnOwnership::Embedder)
+                .build()
+                .await
+                .unwrap();
+            local.shutdown().await.unwrap();
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let exposed = Node::builder()
+                .with_txn_ownership(db::TxnOwnership::Embedder)
+                .with_http(HttpConfig::with_listener(listener).unwrap())
+                .build()
+                .await;
+            assert!(matches!(
+                exposed,
+                Err(crate::Error::HttpEmbedderTransactionOwnership)
+            ));
+        })
+        .unwrap();
+}
+
 #[test]
 #[ignore = "Requires Lean; run in the Lean Conformance job"]
 fn embedded_http_relationships_match_executed_model() {

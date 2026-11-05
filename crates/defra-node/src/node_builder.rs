@@ -429,6 +429,11 @@ impl NodeBuilder {
             None => (false, None),
         };
 
+        #[cfg(feature = "http")]
+        if serves_http && self.txn_ownership == db::TxnOwnership::Embedder {
+            return Err(crate::Error::HttpEmbedderTransactionOwnership);
+        }
+
         let extras = Extras {
             embedding_url: self.embedding_url.take(),
             embedding_model: self.embedding_model.take(),

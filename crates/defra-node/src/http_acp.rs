@@ -21,6 +21,10 @@ impl HttpDocumentAcp {
 
 #[async_trait::async_trait]
 impl DocumentAcpOperations for HttpDocumentAcp {
+    fn supports_transactional_relationships(&self) -> bool {
+        true
+    }
+
     fn bind_request(&self, context: &RequestContext) -> Option<Arc<dyn DocumentAcpOperations>> {
         Some(Arc::new(Self {
             ops: self.ops.clone(),
