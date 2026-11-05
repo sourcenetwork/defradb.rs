@@ -20,8 +20,8 @@ EXTENDS Naturals
 CONSTANT Bug, Scenario
 
 \* The scenarios cover the valid path, inactive ACP and each rejected fact.
-Cases == {"good", "inactive", "parse", "rollback", "actor", "signature", "target",
-          "heads", "rehead", "wave", "schema", "bypass", "owner", "nac", "dac", "nacBound", "dacBound", "revokeNac", "revokeDac"}
+Cases == {"good", "inactive", "parse", "single", "encryption", "input", "selection", "confirmation", "rollback", "actor", "signature", "target",
+          "heads", "rehead", "wave", "schema", "bypass", "owner", "writable", "nac", "dac", "nacBound", "dacBound", "revokeNac", "revokeDac"}
 
 \* All three supported mutation kinds share the same transaction owner.
 Operations == {"create", "update", "delete"}
@@ -41,12 +41,22 @@ Init == /\ operation \in Operations
 \* A second typed operation would override the parsed text; a failure scenario
 \* also uses this rejected input to exercise whole-transaction rollback.
 Canonical == scenario # "parse" /\ scenario # "rollback"
+\* Exactly one mutation is authorized by the graph.
+SingleMutation == scenario # "single"
+\* Encryption is outside these approved unencrypted graphs.
+Unencrypted == scenario # "encryption"
 \* The effect actor must be exactly the signer derived from the verified key.
 ActorMatches == scenario # "actor"
 \* The signed public blocks must verify under that key.
 SignatureValid == scenario # "signature"
 \* The selected physical target and input must match the verified graph.
 TargetMatches == scenario # "target"
+\* The exact input must match for creates and updates.
+InputMatches == operation = "delete" \/ scenario # "input"
+\* The unaliased physical document ID must be selected.
+SelectionValid == scenario # "selection"
+\* The response must confirm exactly the approved physical document.
+ResponseConfirmed == scenario # "confirmation"
 \* Updates and deletes must produce the approved bytes from the current heads.
 HeadsMatch == operation = "create" \/ scenario # "heads"
 \* This execution must consume every approved signed block, not just return a row.
@@ -57,6 +67,8 @@ SchemaBound == scenario # "schema"
 NoBypass == scenario # "bypass"
 \* The transaction handle belongs to the Node that executes this request.
 NodeOwnsTransaction == scenario # "owner"
+\* The Node's transaction must permit writes.
+TransactionWritable == scenario # "writable"
 \* The inactive scenario deliberately has neither NAC nor document policy.
 NacActive == scenario # "inactive"
 \* The document policy is inactive in the same deliberately unbound collection.
@@ -73,14 +85,20 @@ DacBound == scenario # "dacBound"
 \* The exact operation, signature and active authorization guards all apply.
 Admitted ==
   /\ (Canonical \/ Bug = "parse")
+  /\ (SingleMutation \/ Bug = "single")
+  /\ (Unencrypted \/ Bug = "encryption")
   /\ (ActorMatches \/ Bug = "actor")
   /\ (SignatureValid \/ Bug = "signature")
   /\ (TargetMatches \/ Bug = "target")
+  /\ (InputMatches \/ Bug = "input")
+  /\ (SelectionValid \/ Bug = "selection")
+  /\ (ResponseConfirmed \/ Bug = "confirmation")
   /\ (HeadsMatch \/ Bug = "heads")
   /\ (WaveConsumed \/ Bug = "wave")
   /\ (SchemaBound \/ Bug = "schema")
   /\ (NoBypass \/ Bug = "bypass")
   /\ (NodeOwnsTransaction \/ Bug = "owner")
+  /\ (TransactionWritable \/ Bug = "writable")
   /\ (~NacActive \/ NacAllowed \/ Bug = "nac")
   /\ (~DacActive \/ DacAllowed \/ Bug = "dac")
   /\ (~NacActive \/ NacBound \/ Bug = "nacBound")
@@ -127,12 +145,22 @@ Spec == Init /\ [][Next]_vars
 
 \* A published User effect used the same canonical operation that was checked.
 INV_Canonical == userVisible => Canonical
+\* A published effect comes from exactly one mutation.
+INV_SingleMutation == userVisible => SingleMutation
+\* A published effect did not alter the graph with encryption.
+INV_Unencrypted == userVisible => Unencrypted
 \* A published User effect has the verified signer's identity.
 INV_Actor == userVisible => ActorMatches
 \* A published User effect has valid User signatures.
 INV_Signature == userVisible => SignatureValid
 \* A published User effect has the exact physical target and input.
 INV_Target == userVisible => TargetMatches
+\* A published create or update used the approved input.
+INV_Input == userVisible => InputMatches
+\* A published effect selected its unaliased physical document ID.
+INV_Selection == userVisible => SelectionValid
+\* A published effect was confirmed for the approved physical document.
+INV_Confirmation == userVisible => ResponseConfirmed
 \* A published update or delete used the approved current heads.
 INV_Heads == userVisible => HeadsMatch
 \* Commit validates the head read even when another writer changes it later.
@@ -145,6 +173,8 @@ INV_Schema == userVisible => SchemaBound
 INV_Bypass == userVisible => NoBypass
 \* A published effect belongs to the Node's transaction.
 INV_Owner == userVisible => NodeOwnsTransaction
+\* A published effect belongs to a writable transaction.
+INV_Writable == userVisible => TransactionWritable
 \* An active NAC authorized the User.
 INV_Nac == userVisible => (~NacActive \/ NacAllowed)
 \* An active DAC authorized the User.

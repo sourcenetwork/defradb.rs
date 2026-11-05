@@ -14,6 +14,12 @@ RUNS=(
   "MC_LocalFetchPermit_Green.cfg LocalFetchPermit.tla GREEN"
   "MC_LocalFetchPermit_Red_Hold.cfg LocalFetchPermit.tla RED"
   "MC_VerifiedClientGraph_Green.cfg VerifiedClientGraph.tla GREEN"
+  "MC_VerifiedClientGraph_Red_SingleMutation.cfg VerifiedClientGraph.tla RED" # a multi-mutation request is accepted (INV_SingleMutation)
+  "MC_VerifiedClientGraph_Red_Unencrypted.cfg VerifiedClientGraph.tla RED" # the request adds encryption outside the approved graph (INV_Unencrypted)
+  "MC_VerifiedClientGraph_Red_Input.cfg VerifiedClientGraph.tla RED" # a different input is accepted (INV_Input)
+  "MC_VerifiedClientGraph_Red_Selection.cfg VerifiedClientGraph.tla RED" # the physical document ID is not selected correctly (INV_Selection)
+  "MC_VerifiedClientGraph_Red_Confirmation.cfg VerifiedClientGraph.tla RED" # an unconfirmed response is accepted (INV_Confirmation)
+  "MC_VerifiedClientGraph_Red_Writable.cfg VerifiedClientGraph.tla RED" # a read-only transaction publishes a mutation (INV_Writable)
   "MC_VerifiedClientGraph_Red_Canonical.cfg VerifiedClientGraph.tla RED" # typed operation overrides the checked GraphQL (INV_Canonical)
   "MC_VerifiedClientGraph_Red_Actor.cfg VerifiedClientGraph.tla RED" # effect actor differs from the signer (INV_Actor)
   "MC_VerifiedClientGraph_Red_Signature.cfg VerifiedClientGraph.tla RED" # an invalid signature is accepted (INV_Signature)
