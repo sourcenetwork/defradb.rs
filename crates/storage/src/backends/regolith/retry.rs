@@ -108,9 +108,29 @@ pub(super) async fn transact(
     match outcome {
         Ok((value, _receipt)) => Ok(value),
         Err(regolith::TransactError::Closure(error)) => Err(error),
-        Err(regolith::TransactError::Exhausted(conflict)) => Err(RetryAttemptError::Exhausted(
-            crate::corekv::TransactionConflict::from(&conflict),
-        )),
+        Err(regolith::TransactError::Exhausted(conflict)) => {
+            if std::env::var_os("DEFRADB_PENDING_CONFLICT_DIAGNOSTICS").is_some() {
+                let key = conflict.key();
+                let category = [
+                    (b"/p2p/pending_dag_peer".as_slice(), "peer_count"),
+                    (b"/p2p/pending_dag_slot/".as_slice(), "slot"),
+                    (b"/p2p/pending_dag_scope/".as_slice(), "scope"),
+                    (b"/p2p/pending_dag_charge/".as_slice(), "charge"),
+                    (b"/p2p/pending_dag/".as_slice(), "record"),
+                ]
+                .into_iter()
+                .find_map(|(prefix, label)| {
+                    key.windows(prefix.len())
+                        .any(|part| part == prefix)
+                        .then_some(label)
+                })
+                .unwrap_or("other");
+                eprintln!("pending_conflict_category={category}");
+            }
+            Err(RetryAttemptError::Exhausted(
+                crate::corekv::TransactionConflict::from(&conflict),
+            ))
+        }
         Err(regolith::TransactError::Engine(error)) => Err(RetryAttemptError::Storage(
             super::transaction::map_txn_error(error),
         )),
