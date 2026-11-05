@@ -370,7 +370,7 @@ fn owner_visibility_distinguishes_public_rows_from_denied_and_missing_rows() {
     .unwrap();
 }
 
-fn modeled_access(mode: &str, facts: [bool; 11]) -> super::DocumentAccessDecision {
+fn modeled_access(mode: &str, facts: [bool; 13]) -> super::DocumentAccessDecision {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -410,49 +410,49 @@ fn unified_access_matches_lean_and_validates_authority_at_commit() {
     let hidden = modeled_access(
         "read",
         [
-            true, true, true, true, true, false, true, true, true, false, false,
+            true, true, true, true, true, true, false, true, true, true, true, false, false,
         ],
     );
     let visible = modeled_access(
         "read",
         [
-            true, true, true, true, true, true, true, true, true, false, false,
+            true, true, true, true, true, true, true, true, true, true, true, false, false,
         ],
     );
     let denied_node = modeled_access(
         "named",
         [
-            true, true, true, false, false, false, true, true, true, false, true,
+            true, true, true, true, false, false, false, true, true, true, true, false, true,
         ],
     );
     let denied_dac = modeled_access(
         "named",
         [
-            true, true, true, false, false, false, true, true, true, true, false,
+            true, true, true, true, false, false, false, true, true, true, true, true, false,
         ],
     );
     let allowed = modeled_access(
         "named",
         [
-            true, true, true, false, false, false, true, true, true, true, true,
+            true, true, true, true, false, false, false, true, true, true, true, true, true,
         ],
     );
     let missing = modeled_access(
         "named",
         [
-            true, true, true, false, false, false, false, true, true, true, true,
+            true, true, true, true, false, false, false, false, true, true, true, true, true,
         ],
     );
     let unregistered = modeled_access(
         "named",
         [
-            true, true, true, false, false, false, true, false, true, true, true,
+            true, true, true, true, false, false, false, true, false, true, true, true, true,
         ],
     );
     let inactive = modeled_access(
         "named",
         [
-            true, true, true, false, false, false, true, true, false, true, true,
+            true, true, true, true, false, false, false, true, true, true, false, true, true,
         ],
     );
     workers::block_on(async {
@@ -494,6 +494,26 @@ fn unified_access_matches_lean_and_validates_authority_at_commit() {
         let nac = node.nac_manager().clone();
         let owner_did = Did::new(&owner).unwrap();
         let actor_did = subject.clone();
+        node.on_acp(move || async move {
+            nac.add_permission_grant(&owner_did, &actor_did, NodePermission::DocumentRead).await.map_err(crate::Error::NacInit)?;
+            nac.add_permission_grant(&owner_did, &actor_did, NodePermission::DocumentUpdate).await.map_err(crate::Error::NacInit)?;
+            Ok(())
+        }).await.unwrap();
+        let principal_context = actor(B);
+        let principal_txn = node.runner().begin_txn_as(&principal_context, false).await.unwrap();
+        assert_eq!(node.runner().observe_document_access_in_txn(principal_context.clone(), &principal_txn, "Users", &ids, subject.clone(), DocumentAccessMode::DelegatedRead).await.unwrap(), [visible, hidden]);
+        let principal_write = query::QueryRequest::new("mutation { add_Other(input: {name: \"guarded\"}) { _docID } }")
+            .with_identity(Some(subject.clone())).with_context(principal_context.clone());
+        let response = node.runner().execute_in_txn(principal_write, &principal_txn).await;
+        assert!(!response.has_errors(), "{:?}", response.errors);
+        let nac = node.nac_manager().clone();
+        let owner_did = Did::new(&owner).unwrap();
+        let actor_did = subject.clone();
+        node.on_acp(move || async move { nac.remove_permission_grant(&owner_did, &actor_did, NodePermission::DocumentRead).await.map_err(crate::Error::NacInit)?; Ok(()) }).await.unwrap();
+        assert!(node.runner().commit_txn_as(&principal_context, &principal_txn).await.is_err(), "principal NAC revocation must conflict with delegated read's guarded commit");
+        let nac = node.nac_manager().clone();
+        let owner_did = Did::new(&owner).unwrap();
+        let actor_did = subject.clone();
         node.on_acp(move || async move { nac.add_permission_grant(&owner_did, &actor_did, NodePermission::DocumentRead).await.map_err(crate::Error::NacInit)?; Ok(()) }).await.unwrap();
         let txn = node.begin_transaction(false).await.unwrap();
         assert_eq!(node.observe_document_access_in_txn(&txn, "Users", &ids, subject.clone(), named()).await.unwrap(), [allowed, missing]);
@@ -527,6 +547,7 @@ fn unified_access_matches_lean_and_validates_authority_at_commit() {
         assert!(node.commit_transaction(&txn).await.is_err(), "disabling NAC must conflict with guarded commit");
         let txn = node.begin_transaction(false).await.unwrap();
         assert_eq!(node.observe_document_access_in_txn(&txn, "Users", &ids, subject.clone(), named()).await.unwrap(), [inactive, missing]);
+        assert_eq!(node.observe_document_access_in_txn(&txn, "Users", &ids, subject.clone(), DocumentAccessMode::DelegatedRead).await.unwrap(), [visible, hidden]);
         node.discard_transaction(&txn).await.unwrap();
         let nac = node.nac_manager().clone();
         node.on_acp(move || async move { nac.re_enable().await.map_err(crate::Error::NacInit)?; Ok(()) }).await.unwrap();
@@ -569,7 +590,7 @@ fn unified_named_access_follows_parent_and_conflicts_on_parent_revoke() {
     let allowed = modeled_access(
         "named",
         [
-            true, true, true, false, false, false, true, true, true, true, true,
+            true, true, true, true, false, false, false, true, true, true, true, true, true,
         ],
     );
     workers::block_on(async {

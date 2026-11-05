@@ -125,11 +125,13 @@ structure AccessEvidence where
   ownsTransaction : Bool
   bound : Bool
   explicitContext : Bool
+  principalNodeBound : Bool
   principalNodeRead : Bool
   actorApplicationRead : Bool
   actorDocumentRead : Bool
   liveMember : Bool
   registered : Bool
+  namedSupported : Bool
   activeNodePolicy : Bool
   actorNodePermission : Bool
   actorNamedPermission : Bool
@@ -140,11 +142,11 @@ def accessDecision (mode : AccessMode) (e : AccessEvidence) : AccessDecision :=
   if e.ownsTransaction && e.explicitContext then
     match mode with
     | .delegatedRead =>
-      if !e.bound || !e.principalNodeRead then .invalid
+      if !e.bound || !e.principalNodeBound || !e.principalNodeRead then .invalid
       else if e.actorApplicationRead && e.actorDocumentRead && e.liveMember then .allowed
       else .unavailable
     | .named =>
-      if !e.bound || !e.liveMember || !e.registered || !e.activeNodePolicy then .unavailable
+      if !e.bound || !e.liveMember || !e.registered || !e.namedSupported || !e.activeNodePolicy then .unavailable
       else if e.actorNodePermission && e.actorNamedPermission then .allowed
       else .denied
   else .invalid
@@ -168,6 +170,12 @@ theorem named_unbound_not_denied (e : AccessEvidence) (h : e.bound = false) :
 -- Ambient bypass cannot replace the explicit transaction context.
 theorem access_requires_explicit_context (mode : AccessMode) (e : AccessEvidence)
     (h : e.explicitContext = false) : accessDecision mode e = .invalid := by
+  simp [accessDecision, h]
+
+-- A delegated read cannot certify detached principal node authorization.
+theorem delegated_access_requires_bound_principal (e : AccessEvidence)
+    (h : e.principalNodeBound = false) :
+    accessDecision .delegatedRead e ≠ .allowed := by
   simp [accessDecision, h]
 
 -- A delegated read without the principal node gate is not a visibility result.
@@ -206,6 +214,13 @@ theorem named_unregistered_not_denied (e : AccessEvidence) (h : e.registered = f
   all_goals (try split) <;> (try simp_all)
   all_goals (try split) <;> (try simp_all)
 
+-- An unsupported named permission cannot be reported as a denial, even when
+-- the actor also lacks its node permission.
+theorem named_unsupported_not_denied (e : AccessEvidence) (h : e.namedSupported = false) :
+    accessDecision .named e ≠ .denied := by
+  simp [accessDecision, h]
+  all_goals (try split) <;> (try simp_all)
+
 -- An inactive NAC cannot be reported as an active permission denial.
 theorem named_inactive_not_denied (e : AccessEvidence) (h : e.activeNodePolicy = false) :
     accessDecision .named e ≠ .denied := by
@@ -228,7 +243,7 @@ theorem named_requires_document_permission (e : AccessEvidence)
   all_goals (try split) <;> (try simp_all)
 
 -- The decision type exports no owner, document fields or hidden identifiers.
-example : accessDecision .named ⟨true, true, true, false, false, false, true, true, true, true, true⟩ = .allowed := by decide
-example : accessDecision .delegatedRead ⟨true, true, true, true, false, false, true, true, true, true, true⟩ = .unavailable := by decide
+example : accessDecision .named ⟨true, true, true, true, false, false, false, true, true, true, true, true, true⟩ = .allowed := by decide
+example : accessDecision .delegatedRead ⟨true, true, true, true, true, false, false, true, true, true, true, true, true⟩ = .unavailable := by decide
 
 end Acp.OwnerObservation

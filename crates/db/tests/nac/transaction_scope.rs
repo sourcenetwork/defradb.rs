@@ -95,10 +95,23 @@ fn bound_active_check_is_unavailable_for_nontransactional_or_incomplete_nac() {
         let txn = BasicTxn::new(store.as_ref(), 1, false).await.unwrap();
         assert_eq!(
             nontransactional
-                .check_bound_active_permission_in_txn(
+                .check_bound_permission_in_txn(
                     txn.acpstore(),
                     &owner,
-                    NodePermission::DocumentRead
+                    NodePermission::DocumentRead,
+                    true,
+                )
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            nontransactional
+                .check_bound_permission_in_txn(
+                    txn.acpstore(),
+                    &owner,
+                    NodePermission::DocumentRead,
+                    false
                 )
                 .await
                 .unwrap(),
@@ -121,10 +134,11 @@ fn bound_active_check_is_unavailable_for_nontransactional_or_incomplete_nac() {
         let txn = BasicTxn::new(store.as_ref(), 2, false).await.unwrap();
         assert_eq!(
             manager
-                .check_bound_active_permission_in_txn(
+                .check_bound_permission_in_txn(
                     txn.acpstore(),
                     &owner,
-                    NodePermission::DocumentRead
+                    NodePermission::DocumentRead,
+                    true,
                 )
                 .await
                 .unwrap(),

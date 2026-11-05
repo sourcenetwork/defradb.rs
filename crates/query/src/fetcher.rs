@@ -147,11 +147,12 @@ pub trait DocFetcher: MaybeSendSync {
         Ok(None)
     }
 
-    /// Evaluate active node authorization only when bound to this transaction.
-    async fn check_bound_active_node_permission(
+    /// Evaluate node authorization only when bound to this transaction.
+    async fn check_bound_node_permission(
         &self,
         _identity: &identity::Did,
         _permission: acp::nac::NodePermission,
+        _require_active: bool,
     ) -> Result<Option<bool>> {
         Ok(None)
     }
