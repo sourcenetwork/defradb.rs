@@ -250,6 +250,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         );
         let mut cids_to_fetch: Vec<(Cid, String)> = Vec::new();
         let mut cids_to_remerge: Vec<(Cid, String)> = Vec::new();
+        let mut walk_error = None;
         for item in &reply.results {
             for head_bytes in &item.heads {
                 match Cid::try_from(head_bytes.as_slice()) {
@@ -313,12 +314,24 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             for (cid, doc_id) in cids_to_remerge {
                 match self.manager.blockstore().get(&cid).await {
                     Ok(Some(data)) => {
-                        let missing = crate::sync::manager::links::find_all_missing_links(
+                        let missing = match crate::sync::manager::links::find_all_missing_links(
                             self.manager.blockstore().as_ref(),
                             &data,
                         )
                         .await
-                        .unwrap_or_default();
+                        {
+                            Ok(missing) => missing,
+                            Err(error) => {
+                                tracing::warn!(cid = %cid, %error, "Could not check DocSync DAG");
+                                if walk_error.is_none() {
+                                    walk_error = Some(error);
+                                }
+                                // The existing reply-driven fetch owner can retry
+                                // this root within its normal bounded attempts.
+                                cids_to_fetch.push((cid, doc_id));
+                                continue;
+                            }
+                        };
 
                         if missing.is_empty() {
                             let mut context = DagFetchContext::new(
@@ -415,7 +428,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                                 &transport, &root_cid,
                             )
                             .await;
-                        super::super::dag_fetcher::poll_fetch_dag(
+                        let (end, _) = super::super::dag_fetcher::poll_fetch_dag(
                             transport,
                             blockstore,
                             event_tx,
@@ -429,13 +442,19 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                             diagnostics,
                         )
                         .await;
+                        if end == super::super::dag_fetcher::FetchTaskEnd::LocalFailure {
+                            tracing::warn!(root_cid = %root_cid, "DocSync fetch stopped after local DAG errors");
+                        }
                     }
                 }))
                 .await;
             });
         } else {
-            tracing::debug!("No blocks to fetch from DocSync reply (all local)");
+            tracing::debug!("No blocks to fetch from DocSync reply");
         }
-        Ok(())
+        match walk_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 }

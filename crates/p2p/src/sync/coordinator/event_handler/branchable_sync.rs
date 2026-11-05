@@ -311,7 +311,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                         &source_peer,
                     )
                     .await;
-                    super::super::dag_fetcher::poll_fetch_dag(
+                    let (end, _) = super::super::dag_fetcher::poll_fetch_dag(
                         transport,
                         blockstore,
                         event_tx,
@@ -328,6 +328,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                         diagnostics,
                     )
                     .await;
+                    if end == super::super::dag_fetcher::FetchTaskEnd::LocalFailure {
+                        tracing::warn!(root_cid = %root_cid, "BranchableSync fetch stopped after local DAG errors");
+                    }
                 });
             }
         } else {
