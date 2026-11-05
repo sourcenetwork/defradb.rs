@@ -200,3 +200,6 @@ lean_lib ClientSignedDelete where
 
 @[default_target]
 lean_lib ClientSignedDeleteFilter where
+
+@[default_target]
+lean_lib VerifiedCreateHandoff where
