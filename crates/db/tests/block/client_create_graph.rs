@@ -791,3 +791,48 @@ fn trusted_delete_graph_matches_model_and_refuses_other_waves() {
         modeled[0]["signs"].as_bool().unwrap()
     );
 }
+
+#[test]
+#[ignore = "Requires Lean; run in the Lean Conformance job"]
+fn signed_create_evidence_matches_the_modeled_exact_handoff() {
+    use db::block::builder::{ClientCreateEvidence, VerifiedClientCreate};
+    let (doc, signer) = fixture();
+    let input = serde_json::to_value(doc.to_map().unwrap()).unwrap();
+    let graph = ClientCreateSignatures::new(&storage::Crdts::default(), &doc, &signer).unwrap();
+    let evidence = graph.evidence();
+    let wire = serde_json::to_value(&evidence).unwrap();
+    assert!(wire.get("private_key_bytes").is_none());
+    let check = |evidence: ClientCreateEvidence, input: &Value| {
+        VerifiedClientCreate::verify(
+            &storage::Crdts::default(),
+            doc.collection(),
+            input,
+            evidence,
+        )
+    };
+    let expected = json!({"signer":"user", "collection":"Agent", "document":graph.doc_id(), "input":input.to_string(), "blocks":["exact"]});
+    let mut cases = Vec::new();
+    let mut altered = wire.clone();
+    let value = altered["child_signatures"][0][0].as_u64().unwrap();
+    altered["child_signatures"][0][0] = json!(value ^ 1);
+    cases.push((wire.clone(), input.clone(), true));
+    cases.push((altered, input.clone(), false));
+    let mut changed_input = input.clone();
+    changed_input["display_name"] = json!("different");
+    cases.push((wire.clone(), changed_input, false));
+    let inputs = cases
+        .iter()
+        .map(|(_, _, valid)| {
+            json!({"approved":expected, "offered":expected,
+        "claimedActor":"user", "verified":valid, "nativeAuthorized":true, "commit":true})
+        })
+        .collect::<Vec<_>>();
+    let modeled = model("VerifiedCreateHandoff.lean", &json!(inputs));
+    for ((wire, input, _), expected) in cases.into_iter().zip(modeled.as_array().unwrap()) {
+        let evidence = serde_json::from_value(wire).unwrap();
+        assert_eq!(
+            check(evidence, &input).is_ok(),
+            expected["accepts"].as_bool().unwrap()
+        );
+    }
+}
