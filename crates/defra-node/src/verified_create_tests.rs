@@ -130,11 +130,11 @@ resources:
 fn verified_update_and_delete_use_exact_actor_and_transaction_state() {
     use db::block::builder::{ClientCreateSignatures, ClientDeleteSignatures, ClientUpdateSignatures,
         ClientUpdateSnapshot, VerifiedClientMutation};
-    const POLICY: &str = "name: Mutations\nresources:\n  - name: records\n    permissions:\n      - name: read\n      - name: update\n      - name: delete\n";
+    const POLICY: &str = "name: Mutations\nresources:\n  - name: records\n    relations:\n      - name: reader\n        types: [actor]\n      - name: editor\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader + editor\n      - name: update\n        expr: editor\n      - name: delete\n";
     edge::testing::edge().block_on(async {
         let (admin, _) = actor();
         let (user, signing) = actor();
-        let (other, _) = actor();
+        let (other, other_signing) = actor();
         let admin_did = admin.did().unwrap().to_string();
         let user_did = user.did().unwrap().to_string();
         let other_did = other.did().unwrap().to_string();
@@ -168,11 +168,23 @@ fn verified_update_and_delete_use_exact_actor_and_transaction_state() {
         let snapshot = ClientUpdateSnapshot::from_commits(&doc_id, history.data.unwrap()["_commits"].as_array().unwrap()).unwrap();
         let patch = json!({"name":"after"});
         let prepared = ClientUpdateSignatures::from_input(&crdts, &schema, &doc_id, &patch, &snapshot, &signing).unwrap();
+        let mut update_block = defra_core::block::Block::from_dag_cbor(prepared.composite_block()).unwrap();
+        update_block.signature = Some(db::block::builder::compute_signature(&update_block, &signing).unwrap().unwrap().0);
+        let update_cid = update_block.generate_cid().unwrap().to_string();
         let update = VerifiedClientMutation::verify_update(&crdts, &schema, &doc_id, &patch, &snapshot, prepared.evidence()).unwrap();
         let stale_delete = ClientDeleteSignatures::from_snapshot(&schema, &doc_id, &snapshot, &signing).unwrap();
         let stale_delete = VerifiedClientMutation::verify_delete(&schema, &doc_id, &snapshot, stale_delete.evidence()).unwrap();
         let update_request = |did: &str| query::QueryRequest::new("mutation($id:ID!, $input:VerifiedRecordMutationInputArg!) { update_VerifiedRecord(docID:$id,input:$input) {_docID} }")
             .with_variables(json!({"id":doc_id,"input":patch})).with_identity(Some(identity::Did::new(did).unwrap()));
+        let user_context = defra_core::RequestContext::default().with_identity(Some(user_did.clone()));
+        node.add_dac_actor_relationship_as(&user_context, "VerifiedRecord", &doc_id, "reader", &other_did).await.unwrap();
+        node.add_dac_actor_relationship_as(&user_context, "VerifiedRecord", &doc_id, "editor", &other_did).await.unwrap();
+        let other_graph = ClientUpdateSignatures::from_input(&crdts, &schema, &doc_id, &patch, &snapshot, &other_signing).unwrap();
+        let other_graph = VerifiedClientMutation::verify_update(&crdts, &schema, &doc_id, &patch, &snapshot, other_graph.evidence()).unwrap();
+        node.delete_dac_actor_relationship_as(&user_context, "VerifiedRecord", &doc_id, "editor", &other_did).await.unwrap();
+        let txn = node.begin_transaction(false).await.unwrap();
+        assert!(node.execute_verified_mutation_in_txn(update_request(&other_did), &txn, &other_graph).await.has_errors());
+        assert!(node.commit_transaction(&txn).await.is_err());
         let txn = node.begin_transaction(false).await.unwrap();
         assert!(node.execute_verified_mutation_in_txn(update_request(&other_did), &txn, &update).await.has_errors());
         assert!(node.commit_transaction(&txn).await.is_err());
@@ -185,6 +197,7 @@ fn verified_update_and_delete_use_exact_actor_and_transaction_state() {
         let result = node.execute_verified_mutation_in_txn(update_request(&user_did), &txn, &update).await;
         assert!(!result.has_errors(), "{:?}", result.errors);
         node.commit_transaction(&txn).await.unwrap();
+        assert_eq!(node.verified_block_signer_did(&update_cid).await.unwrap(), user_did);
         let delete_request = || query::QueryRequest::new("mutation($id:ID!) { delete_VerifiedRecord(docIDs:[$id]) {_docID} }")
             .with_variables(json!({"id":doc_id})).with_identity(Some(user.did().unwrap()));
         let txn = node.begin_transaction(false).await.unwrap();
@@ -193,6 +206,9 @@ fn verified_update_and_delete_use_exact_actor_and_transaction_state() {
         let history = node.execute_request(history_request()).await;
         let snapshot = ClientUpdateSnapshot::from_commits(&doc_id, history.data.unwrap()["_commits"].as_array().unwrap()).unwrap();
         let prepared = ClientDeleteSignatures::from_snapshot(&schema, &doc_id, &snapshot, &signing).unwrap();
+        let mut delete_block = defra_core::block::Block::from_dag_cbor(prepared.composite_block()).unwrap();
+        delete_block.signature = Some(db::block::builder::compute_signature(&delete_block, &signing).unwrap().unwrap().0);
+        let delete_cid = delete_block.generate_cid().unwrap().to_string();
         let delete = VerifiedClientMutation::verify_delete(&schema, &doc_id, &snapshot, prepared.evidence()).unwrap();
         let txn = node.begin_transaction(false).await.unwrap();
         let result = node.execute_verified_mutation_in_txn(delete_request(), &txn, &delete).await;
@@ -204,6 +220,7 @@ fn verified_update_and_delete_use_exact_actor_and_transaction_state() {
         let result = node.execute_verified_mutation_in_txn(delete_request(), &txn, &delete).await;
         assert!(!result.has_errors(), "{:?}", result.errors);
         node.commit_transaction(&txn).await.unwrap();
+        assert_eq!(node.verified_block_signer_did(&delete_cid).await.unwrap(), user_did);
         let retained = node.execute_request(query::QueryRequest::new("{ VerifiedRecord {_docID} }").with_identity(Some(user.did().unwrap()))).await;
         assert!(retained.data.unwrap()["VerifiedRecord"].as_array().unwrap().is_empty());
         node.shutdown().await.unwrap();
