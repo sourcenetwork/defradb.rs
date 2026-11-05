@@ -3,7 +3,7 @@
 The proof split is intentional:
 
 - TLA+ (`proofs/tla/Convergence.tla`) models distributed delivery: partitions,
-  reconnects, head rediscovery, synced-CID eviction, and restart.
+  reconnects, retry markers, durable pending records, and restart.
 - Lean (`proofs/lean/`) models the local merge/apply state machine after delivery.
 
 ## Lean Theorems
