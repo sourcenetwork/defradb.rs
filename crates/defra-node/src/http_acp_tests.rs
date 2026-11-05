@@ -364,6 +364,15 @@ async fn exercise_transactional_http_relationships() {
             .await
             .unwrap();
         assert!(!wrong_actor.status().is_success());
+        let wrong_grant = client
+            .post(&relationship_url)
+            .header("Authorization", other_auth.as_str())
+            .header("x-defradb-tx", tx.as_str())
+            .json(&relationship)
+            .send()
+            .await
+            .unwrap();
+        assert!(!wrong_grant.status().is_success());
         let forged_actor = client
             .post(&ownership_url)
             .header("Authorization", auth.as_str())

@@ -7,10 +7,25 @@ use std::sync::Arc;
 use defra_core::RequestContext;
 use identity::Did;
 
-mod transactional;
+pub(crate) mod transactional;
 
 #[async_trait::async_trait]
 pub(crate) trait AcpOps: Send + Sync {
+    /// A trusted embedder selects a document actor while the node owns the
+    /// transaction; the HTTP adapter never exposes this operation.
+    async fn change_dac_relationship_for_in_txn(
+        &self,
+        _transaction_context: &RequestContext,
+        _actor_context: &RequestContext,
+        _relationship: transactional::Relationship<'_>,
+        _delete: bool,
+    ) -> Result<bool> {
+        Err(query::QueryError::execution(
+            "transaction-bound relationship delegation is unavailable",
+        )
+        .into())
+    }
+
     #[cfg(feature = "http")]
     async fn check_doc_access(
         &self,
@@ -169,6 +184,33 @@ impl<S: storage::corekv::Store + 'static> DbAcpOps<S> {
 
 #[async_trait::async_trait]
 impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
+    async fn change_dac_relationship_for_in_txn(
+        &self,
+        transaction_context: &RequestContext,
+        actor_context: &RequestContext,
+        relationship: transactional::Relationship<'_>,
+        delete: bool,
+    ) -> Result<bool> {
+        let identity = actor_context.identity().ok_or_else(|| {
+            query::QueryError::permission_denied("an authenticated relationship actor is required")
+        })?;
+        let actor = Did::new(identity).map_err(Error::InvalidIdentityDid)?;
+        if actor.is_wildcard() {
+            return Err(query::QueryError::permission_denied(
+                "an explicit relationship actor is required",
+            )
+            .into());
+        }
+        self.relationship_in_txn(
+            transaction_context,
+            actor_context,
+            identity,
+            relationship,
+            delete,
+        )
+        .await
+    }
+
     #[cfg(feature = "http")]
     async fn check_doc_access(
         &self,
@@ -206,6 +248,7 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
         if context.txn().is_some() {
             return self
                 .relationship_in_txn(
+                    context,
                     context,
                     identity,
                     transactional::Relationship {
@@ -264,6 +307,7 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
         if context.txn().is_some() {
             return self
                 .relationship_in_txn(
+                    context,
                     context,
                     identity,
                     transactional::Relationship {
