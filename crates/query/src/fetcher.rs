@@ -139,6 +139,22 @@ impl IndexScanResult {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait DocFetcher: MaybeSendSync {
+    /// Apply native node-administrator authority in this exact transaction.
+    #[allow(clippy::too_many_arguments)]
+    async fn change_node_admin_relationship(
+        &self,
+        _provider: std::sync::Arc<dyn acp::DocumentACP>,
+        _actor: &identity::Did,
+        _target: acp::Subject,
+        _policy_id: &str,
+        _resource: &str,
+        _doc_id: &str,
+        _relation: &str,
+        _delete: bool,
+    ) -> acp::Result<bool> {
+        Err(acp::Error::UnsupportedAdministrativeRelationship)
+    }
+
     /// An active NAC must make its decision in this fetcher's transaction.
     /// None means that an enforcing provider cannot bind to that transaction.
     async fn check_verified_node_permission(

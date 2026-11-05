@@ -167,6 +167,7 @@ fn unbound_document_authorization_fails_without_writing() {
             node.txn_registry.clone(),
             unbound,
             node.event_bus.clone(),
+            node.runner.clone(),
         );
         let owner = actor(OWNER);
         let handle = node.runner().begin_txn_as(&owner, false).await.unwrap();
@@ -402,6 +403,7 @@ fn transaction_admission_matches_executed_lean_model() {
             node.txn_registry.clone(),
             unbound,
             node.event_bus.clone(),
+            node.runner.clone(),
         );
         let handle = node.runner().begin_txn_as(&owner, false).await.unwrap();
         let tx = owner

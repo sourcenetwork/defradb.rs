@@ -61,6 +61,7 @@ pub(crate) struct DbAcpOps<S: storage::corekv::Store + 'static> {
     registry: Arc<db::DbTransactionRegistry<S>>,
     document_acp: Arc<dyn acp::DocumentACP>,
     event_bus: Arc<dyn events::Bus>,
+    executor: Arc<dyn query::QueryExecutor>,
 }
 
 /// Everything a relationship call needs from the collection and its policy.
@@ -78,13 +79,31 @@ impl<S: storage::corekv::Store + 'static> DbAcpOps<S> {
         registry: Arc<db::DbTransactionRegistry<S>>,
         document_acp: Arc<dyn acp::DocumentACP>,
         event_bus: Arc<dyn events::Bus>,
+        executor: Arc<dyn query::QueryExecutor>,
     ) -> Self {
         Self {
             database,
             registry,
             document_acp,
             event_bus,
+            executor,
         }
+    }
+
+    async fn relationship_autocommit(
+        &self,
+        context: &RequestContext,
+        identity: &str,
+        relationship: transactional::Relationship<'_>,
+        delete: bool,
+    ) -> Result<bool> {
+        let guard = query::TransactionGuard::begin_as(self.executor.as_ref(), context.clone(), false).await?;
+        let id = guard.handle().ok_or_else(|| query::QueryError::execution("transaction is unavailable"))?
+            .as_str().parse().map_err(|_| query::QueryError::execution("transaction ID must be numeric"))?;
+        let txn_context = context.clone().with_txn(Some(id));
+        let changed = self.relationship_in_txn(&txn_context, context, identity, relationship, delete).await?;
+        guard.commit().await?;
+        Ok(changed)
     }
 
     /// Resolve the caller's DID and check the node-level permission it needs.
@@ -261,6 +280,11 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
                 )
                 .await;
         }
+        if self.document_acp.supports_transactions() {
+            return self.relationship_autocommit(context, identity, transactional::Relationship {
+                collection, doc_id, relation, target,
+            }, false).await;
+        }
         let requestor = self
             .authorize(identity, acp::nac::NodePermission::DacRelationAdd)
             .await?;
@@ -319,6 +343,11 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
                     true,
                 )
                 .await;
+        }
+        if self.document_acp.supports_transactions() {
+            return self.relationship_autocommit(context, identity, transactional::Relationship {
+                collection, doc_id, relation, target,
+            }, true).await;
         }
         let requestor = self
             .authorize(identity, acp::nac::NodePermission::DacRelationDelete)

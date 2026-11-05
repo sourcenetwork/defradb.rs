@@ -1,6 +1,7 @@
 //! Zanzibar-based DocumentACP implementation.
 
 mod document_acp;
+mod administrative_relationship;
 
 use crate::policy_cache::PolicyCache;
 use std::sync::Arc;

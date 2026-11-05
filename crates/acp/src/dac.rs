@@ -22,6 +22,23 @@ use crate::permission::DocumentPermission;
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait DocumentACP: MaybeSendSync {
+    /// Manage a document relation as the actual native NAC administrator.
+    /// Implementations must evaluate active NAC and perform DAC writes through
+    /// this same view. This is unavailable for unbound or remote providers.
+    async fn change_node_admin_relationship(
+        &self,
+        _view: datastore::NamespaceView,
+        _actor: &Did,
+        _target: Subject,
+        _policy_id: &str,
+        _resource: &str,
+        _doc_id: &str,
+        _relation: &str,
+        _delete: bool,
+    ) -> Result<bool> {
+        Err(Error::UnsupportedAdministrativeRelationship)
+    }
+
     /// Whether local reads and writes must share the authorized transaction.
     fn supports_transactions(&self) -> bool {
         false

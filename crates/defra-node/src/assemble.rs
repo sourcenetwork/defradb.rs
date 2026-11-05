@@ -479,6 +479,7 @@ where
         registry.clone(),
         document_acp.clone(),
         event_bus.clone(),
+        runner.clone(),
     ));
     // Started last: nothing after this point fails, so a failed build
     // never leaves a task holding the store open. The vector sweep rebuilds

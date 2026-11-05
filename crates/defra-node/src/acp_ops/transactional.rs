@@ -148,28 +148,42 @@ where
                         .into_iter()
                         .map(str::to_owned)
                         .collect::<Vec<_>>();
-                    let changed = if delete {
+                    let ordinary = if delete {
                         acp.delete_relationship(
                             &actor,
-                            target,
+                            target.clone(),
                             &binding.id,
                             &binding.resource_name,
                             &doc_id,
                             &relation,
                             &managers,
                         )
-                        .await?
+                        .await
                     } else {
                         acp.add_relationship(
                             &actor,
-                            target,
+                            target.clone(),
                             &binding.id,
                             &binding.resource_name,
                             &doc_id,
                             &relation,
                             &managers,
                         )
-                        .await?
+                        .await
+                    };
+                    let changed = match ordinary {
+                        Ok(changed) => changed,
+                        Err(original @ (acp::Error::NotOwner { .. } | acp::Error::NotManager { .. })) => {
+                            match fetcher.change_node_admin_relationship(
+                                acp.clone(), &actor, target, &binding.id,
+                                &binding.resource_name, &doc_id, &relation, delete,
+                            ).await {
+                                Ok(changed) => changed,
+                                Err(acp::Error::PermissionDenied(_) | acp::Error::UnsupportedAdministrativeRelationship) => return Err(original.into()),
+                                Err(error) => return Err(error.into()),
+                            }
+                        }
+                        Err(error) => return Err(error.into()),
                     };
                     if changed && !delete {
                         let collection_id = definition.collection_id.clone();

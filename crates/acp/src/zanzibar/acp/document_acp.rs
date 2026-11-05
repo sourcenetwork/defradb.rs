@@ -23,6 +23,21 @@ fn actor_subject(actor: &Did) -> Subject {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: ZanzibarStore + ?Sized + 'static> DocumentACP for ZanzibarDocumentACP<S> {
+    #[allow(clippy::too_many_arguments)]
+    async fn change_node_admin_relationship(
+        &self,
+        view: datastore::NamespaceView,
+        actor: &Did,
+        target: Subject,
+        policy_id: &str,
+        resource: &str,
+        doc_id: &str,
+        relation: &str,
+        delete: bool,
+    ) -> Result<bool> {
+        self.change_administrative_relationship(view, actor, target, policy_id, resource, doc_id, relation, delete).await
+    }
+
     fn supports_transactions(&self) -> bool {
         self.store.supports_transactions()
     }

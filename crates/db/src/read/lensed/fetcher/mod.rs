@@ -207,6 +207,24 @@ impl<S: Store + 'static> LensedDocFetcher<S> {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
+    #[allow(clippy::too_many_arguments)]
+    async fn change_node_admin_relationship(
+        &self,
+        provider: Arc<dyn acp::DocumentACP>,
+        actor: &identity::Did,
+        target: acp::Subject,
+        policy_id: &str,
+        resource: &str,
+        doc_id: &str,
+        relation: &str,
+        delete: bool,
+    ) -> acp::Result<bool> {
+        let txn = &*self.shared_txn().map_err(|error| acp::Error::Storage(error.to_string()))?;
+        let view = txn.acpstore().map_err(|error| acp::Error::Storage(error.to_string()))?;
+        provider.change_node_admin_relationship(view, actor, target, policy_id, resource, doc_id, relation, delete)
+            .await
+    }
+
     async fn check_verified_node_permission(
         &self,
         identity: &identity::Did,
