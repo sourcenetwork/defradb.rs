@@ -29,6 +29,10 @@ pub struct NodeSpec {
     pub listen: Vec<String>,
     /// A Rust node under every client.
     pub rust: bool,
+    /// The node's retention floor, if any.
+    pub retention: Option<crate::actions::RetentionSpec>,
+    /// The node's replication filter cutoff, if any.
+    pub refuse_at_or_below: Option<crate::actions::CutoffSpec>,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -49,10 +53,12 @@ impl TestNode {
             Some(address) => address.clone(),
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),
         };
-        // A node pinned to Rust is a Rust node under every client; go-http
-        // reaches it over HTTP, as rust-http does.
+        // A node pinned to Rust, or with a retention floor or a receive filter
+        // (Rust options), is a Rust node under every client; go-http reaches
+        // it over HTTP, as rust-http does.
+        let rust = spec.rust || spec.retention.is_some() || spec.refuse_at_or_below.is_some();
         let client_type = match client_type {
-            ClientType::GoHttp if spec.rust => ClientType::RustHttp,
+            ClientType::GoHttp if rust => ClientType::RustHttp,
             other => other,
         };
         match client_type {
@@ -107,6 +113,12 @@ impl TestNode {
             _held: held,
             events: Atom::new(None),
         }
+    }
+
+    /// The Rust node behind any client, for an operation only its core
+    /// offers; `None` for a Go node.
+    pub fn core(&self) -> Option<Arc<Node>> {
+        self.node.clone().or_else(|| self.embedded.clone())
     }
 
     /// Stop the node through the core's shutdown; a Go node is stopped when
@@ -193,6 +205,20 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Node {
     }
     if spec.network {
         builder = builder.with_libp2p(listen);
+    }
+    if let Some(retention) = &spec.retention {
+        let mut floors = rapidhash::RapidHashMap::default();
+        floors.insert(
+            retention.collection_id.clone(),
+            db::retention::RetentionFloor {
+                field: retention.field.clone(),
+                floor: retention.floor,
+            },
+        );
+        builder = builder.with_retention(Arc::new(db::retention::StaticRetentionRule::new(floors)));
+    }
+    if let Some(cutoff) = &spec.refuse_at_or_below {
+        builder = builder.with_replication_filter(Arc::new(Cutoff(cutoff.clone())));
     }
     if let Some(config) = http {
         builder = builder.with_http(config);
@@ -371,4 +397,22 @@ impl Events {
 /// The peer ID at the end of a `/p2p/<ID>` address.
 pub fn peer_id(address: &str) -> &str {
     address.rsplit("/p2p/").next().unwrap_or(address)
+}
+
+/// A replication filter refusing documents whose integer field is at or
+/// below a cutoff; a document without the field is kept.
+struct Cutoff(crate::actions::CutoffSpec);
+
+impl db::replication_filter::ReplicationFilter for Cutoff {
+    fn allow_replication(
+        &self,
+        _collection_id: &str,
+        _doc_id: &str,
+        fields: &db::replication_filter::FieldValues,
+    ) -> bool {
+        match fields.get(&self.0.field) {
+            Some(ciborium::Value::Integer(value)) => i128::from(*value) > i128::from(self.0.cutoff),
+            _ => true,
+        }
+    }
 }

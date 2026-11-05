@@ -4587,14 +4587,14 @@ struct RefuseAll;
 
 #[async_trait::async_trait]
 impl crate::sync::receive_gate::ReceiveGate for RefuseAll {
-    async fn allows(
+    async fn judge(
         &self,
         _collection_id: &str,
         _doc_id: &str,
         _head: &[u8],
         _blocks: &dyn crate::sync::receive_gate::GateBlocks,
-    ) -> bool {
-        false
+    ) -> Option<crate::sync::receive_gate::GateRefusal> {
+        Some(crate::sync::receive_gate::GateRefusal::Filtered)
     }
 }
 

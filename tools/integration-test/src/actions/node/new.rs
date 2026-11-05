@@ -9,6 +9,25 @@ use serde_json::{json, Value};
 use testo::prelude::*;
 
 /// Starts a node. Without options it is a plain in-process node; every option below is one of the corpus's ways to start one.
+/// A collection's retention floor: documents whose `field` is at or below
+/// `floor` are refused.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RetentionSpec {
+    pub collection_id: String,
+    pub field: String,
+    pub floor: i64,
+}
+
+/// A replication filter refusing documents whose integer `field` is at or
+/// below `cutoff`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CutoffSpec {
+    pub field: String,
+    pub cutoff: i64,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NewNode {
@@ -46,6 +65,14 @@ pub struct NewNode {
     /// A Rust node under every client; the Go clients reach it over HTTP.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub rust: bool,
+    /// Refuse replicated documents of a collection at or below a height (a
+    /// Rust node's retention floor).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retention: Option<RetentionSpec>,
+    /// A replication filter refusing documents whose field is at or below a
+    /// cutoff.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refuse_at_or_below: Option<CutoffSpec>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -76,6 +103,8 @@ impl Op for NewNode {
         probe.network = false;
         probe.database_dir = None;
         probe.rust = false;
+        probe.retention = None;
+        probe.refuse_at_or_below = None;
         if probe != Self::default() {
             let options = serde_json::to_string(&probe).unwrap_or_default();
             return Err(Failure::unsupported(format!("{} {options}", Self::name())));
@@ -91,6 +120,8 @@ impl Op for NewNode {
             dir,
             listen: Vec::new(),
             rust: self.rust,
+            retention: self.retention.clone(),
+            refuse_at_or_below: self.refuse_at_or_below.clone(),
         };
         state.start_node(self.common.node(), spec);
         Ok(json!({}))

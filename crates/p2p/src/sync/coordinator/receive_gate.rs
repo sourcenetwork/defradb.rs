@@ -1,4 +1,4 @@
-//! The two receive-path checks on pushed documents: one when a push
+//! The two receive-path checks on pushed documents (#2456): one when a push
 //! arrives, before its head is stored or anything fetched, and one on a
 //! fetched CAR, before its blocks are imported. `proofs/tla/ReceiveGate.tla`
 //! models them.
@@ -10,7 +10,7 @@ use cid::Cid;
 
 use super::SyncCoordinator;
 use crate::message::PushLogBroadcast;
-use crate::sync::receive_gate::{CarBlocks, GateBlocks, SharedReceiveGate};
+use crate::sync::receive_gate::{CarBlocks, GateBlocks, GateStage, SharedReceiveGate};
 use crate::transport::P2PTransport;
 
 /// Blocks this node already stores.
@@ -33,15 +33,15 @@ where
     T: P2PTransport,
 {
     /// Check every pushed document with `gate` before its blocks are fetched
-    /// or stored. The merge keeps its own check as the backstop.
+    /// or stored. The merge keeps its own checks as the backstop.
     pub fn set_receive_gate(&self, gate: SharedReceiveGate) {
         let _ = self.manager.receive_gate.set(gate);
     }
 
     /// The check on a push as it arrives, on its head and this node's
     /// store. `false` when the gate refused it: nothing of it is stored and
-    /// nothing fetched. A head whose bytes do not match its CID goes on, so
-    /// the ingest refuses it as before.
+    /// nothing fetched, and the skip is counted. A head whose bytes do not
+    /// match its CID goes on, so the ingest refuses it as before.
     pub(super) async fn gate_arrival(&self, message: &PushLogBroadcast) -> bool {
         let Some(gate) = self.manager.receive_gate.get() else {
             return true;
@@ -53,21 +53,26 @@ where
             return true;
         }
         let stored = StoredBlocks(self.manager.blockstore().as_ref());
-        if gate
-            .allows(
+        let Some(refusal) = gate
+            .judge(
                 &message.collection_id,
                 &message.doc_id,
                 &message.block,
                 &stored,
             )
             .await
-        {
+        else {
             return true;
-        }
+        };
+        self.manager
+            .diagnostics
+            .arrivals()
+            .record_skip(refusal.skip(GateStage::Arrival));
         tracing::debug!(
             head = %head,
             doc_id = %message.doc_id,
             collection_id = %message.collection_id,
+            ?refusal,
             "Pushed document refused before anything was fetched"
         );
         false
@@ -76,7 +81,7 @@ where
     /// The check on a CAR fetched for `root`, before its blocks are
     /// imported. `false` when the gate refused the document: the root is
     /// discharged as a terminal skip, as the merge discharges a refusal, so
-    /// it is not fetched again.
+    /// it is not fetched again, and the skip is counted.
     pub(super) async fn gate_fetched(&self, root: &Cid, blocks: &[(Cid, Vec<u8>)]) -> bool {
         let Some(gate) = self.manager.receive_gate.get() else {
             return true;
@@ -94,16 +99,21 @@ where
         let Some(head) = car.block(root).await else {
             return true;
         };
-        if gate
-            .allows(&pending.collection_id, &pending.doc_id, &head, &car)
+        let Some(refusal) = gate
+            .judge(&pending.collection_id, &pending.doc_id, &head, &car)
             .await
-        {
+        else {
             return true;
-        }
+        };
+        self.manager
+            .diagnostics
+            .arrivals()
+            .record_skip(refusal.skip(GateStage::AfterFetch));
         tracing::debug!(
             root = %root,
             doc_id = %pending.doc_id,
             collection_id = %pending.collection_id,
+            ?refusal,
             "Fetched document refused before its CAR was imported"
         );
         if let Err(error) = self.manager.mark_as_merged(root).await {

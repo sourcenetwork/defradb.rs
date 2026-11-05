@@ -220,8 +220,8 @@ where
             .await;
     });
 
-    // A replication filter also judges pushes before their blocks are
-    // fetched; the merge keeps its own check.
+    // The filter and retention floor also judge pushes before their blocks
+    // are fetched (#2456); the merge keeps its own checks.
     if let Some(gate) = db::receive_gate::DbReceiveGate::new(Arc::clone(&database)) {
         coordinator.set_receive_gate(Arc::new(gate));
     }

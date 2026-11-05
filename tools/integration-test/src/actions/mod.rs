@@ -174,6 +174,7 @@ client_actions! {
         SyncBranchableCollection,
         SyncCollectionVersions,
         SyncDocs,
+        BlockAbsent,
         VerifyBlockSignature,
         Wait,
         WaitForIndexReady,

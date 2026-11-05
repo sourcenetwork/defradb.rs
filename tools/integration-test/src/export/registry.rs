@@ -144,6 +144,7 @@ registry! {
     SyncCollectionVersions => [v("collection.syncVersions")],
     SyncDocs => [v("document.sync")],
     Truncate => [v("collection.truncate")],
+    BlockAbsent => [v("block.absent")],
     TxnBegin => [v("transaction.begin")],
     TxnCommit => [v("transaction.commit")],
     TxnDiscard => [v("transaction.discard")],

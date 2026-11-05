@@ -265,7 +265,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         let is_explicit_replicator =
             is_explicit_replicator || explicit_replay_authorization.is_some();
         let broadcast = PushLogBroadcast::from_request(&request);
-        // A replicator's direct push meets the receive gate too.
+        // Go gates a replicator's direct push too: its filter and retention
+        // checks run whatever `isReplicator` is.
         let process_result = if self.gate_arrival(&broadcast).await {
             self.manager
                 .process_pushlog_from_dag_provider(
