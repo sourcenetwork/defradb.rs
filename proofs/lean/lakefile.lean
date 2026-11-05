@@ -194,3 +194,6 @@ lean_lib ClientSignedUpdateFilter where
 
 @[default_target]
 lean_lib ClientSignedUpdate where
+
+@[default_target]
+lean_lib ClientSignedDelete where
