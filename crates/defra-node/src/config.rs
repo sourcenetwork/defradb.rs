@@ -198,6 +198,10 @@ pub struct Libp2pConfig {
     /// libp2p resource budget overrides: the memory and file descriptor
     /// budgets and the per-peer inbound stream cap.
     pub resource_limits: p2p::ResourceLimits,
+    /// Send rooted CAR requests; off, every fetch walks the DAG block by
+    /// block. Tests only.
+    #[cfg(feature = "test-utils")]
+    pub car_requests: bool,
 }
 
 #[cfg(feature = "libp2p")]
@@ -212,6 +216,8 @@ impl Default for Libp2pConfig {
             sync: SyncTuning::default(),
             orphan_sweep: db::block::orphan_gc::OrphanSweepConfig::default(),
             resource_limits: p2p::ResourceLimits::default(),
+            #[cfg(feature = "test-utils")]
+            car_requests: true,
         }
     }
 }

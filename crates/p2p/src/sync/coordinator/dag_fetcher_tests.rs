@@ -12,6 +12,8 @@ mod dag_fetch_logs;
 mod dispatch_merge_fifo;
 #[path = "../../../tests/unit/durable_overflow_rotation.rs"]
 mod durable_overflow_rotation;
+#[path = "../../../tests/unit/height_gate.rs"]
+mod height_gate;
 #[path = "../../../tests/unit/productive_quantum.rs"]
 mod productive_quantum;
 #[path = "../../../tests/unit/provider_ranking.rs"]

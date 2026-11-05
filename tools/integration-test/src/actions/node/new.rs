@@ -73,6 +73,10 @@ pub struct NewNode {
     /// cutoff.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refuse_at_or_below: Option<CutoffSpec>,
+    /// A Rust node that sends no CAR requests, so it fetches every pushed
+    /// document block by block, as from a peer that predates the exchange.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_car_requests: bool,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -105,6 +109,7 @@ impl Op for NewNode {
         probe.rust = false;
         probe.retention = None;
         probe.refuse_at_or_below = None;
+        probe.no_car_requests = false;
         if probe != Self::default() {
             let options = serde_json::to_string(&probe).unwrap_or_default();
             return Err(Failure::unsupported(format!("{} {options}", Self::name())));
@@ -122,6 +127,7 @@ impl Op for NewNode {
             rust: self.rust,
             retention: self.retention.clone(),
             refuse_at_or_below: self.refuse_at_or_below.clone(),
+            no_car_requests: self.no_car_requests,
         };
         state.start_node(self.common.node(), spec);
         Ok(json!({}))

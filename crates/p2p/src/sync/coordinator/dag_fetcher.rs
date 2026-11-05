@@ -25,9 +25,11 @@ use super::dag_retry::{
 };
 use super::fetch_failures::{FetchFailures, WindowFailure};
 use super::fetch_logs::{log_exhausted, log_no_progress_batch, log_retry};
+use super::height_gate::HeightGate;
 use super::provider_health::ProviderHealth;
 use super::DagFetchLimiter;
 use crate::sync::arbitration::AttemptSample;
+use crate::sync::manager::arrival_stats::SkipReason;
 use crate::sync::manager::links::find_all_missing_links;
 use crate::sync::manager::SyncEvent;
 use crate::sync::manager::{FetchCompletion, SyncDiagnostics};
@@ -100,6 +102,8 @@ enum ProviderWindowOutcome {
 enum FetchAttemptOutcome {
     /// The DAG is local; carries the root block.
     Complete(bytes::Bytes),
+    /// The receive gate refused the document before it was walked.
+    Refused(SkipReason),
     /// The missing block count, and why this attempt's windows failed.
     Incomplete(usize, FetchFailures),
     Deferred,
@@ -285,6 +289,10 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
                 emit_dag_ready(&event_tx, root_cid, &context, &root_data).await;
                 return (FetchTaskEnd::Settled, sample);
             }
+            FetchAttemptOutcome::Refused(skip) => {
+                refuse(&event_tx, root_cid, &context, skip).await;
+                return (FetchTaskEnd::Settled, sample);
+            }
             FetchAttemptOutcome::Unservable => {
                 error!(root_cid = %root_cid, providers = ?providers.peers(),
                     "Providers cannot serve the remaining DAG within their CAR byte limits; stopping this fetch");
@@ -393,7 +401,9 @@ fn attempt_sample(
             fast: elapsed < FAST_REFUSAL,
             progressed,
         },
-        FetchAttemptOutcome::Deferred | FetchAttemptOutcome::Unservable => AttemptSample::Skipped,
+        FetchAttemptOutcome::Refused(_)
+        | FetchAttemptOutcome::Deferred
+        | FetchAttemptOutcome::Unservable => AttemptSample::Skipped,
     }
 }
 
@@ -708,6 +718,14 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         }
     }
 
+    if let Some(gate) = context.height_gate() {
+        match height_refusal(gate, transport, blockstore, root_cid, context, state).await {
+            Ok(None) => {}
+            Ok(Some(skip)) => return FetchAttemptOutcome::Refused(skip),
+            Err(outcome) => return outcome,
+        }
+    }
+
     // Walk DAG, fetching missing blocks level by level. The walk stops as soon
     // as an iteration makes no progress (`!made_progress` below), and a
     // clock-dispatched walk that is still progressing stops at its quantum,
@@ -818,6 +836,87 @@ fn incomplete_or_shed(
         FetchAttemptOutcome::ProviderBusy
     } else {
         FetchAttemptOutcome::Incomplete(remaining, failures)
+    }
+}
+
+/// Go's height-only fetch (#2464): before a create is walked block by
+/// block, fetch only the block it links under the retention field, once
+/// however many documents share it, and let the gate judge it. `Err` ends
+/// the attempt the way the fetch did.
+async fn height_refusal<B: Blockstore, T: P2PTransport>(
+    gate: &HeightGate,
+    transport: &T,
+    blockstore: &Arc<B>,
+    root_cid: Cid,
+    context: &DagFetchContext,
+    state: &mut ProviderFetchState<'_>,
+) -> Result<Option<SkipReason>, FetchAttemptOutcome> {
+    let Ok(Some(head)) = blockstore.get(&root_cid).await else {
+        return Ok(None);
+    };
+    let Some(link) = gate.height_link(&context.collection_id, &head).await else {
+        return Ok(None);
+    };
+    if !matches!(blockstore.has(&link).await, Ok(true)) {
+        match gate.fetches.try_acquire(&link) {
+            Ok(_owner) => {
+                let outcome = poll_fetch_blocks_rotating(
+                    &root_cid,
+                    std::slice::from_ref(&link),
+                    transport,
+                    blockstore,
+                    state,
+                    context,
+                )
+                .await;
+                match outcome {
+                    FetchBatchOutcome::Deferred => return Err(FetchAttemptOutcome::Deferred),
+                    FetchBatchOutcome::ProviderBusy => {
+                        return Err(FetchAttemptOutcome::ProviderBusy);
+                    }
+                    _ => {}
+                }
+                state
+                    .diagnostics
+                    .arrivals()
+                    .record_height_fetch(outcome == FetchBatchOutcome::Complete);
+            }
+            // Another document is fetching the same height block: wait for it
+            // rather than ask again.
+            Err(wait) => wait.released().await,
+        }
+    }
+    Ok(gate
+        .refusal(
+            blockstore.as_ref(),
+            &context.collection_id,
+            &context.doc_id,
+            &head,
+        )
+        .await)
+}
+
+/// Hand a refused root back to be discharged as a terminal skip.
+async fn refuse(
+    event_tx: &mpsc::Sender<SyncEvent>,
+    root_cid: Cid,
+    context: &DagFetchContext,
+    skip: SkipReason,
+) {
+    debug!(
+        root_cid = %root_cid,
+        doc_id = %context.doc_id,
+        ?skip,
+        "Fetched height block refused the document before it was walked"
+    );
+    let event = SyncEvent::GateRefused {
+        root_cid,
+        doc_id: context.doc_id.clone(),
+        collection_id: context.collection_id.clone(),
+        skip,
+    };
+    if event_tx.send(event).await.is_err() {
+        warn!(root_cid = %root_cid, "Failed to hand a refused root back");
     }
 }
 

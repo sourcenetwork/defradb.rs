@@ -301,6 +301,13 @@ impl<S: Store> P2PHost<S> {
         root_cid: Cid,
         response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
+        #[cfg(feature = "test-utils")]
+        if !self.car_requests {
+            let _ = response.send(Err(crate::error::Error::Transport(
+                "CAR requests are off".to_string(),
+            )));
+            return;
+        }
         let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
             let result = h.send_car_request(peer_id, root_cid).await;

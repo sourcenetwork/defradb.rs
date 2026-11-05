@@ -318,9 +318,21 @@ pub struct P2PHost<S: Store> {
     pub(super) pubsub_rpc_topics: RapidHashSet<String>,
     /// The network runtime the host's background tasks run on.
     pub(super) edge: edge::Edge,
+    /// Send rooted CAR requests; see [`Self::without_car_requests`].
+    #[cfg(feature = "test-utils")]
+    pub(crate) car_requests: bool,
 }
 
 impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
+    /// Send no rooted CAR requests: each fails at once, so every fetch walks
+    /// the DAG block by block, as with a peer that predates the exchange.
+    /// Tests only; call it before the host runs.
+    #[cfg(feature = "test-utils")]
+    pub fn without_car_requests(mut self) -> Self {
+        self.car_requests = false;
+        self
+    }
+
     /// Create a new P2P host with a generated identity and the given blockstore.
     ///
     /// # Arguments
@@ -627,6 +639,8 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
             ),
             pubsub_rpc_topics: RapidHashSet::new(),
             edge,
+            #[cfg(feature = "test-utils")]
+            car_requests: true,
         };
 
         Ok((host, handle, event_rx, replicators))

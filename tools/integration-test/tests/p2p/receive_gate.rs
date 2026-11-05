@@ -178,3 +178,23 @@ fn a_document_the_filter_refuses_never_arrives() {
         ..Default::default()
     });
 }
+
+/// A node that sends no CAR requests walks a pushed document block by block,
+/// as from a peer that predates the exchange. Before that walk it fetches
+/// only the height block, and a Log below the floor is refused there, never
+/// walked (#2464).
+#[test]
+#[mantra_macros::req_test("go.shinzo.p2p.retention.gate")]
+fn a_document_below_the_floor_is_refused_on_its_height_block_alone() {
+    only_the_kept_log_arrives(NewNode {
+        network: true,
+        no_car_requests: true,
+        retention: Some(RetentionSpec {
+            collection_id: LOG_ID.into(),
+            field: "blockNumber".into(),
+            floor: 100,
+        }),
+        common: on(JUDGING),
+        ..Default::default()
+    });
+}

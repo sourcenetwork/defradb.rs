@@ -91,16 +91,6 @@ A pushed document is filtered first on what the head block alone carries (`{}` f
 
 A node may be given a `RetentionRule` naming, per collection, a height field and a floor. A replicated document created at or below the floor, or with no valid height, is refused: `replicated document is at or below the retention floor` or `replicated document has no valid retention height`, both wrapping `refused by the retention rule`. Only creates are judged (a head of priority 1); updates, deletes and branchable collections are not.
 
-# `go.shinzo.p2p.retention.gate`: Refused before the document is walked, storing at most its height block
-
-- **Parents:** ["go.shinzo.p2p.retention"]
-- **Go-Tests:** ["internal/db/p2p/retention_test.go::TestRetentionGateRefusesOnTheFirstHeightItCanRead", "internal/db/p2p/retention_test.go::TestRetentionGateAsksForASharedHeightBlockOnce"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-
-A pushed create is judged on the height block its head links under the height field, read from the first place that has it: the local store, its own fetched CAR, and last the height block alone. It is refused at the first place, and the skip names where: `retentionBeforeFetch` (local store), `retentionAfterCARFetch` (fetched CAR), `retentionAfterHeightFetch` (height block fetched alone; `heightFetches: 1`), or `retentionNoHeight` (the value is not a height, e.g. the string `"100"`). A refused document is never walked and never merged.
-
-Documents that share a height block nobody serves fetch it once (`heightFetches: 1`, `heightFetchMissed: 1`) and are each walked.
-
 # `go.shinzo.p2p.retention.lets_through`: What the gate cannot refuse goes on
 
 - **Parents:** ["go.shinzo.p2p.retention"]

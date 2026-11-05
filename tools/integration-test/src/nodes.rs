@@ -33,6 +33,8 @@ pub struct NodeSpec {
     pub retention: Option<crate::actions::RetentionSpec>,
     /// The node's replication filter cutoff, if any.
     pub refuse_at_or_below: Option<crate::actions::CutoffSpec>,
+    /// The node sends no CAR requests.
+    pub no_car_requests: bool,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -53,10 +55,13 @@ impl TestNode {
             Some(address) => address.clone(),
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),
         };
-        // A node pinned to Rust, or with a retention floor or a receive filter
-        // (Rust options), is a Rust node under every client; go-http reaches
-        // it over HTTP, as rust-http does.
-        let rust = spec.rust || spec.retention.is_some() || spec.refuse_at_or_below.is_some();
+        // A node pinned to Rust, or with a retention floor, a receive filter or
+        // no CAR requests (Rust options), is a Rust node under every client;
+        // go-http reaches it over HTTP, as rust-http does.
+        let rust = spec.rust
+            || spec.retention.is_some()
+            || spec.refuse_at_or_below.is_some()
+            || spec.no_car_requests;
         let client_type = match client_type {
             ClientType::GoHttp if rust => ClientType::RustHttp,
             other => other,
@@ -216,6 +221,9 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Node {
             },
         );
         builder = builder.with_retention(Arc::new(db::retention::StaticRetentionRule::new(floors)));
+    }
+    if spec.no_car_requests {
+        builder = builder.without_car_requests();
     }
     if let Some(cutoff) = &spec.refuse_at_or_below {
         builder = builder.with_replication_filter(Arc::new(Cutoff(cutoff.clone())));
