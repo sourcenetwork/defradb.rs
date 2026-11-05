@@ -78,6 +78,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/defra-node/src/embedded_signer.rs; crates/defra-node/src/lib.rs execute_request_with_signer",
         model_ref: "EmbeddedSigner (lake build); embedded_signer::native_admission_matches_executed_lean_model",
         tiers: &[Boundary, Contract],
+        bound_by: "crates/defra-node/tests/embedded_signer.rs native_admission_matches_executed_lean_model",
     },
     Property {
         family: "Explicit embedded signing",
@@ -86,6 +87,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/defra-node/src/embedded_signer.rs; crates/defra-node/src/lib.rs execute_request_in_txn_with_signer",
         model_ref: "MC_EmbeddedSigner_{Green,Red_*}.cfg",
         tiers: &[Boundary, Contract],
+        bound_by: "crates/defra-node/tests/embedded_signer.rs selected_actor_signs_create_update_and_respects_transaction_finality, selected_signer_does_not_bypass_document_acp",
     },
     Property {
         family: "Verified client graph transaction",
@@ -94,6 +96,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/defra-node/src/lib.rs execute_verified_graph_in_txn; crates/db/src/block/builder/verified_client_create.rs; crates/db/src/block/builder/verified_client_mutation.rs; crates/query/src/runner/turn.rs lent",
         model_ref: "MC_VerifiedClientGraph_{Green,Red_*}.cfg",
         tiers: &[Boundary, Contract],
+        bound_by: "crates/defra-node/src/verified_create_tests.rs verified_user_create_shares_node_transaction_with_agent_effects, verified_update_and_delete_use_exact_actor_and_transaction_state, verified_create_allows_disabled_nac_and_unbound_collection",
     },
     Property {
         family: "Verified client graph transaction",
@@ -102,6 +105,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/block/builder/verified_client_create.rs; crates/db/src/block/builder/verified_client_mutation.rs; crates/defra-node/src/lib.rs execute_verified_graph_in_txn",
         model_ref: "VerifiedCreateHandoff and VerifiedMutationHandoff (lake build); client_create_graph::signed_create_evidence_matches_the_modeled_exact_handoff",
         tiers: &[Boundary, Contract],
+        bound_by: "crates/db/tests/block/client_create_graph.rs signed_create_evidence_matches_the_modeled_exact_handoff, trusted_delete_graph_matches_model_and_refuses_other_waves; crates/defra-node/src/verified_create_tests.rs verified_update_and_delete_use_exact_actor_and_transaction_state",
     },
     Property {
         family: "Transactional document relationships",
@@ -110,6 +114,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/defra-node/src/transaction.rs trusted embedded relationship delegation; crates/defra-node/src/delegated_relationship_tests.rs embedded_delegation_matches_executed_lean_model",
         model_ref: "MC_DelegatedRelationship_{Green,Red_*}.cfg",
         tiers: &[Boundary, Contract],
+        bound_by: "crates/defra-node/src/delegated_relationship_tests.rs embedded_delegation_matches_executed_lean_model, selected_actor_nac_revocation_conflicts_with_node_owned_grant",
     },
     Property {
         family: "Transactional document relationships",
@@ -118,6 +123,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/defra-node/src/acp_ops/transactional.rs; crates/defra-node/src/http_acp.rs; crates/cli/src/doc_acp_adapter.rs",
         model_ref: "MC_TransactionalRelationship_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "crates/defra-node/src/transactional_relationship_tests.rs relationship_grant_and_revoke_obey_commit_and_discard, stale_marker_cannot_restore_revoked_relationship, failed_relationship_statement_does_not_leak_its_writes_or_events",
     },
     Property {
         family: "Transactional document relationships",
@@ -126,6 +132,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/http/src/handlers/acp.rs own_documents; crates/query/src/runner/owners.rs observe_owners",
         model_ref: "MC_OwnerSelfObservation_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "crates/defra-node/src/http_acp_tests.rs http_owner_registration_matches_executed_model, http_relationships_and_owner_observation_use_the_authenticated_transaction",
     },
     Property {
         family: "Transactional document relationships",
@@ -134,6 +141,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/defra-node/src/node_builder.rs build; crates/defra-node/src/http_acp_tests.rs http_cannot_use_the_embedder_only_transaction_registry",
         model_ref: "MC_HttpTxnConfiguration_{Green,Red_Allow}.cfg",
         tiers: &[Boundary],
+        bound_by: "crates/defra-node/src/http_acp_tests.rs http_cannot_use_the_embedder_only_transaction_registry",
     },
     Property {
         family: "Transactional document relationships",
@@ -142,6 +150,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/defra-node/src/transactional_relationship_tests.rs transaction_admission_matches_executed_lean_model; crates/cli/src/doc_acp_adapter.rs a_named_transaction_never_falls_back_to_autocommit",
         model_ref: "TransactionalRelationship (lake build)",
         tiers: &[Boundary, Contract],
+        bound_by: "crates/defra-node/src/transactional_relationship_tests.rs transaction_admission_matches_executed_lean_model; crates/cli/src/doc_acp_adapter.rs a_named_transaction_never_falls_back_to_autocommit",
     },
     Property {
         family: "HTTP client-signed create",
@@ -150,6 +159,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/http/src/client_signing.rs upgrade; crates/http/src/router/state.rs AppState",
         model_ref: "ClientSigningAdmission (lake build); client_signer_tests::admission_and_token_lifetime_match_the_model",
         tiers: &[Boundary, Contract],
+        bound_by: "crates/http/src/client_signer_tests.rs admission_and_token_lifetime_match_the_model",
     },
     Property {
         family: "HTTP client-signed create",
@@ -158,6 +168,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/write/create.rs compute; crates/db/src/write/prepare.rs PreparedCreateBlocks",
         model_ref: "ClientCreateSchema (lake build); write::create::schema_binding_tests::prepared_create_checks_immutable_definition_even_when_version_is_unchanged",
         tiers: &[Boundary, Contract],
+        bound_by: "crates/db/src/write/create/schema_binding_tests.rs prepared_create_checks_immutable_definition_even_when_version_is_unchanged",
     },
     Property {
         family: "HTTP client-signed create",
@@ -166,14 +177,16 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/http/src/client_signing.rs upgrade; crates/http/src/router/state.rs AppState",
         model_ref: "MC_SigningAdmission_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "crates/http/src/client_signer_tests.rs admission_and_token_lifetime_match_the_model, disconnected_and_expired_connections_release_their_slots",
     },
     Property {
         family: "HTTP client-signed create",
         name: "original actor and context, verified waves, live operation, deciding ACP, outside-attempt interaction, and eventual cleanup",
         axis: Tla,
-        anchor: "proposed: crates/http request-scoped signature continuation; crates/query prepared inputs; crates/db create preparation",
+        anchor: "crates/http/src/client_signing.rs run; crates/query/src/runner/turn.rs drive; crates/db/src/write/create.rs compute",
         model_ref: "MC_ClientSignedCreate_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "crates/defra-node/src/http_signing_tests.rs http_client_signs_the_complete_agent_create_graph; crates/http/src/client_signer_tests.rs signing_endpoint_requires_an_authenticated_caller, disconnected_and_expired_connections_release_their_slots",
     },
     Property {
         family: "HTTP client-signed create",
@@ -182,30 +195,34 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/block/builder/client_create.rs ClientCreateSignatures::matches_input",
         model_ref: "ClientCreateIntent (lake build); client_create_graph::normalized_agent_intent_preserves_explicit_null_and_datetime",
         tiers: &[Boundary, Contract],
+        bound_by: "crates/db/tests/block/client_create_graph.rs normalized_agent_intent_preserves_explicit_null_and_datetime",
     },
     Property {
         family: "HTTP client-signed create",
         name: "immutable_included / mutable_included / immutable_has_no_extra / mutable_has_no_extra / accepted_exact_links",
         axis: Lean,
-        anchor: "crates/db/src/block/builder/immutable.rs immutable_fields; crates/db/src/block/builder/compute.rs compute_document_blocks; proposed client create-graph validation",
+        anchor: "crates/db/src/block/builder/immutable.rs immutable_fields; crates/db/src/block/builder/compute.rs compute_document_blocks; crates/db/src/block/builder/client_create.rs ClientCreateSignatures::build",
         model_ref: "ClientCreateGraph (lake build); client_create_graph::trusted_create_graph_matches_model_and_rejects_unapproved_waves",
         tiers: &[Boundary, Contract],
+        bound_by: "crates/db/tests/block/client_create_graph.rs trusted_create_graph_matches_model_and_rejects_unapproved_waves",
     },
     Property {
         family: "HTTP client-signed create",
         name: "accepted_live / accepted_exact_blocks / signed_exact_blocks",
         axis: Lean,
-        anchor: "crates/http/src/client_signing.rs continuation; crates/db/src/block/builder/client_waves.rs ClientWaves::respond",
+        anchor: "crates/http/src/client_signing.rs run; crates/db/src/block/builder/client_waves.rs ClientWaves::respond",
         model_ref: "ClientSignedCreate (lake build)",
         tiers: &[Boundary],
+        bound_by: "crates/db/tests/block/client_create_graph.rs trusted_create_graph_matches_model_and_rejects_unapproved_waves; crates/http/src/client_signer_tests.rs the_connection_signer_checks_each_signature_before_answering",
     },
     Property {
         family: "HTTP client-signed update",
         name: "fixed intent, live signing, relevant field and deciding authorization",
         axis: Tla,
-        anchor: "crates/http/src/client_signing.rs continuation; crates/db/src/block/builder/client_update.rs and update transactions",
+        anchor: "crates/http/src/client_signing.rs run; crates/db/src/block/builder/client_update.rs and update transactions",
         model_ref: "MC_ClientSignedUpdate_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "crates/defra-node/src/http_signing_tests.rs http_client_signs_a_single_document_update, http_client_signed_update_rechecks_acp_and_cancellation",
     },
     Property {
         family: "HTTP client-signed update",
@@ -214,6 +231,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/block/builder/client_update.rs; crates/db/src/block/builder/client_waves.rs ClientWaves::respond",
         model_ref: "ClientSignedUpdate (lake build); client_create_graph::trusted_update_graph_matches_model_and_rejects_unapproved_waves",
         tiers: &[Boundary],
+        bound_by: "crates/db/tests/block/client_create_graph.rs trusted_update_graph_matches_model_and_rejects_unapproved_waves",
     },
     Property {
         family: "HTTP client-signed conditional update",
@@ -222,6 +240,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/http/src/client_signed_update.rs single_document_target",
         model_ref: "ClientSignedUpdateFilter (lake build); single_document_filter_admission_matches_model",
         tiers: &[Boundary],
+        bound_by: "crates/http/src/client_signed_update.rs single_document_filter_admission_matches_model",
     },
     Property {
         family: "SSE loss and error delivery",
@@ -230,6 +249,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/events/src/channel_bus.rs ChannelBus::publish_raw; crates/http/src/handlers/graphql/query.rs graphql_sse; crates/http/tests/graphql_sse_recovery.rs",
         model_ref: "MC_SseDelivery_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "crates/http/tests/graphql_sse_recovery.rs overflow_ends_the_graphql_stream_before_a_queued_result, query_error_is_delivered_even_without_rows",
     },
     Property {
         family: "SSE loss and error delivery",
@@ -238,6 +258,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/events/src/channel_bus.rs ChannelBus::publish_raw; crates/http/src/handlers/graphql/query.rs graphql_sse; crates/query/src/executor.rs QueryResponseError::from_query_error",
         model_ref: "SseDelivery (lake build)",
         tiers: &[Boundary],
+        bound_by: "crates/events/src/channel_bus_tests.rs overflow_wakes_reader_that_drained_before_loss_was_recorded, ordinary_raw_subscription_remains_open_after_overflow; crates/http/tests/graphql_sse_recovery.rs typed_permission_refusal_keeps_its_code_in_the_graphql_stream",
     },
     Property {
         family: "HTTP router composition",
@@ -288,6 +309,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/query/src/runner/owners.rs; crates/db/src/read/lensed/fetcher/mod.rs",
         model_ref: "MC_UnifiedAccess_Green.cfg / MC_UnifiedAccess_Red_*.cfg",
         tiers: &[Contract],
+        bound_by: "crates/query/src/runner/owners_tests.rs unified_access_rejects_or_reports_unavailable_without_bound_acp, delegated_turn_uses_certified_acp_even_if_fetcher_fallback_is_unbound",
     },
     Property {
         family: "ACP soundness + revocation + dual-path commits",
@@ -296,6 +318,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/query/src/runner/owners.rs",
         model_ref: "Acp.OwnerObservation",
         tiers: &[Contract],
+        bound_by: "crates/query/src/runner/owners_tests.rs unified_access_rejects_or_reports_unavailable_without_bound_acp; crates/db/tests/read/owner_observation.rs owner_observation_rejects_a_claim_without_a_bound_transaction_view",
     },
     Property {
         family: "Peer connection observation",
@@ -2329,6 +2352,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/access/nac_ops/mod.rs DB::disable_nac_as, DB::re_enable_nac_as, DB::check_stored_node_access, DB::add_nac_actor_relationship_as, DB::nac_relationship; crates/db/src/nac/mod.rs NacManager::initialize, NacManager::check_permission_persisted",
         model_ref: "MC_NodeAcpOps_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "tools/integration-test/tests/nac/core_operations.rs nac_core_operations_gate_test; crates/db/tests/nac/tests.rs test_nac_manager_disable_reenable, test_nac_manager_permission_check",
     },
     Property {
         family: "Iroh solicited replies",

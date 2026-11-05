@@ -24,7 +24,10 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Family | Tool | Crates it covers |
 |---|---|---|
 | Explicit embedded signing | TLA+ / Lean | defra-node, query, db |
-| HTTP client-signed create | TLA+ / Lean | http, query, db (proposed; implementation unbound) |
+| Verified client graph transaction | TLA+ / Lean | defra-node, query, db |
+| HTTP client-signed create | TLA+ / Lean | http, query, db |
+| HTTP client-signed update | TLA+ / Lean | http, query, db |
+| HTTP client-signed conditional update | Lean | http, query |
 | SSE loss and error delivery | TLA+ / Lean | events, http, query |
 | Storage failure classification | TLA+ / Lean | storage, db, query, http |
 | B3 filtered replication | TLA+ | p2p, db-merge |
