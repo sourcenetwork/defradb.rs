@@ -6,6 +6,10 @@ use kovan_queue::seg_queue::SegQueue;
 use query::{QueryExecutor, QueryRequest, TransactionError, TransactionHandle};
 
 enum TestExecution {
+    Held {
+        started: Arc<regolith::sync::Event>,
+        release: Arc<regolith::sync::Event>,
+    },
     Slow {
         started: Arc<AtomicBool>,
         completed: SegQueue<std::sync::mpsc::Sender<()>>,
@@ -17,6 +21,13 @@ enum TestExecution {
         expected_did: String,
         expected_public_key_hex: String,
     },
+}
+
+pub(super) fn held_signing_executor(
+    started: Arc<regolith::sync::Event>,
+    release: Arc<regolith::sync::Event>,
+) -> Arc<dyn QueryExecutor> {
+    Arc::new(TestExecution::Held { started, release })
 }
 
 pub(super) fn slow_signing_executor(
@@ -66,6 +77,10 @@ impl QueryExecutor for TestExecution {
 
     async fn execute(&self, _request: QueryRequest) -> query::QueryResponse {
         match self {
+            Self::Held { started, release } => {
+                started.set();
+                release.wait().await;
+            }
             Self::Slow { started, completed } => {
                 started.store(true, Ordering::SeqCst);
                 edge::testing::edge()

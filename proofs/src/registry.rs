@@ -548,6 +548,17 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // A transactional write's markers are registered after its commit;
+        // the commit returns only once that registration ran, and P2P stops
+        // only after the writes the node admitted drained.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "ACT_AckedWriteOwned / INV_ConservedWhileSenderUp — a commit call returns only once its head is owed; while the sender runs every committed head is owed",
+        axis: Tla,
+        anchor: "crates/db/src/merge/txn_broadcaster.rs SyncTxnBroadcaster::submit_update; crates/db/src/event/emission.rs register_update_event_callback; crates/defra-node/src/lib.rs Node::shutdown",
+        model_ref: "MC_SyncOwnership_{Green_MarkerHandoff,Red_UndrainedMarker}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "LIVE_EventualCurrency / LIVE_EventualReceiverQuiescence — document scope",
         axis: Tla,
@@ -1252,12 +1263,55 @@ pub const PROPERTIES: &[Property] = &[
         // A node's shutdown aborts every task it holds and waits for each to
         // let go of storage before the pool stops and regolith closes; the
         // drain gives up at its deadline; a refused telemetry flush moves to
-        // a thread of its own instead of the caller.
+        // a thread of its own instead of the caller. Requests and in-process
+        // writes stop and drain before P2P, so every admitted write registers
+        // its head marker; the transactions callers left open end before
+        // regolith closes.
         family: "Node shutdown order",
-        name: "INV_NoStorageAfterClose / INV_NothingDetached / INV_CallerNeverJoinsExporter / LIVE_ShutdownTerminates: no task reaches storage after regolith closes, none outlives shutdown, shutdown returns",
+        name: "INV_NoStorageAfterClose / INV_NothingDetached / INV_CallerNeverJoinsExporter / INV_AdmittedWritesMarked / INV_CloseWaitsForNoTransaction / LIVE_ShutdownTerminates: no task reaches storage after regolith closes, none outlives shutdown, every admitted write is marked, the close waits for no transaction left open, shutdown returns",
         axis: Tla,
-        anchor: "crates/defra-node/src/lib.rs Node::shutdown; crates/defra-node/src/node_acp.rs gate_external_acp; crates/defra-node/src/managed_p2p.rs ShutdownHandle::stop, stop_services; crates/edge/src/task.rs Service::stopped; crates/edge/src/handle.rs Scope::drain; crates/net/src/server.rs serve, until_closing",
-        model_ref: "MC_NodeShutdown_{Green,Red_RedriveDetached,Red_ServicesNotAwaited,Red_NoDrainDeadline,Red_FlushOnCaller}.cfg",
+        anchor: "crates/defra-node/src/lib.rs Node::shutdown, Node::as_request; crates/defra-node/src/ops/request.rs Node::txn_begin, Node::txn_commit; crates/defra-node/src/network.rs NodeEdge::drain_requests; crates/http/src/server.rs Server::router; crates/defra-node/src/node_acp.rs gate_external_acp; crates/defra-node/src/managed_p2p.rs ShutdownHandle::stop, stop_services; crates/edge/src/task.rs Service::stopped; crates/edge/src/handle.rs Scope::drain; crates/net/src/server.rs serve, until_closing",
+        model_ref: "MC_NodeShutdown_{Green,Red_RedriveDetached,Red_ServicesNotAwaited,Red_NoDrainDeadline,Red_FlushOnCaller,Red_RequestsDuringP2P,Red_CommitNotAdmitted,Red_OpenTransaction}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // A signed query or transformed route keeps a request-scope permit
+        // while its started worker writes, so P2P cannot stop first.
+        family: "Node shutdown order",
+        name: "INV_CommittedMarked: a signed query or transformed route commits with its durable head marker",
+        axis: Tla,
+        anchor: "crates/defra-node/src/signed_query/mod.rs execute_with_signing_context; crates/http/src/server.rs Server::router; crates/query/src/pooled/mod.rs PooledExecutor::execute_prepared; crates/workers/src/pool/detached.rs run_on; crates/defra-node/src/network.rs NodeEdge::drain_requests",
+        model_ref: "MC_SignedRequestDrain_{Green,Red_TaskDeadline,Red_Transform}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // A transaction guard follows its admitted commit task rather than a
+        // caller that can stop waiting while the task still runs.
+        family: "Node shutdown order",
+        name: "INV_CommitNotAbandoned: cancelling the waiter does not abandon an edge-admitted commit in flight",
+        axis: Tla,
+        anchor: "crates/defra-node/src/transaction.rs NodeTransaction::commit; crates/query/src/txn/guard.rs TransactionGuard::drop; crates/db/src/txn/owner/table.rs Table::abandon",
+        model_ref: "MC_GuardedCommit_{Green,Red_CallerOwns}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // Request admission follows the worker; transaction ownership follows
+        // its commit task when the caller gives up waiting.
+        family: "Node shutdown order",
+        name: "start_keeps_permit / finish_keeps_permit / dropped_waiter_keeps_permit / expired_task_loses_permit / task_guard_survives_cancellation / caller_guard_is_abandoned / begin_open_has_owner / abandoned_begin_is_closed",
+        axis: Lean,
+        anchor: "crates/defra-node/src/signed_query/mod.rs execute_with_signing_context; crates/defra-node/src/transaction.rs NodeTransaction::commit; crates/workers/src/pool/detached.rs run_on",
+        model_ref: "RequestDrain (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        // The result of a detached begin abandons its transaction if its
+        // caller leaves before receiving the handle.
+        family: "Node shutdown order",
+        name: "INV_OpenHasOwner: an edge-admitted begin cannot leave an unowned transaction open",
+        axis: Tla,
+        anchor: "crates/defra-node/src/lib.rs Node::begin_transaction; crates/defra-node/src/ops/request.rs Node::txn_begin; crates/query/src/txn/guard.rs TransactionGuard::drop",
+        model_ref: "MC_DetachedBegin_{Green,Red_NoResultGuard}.cfg",
         tiers: &[Boundary],
     },
     Property {

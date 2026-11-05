@@ -30,7 +30,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | DAG convergence (partition / eviction / restart) | TLA+ | p2p, db-merge, blockstore |
 | CRDT merge laws | Lean | crdt, defra-core |
 | Replicator lifecycle (no-loss / resume) | TLA+ | p2p, db-merge, embedded |
-| Sync ownership transfer (head hint / receiver pull) | TLA+ | p2p, db-merge, storage, embedded |
+| Sync ownership transfer (head hint / receiver pull) | TLA+ | p2p, db-merge, storage, embedded, defra-node |
 | Multi-instance claim | TLA+ | gents |
 | Block integrity / signatures | TLA+ | db-merge, defra-core, blockstore |
 | KMS key distribution | TLA+ / Lean | kms, db, db-merge |
@@ -66,7 +66,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Engine ticker export | TLA+ & Lean | telemetry, storage |
 | Worker pool CPU ledger | TLA+ & Lean | workers |
 | Worker default pool | TLA+ & Lean | workers |
-| Node shutdown order | TLA+ | defra-node, embedded, edge, acp |
+| Node shutdown order | TLA+ / Lean | defra-node, embedded, edge, acp, http, query, db, storage |
 | Inbound stream admission | TLA+, Lean | p2p |
 | Vector index link maintenance | TLA+ | storage, db-index |
 | Peer fetch stats | Lean | p2p |
