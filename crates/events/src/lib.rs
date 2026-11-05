@@ -44,8 +44,9 @@ pub use channel_bus::{ChannelBus, ChannelBusConfig};
 pub use document_changes::{DocumentChange, DocumentChangeBatch, DocumentChangeSubscription};
 pub use event::{
     AcpCacheInvalidatedData, AcpHeightAdvancedData, EventName, MergeCompleteData, Message,
-    MessageData, PeerConnectionData, PendingDagQuarantinedData, ReplicatorCompletedData,
-    SEArtifactReceivedData, TopicPeerEventData, UniqueIndexConflictData, Update,
+    MessageData, P2PNoPeersData, PeerConnectionData, PendingDagQuarantinedData,
+    ReplicatorCompletedData, SEArtifactReceivedData, TopicPeerEventData, UniqueIndexConflictData,
+    Update,
 };
 pub use noop_bus::NoOpBus;
 pub use subscription::{Subscription, TryRecvError};

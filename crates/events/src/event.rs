@@ -35,6 +35,9 @@ pub enum EventName {
     ActionExecution,
     /// A merge resolved a unique-index collision between two documents.
     UniqueIndexConflict,
+    /// A document's push found no subscribed peers, so the update may not
+    /// have reached anyone (Go Shinzo's `p2p-no-peers`).
+    P2PNoPeers,
 }
 
 impl EventName {
@@ -63,6 +66,7 @@ impl std::fmt::Display for EventName {
             EventName::PendingDagQuarantined => write!(f, "pending-dag-quarantined"),
             EventName::ActionExecution => write!(f, "action-execution"),
             EventName::UniqueIndexConflict => write!(f, "unique-index-conflict"),
+            EventName::P2PNoPeers => write!(f, "p2p-no-peers"),
         }
     }
 }
@@ -141,6 +145,17 @@ pub struct UniqueIndexConflictData {
     pub winner_doc_id: String,
     /// Document left out of the index for the conflicting value.
     pub unindexed_doc_id: String,
+}
+
+/// A document's push found no subscribed peers on its topic.
+#[derive(Debug, Clone)]
+pub struct P2PNoPeersData {
+    /// The document whose update was pushed.
+    pub doc_id: String,
+    /// The collection the document belongs to.
+    pub collection_id: String,
+    /// The topic no peer was subscribed to.
+    pub topic: String,
 }
 
 /// ACP light client height advancement event data.
@@ -276,6 +291,8 @@ pub enum MessageData {
     ActionExecution(ActionExecution),
     /// Unique-index collision resolved during a merge.
     UniqueIndexConflict(UniqueIndexConflictData),
+    /// A document's push found no subscribed peers.
+    P2PNoPeers(P2PNoPeersData),
 }
 
 impl Message {
@@ -381,6 +398,14 @@ impl Message {
         }
     }
 
+    /// Create a new P2PNoPeers message.
+    pub fn p2p_no_peers(data: P2PNoPeersData) -> Self {
+        Self {
+            name: EventName::P2PNoPeers,
+            data: MessageData::P2PNoPeers(data),
+        }
+    }
+
     /// Create a new ActionExecution message.
     pub fn action_execution(data: ActionExecution) -> Self {
         Self {
@@ -449,6 +474,14 @@ impl Message {
     pub fn as_unique_index_conflict(&self) -> Option<&UniqueIndexConflictData> {
         match &self.data {
             MessageData::UniqueIndexConflict(d) => Some(d),
+            _ => None,
+        }
+    }
+
+    /// Get the P2PNoPeersData if this is a P2PNoPeers message.
+    pub fn as_p2p_no_peers(&self) -> Option<&P2PNoPeersData> {
+        match &self.data {
+            MessageData::P2PNoPeers(d) => Some(d),
             _ => None,
         }
     }

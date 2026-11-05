@@ -25,6 +25,9 @@ struct MergeRetryAttempt<S: Store, B: blockstore::Blockstore> {
     is_recovery: bool,
     is_schema_block: bool,
     history_rejection: Option<Box<super::HistoryRejection>>,
+    /// Whether an earlier attempt of this retry operation ran; each one
+    /// after the first means that one was abandoned to a conflict.
+    attempted: bool,
 }
 
 impl<S: Store + 'static, B: blockstore::Blockstore + 'static> storage::corekv::RetryAttemptFn
@@ -49,6 +52,10 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> MergeRetryAttempt<
         retry: &mut dyn storage::corekv::RetryTxn,
     ) -> Result<MergeOutcome, MergeError> {
         self.handler.reset_retry_dek_prefetch_request();
+        if std::mem::replace(&mut self.attempted, true) {
+            self.handler.db.merge_stats().record_txn_conflict();
+        }
+        self.handler.reset_attempt_counts();
         let io = retry
             .begin_attempt_io()
             .map_err(|error| MergeError::Database(crate::error::Error::Storage(error)))?;
@@ -171,6 +178,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> MergeRetryAttempt<
                 })))?;
             }
         }
+        self.handler.count_merges_on_commit(&txn)?;
         let (io, callbacks) = txn
             .into_retry_attempt()
             .map_err(crate::error::Error::Storage)?;
@@ -258,6 +266,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         let mut history_mode = false;
         let mut prepare_history_keys = false;
         let mut history_rejection = None;
+        let mut history_counted = None;
         let prefetch_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let retry_metadata = BlockMetadata {
             doc_id: doc_id.as_deref(),
@@ -285,10 +294,12 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                 }
                 prepare_history_keys = false;
             }
-            let mut handler = self.with_retry_decryption_context(
-                Arc::clone(&retry_deks),
-                Arc::clone(&prefetch_requested),
-            );
+            let mut handler = self
+                .with_retry_decryption_context(
+                    Arc::clone(&retry_deks),
+                    Arc::clone(&prefetch_requested),
+                )
+                .with_attempt_counts();
             handler.history_mode = history_mode;
             let attempt = MergeRetryAttempt {
                 handler,
@@ -303,6 +314,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                 is_recovery: metadata.is_recovery,
                 is_schema_block: metadata.is_schema_block,
                 history_rejection: history_rejection.take(),
+                attempted: false,
             };
             let result = self
                 .db
@@ -325,49 +337,54 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                     }
                     break Ok(outcome);
                 }
-                Err(error) => match error.downcast_abort::<MergeError>() {
-                    Ok(MergeError::HistoryRequired | MergeError::DepthExceeded { .. })
-                        if !history_mode =>
-                    {
-                        history_mode = true;
-                        prepare_history_keys = true;
-                    }
-                    Ok(MergeError::HistoryAborted(rejection)) => {
-                        history_rejection = Some(rejection);
-                    }
-                    Ok(MergeError::NeedsDecryptionKey(enc_cid)) => {
-                        if retry_deks.contains_key(&enc_cid) {
-                            break Err(super::repeated_key_request(&enc_cid));
+                Err(error) => {
+                    match super::exhausted(&self.db, error).downcast_abort::<MergeError>() {
+                        Ok(MergeError::HistoryRequired | MergeError::DepthExceeded { .. })
+                            if !history_mode =>
+                        {
+                            history_mode = true;
+                            prepare_history_keys = true;
                         }
-                        let Some(kms) = self.kms() else {
-                            break Err(MergeError::Kms(kms::Error::KeyUnavailable));
-                        };
-                        let resolved = async {
-                            let results = kms
-                                .get_keys(&kms_context, std::slice::from_ref(&enc_cid))
-                                .await?;
-                            let key = results
-                                .wait_all()
-                                .await?
-                                .remove(&enc_cid)
-                                .ok_or(kms::Error::KeyUnavailable)?;
-                            Ok::<_, kms::Error>((enc_cid, key))
+                        Ok(MergeError::HistoryAborted(rejection)) => {
+                            // A resumed page re-raises a stored rejection without its
+                            // cause; keep the cause the failing page gave.
+                            history_counted = rejection.counted.or(history_counted);
+                            history_rejection = Some(rejection);
                         }
-                        .await;
-                        match resolved {
-                            Ok((cid, key)) => {
-                                retry_deks.insert(cid, zeroize::Zeroizing::new(key));
+                        Ok(MergeError::NeedsDecryptionKey(enc_cid)) => {
+                            if retry_deks.contains_key(&enc_cid) {
+                                break Err(super::repeated_key_request(&enc_cid));
                             }
-                            Err(error) => break Err(MergeError::Kms(error)),
+                            let Some(kms) = self.kms() else {
+                                break Err(MergeError::Kms(kms::Error::KeyUnavailable));
+                            };
+                            let resolved = async {
+                                let results = kms
+                                    .get_keys(&kms_context, std::slice::from_ref(&enc_cid))
+                                    .await?;
+                                let key = results
+                                    .wait_all()
+                                    .await?
+                                    .remove(&enc_cid)
+                                    .ok_or(kms::Error::KeyUnavailable)?;
+                                Ok::<_, kms::Error>((enc_cid, key))
+                            }
+                            .await;
+                            match resolved {
+                                Ok((cid, key)) => {
+                                    retry_deks.insert(cid, zeroize::Zeroizing::new(key));
+                                }
+                                Err(error) => break Err(MergeError::Kms(error)),
+                            }
+                        }
+                        Ok(error) => break Err(error),
+                        Err(error) => {
+                            break Err(MergeError::Database(crate::error::Error::Storage(
+                                error.into_storage(),
+                            )));
                         }
                     }
-                    Ok(error) => break Err(error),
-                    Err(error) => {
-                        break Err(MergeError::Database(crate::error::Error::Storage(
-                            error.into_storage(),
-                        )));
-                    }
-                },
+                }
             }
         };
         // Preserve sync-time warming for encrypted standalone field blocks,
@@ -379,6 +396,18 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                     self.spawn_dek_prefetch(enc_cid, &retry_metadata);
                 }
             }
+        }
+        // Counted once, here: a batch that meets a refusal splits and re-runs,
+        // and only the final, single-block attempt reaches this point. A
+        // history walk that failed is cleaned up first and ends `Rejected`;
+        // its failure is counted as the walk recorded it.
+        let failure = match &result {
+            Err(error) => crate::stats::MergeFailure::of(error),
+            Ok(MergeOutcome::Rejected { .. }) => history_counted,
+            Ok(_) => None,
+        };
+        if let Some(failure) = failure {
+            self.db.merge_stats().record_failure(failure);
         }
         match result {
             Err(MergeError::RetryRejected(reason)) => Ok(MergeOutcome::rejected(reason)),

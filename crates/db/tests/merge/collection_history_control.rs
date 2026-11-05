@@ -25,6 +25,7 @@ impl CompositeMergeHook for DriverFailure {
                 context: [3; 32],
                 generation: [4; 16],
                 reason: "bad ancestor".into(),
+                counted: None,
             })),
             2 => MergeError::NeedsDecryptionKey(self.root),
             _ => MergeError::DepthExceeded {

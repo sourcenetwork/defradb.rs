@@ -11,6 +11,9 @@ pub struct HistoryRejection {
     pub(super) context: [u8; 32],
     pub(super) generation: [u8; 16],
     pub(super) reason: String,
+    /// What the failure that ended the walk counts as, counted once the
+    /// rejection is recorded; `None` when it is not known here.
+    pub(super) counted: Option<crate::stats::MergeFailure>,
 }
 
 /// Error type for database merge operations.

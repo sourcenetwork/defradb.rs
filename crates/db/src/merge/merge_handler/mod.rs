@@ -91,6 +91,21 @@ pub(crate) fn repeated_key_request(encryption_cid: &Cid) -> MergeError {
     ))
 }
 
+/// Count the last attempt of a merge that ran out of retries as abandoned
+/// to a conflict, as the attempts before it were, and hand the error back.
+pub(super) fn exhausted<S>(
+    db: &crate::database::DB<S>,
+    error: storage::corekv::RetryAttemptError,
+) -> storage::corekv::RetryAttemptError
+where
+    S: Store,
+{
+    if matches!(error, storage::corekv::RetryAttemptError::Exhausted(_)) {
+        db.merge_stats().record_txn_conflict();
+    }
+    error
+}
+
 /// An empty [`CidSet`].
 pub fn cid_set() -> CidSet {
     CidSet::with_hasher(RandomState::default())
@@ -135,6 +150,9 @@ pub struct DbMergeHandler<S: Store, B: blockstore::Blockstore> {
     /// `None` means this handler is on the legacy non-retry path.
     retry_decryption_keys: Option<RetryDecryptionKeys>,
     retry_prefetch_requested: Option<Arc<AtomicBool>>,
+    /// For each composite this attempt published, whether it created the
+    /// document (it had no heads before); counted once the attempt commits.
+    merge_kinds: Arc<SegQueue<bool>>,
     /// Keys fetched before this merge's own transaction (see
     /// `merge_keys`): consulted before any request to the KMS.
     prepared_keys: Option<merge_keys::PreparedMergeKeys>,
@@ -177,6 +195,7 @@ impl<S: Store, B: blockstore::Blockstore> Clone for DbMergeHandler<S, B> {
             kms: Arc::clone(&self.kms),
             retry_decryption_keys: self.retry_decryption_keys.clone(),
             retry_prefetch_requested: self.retry_prefetch_requested.clone(),
+            merge_kinds: Arc::clone(&self.merge_kinds),
             prepared_keys: self.prepared_keys.clone(),
             local_keys_only: self.local_keys_only,
             prefetched_dek_cids: Arc::clone(&self.prefetched_dek_cids),
@@ -195,6 +214,38 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let mut handler = self.clone();
         handler.single_history_turn = true;
         handler
+    }
+
+    /// A handler whose composite counts (create or update) belong to one
+    /// engine retry operation: handlers derived from it share them, and
+    /// nothing another merge counts lands here.
+    pub(super) fn with_attempt_counts(&self) -> Self {
+        let mut handler = self.clone();
+        handler.merge_kinds = Arc::default();
+        handler
+    }
+
+    /// Forget what an abandoned attempt counted, before the next one runs.
+    pub(super) fn reset_attempt_counts(&self) {
+        while self.merge_kinds.pop().is_some() {}
+    }
+
+    /// Count this attempt's merges once its transaction commits.
+    pub(super) fn count_merges_on_commit(
+        &self,
+        txn: &crate::txn::DbTxn<S>,
+    ) -> Result<(), MergeError> {
+        let kinds: Vec<bool> = std::iter::from_fn(|| self.merge_kinds.pop()).collect();
+        if kinds.is_empty() {
+            return Ok(());
+        }
+        let stats = Arc::clone(self.db.merge_stats());
+        txn.on_commit(storage::corekv::OnCommit::Sync(Box::new(move || {
+            for created in kinds {
+                stats.record_merge(created);
+            }
+        })))
+        .map_err(MergeError::Database)
     }
 
     pub(super) fn with_retry_decryption_context(
@@ -307,6 +358,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             kms: Arc::new(regolith::sync::OnceCell::new()),
             retry_decryption_keys: None,
             retry_prefetch_requested: None,
+            merge_kinds: Arc::default(),
             prepared_keys: None,
             local_keys_only: false,
             prefetched_dek_cids: Arc::new(cid_set()),

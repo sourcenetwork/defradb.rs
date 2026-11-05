@@ -271,6 +271,7 @@ where
                     context,
                     generation,
                     reason: error.to_string(),
+                    counted: crate::stats::MergeFailure::of(&error),
                 }))
             } else {
                 error

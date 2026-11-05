@@ -43,6 +43,9 @@ pub struct NewNode {
     pub with_identity: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_document_acp_test: bool,
+    /// A Rust node under every client; the Go clients reach it over HTTP.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rust: bool,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -72,6 +75,7 @@ impl Op for NewNode {
         probe.expected_error = None;
         probe.network = false;
         probe.database_dir = None;
+        probe.rust = false;
         if probe != Self::default() {
             let options = serde_json::to_string(&probe).unwrap_or_default();
             return Err(Failure::unsupported(format!("{} {options}", Self::name())));
@@ -86,6 +90,7 @@ impl Op for NewNode {
             network: self.network,
             dir,
             listen: Vec::new(),
+            rust: self.rust,
         };
         state.start_node(self.common.node(), spec);
         Ok(json!({}))

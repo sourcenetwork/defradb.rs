@@ -170,6 +170,16 @@ fn the_merge_refuses_what_the_rule_refuses() {
                 "{address}"
             );
         }
+        let report = handler.db().merge_stats().drain();
+        assert_eq!(
+            (
+                report.creates,
+                report.rejected_below_floor,
+                report.rejected_no_height
+            ),
+            (1, 1, 2),
+            "refusals count by cause, and only the stored one is a create: {report:?}"
+        );
     })
     .unwrap()
 }
@@ -270,6 +280,16 @@ fn a_refusal_in_a_batch_refuses_only_that_document() {
         assert!(stored(&handler, "col-log", &blocks[0].doc_id).await);
         assert!(!stored(&handler, "col-log", &blocks[1].doc_id).await);
         assert!(stored(&handler, "col-log", &blocks[2].doc_id).await);
+        let report = handler.db().merge_stats().drain();
+        assert_eq!(
+            (report.rejected_below_floor, report.creates),
+            (1, 2),
+            "a refusal splits the batch, but counts once: {report:?}"
+        );
+        assert!(
+            report.drops.is_empty(),
+            "a refusal is not a drop: {report:?}"
+        );
     })
     .unwrap()
 }
@@ -567,6 +587,47 @@ fn an_update_concurrent_with_a_delete_merges_into_the_deleted_document() {
         assert_eq!(merge(&handler, &delete).await, MergeOutcome::Merged);
         assert_eq!(merge(&handler, &update).await, MergeOutcome::Merged);
         assert_eq!(height(&handler, &create.doc_id).await, None);
+    })
+    .unwrap()
+}
+
+/// A head refused at the end of a walk too deep for one attempt, which the
+/// merge pages through as a history: its refusal is counted once, as a
+/// refusal, not as a drop.
+#[test]
+#[mantra_macros::req_test("go.shinzo.merge.telemetry.report")]
+fn a_refusal_ending_a_history_walk_is_counted_once() {
+    workers::block_on(async {
+        let schema = logs("col-log");
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let mut floors = RapidHashMap::new();
+        floors.insert(
+            "col-log".to_string(),
+            RetentionFloor {
+                field: "blockNumber".to_string(),
+                floor: 100,
+            },
+        );
+        let options =
+            DbOptions::new().with_retention_rule(Arc::new(StaticRetentionRule::new(floors)));
+        let db = Arc::new(DB::from_arc_with_options(store.clone(), options).unwrap());
+        db.create_collection(schema.clone()).await.unwrap();
+        let blockstore = Arc::new(DefraBlockstore::new(store, false));
+        let handler = DbMergeHandler::new_with_max_merge_depth(db, blockstore.clone(), 1);
+        let heads = versions(
+            &blockstore,
+            &schema,
+            &[150, 160, 170, 50].map(NormalValue::Int),
+        )
+        .await;
+        let head = heads.last().unwrap();
+        assert_eq!(merge(&handler, head).await, rejected(BELOW));
+        let report = handler.db().merge_stats().drain();
+        assert_eq!(
+            (report.rejected_below_floor, report.drops.len()),
+            (1, 0),
+            "{report:?}"
+        );
     })
     .unwrap()
 }

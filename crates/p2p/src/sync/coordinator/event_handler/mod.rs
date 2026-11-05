@@ -254,7 +254,21 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         event: TransportEvent<T::ResponseToken>,
         admission: crate::sync::DispatchAdmission,
     ) -> Result<()> {
-        if admission == crate::sync::DispatchAdmission::Admitted {
+        let admitted = admission == crate::sync::DispatchAdmission::Admitted;
+        // Pushes only: raw gossip carries DocSync and Branchable requests and
+        // their responses, which are not documents arriving.
+        if matches!(
+            event,
+            TransportEvent::PushLogRequest { .. }
+                | TransportEvent::TwoStreamRequest { .. }
+                | TransportEvent::GossipMessage { .. }
+        ) {
+            self.manager
+                .diagnostics()
+                .arrivals()
+                .record_inbound(admitted);
+        }
+        if admitted {
             return self.handle_transport_event(event).await;
         }
 

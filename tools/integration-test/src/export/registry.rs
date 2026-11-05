@@ -152,7 +152,7 @@ registry! {
     VerifyBlockSignature => [v("signature.verifySeed").all(&["signerSeed"]), v("signature.verify")],
     Wait => [v("action.wait").all(&["expectedAction"]), v("node.wait")],
     WaitForIndexReady => [v("index.waitBuildCollections").all(&["expectedCount"]), v("index.waitBuilt").all(&["collection"]), v("index.waitBuildBlocked").all(&["blocked"]).implied(&[("blocked", "true")]), v("index.releaseBuildGate").all(&["releaseGate"]).implied(&[("releaseGate", "true")])],
-    WaitForPeersEvents => [v("peer.events.start").all(&["start"]).implied(&[("start", "true")]), v("peer.awaitTopics")],
+    WaitForPeersEvents => [v("peer.events.start").all(&["start"]).implied(&[("start", "true")]), v("peer.awaitNoPeers").all(&["noPeers"]).implied(&[("noPeers", "true")]), v("peer.awaitTopics")],
     WaitForSESync => [v("peer.awaitSESync")],
     WaitForSync => [v("peer.awaitMerge").all(&["docID", "blockCID"]), v("peer.awaitUpdateFields").all(&["updatedFields"]).implied(&[("updatedFields", "true")]), v("peer.awaitUpdates").all(&["docIDs"]), v("peer.awaitUpdate")],
 }

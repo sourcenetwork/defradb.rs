@@ -1156,6 +1156,55 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         }
     }
 
+    /// Logs the `p2p stats` report every `interval`, each covering that
+    /// interval only, until shutdown. `also` runs on the same tick, for the
+    /// node's reports that live outside the sync layer (`merge stats`).
+    pub async fn run_stats_report<F>(&self, interval: Duration, mut also: F)
+    where
+        F: FnMut(),
+    {
+        let mut tick = crate::rt::time::interval(interval);
+        tick.set_missed_tick_behavior(crate::rt::time::MissedTickBehavior::Skip);
+        tick.tick().await;
+        let mut budget_drops = 0;
+        loop {
+            futures::select! {
+                _ = tick.tick().fuse() => {
+                    self.stats_report(&mut budget_drops).await.log();
+                    also();
+                }
+                _ = self.runtime.shutdown.cancelled().fuse() => return,
+            }
+        }
+    }
+
+    /// One interval's `p2p stats`: the arrival counts, the push queue as it
+    /// stands, and the inbound byte budget's refusals since `budget_drops`
+    /// (on a transport with a budget).
+    async fn stats_report(
+        &self,
+        budget_drops: &mut u64,
+    ) -> crate::sync::manager::arrival_stats::ArrivalReport {
+        let mut report = self.manager.diagnostics().arrivals().drain();
+        let backlog = self.runtime.push_backlog.snapshot().await;
+        report
+            .extra
+            .push(("queueDepth", backlog.queued_items as u64));
+        report
+            .extra
+            .push(("queueBytes", backlog.queued_bytes as u64));
+        let budget = self.transport().inbound_budget().await.unwrap_or_default();
+        if !budget.is_empty() {
+            let total: u64 = budget
+                .iter()
+                .map(|class| class.busy_resets + class.oversized_resets)
+                .sum();
+            let since = total.saturating_sub(std::mem::replace(budget_drops, total));
+            report.extra.push(("droppedOverBudget", since));
+        }
+        report
+    }
+
     /// Each dispatch takes the clock's own lane into the merge loop, which
     /// has room for one per fetch slot and which the merge loop empties
     /// before its channel of merge work: a dispatch never competes with the

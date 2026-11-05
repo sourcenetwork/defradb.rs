@@ -109,6 +109,7 @@ where
                     context,
                     generation,
                     reason,
+                    counted: None,
                 })));
             }
             let more = cleanup(store, root, budget).await?;
