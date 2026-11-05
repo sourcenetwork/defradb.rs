@@ -748,6 +748,37 @@ fn trusted_delete_graph_matches_model_and_refuses_other_waves() {
     history.push(composite);
     let doc_id = create.doc_id().to_owned();
     let snapshot = ClientUpdateSnapshot::from_blocks(&doc_id, &history, &[head]).unwrap();
+    // The model derives acceptance from the exact intent and authenticated graph.
+    let patch = json!({"name":"after"});
+    let update = db::block::builder::ClientUpdateSignatures::from_input(
+        &storage::Crdts::default(), &schema, &doc_id, &patch, &snapshot, &signer,
+    ).unwrap();
+    let delete = ClientDeleteSignatures::from_snapshot(&schema, &doc_id, &snapshot, &signer).unwrap();
+    let mut cases = Vec::new();
+    for (operation, evidence) in [("update", serde_json::to_value(update.evidence()).unwrap()),
+                                   ("delete", serde_json::to_value(delete.evidence()).unwrap())] {
+        let mut tampered = evidence.clone();
+        let byte = tampered["composite_signature"][0].as_u64().unwrap();
+        tampered["composite_signature"][0] = json!(byte ^ 1);
+        cases.push((operation, evidence, true));
+        cases.push((operation, tampered, false));
+    }
+    let modeled = model("VerifiedMutationHandoff.lean", &json!(cases.iter().map(|(op, _, valid)| {
+        let graph = json!({"signer":"user", "operation":op, "collection":"Settings", "document":doc_id,
+            "input":patch.to_string(), "history":head.to_string(), "blocks":["composite"]});
+        json!({"approved":graph, "offered":graph, "claimedActor":"user", "verified":valid,
+            "nativeAuthorized":true, "waveMatches":true, "commit":true})
+    }).collect::<Vec<_>>()));
+    for ((operation, wire, _), expected) in cases.into_iter().zip(modeled.as_array().unwrap()) {
+        let evidence = serde_json::from_value(wire).unwrap();
+        let result = match operation {
+            "update" => db::block::builder::VerifiedClientMutation::verify_update(
+                &storage::Crdts::default(), &schema, &doc_id, &patch, &snapshot, evidence),
+            _ => db::block::builder::VerifiedClientMutation::verify_delete(
+                &schema, &doc_id, &snapshot, evidence),
+        };
+        assert_eq!(result.is_ok(), expected["accepts"].as_bool().unwrap());
+    }
     let new_graph =
         || ClientDeleteSignatures::from_snapshot(&schema, &doc_id, &snapshot, &signer).unwrap();
     let wave = vec![new_graph().composite_block().to_vec()];
