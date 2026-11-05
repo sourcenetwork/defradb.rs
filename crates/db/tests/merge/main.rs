@@ -36,6 +36,7 @@ mod receive_gate;
 mod replicated;
 mod replication;
 mod replication_filter;
+mod retention;
 mod se_artifact_gen;
 mod se_coordinator;
 mod se_receiver;

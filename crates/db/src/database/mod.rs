@@ -55,6 +55,9 @@ pub struct DbOptions {
     /// The embedder's check on replicated documents before their commits
     /// store anything. `None` keeps every document.
     pub replication_filter: Option<Arc<dyn crate::replication_filter::ReplicationFilter>>,
+    /// The retention floor replicated documents are judged against at
+    /// merge. `None` judges nothing.
+    pub retention_rule: Option<Arc<dyn crate::retention::RetentionRule>>,
 }
 
 impl std::fmt::Debug for DbOptions {
@@ -78,6 +81,7 @@ impl std::fmt::Debug for DbOptions {
             )
             .field("pool", &self.pool)
             .field("replication_filter", &self.replication_filter.is_some())
+            .field("retention_rule", &self.retention_rule.is_some())
             .finish()
     }
 }
@@ -118,6 +122,27 @@ impl DbOptions {
     ) -> Self {
         self.replication_filter = Some(filter);
         self
+    }
+
+    /// Judges replicated documents against `rule` at merge.
+    pub fn with_retention_rule(mut self, rule: Arc<dyn crate::retention::RetentionRule>) -> Self {
+        self.retention_rule = Some(rule);
+        self
+    }
+
+    /// The field and floor replicated documents of a collection are judged
+    /// against, or `None` when it is not judged. A branchable collection
+    /// never is: one of its heads commits many documents at once.
+    pub fn retention_floor(
+        &self,
+        collection: &schema::CollectionVersion,
+    ) -> Option<crate::retention::RetentionFloor> {
+        if collection.is_branchable {
+            return None;
+        }
+        self.retention_rule
+            .as_ref()?
+            .retention_floor(&collection.collection_id)
     }
 
     /// The engine retry policy every write of this database runs under.

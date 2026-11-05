@@ -83,6 +83,7 @@ where
         query_timeout,
         introspection_cache,
         replication_filter,
+        retention,
     } = config;
     let introspection_cache = introspection_cache.unwrap_or(true);
     #[cfg(not(any(feature = "p2p", feature = "libp2p")))]
@@ -152,6 +153,9 @@ where
     }
     if let Some(filter) = replication_filter {
         db_options = db_options.with_replication_filter(filter.0);
+    }
+    if let Some(rule) = retention {
+        db_options = db_options.with_retention_rule(rule.0);
     }
     if let Some(identity) = node_p2p_identity.as_ref() {
         db_options = db_options.with_node_identity_arc(identity.clone());

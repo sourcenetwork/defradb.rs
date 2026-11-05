@@ -266,6 +266,14 @@ impl NodeBuilder {
         self
     }
 
+    /// Refuse replicated documents at or below the floors `rule` gives, asked
+    /// as documents merge: a fixed map (`db::retention::StaticRetentionRule`)
+    /// or a floor that moves with the chain.
+    pub fn with_retention(mut self, rule: Arc<dyn db::retention::RetentionRule>) -> Self {
+        self.config.retention = Some(crate::RetentionRuleHandle(rule));
+        self
+    }
+
     /// Enable the HTTP GraphQL server.
     #[cfg(feature = "http")]
     pub fn with_http(mut self, config: HttpConfig) -> Self {

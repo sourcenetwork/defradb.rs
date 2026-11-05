@@ -383,6 +383,9 @@ pub struct NodeConfig {
     pub introspection_cache: Option<bool>,
     /// The embedder's check on replicated documents; `None` keeps them all.
     pub replication_filter: Option<ReplicationFilterHandle>,
+    /// The retention floor replicated documents are judged against at
+    /// merge; `None` judges nothing.
+    pub retention: Option<RetentionRuleHandle>,
 }
 
 /// An embedder's [`db::replication_filter::ReplicationFilter`], compared by
@@ -399,6 +402,25 @@ impl std::fmt::Debug for ReplicationFilterHandle {
 }
 
 impl PartialEq for ReplicationFilterHandle {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+/// An embedder's [`db::retention::RetentionRule`], asked for each collection's
+/// floor as documents merge, compared by identity.
+#[derive(Clone)]
+pub struct RetentionRuleHandle(pub Arc<dyn db::retention::RetentionRule>);
+
+impl std::fmt::Debug for RetentionRuleHandle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RetentionRuleHandle")
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for RetentionRuleHandle {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }

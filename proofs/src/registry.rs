@@ -2103,6 +2103,20 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // The retention floor (#2450): the merge judges the alive document a
+        // pushed head's walk ends with, in a covered, non-branchable
+        // collection; a refusal is the head's own Rejected outcome, its whole
+        // walk discarded, never merged or relayed; deletes, local writes and a
+        // floor of zero or less refuse nothing by height.
+        family: "Retention floor",
+        name: "INV_NoneBelowFloor / INV_RefusedNotMerged / INV_DeleteApplies / INV_HeadDecides / INV_LocalAndBranchable",
+        axis: Tla,
+        anchor: "crates/db/src/retention.rs RetentionFloor::refusal; crates/db/src/database/mod.rs DbOptions::retention_floor; crates/db/src/merge/merge_handler/composite_persist.rs persist_merged_document; crates/db/src/merge/merge_handler/composite.rs CompositeMergeContext::is_root, process_composite_delta_in_txn; crates/db/src/merge/merge_handler/error.rs MergeError::RetentionRefused; crates/db/src/merge/merge_handler/batch.rs try_batch_merge_with_split",
+        model_ref: "MC_Retention_{Green,Green_ZeroFloor,Green_Branchable,Red_Never,Red_JudgeEach,Red_JudgeDeletes,Red_WholeBatch,Red_StrictFloor,Red_RelayAll,Red_JudgeLocal,Red_JudgeBranchable,Red_NegativeHeight}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Document write pipeline",
         name: "INV_NoStoreBeforeComposite / INV_NoMintInAttempt / INV_OneKeyPerField / INV_CommittedWhole",
         axis: Tla,

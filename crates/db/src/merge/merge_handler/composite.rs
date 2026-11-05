@@ -25,6 +25,9 @@ pub struct CompositeMergeContext<'a, 'b> {
     pub(crate) doc_short_id: u64,
     pub(crate) collection: Option<Collection>,
     pub(crate) mode: CompositeMergeMode,
+    /// The composite the walk was asked to merge, which it merges last: the
+    /// document as this composite leaves it is the one the walk ends with.
+    pub(crate) is_root: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -38,6 +41,7 @@ impl<'a, 'b> CompositeMergeContext<'a, 'b> {
         doc_short_id: u64,
         collection: Option<Collection>,
         mode: CompositeMergeMode,
+        is_root: bool,
     ) -> Self {
         Self {
             cid,
@@ -48,6 +52,7 @@ impl<'a, 'b> CompositeMergeContext<'a, 'b> {
             doc_short_id,
             collection,
             mode,
+            is_root,
         }
     }
 }
@@ -497,6 +502,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             doc_short_id,
             collection_lookup.clone(),
             CompositeMergeMode::Standalone,
+            is_root,
         );
         let mut state = CompositeMergeState::default();
 
@@ -957,6 +963,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             doc_short_id,
             collection_lookup.clone(),
             mode,
+            is_root,
         );
         let mut state = CompositeMergeState {
             reads: std::mem::take(reads),
