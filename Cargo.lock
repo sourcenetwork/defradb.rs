@@ -3996,6 +3996,7 @@ dependencies = [
  "acp",
  "async-stream",
  "async-trait",
+ "async-tungstenite",
  "axum",
  "base64 0.23.1",
  "cid",

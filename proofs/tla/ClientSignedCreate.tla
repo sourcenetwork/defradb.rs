@@ -15,46 +15,47 @@ Clients == {"s1", "s2"}
 \* Another actor can try to answer either session.
 Actors == {"alice", "mallory"}
 \* Every request advances through two waves and at most one commit.
-Phases == {"field", "composite", "ready", "done", "closed"}
+Phases == {"field", "composite", "ready", "committing", "done", "closed"}
 \* These flags retain any historical violation even after the request advances.
 VARIABLES phase, live, version, acp, active, badActor, badContext, badSignature,
-          badClient, badLive, badAcp, networkInside, replayed
+          badClient, badLive, badAcp, networkInside, replayed, finishedExpired
 \* The complete state TLC explores.
 vars == <<phase, live, version, acp, active, badActor, badContext, badSignature,
-          badClient, badLive, badAcp, networkInside, replayed>>
+          badClient, badLive, badAcp, networkInside, replayed, finishedExpired>>
 \* Each original request starts live, authorized and waiting for its field wave.
 Init == /\ phase = [c \in Clients |-> "field"]
         /\ live = [c \in Clients |-> TRUE]
         /\ version = 0 /\ acp = TRUE /\ active = [c \in Clients |-> FALSE]
         /\ badActor = FALSE /\ badContext = FALSE /\ badSignature = FALSE
         /\ badClient = FALSE /\ badLive = FALSE /\ badAcp = FALSE
-        /\ networkInside = FALSE /\ replayed = FALSE
-\* An unrelated committed change can invalidate prepared schema context.
+        /\ networkInside = FALSE /\ replayed = FALSE /\ finishedExpired = FALSE
+\* A committed definition change, including immutable flags under the same
+\* version ID, invalidates the complete prepared schema context.
 ChangeSchema == /\ version = 0 /\ version' = 1
                 /\ UNCHANGED <<phase, live, acp, active, badActor, badContext,
-                                badSignature, badClient, badLive, badAcp, networkInside, replayed>>
+                                badSignature, badClient, badLive, badAcp, networkInside, replayed, finishedExpired>>
 \* Revocation may happen after preparation but before the deciding commit.
 Revoke == /\ acp /\ acp' = FALSE
           /\ UNCHANGED <<phase, live, version, active, badActor, badContext,
-                          badSignature, badClient, badLive, badAcp, networkInside, replayed>>
+                          badSignature, badClient, badLive, badAcp, networkInside, replayed, finishedExpired>>
 \* A client can cancel or let its operation expire while a reply is in flight.
 End(c) == /\ live[c] /\ phase[c] # "done"
           /\ live' = [live EXCEPT ![c] = FALSE]
           /\ UNCHANGED <<phase, version, acp, active, badActor, badContext,
-                          badSignature, badClient, badLive, badAcp, networkInside, replayed>>
+                          badSignature, badClient, badLive, badAcp, networkInside, replayed, finishedExpired>>
 \* Cleanup releases the capsule after cancellation or expiry.
 Reap(c) == /\ Reclaim /\ ~live[c] /\ phase[c] \in {"field", "composite", "ready"}
            /\ phase' = [phase EXCEPT ![c] = "closed"]
            /\ UNCHANGED <<live, version, acp, active, badActor, badContext,
-                           badSignature, badClient, badLive, badAcp, networkInside, replayed>>
+                           badSignature, badClient, badLive, badAcp, networkInside, replayed, finishedExpired>>
 \* A transaction attempt can be active only until it yields for an input.
 BeginAttempt(c) == /\ ~active[c] /\ active' = [active EXCEPT ![c] = TRUE]
                 /\ UNCHANGED <<phase, live, version, acp, badActor, badContext,
-                                badSignature, badClient, badLive, badAcp, networkInside, replayed>>
+                                badSignature, badClient, badLive, badAcp, networkInside, replayed, finishedExpired>>
 \* Ending the attempt releases its transaction turn before external work.
 EndAttempt(c) == /\ active[c] /\ active' = [active EXCEPT ![c] = FALSE]
               /\ UNCHANGED <<phase, live, version, acp, badActor, badContext,
-                              badSignature, badClient, badLive, badAcp, networkInside, replayed>>
+                              badSignature, badClient, badLive, badAcp, networkInside, replayed, finishedExpired>>
 \* A correct client signs only its independently reconstructed wave; clientOk
 \* is an abstract history fact, not a flag a server can trust from a caller.
 \* A verified signature can also be an older valid signature on the same
@@ -76,18 +77,26 @@ Reply(c, sender, session, contextOk, signatureOk, clientOk, replay) ==
   /\ replayed' = (replayed \/ (replay /\ ~clientOk))
   /\ badLive' = (badLive \/ ~live[c])
   /\ networkInside' = (networkInside \/ active[c])
-  /\ UNCHANGED <<live, version, acp, active, badAcp>>
-\* The existing transaction owner decides authorization at commit time.
-Commit(c) == /\ phase[c] = "ready" /\ live[c]
-             /\ (CheckAcp => acp) /\ (CheckContext => version = 0)
+  /\ UNCHANGED <<live, version, acp, active, badAcp, finishedExpired>>
+\* Dispatch checks the live bearer, schema and ACP before starting a commit.
+Dispatch(c) == /\ phase[c] = "ready"
+               /\ (CheckLive => live[c]) /\ (CheckAcp => acp)
+               /\ (CheckContext => version = 0)
+               /\ phase' = [phase EXCEPT ![c] = "committing"]
+               /\ badLive' = (badLive \/ ~live[c])
+               /\ badAcp' = (badAcp \/ ~acp)
+               /\ badContext' = (badContext \/ version # 0)
+               /\ UNCHANGED <<live, version, acp, active, badActor,
+                               badSignature, badClient, networkInside, replayed, finishedExpired>>
+\* A commit that already began finishes even if its caller or token expired.
+Commit(c) == /\ phase[c] = "committing"
              /\ phase' = [phase EXCEPT ![c] = "done"]
-             /\ badAcp' = (badAcp \/ ~acp)
-             /\ badContext' = (badContext \/ version # 0)
-             /\ UNCHANGED <<live, version, acp, active, badActor,
-                             badSignature, badClient, badLive, networkInside, replayed>>
+             /\ finishedExpired' = (finishedExpired \/ ~live[c])
+             /\ UNCHANGED <<live, version, acp, active, badActor, badContext,
+                             badSignature, badClient, badLive, badAcp, networkInside, replayed>>
 \* The environment can interleave each client and all of these changes.
 Next == ChangeSchema \/ Revoke
-        \/ (\E c \in Clients : BeginAttempt(c) \/ EndAttempt(c) \/ End(c) \/ Reap(c) \/ Commit(c))
+        \/ (\E c \in Clients : BeginAttempt(c) \/ EndAttempt(c) \/ End(c) \/ Reap(c) \/ Dispatch(c) \/ Commit(c))
         \/ (\E c, session \in Clients : \E sender \in Actors :
               \E contextOk, signatureOk, clientOk, replay \in BOOLEAN :
                 Reply(c, sender, session, contextOk, signatureOk, clientOk, replay))
@@ -98,7 +107,7 @@ TypeOK == /\ phase \in [Clients -> Phases] /\ live \in [Clients -> BOOLEAN]
           /\ version \in {0, 1} /\ acp \in BOOLEAN /\ active \in [Clients -> BOOLEAN]
           /\ badActor \in BOOLEAN /\ badContext \in BOOLEAN
           /\ badSignature \in BOOLEAN /\ badClient \in BOOLEAN
-          /\ badLive \in BOOLEAN /\ badAcp \in BOOLEAN /\ networkInside \in BOOLEAN /\ replayed \in BOOLEAN
+          /\ badLive \in BOOLEAN /\ badAcp \in BOOLEAN /\ networkInside \in BOOLEAN /\ replayed \in BOOLEAN /\ finishedExpired \in BOOLEAN
 \* Another caller cannot answer a request.
 INV_Actor == ~badActor
 \* The server does not consume a mismatched operation, wave, byte sequence or schema.
@@ -109,10 +118,12 @@ INV_Signature == ~badSignature
 INV_Client == ~badClient
 \* An expired or cancelled session cannot consume a reply.
 INV_Live == ~badLive
-\* A revoked caller cannot commit.
+\* A revoked caller cannot start a commit.
 INV_Acp == ~badAcp
 \* Client interaction never holds a database attempt.
 INV_Outside == ~networkInside
+\* This false claim records native finality when expiry follows dispatch.
+INV_NoCompletionAfterExpiry == ~finishedExpired
 \* This intentionally false claim documents cross-session signature replay.
 INV_NoReplay == ~replayed
 \* A cancelled or expired operation eventually releases its capsule.

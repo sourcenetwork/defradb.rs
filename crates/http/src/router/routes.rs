@@ -255,6 +255,7 @@ pub(crate) fn create_router_with_state_and_body_limits(
 
     // Versioned API routes
     let api_routes = Router::new()
+        .route("/graphql/client-sign", get(crate::client_signing::upgrade))
         .route("/ccip", post(handlers::ccip::post))
         .route("/ccip/{sender}/{data}", get(handlers::ccip::get))
         // GraphQL endpoints

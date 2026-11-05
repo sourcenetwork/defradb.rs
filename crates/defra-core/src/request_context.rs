@@ -39,6 +39,7 @@ struct Fields {
     /// carries a bearer at all.
     bearer: Option<(Option<String>, Option<String>)>,
     txn: Option<TxnId>,
+    authorization_expiration: Option<u64>,
 }
 
 impl RequestContext {
@@ -108,6 +109,31 @@ impl RequestContext {
     /// request.
     pub fn identity(&self) -> Option<&str> {
         self.0.identity.as_deref()
+    }
+
+    /// Restricts dispatch to times before this authenticated request expires.
+    /// A dispatched database attempt retains its normal commit finality.
+    #[must_use]
+    pub fn with_authorization_expiration(mut self, expiration: Option<u64>) -> Self {
+        Arc::make_mut(&mut self.0).authorization_expiration = expiration;
+        self
+    }
+
+    /// Whether a new database attempt may be dispatched now.
+    pub fn authorization_valid_now(&self) -> bool {
+        match self.0.authorization_expiration {
+            None => true,
+            Some(_) => std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .is_ok_and(|now| self.authorization_valid_at(now.as_secs())),
+        }
+    }
+
+    /// Whether a new attempt is authorized at the given Unix second.
+    pub fn authorization_valid_at(&self, now: u64) -> bool {
+        self.0
+            .authorization_expiration
+            .is_none_or(|expiration| now < expiration)
     }
 
     /// This context with the acting identity set to `identity`.

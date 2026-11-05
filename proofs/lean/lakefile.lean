@@ -13,6 +13,15 @@ lean_lib EmbeddedHttpAcp where
 lean_lib SseDelivery where
 
 @[default_target]
+lean_lib ClientSigningAdmission where
+
+@[default_target]
+lean_lib ClientCreateSchema where
+
+@[default_target]
+lean_lib ClientCreateGraph where
+
+@[default_target]
 lean_lib ClientSignedCreate where
 
 @[default_target]

@@ -75,12 +75,12 @@ theorem accepted_exact_blocks (capsule : Capsule) (reply : Reply)
 
 -- The client signs only a wave it independently reconstructed from its intent.
 def clientSigns (intent : ClientIntent) (blocks : List String) : Bool :=
-  blocks == intent.expected
+  blocks.isPerm intent.expected
 
--- A client that signs has compared the whole ordered wave to its expectation.
+-- A client signs exactly the expected wave, allowing only a change of order.
 theorem signed_exact_blocks (intent : ClientIntent) (blocks : List String)
-    (signed : clientSigns intent blocks = true) : blocks = intent.expected := by
-  simpa [clientSigns] using signed
+    (signed : clientSigns intent blocks = true) : blocks.Perm intent.expected := by
+  exact List.isPerm_iff.mp signed
 
 -- Cases carry independent server and client observations.
 structure Input where
