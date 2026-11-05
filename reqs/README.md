@@ -49,7 +49,7 @@ Below the heading are a few optional lines:
 - **`Go-Tests`** lists the Go tests that prove the behaviour.
 - **`Scenarios`** lists our own tests that prove it, once it has some.
 - **`Go-Bug-Suspect`** warns that a Go test may be checking a bug. We don't copy Go's bugs. Work out what the right behaviour is and write that down.
-- **`Go-Ref`** names the Go branch and commit a requirement is checked against when that isn't `develop` at `root.md`'s commit. `go.shinzo` leaves carry `"shinzo-develop 2a899b860"` and run under `DEFRA_CLIENT=go-shinzo`.
+- **`Go-Ref`** names the Go branch and commit a requirement is checked against when that isn't `develop` at `root.md`'s commit. `go.shinzo` leaves carry `"shinzo-develop 2a899b860"`, the Go Shinzo commit their Go tests were read at.
 - **`Interop`** marks a wire format a Rust node shares with Go nodes, and says what must match byte for byte.
 
 ## The folders
