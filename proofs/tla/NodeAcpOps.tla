@@ -14,8 +14,10 @@
 \*   re-enable  configured, stored (the caller's permission in the stored
 \*              relationships, since the live check lets everyone through
 \*              while NAC is off), already (NAC is not on yet);
-\*   add/delete configured, nac, acp (NAC is on), identity (someone acts),
-\*              relation (one the node's policy has), target (a DID or *).
+\*   add        configured, nac, acp (NAC is on), identity (someone acts),
+\*              relation (one the node's policy has), target (a DID or *);
+\*   delete     the same but target: a target that is not a DID holds no
+\*              relationship, so Go finds none to take and refuses nothing.
 \* A restart, with or without NAC asked for at start, leaves a set-up NAC as
 \* it was: a disabled NAC stays off.
 \*
@@ -45,7 +47,8 @@
 \*     DB::disable_nac_as                   hands the caller to NacManager::disable_as
 \*     DB::re_enable_nac_as                 hands the caller to NacManager::re_enable_as
 \*     DB::add_nac_actor_relationship_as    the add checks (DB::nac_relationship), then the grant
-\*     DB::delete_nac_actor_relationship_as the same checks, then the revocation
+\*     DB::delete_nac_actor_relationship_as the same checks but target, then the
+\*                                          revocation, or "not found" for a non-DID
 \*   crates/db/src/nac/toggle.rs
 \*     NacManager::toggle_as                one write scope per attempt; a lost
 \*                                          commit runs the decision again
@@ -84,7 +87,7 @@ GoOrder(o) ==
     [] o = "disable"  -> <<"configured", "already", "nac">>
     [] o = "reenable" -> <<"configured", "stored", "already">>
     [] o = "add"      -> <<"configured", "nac", "acp", "identity", "relation", "target">>
-    [] o = "delete"   -> <<"configured", "nac", "acp", "identity", "relation", "target">>
+    [] o = "delete"   -> <<"configured", "nac", "acp", "identity", "relation">>
     [] o = "restart"  -> <<>>
 
 \* The order the database runs a request's checks in: Go's, or for re-enable
@@ -171,7 +174,8 @@ Check ==
 
 \* The change. Disable turns NAC off and re-enable turns it on, even on a
 \* node where NAC was never set up when the check for that is left out. Add
-\* and delete change the relationship. A status read changes nothing. A
+\* changes the relationship; delete does too, unless its target is not a DID,
+\* which holds none, so nothing is taken. A status read changes nothing. A
 \* restart leaves a set-up NAC as it was, unless the RED switch makes it turn
 \* a disabled NAC back on.
 Apply ==
@@ -181,7 +185,7 @@ Apply ==
        [] op = "disable"  -> after' = "off" /\ UNCHANGED granted
        [] op = "reenable" -> after' = "on" /\ UNCHANGED granted
        [] op = "add"      -> granted' = TRUE /\ UNCHANGED after
-       [] op = "delete"   -> granted' = TRUE /\ UNCHANGED after
+       [] op = "delete"   -> granted' = targetOk /\ UNCHANGED after
        [] op = "restart"  -> /\ after' = IF StartReEnables /\ status = "off"
                                             THEN "on" ELSE status
                              /\ UNCHANGED granted

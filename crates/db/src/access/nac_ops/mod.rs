@@ -77,6 +77,7 @@ where
                 target_actor,
             )
             .await?;
+        let target = target.ok_or(NodeAcpError::InvalidActor)?;
         let added = match grant {
             Grant::Admin => nac.add_admin(&requestor, &target).await,
             Grant::Permission(permission) => {
@@ -90,7 +91,8 @@ where
 
     /// Take `relation` on the node from `target_actor`, the caller asking.
     /// Go's `DeleteNACActorRelationship`; whether the relationship was
-    /// there.
+    /// there. A target that is not a DID holds no relationship, so Go's ACP
+    /// engine finds none for it rather than refusing it.
     pub async fn delete_nac_actor_relationship_as(
         &self,
         context: &RequestContext,
@@ -105,6 +107,9 @@ where
                 target_actor,
             )
             .await?;
+        let Some(target) = target else {
+            return Ok(false);
+        };
         match grant {
             Grant::Admin => nac.remove_admin(&requestor, &target).await,
             Grant::Permission(permission) => {
@@ -134,14 +139,15 @@ where
 
     /// Everything a relationship operation needs, checked in Go's order:
     /// NAC set up, the caller's `permission`, NAC on, an identity acting,
-    /// then the relation and the target.
+    /// then the relation; the target, `None` when it is neither a DID nor
+    /// `*`, is the operation's to judge.
     async fn nac_relationship(
         &self,
         context: &RequestContext,
         permission: NodePermission,
         relation: &str,
         target_actor: &str,
-    ) -> Result<(Arc<dyn NacManagerApi>, Did, Grant, Did), NodeAcpError> {
+    ) -> Result<(Arc<dyn NacManagerApi>, Did, Grant, Option<Did>), NodeAcpError> {
         let nac = self.configured_nac().await?;
         self.check_node_access_as(context, permission).await?;
         if nac.status().await != NacStatus::Enabled {
@@ -155,8 +161,8 @@ where
             ),
         };
         let target = match target_actor {
-            "*" => Did::wildcard(),
-            did => Did::new(did).map_err(|_| NodeAcpError::InvalidActor)?,
+            "*" => Some(Did::wildcard()),
+            did => Did::new(did).ok(),
         };
         Ok((nac, requestor, grant, target))
     }
