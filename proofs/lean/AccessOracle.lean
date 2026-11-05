@@ -17,12 +17,12 @@ def decisionName : AccessDecision → String
 -- Evaluate the exact fact vector the calling test observed or configured.
 def main (args : List String) : IO UInt32 := do
   match args with
-  | [mode, owner, bound, context, principal, app, read, member, registered, active, node, named] =>
-    let evidence : AccessEvidence := ⟨fact owner, fact bound, fact context, fact principal,
-      fact app, fact read, fact member, fact registered, fact active, fact node, fact named⟩
+  | [mode, owner, bound, context, principalBound, principal, app, read, member, registered, supported, active, node, named] =>
+    let evidence : AccessEvidence := ⟨fact owner, fact bound, fact context, fact principalBound, fact principal,
+      fact app, fact read, fact member, fact registered, fact supported, fact active, fact node, fact named⟩
     let accessMode := if mode == "read" then AccessMode.delegatedRead else AccessMode.named
     IO.println (decisionName (accessDecision accessMode evidence))
     return 0
   | _ =>
-    IO.eprintln "expected mode and eleven authorization facts"
+    IO.eprintln "expected mode and thirteen authorization facts"
     return 2

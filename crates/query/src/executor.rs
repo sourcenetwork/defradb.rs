@@ -518,6 +518,8 @@ pub trait QueryExecutor: MaybeSendSync {
     /// The caller authenticates the actor and restricts this API to trusted
     /// native code. Decisions distinguish denial from absence and must not be
     /// disclosed to untrusted requesters. No document metadata is returned.
+    /// Local ACP and row reads are transaction-bound; application hooks may
+    /// consult external state and are not fenced by this transaction.
     async fn observe_document_access_in_txn(
         &self,
         context: RequestContext,

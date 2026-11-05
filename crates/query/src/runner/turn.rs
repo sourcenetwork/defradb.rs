@@ -34,6 +34,41 @@ pub(super) enum Turned {
     NeedsInput(PreparedInputRequest, Option<Arc<dyn DocMutator>>),
 }
 
+/// Delegated observations must never fall back to a detached node check.
+pub(super) async fn turn_node_permission(
+    fetcher: &dyn DocFetcher,
+    identity: &Did,
+    permission: acp::nac::NodePermission,
+    require_bound: bool,
+) -> crate::error::Result<Option<bool>> {
+    if require_bound {
+        fetcher
+            .check_bound_node_permission(identity, permission, false)
+            .await
+    } else {
+        fetcher.check_node_permission(identity, permission).await
+    }
+}
+
+/// A certified provider is already bound to the row transaction. Only ordinary
+/// queries may ask the fetcher to choose a provider on their behalf.
+pub(super) async fn turn_acp(
+    fetcher: &dyn DocFetcher,
+    original: Arc<dyn acp::DocumentACP>,
+    certified: Option<Arc<dyn acp::DocumentACP>>,
+) -> crate::error::Result<Arc<dyn acp::DocumentACP>> {
+    match certified {
+        Some(provider) => Ok(provider),
+        None => fetcher.scoped_acp(original).await,
+    }
+}
+
+/// The authenticated principal and certified ACP for a delegated read turn.
+pub(super) struct DelegatedAuthority {
+    pub identity: Did,
+    pub acp: Arc<dyn acp::DocumentACP>,
+}
+
 fn parse_error(message: String) -> QueryResponse {
     QueryResponse {
         data: None,
@@ -115,17 +150,17 @@ where
         inputs: PreparedInputMemo,
         parsed: Option<ParsedOperation>,
     ) -> Turned {
-        self.run_turn_with_nac_identity(turn, request, inputs, parsed, None)
+        self.run_turn_with_delegation(turn, request, inputs, parsed, None)
             .await
     }
 
-    pub(super) async fn run_turn_with_nac_identity(
+    pub(super) async fn run_turn_with_delegation(
         &self,
         turn: &mut dyn TxnTurn,
         request: QueryRequest,
         inputs: PreparedInputMemo,
         parsed: Option<ParsedOperation>,
-        nac_identity: Option<Did>,
+        delegation: Option<DelegatedAuthority>,
     ) -> Turned {
         let variables = convert_variables(&request.variables);
         let parsed = match parsed {
@@ -145,7 +180,7 @@ where
             }
         }
         let turned = self
-            .lent(turn, parsed, request, variables, inputs, nac_identity)
+            .lent(turn, parsed, request, variables, inputs, delegation)
             .await
             .unwrap_or_else(|error| Turned::Done(QueryResponse::error(error.to_string())));
         if statement {
@@ -168,7 +203,7 @@ where
         request: QueryRequest,
         variables: Option<rapidhash::RapidHashMap<String, serde_json::Value>>,
         inputs: PreparedInputMemo,
-        nac_identity_override: Option<Did>,
+        delegation: Option<DelegatedAuthority>,
     ) -> std::result::Result<Turned, TransactionError> {
         let txn_ctx = turn.context()?;
         // The transaction's own provider, so its uncommitted schemas are visible.
@@ -181,17 +216,29 @@ where
             return Ok(Turned::Done(parse_error(error.to_string())));
         }
 
-        let nac_actor = nac_identity_override.or_else(|| request.identity.clone());
+        let require_bound_nac = delegation.is_some();
+        let (nac_actor, bound_acp) = match delegation {
+            Some(delegation) => (Some(delegation.identity), Some(delegation.acp)),
+            None => (request.identity.clone(), None),
+        };
         let nac_identity = nac_actor.clone().unwrap_or_else(Did::wildcard);
-        match txn_ctx
-            .doc_fetcher()
-            .check_node_permission(&nac_identity, permission_for_operation(&parsed))
-            .await
-        {
+        let nac_check = turn_node_permission(
+            txn_ctx.doc_fetcher().as_ref(),
+            &nac_identity,
+            permission_for_operation(&parsed),
+            require_bound_nac,
+        )
+        .await;
+        match nac_check {
             Ok(Some(false)) => {
                 return Ok(Turned::Done(QueryResponse::success(serde_json::json!({}))))
             }
             Ok(Some(true)) => {}
+            Ok(None) if require_bound_nac => {
+                return Ok(Turned::Done(QueryResponse::error(
+                    "transaction-bound node authorization is unavailable",
+                )));
+            }
             Ok(None) => {
                 if let Some(denial) = check_nac(self, &nac_actor, &parsed).await {
                     return Ok(Turned::Done(denial));
@@ -203,10 +250,11 @@ where
         let identity = self.resolve_identity(request.identity);
         let mut warnings: Vec<GqlWarning> = Vec::new();
 
-        let scoped_acp = match txn_ctx.doc_fetcher().scoped_acp(self.acp.clone()).await {
-            Ok(provider) => provider,
-            Err(error) => return Ok(Turned::Done(QueryResponse::error(error.to_string()))),
-        };
+        let scoped_acp =
+            match turn_acp(txn_ctx.doc_fetcher().as_ref(), self.acp.clone(), bound_acp).await {
+                Ok(provider) => provider,
+                Err(error) => return Ok(Turned::Done(QueryResponse::error(error.to_string()))),
+            };
         let mut scoped_runner = self.scoped_runner(scoped_acp);
         scoped_runner.collection_provider = txn_provider.clone();
         if !scoped_runner.acp.supports_transactions() {

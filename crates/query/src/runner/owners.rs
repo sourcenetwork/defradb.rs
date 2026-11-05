@@ -12,6 +12,28 @@ use crate::owners::{
 use crate::prepared::PreparedInputMemo;
 use crate::txn::{txn_job, TransactionHandle, TransactionRegistry};
 
+pub(super) async fn named_access_decision(
+    acp: &dyn acp::DocumentACP,
+    actor: &Did,
+    permission: &str,
+    policy: &schema::PolicyDescription,
+    doc_id: &str,
+    node: Option<bool>,
+) -> Result<DocumentAccessDecision> {
+    let Some(node_allowed) = node else {
+        return Ok(DocumentAccessDecision::Unavailable);
+    };
+    match acp
+        .check_named_permission(actor, permission, &policy.id, &policy.resource_name, doc_id)
+        .await
+    {
+        Ok(named_allowed) if node_allowed && named_allowed => Ok(DocumentAccessDecision::Allowed),
+        Ok(_) => Ok(DocumentAccessDecision::Denied),
+        Err(acp::Error::UnsupportedNamedPermission) => Ok(DocumentAccessDecision::Unavailable),
+        Err(error) => Err(QueryError::execution(error.to_string())),
+    }
+}
+
 fn validate_observation_ids(collection: &str, doc_ids: &[String]) -> Result<()> {
     let mut name = collection.chars();
     if !name
@@ -94,7 +116,7 @@ where
                 })?;
                 let node = ctx
                     .doc_fetcher()
-                    .check_bound_active_node_permission(&actor, node_permission)
+                    .check_bound_node_permission(&actor, node_permission, true)
                     .await?;
                 let rows = ctx.doc_fetcher().get_by_ids(&collection, &doc_ids).await?;
                 let missing: RapidHashSet<&str> =
@@ -110,27 +132,15 @@ where
                         result.push(DocumentAccessDecision::Unavailable);
                         continue;
                     }
-                    let decision = match node {
-                        None => DocumentAccessDecision::Unavailable,
-                        Some(false) => DocumentAccessDecision::Denied,
-                        Some(true) => match acp
-                            .check_named_permission(
-                                &actor,
-                                &permission,
-                                &policy.id,
-                                &policy.resource_name,
-                                doc_id,
-                            )
-                            .await
-                        {
-                            Ok(true) => DocumentAccessDecision::Allowed,
-                            Ok(false) => DocumentAccessDecision::Denied,
-                            Err(acp::Error::UnsupportedNamedPermission) => {
-                                DocumentAccessDecision::Unavailable
-                            }
-                            Err(error) => return Err(QueryError::execution(error.to_string())),
-                        },
-                    };
+                    let decision = named_access_decision(
+                        acp.as_ref(),
+                        &actor,
+                        &permission,
+                        policy,
+                        doc_id,
+                        node,
+                    )
+                    .await?;
                     result.push(decision);
                 }
                 Ok(result)
@@ -212,7 +222,11 @@ where
                 drop(ctx);
                 // The ordinary read path owns node, application, document and live
                 // membership gates. Both reads stay on this one transaction turn.
-                let response = match runner.run_turn_with_nac_identity(turn, request, PreparedInputMemo::default(), None, nac_identity).await {
+                let delegation = nac_identity.map(|identity| super::turn::DelegatedAuthority {
+                    identity,
+                    acp: acp.clone(),
+                });
+                let response = match runner.run_turn_with_delegation(turn, request, PreparedInputMemo::default(), None, delegation).await {
                 Turned::Done(response) => response,
                 Turned::NeedsInput(_, _) => return Err(QueryError::execution("owner observation requires an external input; use a local authorization snapshot")),
             };
