@@ -4,6 +4,12 @@ open Lake DSL
 package defraConvergence where
 
 @[default_target]
+lean_lib DelegatedRelationship where
+
+@[default_target]
+lean_lib TransactionalRelationship where
+
+@[default_target]
 lean_lib EmbeddedHttpAcp where
 
 @[default_target]

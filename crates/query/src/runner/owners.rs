@@ -198,8 +198,14 @@ where
         };
         let collection = collection.to_owned();
         let doc_ids = doc_ids.to_vec();
+        let authorization = context.clone();
         let job = txn_job(move |turn| {
             Box::pin(async move {
+                if !authorization.authorization_valid_now() {
+                    return Err(QueryError::permission_denied(
+                        "request authorization expired before the transaction turn",
+                    ));
+                }
                 let ctx = turn
                     .context()
                     .map_err(|error| QueryError::execution(error.to_string()))?;

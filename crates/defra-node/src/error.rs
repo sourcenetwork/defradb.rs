@@ -37,6 +37,9 @@ pub enum Error {
     /// A transaction operation failed.
     #[error(transparent)]
     Transaction(#[from] query::TransactionError),
+    /// A transaction-scoped query operation failed.
+    #[error(transparent)]
+    Query(#[from] query::QueryError),
     /// The transaction does not exist, is finished, or belongs to another
     /// caller. Go's text for all three.
     #[error("transaction not found")]
@@ -44,6 +47,9 @@ pub enum Error {
     /// The commit lost a write conflict. Go's text.
     #[error("transaction conflict. Please retry")]
     TransactionConflict,
+    /// An HTTP server cannot expose transactions keyed only by embedder.
+    #[error("HTTP requires identity-owned transactions; embedder-only ownership is local")]
+    HttpEmbedderTransactionOwnership,
     /// A custom CRDT type could not be registered.
     #[error(transparent)]
     CustomCrdt(#[from] crdt::RegistryError),

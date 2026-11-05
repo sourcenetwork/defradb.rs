@@ -49,6 +49,46 @@ use Tier::{Behavioral, Boundary, Contract};
 
 pub const PROPERTIES: &[Property] = &[
     Property {
+        family: "Transactional document relationships",
+        name: "INV_ActorAuthority / actor_nac_required / actor_dac_required",
+        axis: Tla,
+        anchor: "crates/defra-node/src/transaction.rs trusted embedded relationship delegation; crates/defra-node/src/delegated_relationship_tests.rs embedded_delegation_matches_executed_lean_model",
+        model_ref: "MC_DelegatedRelationship_{Green,Red_*}.cfg",
+        tiers: &[Boundary, Contract],
+    },
+    Property {
+        family: "Transactional document relationships",
+        name: "INV_Authority / INV_Private / INV_NoRevival",
+        axis: Tla,
+        anchor: "crates/defra-node/src/acp_ops/transactional.rs; crates/defra-node/src/http_acp.rs; crates/cli/src/doc_acp_adapter.rs",
+        model_ref: "MC_TransactionalRelationship_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Transactional document relationships",
+        name: "INV_NoFalseAuthority",
+        axis: Tla,
+        anchor: "crates/http/src/handlers/acp.rs own_documents; crates/query/src/runner/owners.rs observe_owners",
+        model_ref: "MC_OwnerSelfObservation_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Transactional document relationships",
+        name: "INV_HttpOwnerIsolation / http_rejects_embedder / local_embedder_allowed",
+        axis: Tla,
+        anchor: "crates/defra-node/src/node_builder.rs build; crates/defra-node/src/http_acp_tests.rs http_cannot_use_the_embedder_only_transaction_registry",
+        model_ref: "MC_HttpTxnConfiguration_{Green,Red_Allow}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Transactional document relationships",
+        name: "wrong_owner_refused / readonly_refused / node_denied / document_denied / unbound_refused / expired_refused / unsupported_backend_refused",
+        axis: Lean,
+        anchor: "crates/defra-node/src/transactional_relationship_tests.rs transaction_admission_matches_executed_lean_model; crates/cli/src/doc_acp_adapter.rs a_named_transaction_never_falls_back_to_autocommit",
+        model_ref: "TransactionalRelationship (lake build)",
+        tiers: &[Boundary, Contract],
+    },
+    Property {
         family: "HTTP client-signed create",
         name: "full_refused / expired_has_no_lifetime / lifetime_bounded / lifetime_before_expiration",
         axis: Lean,

@@ -166,6 +166,11 @@ pub trait DocFetcher: MaybeSendSync {
         Ok(None)
     }
 
+    /// Read a DAC policy through the same transaction as its relationships.
+    async fn transaction_dac_policy(&self, _id: &str) -> Result<Option<acp::Policy>> {
+        Ok(None)
+    }
+
     /// Use the row snapshot for local authorization; remote providers remain external.
     async fn scoped_acp(
         &self,

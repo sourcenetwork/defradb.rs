@@ -369,6 +369,31 @@ RUNS=(
   "MC_CoreDispatch_Green.cfg CoreDispatch.tla GREEN" # schema-evolution ops: NAC before any effect, a named transaction holds the write, a patch in one is refused
   "MC_CoreDispatch_Red_NoNac.cfg CoreDispatch.tla RED" # the core skips NAC (INV_NoEffectWithoutPermission)
   "MC_CoreDispatch_Red_IgnoreTxn.cfg CoreDispatch.tla RED" # the edge drops the transaction (INV_TxnNeverAutocommits)
+  "MC_TransactionalRelationship_Green.cfg TransactionalRelationship.tla GREEN" # a grant and marker share the authorized transaction
+  "MC_DelegatedRelationship_Green.cfg DelegatedRelationship.tla GREEN" # the embedder owns the transaction and the selected actor passes NAC and DAC
+  "MC_DelegatedRelationship_Red_Http.cfg DelegatedRelationship.tla RED" # an HTTP caller reaches the privileged embedding boundary (INV_ActorAuthority)
+  "MC_DelegatedRelationship_Red_Owner.cfg DelegatedRelationship.tla RED" # a transaction owned by another caller is admitted (INV_ActorAuthority)
+  "MC_DelegatedRelationship_Red_Actor.cfg DelegatedRelationship.tla RED" # an unauthenticated actor is accepted (INV_ActorAuthority)
+  "MC_DelegatedRelationship_Red_Nac.cfg DelegatedRelationship.tla RED" # node authority replaces the actor's NAC (INV_ActorAuthority)
+  "MC_DelegatedRelationship_Red_Dac.cfg DelegatedRelationship.tla RED" # node authority replaces the actor's DAC (INV_ActorAuthority)
+  "MC_DelegatedRelationship_Red_Bound.cfg DelegatedRelationship.tla RED" # an unbound provider is accepted (INV_ActorAuthority)
+  "MC_HttpTxnConfiguration_Green.cfg HttpTxnConfiguration.tla GREEN" # HTTP never shares the embedder-only transaction key
+  "MC_HttpTxnConfiguration_Red_Allow.cfg HttpTxnConfiguration.tla RED" # HTTP uses the embedder-only key (INV_HttpOwnerIsolation)
+  "MC_TransactionalRelationship_Red_Owner.cfg TransactionalRelationship.tla RED" # another actor reaches the transaction (INV_Authority)
+  "MC_TransactionalRelationship_Red_Readonly.cfg TransactionalRelationship.tla RED" # a read-only transaction writes (INV_Authority)
+  "MC_TransactionalRelationship_Red_Nac.cfg TransactionalRelationship.tla RED" # the node permission is skipped (INV_Authority)
+  "MC_TransactionalRelationship_Red_Dac.cfg TransactionalRelationship.tla RED" # the document relationship manager check is skipped (INV_Authority)
+  "MC_TransactionalRelationship_Red_Provider.cfg TransactionalRelationship.tla RED" # an external provider is treated as transaction-bound (INV_Authority)
+  "MC_TransactionalRelationship_Red_Expiry.cfg TransactionalRelationship.tla RED" # an expired request starts its transaction turn (INV_Authority)
+  "MC_TransactionalRelationship_Red_Backend.cfg TransactionalRelationship.tla RED" # an unsupported server accepts the request (INV_Authority)
+  "MC_TransactionalRelationship_Red_Autocommit.cfg TransactionalRelationship.tla RED" # the edge drops the transaction (INV_Private)
+  "MC_TransactionalRelationship_Red_Conflict.cfg TransactionalRelationship.tla RED" # the stale marker is not validated (INV_NoRevival)
+  "MC_OwnerSelfObservation_Green.cfg OwnerSelfObservation.tla GREEN" # only a visible document owned by this caller can answer owned
+  "MC_OwnerSelfObservation_Red_Auth.cfg OwnerSelfObservation.tla RED" # an anonymous caller is admitted (INV_NoFalseAuthority)
+  "MC_OwnerSelfObservation_Red_Owner.cfg OwnerSelfObservation.tla RED" # the caller reaches another actor's transaction (INV_NoFalseAuthority)
+  "MC_OwnerSelfObservation_Red_Bound.cfg OwnerSelfObservation.tla RED" # an unbound ACP is treated as a transaction snapshot (INV_NoFalseAuthority)
+  "MC_OwnerSelfObservation_Red_Subject.cfg OwnerSelfObservation.tla RED" # the requester chooses another subject (INV_NoFalseAuthority)
+  "MC_OwnerSelfObservation_Red_Visible.cfg OwnerSelfObservation.tla RED" # an unreadable document is reported owned (INV_NoFalseAuthority)
   "MC_TwoStoreCounter_Red_Split.cfg TwoStoreCounter.tla           RED"   # counter reconcile-from-blob clobbers a concurrent local increment (INV_NoLoss)
   "MC_TwoStoreCounter_Red_DoubleApply.cfg TwoStoreCounter.tla     RED"   # #4935: re-delivered delta merged twice w/o dedup -> double-apply (INV_NoDoubleApply)
   "MC_TwoStoreCounter_Red_LostDeferral.cfg TwoStoreCounter.tla    RED"   # standalone counter block before its document's value claims the applied key unadded (INV_NoLoss)
