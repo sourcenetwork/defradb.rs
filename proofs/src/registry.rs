@@ -72,6 +72,22 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/p2p/src/sync/coordinator/dag_fetcher_tests.rs local_complete_fetch_releases_peer_permit_before_waiting_to_send",
     },
     Property {
+        family: "SSE loss and error delivery",
+        name: "INV_DetectedLossEnds / INV_ErrorForwarded",
+        axis: Tla,
+        anchor: "crates/http/src/handlers/graphql/query.rs graphql_sse; crates/http/tests/graphql_sse_recovery.rs",
+        model_ref: "MC_SseDelivery_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "SSE loss and error delivery",
+        name: "loss_requires_recovery / errors_are_forwarded / empty_is_skipped / denial_has_code / other_has_no_denial",
+        axis: Lean,
+        anchor: "crates/http/src/handlers/graphql/query.rs graphql_sse; crates/query/src/executor.rs QueryResponseError::from_query_error",
+        model_ref: "SseDelivery (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "HTTP router composition",
         name: "WholeRouter / SingleConstructor / NoBypass / ForwardingPreserved",
         axis: Tla,
