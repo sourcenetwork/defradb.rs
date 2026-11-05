@@ -61,6 +61,9 @@ pub(crate) async fn build_node_state(
         .with_config(config)
         .with_store_profile(defra_node::StoreProfile::Server)
         .with_txn_ownership(db::TxnOwnership::Embedder);
+    // SAFETY: `options` comes from the C caller, who promised its strings
+    // and callback are valid when it passed them.
+    builder = unsafe { crate::shinzo::with_node_options(builder, &options) }?;
     if let Some(path) = &db_path_opt {
         builder = builder.data_path(path);
     }
