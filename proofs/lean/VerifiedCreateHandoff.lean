@@ -20,13 +20,14 @@ structure Input where
   offered : Graph
   claimedActor : String
   verified : Bool
+  typedOverride : Bool
   nativeAuthorized : Bool
   waveConsumed : Bool
   commit : Bool
   deriving FromJson, ToJson
 
 def accepts (input : Input) : Bool :=
-  input.verified && input.claimedActor == input.approved.signer && input.approved == input.offered
+  input.verified && !input.typedOverride && input.claimedActor == input.approved.signer && input.approved == input.offered
 
 def creates (input : Input) : Bool :=
   accepts input && input.nativeAuthorized && input.waveConsumed && input.commit
@@ -35,6 +36,9 @@ theorem signature_evidence_is_not_authority (input : Input) (h : input.nativeAut
     creates input = false := by simp [creates, h]
 
 theorem wrong_actor_is_rejected (input : Input) (h : input.claimedActor ≠ input.approved.signer) :
+    accepts input = false := by simp [accepts, h]
+
+theorem typed_override_rejected (input : Input) (h : input.typedOverride = true) :
     accepts input = false := by simp [accepts, h]
 
 theorem failed_transaction_publishes_nothing (input : Input) (h : input.commit = false) :
