@@ -88,6 +88,22 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary, Contract],
     },
     Property {
+        family: "Verified client graph transaction",
+        name: "exact operation and graph, active bound authority, revocation and atomic mixed-actor commit",
+        axis: Tla,
+        anchor: "crates/defra-node/src/lib.rs execute_verified_graph_in_txn; crates/db/src/block/builder/verified_client_create.rs; crates/db/src/block/builder/verified_client_mutation.rs; crates/query/src/runner/turn.rs lent",
+        model_ref: "MC_VerifiedClientGraph_{Green,Red_*}.cfg",
+        tiers: &[Boundary, Contract],
+    },
+    Property {
+        family: "Verified client graph transaction",
+        name: "exact evidence, signed actor, consumed wave and transaction-bound authority",
+        axis: Lean,
+        anchor: "crates/db/src/block/builder/verified_client_create.rs; crates/db/src/block/builder/verified_client_mutation.rs; crates/defra-node/src/lib.rs execute_verified_graph_in_txn",
+        model_ref: "VerifiedCreateHandoff and VerifiedMutationHandoff (lake build); client_create_graph::signed_create_evidence_matches_the_modeled_exact_handoff",
+        tiers: &[Boundary, Contract],
+    },
+    Property {
         family: "Transactional document relationships",
         name: "INV_ActorAuthority / actor_nac_required / actor_dac_required",
         axis: Tla,

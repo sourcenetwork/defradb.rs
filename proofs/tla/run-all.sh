@@ -13,6 +13,24 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 RUNS=(
   "MC_LocalFetchPermit_Green.cfg LocalFetchPermit.tla GREEN"
   "MC_LocalFetchPermit_Red_Hold.cfg LocalFetchPermit.tla RED"
+  "MC_VerifiedClientGraph_Green.cfg VerifiedClientGraph.tla GREEN"
+  "MC_VerifiedClientGraph_Red_Canonical.cfg VerifiedClientGraph.tla RED" # typed operation overrides the checked GraphQL (INV_Canonical)
+  "MC_VerifiedClientGraph_Red_Actor.cfg VerifiedClientGraph.tla RED" # effect actor differs from the signer (INV_Actor)
+  "MC_VerifiedClientGraph_Red_Signature.cfg VerifiedClientGraph.tla RED" # an invalid signature is accepted (INV_Signature)
+  "MC_VerifiedClientGraph_Red_Target.cfg VerifiedClientGraph.tla RED" # a different physical target is accepted (INV_Target)
+  "MC_VerifiedClientGraph_Red_Heads.cfg VerifiedClientGraph.tla RED" # a stale update or delete graph is accepted (INV_Heads)
+  "MC_VerifiedClientGraph_Red_HeadConflict.cfg VerifiedClientGraph.tla RED" # a concurrent head change is not validated (INV_HeadConflict)
+  "MC_VerifiedClientGraph_Red_Wave.cfg VerifiedClientGraph.tla RED" # the execution reports success without all signed blocks (INV_Wave)
+  "MC_VerifiedClientGraph_Red_Schema.cfg VerifiedClientGraph.tla RED" # an outside schema supplies the decision (INV_Schema)
+  "MC_VerifiedClientGraph_Red_Bypass.cfg VerifiedClientGraph.tla RED" # the request carries DAC bypass (INV_Bypass)
+  "MC_VerifiedClientGraph_Red_Owner.cfg VerifiedClientGraph.tla RED" # the Node does not own the transaction (INV_Owner)
+  "MC_VerifiedClientGraph_Red_Nac.cfg VerifiedClientGraph.tla RED" # the active NAC permission is ignored (INV_Nac)
+  "MC_VerifiedClientGraph_Red_Dac.cfg VerifiedClientGraph.tla RED" # the active DAC permission is ignored (INV_Dac)
+  "MC_VerifiedClientGraph_Red_NacBound.cfg VerifiedClientGraph.tla RED" # active NAC is not transaction bound (INV_NacBound)
+  "MC_VerifiedClientGraph_Red_DacBound.cfg VerifiedClientGraph.tla RED" # active DAC is not transaction bound (INV_DacBound)
+  "MC_VerifiedClientGraph_Red_RevokeNac.cfg VerifiedClientGraph.tla RED" # NAC revocation is not validated at commit (INV_NacRevocation)
+  "MC_VerifiedClientGraph_Red_RevokeDac.cfg VerifiedClientGraph.tla RED" # DAC revocation is not validated at commit (INV_DacRevocation)
+  "MC_VerifiedClientGraph_Red_Rollback.cfg VerifiedClientGraph.tla RED" # a rejected graph publishes the Agent effect (INV_Atomic)
   "MC_EmbeddedSigner_Green.cfg EmbeddedSigner.tla GREEN"
   "MC_EmbeddedSigner_Red_Actor.cfg EmbeddedSigner.tla RED"
   "MC_EmbeddedSigner_Red_Match.cfg EmbeddedSigner.tla RED"
