@@ -514,6 +514,49 @@ fn http_client_signs_a_single_document_update() {
         let current = node.execute_request(query::QueryRequest::new("{ Settings { name extra } }").with_identity(Some(identity.did().unwrap()))).await;
         assert!(!current.has_errors(), "{:?}", current.errors);
         assert_eq!(current.data.unwrap()["Settings"][0], json!({"name":"winner", "extra":"first"}));
+
+        let history_query = defra_http::client_signed_update::history_request(&doc_id);
+        let latest: query::QueryResponse = http.post(format!("http://{address}/api/v0/graphql")).bearer_auth(&token)
+            .json(&json!({"query":history_query.query, "variables":history_query.variables})).send().await.unwrap().json().await.unwrap();
+        let latest = defra_http::client_signed_update::snapshot_from_response(&doc_id, &latest).unwrap();
+        let mut transactions = Vec::new();
+        for _ in 0..2 {
+            let value: Value = http.post(format!("http://{address}/api/v0/tx")).bearer_auth(&token).send().await.unwrap().json().await.unwrap();
+            transactions.push(value["id"].as_u64().unwrap().to_string());
+        }
+        let conditional_patch = json!({"extra":"conditional"});
+        let mut conditional = ClientUpdateSignatures::from_input(&storage::Crdts::default(), &schema, &doc_id, &conditional_patch, &latest, &signing).unwrap();
+        let conditional_request = query::QueryRequest::new(r#"mutation($id:ID!, $input:SettingsMutationInputArg!) { update_Settings(filter:{_docID:{_eq:$id}, name:{_eq:"winner"}},input:$input) { _docID } }"#)
+            .with_variables(json!({"id":doc_id,"input":conditional_patch}));
+        let response = defra_http::client_signed_update::execute(&url, &authorization, conditional_request, Some(&transactions[0]), &mut conditional).await.unwrap();
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        let competing_patch = json!({"name":"changed"});
+        let mut competing = ClientUpdateSignatures::from_input(&storage::Crdts::default(), &schema, &doc_id, &competing_patch, &latest, &signing).unwrap();
+        let request = query::QueryRequest::new("mutation($id:ID!, $input:SettingsMutationInputArg!) { update_Settings(docID:$id,input:$input) { _docID } }")
+            .with_variables(json!({"id":doc_id,"input":competing_patch}));
+        let response = defra_http::client_signed_update::execute(&url, &authorization, request, Some(&transactions[1]), &mut competing).await.unwrap();
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        http.post(format!("http://{address}/api/v0/tx/{}", transactions[1])).bearer_auth(&token).send().await.unwrap().error_for_status().unwrap();
+        let conflict = http.post(format!("http://{address}/api/v0/tx/{}", transactions[0])).bearer_auth(&token).send().await.unwrap();
+        assert_eq!(conflict.status().as_u16(), 409, "predicate field changed before conditional commit");
+        let current = node.execute_request(query::QueryRequest::new("{ Settings { name extra } }").with_identity(Some(identity.did().unwrap()))).await;
+        assert_eq!(current.data.unwrap()["Settings"][0], json!({"name":"changed", "extra":"first"}));
+
+        let history_query = defra_http::client_signed_update::history_request(&doc_id);
+        let current: query::QueryResponse = http.post(format!("http://{address}/api/v0/graphql")).bearer_auth(&token)
+            .json(&json!({"query":history_query.query, "variables":history_query.variables})).send().await.unwrap().json().await.unwrap();
+        let current = defra_http::client_signed_update::snapshot_from_response(&doc_id, &current).unwrap();
+        let patch = json!({"extra":"accepted"});
+        let request = |predicate: &str| query::QueryRequest::new(format!(r#"mutation($id:ID!, $input:SettingsMutationInputArg!) {{ update_Settings(filter:{{_docID:{{_eq:$id}}, name:{{_eq:"{predicate}"}}}},input:$input) {{ _docID _version {{ cid }} }} }}"#))
+            .with_variables(json!({"id":doc_id,"input":patch}));
+        let mut denied = ClientUpdateSignatures::from_input(&storage::Crdts::default(), &schema, &doc_id, &patch, &current, &signing).unwrap();
+        let denied = defra_http::client_signed_update::execute(&url, &authorization, request("winner"), None, &mut denied).await;
+        assert!(matches!(denied, Err(defra_http::client_signed_create::ClientSignedCreateError::Incomplete)), "{denied:?}");
+        let mut graph = ClientUpdateSignatures::from_input(&storage::Crdts::default(), &schema, &doc_id, &patch, &current, &signing).unwrap();
+        let response = defra_http::client_signed_update::execute(&url, &authorization, request("changed"), None, &mut graph).await.unwrap();
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        let cid = response.data.unwrap()["update_Settings"][0]["_version"][0]["cid"].as_str().unwrap().to_owned();
+        assert_eq!(node.verified_block_signer_did(&cid).await.unwrap(), caller);
         node.shutdown().await.unwrap();
     }).unwrap();
 }

@@ -187,4 +187,7 @@ lean_lib Arbitration where
 lean_lib RequestDrain where
 
 @[default_target]
+lean_lib ClientSignedUpdateFilter where
+
+@[default_target]
 lean_lib ClientSignedUpdate where
