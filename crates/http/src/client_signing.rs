@@ -187,11 +187,7 @@ fn accepted_mutation(start: &Start, limits: query::QueryLimits) -> bool {
         && match mutations[0].mutation_type {
             query::MutationType::Add => mutations[0].create_input.len() == 1,
             query::MutationType::Update => {
-                mutations[0]
-                    .doc_ids
-                    .as_ref()
-                    .is_some_and(|ids| ids.len() == 1)
-                    && mutations[0].filter.is_none()
+                crate::client_signed_update::single_document_target(&mutations[0]).is_some()
                     && !mutations[0].update_input.is_empty()
             }
             _ => false,

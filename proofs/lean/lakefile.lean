@@ -181,4 +181,7 @@ lean_lib HttpClient where
 lean_lib Arbitration where
 
 @[default_target]
+lean_lib ClientSignedUpdateFilter where
+
+@[default_target]
 lean_lib ClientSignedUpdate where
