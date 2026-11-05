@@ -48,17 +48,39 @@ theorem signed_exact_wave (intent offered : Intent)
   simp [signs] at accepted
   exact List.isPerm_iff.mp accepted.2
 
+-- The snapshot provides the materialized value, if the field has one.
+structure Change where
+  name : String
+  before : Option String
+  after : String
+  deriving BEq, FromJson, ToJson
+
+-- An unchanged field has no new LWW block.
+def writes (change : Change) : Bool :=
+  change.before != some change.after
+
+-- A value already present in the snapshot is not rewritten.
+theorem unchanged_skipped (change : Change)
+    (unchanged : change.before = some change.after) : writes change = false := by
+  simp [writes, unchanged]
+
+-- The graph contains exactly the changes that still need writes.
+def writtenFields (changes : List Change) : List String :=
+  (changes.filter writes).map Change.name
+
 -- The test supplies the observations to the executable owner.
 structure Input where
   intent : Intent
   offered : Intent
+  changes : List Change
   deriving FromJson, ToJson
 
 -- Emit the signing decision for each real input.
 def evaluate (json : Json) : Except String Json := do
   let inputs : Array Input ← fromJson? json
   pure <| toJson <| inputs.map fun input => Json.mkObj
-    [("input", toJson input), ("signs", toJson (signs input.intent input.offered))]
+    [("input", toJson input), ("signs", toJson (signs input.intent input.offered)),
+     ("writtenFields", toJson (writtenFields input.changes))]
 
 end ClientSignedUpdate
 
