@@ -47,11 +47,11 @@ mod tests {
                 .build()
                 .await
                 .unwrap();
-            node.add_collection("type Item { name: String }")
-                .await
-                .unwrap();
             let owner = RequestContext::default().with_identity(Some("did:key:owner".into()));
             let actor = RequestContext::default().with_identity(Some("did:key:actor".into()));
+            node.add_collection_as(&owner, "type Item { name: String }")
+                .await
+                .unwrap();
             assert!(node
                 .add_view_as(&actor, "Item { name }", "type ItemView { name: String }")
                 .await
