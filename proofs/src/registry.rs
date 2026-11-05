@@ -170,7 +170,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "HTTP client-signed update",
-        name: "signed_document / signed_changes / signed_exact_wave",
+        name: "signed_document / signed_changes / signed_exact_wave / unchanged_skipped",
         axis: Lean,
         anchor: "proposed: crates/db block builder and crates/http client signing",
         model_ref: "ClientSignedUpdate (lake build)",
