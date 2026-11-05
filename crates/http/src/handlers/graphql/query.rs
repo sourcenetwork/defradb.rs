@@ -374,7 +374,7 @@ async fn graphql_sse(
         HttpError::ServiceUnavailable("event bus is not available for subscriptions".to_string())
     })?;
 
-    let mut subscription = event_bus.subscribe(&[events::EventName::Update]);
+    let mut subscription = event_bus.subscribe_closing_on_overflow(&[events::EventName::Update]);
     let query_str = request.query;
     let operation_name = request.operation_name;
     let variables = request.variables;
