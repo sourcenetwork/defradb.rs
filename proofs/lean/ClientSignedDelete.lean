@@ -19,7 +19,7 @@ structure Intent where
   priority : Nat
   block : String
   signer : String
-  deriving BEq, FromJson, ToJson
+  deriving BEq, DecidableEq, FromJson, ToJson
 
 structure Input where
   approved : Intent
@@ -33,7 +33,7 @@ structure Input where
 
 def signs (input : Input) : Bool :=
   input.snapshotValid && input.authenticated == input.approved.signer &&
-    input.approved == input.offered
+    decide (input.approved = input.offered)
 
 def outcome (input : Input) : String :=
   if !signs input || !input.authorized then "unchanged"
