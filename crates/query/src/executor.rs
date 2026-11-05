@@ -28,6 +28,9 @@ pub type ResponseCallback = Box<dyn Respond>;
 pub const TXN_CONFLICT_ERROR_CODE: &str = "TXN_CONFLICT";
 pub const TXN_RETRY_EXHAUSTED_ERROR_CODE: &str = "TXN_RETRY_EXHAUSTED";
 
+/// An explicit authorization refusal, distinct from an empty filtered read.
+pub const PERMISSION_DENIED_ERROR_CODE: &str = "PERMISSION_DENIED";
+
 /// The storage operation failed with a typed disk-full cause. Commit outcome
 /// remains unknown; clients must not infer that replaying a mutation is safe.
 pub const STORAGE_FULL_ERROR_CODE: &str = "STORAGE_FULL";
@@ -332,6 +335,7 @@ impl QueryResponseError {
             &error,
             crate::error::QueryError::TransactionRetryExhausted(_)
         );
+        let is_permission_denied = matches!(&error, crate::error::QueryError::PermissionDenied(_));
         let is_storage_full = matches!(
             &error,
             crate::error::QueryError::Storage(cause) if cause.is_storage_full()
@@ -347,6 +351,8 @@ impl QueryResponseError {
             response_error.with_code(TXN_RETRY_EXHAUSTED_ERROR_CODE)
         } else if is_storage_full {
             response_error.with_code(STORAGE_FULL_ERROR_CODE)
+        } else if is_permission_denied {
+            response_error.with_code(PERMISSION_DENIED_ERROR_CODE)
         } else {
             response_error
         };
@@ -926,6 +932,21 @@ mod tests {
             serde_json::to_value(response).unwrap()["errors"][0]["extensions"]["code"],
             TXN_RETRY_EXHAUSTED_ERROR_CODE
         );
+    }
+
+    #[test]
+    fn explicit_permission_denial_has_stable_graphql_code() {
+        let denied = QueryResponse::error(QueryResponseError::from_query_error(
+            crate::error::QueryError::permission_denied("opaque"),
+        ));
+        assert_eq!(
+            serde_json::to_value(denied).unwrap()["errors"][0]["extensions"]["code"],
+            PERMISSION_DENIED_ERROR_CODE
+        );
+        let other = QueryResponseError::from_query_error(crate::error::QueryError::execution(
+            "permission denied",
+        ));
+        assert_eq!(other.code(), None);
     }
 
     #[test]

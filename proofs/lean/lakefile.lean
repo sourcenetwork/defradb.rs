@@ -4,6 +4,9 @@ open Lake DSL
 package defraConvergence where
 
 @[default_target]
+lean_lib SseDelivery where
+
+@[default_target]
 lean_lib HttpRouterComposition where
 
 @[default_target]

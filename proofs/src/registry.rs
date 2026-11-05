@@ -49,6 +49,22 @@ use Tier::{Behavioral, Boundary, Contract};
 
 pub const PROPERTIES: &[Property] = &[
     Property {
+        family: "SSE loss and error delivery",
+        name: "INV_DetectedLossEnds / INV_ErrorForwarded / LossEndsStream",
+        axis: Tla,
+        anchor: "crates/events/src/channel_bus.rs ChannelBus::publish_raw; crates/http/src/handlers/graphql/query.rs graphql_sse; crates/http/tests/graphql_sse_recovery.rs",
+        model_ref: "MC_SseDelivery_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "SSE loss and error delivery",
+        name: "loss_requires_recovery / loss_aware_closes / raw_stays_open / errors_are_forwarded / empty_is_skipped / denial_has_code / other_has_no_denial",
+        axis: Lean,
+        anchor: "crates/events/src/channel_bus.rs ChannelBus::publish_raw; crates/http/src/handlers/graphql/query.rs graphql_sse; crates/query/src/executor.rs QueryResponseError::from_query_error",
+        model_ref: "SseDelivery (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "HTTP router composition",
         name: "WholeRouter / SingleConstructor / NoBypass / ForwardingPreserved",
         axis: Tla,
