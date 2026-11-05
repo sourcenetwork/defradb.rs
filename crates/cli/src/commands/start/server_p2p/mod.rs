@@ -162,10 +162,28 @@ impl Node {
             rate_limit_rate: config.net.p2p_rate_limit_rate,
             max_doc_sync_request_doc_ids: config.net.p2p_max_doc_sync_request_doc_ids,
             max_pending_dags: config.net.p2p_max_pending_dags,
+            max_concurrent_dag_fetches: config.net.p2p_max_concurrent_dag_fetches,
+            pending_dag_ttl: std::time::Duration::from_secs(config.net.p2p_pending_dag_ttl_secs),
             push_queue_capacity: config.net.p2p_push_queue_capacity,
             push_queue_byte_capacity: config.net.p2p_push_queue_byte_capacity,
             max_active_pushes_per_peer: config.net.p2p_max_active_pushes_per_peer,
             ..Default::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_keeps_the_sync_defaults() {
+        let sync = Node::sync_config(&Config::default());
+        let defaults = p2p::sync::SyncConfig::default();
+        assert_eq!(
+            sync.max_concurrent_dag_fetches,
+            defaults.max_concurrent_dag_fetches
+        );
+        assert_eq!(sync.pending_dag_ttl, defaults.pending_dag_ttl);
     }
 }

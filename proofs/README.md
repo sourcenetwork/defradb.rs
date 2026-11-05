@@ -203,6 +203,7 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 proofs/verify-all.sh                 # TLA + Lean + conformance (behavioral if binary present)
 cargo build -p cli                   # produce fresh target/debug/defra
 cargo test -p conformance            # Lean axis + behavioral; DEFRA_CONFORMANCE_BINARY overrides target
+                                     # iroh families: DEFRA_CONFORMANCE_IROH_BINARY, else built with --features iroh
 ```
 
 ### Trace validation (P2P delivery)

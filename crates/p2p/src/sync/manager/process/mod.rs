@@ -114,6 +114,9 @@ pub struct SyncManager<B: Blockstore> {
     /// Capacity of `pending_dags`; overflow is rejected with a backpressure nack.
     pub(super) max_pending_dags: usize,
 
+    /// Lifetime of an unacknowledged `pending_dags` entry.
+    pub(super) pending_dag_ttl: std::time::Duration,
+
     /// Durable backing for push-originated pending registrations (#1099).
     /// Empty until the embedding layer installs a store; process-local
     /// semantics apply while empty.
@@ -221,6 +224,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             // A zero cap would reject every missing-link push forever
             // (permanent admission outage); normalize to a 1-slot map.
             max_pending_dags: config.max_pending_dags.max(1),
+            pending_dag_ttl: config
+                .pending_dag_ttl
+                .max(std::time::Duration::from_secs(1)),
             pending_store: regolith::sync::OnceCell::new(),
             persisted: Arc::new(PersistedView::default()),
             pending_resync_in_flight: std::sync::atomic::AtomicBool::new(false),

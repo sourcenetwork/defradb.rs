@@ -27,7 +27,7 @@ thiserror.workspace = true
 [dev-dependencies]
 # The estimator constants `tests/lean_conformance.rs` binds to the Lean contract.
 p2p = { path = "../crates/p2p" }
-defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "501bff096be8a3e1de1d203f4cad0f95e8d4883a" }
+defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "71a49b06a3bd992cb84359473de4b3f038df1196" }
 edge = { path = "../crates/edge" }
 nuclei.workspace = true
 

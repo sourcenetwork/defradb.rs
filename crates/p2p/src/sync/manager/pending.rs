@@ -12,7 +12,8 @@ use kovan::Atom;
 use crate::sync::head_scope::{HeadVersion, Scope, ScopeDecision};
 use crate::ExplicitReplayAuthorization;
 
-/// Time-to-live for a pending DAG entry that was never acknowledged.
+/// Default time-to-live for a pending DAG entry that was never acknowledged
+/// (`SyncConfig::pending_dag_ttl`).
 ///
 /// Such entries older than this are evicted during insertion to prevent
 /// indefinitely stale DAGs from accumulating.
@@ -101,8 +102,8 @@ impl PendingDag {
     /// head's one owner: it stays until merge, quarantine or a head of its
     /// scope that links it, bounded by `max_pending_dags`. A local continuation does not
     /// expire either; it ends when its merge stops yielding (`PendingOrigin`).
-    pub fn is_expired(&self, now: Instant) -> bool {
-        !self.is_recovery_registered && now.duration_since(self.inserted_at) >= PENDING_DAG_TTL
+    pub fn is_expired(&self, now: Instant, ttl: Duration) -> bool {
+        !self.is_recovery_registered && now.duration_since(self.inserted_at) >= ttl
     }
 }
 
@@ -184,9 +185,9 @@ impl PendingDagRegistry {
         }
     }
 
-    /// Whether any entry has expired at `now`.
-    pub(super) fn has_expired(&self, now: Instant) -> bool {
-        self.roots.values().any(|dag| dag.is_expired(now))
+    /// Whether any entry has expired at `now` under `ttl`.
+    pub(super) fn has_expired(&self, now: Instant, ttl: Duration) -> bool {
+        self.roots.values().any(|dag| dag.is_expired(now, ttl))
     }
 
     pub(super) fn snapshot(&self, root_cid: &Cid) -> Option<PendingDag> {

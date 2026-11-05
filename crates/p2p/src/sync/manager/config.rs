@@ -122,6 +122,11 @@ pub struct SyncConfig {
     /// Values below 1 are normalized to 1 (a zero cap would reject every
     /// missing-link push forever).
     pub max_pending_dags: usize,
+
+    /// How long an unacknowledged pending-DAG entry lives before it is
+    /// evicted (`PendingDag::is_expired`); an acknowledged entry never
+    /// expires. Values below one second are normalized to one second.
+    pub pending_dag_ttl: Duration,
 }
 
 impl Default for SyncConfig {
@@ -139,6 +144,7 @@ impl Default for SyncConfig {
             rate_limit_backoff: default_rate_limit_backoff(),
             push_send_timeout: DEFAULT_PUSH_SEND_TIMEOUT,
             max_pending_dags: DEFAULT_MAX_PENDING_DAGS,
+            pending_dag_ttl: super::pending::PENDING_DAG_TTL,
         }
     }
 }
