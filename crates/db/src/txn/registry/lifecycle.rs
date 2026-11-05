@@ -260,7 +260,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             ));
         }
         self.db
-            .patch_collections_as(context, patch, migration)
+            .patch_collection(context, patch, migration)
             .await
             .map_err(operation_error)
     }
