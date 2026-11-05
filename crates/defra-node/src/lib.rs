@@ -1599,6 +1599,8 @@ mod p2p_tests;
 mod owner_observation_tests;
 
 #[cfg(test)]
+mod source_nac_tests;
+#[cfg(test)]
 mod transactional_relationship_tests;
 
 #[cfg(test)]

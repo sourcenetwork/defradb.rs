@@ -309,6 +309,18 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
         ))
     }
 
+    /// Stage a source-specific node permission in the explicit transaction.
+    async fn change_nac_source_permission_as(
+        &self,
+        context: &RequestContext,
+        edge: &crate::txn::SourcePermission,
+    ) -> std::result::Result<bool, TransactionError> {
+        let _ = (context, edge);
+        Err(TransactionError::not_supported(
+            "transactional node source permissions are unavailable",
+        ))
+    }
+
     /// Take `relation` on the node from `target_actor`, the caller `context`
     /// names asking; whether it was there. Go's
     /// `DeleteNACActorRelationship`.

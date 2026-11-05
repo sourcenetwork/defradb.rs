@@ -37,6 +37,17 @@ RUNS=(
   "MC_VerifiedClientGraph_Red_RevokeNac.cfg VerifiedClientGraph.tla RED" # NAC revocation is not validated at commit (INV_NacRevocation)
   "MC_VerifiedClientGraph_Red_RevokeDac.cfg VerifiedClientGraph.tla RED" # DAC revocation is not validated at commit (INV_DacRevocation)
   "MC_VerifiedClientGraph_Red_Rollback.cfg VerifiedClientGraph.tla RED" # a rejected graph publishes the Agent effect (INV_Atomic)
+  "MC_SourceScopedNac_Green.cfg SourceScopedNac.tla GREEN"
+  "MC_SourceScopedNac_Red_Authority.cfg SourceScopedNac.tla RED"
+  "MC_SourceScopedNac_Red_Owner.cfg SourceScopedNac.tla RED"
+  "MC_SourceScopedNac_Red_Readonly.cfg SourceScopedNac.tla RED"
+  "MC_SourceScopedNac_Red_Store.cfg SourceScopedNac.tla RED"
+  "MC_SourceScopedNac_Red_Expired.cfg SourceScopedNac.tla RED"
+  "MC_SourceScopedNac_Red_InvalidSource.cfg SourceScopedNac.tla RED"
+  "MC_SourceScopedNac_Red_Autocommit.cfg SourceScopedNac.tla RED"
+  "MC_SourceScopedNac_Red_Conflict.cfg SourceScopedNac.tla RED"
+  "MC_SourceScopedNac_Red_Sources.cfg SourceScopedNac.tla RED"
+  "MC_SourceScopedNac_Red_Membership.cfg SourceScopedNac.tla RED"
   "MC_EmbeddedSigner_Green.cfg EmbeddedSigner.tla GREEN"
   "MC_EmbeddedSigner_Red_Actor.cfg EmbeddedSigner.tla RED"
   "MC_EmbeddedSigner_Red_Match.cfg EmbeddedSigner.tla RED"

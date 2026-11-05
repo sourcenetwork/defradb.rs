@@ -148,3 +148,35 @@ fn bound_active_check_is_unavailable_for_nontransactional_or_incomplete_nac() {
     })
     .unwrap();
 }
+
+#[test]
+fn source_mutation_rejects_unbound_persistent_store() {
+    workers::block_on(async {
+        let first = Arc::new(RegolithStore::in_memory().unwrap());
+        let second = Arc::new(RegolithStore::in_memory().unwrap());
+        let manager = NacManager::new(
+            Arc::new(PersistentZanzibarStore::from_store(first)),
+            NacConfig::new().with_enabled(),
+        );
+        let owner = Did::new("did:key:owner").unwrap();
+        manager.initialize(Some(&owner)).await.unwrap();
+        let txn = BasicTxn::new(second.as_ref(), 1, false).await.unwrap();
+        assert_eq!(
+            manager
+                .change_source_permission_in_txn(
+                    txn.acpstore(),
+                    &owner,
+                    NodePermission::CollectionPatch,
+                    None,
+                    "source",
+                    "tools:one",
+                    false,
+                )
+                .await
+                .unwrap(),
+            None
+        );
+        txn.discard().unwrap();
+    })
+    .unwrap();
+}

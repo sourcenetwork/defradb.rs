@@ -343,6 +343,19 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .map_err(|error| TransactionError::operation(error.to_string()))
     }
 
+    async fn change_nac_source_permission_as(
+        &self,
+        context: &RequestContext,
+        edge: &query::txn::SourcePermission,
+    ) -> std::result::Result<bool, TransactionError> {
+        let id = context
+            .txn()
+            .ok_or_else(|| TransactionError::operation("an explicit transaction is required"))?;
+        let handle = TransactionHandle::new(id.to_string());
+        let job = query::txn::source_permission_job(context.clone(), edge.clone())?;
+        self.run_as(context, &handle, None, job).await?
+    }
+
     async fn delete_nac_actor_relationship_as(
         &self,
         context: &RequestContext,

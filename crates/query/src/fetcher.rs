@@ -183,6 +183,19 @@ pub trait DocFetcher: MaybeSendSync {
         Ok(None)
     }
 
+    /// Stage a source-scoped node grant in this transaction, when supported.
+    async fn change_source_node_permission(
+        &self,
+        _requestor: &identity::Did,
+        _permission: acp::nac::NodePermission,
+        _parent_source: Option<&str>,
+        _subject_kind: &str,
+        _subject: &str,
+        _delete: bool,
+    ) -> Result<Option<bool>> {
+        Ok(None)
+    }
+
     /// An authorization provider actually bound to this fetcher's transaction.
     /// A capability flag or an unbound provider cannot certify a row snapshot.
     async fn transaction_acp(

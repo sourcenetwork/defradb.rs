@@ -60,6 +60,29 @@ pub struct NodeTransaction<'a> {
 }
 
 impl Node {
+    /// Stage a native source grant in a node-owned transaction for the
+    /// authenticated embedder-supplied actor. HTTP cannot select this actor.
+    pub async fn change_nac_source_permission_for_in_txn(
+        &self,
+        handle: &TransactionHandle,
+        actor_context: &defra_core::RequestContext,
+        edge: &query::txn::SourcePermission,
+    ) -> crate::Result<bool> {
+        let id = handle
+            .as_str()
+            .parse()
+            .map_err(|_| query::QueryError::execution("transaction ID must be numeric"))?;
+        let transaction_context = self.node_context().with_txn(Some(id));
+        let actor_context = actor_context.clone();
+        let ops = std::sync::Arc::clone(&self.acp_ops);
+        let edge = edge.clone();
+        self.on_acp(move || async move {
+            ops.change_nac_source_for_in_txn(&transaction_context, &actor_context, &edge)
+                .await
+        })
+        .await
+    }
+
     /// Add a relationship in a node-owned transaction for an actor that the
     /// embedding process has authenticated. Transaction ownership is checked
     /// as the node; native NAC and DAC check the explicit actor. This trusted

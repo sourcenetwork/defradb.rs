@@ -9,6 +9,18 @@ use crate::ops::request::transaction_error;
 use crate::{Node, Result};
 
 impl Node {
+    /// Stage one source-specific node permission in the authenticated caller's transaction.
+    pub async fn change_nac_source_permission_as(
+        &self,
+        context: &RequestContext,
+        edge: &query::txn::SourcePermission,
+    ) -> Result<bool> {
+        self.runner()
+            .change_nac_source_permission_as(context, edge)
+            .await
+            .map_err(transaction_error)
+    }
+
     /// The node's NAC status. Go's `GetNACStatus`.
     pub async fn nac_status_as(&self, context: &RequestContext) -> Result<acp::nac::NacStatus> {
         let runner = Arc::clone(self.runner());

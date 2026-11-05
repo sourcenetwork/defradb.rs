@@ -398,6 +398,16 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
             .await
     }
 
+    async fn change_nac_source_permission_as(
+        &self,
+        context: &RequestContext,
+        edge: &crate::txn::SourcePermission,
+    ) -> std::result::Result<bool, TransactionError> {
+        self.registry
+            .change_nac_source_permission_as(context, edge)
+            .await
+    }
+
     async fn delete_nac_actor_relationship_as(
         &self,
         context: &RequestContext,

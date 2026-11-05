@@ -161,7 +161,7 @@ where
     if owner.is_some() {
         nac_config = nac_config.with_enabled();
     }
-    let manager = Arc::new(db::NacManager::new(nac_store, nac_config));
+    let manager = Arc::new(db::NacManager::new_bound(nac_store, nac_config));
     manager.initialize(owner).await.map_err(Error::NacInit)?;
     Ok(manager)
 }

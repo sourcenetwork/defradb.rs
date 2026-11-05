@@ -19,6 +19,9 @@ lean_lib DelegatedRelationship where
 lean_lib TransactionalRelationship where
 
 @[default_target]
+lean_lib SourceScopedNac where
+
+@[default_target]
 lean_lib EmbeddedHttpAcp where
 
 @[default_target]

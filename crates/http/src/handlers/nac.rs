@@ -5,7 +5,7 @@
 //! actor relationships. `enable` and the batch relationship route are Rust
 //! only.
 
-use axum::{extract::State, response::IntoResponse, Json};
+use axum::{extract::State, http::HeaderMap, response::IntoResponse, Json};
 
 use crate::error::{http_error_from_backend_message, HttpError};
 use crate::identity_extractor::ExtractIdentity;
@@ -21,6 +21,31 @@ pub struct GoNacRelationshipRequest {
     /// Target actor DID.
     #[serde(rename = "TargetActor")]
     pub target_actor: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct SourcePermissionResponse {
+    pub changed: bool,
+}
+
+/// Source grants are always staged in the caller's existing transaction.
+pub async fn change_source_permission(
+    State(state): State<AppState>,
+    identity: ExtractIdentity,
+    headers: HeaderMap,
+    Json(body): Json<query::txn::SourcePermission>,
+) -> Result<Json<SourcePermissionResponse>, HttpError> {
+    let context = super::txn_header::txn_context(&identity, &headers)?
+        .ok_or_else(|| HttpError::BadRequest("x-defradb-tx is required".into()))?
+        .with_dac_bypass(false);
+    if identity.did().is_none() || !context.authorization_valid_now() {
+        return Err(HttpError::Unauthorized("authentication required".into()));
+    }
+    let changed = state
+        .executor
+        .change_nac_source_permission_as(&context, &body)
+        .await?;
+    Ok(Json(SourcePermissionResponse { changed }))
 }
 
 /// Go's `client.AddActorRelationshipResult`.

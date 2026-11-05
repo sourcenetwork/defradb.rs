@@ -238,6 +238,10 @@ pub(crate) fn create_router_with_state_and_body_limits(
         .route("/relationship", post(handlers::nac::go_add_relationship))
         .route("/relationships", post(handlers::nac::go_add_relationships))
         .route(
+            "/source-permission",
+            post(handlers::nac::change_source_permission),
+        )
+        .route(
             "/relationship",
             delete(handlers::nac::go_remove_relationship),
         )

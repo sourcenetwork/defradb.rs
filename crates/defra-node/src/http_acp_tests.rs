@@ -746,3 +746,41 @@ fn embedded_http_relationships_match_executed_model() {
     let expected: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(cases, expected);
 }
+
+#[test]
+fn source_permission_http_uses_caller_transaction() {
+    edge::testing::edge().block_on(async {
+        let owner = identity();
+        let owner_did = owner.did().unwrap();
+        let actor = identity().did().unwrap();
+        let outsider = identity();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let node = Node::builder().with_node_acp_owner(owner_did.as_str())
+            .with_http(HttpConfig::with_listener(listener).unwrap()).build().await.unwrap();
+        let client = net::http::Client::builder(edge::testing::edge()).no_proxy().timeout(Duration::from_secs(5)).build().unwrap();
+        let auth = bearer(&owner, &address.to_string());
+        let body = json!({"permission":"patch-collection","parent_source":null,"subject_kind":"source","subject":"tools:one","delete":false});
+        let url = format!("http://{address}/api/v0/acp/node/source-permission");
+        let missing = client.post(&url).header("Authorization", &auth).json(&body).send().await.unwrap();
+        assert!(!missing.status().is_success());
+        let begin: Value = client.post(format!("http://{address}/api/v0/tx"))
+            .header("Authorization", &auth).send().await.unwrap().json().await.unwrap();
+        let tx = begin["id"].as_u64().unwrap().to_string();
+        let wrong = client.post(&url).header("Authorization", bearer(&outsider, &address.to_string()))
+            .header("x-defradb-tx", &tx).json(&body).send().await.unwrap();
+        assert!(!wrong.status().is_success());
+        let staged = client.post(&url).header("Authorization", &auth)
+            .header("x-defradb-tx", &tx).json(&body).send().await.unwrap();
+        assert!(staged.status().is_success(), "{}", staged.status());
+        let member = json!({"permission":"patch-collection","parent_source":"tools:one","subject_kind":"actor","subject":actor.as_str(),"delete":false});
+        let staged = client.post(&url).header("Authorization", &auth)
+            .header("x-defradb-tx", &tx).json(&member).send().await.unwrap();
+        assert!(staged.status().is_success(), "{}", staged.status());
+        assert!(!node.nac_manager().check_permission(&actor, acp::NodePermission::CollectionPatch).await.unwrap());
+        client.post(format!("http://{address}/api/v0/tx/{tx}"))
+            .header("Authorization", &auth).send().await.unwrap().error_for_status().unwrap();
+        assert!(node.nac_manager().check_permission(&actor, acp::NodePermission::CollectionPatch).await.unwrap());
+        node.shutdown().await.unwrap();
+    }).unwrap();
+}

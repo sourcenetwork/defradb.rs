@@ -759,6 +759,18 @@ pub trait QueryExecutor: MaybeSendSync {
         ))
     }
 
+    /// Stage a source-specific node permission in the caller's transaction.
+    async fn change_nac_source_permission_as(
+        &self,
+        context: &RequestContext,
+        edge: &crate::txn::SourcePermission,
+    ) -> std::result::Result<bool, TransactionError> {
+        let _ = (context, edge);
+        Err(TransactionError::not_supported(
+            "transactional node source permissions are unavailable",
+        ))
+    }
+
     /// [`TransactionRegistry::delete_nac_actor_relationship_as`](crate::txn::TransactionRegistry::delete_nac_actor_relationship_as).
     async fn delete_nac_actor_relationship_as(
         &self,

@@ -11,6 +11,17 @@ pub(crate) mod transactional;
 
 #[async_trait::async_trait]
 pub(crate) trait AcpOps: Send + Sync {
+    async fn change_nac_source_for_in_txn(
+        &self,
+        _transaction_context: &RequestContext,
+        _actor_context: &RequestContext,
+        _edge: &query::txn::SourcePermission,
+    ) -> Result<bool> {
+        Err(query::QueryError::execution(
+            "transaction-bound node source permissions are unavailable",
+        )
+        .into())
+    }
     /// A trusted embedder selects a document actor while the node owns the
     /// transaction; the HTTP adapter never exposes this operation.
     async fn change_dac_relationship_for_in_txn(
@@ -203,6 +214,31 @@ impl<S: storage::corekv::Store + 'static> DbAcpOps<S> {
 
 #[async_trait::async_trait]
 impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
+    async fn change_nac_source_for_in_txn(
+        &self,
+        transaction_context: &RequestContext,
+        actor_context: &RequestContext,
+        edge: &query::txn::SourcePermission,
+    ) -> Result<bool> {
+        use query::txn::TransactionRegistry as _;
+        let id = transaction_context
+            .txn()
+            .ok_or_else(|| query::QueryError::execution("an explicit transaction is required"))?;
+        if !transaction_context.authorization_valid_now()
+            || actor_context.txn().is_some_and(|actor_id| actor_id != id)
+        {
+            return Err(query::QueryError::permission_denied(
+                "invalid transaction or actor authorization",
+            )
+            .into());
+        }
+        let job = query::txn::source_permission_job(actor_context.clone(), edge.clone())?;
+        let handle = query::txn::TransactionHandle::new(id.to_string());
+        Ok(self
+            .registry
+            .run_as(transaction_context, &handle, None, job)
+            .await??)
+    }
     async fn change_dac_relationship_for_in_txn(
         &self,
         transaction_context: &RequestContext,

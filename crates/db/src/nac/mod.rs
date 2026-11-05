@@ -83,6 +83,19 @@ pub trait NacManagerApi: defra_core::thread_bounds::MaybeSendSync {
     ) -> Result<Option<bool>> {
         Ok(None)
     }
+    /// Change a source relationship only through the caller's bound store.
+    async fn change_source_permission_in_txn(
+        &self,
+        _view: datastore::NamespaceView,
+        _requestor: &Did,
+        _permission: NodePermission,
+        _parent_source: Option<&str>,
+        _subject_kind: &str,
+        _subject: &str,
+        _delete: bool,
+    ) -> Result<Option<bool>> {
+        Ok(None)
+    }
     async fn check_permission_persisted(
         &self,
         identity: &Did,
@@ -121,6 +134,7 @@ pub trait NacManagerApi: defra_core::thread_bounds::MaybeSendSync {
 pub struct NacManager<S: ZanzibarStore + ?Sized + 'static> {
     nac: NodeACP<S>,
     config: NacConfig,
+    transaction_store_bound: bool,
 }
 
 impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
@@ -129,6 +143,16 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
         Self {
             nac: NodeACP::new(store),
             config,
+            transaction_store_bound: false,
+        }
+    }
+
+    /// The caller supplies the same storage engine used by its database transactions.
+    pub fn new_bound(store: Arc<S>, config: NacConfig) -> Self {
+        Self {
+            nac: NodeACP::new(store),
+            config,
+            transaction_store_bound: true,
         }
     }
 
@@ -141,6 +165,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
         NacManager {
             nac: self.nac.scoped(store),
             config: self.config.clone(),
+            transaction_store_bound: self.transaction_store_bound,
         }
     }
 
