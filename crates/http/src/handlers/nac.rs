@@ -115,18 +115,32 @@ pub async fn go_add_relationship(
 
 /// POST /api/v0/acp/node/relationships
 ///
-/// Add several NAC relationships in one request, in order. An error stops
-/// the request without undoing the entries before it.
+/// Validate the entire batch before applying relationships in order. A backend
+/// failure stops the request without undoing entries already applied.
 pub async fn go_add_relationships(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     Json(bodies): Json<Vec<GoNacRelationshipRequest>>,
 ) -> Result<Json<Vec<AddActorRelationshipResult>>, HttpError> {
+    for body in &bodies {
+        validate_add_relationship(body)?;
+    }
     let mut results = Vec::with_capacity(bodies.len());
     for body in &bodies {
         results.push(add_relationship(&state, &identity, body).await?);
     }
     Ok(Json(results))
+}
+
+fn validate_add_relationship(body: &GoNacRelationshipRequest) -> Result<(), HttpError> {
+    if body.relation == acp::nac::OWNER_RELATION || !acp::nac::is_valid_nac_relation(&body.relation) {
+        return Err(HttpError::BadRequest("relation not in resource".into()));
+    }
+    if body.target_actor != "*" {
+        identity::Did::new(&body.target_actor)
+            .map_err(|error| HttpError::BadRequest(format!("invalid TargetActor DID: {error}")))?;
+    }
+    Ok(())
 }
 
 async fn add_relationship(
@@ -194,7 +208,7 @@ mod tests {
         let target = identity::Did::new("did:key:target").unwrap();
         let nac = Arc::new(MockNodeAcpOperations::enabled_with_owner(requestor.clone()));
         let state = AppStateBuilder::new(
-            Arc::new(MockQueryExecutor::new()) as Arc<dyn QueryExecutor>,
+            Arc::new(MockQueryExecutor::with_nac(Arc::clone(&nac))) as Arc<dyn QueryExecutor>,
             edge::testing::edge(),
         )
         .with_nac(Arc::clone(&nac) as Arc<dyn NodeAcpOperations>)
