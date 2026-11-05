@@ -162,7 +162,7 @@ where
     serde_json::from_str(&text).ok()
 }
 
-fn accepted_create(start: &Start, limits: query::QueryLimits) -> bool {
+fn accepted_mutation(start: &Start, limits: query::QueryLimits) -> bool {
     let variables = match &start.variables {
         Some(serde_json::Value::Object(map)) => {
             Some(map.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
@@ -183,16 +183,26 @@ fn accepted_create(start: &Start, limits: query::QueryLimits) -> bool {
         return false;
     };
     mutations.len() == 1
-        && mutations[0].mutation_type == query::MutationType::Add
-        && mutations[0].create_input.len() == 1
         && mutations[0].encryption().is_none()
+        && match mutations[0].mutation_type {
+            query::MutationType::Add => mutations[0].create_input.len() == 1,
+            query::MutationType::Update => {
+                mutations[0]
+                    .doc_ids
+                    .as_ref()
+                    .is_some_and(|ids| ids.len() == 1)
+                    && mutations[0].filter.is_none()
+                    && !mutations[0].update_input.is_empty()
+            }
+            _ => false,
+        }
 }
 
 async fn run(mut socket: Socket, state: AppState, identity: ExtractIdentity, expiration: u64) {
     let Some(start) = next_json::<Start>(&mut socket).await else {
         return;
     };
-    if current_lifetime(expiration).is_none() || !accepted_create(&start, state.query_limits) {
+    if current_lifetime(expiration).is_none() || !accepted_mutation(&start, state.query_limits) {
         return;
     }
     let Ok(public) =

@@ -412,3 +412,204 @@ fn trusted_create_graph_matches_model_and_rejects_unapproved_waves() {
     assert_eq!(prepared.respond(&[composite]).unwrap().len(), 1);
     assert!(prepared.respond(&children).is_err());
 }
+
+#[test]
+#[ignore = "Requires Lean; run in the Lean Conformance job"]
+fn trusted_update_graph_matches_model_and_rejects_unapproved_waves() {
+    use db::block::builder::{ClientUpdateSignatures, ClientUpdateSnapshot};
+
+    let (_, signer) = fixture();
+    let schema = CollectionVersion::new(
+        "Settings",
+        "settings-version",
+        "settings",
+        vec![
+            FieldDescription::new("1", "name", FieldKind::string(), CType::LwwRegister),
+            FieldDescription::new(
+                "2",
+                "tags",
+                FieldKind::nillable_string_array(),
+                CType::LwwRegister,
+            ),
+        ],
+    );
+    let initial = json!({"name":"before", "tags":["one"]});
+    let mut create =
+        ClientCreateSignatures::from_input(&storage::Crdts::default(), &schema, &initial, &signer)
+            .unwrap();
+    let child_bytes = create.child_blocks().to_vec();
+    let child_sigs = create.respond(&child_bytes).unwrap();
+    let signed = |bytes: &[u8], signature: Vec<u8>| {
+        let mut block = Block::from_dag_cbor(bytes).unwrap();
+        block.signature = Some(
+            Signature::new(
+                SignatureHeader::new(
+                    SignatureType::EdDSA,
+                    signer.public_key_hex.as_bytes().to_vec(),
+                ),
+                signature,
+            )
+            .generate_cid()
+            .unwrap(),
+        );
+        block.to_dag_cbor().unwrap()
+    };
+    let mut history = child_bytes
+        .iter()
+        .zip(child_sigs)
+        .map(|(bytes, sig)| signed(bytes, sig))
+        .collect::<Vec<_>>();
+    let composite = create.composite_block().to_vec();
+    let sig = create
+        .respond(std::slice::from_ref(&composite))
+        .unwrap()
+        .remove(0);
+    let composite = signed(&composite, sig);
+    let composite_cid = Block::from_dag_cbor(&composite)
+        .unwrap()
+        .generate_cid()
+        .unwrap();
+    history.push(composite);
+    let doc_id = create.doc_id().to_string();
+    let snapshot = ClientUpdateSnapshot::from_blocks(&doc_id, &history, &[composite_cid]).unwrap();
+    let input = json!({"name":"after", "tags":null});
+    let new_graph = || {
+        ClientUpdateSignatures::from_input(
+            &storage::Crdts::default(),
+            &schema,
+            &doc_id,
+            &input,
+            &snapshot,
+            &signer,
+        )
+        .unwrap()
+    };
+    let graph = new_graph();
+    let wave = vec![graph.composite_block().to_vec()];
+    let mut changed = wave.clone();
+    changed[0][0] ^= 1;
+    let cases = [
+        wave.clone(),
+        changed,
+        Vec::new(),
+        vec![wave[0].clone(), wave[0].clone()],
+    ];
+    let blocks = wave.iter().map(hex::encode).collect::<Vec<_>>();
+    let heads = vec![composite_cid.to_string()];
+    let changes = vec!["name=after", "tags=null"];
+    let intent = json!({"collection":"Settings", "document":doc_id, "version":"settings-version", "heads":heads, "changes":changes, "blocks":blocks});
+    let inputs = cases.iter().map(|offered| json!({"intent":intent, "offered": {
+        "collection":"Settings", "document":doc_id, "version":"settings-version", "heads":heads,
+        "changes":changes, "blocks":offered.iter().map(hex::encode).collect::<Vec<_>>()
+    }, "changes":[{"name":"name","before":initial["name"].to_string(),"after":input["name"].to_string()},{"name":"tags","before":initial["tags"].to_string(),"after":input["tags"].to_string()}]})).collect::<Vec<_>>();
+    let expected = model("ClientSignedUpdate.lean", &json!(inputs));
+    for (index, offered) in cases.iter().enumerate() {
+        assert_eq!(
+            new_graph().respond(offered).is_ok(),
+            expected[index]["signs"].as_bool().unwrap()
+        );
+    }
+    let mut graph = new_graph();
+    let changed_target = json!({"collection":"Settings", "document":"wrong-document", "version":"settings-version", "heads":heads, "changes":changes, "blocks":blocks});
+    let target_expectation = model(
+        "ClientSignedUpdate.lean",
+        &json!([{"intent":intent, "offered":changed_target, "changes":[]} ]),
+    );
+    assert!(graph.matches_input("Settings", &doc_id, &input));
+    assert_eq!(
+        graph.matches_input("Settings", "wrong-document", &input),
+        target_expectation[0]["signs"].as_bool().unwrap()
+    );
+    assert!(!graph.matches_input("Settings", &doc_id, &json!({"name":"changed", "tags":null})));
+    assert_eq!(graph.respond(&wave).unwrap().len(), 1);
+    assert!(graph.respond(&wave).is_err());
+    let wrong_id = document::DocID::new_v0_from_seed("wrong").to_string();
+    assert!(ClientUpdateSnapshot::from_blocks(&wrong_id, &history, &[composite_cid]).is_err());
+    let mut damaged_history = history.clone();
+    damaged_history[0][0] ^= 1;
+    assert!(
+        ClientUpdateSnapshot::from_blocks(&doc_id, &damaged_history, &[composite_cid]).is_err()
+    );
+
+    let crdts = storage::Crdts::default();
+    let mut before_doc = Document::new(schema.clone());
+    for bytes in &child_bytes {
+        let block = Block::from_dag_cbor(bytes).unwrap();
+        let CrdtDelta::Lww(delta) = block.delta else {
+            panic!("expected LWW")
+        };
+        let field = schema.field_by_name(&delta.field_name).unwrap();
+        let crdt = crdts.field(field.crdt_type).unwrap();
+        let state = crdt
+            .block_state(field, delta.priority, &delta.data)
+            .unwrap();
+        let value = crdt.materialize(state.part()).unwrap();
+        if !value.is_nil() {
+            before_doc.load(field.name.clone(), value);
+        }
+    }
+    for patch in [
+        json!({"name":"before"}),
+        json!({"name":"before", "tags":["one"]}),
+        json!({"name":"before", "tags":null}),
+    ] {
+        let fields = patch
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect();
+        let update = query::plan::mutation::UpdateInput {
+            fields,
+            ops: rapidhash::RapidHashMap::default(),
+        };
+        let mut after_doc = Document::new(schema.clone());
+        update
+            .apply_to(&crdts, &mut after_doc, Some(&schema))
+            .unwrap();
+        let observations = patch
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|name| {
+                let before = before_doc.get(name).map(|value| format!("{value:?}"));
+                let after = format!("{:?}", after_doc.get(name).unwrap());
+                json!({"name":name, "before":before, "after":after})
+            })
+            .collect::<Vec<_>>();
+        let modeled = model(
+            "ClientSignedUpdate.lean",
+            &json!([{"intent":intent, "offered":intent, "changes":observations}]),
+        );
+        let mut expected_fields = modeled[0]["writtenFields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        let candidate = ClientUpdateSignatures::from_input(
+            &storage::Crdts::default(),
+            &schema,
+            &doc_id,
+            &patch,
+            &snapshot,
+            &signer,
+        )
+        .unwrap();
+        let mut observed_fields = if candidate.is_complete() {
+            Vec::new()
+        } else {
+            Block::from_dag_cbor(candidate.composite_block())
+                .unwrap()
+                .links
+                .unwrap_or_default()
+                .into_iter()
+                .map(|link| link.name)
+                .collect::<Vec<_>>()
+        };
+        expected_fields.sort();
+        observed_fields.sort();
+        assert_eq!(observed_fields, expected_fields);
+        assert_eq!(candidate.is_complete(), expected_fields.is_empty());
+    }
+}
