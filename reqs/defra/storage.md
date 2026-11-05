@@ -18,7 +18,7 @@ With a unique index on `User.name` and a stored `{"name":"alice","age":1}`, addi
 # `defra.index.merged_field`: An index on a merged field follows the merged value
 
 - **Parents:** ["defra.index"]
-- **Scenarios:** ["index::merged_field::a_text_index_follows_local_edits", "index::merged_field::a_text_index_follows_merged_edits", "index::merged_field::a_json_index_follows_merged_edits"]
+- **Scenarios:** ["index::merged_field::text::a_text_index_follows_local_edits", "index::merged_field::text::a_text_index_follows_merged_edits", "index::merged_field::json::a_json_index_follows_merged_edits"]
 
 For a field whose CRDT merges by value (text, JSON), the index holds only the current value. After a local edit, or after two nodes edit the field concurrently and replicate to each other, a filter on the merged value fetches one index entry and one document, and a filter on any earlier value fetches none.
 
