@@ -321,6 +321,29 @@ their scope markers on the success reply.
   already due (`FetchTaskEnd::Preempted`, `finish_attempt(preempted)`).
   `"Unbounded"`, the rule before, ends an attempt only on a window without
   progress, so a trickling attempt keeps its slot as long as its DAG takes.
+- An attempt also needs a fetch permit of its source peer (`DagFetchLimiter`:
+  one fewer per peer than the global limit, so one peer cannot hold them all).
+  `SharedPeer` names the scopes one source peer announces, each with
+  `PeerPermits` permits; every other scope's peer announces only it. Pull
+  fetches of that peer (DocSync and BranchableSync replies) take its permits
+  too, with no slot (`PullBegin`, at most `MaxPulls` at once; `PullEnd`).
+  `PermitMode = "WithSlot"`: the clock takes a root's slot and a permit of its
+  peer together (`DagFetchLimiter::try_reserve_peer` in
+  `dispatch_due_pending_dag_fetches`; the `DagNeedsFetch` event carries the
+  permit to the fetch), and a root whose peer has none free is not eligible:
+  it is passed over and keeps its place in the due order. `"AfterSlot"`, the
+  rule before, reserved the slot and let the fetch wait for the permit in
+  `DagFetchLimiter::acquire` (`parked`: waiters on the peer's semaphore), so
+  after a restart the first spoke's due roots held every slot, one of them
+  waiting for a permit of that spoke, while the other peers' heads waited for
+  a slot. `INV_NoSlotWaitsForPermit`: no slot is held by a fetch waiting for a
+  permit while a root that could start at once waits for a slot. The
+  limiter's global permit is not modelled: the slot pool and the global limit
+  are the same number, so clock fetches alone never wait for one, and a fetch
+  waits for one only while pull fetches hold it, in a queue every peer's root
+  would join too. That queue is regolith's `Semaphore`, which is not FIFO: an
+  acquire may take a free permit past the waiters, but a waiter passed over
+  `MAX_BYPASS` times is owed the next one, so its wait ends.
 
 The checks use two documents, one fetch slot, `MaxV = 1` and one restart. The
 liveness run makes only the receiver fair, and only at the scheduler level:
@@ -333,7 +356,7 @@ for ever. Per root there are only timers: a deadline passes (`BecomeDue`),
 an attempt's windows end (`WFail`: each window is bounded), a quantum ends
 (`Preempt`).
 
-`LIVE_AckedRootMerged` rests on one environment assumption, stated as strong
+`LIVE_AckedRootMerged` rests on an environment assumption, stated as strong
 fairness on some `WComplete`: a fetch that can complete eventually does.
 Reachability alone does not give it, since a reachable provider can answer
 busy every time. The assumption is a `Boundary` in `proofs/src/registry.rs`.
@@ -345,6 +368,22 @@ and `MC_SyncOwnership_Green_Dispatch_Trickle` check that; with the property
 unrestricted, the dead-provider check fails, which is why the assumption is
 needed. `MC_SyncOwnership_Red_UnboundedProductive` drops the quantum: a
 trickling root claims the only slot and d2 is never dispatched.
+
+The permit checks need a second peer. `MC_SyncOwnership_Green_Dispatch_PeerPermits`
+uses three documents and two slots: one spoke announces d1 and d2 with one
+permit, d1's provider trickles, and d3 comes from another peer. It checks
+safety only, since its liveness run takes close to a minute;
+`MC_SyncOwnership_Red_SlotBeforePermit` is the same configuration under
+`"AfterSlot"`. `MC_SyncOwnership_Green_Dispatch_PullPermit` checks liveness
+with two documents, one slot and a pull fetch that may hold d1's peer's only
+permit: d1 is passed over while it does and still merges. A passed-over root
+has no fairness of its own: its turn follows from the due order once a
+permit comes back. The liveness runs also assume that pull fetches, which
+answer this node's own sync requests, come in bursts that end: from some
+point on none starts (`<>[][~PullBegin]_allVars` in `WFairSpec`). Without
+that assumption, or without weak fairness on `PullEnd` (a pull fetch that
+never ends), d1 is never dispatched and the liveness check fails, so the
+result is not vacuous.
 
 ## In-memory pending map
 
@@ -467,6 +506,12 @@ state a property: the end of a continuation is the liveness property
   its root behind every root already waiting. Together a due root waiting for
   a fetch slot is never passed by a root that became due after it, so a head
   acknowledged after a restart is not starved by catch-up roots retrying.
+  A root whose source peer has no fetch permit free cannot run and may be
+  passed.
+- `INV_NoSlotWaitsForPermit` (dispatch): no fetch slot is held by a fetch
+  waiting for its source peer's permit while a root that could start at once
+  waits for a slot. `INV_PeerPermitsBounded`: no peer has more permits in use
+  than it has.
 - `INV_DueOrBackoff` (dispatch): an idle pending root is either due or waiting
   out its backoff.
 - `ACT_AckedRootLeavesOwned` (dispatch), a property of every step: an
@@ -536,6 +581,9 @@ fetch owner is deliberately not expressible.
 | `MC_SyncOwnership_Red_HeldSlot.cfg` | RED | a fetch keeps its slot through all of its attempts and starts the next ahead of a head acknowledged while it held the slot (`ACT_AttemptsStartInDueOrder`) |
 | `MC_SyncOwnership_Red_ClaimTimeRearm.cfg` | RED | the root's next deadline is fixed when it is claimed and passes during the attempt, so the failed root ends due ahead of heads acknowledged during its attempt (`ACT_EndedAttemptQueuesBehind`) |
 | `MC_SyncOwnership_Red_AckedTtl.cfg` | RED | the pending TTL drops an acknowledged head whose sender already ended its marker (`ACT_AckedRootLeavesOwned`) |
+| `MC_SyncOwnership_Green_Dispatch_PeerPermits.cfg` | GREEN | the clock takes a slot with a permit of the root's source peer: while d1's trickling attempt holds its spoke's only permit, d2 is passed over and the second slot goes to d3, from another peer |
+| `MC_SyncOwnership_Green_Dispatch_PullPermit.cfg` | GREEN | a pull fetch holds d1's peer's only permit: d1 is passed over, d2 takes the slot, and both heads merge across a restart |
+| `MC_SyncOwnership_Red_SlotBeforePermit.cfg` | RED | the slot is reserved first and the fetch waits for its peer's permit inside it: d2 waits in the second slot while d3, able to start at once, finds none (`INV_NoSlotWaitsForPermit`) |
 | `MC_SyncOwnership_Green_Memory.cfg` | GREEN | durable roots past the in-memory cap take turns, so a never-serving root restored first does not keep the other from merging; a local continuation ends when it stops yielding |
 | `MC_SyncOwnership_Red_RetainedOverflow.cfg` | RED | an acknowledged root never gives its entry up: the never-serving root restored first holds the only entry for good (`LIVE_DurableRootMerged`) |
 | `MC_SyncOwnership_Red_KeyOrderResync.cfg` | RED | the root gives its entry up but the sweep restarts at the first key and re-admits it ahead of the other (`LIVE_DurableRootMerged`) |
