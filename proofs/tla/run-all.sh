@@ -5,7 +5,11 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-# rows: <cfg> <module> <GREEN|RED>
+# rows: <cfg> <module> <GREEN|RED|TRACE:<depth>|DEADLOCK:<l>>
+# A trace replay walks one path, so its verdict also says where it ends:
+# TRACE:<depth> finds no error from exactly one initial state and walks every
+# event to the settled rest (depth = events + 1), and DEADLOCK:<l> stops with
+# event l next (past the end when l = events + 1).
 RUNS=(
   "MC_LocalFetchPermit_Green.cfg LocalFetchPermit.tla GREEN"
   "MC_LocalFetchPermit_Red_Hold.cfg LocalFetchPermit.tla RED"
@@ -509,6 +513,19 @@ RUNS=(
   "MC_P2PDelivery_Red_F5_FanoutAbort.cfg MC_P2PDelivery_E2E.tla RED" # F5, main: a failed registration on the hub drops the intent of the peer not registered yet (INV_ObligationOwned)
   "MC_P2PDelivery_Red_F5_FailedDropped.cfg MC_P2PDelivery_E2E.tla RED" # F5, main: a failed registration's own intent is never retried (INV_ObligationOwned)
   "MC_P2PDelivery_Red_F27_HalfRegistered.cfg MC_P2PDelivery_E2E.tla RED" # F27, main only (the rc1 pin adopts): the accepting side sends on a connection its dialer does not serve (INV_ReverseBorrowServed)
+  "MC_P2PDelivery_Trace_TwoNode.cfg MC_P2PDelivery_Trace_TwoNode.tla TRACE:20" # a recorded run, a -> b, create and update: all 19 events are model steps and the run settles
+  "MC_P2PDelivery_Trace_HubRelay.cfg MC_P2PDelivery_Trace_HubRelay.tla TRACE:36" # a recorded run, a -> h -> b: all 35 events replay; the hub's merge lays its marker for b
+  "MC_P2PDelivery_Trace_Red_Unscheduled.cfg MC_P2PDelivery_Trace_Mutants.tla DEADLOCK:14" # the recorded run without its dispatches: a fetch with no slot (deadlock at the first Acquire)
+  "MC_P2PDelivery_Trace_Red_PushBeforeMarker.cfg MC_P2PDelivery_Trace_Mutants.tla DEADLOCK:11" # a push admitted before the sender's marker exists (deadlock at the Admit)
+  "MC_P2PDelivery_Trace_Red_ExpireAfterAck.cfg MC_P2PDelivery_Trace_Mutants.tla DEADLOCK:13" # #0b: the TTL drops an acknowledged root and its record (deadlock at the Expire: an acknowledged root never expires)
+  "MC_P2PDelivery_Trace_Red_ExpireDropsRecord.cfg MC_P2PDelivery_Trace_Mutants.tla DEADLOCK:13" # #0b: the TTL drops the acknowledged root's record too (deadlock at the Expire)
+  "MC_P2PDelivery_Trace_Red_CoveredByNothing.cfg MC_P2PDelivery_Trace_Mutants.tla DEADLOCK:12" # F1 class: a head acked as covered that no record brings (deadlock at the Admit)
+  "MC_P2PDelivery_Trace_Red_RetiresNonAncestor.cfg MC_P2PDelivery_Trace_Mutants.tla DEADLOCK:12" # F1 class: an admission retires a head that is no ancestor of it (deadlock at the Admit)
+  "MC_P2PDelivery_Trace_Red_AckBeforeAdmit.cfg MC_P2PDelivery_Trace_Mutants.tla DEADLOCK:12" # a sender drops its marker on an ack the receiver never gave (deadlock at the Ack)
+  "MC_P2PDelivery_Trace_Red_StallHolds.cfg MC_P2PDelivery_Trace_Mutants.tla DEADLOCK:16" # #0a: an attempt that got nothing keeps its fetch slot (deadlock at the Stall)
+  "MC_P2PDelivery_Trace_Red_SlotBeforePermit.cfg MC_P2PDelivery_Trace_Mutants.tla DEADLOCK:13" # F8: a dispatch parks on its slot waiting for permits (deadlock at the Schedule)
+  "MC_P2PDelivery_Trace_Red_DialerOnly.cfg MC_P2PDelivery_Trace_Mutants.tla DEADLOCK:7" # F27: a connection served only for its dialer (deadlock at the Reconnect)
+  "MC_P2PDelivery_Trace_Red_Unsettled.cfg MC_P2PDelivery_Trace_Mutants.tla DEADLOCK:30" # the run ends with a forward intent never registered (deadlock past the end of 29 events)
   "MC_VectorLinks_Green.cfg VectorLinks.tla GREEN"
   "MC_VectorLinks_Red_Puts.cfg VectorLinks.tla RED"
   "MC_VectorLinks_Red_Prune.cfg VectorLinks.tla RED"
@@ -691,6 +708,23 @@ if ! workdir=$(mktemp -d "${TMPDIR:-/tmp}/defra-tla.XXXXXX"); then
 fi
 trap 'rm -rf "$workdir"' EXIT
 
+# The verdict of a trace replay: TRACE:<depth> when TLC found no error from
+# exactly one initial state, DEADLOCK:<l> with the index l of the event the
+# last state of the deadlocked behaviour waits on, ERROR otherwise.
+trace_verdict() {
+  local out="$1" depth last
+  depth=$(sed -n 's/^The depth of the complete state graph search is \([0-9]*\)\.$/\1/p' <<<"$out")
+  if grep -q "No error has been found" <<<"$out" &&
+     grep -q "^Finished computing initial states: 1 distinct state generated" <<<"$out"; then
+    echo "TRACE:$depth"
+  elif grep -q "Deadlock reached" <<<"$out"; then
+    last=$(grep -E '^/\\ l = [0-9]+$' <<<"$out" | tail -n 1)
+    echo "DEADLOCK:${last##* }"
+  else
+    echo ERROR
+  fi
+}
+
 run_model() {
   local index="$1" row="$2" cfg mod want out got
   read -r cfg mod want <<<"$row"
@@ -698,9 +732,13 @@ run_model() {
   out=$(TLA_JAVA_TMPDIR="$workdir/java-$index" ./tools/tlc -metadir "$workdir/state-$index" -config "$cfg" "$mod" 2>&1)
   # Here-strings, not pipes: `grep -q` stops at the first match, and under
   # pipefail the writer's broken pipe would turn a long trace into ERROR.
-  if grep -q "No error has been found" <<<"$out"; then got=GREEN
-  elif grep -qE "is violated|was violated|properties were violated|Deadlock reached|Deadlock" <<<"$out"; then got=RED
-  else got=ERROR; fi
+  case "$want" in
+    TRACE:*|DEADLOCK:*) got=$(trace_verdict "$out") ;;
+    *)
+      if grep -q "No error has been found" <<<"$out"; then got=GREEN
+      elif grep -qE "is violated|was violated|properties were violated|Deadlock reached|Deadlock" <<<"$out"; then got=RED
+      else got=ERROR; fi ;;
+  esac
   if [ "$got" = "$want" ]; then
     printf "  ok   %-6s %-34s %s\n" "$got" "$cfg" "$mod"
   else

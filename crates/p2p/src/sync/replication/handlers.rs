@@ -459,6 +459,10 @@ where
             {
                 return result;
             }
+            crate::model_trace!(Merge {
+                doc: &doc_id_for_result,
+                head: cid.to_string(),
+            });
 
             // Optionally re-broadcast (skip if metadata incomplete - can't broadcast without doc/collection IDs)
             if config.rebroadcast_on_merge && !collection_id_for_broadcast.is_empty() {
@@ -956,6 +960,16 @@ where
                         error: e.to_string(),
                     };
                 }
+            }
+        } else if crate::model_trace::ENABLED {
+            for block in merge_blocks
+                .iter()
+                .filter(|block| merged_cids.contains(&block.cid))
+            {
+                crate::model_trace!(Merge {
+                    doc: &block.doc_id,
+                    head: block.cid.to_string(),
+                });
             }
         }
     }

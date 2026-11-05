@@ -971,6 +971,11 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
                 }
                 Ok(_) => {
                     successful_blocks += 1;
+                    p2p::model_trace!(Ack {
+                        doc: doc_id,
+                        receiver: peer_id.as_str(),
+                        head: head_cid.to_string(),
+                    });
                 }
                 Err(error) => {
                     let prefix = if error.is_connection_like() {

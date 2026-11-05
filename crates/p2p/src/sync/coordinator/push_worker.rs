@@ -370,6 +370,11 @@ where
     } else if context.backlog.is_current(job).await {
         if job.marker_generation.is_none() || is_whole_frontier(context, job).await {
             let _ = report_push_ack(&context.failure_tx, job).await;
+            crate::model_trace!(Ack {
+                doc: &job.doc_id,
+                receiver: job.peer_id.as_str(),
+                head: job.root_cid.to_string(),
+            });
         }
         JobCompletion::Succeeded
     } else {

@@ -32,6 +32,7 @@ use blockstore::{verify_block_cid, Blockstore};
 
 use crate::error::{Error, Result};
 use crate::message::PushLogBroadcast;
+use crate::model_trace::Outcome;
 use crate::sync::manager::events::SyncEvent;
 use crate::sync::manager::links::find_all_missing_links;
 use crate::sync::manager::pending::PendingDag;
@@ -88,6 +89,52 @@ fn announced_block_kind(bytes: &[u8]) -> AnnouncedBlockKind {
         }
         _ => AnnouncedBlockKind::Descendant,
     }
+}
+
+/// How the receiver decided a pushed head: the outcome its reply carries,
+/// the older roots of the sender scope it retired, and when the decision
+/// took effect.
+pub(super) struct Admitted {
+    outcome: Outcome,
+    superseded: Vec<Cid>,
+    at: u64,
+}
+
+/// A head decided now, retiring `superseded`.
+fn admitted(outcome: Outcome, superseded: Vec<Cid>) -> Option<Admitted> {
+    Some(Admitted {
+        outcome,
+        superseded,
+        at: crate::model_trace::now(),
+    })
+}
+
+/// Records the one decision a push ends with, once its reply is final: the
+/// head's outcome, or a nack. A block that carries no head records nothing.
+fn trace_admit(
+    msg: &PushLogBroadcast,
+    sender_peer: Option<&str>,
+    cid: &Cid,
+    decided: std::result::Result<Option<&Admitted>, &Error>,
+) {
+    if !crate::model_trace::ENABLED {
+        return;
+    }
+    let (outcome, superseded, at) = match decided {
+        Ok(Some(decision)) => (decision.outcome, &decision.superseded[..], decision.at),
+        Ok(None) => return,
+        Err(_) => (Outcome::Nacked, &[][..], crate::model_trace::now()),
+    };
+    crate::model_trace::emit_at(
+        at,
+        crate::model_trace::Event::Admit {
+            doc: &msg.doc_id,
+            sender: sender_peer,
+            head: cid.to_string(),
+            outcome,
+            superseded: superseded.iter().map(ToString::to_string).collect(),
+        },
+    );
 }
 
 impl<B: Blockstore + 'static> SyncManager<B> {
@@ -193,14 +240,24 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             Some(guard) => guard,
             None => match self
                 .join_in_flight(&cid, sender_peer, explicit_replay_authorization.is_some())
-                .await?
+                .await
             {
-                Some(guard) => guard,
-                None => return Ok(()),
+                Ok(Some(guard)) => guard,
+                Ok(None) => {
+                    if crate::model_trace::ENABLED {
+                        let joined = admitted(self.joined_outcome(&cid), Vec::new());
+                        trace_admit(msg, sender_peer, &cid, Ok(joined.as_ref()));
+                    }
+                    return Ok(());
+                }
+                Err(error) => {
+                    trace_admit(msg, sender_peer, &cid, Err(&error));
+                    return Err(error);
+                }
             },
         };
 
-        let processed = self
+        let decided = match self
             .process_block_inner(
                 &cid,
                 msg,
@@ -209,10 +266,26 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 explicit_replay_authorization,
                 recovery_provider_evidenced,
             )
-            .await?;
-
-        self.assert_pushlog_left_durable_state(&cid, msg, sender_peer, processed)
             .await
+        {
+            Ok((processed, decision)) => self
+                .assert_pushlog_left_durable_state(&cid, msg, sender_peer, processed)
+                .await
+                .map(|()| decision),
+            Err(error) => Err(error),
+        };
+        trace_admit(msg, sender_peer, &cid, decided.as_ref().map(Option::as_ref));
+        decided.map(drop)
+    }
+
+    /// How a push that joined another one's processing is decided: the
+    /// head is registered by then, or merged.
+    fn joined_outcome(&self, cid: &Cid) -> Outcome {
+        if self.is_pending_dag_owned(cid) {
+            Outcome::Covered
+        } else {
+            Outcome::Merged
+        }
     }
 
     /// Hold the ack contract for a block that carries a document head: success
@@ -276,7 +349,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         is_explicit_replicator: bool,
         explicit_replay_authorization: Option<ExplicitReplayAuthorization>,
         recovery_provider_evidenced: bool,
-    ) -> Result<Processed> {
+    ) -> Result<(Processed, Option<Admitted>)> {
         // Check if already merged
         match self
             .blockstore
@@ -287,7 +360,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             Ok(true) => {
                 self.diagnostics.record_already_merged_fast_path();
                 tracing::debug!(cid = %cid, doc_id = %msg.doc_id, "Block already merged, skipping");
-                return Ok(Processed::Shown);
+                return Ok((Processed::Shown, admitted(Outcome::Merged, Vec::new())));
             }
             Ok(false) => {
                 // Not merged, continue processing
@@ -385,7 +458,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 "Stored legacy dependency PushLog without treating it as a head"
             );
             self.retry_pending_dags_waiting_on(cid).await?;
-            return Ok(Processed::Shown);
+            return Ok((Processed::Shown, None));
         }
 
         // Check for missing linked blocks at every depth of the reachable DAG.
@@ -417,7 +490,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             );
         }
 
-        let processed = {
+        let (processed, retired, registered_at) = {
             // Every unmerged success-acked head, including a complete-at-arrival
             // DAG, enters the same durable receiver clock. The clock emits the
             // merge work and keeps the registration until merge or quarantine
@@ -435,7 +508,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     collection_id = %msg.collection_id,
                     "Head merged while awaiting durable pending registration"
                 );
-                return Ok(Processed::Shown);
+                return Ok((Processed::Shown, admitted(Outcome::Merged, Vec::new())));
             }
 
             // A root already owned by the receiver is idempotently covered by
@@ -448,6 +521,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             if let Some(existing) = self.pending_dag_snapshot(cid).filter(|dag| {
                 dag.origin != crate::sync::manager::pending::PendingOrigin::LocalContinuation
             }) {
+                let covered = admitted(Outcome::Covered, Vec::new());
                 return self
                     .extend_registered_root(
                         cid,
@@ -457,7 +531,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                         recovery_provider_evidenced,
                     )
                     .await
-                    .map(|()| Processed::Shown);
+                    .map(|()| (Processed::Shown, covered));
             }
             if self.persisted.contains(cid) {
                 tracing::debug!(
@@ -465,7 +539,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     announced_source_peer = ?sender_peer,
                     "Incoming root is durably receiver-owned; retaining its recovery provider"
                 );
-                return Ok(Processed::Shown);
+                return Ok((Processed::Shown, admitted(Outcome::Covered, Vec::new())));
             }
 
             // A peer holds at most its share of the durable records, whichever
@@ -581,6 +655,10 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             // The cap, the retirement of the sender scope's durable current
             // head when this one links it, and the record are one engine
             // transaction.
+            let mut retired: Vec<Cid> = Vec::new();
+            if crate::model_trace::ENABLED {
+                retired.extend(superseded.iter().map(|(root, _)| *root));
+            }
             if let Some(store) = self.pending_store() {
                 let durable_cap = self.persisted_pending_capacity();
                 let record = PersistedPendingDag {
@@ -604,7 +682,12 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     peer_capacity: peer_share,
                 };
                 let refusal = match store.register(registration, &self.persisted).await {
-                    Ok(Admission::Registered) => None,
+                    Ok(Admission::Registered { retired: durable }) => {
+                        if crate::model_trace::ENABLED {
+                            retired.extend(durable.filter(|root| !retired.contains(root)));
+                        }
+                        None
+                    }
                     Ok(Admission::AtCapacity) => {
                         self.diagnostics.record_pending_dag_capacity_shed();
                         tracing::warn!(
@@ -675,9 +758,10 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 );
                 if matches!(self.is_merged(cid).await, Ok(true)) {
                     self.discharge_merged(cid).await;
-                    return Ok(Processed::Shown);
+                    return Ok((Processed::Shown, admitted(Outcome::Merged, retired)));
                 }
             }
+            let registered_at = crate::model_trace::now();
             if resident {
                 self.mark_pending_dag_recovery_registered(cid, inserted_at);
             }
@@ -696,11 +780,12 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 resident,
                 "Pending DAG durably registered and left due for receiver clock"
             );
-            if resident {
+            let processed = if resident {
                 Processed::Shown
             } else {
                 Processed::DurablyRegistered
-            }
+            };
+            (processed, retired, registered_at)
         };
 
         // This head can also be a missing descendant of another registered
@@ -716,7 +801,14 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             );
         }
 
-        Ok(processed)
+        Ok((
+            processed,
+            Some(Admitted {
+                outcome: Outcome::Registered,
+                superseded: retired,
+                at: registered_at,
+            }),
+        ))
     }
 
     /// A root this receiver owns, announced again: it keeps its provider and
@@ -802,7 +894,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 Admission::AtPeerCapacity => {
                     return Err(Error::PendingDagCapacity { max: peer_capacity })
                 }
-                Admission::Registered => {}
+                Admission::Registered { .. } => {}
             }
         }
         self.pending_dags.update(|pending| {

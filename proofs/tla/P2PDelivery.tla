@@ -456,15 +456,21 @@ ForwardFail(r, hd) ==
   /\ EndAttempt(r, hd, "back")                                     \* slot back, re-driven later
   /\ UNCHANGED <<pendDur, known, senderVars, cursor, conn, pull, flood, contLive, contMade, crashes, discs>> \* records stay
 
+\* What an attempt that got nothing, or a dispatch parked for its permits,
+\* does with its slot: the attempt ends and hd is due after a backoff.
+StallStep(r, hd) ==
+  /\ slot[r][hd] \in {"run", "prod", "wait"}                       \* an attempt, or a parked dispatch
+  /\ EndAttempt(r, hd, "back")                                     \* slot back, due later
+  /\ UNCHANGED <<merged, pendDur, known, senderVars, cursor, envVars>>        \* nothing else moves
+
 \* The provider cannot serve hd (gone, dead, or a connection it does not
-\* answer on): the attempt ends and hd is due after a backoff. A dispatch
-\* parked for its permits whose provider is not connected ends the same way,
-\* without the permits: poll_fetch_dag defers before it awaits the limiter.
+\* answer on), so the attempt gets nothing. A dispatch parked for its permits
+\* whose provider is not connected ends the same way, without the permits:
+\* poll_fetch_dag defers before it awaits the limiter.
 Stall(r, hd) ==
   /\ \/ slot[r][hd] \in {"run", "prod"} /\ ~Fetchable(r, hd)       \* the attempt gets nothing
      \/ slot[r][hd] = "wait" /\ ~FetchOk(r, SrcOf[r, hd])          \* or no provider is connected
-  /\ EndAttempt(r, hd, "back")                                     \* slot back, due later
-  /\ UNCHANGED <<merged, pendDur, known, senderVars, cursor, envVars>>        \* nothing else moves
+  /\ StallStep(r, hd)                                              \* so it ends empty
 
 \* The quantum cuts a productive attempt; the blocks it brought stay and hd is
 \* due again at once.

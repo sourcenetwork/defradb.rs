@@ -333,7 +333,7 @@ async fn register(
     }
     drop(systemstore);
     on_commit(txn, view.registered(root, &record, retired))?;
-    Ok(Box::new(Admission::Registered))
+    Ok(Box::new(Admission::Registered { retired }))
 }
 
 /// A free slot and a charge to its peer's share for `root`, new to the store

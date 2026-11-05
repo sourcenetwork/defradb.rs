@@ -197,12 +197,68 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 | JWT issuer / algorithm binding | Boundary | DID-binding via `acp.rs`; forge unreachable via CLI |
 | Order-preserving key encoding | Boundary | ordered query may sort in memory; consts `pub(crate)` |
 | DiskANN resident code table | Boundary | in-memory search cache, not observable on the wire; `DiskAnnCodes`; unit tests in `crates/db/tests/vector/diskann_resident.rs` |
+| P2P delivery liveness | Behavioral (trace) + Boundary | `model_trace.rs` replays recorded runs through `Trace_P2PDelivery.tla`; eventual connectivity, the bounded instance and the restart scenarios stay Boundary |
 
 ```bash
 proofs/verify-all.sh                 # TLA + Lean + conformance (behavioral if binary present)
 cargo build -p cli                   # produce fresh target/debug/defra
 cargo test -p conformance            # Lean axis + behavioral; DEFRA_CONFORMANCE_BINARY overrides target
 ```
+
+### Trace validation (P2P delivery)
+
+A `defra` built with `--features model-trace` logs one JSON event per
+[`P2PDelivery`](tla/P2PDelivery.tla) action under the `model_trace` log target
+(`crates/p2p/src/model_trace.rs`; the event table and its code sites are in
+[`P2PDelivery_DESIGN.md`](tla/P2PDelivery_DESIGN.md)). Without the feature the
+`model_trace!` sites compile to nothing. [`src/model_trace.rs`] reads the
+events from each node's log, orders them by time, names the nodes and the heads
+of one document, and writes a TLA+ module and TLC configuration that
+[`Trace_P2PDelivery.tla`](tla/Trace_P2PDelivery.tla) replays: each event must
+be a model step from the state the earlier events left, under the fixed
+design's knobs, with the model's invariants holding and the run settled at the
+end. A deadlock names the first event the model forbids.
+
+```bash
+cargo build -p cli --features iroh,model-trace && cp target/debug/defra target/defra-trace
+DEFRA_TRACE_BINARY=$PWD/target/defra-trace cargo test -p conformance --test tla_conformance -- --ignored model_trace::
+```
+
+Each run leaves `events.jsonl`, the module, the configuration and `tlc.out` in
+`target/model-trace/<Scenario>/`. A replay is accepted only when TLC starts
+from one state and walks past every event, so a trace whose start the model
+rules out cannot pass by checking nothing. The recorded runs
+`MC_P2PDelivery_Trace_TwoNode` and `MC_P2PDelivery_Trace_HubRelay` and eleven
+RED configurations of planted mutants (`MC_P2PDelivery_Trace_Mutants.tla`, one
+per replay guard) also run in `tla/run-all.sh`, so the replay is checked
+without a binary. Their rows say where the replay must end: `TRACE:<n>` walks
+`n` states (events + 1) with no error, `DEADLOCK:<l>` stops at event `l`.
+
+To add a trace for a new scenario:
+
+1. Write a test in `tests/behavioral/model_trace.rs` that builds its cluster
+   with `cluster(n)`, connects the nodes and sets every replicator before the
+   first write (the model's edges exist from the start), writes one document
+   and waits until every node the edges lead to has each write.
+2. Call `replay(&cluster, names, edges, &doc, "<Scenario>", story)` with the
+   nodes' model names in cluster order, the edges by name and the document to
+   follow. It asserts that TLC accepts the run.
+3. Assert the steps you meant to exercise are in the trace (`Trace::count`,
+   `Trace::steps`), so an empty run cannot pass.
+4. To pin the run, copy the generated `MC_P2PDelivery_Trace_<Scenario>.{tla,cfg}`
+   into `tla/`, add a `TRACE:<events + 1>` row to `run-all.sh`, and plant RED
+   mutants of it in a mutants module, each with a `DEADLOCK:<index>` row.
+5. A code path that takes a model step nobody logs yet gets a
+   `p2p::model_trace!(Variant { .. })` at its site, a case in
+   `Trace_P2PDelivery.tla`'s `Replay`, and, for a new field, a line in
+   `model_trace::step`.
+
+A trace follows one document, and every head in it must be written during the
+run. Pull sync (`p2p_collection_add`) runs advisory fetches the model counts only
+from one provider, so scenarios replicate through replicators alone. A scenario
+that drives a behaviour main still has (a RED of `P2PDelivery`) fails the replay
+under the fixed design's knobs; setting that one knob to main's value in the
+generated configuration confirms it is the known defect.
 
 ## Conventions (follow these in new slices)
 

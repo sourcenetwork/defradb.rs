@@ -349,9 +349,20 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         }
         let expired = self
             .pending_dags
-            .update(|pending| evict_expired_pending_dags(pending, now).len());
-        for _ in 0..expired {
+            .update(|pending| evict_expired_pending_dags(pending, now));
+        self.trace_expired(expired.iter().map(|(root, _)| root));
+        for _ in &expired {
             self.diagnostics.record_pending_dag_expired();
+        }
+    }
+
+    /// Records the TTL's eviction of each of `roots` from memory.
+    fn trace_expired<'a>(&self, roots: impl IntoIterator<Item = &'a Cid>) {
+        for root in roots {
+            crate::model_trace!(Expire {
+                head: root.to_string(),
+                removed: self.pending_store().is_none(),
+            });
         }
     }
 
@@ -547,8 +558,8 @@ impl<B: Blockstore + 'static> SyncManager<B> {
 
         let max_per_peer = self.max_pending_dags_per_peer();
         let registered = dag.is_recovery_registered;
-        let (admission, depth) = self.pending_dags.update(|pending| {
-            evict_expired_pending_dags(pending, Instant::now());
+        let (admission, depth, expired) = self.pending_dags.update(|pending| {
+            let expired = evict_expired_pending_dags(pending, Instant::now());
 
             let scope_decision = pending.scope_head_decision(root_cid, parents, &dag);
             let superseded_root = match scope_decision {
@@ -560,7 +571,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 && !pending.contains_key(&root_cid)
                 && superseded_root.is_none()
             {
-                return (PendingDagAdmission::GlobalCapacity, None);
+                return (PendingDagAdmission::GlobalCapacity, None, expired);
             }
 
             if let Some(source_peer) = dag.source_peer.as_deref() {
@@ -571,7 +582,11 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     && pending.source_count(source_peer) >= max_per_peer
                     && superseded_root.is_none()
                 {
-                    return (PendingDagAdmission::PeerQuota { max_per_peer }, None);
+                    return (
+                        PendingDagAdmission::PeerQuota { max_per_peer },
+                        None,
+                        expired,
+                    );
                 }
             }
 
@@ -583,8 +598,10 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     superseded: Box::new(superseded),
                 },
                 Some(pending.len()),
+                expired,
             )
         });
+        self.trace_expired(expired.iter().map(|(root, _)| root));
         if let Some(depth) = depth {
             self.diagnostics.observe_pending_dag_depth(depth);
             if registered {
@@ -866,17 +883,18 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         // Record the attempt (and capture the incremented value) in the same
         // update so concurrent retries observe monotonic attempt counts.
         let now = Instant::now();
-        let pending_info = self.pending_dags.update(|pending| {
-            let expired = evict_expired_pending_dags(pending, now);
-            if let Some((_, dag)) = expired.into_iter().find(|(cid, _)| cid == root_cid) {
-                Some(PendingDagRetryEntry::Expired(dag))
-            } else {
-                pending.get_mut(root_cid).map(|dag| {
+        let (pending_info, expired) = self.pending_dags.update(|pending| {
+            let mut expired = evict_expired_pending_dags(pending, now);
+            let entry = match expired.iter().position(|(cid, _)| cid == root_cid) {
+                Some(own) => Some(PendingDagRetryEntry::Expired(expired.swap_remove(own).1)),
+                None => pending.get_mut(root_cid).map(|dag| {
                     dag.attempts = dag.attempts.saturating_add(1);
                     PendingDagRetryEntry::Current(dag.clone())
-                })
-            }
+                }),
+            };
+            (entry, expired)
         });
+        self.trace_expired(expired.iter().map(|(root, _)| root));
 
         let Some(info) = pending_info else {
             tracing::debug!(
@@ -889,6 +907,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         let info = match info {
             PendingDagRetryEntry::Current(info) => info,
             PendingDagRetryEntry::Expired(info) => {
+                self.trace_expired([root_cid]);
                 self.diagnostics.record_pending_dag_expired();
                 tracing::warn!(
                     root_cid = %root_cid,
@@ -1248,6 +1267,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     continue;
                 }
             };
+            crate::model_trace!(Resync {
+                head: root_cid.to_string(),
+            });
             if let Some((old_root, _)) = superseded {
                 // Both records survived the restart, so deleting the older
                 // one after the newer one is live cannot create an ownership

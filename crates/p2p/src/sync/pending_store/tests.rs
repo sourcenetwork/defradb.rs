@@ -283,7 +283,7 @@ async fn a_registered_record_reads_as_the_registration_alone() {
     let root = cid(b"slotted");
     assert_eq!(
         register(&store, &view(), root, &record("doc"), 4).await,
-        Admission::Registered
+        Admission::Registered { retired: None }
     );
 
     let txn = Systemstore::new(inner).new_txn(true).await.unwrap();
@@ -309,11 +309,11 @@ async fn the_cap_refuses_a_new_root_until_a_slot_frees() {
     let (a, b, c) = (cid(b"a"), cid(b"b"), cid(b"c"));
     assert_eq!(
         register(&store, &view, a, &record("doc-a"), 2).await,
-        Admission::Registered
+        Admission::Registered { retired: None }
     );
     assert_eq!(
         register(&store, &view, b, &record("doc-b"), 2).await,
-        Admission::Registered
+        Admission::Registered { retired: None }
     );
     assert_eq!(
         register(&store, &view, c, &record("doc-c"), 2).await,
@@ -328,7 +328,7 @@ async fn the_cap_refuses_a_new_root_until_a_slot_frees() {
 
     assert_eq!(
         register(&store, &view, a, &record("doc-a"), 2).await,
-        Admission::Registered,
+        Admission::Registered { retired: None },
         "a root that holds a record keeps its slot"
     );
 
@@ -336,7 +336,7 @@ async fn the_cap_refuses_a_new_root_until_a_slot_frees() {
     assert!(!store.remove(&a, &view).await.unwrap(), "already gone");
     assert_eq!(
         register(&store, &view, c, &record("doc-c"), 2).await,
-        Admission::Registered
+        Admission::Registered { retired: None }
     );
     assert!(view.contains(&b) && view.contains(&c) && !view.contains(&a));
     assert_eq!(view.len(), 2);
@@ -374,7 +374,7 @@ async fn concurrent_registrations_never_exceed_the_cap() {
     let mut registered = 0;
     for task in tasks {
         match task.join().await.unwrap() {
-            Admission::Registered => registered += 1,
+            Admission::Registered { .. } => registered += 1,
             Admission::AtCapacity => {}
             Admission::AtPeerCapacity => panic!("no share binds"),
         }
@@ -394,11 +394,11 @@ async fn a_head_retires_the_current_head_it_links_and_takes_its_slot() {
     let (old, new, sibling) = (cid(b"old"), cid(b"new"), cid(b"sibling"));
     assert_eq!(
         register(&store, &view, old, &head(1), 1).await,
-        Admission::Registered
+        Admission::Registered { retired: None }
     );
     assert_eq!(
         register_over(&store, &view, new, &[old], &head(2), 1).await,
-        Admission::Registered
+        Admission::Registered { retired: Some(old) }
     );
     assert_eq!(store.load_all().await.unwrap(), vec![(new, head(2))]);
     assert!(view.contains(&new) && !view.contains(&old));
@@ -410,11 +410,11 @@ async fn a_head_retires_the_current_head_it_links_and_takes_its_slot() {
     );
     assert_eq!(
         register_over(&store, &view, sibling, &[old], &head(2), 3).await,
-        Admission::Registered
+        Admission::Registered { retired: None }
     );
     assert_eq!(
         register(&store, &view, old, &head(1), 3).await,
-        Admission::Registered
+        Admission::Registered { retired: None }
     );
     assert_eq!(
         sorted_roots(store.load_all().await.unwrap()),
@@ -435,7 +435,7 @@ async fn concurrent_siblings_of_one_scope_each_keep_their_record() {
     let base = cid(b"head-1");
     assert_eq!(
         register(&store, &view, base, &head(1), 9).await,
-        Admission::Registered
+        Admission::Registered { retired: None }
     );
     let siblings: Vec<Cid> = (2..10u32)
         .map(|index| cid(format!("head-{index}").as_bytes()))
@@ -462,17 +462,20 @@ async fn concurrent_siblings_of_one_scope_each_keep_their_record() {
         }));
     }
     for task in tasks {
-        assert_eq!(task.join().await.unwrap(), Admission::Registered);
+        assert!(matches!(
+            task.join().await.unwrap(),
+            Admission::Registered { .. }
+        ));
     }
     let mut expected = siblings.clone();
     expected.sort();
     assert_eq!(sorted_roots(store.load_all().await.unwrap()), expected);
 
     let merge = cid(b"merge");
-    assert_eq!(
+    assert!(matches!(
         register_over(&store, &view, merge, &siblings, &head(3), 9).await,
-        Admission::Registered
-    );
+        Admission::Registered { retired: Some(_) }
+    ));
     let roots = sorted_roots(store.load_all().await.unwrap());
     assert_eq!(roots.len(), siblings.len());
     assert!(roots.contains(&merge) && !roots.contains(&base));
@@ -490,11 +493,11 @@ async fn a_peer_holds_its_share_and_a_discharge_gives_a_place_back() {
     let (old, new, other) = (cid(b"old"), cid(b"new"), cid(b"other"));
     assert_eq!(
         register_within(&store, &view, old, &[], &head(1), 4, 1).await,
-        Admission::Registered
+        Admission::Registered { retired: None }
     );
     assert_eq!(
         register_within(&store, &view, new, &[old], &head(2), 4, 1).await,
-        Admission::Registered,
+        Admission::Registered { retired: Some(old) },
         "a newer head takes over the older head's place"
     );
     assert_eq!(
@@ -508,7 +511,7 @@ async fn a_peer_holds_its_share_and_a_discharge_gives_a_place_back() {
     };
     assert_eq!(
         register_within(&store, &view, other, &[], &other_peer, 4, 1).await,
-        Admission::Registered,
+        Admission::Registered { retired: None },
         "another peer has a share of its own"
     );
 
@@ -516,7 +519,7 @@ async fn a_peer_holds_its_share_and_a_discharge_gives_a_place_back() {
     let third = cid(b"third");
     assert_eq!(
         register_within(&store, &view, third, &[], &record("doc-third"), 4, 1).await,
-        Admission::Registered
+        Admission::Registered { retired: None }
     );
 }
 
@@ -597,7 +600,7 @@ impl RetryAttemptFn for RegisterBeside {
                 let beside = PendingDagStore::new(Arc::clone(&self.store));
                 assert_eq!(
                     register_within(&beside, &self.view, self.root, &[], &self.record, 4, 1).await,
-                    Admission::Registered,
+                    Admission::Registered { retired: None },
                     "the registration beside it runs first and commits"
                 );
             }
@@ -650,7 +653,7 @@ async fn quarantine_moves_the_root_and_counts_it_once() {
     let root = cid(b"rejected");
     assert_eq!(
         register(&store, &view, root, &record("doc"), 1).await,
-        Admission::Registered
+        Admission::Registered { retired: None }
     );
 
     let entry = quarantined("doc", "unique constraint violation");
@@ -663,7 +666,7 @@ async fn quarantine_moves_the_root_and_counts_it_once() {
     assert_eq!(view.quarantined(), 1);
     assert_eq!(
         register(&store, &view, cid(b"next"), &record("doc-next"), 1).await,
-        Admission::Registered,
+        Admission::Registered { retired: None },
         "the quarantined root's slot is free"
     );
 }
@@ -677,7 +680,7 @@ async fn a_sweep_makes_the_view_the_records() {
     let (kept, orphan) = (cid(b"kept"), cid(b"orphan"));
     assert_eq!(
         register(&store, &view, kept, &record("doc-kept"), 4).await,
-        Admission::Registered
+        Admission::Registered { retired: None }
     );
     store.put(&orphan, &record("doc-orphan")).await.unwrap();
     assert!(store

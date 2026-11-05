@@ -231,3 +231,93 @@ in the registry family "P2P delivery liveness", alongside the two ack-backing mo
 that had no row (`PendingDagRestart` `INV_AckBacked`, `PushLogAdmission`
 `INV_SuccessImpliesRegisteredOrMerged`), whose witnesses are integration tests outside
 the conformance binary. Eventual connectivity and the bounded instance are assumed.
+Trace validation (below) is the family's Behavioral row: recorded runs of the binary
+replay as behaviours of the model.
+
+The scenario leg is pending. It needs defra-harness to pause and throttle a node,
+CLI flags for `max_concurrent_dag_fetches` and `pending_dag_ttl_secs`, and HTTP-readable
+marker counts and `SyncStatus`. With those it covers: delivery within a bound after a
+hub restart under catch-up, an acked head delivered past the pending TTL, sibling heads
+both delivered by replay, and an acked drop rediscovered on reconnect. The pending TTL
+reads `web_time::Instant`, so a paused tokio clock cannot drive it; those scenarios
+need the TTL flag with real time, or an injected clock. Eventual connectivity and the
+bounded instance stay Boundary for good.
+
+## Trace validation
+
+`Trace_P2PDelivery.tla` replays a run of the real binary through this model.
+A `defra` built with `--features model-trace` logs one JSON event per action
+under the `model_trace` log target (`crates/p2p/src/model_trace.rs`); without
+the feature every site compiles to nothing. `proofs/src/model_trace.rs` orders
+the nodes' events by time, names the nodes and the heads of one document, and
+writes the constants and the trace; the replay must take each event as a model
+step under the fixed design's knobs, keep `INV_TypeOK`, `INV_Bounded` and
+`INV_ObligationOwned`, and end settled: every intent registered, every head
+merged where its edges lead. `proofs/README.md` says how to run it and how to
+add a scenario.
+
+The node that logs an event is the acting node. From the events the replay
+reconstructs every variable: `merged`, `owed`, `outbox`, `pendDur`, `queue`,
+`back`, `slot`, `cursor`, `known`, `conn`, `pull`, `flood`, `contLive`,
+`contMade`, and the counters `crashes`, `regFails`, `discs` (each fault budget
+is the number of its events).
+
+| Event | Parameters | Logged at | Replays as |
+|---|---|---|---|
+| `Commit` | doc, head, parents | `coordinator/broadcast.rs` `push_document_to_replicators_with_creator`; `merge/txn_broadcaster.rs` `broadcast`, `merge/broadcast_mutator/batch.rs` `register_pending_static` and `merge/broadcast_mutator/mod.rs` delete, for a write without document JSON | `Commit`; `parents` gives the constant `Parent` |
+| `Register` | doc, receiver, head | `broadcast.rs` `admit_replicator_push`, once the recorder returned the marker's generation | `Register`; for a hub's forward of a head it merged, no step: the merge step lays that marker (`BeforeMark`) |
+| `RegFail` | doc, receiver, head, dropped | `admit_replicator_push`, when the recorder returned none; `dropped` is empty, since each peer's registration stands alone (F5) | `RegFail`; for a hub's forward, `ForwardFail` once per attempt |
+| `Admit` | doc, sender, head, outcome, superseded | `manager/process/pushlog.rs` `process_pushlog_with_provider_evidence`, once per push after `assert_pushlog_left_durable_state`: the outcome `process_block_inner` decided, or `nacked` for any error, including a join that timed out; a push that joined one in flight logs `covered` or `merged`. `superseded` is the in-memory retirement of `try_insert_pending_dag` with the durable one `PendingDagStorage::register` returns. The event carries the time the decision took effect (`registered`: just before the clock can see the record), so the dispatch it enables sorts after it | `registered`: `Push` taking the record branch, retiring only what `Superseded` allows; `merged`/`covered`: `Push`'s ack branch, with the model agreeing the head is merged or covered by ancestry; `nacked`: no step |
+| `Ack` | doc, receiver, head | `coordinator/push_worker.rs` `run_push_job` after `report_push_ack`; `merge/push_docs.rs` `retry_doc` per acknowledged head | no step; the marker is already gone |
+| `Schedule` | doc, head, `run`/`wait` | `coordinator/mod.rs` `dispatch_due_pending_dag_fetches`, after the claim; the clock took the source peer's permit with the slot (F8), and the mode says whether a global permit was free | `Schedule`, of this head, in this mode |
+| `Acquire` | head | `dag_fetcher.rs` `poll_fetch_dag`, a clock dispatch's attempt, after `DagFetchLimiter::acquire` | `Acquire` from `wait`; no step on a slot that runs |
+| `Progress` | head | `fetch_dag_attempt`, a partial rooted CAR | `Progress` for a `Trickle` head; no step otherwise |
+| `Merge` | doc, head | `replication/handlers.rs` `handle_block_received` after `forward_then_mark` (the forward, then `mark_as_merged`), and the batch path after `mark_batch_as_merged` | the completing `Progress`: merge, the forward's markers, discharge (`BeforeMark`); the hub's `Register` events before it are that forward |
+| `Stall` | head, `backoff` | `poll_fetch_dag`, a clock attempt that ended without the DAG, or a deferral before it took its permits | `StallStep` |
+| `Preempt` | head | `poll_fetch_dag`, a clock attempt cut at `CLOCK_ATTEMPT_QUANTUM` | `Preempt` |
+| `BecomeDue` | head | `dispatch_due_pending_dag_fetches`, for a root dispatched before | `BecomeDue`; no step for a root due already |
+| `Resync` | head | `pending_dag.rs` `resync_persisted_pending_dags_inner`, after admission | `Resync` of this head |
+| `Expire` | head, record removed | `pending_dag.rs`, one per root the TTL evicts, at every eviction: `evict_expired`, `try_insert_pending_dag` and `retry_pending_dag` | no step for an entry with no durable record; an acknowledged root never expires |
+| `PullStart`, `PullEnd` | provider | `poll_fetch_dag` around an attempt without a pending lease (doc sync, branchable sync) | `PullStart` from `PullPeer`, `PullEnd` |
+| `Crash` | node | `p2p-adapter/src/iroh_peer/peer.rs` `assemble`, at every start | `Crash`; also names the node's peer ID |
+| `RestoreReplicators` | | `assemble`, after `restore_iroh_p2p_state` | `RestoreReplicators`, or no step when replicators were restored first |
+| `Reconnect` | peer, `full`/`dialer` | `iroh/endpoint_commands.rs` `handle_dial` (`full`), `iroh/endpoint_rpc.rs` `connect_with_cache` for a new connection (`dialer`) | `Reconnect` of a down pair; no step for a pair already up |
+| `Disconnect` | peer | `iroh/endpoint_streams.rs`, the last connection to the peer closed | `Disconnect`; no step for a pair already down |
+
+The vocabulary also has `FloodOn`, `FloodOff`, `StartCont` and `EndCont`, which
+the code logs nowhere: the clock dispatches on a lane of its own, and local
+continuations start only for merges larger than a scenario writes.
+
+Two parts of the replay are looser than the model's own steps, both stated in
+`Trace_P2PDelivery.tla`: a traced `Stall` does not need the provider to be
+unreachable (the one-block DAG abstracts a window that fails while its provider
+serves, which is why `Stall` is split into its guard and `StallStep`), and a
+duplicate `Admit` of a head already acknowledged changes nothing.
+
+The fixed design's knobs are the contract the trace is held to. A run of a
+behaviour the design rules out fails the replay: a fetch that keeps its slot
+across retries fails at its `Stall{hold}` (#0a), a TTL expiry of an
+acknowledged root at its `Expire` (#0b, F10), a sibling acknowledged as covered
+at its `Admit` (F1). For F1, setting `CoverRule` to main's value in the
+generated configuration confirms the run is the known defect.
+
+| Configuration | Run | Verdict |
+|---|---|---|
+| `MC_P2PDelivery_Trace_TwoNode` | `a → b`: create, then update once b has it | GREEN, all 19 events (`TRACE:20`) |
+| `MC_P2PDelivery_Trace_HubRelay` | `a → h → b`: the same writes through the hub | GREEN, all 35 events (`TRACE:36`) |
+| `MC_P2PDelivery_Trace_Red_Unscheduled` | the hub relay run without its `Schedule` events | deadlock at the first `Acquire` (14) |
+| `MC_P2PDelivery_Trace_Red_PushBeforeMarker` | a's first marker registered after h admitted the push | deadlock at the `Admit` (11) |
+| `MC_P2PDelivery_Trace_Red_ExpireAfterAck` | the TTL drops h1 and its record right after h acknowledged it (#0b) | deadlock at the `Expire` (13): no TTL in the fixed design |
+| `MC_P2PDelivery_Trace_Red_ExpireDropsRecord` | the same expiry under `TtlMode = "Cancel"`, which unloads h1 but must keep its record (#0b) | deadlock at the `Expire` (13); with the record kept it replays past it |
+| `MC_P2PDelivery_Trace_Red_CoveredByNothing` | h acknowledges h1 as covered by nothing (F1 class) | deadlock at the `Admit` (12) |
+| `MC_P2PDelivery_Trace_Red_RetiresNonAncestor` | h's admission of h1 retires h2, no ancestor of h1 (F1 class) | deadlock at the `Admit` (12) |
+| `MC_P2PDelivery_Trace_Red_AckBeforeAdmit` | a acts on h's ack for h1 before h admitted it | deadlock at the `Ack` (12) |
+| `MC_P2PDelivery_Trace_Red_StallHolds` | h's first attempt for h1 gets nothing and keeps its slot (#0a) | deadlock at the `Stall` (16) |
+| `MC_P2PDelivery_Trace_Red_SlotBeforePermit` | h's dispatch of h1 parks on its slot for permits (F8) | deadlock at the `Schedule` (13) |
+| `MC_P2PDelivery_Trace_Red_DialerOnly` | a's connection to h serves only a (F27) | deadlock at the `Reconnect` (7) |
+| `MC_P2PDelivery_Trace_Red_Unsettled` | the run cut after the hub merged h2 | deadlock past the end (30) |
+
+Each RED row in `run-all.sh` names the index its replay must stop at
+(`DEADLOCK:<l>`), so a mutant that slips past the event it plants and fails
+later does not count, and each GREEN row the depth it must reach
+(`TRACE:<events + 1>`), so a replay that starts from no state does not pass.
