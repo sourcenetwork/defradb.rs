@@ -782,4 +782,12 @@ fn trusted_delete_graph_matches_model_and_refuses_other_waves() {
     assert!(!graph.matches_target("Settings", "different"));
     assert_eq!(graph.respond(&wave).unwrap().len(), 1);
     assert!(graph.respond(&wave).is_err());
+    let mut wrong_schema = schema.clone();
+    wrong_schema.fields.clear();
+    let invalid = json!({"approved":intent, "offered":intent, "authenticated":"caller", "snapshotValid":false, "authorized":true, "committed":true, "responseReceived":true});
+    let modeled = model("ClientSignedDelete.lean", &json!([invalid]));
+    assert_eq!(
+        ClientDeleteSignatures::from_snapshot(&wrong_schema, &doc_id, &snapshot, &signer).is_ok(),
+        modeled[0]["signs"].as_bool().unwrap()
+    );
 }

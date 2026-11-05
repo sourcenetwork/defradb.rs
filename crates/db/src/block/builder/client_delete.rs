@@ -1,6 +1,6 @@
 use defra_core::block::{Block, CompositeDeltaPayload, CrdtDelta, Signature};
 use defra_core::signing::{SigningConfig, SigningKeyType};
-use schema::CollectionVersion;
+use schema::{CType, CollectionVersion, FieldKind};
 
 use super::{client_waves::ClientWaves, compute_signature, ClientUpdateSnapshot};
 
@@ -45,6 +45,19 @@ impl ClientDeleteSignatures {
             || snapshot.versions.len() != 1
             || !snapshot.versions.contains(&schema.version_id)
             || schema.is_branchable
+            || snapshot.values.keys().any(|name| {
+                schema.field_by_name(name).is_none_or(|field| {
+                    field.crdt_type != CType::LwwRegister
+                        || field.relation_name.is_some()
+                        || !matches!(field.kind, FieldKind::Scalar(_) | FieldKind::ScalarArray(_))
+                })
+            })
+            || snapshot.immutable_fields.iter().any(|name| {
+                schema
+                    .field_by_name(name)
+                    .is_none_or(|field| !field.immutable)
+            })
+            || schema.field_by_name("C").is_some()
         {
             return Err(ClientDeleteError::UnsupportedSnapshot);
         }
