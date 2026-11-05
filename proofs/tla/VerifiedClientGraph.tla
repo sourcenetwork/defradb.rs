@@ -74,13 +74,13 @@ NacActive == scenario # "inactive"
 \* The document policy is inactive in the same deliberately unbound collection.
 DacActive == scenario # "inactive"
 \* An active NAC checks the User's own permission and has a bound provider.
-NacAllowed == scenario # "nac"
+NacAllowed == scenario \notin {"nac", "inactive"}
 \* An active DAC checks the User's own permission and has a bound provider.
-DacAllowed == scenario # "dac"
+DacAllowed == scenario \notin {"dac", "inactive"}
 \* An active NAC decision must share the transaction snapshot.
-NacBound == scenario # "nacBound"
+NacBound == scenario \notin {"nacBound", "inactive"}
 \* An active DAC decision must share the transaction snapshot.
-DacBound == scenario # "dacBound"
+DacBound == scenario \notin {"dacBound", "inactive"}
 
 \* The exact operation, signature and active authorization guards all apply.
 Admitted ==
