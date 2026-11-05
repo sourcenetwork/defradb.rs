@@ -478,6 +478,8 @@ jobs:
         run: cargo test -p p2p --features iroh-transport --lib iroh::endpoint_config::bind_tests::native_port_mapping_configuration_matches_executed_model -- --exact --ignored
       - name: Check client create graph model binding
         run: cargo test -p db --test block client_create_graph::trusted_create_graph_matches_model_and_rejects_unapproved_waves -- --exact --ignored
+      - name: Check normalized client create intent model binding
+        run: cargo test -p db --test block client_create_graph::normalized_agent_intent_preserves_explicit_null_and_datetime -- --exact --ignored
       - name: Check client create schema model binding
         run: cargo test -p db --lib write::create::schema_binding_tests::prepared_create_checks_immutable_definition_even_when_version_is_unchanged -- --exact --ignored
       - name: Check client signing admission model binding

@@ -19,6 +19,9 @@ lean_lib ClientSigningAdmission where
 lean_lib ClientCreateSchema where
 
 @[default_target]
+lean_lib ClientCreateIntent where
+
+@[default_target]
 lean_lib ClientCreateGraph where
 
 @[default_target]

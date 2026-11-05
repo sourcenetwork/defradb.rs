@@ -11,9 +11,9 @@ The model checks the logical partition and the exact link list. DAG-CBOR
 encoding, CID hashing, CRDT encoding, and cryptographic signatures are separate
 external premises. The concrete client must independently reconstruct the
 native blocks using the trusted schema; a remote collection version alone is
-not a trusted schema. Empty and null arrays follow the native document encoder.
-Rust owners: crates/db/src/block/builder/immutable.rs and compute.rs; proposed
-client create-graph validator. No client validator is implemented yet.
+not a trusted schema. Present nulls remain fields in the native block graph;
+omitted fields do not. Rust owners: crates/db/src/block/builder/immutable.rs,
+compute.rs, and client_create.rs.
 -/
 
 namespace ClientCreateGraph
