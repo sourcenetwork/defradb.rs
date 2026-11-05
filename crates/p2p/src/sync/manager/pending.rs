@@ -12,7 +12,8 @@ use kovan::Atom;
 use crate::sync::head_scope::{HeadVersion, Scope, ScopeDecision};
 use crate::ExplicitReplayAuthorization;
 
-/// Time-to-live for a pending DAG entry that was never acknowledged.
+/// Default time-to-live for a pending DAG entry that was never acknowledged
+/// (`SyncConfig::pending_dag_ttl`).
 ///
 /// Such entries older than this are evicted during insertion to prevent
 /// indefinitely stale DAGs from accumulating.
@@ -22,8 +23,8 @@ pub const PENDING_DAG_TTL: Duration = Duration::from_secs(300);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PendingOrigin {
     /// A sender's PushLog registered it. Once acknowledged it is the head's
-    /// one owner, so it leaves only on merge, quarantine or a newer head of
-    /// its scope.
+    /// one owner, so it leaves only on merge, quarantine or a head of its
+    /// scope that links it.
     Push,
     /// The resync sweep re-registered it from its durable record (a push
     /// acknowledged before a restart). It leaves as a `Push` entry does.
@@ -98,11 +99,11 @@ pub struct PendingDag {
 impl PendingDag {
     /// An entry expires only while it is not acknowledged. Once the sender has
     /// a success reply it has dropped its retry marker, so this entry is the
-    /// head's one owner: it stays until merge, quarantine or a newer head of
-    /// its scope, bounded by `max_pending_dags`. A local continuation does not
+    /// head's one owner: it stays until merge, quarantine or a head of its
+    /// scope that links it, bounded by `max_pending_dags`. A local continuation does not
     /// expire either; it ends when its merge stops yielding (`PendingOrigin`).
-    pub fn is_expired(&self, now: Instant) -> bool {
-        !self.is_recovery_registered && now.duration_since(self.inserted_at) >= PENDING_DAG_TTL
+    pub fn is_expired(&self, now: Instant, ttl: Duration) -> bool {
+        !self.is_recovery_registered && now.duration_since(self.inserted_at) >= ttl
     }
 }
 
@@ -133,25 +134,8 @@ impl PendingDagRegistry {
         self.current_by_source_scope.get(scope).copied()
     }
 
-    pub(super) fn scope_head_is_refresh_or_newer(
-        &self,
-        root_cid: Cid,
-        source_peer: Option<&str>,
-        collection_id: &str,
-        doc_id: &str,
-        head_priority: Option<u64>,
-    ) -> bool {
-        Scope::of(root_cid, source_peer, collection_id, doc_id, head_priority).is_some_and(
-            |(scope, version)| {
-                ScopeDecision::refreshes_or_supersedes(version, self.current(&scope))
-            },
-        )
-    }
-
-    /// True when a newer head for the same sender scope is the current
-    /// pending root, so this root is subsumed by an obligation that is
-    /// already registered.
-    pub(super) fn scope_head_is_covered_by_current(
+    /// Whether the scope of this head has a current head among the pending roots.
+    pub(super) fn has_scope_head(
         &self,
         root_cid: Cid,
         source_peer: Option<&str>,
@@ -160,7 +144,23 @@ impl PendingDagRegistry {
         head_priority: Option<u64>,
     ) -> bool {
         Scope::of(root_cid, source_peer, collection_id, doc_id, head_priority)
-            .is_some_and(|(scope, version)| ScopeDecision::covered(version, self.current(&scope)))
+            .is_some_and(|(scope, _)| self.current(&scope).is_some())
+    }
+
+    pub(super) fn scope_head_is_refresh_or_newer(
+        &self,
+        root_cid: Cid,
+        parents: &[Cid],
+        source_peer: Option<&str>,
+        collection_id: &str,
+        doc_id: &str,
+        head_priority: Option<u64>,
+    ) -> bool {
+        Scope::of(root_cid, source_peer, collection_id, doc_id, head_priority).is_some_and(
+            |(scope, version)| {
+                ScopeDecision::refreshes_or_supersedes(version, parents, self.current(&scope))
+            },
+        )
     }
 
     fn scope_of(root_cid: Cid, dag: &PendingDag) -> Option<(Scope, HeadVersion)> {
@@ -173,16 +173,21 @@ impl PendingDagRegistry {
         )
     }
 
-    pub(super) fn scope_head_decision(&self, root_cid: Cid, dag: &PendingDag) -> ScopeDecision {
+    pub(super) fn scope_head_decision(
+        &self,
+        root_cid: Cid,
+        parents: &[Cid],
+        dag: &PendingDag,
+    ) -> ScopeDecision {
         match Self::scope_of(root_cid, dag) {
             None => ScopeDecision::Independent,
-            Some((scope, version)) => ScopeDecision::of(version, self.current(&scope)),
+            Some((scope, version)) => ScopeDecision::of(version, parents, self.current(&scope)),
         }
     }
 
-    /// Whether any entry has expired at `now`.
-    pub(super) fn has_expired(&self, now: Instant) -> bool {
-        self.roots.values().any(|dag| dag.is_expired(now))
+    /// Whether any entry has expired at `now` under `ttl`.
+    pub(super) fn has_expired(&self, now: Instant, ttl: Duration) -> bool {
+        self.roots.values().any(|dag| dag.is_expired(now, ttl))
     }
 
     pub(super) fn snapshot(&self, root_cid: &Cid) -> Option<PendingDag> {
@@ -208,8 +213,13 @@ impl PendingDagRegistry {
             }
         }
         if let Some((scope, version)) = Self::scope_of(root_cid, &dag) {
-            self.current_by_source_scope
-                .insert(Arc::new(scope), version);
+            if self
+                .current(&scope)
+                .is_none_or(|current| version >= current)
+            {
+                self.current_by_source_scope
+                    .insert(Arc::new(scope), version);
+            }
         }
         self.roots.insert(root_cid, Arc::new(dag));
         previous

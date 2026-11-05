@@ -70,12 +70,16 @@ impl PendingDagStorage for PooledPendingStore {
         view: &Arc<PersistedView>,
     ) -> Result<Admission> {
         let (root, capacity) = (registration.root, registration.capacity);
+        let parents = registration.parents.to_vec();
+        let peer_capacity = registration.peer_capacity;
         let (record, view) = (registration.record.clone(), Arc::clone(view));
         self.on_pool(move |inner| async move {
             let registration = Registration {
                 root,
+                parents: &parents,
                 record: &record,
                 capacity,
+                peer_capacity,
             };
             inner.register(registration, &view).await
         })

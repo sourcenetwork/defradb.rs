@@ -18,8 +18,7 @@ forwarders:
   `dag_fetcher.rs`.
 - `p2p_doc_pusher.rs` / `transport_doc_pusher.rs` — one-line delegation to
   `db::merge::push_existing_docs`.
-- `acp_adapter.rs`, `doc_acp_adapter.rs`, `nac_adapter.rs`, `txn_adapter.rs`,
-  etc. — trait impls over `acp` / `db` calls.
+- `doc_acp_adapter.rs` and `nac_adapter.rs` — trait impls over `acp` / `db` calls.
 
 ## Candidates
 | name | kind | property | already-modeled | priority |

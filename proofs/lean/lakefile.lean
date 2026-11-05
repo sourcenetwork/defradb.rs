@@ -4,6 +4,9 @@ open Lake DSL
 package defraConvergence where
 
 @[default_target]
+lean_lib LocalFetchPermit where
+
+@[default_target]
 lean_lib HttpRouterComposition where
 
 @[default_target]
@@ -149,3 +152,6 @@ lean_lib HttpClient where
 
 @[default_target]
 lean_lib Arbitration where
+
+@[default_target]
+lean_lib RequestDrain where

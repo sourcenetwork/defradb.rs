@@ -39,7 +39,7 @@ const SELECTIVE_FETCH_BATCH_SIZE: usize = 2048;
 /// Iroh bounds its request/response read at 30 seconds. The receiver owner must
 /// outlive that bound so the transport completion event, rather than a racing
 /// shorter poll window, decides when a productive CAR stream is reaped.
-pub(super) const BLOCK_SYNC_COMPLETION_WATCHDOG: Duration = Duration::from_secs(35);
+pub const BLOCK_SYNC_COMPLETION_WATCHDOG: Duration = Duration::from_secs(35);
 
 // The free refusals of one attempt together cost at most one fetch window.
 const _: () = assert!(
@@ -98,7 +98,8 @@ enum ProviderWindowOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum FetchAttemptOutcome {
-    Complete,
+    /// The DAG is local; carries the root block.
+    Complete(bytes::Bytes),
     /// The missing block count, and why this attempt's windows failed.
     Incomplete(usize, FetchFailures),
     Deferred,
@@ -135,15 +136,18 @@ pub(crate) enum FetchTaskEnd {
 ///
 /// A limiter permit is held only for the duration of each attempt — it is
 /// released during backoff sleeps so a fetch stuck on dead providers does not
-/// starve other roots under fan-in pressure. Every issued transport query is
-/// reaped via `cancel_sync` at the end of its poll window, so releasing the
-/// permit never leaves stalled fetch work running in the transport.
+/// starve other roots under fan-in pressure, and before a complete DAG waits
+/// for room in the merge loop's channel. A clock-dispatched fetch arrives
+/// with its source peer's permit, taken together with its slot, and waits
+/// only for a global one. Every issued transport query is reaped via
+/// `cancel_sync` at the end of its poll window, so releasing the permit never
+/// leaves stalled fetch work running in the transport.
 pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
     transport: T,
     blockstore: Arc<B>,
     event_tx: mpsc::Sender<SyncEvent>,
     root_cid: Cid,
-    context: DagFetchContext,
+    mut context: DagFetchContext,
     limiter: DagFetchLimiter,
     diagnostics: Arc<SyncDiagnostics>,
 ) -> (FetchTaskEnd, AttemptSample) {
@@ -179,6 +183,7 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
             .await
             .is_ok_and(|missing| missing.is_empty())
         {
+            drop(context.take_peer_permit());
             emit_dag_ready(&event_tx, root_cid, &context, &root_data).await;
             return (FetchTaskEnd::Settled, AttemptSample::Complete);
         }
@@ -196,6 +201,7 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
             providers = ?providers.peers(),
             "Deferring pending DAG fetch until a qualified provider reconnects"
         );
+        trace_stall(&context, root_cid);
         return (FetchTaskEnd::Settled, AttemptSample::Skipped);
     }
 
@@ -233,7 +239,8 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
 
         // A shed attempt repeats in place without consuming `attempt`.
         let outcome = loop {
-            let Some(permits) = limiter.acquire(&context.source_peer).await else {
+            let reserved = context.take_peer_permit();
+            let Some(permits) = limiter.acquire(&context.source_peer, reserved).await else {
                 debug!(
                     root_cid = %root_cid,
                     doc_id = %context.doc_id,
@@ -245,19 +252,18 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
             if !context.is_current() {
                 return (FetchTaskEnd::Settled, sample);
             }
+            trace_permits_taken(&context, root_cid);
             let started = Instant::now();
             let mut state = ProviderFetchState::new(&mut providers, health, diagnostics.as_ref())
                 .with_quantum(context.is_clock_owned());
-            let outcome = fetch_dag_attempt(
-                &transport,
-                &blockstore,
-                &event_tx,
-                root_cid,
-                &context,
-                &mut state,
-            )
-            .await;
+            let outcome =
+                fetch_dag_attempt(&transport, &blockstore, root_cid, &context, &mut state).await;
             sample = attempt_sample(&outcome, started.elapsed(), providers.attempt_progressed());
+            if !context.is_clock_owned() {
+                crate::model_trace!(PullEnd {
+                    provider: context.source_peer.as_str(),
+                });
+            }
             if outcome != FetchAttemptOutcome::ProviderBusy || busy_retries == 0 {
                 break outcome;
             }
@@ -275,15 +281,20 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
         };
 
         match outcome {
-            FetchAttemptOutcome::Complete => return (FetchTaskEnd::Settled, sample),
+            FetchAttemptOutcome::Complete(root_data) => {
+                emit_dag_ready(&event_tx, root_cid, &context, &root_data).await;
+                return (FetchTaskEnd::Settled, sample);
+            }
             FetchAttemptOutcome::Unservable => {
                 error!(root_cid = %root_cid, providers = ?providers.peers(),
                     "Providers cannot serve the remaining DAG within their CAR byte limits; stopping this fetch");
+                trace_stall(&context, root_cid);
                 return (FetchTaskEnd::Settled, sample);
             }
             FetchAttemptOutcome::Incomplete(remaining, failures) => {
                 remaining_count = remaining;
                 last_failures = failures;
+                trace_stall(&context, root_cid);
             }
             FetchAttemptOutcome::Deferred => {
                 diagnostics.record_pending_dag_fetch_deferred_contention();
@@ -291,12 +302,14 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
                     root_cid = %root_cid,
                     "CAR ingest coalesced behind a storage owner; deferring to the per-root clock"
                 );
+                trace_stall(&context, root_cid);
                 return (FetchTaskEnd::Settled, sample);
             }
             FetchAttemptOutcome::ProviderBusy => {
                 diagnostics.record_pending_dag_fetch_deferred_busy();
                 debug!(root_cid = %root_cid, providers = ?providers.peers(),
                     "A provider shed the fetch as busy and none delivered; deferring to the per-root clock");
+                trace_stall(&context, root_cid);
                 return (FetchTaskEnd::Settled, sample);
             }
             FetchAttemptOutcome::Preempted => {
@@ -305,6 +318,11 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
                     quantum_secs = CLOCK_ATTEMPT_QUANTUM.as_secs(),
                     "DAG fetch still making progress at its quantum; giving its slot back"
                 );
+                if context.is_clock_owned() {
+                    crate::model_trace!(Preempt {
+                        head: root_cid.to_string(),
+                    });
+                }
                 return (FetchTaskEnd::Preempted, sample);
             }
         }
@@ -367,7 +385,7 @@ fn attempt_sample(
     progressed: bool,
 ) -> AttemptSample {
     match outcome {
-        FetchAttemptOutcome::Complete => AttemptSample::Complete,
+        FetchAttemptOutcome::Complete(_) => AttemptSample::Complete,
         FetchAttemptOutcome::ProviderBusy => AttemptSample::Shed { progressed },
         FetchAttemptOutcome::Preempted => AttemptSample::Preempted,
         FetchAttemptOutcome::Incomplete(..) => AttemptSample::Incomplete {
@@ -376,6 +394,31 @@ fn attempt_sample(
             progressed,
         },
         FetchAttemptOutcome::Deferred | FetchAttemptOutcome::Unservable => AttemptSample::Skipped,
+    }
+}
+
+/// Records the permits a fetch just took: a clock dispatch's attempt, or an
+/// advisory pull.
+fn trace_permits_taken(context: &DagFetchContext, root_cid: Cid) {
+    if context.is_clock_owned() {
+        crate::model_trace!(Acquire {
+            head: root_cid.to_string(),
+        });
+    } else {
+        crate::model_trace!(PullStart {
+            provider: context.source_peer.as_str(),
+        });
+    }
+}
+
+/// Records a clock-owned attempt that ended without the DAG; its slot goes
+/// back and the root is due after a backoff.
+fn trace_stall(context: &DagFetchContext, root_cid: Cid) {
+    if context.is_clock_owned() {
+        crate::model_trace!(Stall {
+            head: root_cid.to_string(),
+            end: crate::model_trace::StallEnd::Backoff,
+        });
     }
 }
 
@@ -531,7 +574,6 @@ pub(crate) async fn add_collection_providers<T: P2PTransport>(
 async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
     transport: &T,
     blockstore: &Arc<B>,
-    event_tx: &mpsc::Sender<SyncEvent>,
     root_cid: Cid,
     context: &DagFetchContext,
     state: &mut ProviderFetchState<'_>,
@@ -621,14 +663,18 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
                 .unwrap_or_default();
             if missing.is_empty() {
                 info!(root_cid = %root_cid, doc_id = %context.doc_id, "DAG fetch complete via rooted CAR");
-                emit_dag_ready(event_tx, root_cid, context, &root_data).await;
-                return FetchAttemptOutcome::Complete;
+                return FetchAttemptOutcome::Complete(root_data);
             }
             debug!(
                 root_cid = %root_cid,
                 missing_count = missing.len(),
                 "CAR fetch was partial, falling through to selective block fetch"
             );
+            if context.is_clock_owned() {
+                crate::model_trace!(Progress {
+                    head: root_cid.to_string(),
+                });
+            }
         }
     }
 
@@ -752,8 +798,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
 
     if remaining.is_empty() {
         info!(root_cid = %root_cid, doc_id = %context.doc_id, "DAG fetch complete");
-        emit_dag_ready(event_tx, root_cid, context, &root_data).await;
-        FetchAttemptOutcome::Complete
+        FetchAttemptOutcome::Complete(root_data)
     } else if unservable {
         FetchAttemptOutcome::Unservable
     } else {

@@ -92,6 +92,9 @@ impl<S: Store + 'static> IrohPeer<S> {
             p2p::iroh::spawn_endpoint(endpoint, edge.clone()).await?;
         let transport = IrohTransport::new(command_tx, secret_key);
         let local_peer_id = transport.local_peer_id().to_string();
+        p2p::model_trace!(Crash {
+            node: &local_peer_id,
+        });
 
         let blockstore = Arc::new(
             IrohBlockstore::new(Arc::clone(&store), true)
@@ -341,6 +344,7 @@ impl<S: Store + 'static> IrohPeer<S> {
         );
         let restored_doc_ids =
             crate::restore_iroh_p2p_state(Arc::clone(&store), &transport, &coordinator).await;
+        p2p::model_trace!(RestoreReplicators);
         let mut adapter = IrohP2PAdapter::with_full_context(
             transport.clone(),
             Arc::clone(&coordinator),

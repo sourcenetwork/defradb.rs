@@ -314,10 +314,16 @@ impl Node {
     ) -> QueryResponse {
         let request = self.with_default_query_identity(request);
         let Some(node_identity_did) = self.node_identity_did.as_deref() else {
-            return match txn_handle {
-                Some(handle) => self.runner.execute_in_txn(request, &handle).await,
-                None => execute_autocommit_request(self.runner.as_ref(), request).await,
-            };
+            let runner = Arc::clone(&self.runner);
+            return self
+                .as_request(async move {
+                    match txn_handle {
+                        Some(handle) => runner.execute_in_txn(request, &handle).await,
+                        None => execute_autocommit_request(runner.as_ref(), request).await,
+                    }
+                })
+                .await
+                .unwrap_or_else(signed_query::refused_response);
         };
 
         #[cfg(target_arch = "wasm32")]
@@ -343,7 +349,7 @@ impl Node {
 
         #[cfg(not(target_arch = "wasm32"))]
         execute_with_signing_context(
-            network.edge(),
+            network.requests(),
             self.runner.clone(),
             request,
             txn_handle,
@@ -351,6 +357,23 @@ impl Node {
             node_identity_did.to_string(),
         )
         .await
+    }
+
+    /// Runs in-process work that may write as a task of the node's request
+    /// scope, as a signed query runs: admitted and counted until it ends, with
+    /// no deadline of its own, so shutdown drains it before P2P stops
+    /// recording head markers, refused once shutdown stops admitting requests,
+    /// and run to its end if its caller stops waiting. A node with no network
+    /// has no P2P, and runs it in place.
+    async fn as_request<F>(&self, work: F) -> std::result::Result<F::Output, edge::EdgeError>
+    where
+        F: std::future::Future + defra_core::thread_bounds::MaybeSend + 'static,
+        F::Output: defra_core::thread_bounds::MaybeSend + 'static,
+    {
+        match self.network.as_ref() {
+            Some(network) => network.requests().spawn(work).within(Duration::MAX).await,
+            None => Ok(work.await),
+        }
     }
 
     fn with_default_query_identity(&self, mut request: QueryRequest) -> QueryRequest {
@@ -557,23 +580,46 @@ impl Node {
 
     /// Begin a manually finalized transaction. Dropping its handle does not
     /// roll it back; use [`Self::begin_transaction_guard`] for scope ownership.
+    ///
+    /// Begun as a request (see [`Self::shutdown`]).
     pub async fn begin_transaction(
         &self,
         readonly: bool,
     ) -> Result<TransactionHandle, query::TransactionError> {
-        self.runner
-            .begin_txn_as(&self.node_context(), readonly)
-            .await
+        self.begin_owned_transaction(self.node_context(), readonly)
+            .await?
+            .into_handle()
+    }
+
+    async fn begin_owned_transaction(
+        &self,
+        context: RequestContext,
+        readonly: bool,
+    ) -> Result<transaction::OwnedTransaction, query::TransactionError> {
+        let runner = Arc::clone(&self.runner);
+        self.as_request(async move {
+            let handle = runner.begin_txn_as(&context, readonly).await?;
+            Ok(transaction::OwnedTransaction::new(runner, handle))
+        })
+        .await
+        .unwrap_or_else(|error| Err(refused_transaction(error, "begun")))
     }
 
     /// Commit a transaction owned by this node.
+    ///
+    /// The commit is admitted as a request (see [`Self::shutdown`]): once
+    /// shutdown stops admitting requests it is refused, uncommitted, rather
+    /// than committing after P2P stopped recording its head markers.
     pub async fn commit_transaction(
         &self,
         transaction: &TransactionHandle,
     ) -> Result<(), query::TransactionError> {
-        self.runner
-            .commit_txn_as(&self.node_context(), transaction)
+        let runner = Arc::clone(&self.runner);
+        let context = self.node_context();
+        let transaction = transaction.clone();
+        self.as_request(async move { runner.commit_txn_as(&context, &transaction).await })
             .await
+            .unwrap_or_else(|error| Err(refused_transaction(error, "committed")))
     }
 
     /// Roll back a transaction owned by this node.
@@ -747,10 +793,13 @@ impl Node {
     }
 
     /// [`Self::execute`] as `context` serves, rather than as the node.
+    /// Admitted as a request (see [`Self::shutdown`]).
     pub async fn execute_as(&self, context: &RequestContext, query_str: &str) -> QueryResponse {
-        self.runner
-            .execute(QueryRequest::new(query_str).with_context(context.clone()))
+        let runner = Arc::clone(&self.runner);
+        let request = QueryRequest::new(query_str).with_context(context.clone());
+        self.as_request(async move { runner.execute(request).await })
             .await
+            .unwrap_or_else(signed_query::refused_response)
     }
 
     /// Add an equality encrypted (searchable-encryption) index on `field_name`
@@ -842,17 +891,45 @@ impl Node {
         #[cfg(not(target_arch = "wasm32"))]
         self.background_tasks.shutdown().await;
 
-        // The transport and the tasks around it stop first and are awaited, so
+        // Requests first: no new signed query, in-process query, transaction
+        // commit or HTTP request is admitted, and those in flight finish while
+        // P2P still records their writes' durable head markers.
+        if let Some(network) = &self.network {
+            network.drain_requests().await;
+        }
+
+        // The transport and the tasks around it stop next and are awaited, so
         // none still reaches storage when the drain and the close come.
         #[cfg(feature = "managed-p2p")]
         if let Some(p2p) = &self.p2p {
             p2p.stop_transport().await;
         }
 
-        // Stop accepting the node's network work (signed queries, the HTTP
-        // server's accept loop) and drain what is in flight.
+        // Stop accepting the rest of the node's network work and drain what is
+        // in flight.
         if let Some(network) = &self.network {
             network.drain().await;
+        }
+
+        // Nothing opens a transaction for the node any more: those left open
+        // (a client gone mid-transaction, a commit refused above) end while
+        // their owners' workers still run, so the store's close does not
+        // wait out its timeout for them.
+        match self
+            .txn_registry
+            .cleanup_stale_transactions(Duration::ZERO)
+            .await
+        {
+            Ok(ended) if ended.cleaned > 0 => {
+                tracing::info!(
+                    ended = ended.cleaned,
+                    "shutdown ended transactions left open"
+                );
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(%error, "shutdown could not end the transactions left open");
+            }
         }
 
         // Nothing reaches the data path any more: the worker pool finishes
@@ -927,6 +1004,16 @@ impl Node {
             notified.await;
         }
     }
+}
+
+/// The error of a transaction step whose request task never finished.
+fn refused_transaction(error: edge::EdgeError, step: &str) -> query::TransactionError {
+    query::TransactionError::Execution(match error {
+        edge::EdgeError::Closed => {
+            format!("the node is shutting down; the transaction was not {step}")
+        }
+        error => format!("transaction task failed: {error}"),
+    })
 }
 
 /// Adds the encrypted index [`Node::add_encrypted_index`] names, on

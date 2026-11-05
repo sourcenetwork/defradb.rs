@@ -30,6 +30,9 @@ use storage::RegolithStore;
 #[path = "continuation_tests.rs"]
 mod continuation_tests;
 
+#[path = "forward_tests.rs"]
+mod forward_tests;
+
 fn test_cid() -> Cid {
     Cid::from_str("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi").unwrap()
 }
@@ -2240,7 +2243,7 @@ async fn dispatch_one_pending_dag_fetch(
         DefraBlockstore<RegolithStore>,
         PollFetchTransport,
     >,
-    events: &mut crate::rt::mpsc::Receiver<SyncEvent>,
+    events: &mut crate::sync::SyncEventReceiver,
     root_cid: Cid,
 ) {
     assert_eq!(
@@ -2731,7 +2734,7 @@ async fn test_run_serializes_duplicate_cids() {
 
     ReplicationLoop::run(
         Arc::new(coordinator),
-        rx,
+        rx.into(),
         handler.clone(),
         ReplicationConfig::default(),
         move |result| {
@@ -2879,7 +2882,7 @@ async fn test_run_uses_one_observable_batch_merge_pipeline() {
     let observed_merges_for_loop = observed_merges.clone();
     ReplicationLoop::run(
         Arc::new(coordinator),
-        rx,
+        rx.into(),
         handler.clone(),
         ReplicationConfig::default(),
         move |result| {
@@ -2913,7 +2916,7 @@ async fn test_process_next_batch_caps_drain_at_config_batch_size() {
     .await
     .unwrap();
 
-    let (tx, mut rx) = mpsc::channel(16);
+    let (tx, rx) = mpsc::channel(16);
     for i in 0..10 {
         let data = format!("block{}", i);
         let cid = make_cid(data.as_bytes());
@@ -2938,14 +2941,15 @@ async fn test_process_next_batch_caps_drain_at_config_batch_size() {
     };
     let handler = BatchTestHandler::new();
 
+    let mut events = crate::sync::SyncEventReceiver::from(rx);
     let results =
-        ReplicationLoop::process_next_batch(&coordinator, &mut rx, &handler, &config).await;
+        ReplicationLoop::process_next_batch(&coordinator, &mut events, &handler, &config).await;
 
     assert_eq!(results.len(), 3);
     assert_eq!(handler.batch_calls(), 1);
     assert_eq!(handler.batch_block_count(), 3);
     assert_eq!(
-        std::iter::from_fn(|| rx.try_recv().ok()).count(),
+        std::iter::from_fn(|| events.try_recv().ok()).count(),
         7,
         "remaining backlog must stay queued"
     );

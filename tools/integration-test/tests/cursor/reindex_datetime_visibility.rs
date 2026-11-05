@@ -10,7 +10,7 @@
 //! production "#72" bug (3,505 of 4,540 CodingSessions hidden after a reindex).
 //!
 //! The reindex is triggered the same way prod hit it: registering a lens
-//! migration (`maybe_reindex_after_migration` → `reindex.rs`).
+//! migration (`set.rs` records the owed rebuild, which `owed.rs` settles).
 
 use integration_test::{DefraClient, TestCluster};
 use serde_json::Value;
