@@ -22,6 +22,22 @@ fn actor() -> (identity::RawIdentity, SigningConfig) {
     )
 }
 
+async fn assert_user_signed_block(node: &Node, cid: &str, user_did: &str, signing: &SigningConfig) {
+    let (block_bytes, signature_bytes) = node
+        .authorized_signed_block_bytes(cid, Some(user_did))
+        .await
+        .unwrap();
+    let mut block = defra_core::block::Block::from_dag_cbor(&block_bytes).unwrap();
+    let signature = defra_core::block::Signature::from_dag_cbor(&signature_bytes).unwrap();
+    assert_eq!(block.generate_cid().unwrap().to_string(), cid);
+    assert_eq!(block.signature.take(), Some(signature.generate_cid().unwrap()));
+    assert_eq!(signature.header.sig_type, defra_core::block::SignatureType::EdDSA);
+    assert_eq!(signature.header.identity.as_slice(), signing.public_key_hex.as_bytes());
+    let public = crypto::public_key_from_string(crypto::KeyType::Ed25519, &signing.public_key_hex).unwrap();
+    assert_eq!(public.did().unwrap(), user_did);
+    assert!(public.verify(&block.to_dag_cbor().unwrap(), &signature.value).unwrap());
+}
+
 #[test]
 fn verified_user_create_shares_node_transaction_with_agent_effects() {
     const POLICY: &str = r#"
@@ -112,20 +128,7 @@ resources:
         let cid = row["_version"][0]["cid"].as_str().unwrap().to_owned();
         node.commit_transaction(&txn).await.unwrap();
         assert!(node.verified_block_signer_did(&cid).await.is_err());
-        let (block_bytes, signature_bytes) = node
-            .authorized_signed_block_bytes(&cid, Some(&user_did))
-            .await
-            .unwrap();
-        let mut block = defra_core::block::Block::from_dag_cbor(&block_bytes).unwrap();
-        let signature = defra_core::block::Signature::from_dag_cbor(&signature_bytes).unwrap();
-        assert_eq!(block.signature.take(), Some(signature.generate_cid().unwrap()));
-        let public = crypto::public_key_from_string(
-            crypto::KeyType::Ed25519,
-            &user_config.public_key_hex,
-        )
-        .unwrap();
-        assert_eq!(public.did().unwrap(), user_did);
-        assert!(public.verify(&block.to_dag_cbor().unwrap(), &signature.value).unwrap());
+        assert_user_signed_block(&node, &cid, &user_did, &user_config).await;
         let txn = node.begin_transaction(false).await.unwrap();
         let next_marker = query::QueryRequest::new("mutation { create_Marker(input:{name:\"must-rollback\"}) {_docID} }")
             .with_identity(Some(agent.did().unwrap()));
@@ -223,7 +226,7 @@ fn verified_update_and_delete_use_exact_actor_and_transaction_state() {
         let result = node.execute_verified_mutation_in_txn(update_request(&user_did), &txn, &update).await;
         assert!(!result.has_errors(), "{:?}", result.errors);
         node.commit_transaction(&txn).await.unwrap();
-        assert_eq!(node.verified_block_signer_did(&update_cid).await.unwrap(), user_did);
+        assert_user_signed_block(&node, &update_cid, &user_did, &signing).await;
         let agent_signer = EmbeddedSigner::from_config(agent_signing).unwrap();
         let txn = node.begin_transaction(false).await.unwrap();
         let marker = query::QueryRequest::new("mutation { create_VerifiedMarker(input:{name:\"must-rollback\"}) {_docID} }")
@@ -282,7 +285,7 @@ fn verified_update_and_delete_use_exact_actor_and_transaction_state() {
         let result = node.execute_verified_mutation_in_txn(delete_request(), &txn, &delete).await;
         assert!(!result.has_errors(), "{:?}", result.errors);
         node.commit_transaction(&txn).await.unwrap();
-        assert_eq!(node.verified_block_signer_did(&delete_cid).await.unwrap(), user_did);
+        assert_user_signed_block(&node, &delete_cid, &user_did, &signing).await;
         let retained = node.execute_request(query::QueryRequest::new("{ VerifiedRecord {_docID} }").with_identity(Some(user.did().unwrap()))).await;
         assert!(retained.data.unwrap()["VerifiedRecord"].as_array().unwrap().is_empty());
         node.shutdown().await.unwrap();
