@@ -708,7 +708,37 @@ RUNS=(
   "MC_CoordinatorShutdown_Red_NoPrunerWait.cfg CoordinatorShutdown.tla RED" # the drain does not wait for pruners: a handle out with a pruner comes back after the drain (INV_NoLeak)
   "MC_CoordinatorShutdown_Red_PrunerIgnoresFlag.cfg CoordinatorShutdown.tla RED" # the code as it stands, the pruner never reads the flag: a pruner that starts after the drain's check puts a live handle back (INV_NoLeak)
   "MC_CoordinatorShutdown_Red_NoRecheck.cfg CoordinatorShutdown.tla RED" # register_task never reads the flag again: a handle pushed after the drain runs on (INV_NoLeak)
-)
+ )
+
+# Each actual caller uses the same checked frontier contract; fault-injection
+# tests bind these abstract route labels to their distinct Rust control paths.
+for route in Initial Rooted Final DocSync Branchable Push Car Resync Pending; do
+  for outcome in Bytes None Error ParseError HasFalse HasError; do
+    RUNS+=("MC_UnreadChildRead_Green_${route}_${outcome}.cfg UnreadChildRead.tla GREEN")
+  done
+done
+for mutation in SkipNone SkipError SwallowError ContradictionMissing HasErrorMissing DocSyncDrop; do
+  RUNS+=("MC_UnreadChildRead_Red_${mutation}.cfg UnreadChildRead.tla RED")
+done
+for scenario in Clock ClockEventually Reply ReplyEventually Push; do
+  RUNS+=("MC_UnreadChildOwnership_Green_${scenario}.cfg UnreadChildOwnership.tla GREEN")
+done
+for mutation in Drop Inline Ack Cancel Restart Supersede EarlyReply HoldReply BlamePeer IgnoreReply; do
+  RUNS+=("MC_UnreadChildOwnership_Red_${mutation}.cfg UnreadChildOwnership.tla RED")
+done
+
+RUNS+=("MC_UnreadChildMixedReply_Green.cfg UnreadChildMixedReply.tla GREEN")
+RUNS+=("MC_UnreadChildMixedReply_Red_ForgetLocal.cfg UnreadChildMixedReply.tla RED")
+for mutation in Unservable Deferred ProviderBusy; do
+  RUNS+=("MC_UnreadChildMixedReply_Red_${mutation}.cfg UnreadChildMixedReply.tla RED")
+done
+
+for scenario in Reply Clock Unavailable; do
+  RUNS+=("MC_UnreadChildPreflight_Green_${scenario}.cfg UnreadChildPreflight.tla GREEN")
+done
+for mutation in DropReply HoldClock SilentUnavailable; do
+  RUNS+=("MC_UnreadChildPreflight_Red_${mutation}.cfg UnreadChildPreflight.tla RED")
+done
 
 parallelism="${TLA_JOBS:-4}"
 case "$parallelism" in

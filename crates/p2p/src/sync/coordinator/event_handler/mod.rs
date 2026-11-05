@@ -1591,4 +1591,188 @@ mod tests {
         ));
         assert!(events.try_recv().is_err());
     }
+    /// A DocSync remerge must not treat an unreadable child as complete.
+    #[nuclei::test]
+    async fn doc_sync_walker_error_does_not_emit_block_received_for_unread_child() {
+        use blockstore::Blockstore;
+        use multihash_codetable::{Code, MultihashDigest};
+        let store = Arc::new(DefraBlockstore::new(
+            Arc::new(RegolithStore::in_memory().unwrap()),
+            true,
+        ));
+        let bad_data = [0xff];
+        assert!(crate::sync::manager::links::extract_ipld_links(&bad_data).is_err());
+        let bad_cid = Cid::new_v1(0x71, Code::Sha2_256.digest(&bad_data));
+        store.put(&bad_cid, &bad_data).await.unwrap();
+        let root = Block::new(
+            CrdtDelta::Composite(CompositeDeltaPayload {
+                collection_version_id: "schema".into(),
+                priority: 1,
+                status: 1,
+            }),
+            vec![],
+            vec![DAGLink::new("name", bad_cid)],
+        );
+        let root_cid = root.generate_cid().unwrap();
+        store
+            .put(&root_cid, &root.to_dag_cbor().unwrap())
+            .await
+            .unwrap();
+        assert!(!store.is_merged(&root_cid).await.unwrap());
+        let (coordinator, mut events) = SyncCoordinator::new(
+            TestTransport::new(),
+            store,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .unwrap();
+        let outcome = coordinator
+            .handle_doc_sync_reply(
+                PeerId::new("source".into()),
+                DocSyncReply::success(
+                    "request",
+                    vec![crate::message::DocSyncItem {
+                        doc_id: "doc".into(),
+                        heads: vec![root_cid.to_bytes()],
+                    }],
+                ),
+            )
+            .await;
+        assert!(
+            outcome.is_err(),
+            "the walker error must be reported to the caller"
+        );
+        assert!(
+            events.try_recv().is_err(),
+            "do not emit an incomplete block for merge"
+        );
+        coordinator.shutdown().await;
+    }
+
+    #[nuclei::test]
+    async fn doc_sync_bad_walk_does_not_block_a_later_complete_root() {
+        use blockstore::Blockstore;
+        use multihash_codetable::{Code, MultihashDigest};
+        let store = Arc::new(DefraBlockstore::new(
+            Arc::new(RegolithStore::in_memory().unwrap()),
+            true,
+        ));
+        let bad_data = [0xff];
+        let bad_child = Cid::new_v1(0x71, Code::Sha2_256.digest(&bad_data));
+        store.put(&bad_child, &bad_data).await.unwrap();
+        let bad_root = Block::new(
+            CrdtDelta::Composite(CompositeDeltaPayload {
+                collection_version_id: "schema".into(),
+                priority: 1,
+                status: 1,
+            }),
+            vec![],
+            vec![DAGLink::new("name", bad_child)],
+        );
+        let bad_cid = bad_root.generate_cid().unwrap();
+        store
+            .put(&bad_cid, &bad_root.to_dag_cbor().unwrap())
+            .await
+            .unwrap();
+        let good_root = Block::new(
+            CrdtDelta::Composite(CompositeDeltaPayload {
+                collection_version_id: "schema".into(),
+                priority: 2,
+                status: 1,
+            }),
+            vec![],
+            vec![],
+        );
+        let good_cid = good_root.generate_cid().unwrap();
+        store
+            .put(&good_cid, &good_root.to_dag_cbor().unwrap())
+            .await
+            .unwrap();
+        let (coordinator, mut events) = SyncCoordinator::new(
+            TestTransport::new(),
+            store,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .unwrap();
+        let results = vec![
+            crate::message::DocSyncItem {
+                doc_id: "bad".into(),
+                heads: vec![bad_cid.to_bytes()],
+            },
+            crate::message::DocSyncItem {
+                doc_id: "good".into(),
+                heads: vec![good_cid.to_bytes()],
+            },
+        ];
+        let outcome = coordinator
+            .handle_doc_sync_reply(
+                PeerId::new("source".into()),
+                DocSyncReply::success("request", results),
+            )
+            .await;
+        assert!(
+            outcome.is_err(),
+            "the bad root's walk failure must be reported"
+        );
+        assert!(
+            matches!(events.try_recv(), Ok(SyncEvent::BlockReceived { cid, .. }) if cid == good_cid)
+        );
+        assert!(events.try_recv().is_err());
+        coordinator.shutdown().await;
+    }
+
+    #[nuclei::test]
+    async fn pushlog_does_not_acknowledge_a_root_with_an_unreadable_child() {
+        use crate::sync::pending_store::{PendingDagStorage, PendingDagStore};
+        use blockstore::Blockstore;
+        use multihash_codetable::{Code, MultihashDigest};
+        let store = Arc::new(DefraBlockstore::new(
+            Arc::new(RegolithStore::in_memory().unwrap()),
+            true,
+        ));
+        let bad_data = [0xff];
+        let child = Cid::new_v1(0x71, Code::Sha2_256.digest(&bad_data));
+        store.put(&child, &bad_data).await.unwrap();
+        let root = Block::new(
+            CrdtDelta::Composite(CompositeDeltaPayload {
+                collection_version_id: "schema".into(),
+                priority: 1,
+                status: 1,
+            }),
+            vec![],
+            vec![DAGLink::new("name", child)],
+        );
+        let root_cid = root.generate_cid().unwrap();
+        let bytes = root.to_dag_cbor().unwrap();
+        let (coordinator, mut events) = SyncCoordinator::new(
+            TestTransport::new(),
+            store,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .unwrap();
+        let pending = Arc::new(PendingDagStore::new(Arc::new(
+            RegolithStore::in_memory().unwrap(),
+        )));
+        coordinator.install_pending_dag_store(pending.clone()).await;
+        let push = make_broadcast("doc", root_cid, bytes, "collection");
+        assert!(coordinator
+            .manager()
+            .process_pushlog(&push, Some("source"), false, None)
+            .await
+            .is_err());
+        assert!(
+            pending.load_all().await.unwrap().is_empty(),
+            "failed admission must not create an acknowledged obligation"
+        );
+        assert!(
+            matches!(events.try_recv(), Ok(SyncEvent::SyncError { cid, .. }) if cid == root_cid)
+        );
+        assert!(events.try_recv().is_err());
+        coordinator.shutdown().await;
+    }
 }

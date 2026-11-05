@@ -105,6 +105,8 @@ enum FetchAttemptOutcome {
     Deferred,
     ProviderBusy,
     Unservable,
+    /// Local traversal could not establish whether the DAG is complete.
+    LocalFailure,
     /// A clock-dispatched attempt still making progress reached its quantum.
     Preempted,
 }
@@ -114,6 +116,8 @@ enum FetchAttemptOutcome {
 pub(crate) enum FetchTaskEnd {
     /// Done for this dispatch: the root is due again a backoff from now.
     Settled,
+    /// Local storage or parsing prevented this owner from completing the DAG.
+    LocalFailure,
     /// Still making progress at its quantum: due again at once, behind every
     /// root already due.
     Preempted,
@@ -175,17 +179,27 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
         "Starting DAG fetch (CAR-first, selective block fallback)"
     );
 
+    let mut preflight_local_failure = false;
     // A root may already have completed through another same-CID arrival
     // between the clock claim and this task starting. Do not require a live
     // provider for local terminal progress.
     if let Ok(Some(root_data)) = blockstore.get(&root_cid).await {
-        if find_all_missing_links(blockstore.as_ref(), &root_data)
-            .await
-            .is_ok_and(|missing| missing.is_empty())
-        {
-            drop(context.take_peer_permit());
-            emit_dag_ready(&event_tx, root_cid, &context, &root_data).await;
-            return (FetchTaskEnd::Settled, AttemptSample::Complete);
+        match find_all_missing_links(blockstore.as_ref(), &root_data).await {
+            Ok(missing) if missing.is_empty() => {
+                drop(context.take_peer_permit());
+                emit_dag_ready(&event_tx, root_cid, &context, &root_data).await;
+                return (FetchTaskEnd::Settled, AttemptSample::Complete);
+            }
+            Ok(_) => {}
+            Err(error) => {
+                warn!(root_cid = %root_cid, %error, "Could not check the local DAG");
+                if context.is_clock_owned() {
+                    trace_stall(&context, root_cid);
+                    return (FetchTaskEnd::LocalFailure, AttemptSample::Skipped);
+                }
+                // A reply-driven fetch still owns its existing bounded attempts.
+                preflight_local_failure = true;
+            }
         }
     }
 
@@ -202,9 +216,15 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
             "Deferring pending DAG fetch until a qualified provider reconnects"
         );
         trace_stall(&context, root_cid);
-        return (FetchTaskEnd::Settled, AttemptSample::Skipped);
+        let end = if preflight_local_failure {
+            FetchTaskEnd::LocalFailure
+        } else {
+            FetchTaskEnd::Settled
+        };
+        return (end, AttemptSample::Skipped);
     }
 
+    let mut saw_local_failure = false;
     let mut remaining_count = 0usize;
     let mut last_failures = FetchFailures::default();
     let mut sample = AttemptSample::Skipped;
@@ -286,6 +306,10 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
                 return (FetchTaskEnd::Settled, sample);
             }
             FetchAttemptOutcome::Unservable => {
+                if saw_local_failure {
+                    trace_stall(&context, root_cid);
+                    return (FetchTaskEnd::LocalFailure, sample);
+                }
                 error!(root_cid = %root_cid, providers = ?providers.peers(),
                     "Providers cannot serve the remaining DAG within their CAR byte limits; stopping this fetch");
                 trace_stall(&context, root_cid);
@@ -296,6 +320,19 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
                 last_failures = failures;
                 trace_stall(&context, root_cid);
             }
+            FetchAttemptOutcome::LocalFailure => {
+                trace_stall(&context, root_cid);
+                if context.is_clock_owned() {
+                    return (FetchTaskEnd::LocalFailure, sample);
+                }
+                saw_local_failure = true;
+                if attempt == attempts {
+                    return (FetchTaskEnd::LocalFailure, sample);
+                }
+                // The existing reply owner releases its permits at the end of
+                // this attempt and uses its normal backoff before the next.
+                continue;
+            }
             FetchAttemptOutcome::Deferred => {
                 diagnostics.record_pending_dag_fetch_deferred_contention();
                 debug!(
@@ -303,14 +340,24 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
                     "CAR ingest coalesced behind a storage owner; deferring to the per-root clock"
                 );
                 trace_stall(&context, root_cid);
-                return (FetchTaskEnd::Settled, sample);
+                let end = if saw_local_failure {
+                    FetchTaskEnd::LocalFailure
+                } else {
+                    FetchTaskEnd::Settled
+                };
+                return (end, sample);
             }
             FetchAttemptOutcome::ProviderBusy => {
                 diagnostics.record_pending_dag_fetch_deferred_busy();
                 debug!(root_cid = %root_cid, providers = ?providers.peers(),
                     "A provider shed the fetch as busy and none delivered; deferring to the per-root clock");
                 trace_stall(&context, root_cid);
-                return (FetchTaskEnd::Settled, sample);
+                let end = if saw_local_failure {
+                    FetchTaskEnd::LocalFailure
+                } else {
+                    FetchTaskEnd::Settled
+                };
+                return (end, sample);
             }
             FetchAttemptOutcome::Preempted => {
                 debug!(
@@ -326,6 +373,12 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
                 return (FetchTaskEnd::Preempted, sample);
             }
         }
+    }
+
+    // A local fault consumed an attempt, so fewer than the usual number of
+    // network attempts ran. Do not charge that shortfall to the provider.
+    if saw_local_failure {
+        return (FetchTaskEnd::LocalFailure, sample);
     }
 
     // A provider may disconnect after dispatch or during its bounded windows.
@@ -393,7 +446,9 @@ fn attempt_sample(
             fast: elapsed < FAST_REFUSAL,
             progressed,
         },
-        FetchAttemptOutcome::Deferred | FetchAttemptOutcome::Unservable => AttemptSample::Skipped,
+        FetchAttemptOutcome::Deferred
+        | FetchAttemptOutcome::LocalFailure
+        | FetchAttemptOutcome::Unservable => AttemptSample::Skipped,
     }
 }
 
@@ -580,10 +635,15 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
 ) -> FetchAttemptOutcome {
     state.providers.begin_attempt();
     let car_missing_watch = match blockstore.get(&root_cid).await {
-        Ok(Some(root_data)) => find_all_missing_links(blockstore.as_ref(), &root_data)
-            .await
-            .ok()
-            .filter(|missing| !missing.is_empty()),
+        Ok(Some(root_data)) => {
+            match find_all_missing_links(blockstore.as_ref(), &root_data).await {
+                Ok(missing) => (!missing.is_empty()).then_some(missing),
+                Err(error) => {
+                    warn!(root_cid = %root_cid, %error, "Could not check the local DAG before CAR fetch");
+                    return FetchAttemptOutcome::LocalFailure;
+                }
+            }
+        }
         _ => None,
     };
 
@@ -658,9 +718,13 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         state.providers.record_progress();
         state.depth.widen();
         if let Ok(Some(root_data)) = blockstore.get(&root_cid).await {
-            let missing = find_all_missing_links(blockstore.as_ref(), &root_data)
-                .await
-                .unwrap_or_default();
+            let missing = match find_all_missing_links(blockstore.as_ref(), &root_data).await {
+                Ok(missing) => missing,
+                Err(error) => {
+                    warn!(root_cid = %root_cid, %error, "Could not check the DAG after CAR fetch");
+                    return FetchAttemptOutcome::LocalFailure;
+                }
+            };
             if missing.is_empty() {
                 info!(root_cid = %root_cid, doc_id = %context.doc_id, "DAG fetch complete via rooted CAR");
                 return FetchAttemptOutcome::Complete(root_data);
@@ -731,7 +795,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
             Ok(m) => m,
             Err(e) => {
                 warn!(root_cid = %root_cid, error = %e, "find_all_missing_links failed");
-                return FetchAttemptOutcome::Incomplete(0, attempt_failures);
+                return FetchAttemptOutcome::LocalFailure;
             }
         };
 
@@ -792,9 +856,13 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         Ok(Some(data)) => data,
         _ => return FetchAttemptOutcome::Incomplete(1, attempt_failures),
     };
-    let remaining = find_all_missing_links(blockstore.as_ref(), &root_data)
-        .await
-        .unwrap_or_default();
+    let remaining = match find_all_missing_links(blockstore.as_ref(), &root_data).await {
+        Ok(missing) => missing,
+        Err(error) => {
+            warn!(root_cid = %root_cid, %error, "Could not verify the fetched DAG");
+            return FetchAttemptOutcome::LocalFailure;
+        }
+    };
 
     if remaining.is_empty() {
         info!(root_cid = %root_cid, doc_id = %context.doc_id, "DAG fetch complete");

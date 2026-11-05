@@ -2118,3 +2118,6 @@ async fn local_complete_fetch_releases_peer_permit_before_waiting_to_send() {
     ));
     fetch.join().await.unwrap();
 }
+
+#[path = "dag_fetcher_fault_investigation.rs"]
+mod dag_fetcher_fault_investigation;

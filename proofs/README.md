@@ -30,7 +30,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | DAG convergence (partition / eviction / restart) | TLA+ | p2p, db-merge, blockstore |
 | CRDT merge laws | Lean | crdt, defra-core |
 | Replicator lifecycle (no-loss / resume) | TLA+ | p2p, db-merge, embedded |
-| Sync ownership transfer (head hint / receiver pull) | TLA+ | p2p, db-merge, storage, embedded, defra-node |
+| Sync ownership transfer (head hint / receiver pull) | TLA+ / Lean | p2p, db-merge, storage, embedded, defra-node |
 | Multi-instance claim | TLA+ | gents |
 | Block integrity / signatures | TLA+ | db-merge, defra-core, blockstore |
 | KMS key distribution | TLA+ / Lean | kms, db, db-merge |

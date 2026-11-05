@@ -55,6 +55,24 @@ use Tier::{Behavioral, Boundary, Contract};
 pub const PROPERTIES: &[Property] = &[
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "Unread-child guards and local-failure owner behavior on sampled paths",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/manager/links.rs find_all_missing_links; crates/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_dag, fetch_dag_attempt; crates/p2p/src/sync/coordinator/event_handler/doc_sync.rs; crates/p2p/src/sync/manager/process/pending_dag.rs",
+        model_ref: "MC_UnreadChildRead_{Green_*,Red_*}.cfg; MC_UnreadChildOwnership_{Green_*,Red_*}.cfg; MC_UnreadChildMixedReply_{Green,Red_*}.cfg; MC_UnreadChildPreflight_{Green_*,Red_*}.cfg",
+        tiers: &[Contract, Boundary],
+        bound_by: "crates/p2p/src/sync/coordinator/dag_fetcher_fault_investigation.rs missing_after_has_never_emits_dag_ready_for_unread_child, read_error_after_has_never_emits_dag_ready_for_unread_child, clock_owned_root_retains_registration_and_backoff_after_child_read_error, reply_driven_attempt_recovers_after_transient_local_error, local_attempt_failure_does_not_terminally_exhaust_or_disconnect_after_network_failures; crates/p2p/src/sync/coordinator/event_handler/mod.rs doc_sync_bad_walk_does_not_block_a_later_complete_root, pushlog_does_not_acknowledge_a_root_with_an_unreadable_child",
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "failed_has_is_fault / inconsistent_read_is_fault / clock_preserves_owner / reply_wait_preserves_owner / local_fault_wins",
+        axis: Lean,
+        anchor: "crates/p2p/src/sync/manager/links.rs find_all_missing_links; crates/p2p/src/sync/manager/process/pending_dag.rs finish_attempt",
+        model_ref: "UnreadChildSafety (lake build)",
+        tiers: &[Contract, Boundary],
+        bound_by: "crates/p2p/src/sync/coordinator/dag_fetcher_fault_investigation.rs has_error_is_not_reported_as_missing_cid, disappearing_child_and_read_error_remain_distinguishable, reply_driven_local_failure_releases_fetch_permits_during_backoff, reply_preflight_error_without_provider_returns_local_failure_until_retriggered",
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
         name: "LocalFetchPermit.released_before_send / release_preserves_queue",
         axis: Lean,
         anchor: "crates/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_dag",
@@ -365,6 +383,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/iroh/endpoint_streams.rs adopt_new_connection and finish_connection; endpoint_rpc.rs connect_with_cache and restore_displaced_connection; endpoint_commands.rs handle_dial; crates/p2p/tests/iroh/shared_connection.rs",
         model_ref: "MC_ConnectionAdoption_{Green,Red_*}.cfg",
         tiers: &[Contract],
+        bound_by: "crates/p2p/tests/iroh/shared_connection.rs rpc_dialed_connection_serves_reverse_service_request, repeated_cache_hits_reuse_one_adopted_connection, allowlist_miss_refuses_only_the_new_connection_and_spares_the_sibling",
     },
     Property {
         family: "Peer connection observation",
@@ -373,6 +392,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/iroh/endpoint_rpc.rs close_peer_connections; crates/p2p/tests/iroh/shared_connection.rs displaced_rpc_dialed_connection_is_closed_by_revoke",
         model_ref: "MC_ConnectionAdoption_{Green,Red_*}.cfg",
         tiers: &[Contract],
+        bound_by: "crates/p2p/tests/iroh/shared_connection.rs displaced_rpc_dialed_connection_is_closed_by_revoke",
     },
     Property {
         family: "Peer connection observation",

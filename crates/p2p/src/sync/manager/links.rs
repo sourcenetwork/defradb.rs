@@ -91,23 +91,22 @@ pub async fn find_all_missing_links<B: Blockstore>(
 
             match blockstore.has(&link_cid).await {
                 Ok(true) => {
-                    // Block exists but not merged — enqueue for further traversal
-                    if let Ok(Some(child_data)) = blockstore.get(&link_cid).await {
-                        queue.push_back(child_data);
+                    // An unread child cannot establish a complete frontier.
+                    match blockstore.get(&link_cid).await {
+                        Ok(Some(child_data)) => queue.push_back(child_data),
+                        Ok(None) => {
+                            return Err(Error::BlockstoreError(format!(
+                                "block {link_cid} disappeared between existence check and read"
+                            )));
+                        }
+                        Err(error) => return Err(Error::from_blockstore(error)),
                     }
                 }
                 Ok(false) => {
                     tracing::debug!(cid = %link_cid, "Missing block at depth in DAG");
                     missing.push(link_cid);
                 }
-                Err(e) => {
-                    tracing::warn!(
-                        cid = %link_cid,
-                        error = %e,
-                        "Failed to check if block exists, treating as missing"
-                    );
-                    missing.push(link_cid);
-                }
+                Err(error) => return Err(Error::from_blockstore(error)),
             }
         }
     }
@@ -158,5 +157,122 @@ mod tests {
             !links.contains(&enc_cid),
             "encryption link must be excluded from Bitswap DAG walk"
         );
+    }
+}
+
+#[cfg(test)]
+mod local_walk_investigation {
+    use super::*;
+    use async_trait::async_trait;
+    use defra_core::{Block, CrdtDelta, DAGLink, LwwDeltaPayload};
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    struct CountingStore {
+        blocks: HashMap<Cid, Bytes>,
+        root: Cid,
+        all_merged: AtomicBool,
+        checks: AtomicUsize,
+        has: AtomicUsize,
+        gets: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Blockstore for CountingStore {
+        async fn get(&self, cid: &Cid) -> blockstore::Result<Option<Bytes>> {
+            self.gets.fetch_add(1, Ordering::SeqCst);
+            Ok(self.blocks.get(cid).cloned())
+        }
+        async fn has(&self, cid: &Cid) -> blockstore::Result<bool> {
+            self.has.fetch_add(1, Ordering::SeqCst);
+            Ok(self.blocks.contains_key(cid))
+        }
+        async fn is_merged(&self, cid: &Cid) -> blockstore::Result<bool> {
+            self.checks.fetch_add(1, Ordering::SeqCst);
+            Ok(self.blocks.contains_key(cid)
+                && (self.all_merged.load(Ordering::SeqCst) || *cid == self.root))
+        }
+        async fn put(&self, _: &Cid, _: &[u8]) -> blockstore::Result<()> {
+            unimplemented!()
+        }
+        async fn put_many(&self, _: &[(&Cid, &[u8])]) -> blockstore::Result<()> {
+            unimplemented!()
+        }
+        async fn delete(&self, _: &Cid) -> blockstore::Result<()> {
+            unimplemented!()
+        }
+        async fn get_size(&self, _: &Cid) -> blockstore::Result<Option<usize>> {
+            unimplemented!()
+        }
+        async fn all_cids(&self) -> blockstore::Result<Vec<Cid>> {
+            unimplemented!()
+        }
+        fn hash_on_read(&self, _: bool) {
+            unimplemented!()
+        }
+        async fn mark_as_merged(&self, _: &Cid) -> blockstore::Result<()> {
+            unimplemented!()
+        }
+        async fn get_unmerged(&self) -> blockstore::Result<Vec<Cid>> {
+            unimplemented!()
+        }
+    }
+
+    /// A caller handing an already-merged root to the local walk does not stop
+    /// traversal at that root: the helper is given bytes, not the root CID.
+    /// This synthetic store deliberately marks its descendants unmerged.
+    #[nuclei::test]
+    async fn merged_root_with_unmerged_descendants_walks_entire_local_chain() {
+        const CHILDREN: usize = 1024;
+        let mut blocks = HashMap::new();
+        let mut previous = None;
+        for i in 0..=CHILDREN {
+            let block = Block::new(
+                CrdtDelta::Lww(LwwDeltaPayload {
+                    field_name: "name".to_string(),
+                    priority: i as u64,
+                    collection_version_id: "schema1".to_string(),
+                    data: i.to_le_bytes().to_vec(),
+                }),
+                vec![],
+                previous
+                    .into_iter()
+                    .map(|cid| DAGLink::new("parent", cid))
+                    .collect(),
+            );
+            let cid = block.generate_cid().unwrap();
+            blocks.insert(cid, Bytes::from(block.to_dag_cbor().unwrap()));
+            previous = Some(cid);
+        }
+        let root = previous.unwrap();
+        let root_data = blocks[&root].clone();
+        let store = CountingStore {
+            blocks,
+            root,
+            all_merged: AtomicBool::new(false),
+            checks: AtomicUsize::new(0),
+            has: AtomicUsize::new(0),
+            gets: AtomicUsize::new(0),
+        };
+        assert!(store.is_merged(&root).await.unwrap());
+        store.checks.store(0, Ordering::SeqCst);
+        assert!(find_all_missing_links(&store, &root_data)
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(store.checks.load(Ordering::SeqCst), CHILDREN);
+        assert_eq!(store.has.load(Ordering::SeqCst), CHILDREN);
+        assert_eq!(store.gets.load(Ordering::SeqCst), CHILDREN);
+        store.all_merged.store(true, Ordering::SeqCst);
+        store.checks.store(0, Ordering::SeqCst);
+        store.has.store(0, Ordering::SeqCst);
+        store.gets.store(0, Ordering::SeqCst);
+        assert!(find_all_missing_links(&store, &root_data)
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(store.checks.load(Ordering::SeqCst), 1);
+        assert_eq!(store.has.load(Ordering::SeqCst), 0);
+        assert_eq!(store.gets.load(Ordering::SeqCst), 0);
     }
 }
