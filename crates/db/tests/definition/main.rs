@@ -9,6 +9,3 @@ mod format;
 mod helpers;
 mod json;
 mod loader;
-mod migration_suite;
-mod owed_reindex;
-mod patch;
