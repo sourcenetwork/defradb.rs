@@ -767,7 +767,7 @@ fn trusted_delete_graph_matches_model_and_refuses_other_waves() {
         let graph = json!({"signer":"user", "operation":op, "collection":"Settings", "document":doc_id,
             "input":patch.to_string(), "history":head.to_string(), "blocks":["composite"]});
         json!({"approved":graph, "offered":graph, "claimedActor":"user", "verified":valid,
-            "nativeAuthorized":true, "waveMatches":true, "commit":true})
+            "nativeAuthorized":true, "authorityBound":true, "waveMatches":true, "commit":true})
     }).collect::<Vec<_>>()));
     for ((operation, wire, _), expected) in cases.into_iter().zip(modeled.as_array().unwrap()) {
         let evidence = serde_json::from_value(wire).unwrap();
@@ -787,7 +787,7 @@ fn trusted_delete_graph_matches_model_and_refuses_other_waves() {
     let graph = json!({"signer":"user", "operation":"update", "collection":"Settings", "document":doc_id,
         "input":unchanged.to_string(), "history":head.to_string(), "blocks":[]});
     let modeled = model("VerifiedMutationHandoff.lean", &json!([{"approved":graph, "offered":graph,
-        "claimedActor":"user", "verified":true, "nativeAuthorized":true, "waveMatches":true, "commit":true}]));
+        "claimedActor":"user", "verified":true, "nativeAuthorized":true, "authorityBound":true, "waveMatches":true, "commit":true}]));
     assert_eq!(db::block::builder::VerifiedClientMutation::verify_update(
         &storage::Crdts::default(), &schema, &doc_id, &unchanged, &snapshot, unsigned.evidence(),
     ).is_ok(), modeled[0]["accepts"].as_bool().unwrap());
@@ -867,7 +867,7 @@ fn signed_create_evidence_matches_the_modeled_exact_handoff() {
         .iter()
         .map(|(_, _, valid)| {
             json!({"approved":expected, "offered":expected,
-        "claimedActor":"user", "verified":valid, "nativeAuthorized":true, "waveConsumed":true, "commit":true})
+        "claimedActor":"user", "verified":valid, "typedOverride":false, "nativeAuthorized":true, "authorityBound":true, "waveConsumed":true, "commit":true})
         })
         .collect::<Vec<_>>();
     let modeled = model("VerifiedCreateHandoff.lean", &json!(inputs));
@@ -891,7 +891,7 @@ fn signed_create_evidence_matches_the_modeled_exact_handoff() {
     states.push(receipt.is_complete());
     assert!(!isolated.is_complete());
     let inputs = states.iter().map(|consumed| json!({"approved":expected, "offered":expected,
-        "claimedActor":"user", "verified":true, "nativeAuthorized":true,
+        "claimedActor":"user", "verified":true, "typedOverride":false, "nativeAuthorized":true, "authorityBound":true,
         "waveConsumed":consumed, "commit":true})).collect::<Vec<_>>();
     let modeled = model("VerifiedCreateHandoff.lean", &json!(inputs));
     for (observed, expected) in states.into_iter().zip(modeled.as_array().unwrap()) {

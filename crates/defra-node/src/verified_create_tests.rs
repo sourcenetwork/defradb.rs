@@ -74,6 +74,16 @@ resources:
         let txn = node.begin_transaction(false).await.unwrap();
         let first = node.execute_request_in_txn_with_signer(marker(), &txn, &signer).await;
         assert!(!first.has_errors(), "{:?}", first.errors);
+        let parsed = query::query_parse::parse_request_with_limits(
+            "mutation { create_Marker(input:{name:\"substituted\"}) {_docID} }", None, None,
+            query::QueryLimits::default()).unwrap();
+        let mut mismatched = replacement(&user_did, input.clone());
+        mismatched.parsed = Some(std::sync::Arc::new(parsed));
+        assert!(node.execute_verified_create_in_txn(mismatched, &txn, &graph).await.has_errors());
+        assert!(node.commit_transaction(&txn).await.is_err());
+        let txn = node.begin_transaction(false).await.unwrap();
+        let first = node.execute_request_in_txn_with_signer(marker(), &txn, &signer).await;
+        assert!(!first.has_errors(), "{:?}", first.errors);
         let wrong_actor = node.execute_verified_create_in_txn(replacement(&agent_did, input.clone()), &txn, &graph).await;
         assert!(wrong_actor.has_errors());
         assert!(node.commit_transaction(&txn).await.is_err());
@@ -141,7 +151,7 @@ resources:
 fn verified_update_and_delete_use_exact_actor_and_transaction_state() {
     use db::block::builder::{ClientCreateSignatures, ClientDeleteSignatures, ClientUpdateSignatures,
         ClientUpdateSnapshot, VerifiedClientMutation};
-    const POLICY: &str = "name: Mutations\nresources:\n  - name: records\n    relations:\n      - name: reader\n        types: [actor]\n      - name: editor\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader + editor\n      - name: update\n        expr: editor\n      - name: delete\n";
+    const POLICY: &str = "name: Mutations\nresources:\n  - name: records\n    relations:\n      - name: reader\n        types: [actor]\n      - name: editor\n        types: [actor]\n      - name: deleter\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader + editor + deleter\n      - name: update\n        expr: editor\n      - name: delete\n        expr: deleter\n";
     edge::testing::edge().block_on(async {
         let (admin, _) = actor();
         let (user, signing) = actor();
@@ -235,6 +245,30 @@ fn verified_update_and_delete_use_exact_actor_and_transaction_state() {
         delete_block.signature = Some(db::block::builder::compute_signature(&delete_block, &signing).unwrap().unwrap().0);
         let delete_cid = delete_block.generate_cid().unwrap().to_string();
         let delete = VerifiedClientMutation::verify_delete(&schema, &doc_id, &snapshot, prepared.evidence()).unwrap();
+        let marker = |name: &str| query::QueryRequest::new("mutation($input:VerifiedMarkerMutationInputArg!) { create_VerifiedMarker(input:$input) {_docID} }")
+            .with_variables(json!({"input":{"name":name}}))
+            .with_identity(Some(agent.did().unwrap()));
+        let txn = node.begin_transaction(false).await.unwrap();
+        assert!(!node.execute_request_in_txn_with_signer(marker("nac-revoked"), &txn, &agent_signer).await.has_errors());
+        let staged = node.execute_verified_mutation_in_txn(delete_request(), &txn, &delete).await;
+        assert!(!staged.has_errors(), "{:?}", staged.errors);
+        node.delete_nac_actor_relationship_as(&admin_context, acp::nac::NodePermission::DocumentDelete.as_str(), &user_did).await.unwrap();
+        assert!(node.commit_transaction(&txn).await.is_err());
+        node.add_nac_actor_relationship_as(&admin_context, acp::nac::NodePermission::DocumentDelete.as_str(), &user_did).await.unwrap();
+        node.add_dac_actor_relationship_as(&user_context, "VerifiedRecord", &doc_id, "deleter", &other_did).await.unwrap();
+        let prepared = ClientDeleteSignatures::from_snapshot(&schema, &doc_id, &snapshot, &other_signing).unwrap();
+        let other_delete = VerifiedClientMutation::verify_delete(&schema, &doc_id, &snapshot, prepared.evidence()).unwrap();
+        let txn = node.begin_transaction(false).await.unwrap();
+        assert!(!node.execute_request_in_txn_with_signer(marker("dac-revoked"), &txn, &agent_signer).await.has_errors());
+        let request = query::QueryRequest::new("mutation($id:ID!) { delete_VerifiedRecord(docIDs:[$id]) {_docID} }")
+            .with_variables(json!({"id":doc_id})).with_identity(Some(other.did().unwrap()));
+        let staged = node.execute_verified_mutation_in_txn(request, &txn, &other_delete).await;
+        assert!(!staged.has_errors(), "{:?}", staged.errors);
+        node.delete_dac_actor_relationship_as(&user_context, "VerifiedRecord", &doc_id, "deleter", &other_did).await.unwrap();
+        assert!(node.commit_transaction(&txn).await.is_err());
+        let markers = node.execute_request(query::QueryRequest::new("{ VerifiedMarker {_docID} }")
+            .with_identity(Some(agent.did().unwrap()))).await;
+        assert!(markers.data.unwrap()["VerifiedMarker"].as_array().unwrap().is_empty());
         let txn = node.begin_transaction(false).await.unwrap();
         let result = node.execute_verified_mutation_in_txn(delete_request(), &txn, &delete).await;
         assert!(!result.has_errors(), "{:?}", result.errors);
