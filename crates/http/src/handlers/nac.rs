@@ -196,7 +196,7 @@ pub async fn re_enable(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mock::{MockNodeAcpOperations, MockQueryExecutor};
+    use crate::mock::MockQueryExecutor;
     use crate::router::AppStateBuilder;
     use query::executor::QueryExecutor;
     use std::sync::Arc;
@@ -212,9 +212,9 @@ mod tests {
     async fn add_relationships_prevalidates_and_returns_ordered_results() {
         let requestor = identity::Did::new("did:key:requestor").unwrap();
         let target = identity::Did::new("did:key:target").unwrap();
-        let nac = Arc::new(MockNodeAcpOperations::enabled_with_owner(requestor.clone()));
+        let executor = Arc::new(MockQueryExecutor::new());
         let state = AppStateBuilder::new(
-            Arc::new(MockQueryExecutor::with_nac(Arc::clone(&nac))) as Arc<dyn QueryExecutor>,
+            Arc::clone(&executor) as Arc<dyn QueryExecutor>,
             edge::testing::edge(),
         )
         .build();
@@ -231,7 +231,7 @@ mod tests {
         .await;
 
         assert!(matches!(result, Err(HttpError::BadRequest(_))));
-        assert!(!nac.is_admin(&target).await.unwrap());
+        assert!(executor.nac_relationships().is_empty());
 
         let Json(results) = go_add_relationships(
             State(state),
