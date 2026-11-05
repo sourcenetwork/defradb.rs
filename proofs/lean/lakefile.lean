@@ -7,6 +7,9 @@ package defraConvergence where
 lean_lib LocalFetchPermit where
 
 @[default_target]
+lean_lib HostMutationProjection where
+
+@[default_target]
 lean_lib EmbeddedSigner where
 
 @[default_target]
