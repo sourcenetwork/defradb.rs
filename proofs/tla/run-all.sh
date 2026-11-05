@@ -11,6 +11,13 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 # event to the settled rest (depth = events + 1), and DEADLOCK:<l> stops with
 # event l next (past the end when l = events + 1).
 RUNS=(
+  "MC_HostMutationProjection_Green.cfg HostMutationProjection.tla GREEN"
+  "MC_HostMutationProjection_Red_Atomic.cfg HostMutationProjection.tla RED"
+  "MC_HostMutationProjection_Red_Raw.cfg HostMutationProjection.tla RED"
+  "MC_HostMutationProjection_Red_Replicated.cfg HostMutationProjection.tla RED"
+  "MC_HostMutationProjection_Red_Direct.cfg HostMutationProjection.tla RED"
+  "MC_HostMutationProjection_Red_Other.cfg HostMutationProjection.tla RED"
+  "MC_HostMutationProjection_Red_Authority.cfg HostMutationProjection.tla RED"
   "MC_LocalFetchPermit_Green.cfg LocalFetchPermit.tla GREEN"
   "MC_LocalFetchPermit_Red_Hold.cfg LocalFetchPermit.tla RED"
   "MC_VerifiedClientGraph_Green.cfg VerifiedClientGraph.tla GREEN"
