@@ -7,8 +7,9 @@ signatures only for the complete expected wave. The committing transaction valid
 authorization. A concurrent disjoint write can merge beside the approved graph. Encodings,
 cryptography, source authenticity and the native transactional read set are
 external premises. Ordinary block signatures can be replayed elsewhere.
-The proposed owners are the db block builder, HTTP signing client and
-transactional write path. No Rust implementation is asserted here.
+Rust owners: crates/db/src/block/builder/client_update.rs,
+client_update_snapshot.rs and client_waves.rs; crates/http/src/client_signed_update.rs;
+the transactional update path and its ACP checks.
 -/
 
 namespace ClientSignedUpdate

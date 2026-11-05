@@ -6,11 +6,15 @@ use futures::{Sink, SinkExt, Stream, StreamExt};
 use query::executor::{QueryRequest, QueryResponse};
 use serde_json::{json, Value};
 
-use db::block::builder::{ClientCreateError, ClientCreateSignatures};
+use db::block::builder::{
+    ClientCreateError, ClientCreateSignatures, ClientUpdateError, ClientUpdateSignatures,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClientSignedCreateError {
-    #[error("the GraphQL create differs from the approved document or omits the unaliased _docID")]
+    #[error(
+        "the GraphQL mutation differs from the approved document or omits the unaliased _docID"
+    )]
     InputMismatch,
     #[error("invalid signing endpoint or authorization header: {0}")]
     Request(String),
@@ -20,12 +24,63 @@ pub enum ClientSignedCreateError {
     Protocol(String),
     #[error("server requested a block outside the approved graph: {0}")]
     Challenge(#[from] ClientCreateError),
+    #[error("server requested a block outside the approved update graph: {0}")]
+    UpdateChallenge(#[from] ClientUpdateError),
     #[error("server reported success before the approved graph was signed")]
     Incomplete,
     #[error("server returned a different document ID")]
     DocumentId,
     #[error("client signing conversation timed out")]
     Timeout,
+}
+
+pub(crate) trait ClientSigningGraph {
+    fn public_key_hex(&self) -> &str;
+    fn doc_id(&self) -> &str;
+    fn is_complete(&self) -> bool;
+    fn respond(&mut self, blocks: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, ClientSignedCreateError>;
+}
+
+impl ClientSigningGraph for ClientCreateSignatures {
+    fn public_key_hex(&self) -> &str {
+        self.public_key_hex()
+    }
+    fn doc_id(&self) -> &str {
+        self.doc_id()
+    }
+    fn is_complete(&self) -> bool {
+        self.is_complete()
+    }
+    fn respond(&mut self, blocks: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, ClientSignedCreateError> {
+        Ok(self.respond(blocks)?)
+    }
+}
+
+impl ClientSigningGraph for ClientUpdateSignatures {
+    fn public_key_hex(&self) -> &str {
+        self.public_key_hex()
+    }
+    fn doc_id(&self) -> &str {
+        self.doc_id()
+    }
+    fn is_complete(&self) -> bool {
+        self.is_complete()
+    }
+    fn respond(&mut self, blocks: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, ClientSignedCreateError> {
+        Ok(self.respond(blocks)?)
+    }
+}
+
+pub(crate) fn valid_doc_id_selection(fields: &[query::mapper::Requestable]) -> bool {
+    fields.iter().any(|field| {
+        matches!(field, query::mapper::Requestable::Field(field) if field.name == "_docID" && field.alias.is_none())
+    }) && !fields.iter().any(|field| match field {
+        query::mapper::Requestable::Field(field) => field.output_name() == "_docID" && field.name != "_docID",
+        query::mapper::Requestable::Select(field) => field.field.output_name() == "_docID",
+        query::mapper::Requestable::Aggregate(field) => field.output_name() == "_docID",
+        query::mapper::Requestable::Similarity(field) => field.output_name() == "_docID",
+        query::mapper::Requestable::FullTextSearch(field) => field.output_name() == "_docID",
+    })
 }
 
 fn response_key(request: &QueryRequest, graph: &ClientCreateSignatures) -> Option<String> {
@@ -54,16 +109,7 @@ fn response_key(request: &QueryRequest, graph: &ClientCreateSignatures) -> Optio
         || mutations[0].mutation_type != query::MutationType::Add
         || mutations[0].create_input.len() != 1
         || mutations[0].encryption().is_some()
-        || !mutations[0].fields.iter().any(|field| {
-            matches!(field, query::mapper::Requestable::Field(field) if field.name == "_docID" && field.alias.is_none())
-        })
-        || mutations[0].fields.iter().any(|field| match field {
-            query::mapper::Requestable::Field(field) => field.output_name() == "_docID" && field.name != "_docID",
-            query::mapper::Requestable::Select(field) => field.field.output_name() == "_docID",
-            query::mapper::Requestable::Aggregate(field) => field.output_name() == "_docID",
-            query::mapper::Requestable::Similarity(field) => field.output_name() == "_docID",
-            query::mapper::Requestable::FullTextSearch(field) => field.output_name() == "_docID",
-        })
+        || !valid_doc_id_selection(&mutations[0].fields)
     {
         return None;
     }
@@ -87,9 +133,23 @@ pub async fn execute(
 ) -> Result<QueryResponse, ClientSignedCreateError> {
     let response_key =
         response_key(&request, graph).ok_or(ClientSignedCreateError::InputMismatch)?;
+    execute_graph(url, authorization, request, txn_id, graph, &response_key).await
+}
+
+pub(crate) async fn execute_graph<G>(
+    url: &str,
+    authorization: &str,
+    request: QueryRequest,
+    txn_id: Option<&str>,
+    graph: &mut G,
+    response_key: &str,
+) -> Result<QueryResponse, ClientSignedCreateError>
+where
+    G: ClientSigningGraph,
+{
     nuclei::time::timeout(
         Duration::from_secs(90),
-        conversation(url, authorization, request, txn_id, graph, &response_key),
+        conversation(url, authorization, request, txn_id, graph, response_key),
     )
     .await
     .map_err(|_| ClientSignedCreateError::Timeout)?
@@ -139,14 +199,17 @@ where
     conversation_on_socket(&mut socket, request, txn_id, graph, &response_key).await
 }
 
-async fn conversation(
+async fn conversation<G>(
     url: &str,
     authorization: &str,
     request: QueryRequest,
     txn_id: Option<&str>,
-    graph: &mut ClientCreateSignatures,
+    graph: &mut G,
     response_key: &str,
-) -> Result<QueryResponse, ClientSignedCreateError> {
+) -> Result<QueryResponse, ClientSignedCreateError>
+where
+    G: ClientSigningGraph,
+{
     let handshake = websocket_request(url, authorization)?;
     let stream = net::connect(handshake.uri())
         .await
@@ -159,16 +222,17 @@ async fn conversation(
     conversation_on_socket(&mut socket, request, txn_id, graph, response_key).await
 }
 
-async fn conversation_on_socket<S, E>(
+pub(crate) async fn conversation_on_socket<S, E, G>(
     socket: &mut S,
     request: QueryRequest,
     txn_id: Option<&str>,
-    graph: &mut ClientCreateSignatures,
+    graph: &mut G,
     response_key: &str,
 ) -> Result<QueryResponse, ClientSignedCreateError>
 where
     S: Sink<Message, Error = E> + Stream<Item = Result<Message, E>> + Unpin,
     E: std::fmt::Display,
+    G: ClientSigningGraph,
 {
     let start = json!({"query":request.query, "operationName":request.operation_name, "variables":request.variables, "txn_id":txn_id, "public_key_hex":graph.public_key_hex()});
     socket

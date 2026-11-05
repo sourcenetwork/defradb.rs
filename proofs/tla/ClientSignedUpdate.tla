@@ -5,7 +5,8 @@
 \* written field and permission and both reads survive commit validation. A cancelled
 \* client releases no more signatures. A disjoint field can change concurrently.
 \* Real field versions and signed bytes are abstract atoms.
-\* Planned Rust owners: db block builder, HTTP signing and transaction reads.
+\* Rust owners: db client_update.rs and client_waves.rs, HTTP signing,
+\* and the transactional update and ACP reads.
 EXTENDS Naturals
 \* RED models remove exactly one guard.
 CONSTANT CheckIntent, CheckLive, ValidateField, ValidateAcp
@@ -18,7 +19,7 @@ Init == /\ field = 0 /\ other = 0 /\ allowed = TRUE /\ live = TRUE /\ phase = "o
         /\ seenField = 0 /\ seenAcp = TRUE
         /\ badIntent = FALSE /\ badLive = FALSE /\ badField = FALSE /\ badAcp = FALSE
 \* A different writer changes the field this update writes.
-ChangeHead == /\ field = 0 /\ field' = 1
+ChangeField == /\ field = 0 /\ field' = 1
               /\ UNCHANGED <<other, allowed, live, phase, seenField, seenAcp, badIntent, badLive, badField, badAcp>>
 \* A disjoint field may change while the update's transaction is active.
 ChangeOther == /\ other = 0 /\ phase = "attempt" /\ other' = 1
@@ -45,7 +46,7 @@ Commit == /\ phase = "attempt" /\ (ValidateField => seenField = field)
           /\ badAcp' = (badAcp \/ ~allowed)
           /\ UNCHANGED <<other, field, allowed, live, seenField, seenAcp, badIntent, badLive>>
 \* The database, client and administrator may act in any order.
-Next == ChangeHead \/ ChangeOther \/ Revoke \/ Cancel \/ Begin \/ Commit \/ (\E exact \in BOOLEAN : Sign(exact))
+Next == ChangeField \/ ChangeOther \/ Revoke \/ Cancel \/ Begin \/ Commit \/ (\E exact \in BOOLEAN : Sign(exact))
 \* Stuttering models unavailable actors.
 Spec == Init /\ [][Next]_vars
 \* Signatures are never released for an unapproved graph.

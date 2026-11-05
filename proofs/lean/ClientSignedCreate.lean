@@ -17,9 +17,9 @@ mutations are outside this first client-verifiable create subset. DefraDB block
 signatures sign block bytes only: a server that receives one can reuse it, and
 existing P2P peers do not enforce the HTTP session, expiry, or intent.
 
-Proposed Rust owners: crates/http request-scoped signature continuation,
-crates/query prepared-input context, and crates/db block creation and validation.
-No Rust implementation is asserted by this model yet.
+Rust owners: crates/http request-scoped signature continuation,
+crates/query prepared-input context, and crates/db block creation and
+client_waves.rs exact-wave validation.
 -/
 
 namespace ClientSignedCreate
