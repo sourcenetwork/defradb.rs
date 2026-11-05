@@ -4758,3 +4758,6 @@ async fn a_two_stream_push_the_gate_refuses_stores_nothing() {
         .await
         .unwrap());
 }
+
+#[path = "refused_descendant_tests.rs"]
+mod refused_descendant_tests;
