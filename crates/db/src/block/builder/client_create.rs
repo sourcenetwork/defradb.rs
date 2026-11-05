@@ -3,7 +3,8 @@ use defra_core::block::{Block, Signature};
 use defra_core::cid_encoding::cid_bytes;
 use defra_core::signing::{SigningConfig, SigningKeyType};
 use document::Document;
-use schema::{CType, FieldKind};
+use schema::{CType, CollectionVersion, FieldKind, ScalarKind};
+use std::sync::Arc;
 
 /// The client's own signed create graph, prepared before any server challenge.
 /// The graph is built from the caller's trusted complete schema and intended
@@ -16,6 +17,7 @@ pub struct ClientCreateSignatures {
     composite_signature: Vec<u8>,
     phase: Phase,
     collection: String,
+    schema: Arc<CollectionVersion>,
     input: serde_json::Value,
     public_key_hex: String,
     doc_id: String,
@@ -43,8 +45,57 @@ pub enum ClientCreateError {
 }
 
 impl ClientCreateSignatures {
+    /// Prepare a graph from explicit JSON input and its locally trusted schema.
+    /// Conversion uses the query engine's schema-aware create owner; omitted
+    /// defaults and DateTime `UTC_NOW` are rejected before signing.
+    pub fn from_input(
+        crdts: &crdt::Crdts,
+        schema: &CollectionVersion,
+        input: &serde_json::Value,
+        signer: &SigningConfig,
+    ) -> Result<Self, ClientCreateError> {
+        let doc =
+            Self::normalize_input(schema, input).ok_or(ClientCreateError::UnsupportedDocument)?;
+        Self::new(crdts, &doc, signer)
+    }
+
+    fn normalize_input(schema: &CollectionVersion, input: &serde_json::Value) -> Option<Document> {
+        let input = input.as_object()?;
+        if schema.fields.iter().any(|field| {
+            if field.default_value.is_some() && !input.contains_key(&field.name) {
+                return true;
+            }
+            let value = input.get(&field.name);
+            match &field.kind {
+                FieldKind::Scalar(kind) if kind.base_kind() == ScalarKind::NillableDateTime => {
+                    value.and_then(serde_json::Value::as_str) == Some("UTC_NOW")
+                }
+                FieldKind::ScalarArray(kind)
+                    if kind.element_kind() == ScalarKind::NillableDateTime =>
+                {
+                    value
+                        .and_then(serde_json::Value::as_array)
+                        .is_some_and(|values| {
+                            values.iter().any(|value| value.as_str() == Some("UTC_NOW"))
+                        })
+                }
+                _ => false,
+            }
+        }) {
+            return None;
+        }
+        query::plan::mutation::AddInput {
+            fields: input
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect(),
+        }
+        .to_document_with_schema(schema)
+        .ok()
+    }
+
     /// Prepare signatures entirely on the client from an approved document.
-    /// This bounded form supports non-null LWW scalar and scalar-list fields,
+    /// This bounded form supports LWW scalar and scalar-list fields,
     /// including immutable fields. The caller supplies the trusted schema in
     /// `doc`; this function neither fetches nor authenticates it.
     pub fn new(
@@ -67,12 +118,11 @@ impl ClientCreateSignatures {
             || schema.fields.iter().any(|field| {
                 field.default_value.is_some() && !doc.values().contains_key(&field.name)
             })
-            || doc.values().iter().any(|(name, value)| {
+            || doc.values().keys().any(|name| {
                 let Some(field) = schema.field_by_name(name) else {
                     return true;
                 };
-                value.value().is_nil()
-                    || field.crdt_type != CType::LwwRegister
+                field.crdt_type != CType::LwwRegister
                     || !matches!(field.kind, FieldKind::Scalar(_) | FieldKind::ScalarArray(_))
                     || doc.pending_op(name).is_some()
             })
@@ -136,6 +186,7 @@ impl ClientCreateSignatures {
                 .map_err(|_| ClientCreateError::InvalidGraph)?;
         Ok(Self {
             collection: schema.name.clone(),
+            schema: schema.clone(),
             input,
             public_key_hex: signer.public_key_hex.clone(),
             doc_id: blocks.block_result.doc_id.clone(),
@@ -148,7 +199,11 @@ impl ClientCreateSignatures {
     }
 
     pub fn matches_input(&self, collection: &str, input: &serde_json::Value) -> bool {
-        self.collection == collection && self.input == *input
+        self.collection == collection
+            && Self::normalize_input(&self.schema, input)
+                .and_then(|doc| doc.to_map().ok())
+                .and_then(|map| serde_json::to_value(map).ok())
+                .is_some_and(|input| self.input == input)
     }
 
     pub fn public_key_hex(&self) -> &str {

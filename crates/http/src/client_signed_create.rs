@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use async_tungstenite::tungstenite::client::IntoClientRequest;
 use async_tungstenite::tungstenite::Message;
-use futures::StreamExt;
+use futures::{Sink, SinkExt, Stream, StreamExt};
 use query::executor::{QueryRequest, QueryResponse};
 use serde_json::{json, Value};
 
@@ -95,14 +95,11 @@ pub async fn execute(
     .map_err(|_| ClientSignedCreateError::Timeout)?
 }
 
-async fn conversation(
+/// Build the authenticated WebSocket handshake for a caller-owned transport.
+pub fn websocket_request(
     url: &str,
     authorization: &str,
-    request: QueryRequest,
-    txn_id: Option<&str>,
-    graph: &mut ClientCreateSignatures,
-    response_key: &str,
-) -> Result<QueryResponse, ClientSignedCreateError> {
+) -> Result<axum::http::Request<()>, ClientSignedCreateError> {
     let mut handshake = url
         .into_client_request()
         .map_err(|error| ClientSignedCreateError::Request(error.to_string()))?;
@@ -113,16 +110,66 @@ async fn conversation(
     handshake
         .headers_mut()
         .insert(axum::http::header::AUTHORIZATION, auth);
+    Ok(handshake)
+}
+
+/// Bound incoming frames before the transport allocates their payloads.
+pub fn websocket_config() -> async_tungstenite::tungstenite::protocol::WebSocketConfig {
+    async_tungstenite::tungstenite::protocol::WebSocketConfig::default()
+        .max_message_size(Some(1024 * 1024))
+        .max_frame_size(Some(1024 * 1024))
+}
+
+/// Run the native signing conversation on a caller-connected WebSocket.
+/// The caller supplies the authenticated handshake, `websocket_config` limits,
+/// and an overall deadline using its own runtime. A lost response after
+/// dispatch leaves the commit outcome unknown.
+pub async fn execute_with_socket<S, E>(
+    mut socket: S,
+    request: QueryRequest,
+    txn_id: Option<&str>,
+    graph: &mut ClientCreateSignatures,
+) -> Result<QueryResponse, ClientSignedCreateError>
+where
+    S: Sink<Message, Error = E> + Stream<Item = Result<Message, E>> + Unpin,
+    E: std::fmt::Display,
+{
+    let response_key =
+        response_key(&request, graph).ok_or(ClientSignedCreateError::InputMismatch)?;
+    conversation_on_socket(&mut socket, request, txn_id, graph, &response_key).await
+}
+
+async fn conversation(
+    url: &str,
+    authorization: &str,
+    request: QueryRequest,
+    txn_id: Option<&str>,
+    graph: &mut ClientCreateSignatures,
+    response_key: &str,
+) -> Result<QueryResponse, ClientSignedCreateError> {
+    let handshake = websocket_request(url, authorization)?;
     let stream = net::connect(handshake.uri())
         .await
         .map_err(|error| ClientSignedCreateError::Connection(error.to_string()))?;
-    let config = async_tungstenite::tungstenite::protocol::WebSocketConfig::default()
-        .max_message_size(Some(1024 * 1024))
-        .max_frame_size(Some(1024 * 1024));
+    let config = websocket_config();
     let (mut socket, _) =
         async_tungstenite::client_async_with_config(handshake, stream, Some(config))
             .await
             .map_err(|error| ClientSignedCreateError::Connection(error.to_string()))?;
+    conversation_on_socket(&mut socket, request, txn_id, graph, response_key).await
+}
+
+async fn conversation_on_socket<S, E>(
+    socket: &mut S,
+    request: QueryRequest,
+    txn_id: Option<&str>,
+    graph: &mut ClientCreateSignatures,
+    response_key: &str,
+) -> Result<QueryResponse, ClientSignedCreateError>
+where
+    S: Sink<Message, Error = E> + Stream<Item = Result<Message, E>> + Unpin,
+    E: std::fmt::Display,
+{
     let start = json!({"query":request.query, "operationName":request.operation_name, "variables":request.variables, "txn_id":txn_id, "public_key_hex":graph.public_key_hex()});
     socket
         .send(Message::Text(start.to_string().into()))

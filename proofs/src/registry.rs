@@ -82,6 +82,14 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "HTTP client-signed create",
+        name: "accepted_exact / null_cannot_be_omitted / generated_is_rejected",
+        axis: Lean,
+        anchor: "crates/db/src/block/builder/client_create.rs ClientCreateSignatures::matches_input",
+        model_ref: "ClientCreateIntent (lake build); client_create_graph::normalized_agent_intent_preserves_explicit_null_and_datetime",
+        tiers: &[Boundary, Contract],
+    },
+    Property {
+        family: "HTTP client-signed create",
         name: "immutable_included / mutable_included / immutable_has_no_extra / mutable_has_no_extra / accepted_exact_links",
         axis: Lean,
         anchor: "crates/db/src/block/builder/immutable.rs immutable_fields; crates/db/src/block/builder/compute.rs compute_document_blocks; proposed client create-graph validation",
