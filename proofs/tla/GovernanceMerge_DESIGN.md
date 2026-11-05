@@ -43,8 +43,10 @@ corrupts state.
   `Registered(r)` and the `room` check in `Apply`. `:129` `release` is
   `Released(r, e)`; `:82` `enqueue_ready` is the sweep's entry to the same
   `queued` gate. The index is in memory: `IndexDurable = FALSE` is today.
-- `judge.rs:32` `judge_governed` maps the verdict (`PushLog`, `DrainReleased`);
-  `:194` `index_deferred` files it.
+- `judge.rs:36` `judge_governed` maps the verdict (`PushLog`, `DrainReleased`);
+  `:221` `index_deferred` files it. All of `governance/` compiles only under
+  `db`'s `governed-collections` feature; without it `merge_handler/ungoverned.rs`
+  stands in, and no composite is judged, deferred or re-driven.
 - `merge_handler/dispatch.rs:121` `redrive_deferred` drains the ready queue
   through the verifying merge path: `DrainReleased`.
 - `sweep.rs:29-33` `sweep_unmerged_governed` walks `blockstore.get_unmerged()`,

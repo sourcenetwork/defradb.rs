@@ -16,6 +16,11 @@ default = ["p2p", "native", "wasmtime-runtime"]
 p2p = ["dep:libp2p", "p2p/libp2p-transport"]
 native = ["events/channel", "acp/native"]
 wasmtime-runtime = ["lens/wasmtime-runtime"]
+# App merge validators for claimed collections: verdicts, the deferred-composite
+# index and its re-drive, the governance sweep. Off, every collection merges
+# ungoverned. `@governed` identities are unaffected: they are content
+# addressing, so a node without this feature still reads and hashes them.
+governed-collections = []
 
 [lib]
 bench = false

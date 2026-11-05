@@ -30,6 +30,9 @@ mod protected_update;
 mod recovery;
 pub mod se_merge;
 mod signature;
+#[cfg(not(feature = "governed-collections"))]
+mod ungoverned;
+#[cfg(feature = "governed-collections")]
 pub(crate) use signature::verify_signature_data;
 
 pub use error::{HistoryRejection, MergeError};
@@ -147,15 +150,18 @@ pub struct DbMergeHandler<S: Store, B: blockstore::Blockstore> {
     /// fetches.
     prefetched_dek_cids: Arc<CidSet>,
     /// Composites a merge validator deferred, by the CIDs they await.
+    #[cfg(feature = "governed-collections")]
     pub(crate) deferred: Arc<crate::merge::governance::DeferredMerges>,
     /// Composites a merge validator rejected. A reject rests on present bytes
     /// and never changes, and the block stays in the blockstore's unmerged
     /// set, so without this the governance sweep would re-judge every
     /// rejected composite each tick and, past its budget, never reach a
     /// deferred one. In memory: after a restart each is re-judged once.
+    #[cfg(feature = "governed-collections")]
     pub(crate) rejected_governed: Arc<CidSet>,
     /// Where composites merged by re-drive are reported, so they take the
     /// same post-merge path as a first-attempt merge.
+    #[cfg(feature = "governed-collections")]
     redriven_sink:
         Arc<regolith::sync::OnceCell<Arc<dyn crate::merge::governance::RedrivenMergeSink>>>,
 }
@@ -180,8 +186,11 @@ impl<S: Store, B: blockstore::Blockstore> Clone for DbMergeHandler<S, B> {
             prepared_keys: self.prepared_keys.clone(),
             local_keys_only: self.local_keys_only,
             prefetched_dek_cids: Arc::clone(&self.prefetched_dek_cids),
+            #[cfg(feature = "governed-collections")]
             deferred: Arc::clone(&self.deferred),
+            #[cfg(feature = "governed-collections")]
             rejected_governed: Arc::clone(&self.rejected_governed),
+            #[cfg(feature = "governed-collections")]
             redriven_sink: Arc::clone(&self.redriven_sink),
         }
     }
@@ -310,8 +319,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             prepared_keys: None,
             local_keys_only: false,
             prefetched_dek_cids: Arc::new(cid_set()),
+            #[cfg(feature = "governed-collections")]
             deferred: Arc::new(Default::default()),
+            #[cfg(feature = "governed-collections")]
             rejected_governed: Arc::new(cid_set()),
+            #[cfg(feature = "governed-collections")]
             redriven_sink: Arc::new(regolith::sync::OnceCell::new()),
         }
     }
@@ -320,12 +332,14 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     /// at-capacity path without indexing
     /// [`crate::merge::governance::MAX_DEFERRED_COMPOSITES`] composites first.
     /// Nothing in production calls this.
+    #[cfg(feature = "governed-collections")]
     pub fn set_deferred_capacity(&self, capacity: usize) {
         self.deferred.set_capacity(capacity);
     }
 
     /// Report composites merged by re-drive to `sink`, which marks them merged
     /// and fans them out as the replication layer does a first-attempt merge.
+    #[cfg(feature = "governed-collections")]
     pub fn set_redriven_merge_sink(
         &self,
         sink: Arc<dyn crate::merge::governance::RedrivenMergeSink>,
@@ -333,10 +347,25 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let _ = self.redriven_sink.set(sink);
     }
 
+    #[cfg(feature = "governed-collections")]
     pub(crate) fn redriven_merge_sink(
         &self,
     ) -> Option<&Arc<dyn crate::merge::governance::RedrivenMergeSink>> {
         self.redriven_sink.get()
+    }
+
+    /// Whether an app merge validator, not ACP, judges this collection's
+    /// replicated composites.
+    #[cfg(feature = "governed-collections")]
+    pub(crate) fn is_governed(&self, collection: &schema::CollectionVersion) -> bool {
+        self.db
+            .merge_governance()
+            .is_some_and(|governance| governance.governs(collection))
+    }
+
+    #[cfg(not(feature = "governed-collections"))]
+    pub(crate) fn is_governed(&self, _collection: &schema::CollectionVersion) -> bool {
+        false
     }
 
     /// Enforce the same parent-chain depth policy for every merge traversal.

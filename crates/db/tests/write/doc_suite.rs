@@ -1277,10 +1277,12 @@ impl db::event::emission::TxnBroadcaster for CapturingBroadcaster {
 }
 
 /// Records the composites local commits release, in the order released.
+#[cfg(feature = "governed-collections")]
 struct CapturingRelease {
     released: Arc<SegQueue<cid::Cid>>,
 }
 
+#[cfg(feature = "governed-collections")]
 impl db::merge::governance::LocalCommitRelease for CapturingRelease {
     fn committed(&self, cid: cid::Cid, _block_data: bytes::Bytes) {
         self.released.push(cid);
@@ -1304,7 +1306,9 @@ fn transactional_broadcasts_and_releases_follow_commit_receipts() {
             Arc::new(CapturingBroadcaster {
                 events: Arc::clone(&captured),
             });
+        #[cfg(feature = "governed-collections")]
         let released = Arc::new(SegQueue::new());
+        #[cfg(feature = "governed-collections")]
         db.set_local_commit_release(Arc::new(CapturingRelease {
             released: Arc::clone(&released),
         }));
@@ -1370,9 +1374,12 @@ fn transactional_broadcasts_and_releases_follow_commit_receipts() {
             broadcast,
             vec![first_doc.doc_id.to_string(), second_doc.doc_id.to_string()]
         );
-        let release_order: Vec<cid::Cid> = std::iter::from_fn(|| released.pop()).collect();
-        let broadcast_cids: Vec<cid::Cid> = events.iter().map(|event| event.doc_cid).collect();
-        assert_eq!(release_order, broadcast_cids);
+        #[cfg(feature = "governed-collections")]
+        {
+            let release_order: Vec<cid::Cid> = std::iter::from_fn(|| released.pop()).collect();
+            let broadcast_cids: Vec<cid::Cid> = events.iter().map(|event| event.doc_cid).collect();
+            assert_eq!(release_order, broadcast_cids);
+        }
         gate.set();
         first_commit.await.expect("join").expect("first commit");
     })

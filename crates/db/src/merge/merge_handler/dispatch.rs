@@ -8,6 +8,7 @@ use defra_core::merge::{
 use storage::corekv::{OnCommit, Store};
 
 use super::{cid_set, DbMergeHandler, MergeError};
+#[cfg(feature = "governed-collections")]
 use crate::merge::governance::{RedrivenMerge, REDRIVE_BUDGET};
 use kovan_queue::seg_queue::SegQueue;
 use std::sync::Arc;
@@ -395,6 +396,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
     /// by a re-driven merge join the same drain. A composite the database
     /// already holds but no mark covers goes to the sink too: the mark follows
     /// a successful forward, so its forward may still be owed.
+    #[cfg(feature = "governed-collections")]
     pub async fn redrive_deferred(&self) {
         let mut budget = REDRIVE_BUDGET;
         while budget > 0 {

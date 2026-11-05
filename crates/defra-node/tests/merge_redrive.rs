@@ -1,4 +1,4 @@
-#![cfg(feature = "p2p")]
+#![cfg(all(feature = "p2p", feature = "governed-collections"))]
 
 //! A composite a merge validator deferred, then merged by re-drive when what
 //! it awaited arrived, reaches this node's own replicators like any composite

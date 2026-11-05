@@ -1,70 +1,26 @@
 #![cfg(feature = "p2p")]
 
-//! An app's own access control on iroh nodes: a merge validator that
-//! accepts, rejects and defers replicated notes, and node-local read and
-//! write validators.
+//! An app's own access control on iroh nodes: node-local read and write
+//! validators and, with `governed-collections`, a merge validator that
+//! accepts, rejects and defers replicated notes.
 
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
+#[cfg(feature = "governed-collections")]
 #[path = "support/clock.rs"]
 mod clock;
 #[path = "support/outcome.rs"]
 mod outcome;
 
 use async_trait::async_trait;
-use cid::Cid;
-use clock::sleep;
-use db::merge::governance::{
-    FieldValue, MergeCandidate, MergeValidator, MergeVerdict, MergeView, SignatureStatus,
-};
 use defra_node::{AccessHooks, Node, NodeBuilder, P2PConfig};
-use document::NormalValue;
 use outcome::Result;
 use query::access_hooks::{ReadRequest, ReadValidator, WriteRequest, WriteValidator};
 use serde_json::Value as JsonValue;
-use std::time::{Duration, Instant};
 
 const SDL: &str =
     "type Grant { writer: String label: String } type Note { grant: String body: String }";
-
-/// A note merges when the grant it names is held and names the note's signer.
-struct GrantValidator;
-
-#[async_trait]
-impl MergeValidator for GrantValidator {
-    async fn validate(
-        &self,
-        candidate: &MergeCandidate<'_>,
-        view: &dyn MergeView,
-    ) -> Result<MergeVerdict, String> {
-        let SignatureStatus::Verified(signer) = &candidate.signature else {
-            return Ok(MergeVerdict::reject("notes must be signed"));
-        };
-        let fields = view
-            .composite_fields(candidate.cid)
-            .await?
-            .unwrap_or_default();
-        let grant = fields.iter().find_map(|(name, value)| match value {
-            FieldValue::Value(NormalValue::String(grant)) if name == "grant" => Some(grant.clone()),
-            _ => None,
-        });
-        let Some(grant) = grant.and_then(|grant| Cid::try_from(grant.as_str()).ok()) else {
-            return Ok(MergeVerdict::reject("note names no grant"));
-        };
-        let Some(grant_fields) = view.composite_fields(&grant).await? else {
-            return Ok(MergeVerdict::defer("grant not held", [grant]));
-        };
-        let names_signer = grant_fields.iter().any(|(name, value)| {
-            name == "writer" && *value == FieldValue::Value(NormalValue::String(signer.clone()))
-        });
-        Ok(if names_signer {
-            MergeVerdict::Accept
-        } else {
-            MergeVerdict::reject("grant does not name the signer")
-        })
-    }
-}
 
 struct HideDrafts;
 
@@ -97,87 +53,13 @@ impl WriteValidator for RefuseEmptyBodies {
 }
 
 #[test]
-fn merge_validator_accepts_rejects_and_defers_replicated_notes() -> Result<()> {
-    edge::testing::edge()
-        .block_on(async {
-            let author = NodeBuilder::default()
-                .with_p2p(iroh_config())
-                .enable_signing()
-                .build()
-                .await?;
-            let receiver = NodeBuilder::default()
-                .with_p2p(iroh_config())
-                .with_access_hooks(
-                    AccessHooks::new(["Note"]).with_merge_validator(Arc::new(GrantValidator)),
-                )
-                .build()
-                .await?;
-            author.add_collection(SDL).await?;
-            receiver.add_collection(SDL).await?;
-            let writer = author
-                .node_identity_did()
-                .expect("author has a signing identity");
-            defra_core::signing::set_signing_config(defra_core::signing::get_identity(writer));
-
-            let (held_grant, held_grant_cid) = create(
-                &author,
-                "Grant",
-                &format!(r#"writer: "{writer}", label: "held""#),
-            )
-            .await?;
-            let (late_grant, late_grant_cid) = create(
-                &author,
-                "Grant",
-                &format!(r#"writer: "{writer}", label: "late""#),
-            )
-            .await?;
-            let (accepted, _) = create(
-                &author,
-                "Note",
-                &format!(r#"grant: "{held_grant_cid}", body: "ok""#),
-            )
-            .await?;
-            let (rejected, _) =
-                create(&author, "Note", r#"grant: "nothing", body: "no grant""#).await?;
-            let (deferred, _) = create(
-                &author,
-                "Note",
-                &format!(r#"grant: "{late_grant_cid}", body: "later""#),
-            )
-            .await?;
-
-            connect(&receiver, &author).await?;
-            sync(&receiver, "Grant", vec![held_grant]).await?;
-            sync(
-                &receiver,
-                "Note",
-                vec![accepted.clone(), rejected.clone(), deferred.clone()],
-            )
-            .await?;
-
-            wait_for_notes(&receiver, &[accepted.as_str()]).await?;
-            sleep(Duration::from_secs(1)).await;
-            assert_eq!(note_ids(&receiver).await?, vec![accepted.clone()]);
-
-            sync(&receiver, "Grant", vec![late_grant]).await?;
-            wait_for_notes(&receiver, &[accepted.as_str(), deferred.as_str()]).await?;
-            assert!(!note_ids(&receiver).await?.contains(&rejected));
-
-            author.shutdown().await.unwrap();
-            receiver.shutdown().await.unwrap();
-            Ok(())
-        })
-        .unwrap()
-}
-
-#[test]
 fn read_and_write_validators_narrow_local_clients() -> Result<()> {
     edge::testing::edge()
         .block_on(async {
             let node = NodeBuilder::default()
                 .with_p2p(iroh_config())
                 .with_access_hooks(
-                    AccessHooks::new(Vec::<String>::new())
+                    AccessHooks::default()
                         .with_read_validator(Arc::new(HideDrafts))
                         .with_write_validator(Arc::new(RefuseEmptyBodies)),
                 )
@@ -237,7 +119,7 @@ fn access_hooks_require_iroh() {
     edge::testing::edge()
         .block_on(async {
             let error = NodeBuilder::default()
-                .with_access_hooks(AccessHooks::new(["Note"]))
+                .with_access_hooks(AccessHooks::default())
                 .build()
                 .await
                 .err()
@@ -289,77 +171,203 @@ async fn create(node: &Node, collection: &str, input: &str) -> Result<(String, S
     Ok((doc_id.to_string(), cid.to_string()))
 }
 
-async fn connect(from: &Node, to: &Node) -> Result<()> {
-    let from = from.p2p_system().expect("p2p");
-    let to = to.p2p_system().expect("p2p");
-    let peer = to.ops().local_peer_id().await?;
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let addr = loop {
-        let addrs = to.ops().listen_addresses().await?;
-        if let Some(addr) = addrs
-            .into_iter()
-            .find(|addr| addr.contains("/p2p/") || addr.starts_with("endpoint"))
-        {
-            break addr;
-        }
-        if Instant::now() >= deadline {
-            panic!("no iroh listen address");
-        }
-        sleep(Duration::from_millis(100)).await;
+#[cfg(feature = "governed-collections")]
+mod merge_validator {
+    use super::*;
+    use cid::Cid;
+    use clock::sleep;
+    use db::merge::governance::{
+        FieldValue, MergeCandidate, MergeValidator, MergeVerdict, MergeView, SignatureStatus,
     };
-    from.ops().connect_peer(&addr).await?;
-    loop {
-        let peers = from.ops().connected_peers().await?;
-        if peers.iter().any(|connected| connected.contains(&peer)) {
-            return Ok(());
+    use document::NormalValue;
+    use std::time::{Duration, Instant};
+
+    /// A note merges when the grant it names is held and names the note's signer.
+    struct GrantValidator;
+
+    #[async_trait]
+    impl MergeValidator for GrantValidator {
+        async fn validate(
+            &self,
+            candidate: &MergeCandidate<'_>,
+            view: &dyn MergeView,
+        ) -> Result<MergeVerdict, String> {
+            let SignatureStatus::Verified(signer) = &candidate.signature else {
+                return Ok(MergeVerdict::reject("notes must be signed"));
+            };
+            let fields = view
+                .composite_fields(candidate.cid)
+                .await?
+                .unwrap_or_default();
+            let grant = fields.iter().find_map(|(name, value)| match value {
+                FieldValue::Value(NormalValue::String(grant)) if name == "grant" => {
+                    Some(grant.clone())
+                }
+                _ => None,
+            });
+            let Some(grant) = grant.and_then(|grant| Cid::try_from(grant.as_str()).ok()) else {
+                return Ok(MergeVerdict::reject("note names no grant"));
+            };
+            let Some(grant_fields) = view.composite_fields(&grant).await? else {
+                return Ok(MergeVerdict::defer("grant not held", [grant]));
+            };
+            let names_signer = grant_fields.iter().any(|(name, value)| {
+                name == "writer" && *value == FieldValue::Value(NormalValue::String(signer.clone()))
+            });
+            Ok(if names_signer {
+                MergeVerdict::Accept
+            } else {
+                MergeVerdict::reject("grant does not name the signer")
+            })
         }
-        if Instant::now() >= deadline {
-            panic!("peer {peer} never connected");
-        }
-        sleep(Duration::from_millis(100)).await;
     }
-}
 
-async fn sync(node: &Node, collection: &str, doc_ids: Vec<String>) -> Result<()> {
-    node.p2p_system()
-        .expect("p2p")
-        .ops()
-        .sync_documents(collection, doc_ids, None)
-        .await
-        .map_err(Into::into)
-}
+    #[test]
+    fn merge_validator_accepts_rejects_and_defers_replicated_notes() -> Result<()> {
+        edge::testing::edge()
+            .block_on(async {
+                let author = NodeBuilder::default()
+                    .with_p2p(iroh_config())
+                    .enable_signing()
+                    .build()
+                    .await?;
+                let receiver = NodeBuilder::default()
+                    .with_p2p(iroh_config())
+                    .with_access_hooks(
+                        AccessHooks::new(["Note"]).with_merge_validator(Arc::new(GrantValidator)),
+                    )
+                    .build()
+                    .await?;
+                author.add_collection(SDL).await?;
+                receiver.add_collection(SDL).await?;
+                let writer = author
+                    .node_identity_did()
+                    .expect("author has a signing identity");
+                defra_core::signing::set_signing_config(defra_core::signing::get_identity(writer));
 
-async fn note_ids(node: &Node) -> Result<Vec<String>> {
-    let response = node.execute("query { Note { _docID } }").await;
-    if response.has_errors() {
-        panic!("Note query failed: {:?}", response.errors);
+                let (held_grant, held_grant_cid) = create(
+                    &author,
+                    "Grant",
+                    &format!(r#"writer: "{writer}", label: "held""#),
+                )
+                .await?;
+                let (late_grant, late_grant_cid) = create(
+                    &author,
+                    "Grant",
+                    &format!(r#"writer: "{writer}", label: "late""#),
+                )
+                .await?;
+                let (accepted, _) = create(
+                    &author,
+                    "Note",
+                    &format!(r#"grant: "{held_grant_cid}", body: "ok""#),
+                )
+                .await?;
+                let (rejected, _) =
+                    create(&author, "Note", r#"grant: "nothing", body: "no grant""#).await?;
+                let (deferred, _) = create(
+                    &author,
+                    "Note",
+                    &format!(r#"grant: "{late_grant_cid}", body: "later""#),
+                )
+                .await?;
+
+                connect(&receiver, &author).await?;
+                sync(&receiver, "Grant", vec![held_grant]).await?;
+                sync(
+                    &receiver,
+                    "Note",
+                    vec![accepted.clone(), rejected.clone(), deferred.clone()],
+                )
+                .await?;
+
+                wait_for_notes(&receiver, &[accepted.as_str()]).await?;
+                sleep(Duration::from_secs(1)).await;
+                assert_eq!(note_ids(&receiver).await?, vec![accepted.clone()]);
+
+                sync(&receiver, "Grant", vec![late_grant]).await?;
+                wait_for_notes(&receiver, &[accepted.as_str(), deferred.as_str()]).await?;
+                assert!(!note_ids(&receiver).await?.contains(&rejected));
+
+                author.shutdown().await.unwrap();
+                receiver.shutdown().await.unwrap();
+                Ok(())
+            })
+            .unwrap()
     }
-    let mut ids: Vec<String> = response
-        .data
-        .as_ref()
-        .and_then(|data| data.get("Note"))
-        .and_then(JsonValue::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|note| note.get("_docID").and_then(JsonValue::as_str))
-        .map(str::to_string)
-        .collect();
-    ids.sort();
-    Ok(ids)
-}
 
-async fn wait_for_notes(node: &Node, expected: &[&str]) -> Result<()> {
-    let mut expected: Vec<String> = expected.iter().map(|id| id.to_string()).collect();
-    expected.sort();
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        let ids = note_ids(node).await?;
-        if ids == expected {
-            return Ok(());
+    async fn connect(from: &Node, to: &Node) -> Result<()> {
+        let from = from.p2p_system().expect("p2p");
+        let to = to.p2p_system().expect("p2p");
+        let peer = to.ops().local_peer_id().await?;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let addr = loop {
+            let addrs = to.ops().listen_addresses().await?;
+            if let Some(addr) = addrs
+                .into_iter()
+                .find(|addr| addr.contains("/p2p/") || addr.starts_with("endpoint"))
+            {
+                break addr;
+            }
+            if Instant::now() >= deadline {
+                panic!("no iroh listen address");
+            }
+            sleep(Duration::from_millis(100)).await;
+        };
+        from.ops().connect_peer(&addr).await?;
+        loop {
+            let peers = from.ops().connected_peers().await?;
+            if peers.iter().any(|connected| connected.contains(&peer)) {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                panic!("peer {peer} never connected");
+            }
+            sleep(Duration::from_millis(100)).await;
         }
-        if Instant::now() >= deadline {
-            panic!("notes {ids:?}, expected {expected:?}");
+    }
+
+    async fn sync(node: &Node, collection: &str, doc_ids: Vec<String>) -> Result<()> {
+        node.p2p_system()
+            .expect("p2p")
+            .ops()
+            .sync_documents(collection, doc_ids, None)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn note_ids(node: &Node) -> Result<Vec<String>> {
+        let response = node.execute("query { Note { _docID } }").await;
+        if response.has_errors() {
+            panic!("Note query failed: {:?}", response.errors);
         }
-        sleep(Duration::from_millis(200)).await;
+        let mut ids: Vec<String> = response
+            .data
+            .as_ref()
+            .and_then(|data| data.get("Note"))
+            .and_then(JsonValue::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|note| note.get("_docID").and_then(JsonValue::as_str))
+            .map(str::to_string)
+            .collect();
+        ids.sort();
+        Ok(ids)
+    }
+
+    async fn wait_for_notes(node: &Node, expected: &[&str]) -> Result<()> {
+        let mut expected: Vec<String> = expected.iter().map(|id| id.to_string()).collect();
+        expected.sort();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let ids = note_ids(node).await?;
+            if ids == expected {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                panic!("notes {ids:?}, expected {expected:?}");
+            }
+            sleep(Duration::from_millis(200)).await;
+        }
     }
 }

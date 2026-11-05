@@ -1,4 +1,5 @@
 mod admission;
+#[cfg(feature = "governed-collections")]
 mod deferred;
 mod fixture;
 

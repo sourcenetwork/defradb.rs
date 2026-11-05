@@ -30,12 +30,6 @@ pub(crate) enum Judgement {
 }
 
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
-    pub(crate) fn is_governed(&self, collection: &CollectionVersion) -> bool {
-        self.db
-            .merge_governance()
-            .is_some_and(|governance| governance.governs(collection))
-    }
-
     /// Judge one composite frame of a governed collection. The signature is
     /// verified here from the block itself, so a frame reached through
     /// recovery, where dispatch skips verification, is judged the same way.

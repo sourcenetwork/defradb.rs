@@ -68,6 +68,7 @@ where
                     {
                         CompositeMergePreparation::Ready(_) => {}
                         CompositeMergePreparation::Complete(outcome) => return Ok(outcome),
+                        #[cfg(feature = "governed-collections")]
                         CompositeMergePreparation::Deferred { outcome, awaiting } => {
                             self.index_deferred(root, doc, metadata, awaiting);
                             return Ok(outcome);
@@ -192,6 +193,7 @@ where
                             });
                             break;
                         }
+                        #[cfg(feature = "governed-collections")]
                         CompositeMergePreparation::Deferred { outcome, awaiting } => {
                             self.index_deferred(root, doc, metadata, awaiting);
                             progress.outcome = Some(Completion::Deferred(format!("{outcome:?}")));
@@ -294,6 +296,7 @@ where
                     .await?
                 }
                 CompositeMergePreparation::Complete(outcome) => outcome,
+                #[cfg(feature = "governed-collections")]
                 CompositeMergePreparation::Deferred { outcome, awaiting } => {
                     self.index_deferred(root, doc, metadata, awaiting);
                     outcome

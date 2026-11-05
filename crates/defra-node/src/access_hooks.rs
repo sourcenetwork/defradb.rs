@@ -1,18 +1,22 @@
 use std::sync::Arc;
 
+#[cfg(feature = "governed-collections")]
 use db::merge::governance::{MergeGovernance, MergeValidator};
 use query::access_hooks::{ReadValidator, WriteValidator};
 
 /// An app's own access control for an iroh node.
 ///
-/// The collections named in [`AccessHooks::new`] are governed by the app:
-/// replicated composites into them are judged by the merge validator, never
-/// by ACP, and a governed collection with no merge validator merges nothing.
-/// The read and write validators are node-local and narrow what this node's
-/// clients may do; they compose with ACP and never widen it.
+/// With `governed-collections`, the collections named in [`AccessHooks::new`]
+/// are governed by the app: replicated composites into them are judged by the
+/// merge validator, never by ACP, and a governed collection with no merge
+/// validator merges nothing. The read and write validators are node-local and
+/// narrow what this node's clients may do; they compose with ACP and never
+/// widen it.
 #[derive(Clone, Default)]
 pub struct AccessHooks {
+    #[cfg(feature = "governed-collections")]
     governed: Vec<String>,
+    #[cfg(feature = "governed-collections")]
     merge: Option<Arc<dyn MergeValidator>>,
     read: Option<Arc<dyn ReadValidator>>,
     write: Option<Arc<dyn WriteValidator>>,
@@ -20,6 +24,7 @@ pub struct AccessHooks {
 
 impl AccessHooks {
     /// Claim collections, by name, for the app's merge validator.
+    #[cfg(feature = "governed-collections")]
     pub fn new(governed: impl IntoIterator<Item = impl Into<String>>) -> Self {
         Self {
             governed: governed.into_iter().map(Into::into).collect(),
@@ -27,6 +32,7 @@ impl AccessHooks {
         }
     }
 
+    #[cfg(feature = "governed-collections")]
     pub fn with_merge_validator(mut self, validator: Arc<dyn MergeValidator>) -> Self {
         self.merge = Some(validator);
         self
@@ -42,6 +48,7 @@ impl AccessHooks {
         self
     }
 
+    #[cfg(feature = "governed-collections")]
     pub(crate) fn install<S>(&self, database: &db::DB<S>)
     where
         S: storage::corekv::Store,
