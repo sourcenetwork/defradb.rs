@@ -7,6 +7,20 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # rows: <cfg> <module> <GREEN|RED>
 RUNS=(
+  "MC_SigningAdmission_Green.cfg SigningAdmission.tla GREEN" # bounded connections release expired slots
+  "MC_SigningAdmission_Red_Capacity.cfg SigningAdmission.tla RED" # admission without a cap (INV_Capacity)
+  "MC_SigningAdmission_Red_Cleanup.cfg SigningAdmission.tla RED" # expiration leaks a slot (LIVE_Reaped)
+  "MC_ClientSignedCreate_ExpiryFinality.cfg ClientSignedCreate.tla RED" # an already-started commit may finish after token expiry (INV_NoCompletionAfterExpiry)
+  "MC_ClientSignedCreate_ReplayBoundary.cfg ClientSignedCreate.tla RED" # ordinary signatures may be reused across sessions (INV_NoReplay)
+  "MC_ClientSignedCreate_Green.cfg ClientSignedCreate.tla GREEN" # the bounded conversation preserves every guard and reaps ended sessions
+  "MC_ClientSignedCreate_Red_Actor.cfg ClientSignedCreate.tla RED" # another caller answers the session (INV_Actor)
+  "MC_ClientSignedCreate_Red_Context.cfg ClientSignedCreate.tla RED" # changed context reuses an answer (INV_Context)
+  "MC_ClientSignedCreate_Red_Signature.cfg ClientSignedCreate.tla RED" # an unverified signature enters the memo (INV_Signature)
+  "MC_ClientSignedCreate_Red_Client.cfg ClientSignedCreate.tla RED" # the signer fails to validate the wave (INV_Client)
+  "MC_ClientSignedCreate_Red_Live.cfg ClientSignedCreate.tla RED" # an ended session consumes an answer (INV_Live)
+  "MC_ClientSignedCreate_Red_Acp.cfg ClientSignedCreate.tla RED" # a revoked actor commits (INV_Acp)
+  "MC_ClientSignedCreate_Red_Inside.cfg ClientSignedCreate.tla RED" # the client is awaited inside an attempt (INV_Outside)
+  "MC_ClientSignedCreate_Red_Reclaim.cfg ClientSignedCreate.tla RED" # expiry leaves its capsule allocated forever (LIVE_Reaped)
   "MC_SseDelivery_Green.cfg SseDelivery.tla GREEN"
   "MC_SseDelivery_Red_Overflow.cfg SseDelivery.tla RED"
   "MC_SseDelivery_Red_Error.cfg SseDelivery.tla RED"

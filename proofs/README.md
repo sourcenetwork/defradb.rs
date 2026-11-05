@@ -23,6 +23,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 ### Modeled families
 | Family | Tool | Crates it covers |
 |---|---|---|
+| HTTP client-signed create | TLA+ / Lean | http, query, db (proposed; implementation unbound) |
 | SSE loss and error delivery | TLA+ / Lean | events, http, query |
 | Storage failure classification | TLA+ / Lean | storage, db, query, http |
 | B3 filtered replication | TLA+ | p2p, db-merge |

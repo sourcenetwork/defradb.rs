@@ -124,3 +124,20 @@ fn a_stream_that_claims_more_than_it_was_lent_is_an_error() {
     assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     assert!(buf.filled().is_empty());
 }
+
+#[test]
+fn upgraded_hyper_io_preserves_futures_io_bytes() {
+    use futures::{AsyncReadExt, AsyncWriteExt};
+    edge::testing::edge()
+        .block_on(async {
+            let inner = futures::io::Cursor::new(b"hello".to_vec());
+            let mut io = net::rt::FromHyper::new(Io::new(inner));
+            let mut received = [0; 5];
+            io.read_exact(&mut received).await.unwrap();
+            assert_eq!(&received, b"hello");
+            io.write_all(b"!").await.unwrap();
+            io.flush().await.unwrap();
+            assert_eq!(io.into_inner().into_inner().into_inner(), b"hello!");
+        })
+        .unwrap();
+}
