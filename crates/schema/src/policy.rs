@@ -48,6 +48,19 @@ pub struct CreateRule {
     pub match_target_field: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_parent_relation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub require_actor_field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub additional: Option<CreateAuthorization>,
+}
+
+/// A second independently resolved target permission in the same create transaction.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CreateAuthorization {
+    pub input_field: String,
+    pub target_collection: String,
+    pub target_field: String,
+    pub permission: String,
 }
 
 impl PolicyDescription {
@@ -104,6 +117,15 @@ impl PolicyDescription {
             }
             if let Some(relation) = &rule.target_parent_relation {
                 Self::validate_field(relation, "create rule parent relation")?;
+            }
+            if let Some(field) = &rule.require_actor_field {
+                Self::validate_field(field, "create rule required actor field")?;
+            }
+            if let Some(extra) = &rule.additional {
+                Self::validate_field(&extra.input_field, "additional create input field")?;
+                Self::validate_field(&extra.target_collection, "additional create target")?;
+                Self::validate_field(&extra.target_field, "additional create target field")?;
+                Self::validate_field(&extra.permission, "additional create permission")?;
             }
         }
         Ok(())

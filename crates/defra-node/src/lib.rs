@@ -543,6 +543,23 @@ impl EmbeddedNode {
         .await
     }
 
+    /// Revoke a direct node permission. Independent bootstrap and admin access
+    /// remains governed by their own native relationships.
+    pub async fn revoke_node_permission_as(
+        &self,
+        actor: identity::Did,
+        target: identity::Did,
+        permission: acp::nac::NodePermission,
+    ) -> Result<bool> {
+        let nac = self.nac_manager.clone().ok_or(Error::NodeAcpUnavailable)?;
+        self.on_pool(move || async move {
+            nac.remove_permission_grant(&actor, &target, permission)
+                .await
+                .map_err(Error::NodeAcpGrant)
+        })
+        .await
+    }
+
     /// Grant full native node administration. The acting DID must already be
     /// a node administrator; this includes native DAC-bypass capability.
     pub async fn grant_node_admin_as(

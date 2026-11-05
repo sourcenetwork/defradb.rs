@@ -284,20 +284,37 @@ pub async fn observe_transaction_permission(
         .map_err(|_| HttpError::BadRequest("invalid transaction id".into()))?;
     let actor = identity::Did::new(&body.actor)
         .map_err(|error| HttpError::BadRequest(error.to_string()))?;
-    let permission = parse_doc_permission(&body.permission)?;
-    let allowed = state
-        .executor
-        .observe_document_permission_in_txn(
-            identity.context(),
-            &handle,
-            observer.clone(),
-            actor,
-            &body.collection,
-            &body.doc_id,
-            permission,
-        )
-        .await
-        .map_err(|error| HttpError::BadRequest(error.to_string()))?;
+    let allowed = match parse_doc_permission(&body.permission) {
+        Ok(permission) => {
+            state
+                .executor
+                .observe_document_permission_in_txn(
+                    identity.context(),
+                    &handle,
+                    observer.clone(),
+                    actor,
+                    &body.collection,
+                    &body.doc_id,
+                    permission,
+                )
+                .await
+        }
+        Err(_) => {
+            state
+                .executor
+                .observe_document_relation_in_txn(
+                    identity.context(),
+                    &handle,
+                    observer.clone(),
+                    actor,
+                    &body.collection,
+                    &body.doc_id,
+                    &body.permission,
+                )
+                .await
+        }
+    }
+    .map_err(|error| HttpError::BadRequest(error.to_string()))?;
     Ok(Json(DocDecisionResponse { allowed }))
 }
 

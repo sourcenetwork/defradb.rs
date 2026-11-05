@@ -516,6 +516,41 @@ pub trait QueryExecutor: MaybeSendSync {
         ))
     }
 
+    /// Observe a declared named document permission on a live target in this transaction.
+    async fn observe_document_relation_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        observer: Did,
+        requester: Did,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+    ) -> Result<bool> {
+        let _ = (
+            context, handle, observer, requester, collection, doc_id, relation,
+        );
+        Err(crate::error::QueryError::execution(
+            "transaction-bound named permission observations are unsupported",
+        ))
+    }
+
+    /// Establish initial node admission for a live document owner in the transaction.
+    async fn bind_initial_bootstrap_owner_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        collection: &str,
+        document: &str,
+        owner: Did,
+        permissions: &[acp::nac::NodePermission],
+    ) -> Result<()> {
+        let _ = (context, handle, collection, document, owner, permissions);
+        Err(crate::error::QueryError::execution(
+            "transaction-bound bootstrap binding is unsupported",
+        ))
+    }
+
     /// Add an actor relationship in the same transaction as its document.
     /// The caller authenticates `actor`; the handle remains owned by `context`.
     async fn add_actor_relationship_in_txn(

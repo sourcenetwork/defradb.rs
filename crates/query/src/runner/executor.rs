@@ -230,6 +230,35 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
             .await
     }
 
+    async fn observe_document_relation_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        observer: identity::Did,
+        requester: identity::Did,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+    ) -> Result<bool> {
+        self.observe_relation(
+            context, handle, observer, requester, collection, doc_id, relation,
+        )
+        .await
+    }
+
+    async fn bind_initial_bootstrap_owner_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        collection: &str,
+        document: &str,
+        owner: identity::Did,
+        permissions: &[acp::nac::NodePermission],
+    ) -> Result<()> {
+        self.bind_initial_bootstrap_owner(context, handle, collection, document, owner, permissions)
+            .await
+    }
+
     async fn add_actor_relationship_in_txn(
         &self,
         context: RequestContext,

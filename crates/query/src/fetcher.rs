@@ -147,6 +147,20 @@ pub trait DocFetcher: MaybeSendSync {
         Ok(None)
     }
 
+    async fn bind_initial_bootstrap_owner(
+        &self,
+        _actor: &identity::Did,
+        _policy_id: &str,
+        _resource: &str,
+        _document: &str,
+        _owner: &identity::Did,
+        _permissions: &[acp::nac::NodePermission],
+    ) -> Result<()> {
+        Err(crate::error::QueryError::execution(
+            "transaction-bound bootstrap binding is unsupported",
+        ))
+    }
+
     /// An authorization provider actually bound to this fetcher's transaction.
     /// A capability flag or an unbound provider cannot certify a row snapshot.
     async fn transaction_acp(

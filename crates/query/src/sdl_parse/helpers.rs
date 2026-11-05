@@ -238,6 +238,11 @@ pub(super) fn parse_policy_directive(directive: &Directive<'_, String>) -> Resul
         "createMatchField",
         "createTargetMatchField",
         "createParentRelation",
+        "createRequireActorField",
+        "createAlsoField",
+        "createAlsoTarget",
+        "createAlsoTargetField",
+        "createAlsoPermission",
     ];
     let values: Vec<_> = names
         .iter()
@@ -290,6 +295,21 @@ pub(super) fn parse_policy_directive(directive: &Directive<'_, String>) -> Resul
             match_input_field,
             match_target_field,
             target_parent_relation,
+            require_actor_field: if values[9].is_none() {
+                None
+            } else {
+                Some(parse(9)?)
+            },
+            additional: if values[10..14].iter().all(Option::is_none) {
+                None
+            } else {
+                Some(schema::CreateAuthorization {
+                    input_field: parse(10)?,
+                    target_collection: parse(11)?,
+                    target_field: parse(12)?,
+                    permission: parse(13)?,
+                })
+            },
         })
     };
     Ok(PolicyConfig {

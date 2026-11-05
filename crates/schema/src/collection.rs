@@ -465,6 +465,23 @@ impl CollectionVersion {
                         ));
                     }
                 }
+                if let Some(extra) = &rule.additional {
+                    let field = self.field_by_name(&extra.input_field).ok_or_else(|| {
+                        SchemaError::InvalidPolicy("additional create input is missing".into())
+                    })?;
+                    if !field.immutable
+                        || !matches!(
+                            &field.kind,
+                            FieldKind::Scalar(
+                                crate::ScalarKind::String | crate::ScalarKind::NillableString
+                            )
+                        )
+                    {
+                        return Err(SchemaError::InvalidPolicy(
+                            "additional create input must be an immutable string".into(),
+                        ));
+                    }
+                }
             }
         }
         Ok(())

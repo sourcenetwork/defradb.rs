@@ -225,6 +225,36 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
             .map_err(|error| query::error::QueryError::execution(error.to_string()))
     }
 
+    async fn bind_initial_bootstrap_owner(
+        &self,
+        actor: &identity::Did,
+        policy_id: &str,
+        resource: &str,
+        document: &str,
+        owner: &identity::Did,
+        permissions: &[acp::nac::NodePermission],
+    ) -> query::error::Result<()> {
+        let nac = self
+            .db
+            .nac_manager()
+            .ok_or_else(|| query::error::QueryError::execution("NAC is unavailable"))?;
+        let txn = &*self.shared_txn()?;
+        let view = txn
+            .acpstore()
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+        nac.bind_initial_bootstrap_owner_in_txn(
+            view,
+            actor,
+            policy_id,
+            resource,
+            document,
+            owner,
+            permissions,
+        )
+        .await
+        .map_err(|error| query::error::QueryError::execution(error.to_string()))
+    }
+
     async fn transaction_acp(
         &self,
         provider: Arc<dyn acp::DocumentACP>,

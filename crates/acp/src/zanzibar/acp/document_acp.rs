@@ -354,7 +354,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> DocumentACP for ZanzibarDocumentACP<S>
 
         self.ensure_policy(policy_id, collection_id).await?;
 
-        if relation == OWNER_RELATION {
+        if relation == OWNER_RELATION || relation == crate::nac::BOOTSTRAP_MARKER {
             return Err(Error::InvalidRelation(
                 "cannot add owner relation".to_string(),
             ));
@@ -463,7 +463,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> DocumentACP for ZanzibarDocumentACP<S>
 
         self.ensure_policy(policy_id, collection_id).await?;
 
-        if relation == OWNER_RELATION {
+        if relation == OWNER_RELATION || relation == crate::nac::BOOTSTRAP_MARKER {
             return Err(Error::InvalidRelation(
                 "cannot delete owner relation".to_string(),
             ));

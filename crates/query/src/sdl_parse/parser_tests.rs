@@ -37,6 +37,17 @@ fn target_bound_create_requires_a_complete_local_rule() {
     );
     let governed = sdl.replace("@policy(", "@governed(root: \"root\") @policy(");
     assert!(parse_sdl(&governed).is_ok());
+    let combined = sdl.replace("createPermission: \"invoke\"", "createPermission: \"invoke\", createRequireActorField: \"did\", createAlsoField: \"agent_did\", createAlsoTarget: \"Agent\", createAlsoTargetField: \"did\", createAlsoPermission: \"invoke\"");
+    let combined_policy = parse_sdl(&combined).unwrap().remove(0).policy.unwrap();
+    let combined_rule = combined_policy.create_rule.unwrap();
+    assert_eq!(combined_rule.require_actor_field.as_deref(), Some("did"));
+    assert_eq!(combined_rule.additional.unwrap().permission, "invoke");
+    assert!(parse_sdl(&combined.replace(", createAlsoPermission: \"invoke\"", "")).is_err());
+    assert!(parse_sdl(&combined.replace(
+        "createAlsoField: \"agent_did\"",
+        "createAlsoField: \"missing\""
+    ))
+    .is_err());
     for invalid in [
         sdl.replace("@policy(", "@branchable @policy("),
         sdl.replace(" @immutable", ""),

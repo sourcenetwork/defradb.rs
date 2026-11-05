@@ -15,6 +15,178 @@ where
     F: DocFetcher + 'static,
     R: TransactionRegistry,
 {
+    pub(super) async fn observe_relation(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        observer: Did,
+        requester: Did,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+    ) -> Result<bool> {
+        let observations = self
+            .observe_owners(
+                context.clone(),
+                handle,
+                collection,
+                &[doc_id.to_owned()],
+                Some(observer),
+                true,
+            )
+            .await?;
+        if !observations.first().is_some_and(|row| row.visible) {
+            return Ok(false);
+        }
+        let runner = self.for_request(context.clone());
+        let collection = collection.to_owned();
+        let doc_id = doc_id.to_owned();
+        let relation = relation.to_owned();
+        let job = txn_job(move |turn| {
+            Box::pin(async move {
+                let ctx = turn
+                    .context()
+                    .map_err(|error| QueryError::execution(error.to_string()))?;
+                let fetcher = ctx.doc_fetcher();
+                match fetcher
+                    .check_node_permission(&requester, acp::nac::NodePermission::DocumentUpdate)
+                    .await?
+                {
+                    Some(true) => {}
+                    Some(false) => return Ok(false),
+                    None => {
+                        return Err(QueryError::execution(
+                            "transaction-bound node authorization is unavailable",
+                        ))
+                    }
+                }
+                let acp = fetcher
+                    .transaction_acp(runner.acp.clone())
+                    .await?
+                    .ok_or_else(|| {
+                        QueryError::execution(
+                            "transaction-bound document authorization is unavailable",
+                        )
+                    })?;
+                let definition = ctx
+                    .collection_provider()
+                    .ok_or_else(|| {
+                        QueryError::execution("transaction schema observation is unavailable")
+                    })?
+                    .get_collection(&collection)
+                    .await?
+                    .ok_or_else(|| QueryError::collection_not_found(&collection))?;
+                let policy = definition
+                    .policy
+                    .as_ref()
+                    .ok_or_else(|| QueryError::execution("collection has no document policy"))?;
+                acp.check_named_permission(
+                    &acp::Identity::Authenticated(requester),
+                    &policy.id,
+                    &policy.resource_name,
+                    &doc_id,
+                    &relation,
+                )
+                .await
+                .map_err(|error| QueryError::execution(error.to_string()))
+            })
+        });
+        self.registry
+            .run_as(&context, handle, self.deadline(), job)
+            .await
+            .map_err(|error| QueryError::execution(error.to_string()))?
+    }
+
+    pub(super) async fn bind_initial_bootstrap_owner(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        collection: &str,
+        document: &str,
+        owner: Did,
+        permissions: &[acp::nac::NodePermission],
+    ) -> Result<()> {
+        let actor = Did::new(
+            context
+                .identity()
+                .ok_or_else(|| QueryError::execution("node transaction identity is required"))?,
+        )
+        .map_err(|error| QueryError::execution(error.to_string()))?;
+        let observed = self
+            .observe_owners(
+                context.clone(),
+                handle,
+                collection,
+                &[document.to_owned()],
+                None,
+                false,
+            )
+            .await?;
+        if !observed
+            .first()
+            .is_some_and(|row| row.visible && row.owner.as_ref() == Some(&owner))
+        {
+            return Err(QueryError::execution(
+                "bootstrap owner is not the owner of a visible live document",
+            ));
+        }
+        let collection = collection.to_owned();
+        let document = document.to_owned();
+        let permissions = permissions.to_vec();
+        let provider = self.acp.clone();
+        let job = txn_job(move |turn| {
+            Box::pin(async move {
+                if turn.is_readonly() {
+                    return Err(QueryError::execution(
+                        "bootstrap binding requires a writable transaction",
+                    ));
+                }
+                turn.begin_statement()
+                    .map_err(|error| QueryError::execution(error.to_string()))?;
+                let result: Result<()> = async {
+                    let ctx = turn
+                        .context()
+                        .map_err(|error| QueryError::execution(error.to_string()))?;
+                    let fetcher = ctx.doc_fetcher();
+                    fetcher.transaction_acp(provider).await?.ok_or_else(|| {
+                        QueryError::execution(
+                            "transaction-bound document authorization is unavailable",
+                        )
+                    })?;
+                    let definition = ctx
+                        .collection_provider()
+                        .ok_or_else(|| {
+                            QueryError::execution("transaction schema observation is unavailable")
+                        })?
+                        .get_collection(&collection)
+                        .await?
+                        .ok_or_else(|| QueryError::collection_not_found(&collection))?;
+                    let policy = definition.policy.as_ref().ok_or_else(|| {
+                        QueryError::execution("collection has no document policy")
+                    })?;
+                    fetcher
+                        .bind_initial_bootstrap_owner(
+                            &actor,
+                            &policy.id,
+                            &policy.resource_name,
+                            &document,
+                            &owner,
+                            &permissions,
+                        )
+                        .await
+                }
+                .await;
+                turn.end_statement(result.is_ok())
+                    .map_err(|error| QueryError::execution(error.to_string()))?;
+                result
+            })
+        });
+        self.registry
+            .run_as(&context, handle, self.deadline(), job)
+            .await
+            .map_err(|error| QueryError::execution(error.to_string()))?
+    }
+
     pub(super) async fn observe_permission(
         &self,
         context: RequestContext,

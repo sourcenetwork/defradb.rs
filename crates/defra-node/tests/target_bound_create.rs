@@ -71,6 +71,38 @@ fn local_policy_commitment_survives_creation_and_schema_patch() {
 }
 
 #[test]
+fn target_actor_and_second_permission_are_enforced_in_one_transaction() {
+    workers::block_on(async {
+        let node = EmbeddedNode::builder().build().await.unwrap();
+        let policy = node.add_dac_policy(OWNER, POLICY).await.unwrap();
+        node.add_collection(&format!(r#"
+            type Agent @policy(id: "{policy}", resource: "agents") {{ did: String @index(unique: true) @immutable }}
+            type ActorCommand @policy(id: "{policy}", resource: "requests", createField: "target", createTarget: "Agent", createTargetField: "_docID", createPermission: "invoke", createRequireActorField: "did") {{ target: String @immutable }}
+            type DualCommand @policy(id: "{policy}", resource: "requests", createField: "target", createTarget: "Agent", createTargetField: "_docID", createPermission: "invoke", createAlsoField: "second", createAlsoTarget: "Agent", createAlsoTargetField: "did", createAlsoPermission: "invoke") {{ target: String @immutable second: String @immutable }}
+        "#)).await.unwrap();
+        let a = created(&execute(&node, OWNER, &format!(r#"mutation {{ create_Agent(input: {{did: "{OWNER}"}}) {{_docID}} }}"#)).await, "Agent");
+        let b = created(&execute(&node, OWNER, &format!(r#"mutation {{ create_Agent(input: {{did: "{SENDER}"}}) {{_docID}} }}"#)).await, "Agent");
+        node.add_dac_actor_relationship(OWNER, "Agent", &a, "invoker", SENDER).await.unwrap();
+        let actor = format!(r#"mutation {{ create_ActorCommand(input: {{target: "{a}"}}) {{_docID}} }}"#);
+        let denied = execute(&node, SENDER, &actor).await;
+        assert!(denied.has_errors(), "permission alone must not satisfy actor equality");
+        created(&execute(&node, OWNER, &actor).await, "ActorCommand");
+        let dual = format!(r#"mutation {{ create_DualCommand(input: {{target: "{a}", second: "{SENDER}"}}) {{_docID}} }}"#);
+        let denied_second = execute(&node, SENDER, &dual).await;
+        assert!(denied_second.has_errors(), "second target permission is required");
+        assert_eq!(denied.errors[0].message, denied_second.errors[0].message);
+        node.add_dac_actor_relationship(OWNER, "Agent", &b, "invoker", SENDER).await.unwrap();
+        let txn = node.begin_transaction(false).await.unwrap();
+        created(&node.execute_request_in_txn(QueryRequest::new(&dual).with_identity(Some(identity::Did::new(SENDER).unwrap())), &txn).await, "DualCommand");
+        node.delete_dac_actor_relationship(OWNER, "Agent", &b, "invoker", SENDER).await.unwrap();
+        node.add_dac_actor_relationship(OWNER, "Agent", &b, "invoker", SENDER).await.unwrap();
+        assert!(node.commit_transaction(&txn).await.is_err(), "second permission ABA must conflict");
+        created(&execute(&node, SENDER, &dual).await, "DualCommand");
+        node.shutdown().await;
+    }).unwrap()
+}
+
+#[test]
 fn target_bound_create_and_revoke_are_transactional() {
     workers::block_on(async {
         let node = EmbeddedNode::builder().build().await.unwrap();

@@ -7,8 +7,11 @@
 //! - **Write blocking when disabled**: All relationship modifications are blocked
 //!   when NAC is disabled to prevent privilege escalation attacks.
 
+mod bootstrap;
 mod lifecycle;
 mod operations;
+
+pub use bootstrap::BOOTSTRAP_MARKER;
 
 use std::sync::Arc;
 use storage::corekv::MaybeSendSync;

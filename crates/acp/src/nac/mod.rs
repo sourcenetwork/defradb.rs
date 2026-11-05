@@ -33,7 +33,7 @@ mod permission;
 mod policy;
 
 pub use dac_bypass::should_bypass_dac;
-pub use node_acp::{NacStatus, NodeACP, NodeAcpOperations, NODE_OBJECT_ID};
+pub use node_acp::{NacStatus, NodeACP, NodeAcpOperations, BOOTSTRAP_MARKER, NODE_OBJECT_ID};
 pub use permission::NodePermission;
 pub use policy::{
     create_node_policy, is_valid_nac_relation, validate_node_policy, ADMIN_RELATION,

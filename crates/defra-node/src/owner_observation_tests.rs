@@ -883,3 +883,57 @@ fn http_resource_relationship_is_transaction_scoped() {
         node.shutdown().await;
     }).unwrap();
 }
+
+#[test]
+fn named_permission_observation_tracks_revocation_and_live_visibility() {
+    workers::block_on(async {
+        use crypto::Key as _;
+        use identity::Identity as _;
+        let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
+        let key = crypto::generate_ed25519().unwrap();
+        let runtime = identity::RawIdentity::from_ed25519(key.clone()).unwrap();
+        let runtime_did = runtime.did().unwrap().to_string();
+        let public = runtime.public_key_bytes();
+        defra_core::signing::store_identity(&runtime_did, defra_core::signing::SigningConfig {
+            key_type: defra_core::signing::SigningKeyType::Ed25519,
+            private_key_bytes: key.raw().to_vec(), public_key_hex: hex::encode(&public),
+            public_key_bytes: public, remote_signer: None, signing_authorization: None,
+        });
+        let node = EmbeddedNode::builder().with_node_identity_did(&runtime_did).with_node_acp_enabled().build().await.unwrap();
+        for did in [A, B] {
+            for permission in [acp::nac::NodePermission::DocumentRead, acp::nac::NodePermission::DocumentUpdate, acp::nac::NodePermission::DacRelationAdd, acp::nac::NodePermission::DacRelationDelete] {
+                node.grant_node_permission_as(Did::new(&runtime_did).unwrap(), Did::new(did).unwrap(), permission).await.unwrap();
+            }
+        }
+        let yaml = "name: Invocable targets\nresources:\n  - name: targets\n    relations:\n      - name: invoker\n    permissions:\n      - name: read\n      - name: update\n      - name: delete\n      - name: invoke\n        expr: invoker\n";
+        let policy = node.add_dac_policy(&runtime_did, yaml).await.unwrap();
+        node.add_collection(&format!("type Targets @policy(id: \"{policy}\", resource: \"targets\") {{ name: String }}\ntype Outcomes {{ value: String }}")).await.unwrap();
+        let created = node.execute_request(query::QueryRequest::new("mutation { add_Targets(input: {name: \"target\"}) { _docID } }").with_identity(Some(Did::new(A).unwrap()))).await;
+        assert!(!created.has_errors(), "{:?}", created.errors);
+        let doc = created.data.unwrap()["add_Targets"][0]["_docID"].as_str().unwrap().to_owned();
+        node.add_dac_actor_relationship(A, "Targets", &doc, "invoker", B).await.unwrap();
+        let executor = node.runner();
+        let observer = actor(A);
+        let txn = executor.begin_txn_as(&observer, false).await.unwrap();
+        assert!(executor.observe_document_relation_in_txn(observer.clone(), &txn, Did::new(A).unwrap(), Did::new(B).unwrap(), "Targets", &doc, "invoke").await.unwrap());
+        assert!(executor.observe_document_relation_in_txn(observer.clone(), &txn, Did::new(A).unwrap(), Did::new(B).unwrap(), "Targets", &doc, "missing").await.is_err());
+        let staged = executor.execute_in_txn(query::QueryRequest::new("mutation { add_Outcomes(input: {value: \"applied\"}) { _docID } }").with_context(observer.clone()).with_identity(Some(Did::new(A).unwrap())), &txn).await;
+        assert!(!staged.has_errors(), "{:?}", staged.errors);
+        node.revoke_node_permission_as(Did::new(&runtime_did).unwrap(), Did::new(B).unwrap(), acp::nac::NodePermission::DocumentUpdate).await.unwrap();
+        node.grant_node_permission_as(Did::new(&runtime_did).unwrap(), Did::new(B).unwrap(), acp::nac::NodePermission::DocumentUpdate).await.unwrap();
+        assert!(executor.commit_txn_as(&observer, &txn).await.is_err(), "revoked and restored NAC permission must conflict");
+        let txn = executor.begin_txn_as(&observer, false).await.unwrap();
+        assert!(executor.observe_document_relation_in_txn(observer.clone(), &txn, Did::new(A).unwrap(), Did::new(B).unwrap(), "Targets", &doc, "invoke").await.unwrap());
+        let staged = executor.execute_in_txn(query::QueryRequest::new("mutation { add_Outcomes(input: {value: \"other\"}) { _docID } }").with_context(observer.clone()).with_identity(Some(Did::new(A).unwrap())), &txn).await;
+        assert!(!staged.has_errors(), "{:?}", staged.errors);
+        node.delete_dac_actor_relationship(A, "Targets", &doc, "invoker", B).await.unwrap();
+        node.add_dac_actor_relationship(A, "Targets", &doc, "invoker", B).await.unwrap();
+        assert!(executor.commit_txn_as(&observer, &txn).await.is_err(), "revoked and restored DAC permission must conflict");
+        node.delete_dac_actor_relationship(A, "Targets", &doc, "invoker", B).await.unwrap();
+        let txn = executor.begin_txn_as(&observer, false).await.unwrap();
+        assert!(!executor.observe_document_relation_in_txn(observer.clone(), &txn, Did::new(A).unwrap(), Did::new(B).unwrap(), "Targets", &doc, "invoke").await.unwrap());
+        executor.discard_txn_as(&observer, &txn).await.unwrap();
+        node.shutdown().await;
+        defra_core::signing::clear_identity_store();
+    }).unwrap();
+}

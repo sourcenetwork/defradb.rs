@@ -799,6 +799,22 @@ impl<'a> SdlParser<'a> {
                     "target-bound create input field must be an immutable string",
                 ));
             }
+            if let Some(extra) = &rule.additional {
+                if !fields.iter().any(|field| {
+                    field.name == extra.input_field
+                        && field.immutable
+                        && matches!(
+                            &field.kind,
+                            FieldKind::Scalar(
+                                schema::ScalarKind::String | schema::ScalarKind::NillableString
+                            )
+                        )
+                }) {
+                    return Err(QueryError::parse(
+                        "additional create input must be an immutable string",
+                    ));
+                }
+            }
         }
         let policy_commitment = commitments
             .commits_field_metadata()

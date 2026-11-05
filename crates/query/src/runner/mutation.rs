@@ -783,6 +783,86 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
             validate_create_target_match(rule, input, &document, &target_collection).map_err(
                 |_| QueryError::document_not_found("target not found or not authorized"),
             )?;
+            if let Some(field_name) = &rule.require_actor_field {
+                let field = target_collection.field_by_name(field_name).ok_or_else(|| {
+                    QueryError::document_not_found("target not found or not authorized")
+                })?;
+                if !field.immutable
+                    || !matches!(
+                        &field.kind,
+                        schema::FieldKind::Scalar(
+                            schema::ScalarKind::String | schema::ScalarKind::NillableString
+                        )
+                    )
+                    || document.get(field_name).and_then(|value| value.as_str())
+                        != Some(actor.as_str())
+                {
+                    return Err(QueryError::document_not_found(
+                        "target not found or not authorized",
+                    ));
+                }
+            }
+            if let Some(extra) = &rule.additional {
+                let input_field = collection
+                    .field_by_name(&extra.input_field)
+                    .ok_or_else(|| QueryError::execution("invalid target-bound create policy"))?;
+                if !input_field.immutable
+                    || !matches!(
+                        &input_field.kind,
+                        schema::FieldKind::Scalar(
+                            schema::ScalarKind::String | schema::ScalarKind::NillableString
+                        )
+                    )
+                {
+                    return Err(QueryError::execution("invalid target-bound create policy"));
+                }
+                let key = input
+                    .get(&extra.input_field)
+                    .and_then(JsonValue::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| {
+                        QueryError::document_not_found("target not found or not authorized")
+                    })?;
+                let (extra_doc, extra_collection) = fetcher
+                    .get_by_unique_string_in_txn(&extra.target_collection, &extra.target_field, key)
+                    .await?
+                    .ok_or_else(|| {
+                        QueryError::document_not_found("target not found or not authorized")
+                    })?;
+                let extra_policy = extra_collection
+                    .policy
+                    .as_ref()
+                    .filter(|policy| {
+                        collection
+                            .policy
+                            .as_ref()
+                            .is_some_and(|own| own.id == policy.id)
+                    })
+                    .ok_or_else(|| {
+                        QueryError::document_not_found("target not found or not authorized")
+                    })?;
+                let extra_id = extra_doc
+                    .id()
+                    .ok_or_else(|| {
+                        QueryError::document_not_found("target not found or not authorized")
+                    })?
+                    .to_string();
+                let allowed = acp
+                    .check_named_permission(
+                        &Identity::Authenticated(actor.clone()),
+                        &extra_policy.id,
+                        &extra_policy.resource_name,
+                        &extra_id,
+                        &extra.permission,
+                    )
+                    .await
+                    .map_err(|error| QueryError::execution(error.to_string()))?;
+                if !allowed {
+                    return Err(QueryError::document_not_found(
+                        "target not found or not authorized",
+                    ));
+                }
+            }
         }
         Ok(())
     }

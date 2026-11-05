@@ -19,10 +19,23 @@ impl<S: ZanzibarStore + ?Sized + 'static> NodeACP<S> {
         identity: &Did,
         permission: NodePermission,
     ) -> Result<bool> {
+        if let Some(scope) = self.store.begin_scope(true).await? {
+            let scoped = self.scoped(scope.store());
+            scoped.load().await?;
+            let scoped: Box<dyn super::NodeAcpOperations> = Box::new(scoped);
+            let result = scoped.check_permission(identity, permission).await?;
+            drop(scoped);
+            scope.commit().await?;
+            return Ok(result);
+        }
         let status = *self.status.load();
 
         // If NAC is not enabled, allow all operations
         if status != NacStatus::Enabled {
+            return Ok(true);
+        }
+
+        if self.bootstrap_permission(identity, permission).await? {
             return Ok(true);
         }
 

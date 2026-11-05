@@ -48,6 +48,8 @@ fn target_bound_rule_is_validated_for_direct_collection_versions() {
         match_input_field: None,
         match_target_field: None,
         target_parent_relation: None,
+        require_actor_field: None,
+        additional: None,
     });
     collection.policy = Some(policy);
     collection.validate().unwrap();

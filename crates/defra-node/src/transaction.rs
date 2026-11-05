@@ -36,6 +36,52 @@ impl EmbeddedNode {
             )
             .await
     }
+    /// Observe a named policy permission on a live document in this transaction.
+    /// The in-process caller authenticates the requester and binds it to its intent.
+    pub async fn observe_document_relation_in_txn(
+        &self,
+        handle: &TransactionHandle,
+        observer: identity::Did,
+        requester: identity::Did,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+    ) -> query::error::Result<bool> {
+        self.runner()
+            .observe_document_relation_in_txn(
+                self.node_context(),
+                handle,
+                observer,
+                requester,
+                collection,
+                doc_id,
+                relation,
+            )
+            .await
+    }
+
+    /// Bind initial node admission to a live document owner in this transaction.
+    /// The node identity acts as the NAC owner; an existing binding cannot be replaced.
+    pub async fn bind_initial_bootstrap_owner_in_txn(
+        &self,
+        handle: &TransactionHandle,
+        collection: &str,
+        document: &str,
+        owner: identity::Did,
+        permissions: &[acp::nac::NodePermission],
+    ) -> query::error::Result<()> {
+        self.runner()
+            .bind_initial_bootstrap_owner_in_txn(
+                self.node_context(),
+                handle,
+                collection,
+                document,
+                owner,
+                permissions,
+            )
+            .await
+    }
+
     /// Revoke a document relationship in the same transaction as related writes.
     /// In-process callers authenticate the supplied actor at their own boundary.
     pub async fn delete_dac_actor_relationship_in_txn(

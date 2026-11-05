@@ -71,6 +71,21 @@ pub trait NacManagerApi: defra_core::thread_bounds::MaybeSendSync {
     ) -> Result<bool> {
         self.check_permission(identity, permission).await
     }
+    /// Bind initial owner admission to a document in the caller's transaction.
+    async fn bind_initial_bootstrap_owner_in_txn(
+        &self,
+        _view: datastore::NamespaceView,
+        _actor: &Did,
+        _policy_id: &str,
+        _resource: &str,
+        _document: &str,
+        _owner: &Did,
+        _permissions: &[NodePermission],
+    ) -> Result<()> {
+        Err(Error::Other(
+            "transaction-bound bootstrap binding is unsupported".into(),
+        ))
+    }
     async fn is_admin(&self, identity: &Did) -> Result<bool>;
     async fn is_admin_persisted(&self, identity: &Did) -> Result<bool>;
     async fn is_owner(&self, identity: &Did) -> bool;
