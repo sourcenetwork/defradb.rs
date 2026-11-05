@@ -1,5 +1,6 @@
 //! Pending DAG registration and retry logic.
 
+use crate::rt::mpsc::error::TrySendError;
 use rapidhash::{HashSetExt, RapidHashSet};
 use std::sync::Arc;
 use web_time::Instant;
@@ -787,6 +788,11 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// This is called when BitswapComplete is received, indicating all requested
     /// blocks have arrived. We re-check the DAG for any remaining missing links
     /// (recursively, at all depths) and process it if complete.
+    ///
+    /// Transport handlers call this in their lane slot, so a complete DAG
+    /// never waits for room in the merge loop's channel: while it is full the
+    /// root is made due at once for the receiver clock, and this returns
+    /// `false`.
     pub async fn retry_pending_dag(&self, root_cid: &Cid) -> Result<bool> {
         enum PendingDagRetryEntry {
             Current(PendingDag),
@@ -923,27 +929,31 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             "DAG complete, emitting DagReady"
         );
 
-        // Emit event that DAG is ready for merge
-        if self
-            .event_tx
-            .clone()
-            .send(SyncEvent::DagReady {
-                root_cid: *root_cid,
-                doc_id: info.doc_id.clone(),
-                collection_id: info.collection_id.clone(),
-                creator: info.creator.clone(),
-                sender_peer: info.source_peer.clone(),
-                is_explicit_replicator: info.is_explicit_replicator,
-                explicit_replay_authorization: info.explicit_replay_authorization.clone(),
-            })
-            .await
-            .is_err()
-        {
-            tracing::error!(
-                root_cid = %root_cid,
-                "Failed to emit DagReady for completed DAG"
-            );
-            return Err(Error::ChannelSend);
+        match self.event_tx.try_send(SyncEvent::DagReady {
+            root_cid: *root_cid,
+            doc_id: info.doc_id.clone(),
+            collection_id: info.collection_id.clone(),
+            creator: info.creator.clone(),
+            sender_peer: info.source_peer.clone(),
+            is_explicit_replicator: info.is_explicit_replicator,
+            explicit_replay_authorization: info.explicit_replay_authorization.clone(),
+        }) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => {
+                tracing::debug!(
+                    root_cid = %root_cid,
+                    "Merge loop channel full; the receiver clock dispatches the complete DAG"
+                );
+                self.expedite_pending_dag_retry(root_cid);
+                return Ok(false);
+            }
+            Err(TrySendError::Closed(_)) => {
+                tracing::error!(
+                    root_cid = %root_cid,
+                    "Failed to emit DagReady for completed DAG"
+                );
+                return Err(Error::ChannelSend);
+            }
         }
 
         self.diagnostics.record_pending_dag_resolved();

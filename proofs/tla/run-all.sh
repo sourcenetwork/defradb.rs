@@ -457,6 +457,12 @@ RUNS=(
   "MC_SyncOwnership_Green_Dispatch_PeerPermits.cfg MC_SyncOwnership_Dispatch.tla GREEN" # a slot is taken with its source peer's permit: a busy peer's root is passed over and the slot goes to another peer's root
   "MC_SyncOwnership_Green_Dispatch_PullPermit.cfg MC_SyncOwnership_Dispatch.tla GREEN" # a pull fetch holds the peer's permit: its root is passed over, then claimed in its turn, and both heads merge
   "MC_SyncOwnership_Red_SlotBeforePermit.cfg MC_SyncOwnership_Dispatch.tla RED" # slot first, permit after: a fetch waits for its peer's permit in a slot another peer's root could use (INV_NoSlotWaitsForPermit)
+  "MC_SyncOwnership_Green_Dispatch_Storm.cfg MC_SyncOwnership_Dispatch.tla GREEN" # the clock's own lane, emptied first: an acked head merges while blocked senders keep the merge loop's channel full
+  "MC_SyncOwnership_Red_MergeFifoDispatch.cfg MC_SyncOwnership_Dispatch.tla RED" # old rule: the clock try_reserves the merge loop's channel and every freed cell goes to a waiting sender (LIVE_AckedRootMerged)
+  "MC_SyncOwnership_Red_BlockingHandlerSend.cfg MC_SyncOwnership_Dispatch.tla RED" # old rule: a handler waits for room in the full channel in its admission lane slot (INV_AdmissionNeverWaitsOnMergeLoop)
+  "MC_SyncOwnership_Red_LoopWaitsOnItself.cfg MC_SyncOwnership_Dispatch.tla RED" # old rule: the merge loop completes a root from a latched block-sync completion and waits for room in its own channel (INV_MergeLoopNeverWaitsOnItself)
+  "MC_SyncOwnership_Green_Dispatch_LaneTurns.cfg MC_SyncOwnership_Dispatch.tla GREEN" # the lane goes first for a slot's worth of dispatches in a row: a DagReady still merges while a trickling root is re-dispatched at every quantum
+  "MC_SyncOwnership_Red_LaneAlwaysFirst.cfg MC_SyncOwnership_Dispatch.tla RED" # the lane always goes first: a root re-dispatched before every receive keeps a DagReady in the channel for good (LIVE_AckedRootMerged)
   "MC_SyncOwnership_Green_Memory.cfg MC_SyncOwnership_Memory.tla GREEN" # durable roots past the in-memory cap take turns; a local continuation ends when it stops yielding
   "MC_SyncOwnership_Red_RetainedOverflow.cfg MC_SyncOwnership_Memory.tla RED" # a never-serving restored root holds the only entry for good (LIVE_DurableRootMerged)
   "MC_SyncOwnership_Red_KeyOrderResync.cfg MC_SyncOwnership_Memory.tla RED" # the sweep restarts at the first key and re-admits the root that gave its entry up (LIVE_DurableRootMerged)

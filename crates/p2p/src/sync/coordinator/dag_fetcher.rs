@@ -98,7 +98,8 @@ enum ProviderWindowOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum FetchAttemptOutcome {
-    Complete,
+    /// The DAG is local; carries the root block.
+    Complete(bytes::Bytes),
     /// The missing block count, and why this attempt's windows failed.
     Incomplete(usize, FetchFailures),
     Deferred,
@@ -135,7 +136,8 @@ pub(crate) enum FetchTaskEnd {
 ///
 /// A limiter permit is held only for the duration of each attempt — it is
 /// released during backoff sleeps so a fetch stuck on dead providers does not
-/// starve other roots under fan-in pressure. A clock-dispatched fetch arrives
+/// starve other roots under fan-in pressure, and before a complete DAG waits
+/// for room in the merge loop's channel. A clock-dispatched fetch arrives
 /// with its source peer's permit, taken together with its slot, and waits
 /// only for a global one. Every issued transport query is reaped via
 /// `cancel_sync` at the end of its poll window, so releasing the permit never
@@ -252,15 +254,8 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
             let started = Instant::now();
             let mut state = ProviderFetchState::new(&mut providers, health, diagnostics.as_ref())
                 .with_quantum(context.is_clock_owned());
-            let outcome = fetch_dag_attempt(
-                &transport,
-                &blockstore,
-                &event_tx,
-                root_cid,
-                &context,
-                &mut state,
-            )
-            .await;
+            let outcome =
+                fetch_dag_attempt(&transport, &blockstore, root_cid, &context, &mut state).await;
             sample = attempt_sample(&outcome, started.elapsed(), providers.attempt_progressed());
             if outcome != FetchAttemptOutcome::ProviderBusy || busy_retries == 0 {
                 break outcome;
@@ -279,7 +274,10 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
         };
 
         match outcome {
-            FetchAttemptOutcome::Complete => return (FetchTaskEnd::Settled, sample),
+            FetchAttemptOutcome::Complete(root_data) => {
+                emit_dag_ready(&event_tx, root_cid, &context, &root_data).await;
+                return (FetchTaskEnd::Settled, sample);
+            }
             FetchAttemptOutcome::Unservable => {
                 error!(root_cid = %root_cid, providers = ?providers.peers(),
                     "Providers cannot serve the remaining DAG within their CAR byte limits; stopping this fetch");
@@ -371,7 +369,7 @@ fn attempt_sample(
     progressed: bool,
 ) -> AttemptSample {
     match outcome {
-        FetchAttemptOutcome::Complete => AttemptSample::Complete,
+        FetchAttemptOutcome::Complete(_) => AttemptSample::Complete,
         FetchAttemptOutcome::ProviderBusy => AttemptSample::Shed { progressed },
         FetchAttemptOutcome::Preempted => AttemptSample::Preempted,
         FetchAttemptOutcome::Incomplete(..) => AttemptSample::Incomplete {
@@ -535,7 +533,6 @@ pub(crate) async fn add_collection_providers<T: P2PTransport>(
 async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
     transport: &T,
     blockstore: &Arc<B>,
-    event_tx: &mpsc::Sender<SyncEvent>,
     root_cid: Cid,
     context: &DagFetchContext,
     state: &mut ProviderFetchState<'_>,
@@ -625,8 +622,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
                 .unwrap_or_default();
             if missing.is_empty() {
                 info!(root_cid = %root_cid, doc_id = %context.doc_id, "DAG fetch complete via rooted CAR");
-                emit_dag_ready(event_tx, root_cid, context, &root_data).await;
-                return FetchAttemptOutcome::Complete;
+                return FetchAttemptOutcome::Complete(root_data);
             }
             debug!(
                 root_cid = %root_cid,
@@ -756,8 +752,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
 
     if remaining.is_empty() {
         info!(root_cid = %root_cid, doc_id = %context.doc_id, "DAG fetch complete");
-        emit_dag_ready(event_tx, root_cid, context, &root_data).await;
-        FetchAttemptOutcome::Complete
+        FetchAttemptOutcome::Complete(root_data)
     } else if unservable {
         FetchAttemptOutcome::Unservable
     } else {
