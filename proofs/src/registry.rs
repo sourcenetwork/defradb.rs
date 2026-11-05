@@ -114,6 +114,22 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "Unified access observations preserve mode-specific gates and transactional authority",
+        axis: Tla,
+        anchor: "crates/query/src/runner/owners.rs; crates/db/src/read/lensed/fetcher/mod.rs",
+        model_ref: "MC_UnifiedAccess_Green.cfg / MC_UnifiedAccess_Red_*.cfg",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "Acp.OwnerObservation.accessDecision preserves delegated and named access gates",
+        axis: Lean,
+        anchor: "crates/query/src/runner/owners.rs",
+        model_ref: "Acp.OwnerObservation",
+        tiers: &[Contract],
+    },
+    Property {
         family: "Peer connection observation",
         name: "ExplicitOnly / ExactAddress / RequestedPort / DefaultPreserved / UnavailableRefused / MappingScope / MappingDefaultsPreserved",
         axis: Tla,

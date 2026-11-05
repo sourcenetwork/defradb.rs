@@ -127,6 +127,38 @@ impl NodeTransaction<'_> {
 }
 
 impl Node {
+    /// Observe access for an authenticated actor on known document IDs. This
+    /// privileged in-process API returns no document metadata; its decisions
+    /// must not be exposed to untrusted requesters. The caller authenticates
+    /// the actor and chooses the authorization mode and node permission.
+    /// Local ACP and row reads share the transaction. Delegated application
+    /// hooks may read external state and are not fenced by this transaction.
+    pub async fn observe_document_access_in_txn(
+        &self,
+        handle: &TransactionHandle,
+        collection: &str,
+        doc_ids: &[String],
+        actor: identity::Did,
+        mode: query::owners::DocumentAccessMode,
+    ) -> query::error::Result<Vec<query::owners::DocumentAccessDecision>> {
+        let context = match &mode {
+            query::owners::DocumentAccessMode::DelegatedRead => {
+                let node = self.node_query_identity.as_ref().ok_or_else(|| {
+                    query::error::QueryError::execution(
+                        "node identity is required for delegated visibility",
+                    )
+                })?;
+                defra_core::RequestContext::default().with_identity(Some(node.to_string()))
+            }
+            query::owners::DocumentAccessMode::Named { .. } => {
+                self.node_context().with_dac_bypass(false)
+            }
+        };
+        self.runner()
+            .observe_document_access_in_txn(context, handle, collection, doc_ids, actor, mode)
+            .await
+    }
+
     /// Read authenticated owners in the same explicit transaction as its rows.
     /// The node remains the transaction actor. A supplied document-read identity
     /// follows the ordinary GraphQL permission path; it does not borrow another

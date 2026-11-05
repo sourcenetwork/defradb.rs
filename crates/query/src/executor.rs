@@ -514,6 +514,27 @@ pub trait QueryExecutor: MaybeSendSync {
         ))
     }
 
+    /// Privileged authorization observations in the transaction's snapshot.
+    /// The caller authenticates the actor and restricts this API to trusted
+    /// native code. Decisions distinguish denial from absence and must not be
+    /// disclosed to untrusted requesters. No document metadata is returned.
+    /// Local ACP and row reads are transaction-bound; application hooks may
+    /// consult external state and are not fenced by this transaction.
+    async fn observe_document_access_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        collection: &str,
+        doc_ids: &[String],
+        actor: identity::Did,
+        mode: crate::owners::DocumentAccessMode,
+    ) -> Result<Vec<crate::owners::DocumentAccessDecision>> {
+        let _ = (context, handle, collection, doc_ids, actor, mode);
+        Err(crate::error::QueryError::execution(
+            "transaction-bound access observations are unsupported",
+        ))
+    }
+
     /// Begin a new transaction.
     ///
     /// Returns a transaction handle that can be used with `execute_in_txn()`.

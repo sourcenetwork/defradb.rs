@@ -225,6 +225,24 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
             .map_err(|error| query::error::QueryError::execution(error.to_string()))
     }
 
+    async fn check_bound_node_permission(
+        &self,
+        identity: &identity::Did,
+        permission: acp::nac::NodePermission,
+        require_active: bool,
+    ) -> query::error::Result<Option<bool>> {
+        let Some(nac) = self.db.nac_manager() else {
+            return Ok(None);
+        };
+        let txn = &*self.shared_txn()?;
+        let view = txn
+            .acpstore()
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+        nac.check_bound_permission_in_txn(view, identity, permission, require_active)
+            .await
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))
+    }
+
     async fn transaction_acp(
         &self,
         provider: Arc<dyn acp::DocumentACP>,

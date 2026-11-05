@@ -160,6 +160,19 @@ pub trait DocumentACP: MaybeSendSync {
         doc_id: &str,
     ) -> Result<bool>;
 
+    /// Evaluate a named permission for an explicit actor. Backends that cannot
+    /// evaluate named permissions must fail rather than infer a grant.
+    async fn check_named_permission(
+        &self,
+        _subject: &Did,
+        _permission: &str,
+        _policy_id: &str,
+        _resource_name: &str,
+        _doc_id: &str,
+    ) -> Result<bool> {
+        Err(Error::UnsupportedNamedPermission)
+    }
+
     /// Create a persisted access decision for a caller/object/permission check.
     ///
     /// Vera-backed ACP can use this to mint a decision that downstream
