@@ -370,6 +370,13 @@ RUNS=(
   "MC_CoreDispatch_Red_NoNac.cfg CoreDispatch.tla RED" # the core skips NAC (INV_NoEffectWithoutPermission)
   "MC_CoreDispatch_Red_IgnoreTxn.cfg CoreDispatch.tla RED" # the edge drops the transaction (INV_TxnNeverAutocommits)
   "MC_TransactionalRelationship_Green.cfg TransactionalRelationship.tla GREEN" # a grant and marker share the authorized transaction
+  "MC_DelegatedRelationship_Green.cfg DelegatedRelationship.tla GREEN" # the embedder owns the transaction and the selected actor passes NAC and DAC
+  "MC_DelegatedRelationship_Red_Http.cfg DelegatedRelationship.tla RED" # an HTTP caller reaches the privileged embedding boundary (INV_ActorAuthority)
+  "MC_DelegatedRelationship_Red_Owner.cfg DelegatedRelationship.tla RED" # a transaction owned by another caller is admitted (INV_ActorAuthority)
+  "MC_DelegatedRelationship_Red_Actor.cfg DelegatedRelationship.tla RED" # an unauthenticated actor is accepted (INV_ActorAuthority)
+  "MC_DelegatedRelationship_Red_Nac.cfg DelegatedRelationship.tla RED" # node authority replaces the actor's NAC (INV_ActorAuthority)
+  "MC_DelegatedRelationship_Red_Dac.cfg DelegatedRelationship.tla RED" # node authority replaces the actor's DAC (INV_ActorAuthority)
+  "MC_DelegatedRelationship_Red_Bound.cfg DelegatedRelationship.tla RED" # an unbound provider is accepted (INV_ActorAuthority)
   "MC_HttpTxnConfiguration_Green.cfg HttpTxnConfiguration.tla GREEN" # HTTP never shares the embedder-only transaction key
   "MC_HttpTxnConfiguration_Red_Allow.cfg HttpTxnConfiguration.tla RED" # HTTP uses the embedder-only key (INV_HttpOwnerIsolation)
   "MC_TransactionalRelationship_Red_Owner.cfg TransactionalRelationship.tla RED" # another actor reaches the transaction (INV_Authority)

@@ -50,6 +50,14 @@ use Tier::{Behavioral, Boundary, Contract};
 pub const PROPERTIES: &[Property] = &[
     Property {
         family: "Transactional document relationships",
+        name: "INV_ActorAuthority / actor_nac_required / actor_dac_required",
+        axis: Tla,
+        anchor: "crates/defra-node/src/transaction.rs trusted embedded relationship delegation; crates/defra-node/src/delegated_relationship_tests.rs embedded_delegation_matches_executed_lean_model",
+        model_ref: "MC_DelegatedRelationship_{Green,Red_*}.cfg",
+        tiers: &[Boundary, Contract],
+    },
+    Property {
+        family: "Transactional document relationships",
         name: "INV_Authority / INV_Private / INV_NoRevival",
         axis: Tla,
         anchor: "crates/defra-node/src/acp_ops/transactional.rs; crates/defra-node/src/http_acp.rs; crates/cli/src/doc_acp_adapter.rs",

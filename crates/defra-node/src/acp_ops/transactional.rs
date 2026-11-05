@@ -8,11 +8,11 @@ use storage::corekv::{OnCommit, Store};
 use super::DbAcpOps;
 use crate::{Error, Result};
 
-pub(super) struct Relationship<'a> {
-    pub(super) collection: &'a str,
-    pub(super) doc_id: &'a str,
-    pub(super) relation: &'a str,
-    pub(super) target: &'a str,
+pub(crate) struct Relationship<'a> {
+    pub(crate) collection: &'a str,
+    pub(crate) doc_id: &'a str,
+    pub(crate) relation: &'a str,
+    pub(crate) target: &'a str,
 }
 
 impl<S> DbAcpOps<S>
@@ -21,7 +21,8 @@ where
 {
     pub(super) async fn relationship_in_txn(
         &self,
-        context: &RequestContext,
+        transaction_context: &RequestContext,
+        actor_context: &RequestContext,
         identity: &str,
         relationship: Relationship<'_>,
         delete: bool,
@@ -32,7 +33,13 @@ where
             relation,
             target,
         } = relationship;
-        if !context.authorization_valid_now() || context.identity() != Some(identity) {
+        if !transaction_context.authorization_valid_now()
+            || !actor_context.authorization_valid_now()
+            || actor_context.identity() != Some(identity)
+            || actor_context
+                .txn()
+                .is_some_and(|id| Some(id) != transaction_context.txn())
+        {
             return Err(query::QueryError::permission_denied(
                 "request identity or authorization is invalid",
             )
@@ -47,21 +54,26 @@ where
         }
         let actor = Did::new(identity).map_err(Error::InvalidIdentityDid)?;
         let target = acp::parse_target_subject(target).map_err(Error::InvalidTarget)?;
-        let handle =
-            TransactionHandle::new(context.txn().expect("transaction is present").to_string());
+        let txn = transaction_context
+            .txn()
+            .ok_or_else(|| query::QueryError::execution("an explicit transaction is required"))?;
+        let handle = TransactionHandle::new(txn.to_string());
         let collection = collection.to_owned();
         let doc_id = doc_id.to_owned();
         let relation = relation.to_owned();
-        let provider = acp::bound_to_request(&self.document_acp, context);
+        let provider = acp::bound_to_request(&self.document_acp, actor_context);
         let database = Arc::clone(&self.database);
         let event_bus = Arc::clone(&self.event_bus);
         let nac_configured = database.nac_manager().is_some();
         let node_did = database.node_did();
-        let authorization = context.clone();
+        let authorization = actor_context.clone();
+        let transaction_authorization = transaction_context.clone();
 
         let job = txn_job(move |turn| {
             Box::pin(async move {
-                if !authorization.authorization_valid_now() {
+                if !authorization.authorization_valid_now()
+                    || !transaction_authorization.authorization_valid_now()
+                {
                     return Err(query::QueryError::permission_denied(
                         "request authorization expired before the transaction turn",
                     )
@@ -195,6 +207,8 @@ where
                 result
             })
         });
-        self.registry.run_as(context, &handle, None, job).await?
+        self.registry
+            .run_as(transaction_context, &handle, None, job)
+            .await?
     }
 }
