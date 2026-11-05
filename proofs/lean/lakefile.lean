@@ -206,3 +206,6 @@ lean_lib VerifiedCreateHandoff where
 
 @[default_target]
 lean_lib VerifiedMutationHandoff where
+
+@[default_target]
+lean_lib AdministrativeRelationship where

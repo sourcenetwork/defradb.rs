@@ -423,6 +423,17 @@ RUNS=(
   "MC_CoreDispatch_Green.cfg CoreDispatch.tla GREEN" # schema-evolution ops: NAC before any effect, a named transaction holds the write, a patch in one is refused
   "MC_CoreDispatch_Red_NoNac.cfg CoreDispatch.tla RED" # the core skips NAC (INV_NoEffectWithoutPermission)
   "MC_CoreDispatch_Red_IgnoreTxn.cfg CoreDispatch.tla RED" # the edge drops the transaction (INV_TxnNeverAutocommits)
+  "MC_AdministrativeRelationship_Green.cfg AdministrativeRelationship.tla GREEN"
+  "MC_AdministrativeRelationship_Red_Actor.cfg AdministrativeRelationship.tla RED" # INV_Actor
+  "MC_AdministrativeRelationship_Red_Active.cfg AdministrativeRelationship.tla RED" # INV_Active
+  "MC_AdministrativeRelationship_Red_NacBound.cfg AdministrativeRelationship.tla RED" # INV_NacBound
+  "MC_AdministrativeRelationship_Red_Bypass.cfg AdministrativeRelationship.tla RED" # INV_Bypass
+  "MC_AdministrativeRelationship_Red_Operation.cfg AdministrativeRelationship.tla RED" # INV_Operation
+  "MC_AdministrativeRelationship_Red_DacBound.cfg AdministrativeRelationship.tla RED" # INV_DacBound
+  "MC_AdministrativeRelationship_Red_Registered.cfg AdministrativeRelationship.tla RED" # INV_Registered
+  "MC_AdministrativeRelationship_Red_Relation.cfg AdministrativeRelationship.tla RED" # INV_Relation
+  "MC_AdministrativeRelationship_Red_Revocation.cfg AdministrativeRelationship.tla RED" # INV_Revocation
+  "MC_AdministrativeRelationship_Red_Rollback.cfg AdministrativeRelationship.tla RED" # INV_Rollback
   "MC_TransactionalRelationship_Green.cfg TransactionalRelationship.tla GREEN" # a grant and marker share the authorized transaction
   "MC_DelegatedRelationship_Green.cfg DelegatedRelationship.tla GREEN" # the embedder owns the transaction and the selected actor passes NAC and DAC
   "MC_DelegatedRelationship_Red_Http.cfg DelegatedRelationship.tla RED" # an HTTP caller reaches the privileged embedding boundary (INV_ActorAuthority)
