@@ -19,6 +19,9 @@ lean_lib TransactionalRelationship where
 lean_lib EmbeddedHttpAcp where
 
 @[default_target]
+lean_lib HttpOwnerRegistration where
+
+@[default_target]
 lean_lib SseDelivery where
 
 @[default_target]

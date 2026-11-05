@@ -160,6 +160,8 @@ pub struct OwnDocument {
     pub doc_id: String,
     pub visible: bool,
     pub is_owner: bool,
+    /// Ownership presence is disclosed only for an ordinarily readable document.
+    pub owner_registered: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -206,6 +208,7 @@ pub async fn own_documents(
                 doc_id: row.doc_id,
                 visible: row.visible,
                 is_owner: row.visible && row.owner.as_ref() == Some(actor),
+                owner_registered: row.visible && row.owner.is_some(),
             })
             .collect(),
     }))

@@ -239,12 +239,13 @@ fn embedded_http_relationships_use_native_caller_and_authorization() {
         .unwrap();
 }
 
-async fn exercise_transactional_http_relationships() {
+async fn exercise_transactional_http_relationships() -> Vec<Value> {
     let _serial = crate::tests::SIGNING_STORE_GUARD.lock().await;
     let owner = identity();
     let owner_did = owner.did().unwrap();
     let target = identity();
     let target_did = target.did().unwrap();
+    let mut owner_cases = Vec::new();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let node = Node::builder()
@@ -284,6 +285,28 @@ async fn exercise_transactional_http_relationships() {
     let ownership_url = format!("http://{address}/api/v0/acp/document/is-owner");
     let relationship = json!({"collection":"Record", "doc_id":doc, "relation":"reader", "target_actor":target_did.as_str()});
     let ownership = json!({"collection":"Record", "doc_ids":[doc]});
+    let deleted = node
+        .execute_request(
+            query::QueryRequest::new(
+                r#"mutation { add_Record(input: {value: "deleted"}) { _docID } }"#,
+            )
+            .with_identity(Some(owner_did.clone())),
+        )
+        .await;
+    assert!(!deleted.has_errors(), "{:?}", deleted.errors);
+    let missing_doc = deleted.data.unwrap()["add_Record"][0]["_docID"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let deleted = node
+        .execute_request(
+            query::QueryRequest::new(format!(
+                r#"mutation {{ delete_Record(docID: "{missing_doc}") {{ _docID }} }}"#
+            ))
+            .with_identity(Some(owner_did.clone())),
+        )
+        .await;
+    assert!(!deleted.has_errors(), "{:?}", deleted.errors);
 
     let missing_tx = client
         .post(&ownership_url)
@@ -323,6 +346,32 @@ async fn exercise_transactional_http_relationships() {
     let hidden: Value = hidden.json().await.unwrap();
     assert_eq!(hidden["documents"][0]["visible"], false);
     assert_eq!(hidden["documents"][0]["is_owner"], false);
+    assert_eq!(hidden["documents"][0]["owner_registered"], false);
+    owner_cases.push(owner_observation_case(
+        false,
+        true,
+        false,
+        &hidden["documents"][0],
+    ));
+    let missing = client
+        .post(&ownership_url)
+        .header("Authorization", other_auth.as_str())
+        .header("x-defradb-tx", other_tx.as_str())
+        .json(&json!({"collection":"Record", "doc_ids":[missing_doc]}))
+        .send()
+        .await
+        .unwrap();
+    assert!(missing.status().is_success());
+    let missing: Value = missing.json().await.unwrap();
+    assert_eq!(missing["documents"][0]["visible"], false);
+    assert_eq!(missing["documents"][0]["owner_registered"], false);
+    assert_eq!(missing["documents"][0]["is_owner"], false);
+    owner_cases.push(owner_observation_case(
+        false,
+        false,
+        false,
+        &missing["documents"][0],
+    ));
     assert!(client
         .delete(format!("{tx_url}/{other_tx}"))
         .header("Authorization", other_auth.as_str())
@@ -354,7 +403,14 @@ async fn exercise_transactional_http_relationships() {
         let body: Value = owner_result.json().await.unwrap();
         assert_eq!(body["documents"][0]["visible"], true);
         assert_eq!(body["documents"][0]["is_owner"], true);
+        assert_eq!(body["documents"][0]["owner_registered"], true);
         assert!(body["documents"][0].get("owner").is_none());
+        owner_cases.push(owner_observation_case(
+            true,
+            true,
+            true,
+            &body["documents"][0],
+        ));
         let wrong_actor = client
             .post(&ownership_url)
             .header("Authorization", other_auth.as_str())
@@ -450,6 +506,42 @@ async fn exercise_transactional_http_relationships() {
     let nonowner: Value = nonowner.json().await.unwrap();
     assert_eq!(nonowner["documents"][0]["visible"], true);
     assert_eq!(nonowner["documents"][0]["is_owner"], false);
+    assert_eq!(nonowner["documents"][0]["owner_registered"], true);
+    assert!(nonowner["documents"][0].get("owner").is_none());
+    owner_cases.push(owner_observation_case(
+        true,
+        true,
+        false,
+        &nonowner["documents"][0],
+    ));
+
+    // Revocation in another transaction cannot rewrite the snapshot of this observation.
+    let revoked = client
+        .delete(&relationship_url)
+        .header("Authorization", auth.as_str())
+        .json(&relationship)
+        .send()
+        .await
+        .unwrap();
+    assert!(revoked.status().is_success());
+    let snapshot = client
+        .post(&ownership_url)
+        .header("Authorization", other_auth.as_str())
+        .header("x-defradb-tx", other_tx.as_str())
+        .json(&ownership)
+        .send()
+        .await
+        .unwrap();
+    assert!(snapshot.status().is_success());
+    let snapshot: Value = snapshot.json().await.unwrap();
+    assert_eq!(snapshot["documents"][0]["visible"], true);
+    assert_eq!(snapshot["documents"][0]["owner_registered"], true);
+    owner_cases.push(owner_observation_case(
+        true,
+        true,
+        false,
+        &snapshot["documents"][0],
+    ));
     assert!(client
         .delete(format!("{tx_url}/{other_tx}"))
         .header("Authorization", other_auth.as_str())
@@ -458,7 +550,112 @@ async fn exercise_transactional_http_relationships() {
         .unwrap()
         .status()
         .is_success());
+    let response = client
+        .post(&tx_url)
+        .header("Authorization", other_auth.as_str())
+        .send()
+        .await
+        .unwrap();
+    let revoked_tx = response.json::<Value>().await.unwrap()["id"]
+        .as_u64()
+        .unwrap()
+        .to_string();
+    let after = client
+        .post(&ownership_url)
+        .header("Authorization", other_auth.as_str())
+        .header("x-defradb-tx", revoked_tx.as_str())
+        .json(&ownership)
+        .send()
+        .await
+        .unwrap();
+    let after: Value = after.json().await.unwrap();
+    assert_eq!(after["documents"][0]["visible"], false);
+    assert_eq!(after["documents"][0]["owner_registered"], false);
+    owner_cases.push(owner_observation_case(
+        false,
+        true,
+        false,
+        &after["documents"][0],
+    ));
+    assert!(client
+        .delete(format!("{tx_url}/{revoked_tx}"))
+        .header("Authorization", other_auth.as_str())
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .is_success());
+
+    let acp = node.document_acp();
+    let unregistered_doc = doc.clone();
+    node.on_acp(move || async move {
+        acp.unregister_doc_object(&policy, "records", &unregistered_doc)
+            .await?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let response = client
+        .post(&tx_url)
+        .header("Authorization", auth.as_str())
+        .send()
+        .await
+        .unwrap();
+    let unregistered_tx = response.json::<Value>().await.unwrap()["id"]
+        .as_u64()
+        .unwrap()
+        .to_string();
+    let unregistered = client
+        .post(&ownership_url)
+        .header("Authorization", auth.as_str())
+        .header("x-defradb-tx", unregistered_tx.as_str())
+        .json(&ownership)
+        .send()
+        .await
+        .unwrap();
+    let unregistered: Value = unregistered.json().await.unwrap();
+    assert_eq!(unregistered["documents"][0]["visible"], true);
+    assert_eq!(unregistered["documents"][0]["owner_registered"], false);
+    assert_eq!(unregistered["documents"][0]["is_owner"], false);
+    owner_cases.push(owner_observation_case(
+        true,
+        false,
+        false,
+        &unregistered["documents"][0],
+    ));
+    assert!(client
+        .delete(format!("{tx_url}/{unregistered_tx}"))
+        .header("Authorization", auth.as_str())
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .is_success());
     node.shutdown().await.unwrap();
+    owner_cases
+}
+
+fn owner_observation_case(
+    visible: bool,
+    owner_present: bool,
+    caller_is_owner: bool,
+    row: &Value,
+) -> Value {
+    let keys: std::collections::BTreeSet<_> = row
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        ["doc_id", "is_owner", "owner_registered", "visible"]
+            .into_iter()
+            .collect(),
+        "owner identity must not be disclosed"
+    );
+    json!({"input": {"nativeVisible": visible, "ownerPresent": owner_present, "callerIsOwner": caller_is_owner},
+        "visible":row["visible"], "owner_registered":row["owner_registered"], "is_owner":row["is_owner"]})
 }
 
 #[test]
@@ -466,6 +663,35 @@ fn http_relationships_and_owner_observation_use_the_authenticated_transaction() 
     edge::testing::edge()
         .block_on(exercise_transactional_http_relationships())
         .unwrap();
+}
+
+#[test]
+#[ignore = "Requires Lean; run in the Lean Conformance job"]
+fn http_owner_registration_matches_executed_model() {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let cases = edge::testing::edge()
+        .block_on(exercise_transactional_http_relationships())
+        .unwrap();
+    let inputs: Vec<_> = cases.iter().map(|case| case["input"].clone()).collect();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../proofs/lean");
+    let mut child = Command::new("lake")
+        .current_dir(root)
+        .args(["env", "lean", "--run", "HttpOwnerRegistration.lean"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writeln!(child.stdin.take().unwrap(), "{}", json!(inputs)).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let expected: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(cases, expected);
 }
 
 #[test]
