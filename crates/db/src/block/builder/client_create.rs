@@ -1,4 +1,4 @@
-use super::{compute_document_blocks, DocRef};
+use super::{client_waves::ClientWaves, compute_document_blocks, DocRef};
 use defra_core::block::{Block, Signature};
 use defra_core::cid_encoding::cid_bytes;
 use defra_core::signing::{SigningConfig, SigningKeyType};
@@ -11,23 +11,12 @@ use std::sync::Arc;
 /// document; neither a remote schema version nor challenge is an authority.
 /// Existing block signatures can be replayed outside the HTTP conversation.
 pub struct ClientCreateSignatures {
-    children: Vec<Vec<u8>>,
-    child_signatures: Vec<Vec<u8>>,
-    composite: Vec<u8>,
-    composite_signature: Vec<u8>,
-    phase: Phase,
+    waves: ClientWaves,
     collection: String,
     schema: Arc<CollectionVersion>,
     input: serde_json::Value,
     public_key_hex: String,
     doc_id: String,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Phase {
-    Children,
-    Composite,
-    Complete,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -176,11 +165,6 @@ impl ClientCreateSignatures {
             child_signatures.push(signature);
         }
         let (composite, composite_signature) = extract(&blocks.block_result.cid)?;
-        let phase = if children.is_empty() {
-            Phase::Composite
-        } else {
-            Phase::Children
-        };
         let input =
             serde_json::to_value(doc.to_map().map_err(|_| ClientCreateError::InvalidGraph)?)
                 .map_err(|_| ClientCreateError::InvalidGraph)?;
@@ -190,11 +174,7 @@ impl ClientCreateSignatures {
             input,
             public_key_hex: signer.public_key_hex.clone(),
             doc_id: blocks.block_result.doc_id.clone(),
-            children,
-            child_signatures,
-            composite,
-            composite_signature,
-            phase,
+            waves: ClientWaves::new(children, child_signatures, composite, composite_signature),
         })
     }
 
@@ -215,44 +195,22 @@ impl ClientCreateSignatures {
     }
 
     pub fn is_complete(&self) -> bool {
-        self.phase == Phase::Complete
+        self.waves.is_complete()
     }
 
     pub fn child_blocks(&self) -> &[Vec<u8>] {
-        &self.children
+        self.waves.children()
     }
 
     pub fn composite_block(&self) -> &[u8] {
-        &self.composite
+        self.waves.composite()
     }
 
     /// Return only signatures over the complete expected wave; reject extra,
     /// missing, altered or repeated blocks before releasing any signature.
     pub fn respond(&mut self, wave: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, ClientCreateError> {
-        if self.phase == Phase::Composite {
-            if wave.len() != 1 || wave[0] != self.composite {
-                return Err(ClientCreateError::UnexpectedWave);
-            }
-            self.phase = Phase::Complete;
-            return Ok(vec![self.composite_signature.clone()]);
-        }
-        if self.phase != Phase::Children || wave.len() != self.children.len() {
-            return Err(ClientCreateError::UnexpectedWave);
-        }
-        let mut used = vec![false; self.children.len()];
-        let mut result = Vec::with_capacity(wave.len());
-        for requested in wave {
-            let index = self
-                .children
-                .iter()
-                .enumerate()
-                .find(|(index, expected)| !used[*index] && *expected == requested)
-                .map(|(index, _)| index)
-                .ok_or(ClientCreateError::UnexpectedWave)?;
-            used[index] = true;
-            result.push(self.child_signatures[index].clone());
-        }
-        self.phase = Phase::Composite;
-        Ok(result)
+        self.waves
+            .respond(wave)
+            .ok_or(ClientCreateError::UnexpectedWave)
     }
 }

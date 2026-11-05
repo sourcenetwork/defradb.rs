@@ -116,6 +116,27 @@ fn http_client_signs_the_complete_agent_create_graph() {
             }
             assert_eq!(node.verified_block_signer_did(cid).await.unwrap(), caller);
             assert_ne!(Some(caller.as_str()), node.node_identity_did());
+            let doc_id = data[root][0]["_docID"].as_str().unwrap();
+            let history = defra_http::client_signed_update::history_request(doc_id);
+            let response: query::QueryResponse = http.post(format!("http://{address}/api/v0/graphql"))
+                .bearer_auth(&token).json(&json!({"query":history.query,"variables":history.variables}))
+                .send().await.unwrap().json().await.unwrap();
+            let snapshot = defra_http::client_signed_update::snapshot_from_response(doc_id, &response).unwrap();
+            let patch = json!({"display_name":"Updated"});
+            let mut update = db::block::builder::ClientUpdateSignatures::from_input(
+                &storage::Crdts::default(), &schema, doc_id, &patch, &snapshot, &signing,
+            ).unwrap();
+            let request = query::QueryRequest::new("mutation($id:ID!, $input:AgentMutationInputArg!) { update_Agent(docID:$id,input:$input) { _docID _version { cid } } }")
+                .with_variables(json!({"id":doc_id,"input":patch}));
+            let updated = defra_http::client_signed_update::execute(
+                &format!("ws://{address}/api/v0/graphql/client-sign"), &authorization, request, None, &mut update,
+            ).await.unwrap();
+            assert!(updated.errors.is_empty(), "{:?}", updated.errors);
+            let cid = updated.data.unwrap()["update_Agent"][0]["_version"][0]["cid"].as_str().unwrap().to_owned();
+            assert_eq!(node.verified_block_signer_did(&cid).await.unwrap(), caller);
+            assert!(db::block::builder::ClientUpdateSignatures::from_input(
+                &storage::Crdts::default(), &schema, doc_id, &json!({"node_did":"changed"}), &snapshot, &signing,
+            ).is_err());
         }
         node.shutdown().await.unwrap();
     }).unwrap();
@@ -354,4 +375,326 @@ resources:
         assert_eq!(node.verified_block_signer_did(&cid).await.unwrap(), caller);
         node.shutdown().await.unwrap();
     }).await.unwrap();
+}
+
+#[test]
+fn http_client_signs_a_single_document_update() {
+    use crypto::{Key as _, PrivateKey as _};
+    use db::block::builder::{
+        ClientCreateSignatures, ClientUpdateSignatures, ClientUpdateSnapshot,
+    };
+    use defra_core::block::{Block, Signature, SignatureHeader, SignatureType};
+    use defra_core::signing::{SigningConfig, SigningKeyType};
+    use identity::Identity as _;
+
+    edge::testing::edge().block_on(async {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let node = Node::builder().enable_signing()
+            .with_http(HttpConfig::with_listener(listener).unwrap())
+            .build().await.unwrap();
+        node.add_collection("type Settings { name: String, tags: [String!], host: JSON, extra: String }").await.unwrap();
+        let schema = node.get_collection("Settings").unwrap().unwrap();
+        let private = crypto::generate_ed25519().unwrap();
+        let public = private.public_key();
+        let signing = SigningConfig {
+            key_type: SigningKeyType::Ed25519,
+            private_key_bytes: private.raw_owned(),
+            public_key_bytes: public.raw_owned(),
+            public_key_hex: hex::encode(public.raw()),
+            remote_signer: None,
+            signing_authorization: None,
+        };
+        let identity = identity::RawIdentity::from_private_key(private).unwrap();
+        let caller = identity.did().unwrap().to_string();
+        let token = String::from_utf8(identity::new_token(&identity, Duration::from_secs(60), Some(address.to_string()), None).unwrap()).unwrap();
+        let authorization = format!("Bearer {token}");
+        let url = format!("ws://{address}/api/v0/graphql/client-sign");
+        let initial = json!({"name":"before", "tags":["one"], "host":{"url":"before"}});
+        let mut history_graph = ClientCreateSignatures::from_input(&storage::Crdts::default(), &schema, &initial, &signing).unwrap();
+        let children = history_graph.child_blocks().to_vec();
+        let signatures = history_graph.respond(&children).unwrap();
+        let signed = |bytes: &[u8], signature: Vec<u8>| {
+            let mut block = Block::from_dag_cbor(bytes).unwrap();
+            block.signature = Some(Signature::new(
+                SignatureHeader::new(SignatureType::EdDSA, signing.public_key_hex.as_bytes().to_vec()), signature,
+            ).generate_cid().unwrap());
+            block.to_dag_cbor().unwrap()
+        };
+        let mut history = children.iter().zip(signatures).map(|(bytes, signature)| signed(bytes, signature)).collect::<Vec<_>>();
+        let composite = history_graph.composite_block().to_vec();
+        let signature = history_graph.respond(std::slice::from_ref(&composite)).unwrap().remove(0);
+        let composite = signed(&composite, signature);
+        let composite_cid = Block::from_dag_cbor(&composite).unwrap().generate_cid().unwrap();
+        history.push(composite);
+        let doc_id = history_graph.doc_id().to_owned();
+        ClientUpdateSnapshot::from_blocks(&doc_id, &history, &[composite_cid]).unwrap();
+        let mut create = ClientCreateSignatures::from_input(&storage::Crdts::default(), &schema, &initial, &signing).unwrap();
+        let created = defra_http::client_signed_create::execute(
+            &url, &authorization,
+            query::QueryRequest::new("mutation($input: SettingsMutationInputArg!) { add_Settings(input:$input) { _docID } }")
+                .with_variables(json!({"input":initial})), None, &mut create,
+        ).await.unwrap();
+        assert!(created.errors.is_empty(), "{:?}", created.errors);
+        assert_eq!(created.data.unwrap()["add_Settings"][0]["_docID"], doc_id);
+        let query = defra_http::client_signed_update::history_request(&doc_id);
+        let http = net::http::Client::builder(edge::testing::edge()).no_proxy().build().unwrap();
+        let response: query::QueryResponse = http.post(format!("http://{address}/api/v0/graphql"))
+            .bearer_auth(&token).json(&json!({"query":query.query, "variables":query.variables}))
+            .send().await.unwrap().json().await.unwrap();
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        let snapshot = defra_http::client_signed_update::snapshot_from_response(&doc_id, &response).unwrap();
+        let mut forged = response.clone();
+        forged.data.as_mut().unwrap()["_commits"][0]["height"] = json!(999);
+        assert!(defra_http::client_signed_update::snapshot_from_response(&doc_id, &forged).is_err());
+
+        let patch = json!({"name":"after", "tags":null, "host":{"url":"after"}});
+        let mut graph = ClientUpdateSignatures::from_input(&storage::Crdts::default(), &schema, &doc_id, &patch, &snapshot, &signing).unwrap();
+        let request = query::QueryRequest::new("mutation Other { update_Settings(docID:\"invalid\", input:{name:\"x\"}) { _docID } } mutation Chosen($id:ID!, $input:SettingsMutationInputArg!) { changed: update_Settings(docID:$id, input:$input) { _docID _version { cid } } }")
+            .with_operation_name("Chosen").with_variables(json!({"id":doc_id, "input":patch}));
+        let response = defra_http::client_signed_update::execute(&url, &authorization, request, None, &mut graph).await.unwrap();
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        let data = response.data.unwrap();
+        assert_eq!(data["changed"][0]["_docID"], doc_id);
+        let cid = data["changed"][0]["_version"][0]["cid"].as_str().unwrap();
+        assert_eq!(node.verified_block_signer_did(cid).await.unwrap(), caller);
+        assert_ne!(Some(caller.as_str()), node.node_identity_did());
+        let stale_patch = json!({"name":"stale-attempt"});
+        let mut stale = ClientUpdateSignatures::from_input(&storage::Crdts::default(), &schema, &doc_id, &stale_patch, &snapshot, &signing).unwrap();
+        let stale_request = query::QueryRequest::new("mutation($id:ID!, $input:SettingsMutationInputArg!) { update_Settings(docID:$id,input:$input) { _docID } }")
+            .with_variables(json!({"id":doc_id,"input":stale_patch}));
+        let result = defra_http::client_signed_update::execute(&url, &authorization, stale_request, None, &mut stale).await;
+        assert!(matches!(result, Err(defra_http::client_signed_create::ClientSignedCreateError::UpdateChallenge(_))), "{result:?}");
+        let current = node.execute_request(query::QueryRequest::new("query { Settings { name } }").with_identity(Some(identity.did().unwrap()))).await;
+        assert!(!current.has_errors(), "{:?}", current.errors);
+        assert_eq!(current.data.unwrap()["Settings"][0]["name"], "after");
+
+        let history_query = defra_http::client_signed_update::history_request(&doc_id);
+        let latest: query::QueryResponse = http.post(format!("http://{address}/api/v0/graphql")).bearer_auth(&token)
+            .json(&json!({"query":history_query.query, "variables":history_query.variables})).send().await.unwrap().json().await.unwrap();
+        let latest = defra_http::client_signed_update::snapshot_from_response(&doc_id, &latest).unwrap();
+        let mut transactions = Vec::new();
+        for _ in 0..2 {
+            let value: Value = http.post(format!("http://{address}/api/v0/tx")).bearer_auth(&token).send().await.unwrap().json().await.unwrap();
+            transactions.push(value["id"].as_u64().unwrap().to_string());
+        }
+        for (txn, patch) in transactions.iter().zip([json!({"name":"disjoint"}), json!({"extra":"first"})]) {
+            let mut graph = ClientUpdateSignatures::from_input(&storage::Crdts::default(), &schema, &doc_id, &patch, &latest, &signing).unwrap();
+            let request = query::QueryRequest::new("mutation($id:ID!, $input:SettingsMutationInputArg!) { update_Settings(docID:$id,input:$input) { _docID } }")
+                .with_variables(json!({"id":doc_id,"input":patch}));
+            let response = defra_http::client_signed_update::execute(&url, &authorization, request, Some(txn), &mut graph).await.unwrap();
+            assert!(response.errors.is_empty(), "{:?}", response.errors);
+        }
+        for txn in &transactions {
+            http.post(format!("http://{address}/api/v0/tx/{txn}")).bearer_auth(&token).send().await.unwrap().error_for_status().unwrap();
+        }
+        let current = node.execute_request(query::QueryRequest::new("{ Settings { name extra } }").with_identity(Some(identity.did().unwrap()))).await;
+        assert!(!current.has_errors(), "{:?}", current.errors);
+        assert_eq!(current.data.unwrap()["Settings"][0], json!({"name":"disjoint", "extra":"first"}));
+
+        let history_query = defra_http::client_signed_update::history_request(&doc_id);
+        let merged: query::QueryResponse = http.post(format!("http://{address}/api/v0/graphql")).bearer_auth(&token)
+            .json(&json!({"query":history_query.query, "variables":history_query.variables})).send().await.unwrap().json().await.unwrap();
+        let merged = defra_http::client_signed_update::snapshot_from_response(&doc_id, &merged).unwrap();
+        let mut transactions = Vec::new();
+        for _ in 0..2 {
+            let value: Value = http.post(format!("http://{address}/api/v0/tx")).bearer_auth(&token).send().await.unwrap().json().await.unwrap();
+            transactions.push(value["id"].as_u64().unwrap().to_string());
+        }
+        for (txn, patch) in transactions.iter().zip([json!({"name":"winner"}), json!({"name":"loser"})]) {
+            let mut graph = ClientUpdateSignatures::from_input(&storage::Crdts::default(), &schema, &doc_id, &patch, &merged, &signing).unwrap();
+            let request = query::QueryRequest::new("mutation($id:ID!, $input:SettingsMutationInputArg!) { update_Settings(docID:$id,input:$input) { _docID } }")
+                .with_variables(json!({"id":doc_id,"input":patch}));
+            let response = defra_http::client_signed_update::execute(&url, &authorization, request, Some(txn), &mut graph).await.unwrap();
+            assert!(response.errors.is_empty(), "{:?}", response.errors);
+        }
+        http.post(format!("http://{address}/api/v0/tx/{}", transactions[0])).bearer_auth(&token).send().await.unwrap().error_for_status().unwrap();
+        let conflict = http.post(format!("http://{address}/api/v0/tx/{}", transactions[1])).bearer_auth(&token).send().await.unwrap();
+        assert_eq!(conflict.status().as_u16(), 409);
+        let current = node.execute_request(query::QueryRequest::new("{ Settings { name extra } }").with_identity(Some(identity.did().unwrap()))).await;
+        assert!(!current.has_errors(), "{:?}", current.errors);
+        assert_eq!(current.data.unwrap()["Settings"][0], json!({"name":"winner", "extra":"first"}));
+
+        let history_query = defra_http::client_signed_update::history_request(&doc_id);
+        let latest: query::QueryResponse = http.post(format!("http://{address}/api/v0/graphql")).bearer_auth(&token)
+            .json(&json!({"query":history_query.query, "variables":history_query.variables})).send().await.unwrap().json().await.unwrap();
+        let latest = defra_http::client_signed_update::snapshot_from_response(&doc_id, &latest).unwrap();
+        let mut transactions = Vec::new();
+        for _ in 0..2 {
+            let value: Value = http.post(format!("http://{address}/api/v0/tx")).bearer_auth(&token).send().await.unwrap().json().await.unwrap();
+            transactions.push(value["id"].as_u64().unwrap().to_string());
+        }
+        let conditional_patch = json!({"extra":"conditional"});
+        let mut conditional = ClientUpdateSignatures::from_input(&storage::Crdts::default(), &schema, &doc_id, &conditional_patch, &latest, &signing).unwrap();
+        let conditional_request = query::QueryRequest::new(r#"mutation($id:ID!, $input:SettingsMutationInputArg!) { update_Settings(filter:{_docID:{_eq:$id}, name:{_eq:"winner"}},input:$input) { _docID } }"#)
+            .with_variables(json!({"id":doc_id,"input":conditional_patch}));
+        let response = defra_http::client_signed_update::execute(&url, &authorization, conditional_request, Some(&transactions[0]), &mut conditional).await.unwrap();
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        let competing_patch = json!({"name":"changed"});
+        let mut competing = ClientUpdateSignatures::from_input(&storage::Crdts::default(), &schema, &doc_id, &competing_patch, &latest, &signing).unwrap();
+        let request = query::QueryRequest::new("mutation($id:ID!, $input:SettingsMutationInputArg!) { update_Settings(docID:$id,input:$input) { _docID } }")
+            .with_variables(json!({"id":doc_id,"input":competing_patch}));
+        let response = defra_http::client_signed_update::execute(&url, &authorization, request, Some(&transactions[1]), &mut competing).await.unwrap();
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        http.post(format!("http://{address}/api/v0/tx/{}", transactions[1])).bearer_auth(&token).send().await.unwrap().error_for_status().unwrap();
+        let conflict = http.post(format!("http://{address}/api/v0/tx/{}", transactions[0])).bearer_auth(&token).send().await.unwrap();
+        assert_eq!(conflict.status().as_u16(), 409, "predicate field changed before conditional commit");
+        let current = node.execute_request(query::QueryRequest::new("{ Settings { name extra } }").with_identity(Some(identity.did().unwrap()))).await;
+        assert_eq!(current.data.unwrap()["Settings"][0], json!({"name":"changed", "extra":"first"}));
+
+        let history_query = defra_http::client_signed_update::history_request(&doc_id);
+        let current: query::QueryResponse = http.post(format!("http://{address}/api/v0/graphql")).bearer_auth(&token)
+            .json(&json!({"query":history_query.query, "variables":history_query.variables})).send().await.unwrap().json().await.unwrap();
+        let current = defra_http::client_signed_update::snapshot_from_response(&doc_id, &current).unwrap();
+        let patch = json!({"extra":"accepted"});
+        let request = |predicate: &str| query::QueryRequest::new(format!(r#"mutation($id:ID!, $input:SettingsMutationInputArg!) {{ update_Settings(filter:{{_docID:{{_eq:$id}}, name:{{_eq:"{predicate}"}}}},input:$input) {{ _docID _version {{ cid }} }} }}"#))
+            .with_variables(json!({"id":doc_id,"input":patch}));
+        let mut denied = ClientUpdateSignatures::from_input(&storage::Crdts::default(), &schema, &doc_id, &patch, &current, &signing).unwrap();
+        let denied = defra_http::client_signed_update::execute(&url, &authorization, request("winner"), None, &mut denied).await;
+        assert!(matches!(denied, Err(defra_http::client_signed_create::ClientSignedCreateError::Incomplete)), "{denied:?}");
+        let mut graph = ClientUpdateSignatures::from_input(&storage::Crdts::default(), &schema, &doc_id, &patch, &current, &signing).unwrap();
+        let response = defra_http::client_signed_update::execute(&url, &authorization, request("changed"), None, &mut graph).await.unwrap();
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        let cid = response.data.unwrap()["update_Settings"][0]["_version"][0]["cid"].as_str().unwrap().to_owned();
+        assert_eq!(node.verified_block_signer_did(&cid).await.unwrap(), caller);
+        node.shutdown().await.unwrap();
+    }).unwrap();
+}
+
+#[test]
+fn http_client_signed_update_rechecks_acp_and_cancellation() {
+    use async_tungstenite::tungstenite::Message;
+    use crypto::{Key as _, PrivateKey as _};
+    use db::block::builder::{ClientCreateSignatures, ClientUpdateSignatures};
+    use defra_core::signing::{SigningConfig, SigningKeyType};
+    use futures::StreamExt;
+    use identity::Identity as _;
+
+    const POLICY: &str = r#"
+name: Client update
+resources:
+  - name: settings
+    relations:
+      - name: reader
+        types: [actor]
+      - name: editor
+        types: [actor]
+    permissions:
+      - name: read
+        expr: reader + editor
+      - name: update
+        expr: editor
+      - name: delete
+"#;
+    edge::testing::edge().block_on(async {
+        let owner_private = crypto::generate_ed25519().unwrap();
+        let owner_public = owner_private.public_key();
+        let owner_signing = SigningConfig { key_type: SigningKeyType::Ed25519, private_key_bytes: owner_private.raw_owned(), public_key_bytes: owner_public.raw_owned(), public_key_hex: hex::encode(owner_public.raw()), remote_signer: None, signing_authorization: None };
+        let owner = identity::RawIdentity::from_private_key(owner_private).unwrap();
+        let owner_did = owner.did().unwrap().to_string();
+        let editor_private = crypto::generate_ed25519().unwrap();
+        let editor_public = editor_private.public_key();
+        let editor_signing = SigningConfig { key_type: SigningKeyType::Ed25519, private_key_bytes: editor_private.raw_owned(), public_key_bytes: editor_public.raw_owned(), public_key_hex: hex::encode(editor_public.raw()), remote_signer: None, signing_authorization: None };
+        let editor = identity::RawIdentity::from_private_key(editor_private).unwrap();
+        let editor_did = editor.did().unwrap().to_string();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let node = Node::builder().enable_signing().with_node_acp_owner(owner_did.clone())
+            .with_http(HttpConfig::with_listener(listener).unwrap()).build().await.unwrap();
+        let owner_context = defra_core::RequestContext::default().with_identity(Some(owner_did.clone()));
+        let policy = node.add_dac_policy_as(&owner_context, POLICY).await.unwrap();
+        node.add_collection(&format!("type ProtectedSettings @policy(id: \"{policy}\", resource: \"settings\") {{ name: String }}")).await.unwrap();
+        let schema = node.get_collection("ProtectedSettings").unwrap().unwrap();
+        for permission in [acp::nac::NodePermission::DocumentRead, acp::nac::NodePermission::DocumentUpdate, acp::nac::NodePermission::CollectionGet] {
+            node.add_nac_actor_relationship_as(&owner_context, permission.as_str(), &editor_did).await.unwrap();
+        }
+        let owner_token = String::from_utf8(identity::new_token(&owner, Duration::from_secs(60), Some(address.to_string()), None).unwrap()).unwrap();
+        let editor_token = String::from_utf8(identity::new_token(&editor, Duration::from_secs(60), Some(address.to_string()), None).unwrap()).unwrap();
+        let url = format!("ws://{address}/api/v0/graphql/client-sign");
+        let initial = json!({"name":"before"});
+        let mut create = ClientCreateSignatures::from_input(&storage::Crdts::default(), &schema, &initial, &owner_signing).unwrap();
+        let created = defra_http::client_signed_create::execute(&url, &format!("Bearer {owner_token}"),
+            query::QueryRequest::new("mutation($input:ProtectedSettingsMutationInputArg!) { add_ProtectedSettings(input:$input) { _docID } }").with_variables(json!({"input":initial})), None, &mut create).await.unwrap();
+        assert!(created.errors.is_empty(), "{:?}", created.errors);
+        let doc_id = created.data.unwrap()["add_ProtectedSettings"][0]["_docID"].as_str().unwrap().to_owned();
+        let query = defra_http::client_signed_update::history_request(&doc_id);
+        let http = net::http::Client::builder(edge::testing::edge()).no_proxy().build().unwrap();
+        let history: query::QueryResponse = http.post(format!("http://{address}/api/v0/graphql")).bearer_auth(&owner_token)
+            .json(&json!({"query":query.query,"variables":query.variables})).send().await.unwrap().json().await.unwrap();
+        let snapshot = defra_http::client_signed_update::snapshot_from_response(&doc_id, &history).unwrap();
+        node.add_dac_actor_relationship_as(&owner_context, "ProtectedSettings", &doc_id, "reader", &editor_did).await.unwrap();
+        let patch = json!({"name":"after"});
+        let request = || query::QueryRequest::new("mutation($id:ID!, $input:ProtectedSettingsMutationInputArg!) { update_ProtectedSettings(docID:$id,input:$input) { _docID _version { cid } } }")
+            .with_variables(json!({"id":doc_id,"input":patch}));
+        let graph = || ClientUpdateSignatures::from_input(&storage::Crdts::default(), &schema, &doc_id, &patch, &snapshot, &editor_signing).unwrap();
+        let mut denied_graph = graph();
+        let denied = defra_http::client_signed_update::execute(&url, &format!("Bearer {editor_token}"), request(), None, &mut denied_graph).await.unwrap();
+        assert!(!denied.errors.is_empty(), "{denied:?}");
+
+        node.add_dac_actor_relationship_as(&owner_context, "ProtectedSettings", &doc_id, "editor", &editor_did).await.unwrap();
+        let handshake = defra_http::client_signed_create::websocket_request(&url, &format!("Bearer {editor_token}")).unwrap();
+        let stream = net::connect(handshake.uri()).await.unwrap();
+        let (mut socket, _) = async_tungstenite::client_async_with_config(handshake, stream, Some(defra_http::client_signed_create::websocket_config())).await.unwrap();
+        let operation = request();
+        socket.send(Message::Text(json!({"query":operation.query,"variables":operation.variables,"operationName":operation.operation_name,"txn_id":null,"public_key_hex":editor_signing.public_key_hex}).to_string().into())).await.unwrap();
+        let frame = edge::testing::edge().timeout(Duration::from_secs(5), socket.next()).await.unwrap().unwrap().unwrap();
+        let Message::Text(frame) = frame else { panic!("expected signing wave") };
+        let wave: Value = serde_json::from_str(&frame).unwrap();
+        let blocks = wave["blocks"].as_array().unwrap().iter().map(|value| hex::decode(value.as_str().unwrap()).unwrap()).collect::<Vec<_>>();
+        let mut revoked_graph = graph();
+        let signatures = revoked_graph.respond(&blocks).unwrap().iter().map(hex::encode).collect::<Vec<_>>();
+        node.delete_dac_actor_relationship_as(&owner_context, "ProtectedSettings", &doc_id, "editor", &editor_did).await.unwrap();
+        socket.send(Message::Text(json!({"signatures":signatures}).to_string().into())).await.unwrap();
+        let frame = edge::testing::edge().timeout(Duration::from_secs(5), socket.next()).await.unwrap().unwrap().unwrap();
+        let Message::Text(frame) = frame else { panic!("expected denied response") };
+        let response: Value = serde_json::from_str(&frame).unwrap();
+        assert!(!response["response"]["errors"].as_array().unwrap().is_empty(), "{response}");
+
+        node.add_dac_actor_relationship_as(&owner_context, "ProtectedSettings", &doc_id, "editor", &editor_did).await.unwrap();
+        let handshake = defra_http::client_signed_create::websocket_request(&url, &format!("Bearer {editor_token}")).unwrap();
+        let stream = net::connect(handshake.uri()).await.unwrap();
+        let (mut socket, _) = async_tungstenite::client_async_with_config(handshake, stream, Some(defra_http::client_signed_create::websocket_config())).await.unwrap();
+        let operation = request();
+        socket.send(Message::Text(json!({"query":operation.query,"variables":operation.variables,"operationName":operation.operation_name,"txn_id":null,"public_key_hex":editor_signing.public_key_hex}).to_string().into())).await.unwrap();
+        let frame = edge::testing::edge().timeout(Duration::from_secs(5), socket.next()).await.unwrap().unwrap().unwrap();
+        assert!(matches!(frame, Message::Text(_)));
+        drop(socket);
+        let read = node.execute_request(query::QueryRequest::new("{ ProtectedSettings { name } }").with_identity(Some(owner.did().unwrap()))).await;
+        assert!(!read.has_errors(), "{:?}", read.errors);
+        assert_eq!(read.data.unwrap()["ProtectedSettings"][0]["name"], "before");
+        let mut allowed_graph = graph();
+        let allowed = defra_http::client_signed_update::execute(&url, &format!("Bearer {editor_token}"), request(), None, &mut allowed_graph).await.unwrap();
+        assert!(allowed.errors.is_empty(), "{:?}", allowed.errors);
+        let cid = allowed.data.unwrap()["update_ProtectedSettings"][0]["_version"][0]["cid"].as_str().unwrap().to_owned();
+        let (block_bytes, signature_bytes) = node.authorized_signed_block_bytes(&cid, Some(&editor_did)).await.unwrap();
+        let mut block = defra_core::block::Block::from_dag_cbor(&block_bytes).unwrap();
+        let signature = defra_core::block::Signature::from_dag_cbor(&signature_bytes).unwrap();
+        assert_eq!(block.signature.take(), Some(signature.generate_cid().unwrap()));
+        let public = crypto::public_key_from_string(crypto::KeyType::Ed25519, &editor_signing.public_key_hex).unwrap();
+        assert_eq!(public.did().unwrap(), editor_did);
+        assert!(public.verify(&block.to_dag_cbor().unwrap(), &signature.value).unwrap());
+
+        let query = defra_http::client_signed_update::history_request(&doc_id);
+        let history: query::QueryResponse = http.post(format!("http://{address}/api/v0/graphql")).bearer_auth(&owner_token)
+            .json(&json!({"query":query.query,"variables":query.variables})).send().await.unwrap().json().await.unwrap();
+        let latest = defra_http::client_signed_update::snapshot_from_response(&doc_id, &history).unwrap();
+        let patch = json!({"name":"unknown-outcome"});
+        let mut uncertain = ClientUpdateSignatures::from_input(&storage::Crdts::default(), &schema, &doc_id, &patch, &latest, &editor_signing).unwrap();
+        let handshake = defra_http::client_signed_create::websocket_request(&url, &format!("Bearer {editor_token}")).unwrap();
+        let stream = net::connect(handshake.uri()).await.unwrap();
+        let (mut socket, _) = async_tungstenite::client_async_with_config(handshake, stream, Some(defra_http::client_signed_create::websocket_config())).await.unwrap();
+        let operation = query::QueryRequest::new("mutation($id:ID!, $input:ProtectedSettingsMutationInputArg!) { update_ProtectedSettings(docID:$id,input:$input) { _docID } }")
+            .with_variables(json!({"id":doc_id,"input":patch}));
+        socket.send(Message::Text(json!({"query":operation.query,"variables":operation.variables,"operationName":operation.operation_name,"txn_id":null,"public_key_hex":editor_signing.public_key_hex}).to_string().into())).await.unwrap();
+        let frame = edge::testing::edge().timeout(Duration::from_secs(5), socket.next()).await.unwrap().unwrap().unwrap();
+        let Message::Text(frame) = frame else { panic!("expected signing wave") };
+        let wave: Value = serde_json::from_str(&frame).unwrap();
+        let blocks = wave["blocks"].as_array().unwrap().iter().map(|value| hex::decode(value.as_str().unwrap()).unwrap()).collect::<Vec<_>>();
+        let signatures = uncertain.respond(&blocks).unwrap().iter().map(hex::encode).collect::<Vec<_>>();
+        socket.send(Message::Text(json!({"signatures":signatures}).to_string().into())).await.unwrap();
+        drop(socket);
+        assert!(uncertain.is_complete());
+        assert!(uncertain.respond(&blocks).is_err());
+        node.shutdown().await.unwrap();
+    }).unwrap();
 }
