@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use storage::corekv::Store;
-use storage::stores::{Peerstore, RetryInfo, RetrySchedule};
+use storage::stores::{Peerstore, RetryInfo, RetrySchedule, RetryScope};
 use storage::RegolithStore;
 use web_time::{SystemTime, UNIX_EPOCH};
 
@@ -80,14 +80,17 @@ fn no_hint_registration_preserves_supplied_rung_and_cursor() {
             .unwrap();
         let mut requested = RetryInfo::new_initial();
         requested.num_retries = 3;
-        requested.dispatch_cursor = 17;
+        requested.dispatch_after = Some((RetryScope::Document, "doc".to_string()));
         peerstore
             .record_push_failure("peer", "doc", "collection", &requested.to_bytes().unwrap())
             .await
             .unwrap();
         let actual = info(&peerstore).await;
         assert_eq!(actual.num_retries, 4);
-        assert_eq!(actual.dispatch_cursor, 17);
+        assert_eq!(
+            actual.dispatch_after,
+            Some((RetryScope::Document, "doc".to_string()))
+        );
     })
     .unwrap()
 }
@@ -102,7 +105,7 @@ fn receiver_hint_preserves_existing_retry_progress() {
             .unwrap();
         let mut requested = RetryInfo::new_initial();
         requested.num_retries = 3;
-        requested.dispatch_cursor = 17;
+        requested.dispatch_after = Some((RetryScope::Document, "doc".to_string()));
         peerstore
             .record_push_failure("peer", "doc", "collection", &requested.to_bytes().unwrap())
             .await
@@ -115,7 +118,7 @@ fn receiver_hint_preserves_existing_retry_progress() {
             .unwrap());
         let hinted = info(&peerstore).await;
         assert_eq!(hinted.num_retries, before.num_retries);
-        assert_eq!(hinted.dispatch_cursor, before.dispatch_cursor);
+        assert_eq!(hinted.dispatch_after, before.dispatch_after);
         assert!(hinted.not_before_unix >= received_at + 45);
         peerstore.activate_retry_peer("peer").await.unwrap();
         assert_eq!(
@@ -145,7 +148,7 @@ fn ordinary_delay_does_not_install_receiver_backpressure() {
             .await
             .unwrap();
         peerstore
-            .reschedule_retry_peer("peer", Some(std::time::Duration::from_secs(2)), 1)
+            .reschedule_retry_peer("peer", Some(std::time::Duration::from_secs(2)), None)
             .await
             .unwrap();
         assert_eq!(info(&peerstore).await.not_before_unix, 0);
@@ -158,7 +161,7 @@ fn ordinary_delay_does_not_install_receiver_backpressure() {
             .unwrap();
         let deadline = info(&peerstore).await.not_before_unix;
         peerstore
-            .reschedule_retry_peer("peer", Some(std::time::Duration::from_secs(2)), 1)
+            .reschedule_retry_peer("peer", Some(std::time::Duration::from_secs(2)), None)
             .await
             .unwrap();
         assert_eq!(info(&peerstore).await.next_retry_unix, deadline);
@@ -309,7 +312,7 @@ fn configured_schedule_survives_scope_updates_and_reopen() {
         );
         let before = now();
         peerstore
-            .reschedule_retry_peer("peer", None, 1)
+            .reschedule_retry_peer("peer", None, None)
             .await
             .unwrap();
         let second = info(&peerstore).await;
@@ -331,7 +334,7 @@ fn configured_schedule_survives_scope_updates_and_reopen() {
         );
         let before = now();
         peerstore
-            .reschedule_retry_peer("peer", None, 1)
+            .reschedule_retry_peer("peer", None, None)
             .await
             .unwrap();
         let third = info(&peerstore).await;
