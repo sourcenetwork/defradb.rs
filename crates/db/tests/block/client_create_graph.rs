@@ -689,3 +689,97 @@ fn immutable_genesis_is_verified_and_immutable_updates_are_refused() {
         .collect::<Vec<_>>();
     assert!(ClientUpdateSnapshot::from_blocks(create.doc_id(), &missing, &[head]).is_err());
 }
+
+#[test]
+#[ignore = "Requires Lean; run in the Lean Conformance job"]
+fn trusted_delete_graph_matches_model_and_refuses_other_waves() {
+    use db::block::builder::{ClientDeleteSignatures, ClientUpdateSnapshot};
+    let (_, signer) = fixture();
+    let schema = CollectionVersion::new(
+        "Settings",
+        "settings-version",
+        "settings",
+        vec![FieldDescription::new(
+            "1",
+            "name",
+            FieldKind::string(),
+            CType::LwwRegister,
+        )],
+    );
+    let mut create = ClientCreateSignatures::from_input(
+        &storage::Crdts::default(),
+        &schema,
+        &json!({"name":"before"}),
+        &signer,
+    )
+    .unwrap();
+    let children = create.child_blocks().to_vec();
+    let signatures = create.respond(&children).unwrap();
+    let signed = |bytes: &[u8], signature: Vec<u8>| {
+        let mut block = Block::from_dag_cbor(bytes).unwrap();
+        block.signature = Some(
+            Signature::new(
+                SignatureHeader::new(
+                    SignatureType::EdDSA,
+                    signer.public_key_hex.as_bytes().to_vec(),
+                ),
+                signature,
+            )
+            .generate_cid()
+            .unwrap(),
+        );
+        block.to_dag_cbor().unwrap()
+    };
+    let mut history = children
+        .iter()
+        .zip(signatures)
+        .map(|(bytes, sig)| signed(bytes, sig))
+        .collect::<Vec<_>>();
+    let composite = create.composite_block().to_vec();
+    let signature = create
+        .respond(std::slice::from_ref(&composite))
+        .unwrap()
+        .remove(0);
+    let composite = signed(&composite, signature);
+    let head = Block::from_dag_cbor(&composite)
+        .unwrap()
+        .generate_cid()
+        .unwrap();
+    history.push(composite);
+    let doc_id = create.doc_id().to_owned();
+    let snapshot = ClientUpdateSnapshot::from_blocks(&doc_id, &history, &[head]).unwrap();
+    let new_graph =
+        || ClientDeleteSignatures::from_snapshot(&schema, &doc_id, &snapshot, &signer).unwrap();
+    let wave = vec![new_graph().composite_block().to_vec()];
+    let block = Block::from_dag_cbor(&wave[0]).unwrap();
+    let CrdtDelta::Composite(delta) = block.delta else {
+        panic!("expected composite")
+    };
+    assert_eq!(delta.status, 2);
+    let mut changed = wave.clone();
+    changed[0][0] ^= 1;
+    let waves = [
+        wave.clone(),
+        changed,
+        vec![],
+        vec![wave[0].clone(), wave[0].clone()],
+    ];
+    let intent = json!({"collection":"Settings", "document":doc_id, "version":"settings-version", "heads":[head.to_string()], "priority":delta.priority, "block":hex::encode(&wave[0]), "signer":"caller"});
+    let inputs = waves.iter().map(|offered| {
+        let mut next = intent.clone();
+        next["block"] = json!(if offered.len() == 1 {hex::encode(&offered[0])} else {"not-one-block".to_owned()});
+        json!({"approved":intent, "offered":next, "authenticated":"caller", "snapshotValid":true, "authorized":true, "committed":true, "responseReceived":true})
+    }).collect::<Vec<_>>();
+    let expected = model("ClientSignedDelete.lean", &json!(inputs));
+    for (offered, expected) in waves.iter().zip(expected.as_array().unwrap()) {
+        assert_eq!(
+            new_graph().respond(offered).is_ok(),
+            expected["signs"].as_bool().unwrap()
+        );
+    }
+    let mut graph = new_graph();
+    assert!(graph.matches_target("Settings", &doc_id));
+    assert!(!graph.matches_target("Settings", "different"));
+    assert_eq!(graph.respond(&wave).unwrap().len(), 1);
+    assert!(graph.respond(&wave).is_err());
+}
