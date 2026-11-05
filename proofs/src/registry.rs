@@ -452,10 +452,18 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Retry input and marker fencing",
-        name: "INV_RegistrationCannotCrossFence — allocated registrations preserve peer incarnation and marker order",
+        name: "ACT_RegistrationCannotCrossFence — allocated registrations preserve peer incarnation and marker order",
         axis: Tla,
         anchor: "crates/storage/src/stores/peerstore.rs RegisterScopeMarkerAttempt; create_replicator",
-        model_ref: "MC_RetryRegistrationFence_{Green,Red_*}.cfg",
+        model_ref: "MC_RetryRegistrationFence_{Green,Red_NoEpoch,Red_NoOrder}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Retry input and marker fencing",
+        name: "INV_FanOutPeerLocal — one replicator's rejected registration leaves every other replicator's marker and job",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/broadcast.rs admit_replicator_push; broadcast_tests.rs fanout_registration_failure_is_peer_local",
+        model_ref: "MC_RetryRegistrationFence_{Green,Red_FanOutAbort}.cfg",
         tiers: &[Boundary],
     },
     Property {
