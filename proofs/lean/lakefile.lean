@@ -4,6 +4,9 @@ open Lake DSL
 package defraConvergence where
 
 @[default_target]
+lean_lib EmbeddedSigner where
+
+@[default_target]
 lean_lib DelegatedRelationship where
 
 @[default_target]
