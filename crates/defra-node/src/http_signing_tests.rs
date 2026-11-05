@@ -757,7 +757,7 @@ resources:
             query::QueryRequest::new("mutation($input: DeleteRecordMutationInputArg!) { create_DeleteRecord(input:$input) {_docID} }")
                 .with_variables(json!({"input":input})), None, &mut create).await.unwrap();
         assert!(created.errors.is_empty(), "{:?}", created.errors);
-        let doc_id = created.data.unwrap()["create_DeleteRecord"][0]["_docID"].as_str().unwrap().to_owned();
+        let doc_id = created.data.unwrap()["add_DeleteRecord"][0]["_docID"].as_str().unwrap().to_owned();
         let history = defra_http::client_signed_update::history_request(&doc_id);
         let query_history = |token: &str| http.post(format!("http://{address}/api/v0/graphql")).bearer_auth(token)
             .json(&json!({"query":history.query,"variables":history.variables}));
@@ -805,7 +805,7 @@ resources:
         let created = defra_http::client_signed_create::execute(&ws, &auth(&owner_token),
             query::QueryRequest::new("mutation($input: DeleteRecordMutationInputArg!) { create_DeleteRecord(input:$input) {_docID} }")
                 .with_variables(json!({"input":input})), None, &mut create).await.unwrap();
-        let unknown_id = created.data.unwrap()["create_DeleteRecord"][0]["_docID"].as_str().unwrap().to_owned();
+        let unknown_id = created.data.unwrap()["add_DeleteRecord"][0]["_docID"].as_str().unwrap().to_owned();
         let query = defra_http::client_signed_update::history_request(&unknown_id);
         let history: query::QueryResponse = http.post(format!("http://{address}/api/v0/graphql")).bearer_auth(&owner_token)
             .json(&json!({"query":query.query,"variables":query.variables})).send().await.unwrap().json().await.unwrap();
