@@ -133,6 +133,19 @@ impl PendingDagRegistry {
         self.current_by_source_scope.get(scope).copied()
     }
 
+    /// Whether the scope of this head has a current head among the pending roots.
+    pub(super) fn has_scope_head(
+        &self,
+        root_cid: Cid,
+        source_peer: Option<&str>,
+        collection_id: &str,
+        doc_id: &str,
+        head_priority: Option<u64>,
+    ) -> bool {
+        Scope::of(root_cid, source_peer, collection_id, doc_id, head_priority)
+            .is_some_and(|(scope, _)| self.current(&scope).is_some())
+    }
+
     pub(super) fn scope_head_is_refresh_or_newer(
         &self,
         root_cid: Cid,

@@ -1,8 +1,9 @@
 //! What this node holds durably, as the commits that changed it say.
 //!
-//! The view keeps the roots with a durable record and, for each sender
-//! scope, its durable current head, so admission and the resync sweep decide
-//! without reading the store. Nothing writes it but a commit of the store:
+//! The view keeps the roots with a durable record, how many of them each
+//! announcing peer holds and, for each sender scope, its durable current
+//! head, so admission and the resync sweep decide without reading the store.
+//! Nothing writes it but a commit of the store:
 //! each transition registers one of the callbacks below on its transaction,
 //! and the store dispatches them in commit-receipt order. Two transitions of
 //! one root therefore land in the order they committed, and a sweep, which
@@ -21,10 +22,13 @@ use storage::corekv::TxnCallback;
 use super::PersistedPendingDag;
 use crate::sync::head_scope::{HeadVersion, Scope, ScopeDecision};
 
-/// The roots with a durable record and the durable current head of each
-/// sender scope.
+/// The roots with a durable record, the peer that announced each, and the
+/// durable current head of each sender scope.
 pub struct PersistedView {
-    roots: HopscotchMap<Cid, (), RandomState>,
+    roots: HopscotchMap<Cid, Option<String>, RandomState>,
+    /// The roots each announcing peer holds a record for. Only the commits'
+    /// callbacks change it, and the store runs those one at a time.
+    sources: HopscotchMap<Option<String>, usize, RandomState>,
     scope_heads: HopscotchMap<Scope, HeadVersion, RandomState>,
     quarantined: AtomicUsize,
 }
@@ -33,6 +37,7 @@ impl Default for PersistedView {
     fn default() -> Self {
         Self {
             roots: HopscotchMap::with_hasher(RandomState::default()),
+            sources: HopscotchMap::with_hasher(RandomState::default()),
             scope_heads: HopscotchMap::with_hasher(RandomState::default()),
             quarantined: AtomicUsize::new(0),
         }
@@ -58,6 +63,13 @@ impl PersistedView {
     /// The roots with a durable record.
     pub fn roots(&self) -> Vec<Cid> {
         self.roots.keys().collect()
+    }
+
+    /// How many roots with a durable record `source_peer` announced.
+    pub fn source_count(&self, source_peer: Option<&str>) -> usize {
+        self.sources
+            .get(&source_peer.map(str::to_owned))
+            .unwrap_or_default()
     }
 
     /// How many roots are quarantined.
@@ -104,12 +116,13 @@ impl PersistedView {
     ) -> TxnCallback {
         let view = Arc::clone(self);
         let head = scope_head(root, record);
+        let source_peer = record.source_peer.clone();
         Box::new(move || {
             // The retired root shares the scope, whose head this one takes.
             if let Some(retired) = retired {
-                view.roots.remove(&retired);
+                view.release(&retired);
             }
-            view.roots.insert(root, ());
+            view.hold(root, source_peer);
             if let Some((scope, version)) = head.clone() {
                 view.remember(scope, version);
             }
@@ -129,7 +142,7 @@ impl PersistedView {
             .and_then(|record| scope_head(root, record))
             .map(|(scope, _)| scope);
         Box::new(move || {
-            view.roots.remove(&root);
+            view.release(&root);
             if let Some(scope) = &scope {
                 if view
                     .scope_heads
@@ -149,6 +162,10 @@ impl PersistedView {
     pub(super) fn swept(self: &Arc<Self>, records: &[(Cid, PersistedPendingDag)]) -> TxnCallback {
         let view = Arc::clone(self);
         let roots: RapidHashSet<Cid> = records.iter().map(|(root, _)| *root).collect();
+        let sources: Vec<(Cid, Option<String>)> = records
+            .iter()
+            .map(|(root, record)| (*root, record.source_peer.clone()))
+            .collect();
         let heads: Vec<(Scope, HeadVersion)> = records
             .iter()
             .filter_map(|(root, record)| scope_head(*root, record))
@@ -160,10 +177,10 @@ impl PersistedView {
                 .filter(|root| !roots.contains(root))
                 .collect();
             for root in stale_roots {
-                view.roots.remove(&root);
+                view.release(&root);
             }
-            for root in &roots {
-                view.roots.insert(*root, ());
+            for (root, source_peer) in sources {
+                view.hold(root, source_peer);
             }
             let stale_scopes: Vec<Scope> = view
                 .scope_heads
@@ -178,6 +195,39 @@ impl PersistedView {
                 view.remember(scope.clone(), *version);
             }
         })
+    }
+
+    /// Gives `root` a record announced by `source_peer`.
+    fn hold(&self, root: Cid, source_peer: Option<String>) {
+        match self.roots.insert(root, source_peer.clone()) {
+            Some(previous) if previous == source_peer => {}
+            previous => {
+                if let Some(previous) = previous {
+                    self.uncount(&previous);
+                }
+                let held = self.sources.get(&source_peer).unwrap_or_default();
+                self.sources.insert(source_peer, held + 1);
+            }
+        }
+    }
+
+    /// Takes `root`'s record away.
+    fn release(&self, root: &Cid) {
+        if let Some(source_peer) = self.roots.remove(root) {
+            self.uncount(&source_peer);
+        }
+    }
+
+    fn uncount(&self, source_peer: &Option<String>) {
+        match self.sources.get(source_peer) {
+            Some(held) if held > 1 => {
+                self.sources.insert(source_peer.clone(), held - 1);
+            }
+            Some(_) => {
+                self.sources.remove(source_peer);
+            }
+            None => {}
+        }
     }
 
     /// Keeps `version` as its scope's head unless a newer one is kept.

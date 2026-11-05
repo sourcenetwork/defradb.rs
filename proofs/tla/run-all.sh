@@ -351,6 +351,9 @@ RUNS=(
   "MC_PushLogAdmission_Red_SuccessOnFull.cfg MC_PushLogAdmission_Common.tla RED" # fa4a84f7 regression: overflow drops registration but acks success (INV_SuccessImpliesRegisteredOrMerged)
   "MC_PushLogAdmission_Green_Siblings.cfg MC_PushLogAdmission_Common.tla GREEN" # F1: a head retires only the scope head it links -> sibling heads each keep a registration + all merge
   "MC_PushLogAdmission_Red_PriorityCover.cfg MC_PushLogAdmission_Common.tla RED" # F1: (priority, CID) covers or supersedes a sibling (INV_AckedHeadReachable)
+  "MC_PushLogAdmission_Red_ViewGuard.cfg MC_PushLogAdmission_Common.tla RED" # the ack guard reads only the lagging view and nacks a head on its committed durable record (INV_NackImpliesUnregistered)
+  "MC_PushLogAdmission_Green_PeerShare.cfg MC_PushLogAdmission_Common.tla GREEN" # the store checks the peer's share in the registration's transaction: the peer never holds more than its share
+  "MC_PushLogAdmission_Red_ViewShare.cfg MC_PushLogAdmission_Common.tla RED" # the share is checked against the lagging view: two of the peer's pushes pass it together (INV_PeerQuota)
   "MC_PushLogJoin_Green.cfg PushLogJoin.tla GREEN" # same-CID PushLog joins the in-flight owner: success implies durable, one processor, every join ends
   "MC_PushLogJoin_Red_NoRecheck.cfg PushLogJoin.tla RED" # waiter acks when the owner lets go without looking again (INV_SuccessImpliesDurable)
   "MC_PushLogJoin_Red_NoGuard.cfg PushLogJoin.tla RED" # waiter processes its copy without the CID guard (INV_OneProcessor)
@@ -478,6 +481,9 @@ RUNS=(
   "MC_SyncOwnership_Red_RetainedOverflow.cfg MC_SyncOwnership_Memory.tla RED" # a never-serving restored root holds the only entry for good (LIVE_DurableRootMerged)
   "MC_SyncOwnership_Red_KeyOrderResync.cfg MC_SyncOwnership_Memory.tla RED" # the sweep restarts at the first key and re-admits the root that gave its entry up (LIVE_DurableRootMerged)
   "MC_SyncOwnership_Red_ImmortalContinuation.cfg MC_SyncOwnership_Memory.tla RED" # a skipped local continuation keeps its entry for ever (LIVE_ContinuationEnds)
+  "MC_SyncOwnership_Green_TwoTierQuota.cfg MC_SyncOwnership_Memory.tla GREEN" # a full map admits a head on its durable record alone; a peer's quota keeps its never-serving roots from filling the store
+  "MC_SyncOwnership_Red_MemoryOnlyAdmission.cfg MC_SyncOwnership_Memory.tla RED" # a full map nacks a fresh head for ever while the store has room (LIVE_WrittenHeadMerged)
+  "MC_SyncOwnership_Red_NoDurablePeerQuota.cfg MC_SyncOwnership_Memory.tla RED" # one peer's never-serving roots fill the durable store and every other peer's head is nacked (LIVE_WrittenHeadMerged)
   "MC_Jwt_Green.cfg                MC_Jwt_Green.tla                GREEN" # token->DID binds genuine signer DID
   "MC_Jwt_Red_NoAlgBinding.cfg     MC_Jwt_Red_NoAlgBinding.tla     RED"   # alg-confusion: header alg not bound to key type
   "MC_Jwt_Red_NoIssBinding.cfg     MC_Jwt_Red_NoIssBinding.tla     RED"   # iss not bound to did(pubkey)
