@@ -455,20 +455,26 @@ they have no clock to hand their blocks to, and the model keeps them as
 
 `MC_SyncOwnership_Memory.tla` runs every action of this model with the
 receiver's bounded in-memory map in front of `pending`. Only roots in memory
-(`mem`) can be claimed. The durable set can be larger than the map: before the
-one restart the map holds the whole durable set, after it `MemCap` entries,
-which is an upgrade or a lower cap. The restart restores only what fits
-(`Resync`). Roots of `Dead` scopes sort first in key order, the worst case for
-a key-order sweep.
+(`mem`) can be claimed, and a new entry needs room in the map and in its
+sender peer's quota of a quarter of the map (`max_pending_dags_per_peer`).
+The shared peer is the one `PeerScopes` entry with more than one scope; every
+other peer pushes one scope. A local continuation counts against the peer it
+was pulled from, as in `continue_merge`. The durable set can be larger than
+the map: before the one restart the map holds the whole durable set, after it
+`MemCap` entries, which is an upgrade or a lower cap. The restart restores
+only what fits (`Resync`). Roots of `Dead` scopes sort first in key order,
+the shared peer's after the others: the worst case for a key-order sweep.
 
 - As in the dispatch model, every variable is code state, mapped in the
   module header: `mem` and `conts` are the map's keys by `PendingDag::origin`,
   `dispatches` is `PendingDag::dispatches` (counted up to `RotateAfter`),
-  `dueOrder` and `backoff` are `next_retry_at` by its order, and `cursor` is
-  `pending_resync_cursor`.
+  `dueOrder` and `backoff` are `next_retry_at` by its order, `cursor` is
+  `pending_resync_cursor`, and `peerCursor` is the shared peer's entry in
+  `pending_resync_peer_cursors`.
 - Admission has two tiers (`process_block_inner`). A new head takes an entry
   and its durable record (`MRegister`, `try_insert_pending_dag`). With the map
-  full it takes the durable record alone and is acknowledged
+  or its peer's share of it full it takes the durable record alone and is
+  acknowledged
   (`MRegisterDurable`); it waits like any durable root without an entry, the
   rotation below gives it one, and it holds its place in the store's key order
   like the others. `AdmissionMode = "MemoryOnly"`, the rule before, nacks it
@@ -511,13 +517,19 @@ a key-order sweep.
   the sender sees only the acknowledgement. The models promise such a head
   an eventual merge (`LIVE_WrittenHeadMerged`), not a bound.
 - `OverflowMode = "Rotate"`: a root whose `dispatches` reached `RotateAfter`
-  (`PENDING_ROTATE_AFTER_DISPATCHES`; 1 in the configurations) gives its
-  entry up once its attempt has ended, while the map is full and a durable
-  root waits, keeping its record (`Yield`; `PendingDagLease::finish_attempt`).
-  The sweep resumes after the root it
-  admitted last (`records_after_resync_cursor`). `"KeyOrder"` yields but
-  sweeps from the first key, re-admitting the root that just gave its entry up.
-  `"Retained"`, the rule before, never gives an acknowledged entry up.
+  (`PENDING_ROTATE_AFTER_DISPATCHES`; 1 in the configurations) gives its entry
+  up as its attempt ends, while a durable root waits and the map is full or
+  its peer is at its quota, keeping its record (`EndAttempt`, part of `MFail`
+  and `MComplete`; `PendingDagLease::finish_attempt`). The sweep visits the
+  places in key order after the place at which it admitted last, gives a
+  peer's places to that peer's roots in key order after the one it admitted
+  last, and admits the first waiting root that fits, passing the others
+  (`records_after_resync_cursor`). `"PassOver"`, the rule before, gives each
+  place its own root: a root left waiting on its peer's quota is passed by the
+  places after it, and when the peer's place is free a root of the same peer
+  that sorts first takes it again. `"KeyOrder"` yields but sweeps from the
+  first key, re-admitting the root that just gave its entry up. `"Retained"`,
+  the rule before rotation, never gives an acknowledged entry up.
 - Entries record their origin (`PendingOrigin`): `Push`, `Restored` or
   `LocalContinuation`. A pull-sync merge that yields its work budget leaves a
   local continuation (`PullYield`, `continue_merge`); it is never an
@@ -541,13 +553,19 @@ dispatch model's scheduler-level fairness and environment assumption. Claims
 follow `next_retry_at` order (`dueOrder`), as in the dispatch model, so no
 root needs claim fairness of its own here either. Nothing is recorded only to
 state a property: the end of a continuation is the liveness property
-`LIVE_ContinuationEnds` over the map itself. The quota checks add a third
+`LIVE_ContinuationEnds` over the map itself. The durable quota checks add a third
 document: one peer pushes `d1` and `d2`, both dead, the other `d3`. Senders
 get fairness per peer, never per scope: each peer's retry ledger offers one of
 its dirty markers again, and the receiver answers one of that peer's hints, so
 a peer may keep offering a nacked head instead of another.
 `LIVE_WrittenHeadMerged` promises a merge only to scopes of peers with no
 never-serving scope, since such a root can hold its peer's quota.
+The in-memory quota checks use three
+documents, `d1` and `d2` from one peer, `d1` and `d3` dead, key order `d3`,
+`d1`, `d2`, and a map of two after the restart, so the peer's quota is one
+entry. Giving an entry up has no fairness of its own: it is part of the end
+of an attempt, as in `finish_attempt`, so a spent root that holds a contended
+place gives it up when its attempt ends.
 
 ## Checked properties
 
@@ -718,6 +736,8 @@ fetch owner is deliberately not expressible.
 | `MC_SyncOwnership_Green_TwoTierQuota.cfg` | GREEN | one peer's two never-serving scopes and another peer's serving scope: the first peer is held at its quota of one durable root, and the other's head is acknowledged in either tier and merges |
 | `MC_SyncOwnership_Red_MemoryOnlyAdmission.cfg` | RED | a full map nacks `d2`'s head while the store has room; `d1` never gives its entry up because no durable root waits, so the head is nacked and offered again for ever and its marker stays with the sender (`LIVE_WrittenHeadMerged`) |
 | `MC_SyncOwnership_Red_NoDurablePeerQuota.cfg` | RED | no per-peer quota: one peer's two never-serving roots fill the durable store and the other peer's head is nacked for ever (`LIVE_WrittenHeadMerged`) |
+| `MC_SyncOwnership_Green_Memory_Quota.cfg` | GREEN | `d2` waits on its peer's quota while the never-serving `d1` holds the peer's place; the sweep gives the peer's place to its roots in turn, so when `d1` gives it up `d2` takes it and merges |
+| `MC_SyncOwnership_Red_QuotaPassOver.cfg` | RED | each place goes to its own root: the sweep passes `d2`, admits `d3`, which keeps giving its entry up and coming back, and re-admits `d1` ahead of `d2` whenever `d1` frees the peer's place (`LIVE_DurableRootMerged`) |
 | `MC_SyncOwnership_Red_ShedAsStall.cfg` | RED | a provider that sheds a CAR request as busy is read as a stalled window, so repeated shedding by a saturated hub burns the attempt budget into terminal provider exhaustion. `ProviderShed` is the release of an attempt in which every provider shed one batch, or in which a provider shed and none delivered, including a busy hub beside alternates that do not hold the root; like `BusyExhaustion`, this guards the classification, and the provider mix itself is tested in `busy_provider_rotation.rs` |
 
 Each red configuration checks only type safety plus the property it is meant to
