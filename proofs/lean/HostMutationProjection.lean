@@ -26,7 +26,7 @@ structure State where
   sourced : Source → Bool
 
 inductive Route where
-  | managed | raw | replicated
+  | managed | raw | replicated | schema
   deriving BEq, DecidableEq
 
 structure Admission where

@@ -15,6 +15,7 @@ RUNS=(
   "MC_HostMutationProjection_Red_Atomic.cfg HostMutationProjection.tla RED"
   "MC_HostMutationProjection_Red_Raw.cfg HostMutationProjection.tla RED"
   "MC_HostMutationProjection_Red_Replicated.cfg HostMutationProjection.tla RED"
+  "MC_HostMutationProjection_Red_Schema.cfg HostMutationProjection.tla RED"
   "MC_HostMutationProjection_Red_Direct.cfg HostMutationProjection.tla RED"
   "MC_HostMutationProjection_Red_Other.cfg HostMutationProjection.tla RED"
   "MC_HostMutationProjection_Red_Authority.cfg HostMutationProjection.tla RED"
