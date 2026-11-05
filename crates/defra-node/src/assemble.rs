@@ -476,6 +476,7 @@ where
     ));
     let acp_ops: Arc<dyn acp_ops::AcpOps> = Arc::new(acp_ops::DbAcpOps::new(
         database.clone(),
+        registry.clone(),
         document_acp.clone(),
         event_bus.clone(),
     ));

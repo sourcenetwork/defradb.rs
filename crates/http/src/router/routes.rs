@@ -187,6 +187,7 @@ pub(crate) fn create_router_with_state_and_body_limits(
         .route("/policy", get(handlers::acp::list_policies))
         .route("/policy/{id}", get(handlers::acp::get_policy))
         .route("/document/decide", post(handlers::acp::decide_doc_access))
+        .route("/document/is-owner", post(handlers::acp::own_documents))
         .route(
             "/document/relationship",
             post(handlers::acp::add_doc_relationship),

@@ -254,6 +254,18 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         Ok(provider.bind_transaction(view))
     }
 
+    async fn transaction_dac_policy(&self, id: &str) -> query::error::Result<Option<acp::Policy>> {
+        use acp::ZanzibarStore;
+        let txn = self.shared_txn()?;
+        let view = txn
+            .acpstore()
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+        acp::zanzibar::store::TransactionZanzibarStore::new(view)
+            .get_policy(id)
+            .await
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))
+    }
+
     async fn scoped_acp(
         &self,
         provider: Arc<dyn acp::DocumentACP>,

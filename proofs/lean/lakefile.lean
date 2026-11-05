@@ -7,6 +7,9 @@ package defraConvergence where
 lean_lib LocalFetchPermit where
 
 @[default_target]
+lean_lib TransactionalRelationship where
+
+@[default_target]
 lean_lib EmbeddedHttpAcp where
 
 @[default_target]
