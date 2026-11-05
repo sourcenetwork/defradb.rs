@@ -8,14 +8,7 @@ use crate::client_signed_create::{self, ClientSignedCreateError};
 
 /// DeleteNode does not retain extra filter predicates after resolving IDs.
 pub fn single_document_target(mutation: &query::mapper::Mutation) -> Option<&str> {
-    if mutation
-        .filter
-        .as_ref()
-        .is_some_and(|filter| filter.conditions().len() != 1)
-    {
-        return None;
-    }
-    crate::client_signed_update::single_document_target(mutation)
+    query::mapper::single_document_mutation_target(mutation, true)
 }
 
 fn response_key(request: &QueryRequest, graph: &ClientDeleteSignatures) -> Option<String> {

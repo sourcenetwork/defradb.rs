@@ -273,6 +273,27 @@ where
     slot
 }
 
+trait VerifiedClientGraph {
+    fn signer_did(&self) -> &str;
+    fn doc_id(&self) -> &str;
+    fn matches_mutation(&self, mutation: &query::mapper::Mutation) -> bool;
+    fn signing_config(&self) -> defra_core::signing::SigningConfig;
+}
+
+impl VerifiedClientGraph for db::block::builder::VerifiedClientCreate {
+    fn signer_did(&self) -> &str { self.signer_did() }
+    fn doc_id(&self) -> &str { self.doc_id() }
+    fn matches_mutation(&self, mutation: &query::mapper::Mutation) -> bool { self.matches_mutation(mutation) }
+    fn signing_config(&self) -> defra_core::signing::SigningConfig { self.signing_config() }
+}
+
+impl VerifiedClientGraph for db::block::builder::VerifiedClientMutation {
+    fn signer_did(&self) -> &str { self.signer_did() }
+    fn doc_id(&self) -> &str { self.doc_id() }
+    fn matches_mutation(&self, mutation: &query::mapper::Mutation) -> bool { self.matches_mutation(mutation) }
+    fn signing_config(&self) -> defra_core::signing::SigningConfig { self.signing_config() }
+}
+
 impl Node {
     /// Start building a new node.
     pub fn builder() -> NodeBuilder {
@@ -339,10 +360,34 @@ impl Node {
     /// evidence is not an authorization grant.
     pub async fn execute_verified_create_in_txn(
         &self,
-        mut request: QueryRequest,
+        request: QueryRequest,
         handle: &TransactionHandle,
         graph: &db::block::builder::VerifiedClientCreate,
     ) -> QueryResponse {
+        self.execute_verified_graph_in_txn(request, handle, graph).await
+    }
+
+    /// Stage one verified client update or delete under native ACP in the
+    /// node-owned transaction. A changed state requires an unapproved wave and
+    /// causes the transaction to be discarded.
+    pub async fn execute_verified_mutation_in_txn(
+        &self,
+        request: QueryRequest,
+        handle: &TransactionHandle,
+        graph: &db::block::builder::VerifiedClientMutation,
+    ) -> QueryResponse {
+        self.execute_verified_graph_in_txn(request, handle, graph).await
+    }
+
+    async fn execute_verified_graph_in_txn<G>(
+        &self,
+        mut request: QueryRequest,
+        handle: &TransactionHandle,
+        graph: &G,
+    ) -> QueryResponse
+    where
+        G: VerifiedClientGraph,
+    {
         if request.context.dac_bypass()
             || request
                 .identity

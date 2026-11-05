@@ -125,3 +125,87 @@ resources:
         node.shutdown().await.unwrap();
     }).unwrap();
 }
+
+#[test]
+fn verified_update_and_delete_use_exact_actor_and_transaction_state() {
+    use db::block::builder::{ClientCreateSignatures, ClientDeleteSignatures, ClientUpdateSignatures,
+        ClientUpdateSnapshot, VerifiedClientMutation};
+    const POLICY: &str = "name: Mutations\nresources:\n  - name: records\n    permissions:\n      - name: read\n      - name: update\n      - name: delete\n";
+    edge::testing::edge().block_on(async {
+        let (admin, _) = actor();
+        let (user, signing) = actor();
+        let (other, _) = actor();
+        let admin_did = admin.did().unwrap().to_string();
+        let user_did = user.did().unwrap().to_string();
+        let other_did = other.did().unwrap().to_string();
+        let node = Node::builder().enable_signing().with_node_acp_owner(admin_did.clone()).build().await.unwrap();
+        let admin_context = defra_core::RequestContext::default().with_identity(Some(admin_did));
+        let node_did = node.node_identity_did().unwrap().to_owned();
+        for did in [&node_did, &user_did, &other_did] {
+            for permission in [acp::nac::NodePermission::DocumentRead, acp::nac::NodePermission::DocumentUpdate,
+                acp::nac::NodePermission::DocumentDelete, acp::nac::NodePermission::CollectionGet] {
+                node.add_nac_actor_relationship_as(&admin_context, permission.as_str(), did).await.unwrap();
+            }
+        }
+        let policy = node.add_dac_policy_as(&admin_context, POLICY).await.unwrap();
+        node.add_collection(&format!("type VerifiedRecord @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
+        let schema = node.get_collection("VerifiedRecord").unwrap().unwrap();
+        let crdts = storage::Crdts::default();
+        let input = json!({"name":"before"});
+        let create = ClientCreateSignatures::from_input(&crdts, &schema, &input, &signing).unwrap();
+        let create = db::block::builder::VerifiedClientCreate::verify(&crdts, &schema, &input, create.evidence()).unwrap();
+        let request = query::QueryRequest::new("mutation($input:VerifiedRecordMutationInputArg!) { create_VerifiedRecord(input:$input) {_docID} }")
+            .with_variables(json!({"input":input})).with_identity(Some(user.did().unwrap()));
+        let txn = node.begin_transaction(false).await.unwrap();
+        let result = node.execute_verified_create_in_txn(request, &txn, &create).await;
+        assert!(!result.has_errors(), "{:?}", result.errors);
+        node.commit_transaction(&txn).await.unwrap();
+        let doc_id = create.doc_id().to_owned();
+        let history_request = || query::QueryRequest::new("query($docID:[String!]!) { _commits(docID:$docID) { cid docID fieldName height delta collectionVersionId links { cid fieldName } heads { cid } signature { type identity value } } }")
+            .with_variables(json!({"docID":[doc_id]})).with_identity(Some(user.did().unwrap()));
+        let history = node.execute_request(history_request()).await;
+        assert!(!history.has_errors(), "{:?}", history.errors);
+        let snapshot = ClientUpdateSnapshot::from_commits(&doc_id, history.data.unwrap()["_commits"].as_array().unwrap()).unwrap();
+        let patch = json!({"name":"after"});
+        let prepared = ClientUpdateSignatures::from_input(&crdts, &schema, &doc_id, &patch, &snapshot, &signing).unwrap();
+        let update = VerifiedClientMutation::verify_update(&crdts, &schema, &doc_id, &patch, &snapshot, prepared.evidence()).unwrap();
+        let stale_delete = ClientDeleteSignatures::from_snapshot(&schema, &doc_id, &snapshot, &signing).unwrap();
+        let stale_delete = VerifiedClientMutation::verify_delete(&schema, &doc_id, &snapshot, stale_delete.evidence()).unwrap();
+        let update_request = |did: &str| query::QueryRequest::new("mutation($id:ID!, $input:VerifiedRecordMutationInputArg!) { update_VerifiedRecord(docID:$id,input:$input) {_docID} }")
+            .with_variables(json!({"id":doc_id,"input":patch})).with_identity(Some(identity::Did::new(did).unwrap()));
+        let txn = node.begin_transaction(false).await.unwrap();
+        assert!(node.execute_verified_mutation_in_txn(update_request(&other_did), &txn, &update).await.has_errors());
+        assert!(node.commit_transaction(&txn).await.is_err());
+        node.delete_nac_actor_relationship_as(&admin_context, acp::nac::NodePermission::DocumentUpdate.as_str(), &user_did).await.unwrap();
+        let txn = node.begin_transaction(false).await.unwrap();
+        assert!(node.execute_verified_mutation_in_txn(update_request(&user_did), &txn, &update).await.has_errors());
+        assert!(node.commit_transaction(&txn).await.is_err());
+        node.add_nac_actor_relationship_as(&admin_context, acp::nac::NodePermission::DocumentUpdate.as_str(), &user_did).await.unwrap();
+        let txn = node.begin_transaction(false).await.unwrap();
+        let result = node.execute_verified_mutation_in_txn(update_request(&user_did), &txn, &update).await;
+        assert!(!result.has_errors(), "{:?}", result.errors);
+        node.commit_transaction(&txn).await.unwrap();
+        let delete_request = || query::QueryRequest::new("mutation($id:ID!) { delete_VerifiedRecord(docIDs:[$id]) {_docID} }")
+            .with_variables(json!({"id":doc_id})).with_identity(Some(user.did().unwrap()));
+        let txn = node.begin_transaction(false).await.unwrap();
+        assert!(node.execute_verified_mutation_in_txn(delete_request(), &txn, &stale_delete).await.has_errors());
+        assert!(node.commit_transaction(&txn).await.is_err());
+        let history = node.execute_request(history_request()).await;
+        let snapshot = ClientUpdateSnapshot::from_commits(&doc_id, history.data.unwrap()["_commits"].as_array().unwrap()).unwrap();
+        let prepared = ClientDeleteSignatures::from_snapshot(&schema, &doc_id, &snapshot, &signing).unwrap();
+        let delete = VerifiedClientMutation::verify_delete(&schema, &doc_id, &snapshot, prepared.evidence()).unwrap();
+        let txn = node.begin_transaction(false).await.unwrap();
+        let result = node.execute_verified_mutation_in_txn(delete_request(), &txn, &delete).await;
+        assert!(!result.has_errors(), "{:?}", result.errors);
+        node.discard_transaction(&txn).await.unwrap();
+        let retained = node.execute_request(query::QueryRequest::new("{ VerifiedRecord {_docID name} }").with_identity(Some(user.did().unwrap()))).await;
+        assert_eq!(retained.data.unwrap()["VerifiedRecord"][0]["name"], "after");
+        let txn = node.begin_transaction(false).await.unwrap();
+        let result = node.execute_verified_mutation_in_txn(delete_request(), &txn, &delete).await;
+        assert!(!result.has_errors(), "{:?}", result.errors);
+        node.commit_transaction(&txn).await.unwrap();
+        let retained = node.execute_request(query::QueryRequest::new("{ VerifiedRecord {_docID} }").with_identity(Some(user.did().unwrap()))).await;
+        assert!(retained.data.unwrap()["VerifiedRecord"].as_array().unwrap().is_empty());
+        node.shutdown().await.unwrap();
+    }).unwrap();
+}

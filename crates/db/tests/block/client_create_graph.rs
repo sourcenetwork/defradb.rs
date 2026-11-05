@@ -779,6 +779,18 @@ fn trusted_delete_graph_matches_model_and_refuses_other_waves() {
         };
         assert_eq!(result.is_ok(), expected["accepts"].as_bool().unwrap());
     }
+    let unchanged = json!({"name":"before"});
+    let unsigned = db::block::builder::ClientUpdateSignatures::from_input(
+        &storage::Crdts::default(), &schema, &doc_id, &unchanged, &snapshot, &signer,
+    ).unwrap();
+    assert!(unsigned.is_complete());
+    let graph = json!({"signer":"user", "operation":"update", "collection":"Settings", "document":doc_id,
+        "input":unchanged.to_string(), "history":head.to_string(), "blocks":[]});
+    let modeled = model("VerifiedMutationHandoff.lean", &json!([{"approved":graph, "offered":graph,
+        "claimedActor":"user", "verified":true, "nativeAuthorized":true, "waveMatches":true, "commit":true}]));
+    assert_eq!(db::block::builder::VerifiedClientMutation::verify_update(
+        &storage::Crdts::default(), &schema, &doc_id, &unchanged, &snapshot, unsigned.evidence(),
+    ).is_ok(), modeled[0]["accepts"].as_bool().unwrap());
     let new_graph =
         || ClientDeleteSignatures::from_snapshot(&schema, &doc_id, &snapshot, &signer).unwrap();
     let wave = vec![new_graph().composite_block().to_vec()];

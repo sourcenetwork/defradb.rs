@@ -12,3 +12,26 @@ pub fn valid_unaliased_doc_id_selection(fields: &[Requestable]) -> bool {
         Requestable::FullTextSearch(field) => field.output_name() == "_docID",
     })
 }
+/// Identify a mutation limited to one physical document. Delete execution drops
+/// extra filter predicates, so deletion requires the DocID predicate alone.
+pub fn single_document_mutation_target(mutation: &super::Mutation, delete: bool) -> Option<&str> {
+    if delete
+        && mutation
+            .filter
+            .as_ref()
+            .is_some_and(|filter| filter.conditions().len() != 1)
+    {
+        return None;
+    }
+    match (&mutation.doc_ids, &mutation.filter) {
+        (Some(ids), None) if ids.len() == 1 => Some(ids[0].as_str()),
+        (None, Some(filter)) => {
+            let condition = filter.conditions().get("_docID")?.as_object()?;
+            if condition.len() != 1 {
+                return None;
+            }
+            condition.get("_eq")?.as_str()
+        }
+        _ => None,
+    }
+}

@@ -41,6 +41,15 @@ impl ClientDeleteSignatures {
         {
             return Err(ClientDeleteError::UnsupportedSigner);
         }
+        Self::build(schema, doc_id, snapshot, signer)
+    }
+
+    pub(super) fn build(
+        schema: &CollectionVersion,
+        doc_id: &str,
+        snapshot: &ClientUpdateSnapshot,
+        signer: &SigningConfig,
+    ) -> Result<Self, ClientDeleteError> {
         if snapshot.doc_id != doc_id
             || snapshot.versions.len() != 1
             || !snapshot.versions.contains(&schema.version_id)
@@ -119,6 +128,9 @@ impl ClientDeleteSignatures {
     }
     pub fn composite_block(&self) -> &[u8] {
         self.waves.composite()
+    }
+    pub fn evidence(&self) -> super::ClientMutationEvidence {
+        super::ClientMutationEvidence::from_waves(&self.public_key_hex, &self.doc_id, &self.waves)
     }
     pub fn respond(&mut self, wave: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, ClientDeleteError> {
         self.waves

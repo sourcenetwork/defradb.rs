@@ -84,6 +84,17 @@ impl ClientUpdateSignatures {
         {
             return Err(ClientUpdateError::UnsupportedSigner);
         }
+        Self::build(crdts, schema, doc_id, input, snapshot, signer)
+    }
+
+    pub(super) fn build(
+        crdts: &crdt::Crdts,
+        schema: &CollectionVersion,
+        doc_id: &str,
+        input: &serde_json::Value,
+        snapshot: &ClientUpdateSnapshot,
+        signer: &SigningConfig,
+    ) -> Result<Self, ClientUpdateError> {
         if doc_id != snapshot.doc_id
             || snapshot.versions.len() != 1
             || !snapshot.versions.contains(&schema.version_id)
@@ -271,6 +282,10 @@ impl ClientUpdateSignatures {
     }
     pub fn composite_block(&self) -> &[u8] {
         self.waves.composite()
+    }
+
+    pub fn evidence(&self) -> super::ClientMutationEvidence {
+        super::ClientMutationEvidence::from_waves(&self.public_key_hex, &self.doc_id, &self.waves)
     }
 
     /// Release only the complete expected wave, once.

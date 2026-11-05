@@ -27,7 +27,7 @@ impl std::fmt::Debug for ClientCreateEvidence {
     }
 }
 
-struct ExactSignatures(RapidHashMap<Vec<u8>, Vec<u8>>);
+pub(super) struct ExactSignatures(pub(super) RapidHashMap<Vec<u8>, Vec<u8>>);
 impl RemoteSigner for ExactSignatures {
     fn sign_sync(&self, data: &[u8], _: Option<&SigningAuthorization>) -> Result<Vec<u8>, String> {
         self.0

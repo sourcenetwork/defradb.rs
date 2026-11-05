@@ -33,17 +33,7 @@ pub fn snapshot_from_response(
 /// Identify an unconditional DocID update or a conditional update whose
 /// top-level `_docID` equality restricts its complete filter to one document.
 pub fn single_document_target(mutation: &query::mapper::Mutation) -> Option<&str> {
-    match (&mutation.doc_ids, &mutation.filter) {
-        (Some(ids), None) if ids.len() == 1 => Some(ids[0].as_str()),
-        (None, Some(filter)) => {
-            let condition = filter.conditions().get("_docID")?.as_object()?;
-            if condition.len() != 1 {
-                return None;
-            }
-            condition.get("_eq")?.as_str()
-        }
-        _ => None,
-    }
+    query::mapper::single_document_mutation_target(mutation, false)
 }
 
 fn response_key(request: &QueryRequest, graph: &ClientUpdateSignatures) -> Option<String> {
