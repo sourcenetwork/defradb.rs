@@ -434,3 +434,143 @@ fn acknowledged_heads_follow_markers_and_replicator_lifetime() {
     })
     .unwrap()
 }
+
+#[test]
+fn a_backward_clock_step_cannot_hold_a_ladder_deadline_past_its_longest_rung() {
+    workers::block_on(async {
+        use storage::corekv::Key;
+        use storage::keys::peerstore::ReplicatorRetryIDKey;
+
+        let peerstore = Peerstore::new(Arc::new(RegolithStore::in_memory().unwrap()))
+            .with_retry_schedule(RetrySchedule::new(vec![10, 600]).unwrap());
+        peerstore
+            .create_replicator("peer", b"replicator")
+            .await
+            .unwrap();
+        peerstore
+            .observe_push_head("peer", "doc", "collection")
+            .await
+            .unwrap();
+        let swept = |info: RetryInfo| {
+            let peerstore = &peerstore;
+            async move {
+                let mut txn = peerstore.new_txn(false).await.unwrap();
+                txn.set(
+                    &ReplicatorRetryIDKey::new("peer").bytes(),
+                    &info.to_bytes().unwrap(),
+                )
+                .await
+                .unwrap();
+                txn.commit().await.unwrap();
+                peerstore.get_retry_documents("peer").await.unwrap()[0]
+                    .retry_info
+                    .clone()
+            }
+        };
+
+        // Charged its last rung, then the wall clock stepped back a day.
+        let mut stepped = info(&peerstore).await;
+        stepped.num_retries = 2;
+        stepped.next_retry_unix = now() + 86_400 + 600;
+        let read = swept(stepped.clone()).await;
+        assert!(
+            read.is_due(),
+            "a deadline a day past the longest rung held the peer"
+        );
+        assert_eq!(read.num_retries, 2);
+
+        stepped.next_retry_unix = now() + 600;
+        assert_eq!(
+            swept(stepped.clone()).await.next_retry_unix,
+            stepped.next_retry_unix
+        );
+
+        let mut hinted = stepped;
+        hinted.deferred_at_unix = now();
+        hinted.not_before_unix = now() + 86_400;
+        hinted.next_retry_unix = hinted.not_before_unix;
+        let read = swept(hinted.clone()).await;
+        assert_eq!(read.next_retry_unix, hinted.next_retry_unix);
+        assert!(!read.is_backpressure_elapsed());
+    })
+    .unwrap()
+}
+
+#[test]
+fn an_acknowledged_completion_restarts_the_peer_clock_and_an_empty_one_keeps_it() {
+    workers::block_on(async {
+        let peerstore = Peerstore::new(Arc::new(RegolithStore::in_memory().unwrap()))
+            .with_retry_schedule(RetrySchedule::new(vec![10, 600]).unwrap());
+        peerstore
+            .create_replicator("peer", b"replicator")
+            .await
+            .unwrap();
+        for doc in ["filtered", "delivered", "due", "owed"] {
+            peerstore
+                .observe_push_head("peer", doc, "collection")
+                .await
+                .unwrap();
+        }
+        let generation = |markers: &[storage::stores::PushRetryMarker], doc: &str| {
+            markers
+                .iter()
+                .find(|marker| marker.doc_id == doc)
+                .unwrap()
+                .generation
+        };
+        let markers = peerstore.get_retry_documents("peer").await.unwrap();
+        peerstore
+            .reschedule_retry_peer("peer", None, None)
+            .await
+            .unwrap();
+        let escalated = info(&peerstore).await;
+        assert!(escalated.next_retry_unix >= now() + 300);
+
+        let filtered = generation(&markers, "filtered");
+        assert!(peerstore
+            .complete_retry_scope("peer", "filtered", "collection", false, filtered, &[])
+            .await
+            .unwrap());
+        let kept = info(&peerstore).await;
+        assert_eq!(
+            (kept.num_retries, kept.next_retry_unix),
+            (escalated.num_retries, escalated.next_retry_unix),
+            "a completion that delivered nothing restarted the clock"
+        );
+
+        let delivered = generation(&markers, "delivered");
+        assert!(peerstore
+            .complete_retry_scope(
+                "peer",
+                "delivered",
+                "collection",
+                false,
+                delivered,
+                &["head".into()],
+            )
+            .await
+            .unwrap());
+        let restarted = info(&peerstore).await;
+        assert_eq!(restarted.num_retries, 1);
+        assert!(
+            restarted.next_retry_unix <= now() + 10,
+            "an acknowledged delivery left the escalated deadline"
+        );
+
+        peerstore.activate_retry_peer("peer").await.unwrap();
+        let due = generation(&markers, "due");
+        assert!(peerstore
+            .complete_retry_scope("peer", "due", "collection", false, due, &["head".into()])
+            .await
+            .unwrap());
+        assert!(
+            info(&peerstore).await.is_due(),
+            "a delivery pushed a due peer back"
+        );
+        assert_eq!(
+            peerstore.get_retry_documents("peer").await.unwrap().len(),
+            1
+        );
+    })
+    .unwrap()
+}

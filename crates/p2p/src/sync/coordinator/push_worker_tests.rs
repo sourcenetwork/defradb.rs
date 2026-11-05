@@ -667,6 +667,43 @@ async fn superseded_active_failure_never_enters_persisted_retry() {
     backlog.close();
 }
 
+/// A push the peer acknowledged after a newer head replaced it is retired, and
+/// its acknowledgement still reaches the recorder with the generation that
+/// fences it, so the peer's retry clock sees the delivery.
+#[nuclei::test]
+async fn superseded_acknowledged_push_reports_its_delivery() {
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
+    let transport = TestTransport::new(Vec::new()).with_send_delay(Duration::from_millis(50));
+    let (context, mut failures) =
+        test_context(transport.clone(), backlog.clone(), Duration::from_secs(1));
+    let mut older = versioned_job("peer", 1);
+    older.marker_generation = Some(7);
+    backlog.try_enqueue(older).await;
+    let active = backlog.next_job().await.unwrap();
+    let push = {
+        let (context, active) = (Arc::clone(&context), active.clone());
+        crate::rt::spawn(async move { run_push_job(&context, &active).await })
+    };
+    let deadline = crate::rt::time::Instant::now() + Duration::from_secs(1);
+    while transport.sent().is_empty() {
+        assert!(crate::rt::time::Instant::now() < deadline);
+        crate::rt::time::sleep(Duration::from_millis(2)).await;
+    }
+    let mut newer = versioned_job("peer", 2);
+    newer.marker_generation = Some(8);
+    backlog.try_enqueue(newer).await;
+
+    assert_eq!(push.join().await.unwrap(), JobCompletion::Retired);
+    let reported = crate::rt::time::timeout(Duration::from_secs(1), failures.recv())
+        .await
+        .expect("the superseded acknowledgement never reached the recorder")
+        .unwrap();
+    assert!(reported.acknowledged);
+    assert_eq!(reported.marker_generation, Some(7));
+    backlog.job_done(&active, JobCompletion::Retired).await;
+    backlog.close();
+}
+
 /// The rejection-to-retry handoff must be lossless: a full failure
 /// channel applies backpressure instead of dropping the retry record.
 #[nuclei::test]

@@ -491,6 +491,29 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // One retry clock per peer serves all of its markers. An acknowledged
+        // delivery, live, fenced by a newer marker generation, or replayed,
+        // returns it to the first rung, never later than it was, so the next
+        // failure charges the second rung; a new marker and a reconnect keep
+        // the rung, so a peer that keeps failing climbs the ladder however
+        // often local writes touch it; and the sweep reads a deadline past
+        // the longest rung, left by a backward clock step, as due.
+        family: "Retry input and marker fencing",
+        name: "ACT_DeliveryRestarts / ACT_SilentPeerBacksOff / INV_HeldWithinLongestRung — a delivery restarts the peer clock, nothing else does, and no deadline holds past the longest rung",
+        axis: Tla,
+        anchor: "crates/storage/src/stores/retry_info.rs RetryInfo::restart_after_delivery, RetryInfo::bounded_by, RetryInfo::bump_with_schedule; crates/storage/src/stores/peerstore.rs PeerstoreRetryAttempt::{CompleteMarker, Reschedule, Restart, Activate}, RegisterScopeMarkerAttempt, Peerstore::load_scope_markers; crates/p2p-adapter/src/retry.rs run_retry_pass, record_failure; crates/p2p/src/sync/coordinator/push_worker.rs run_push_job; crates/db/src/merge/push_docs_common.rs complete_document_retry_if_current",
+        model_ref: "MC_RetrySchedule_{Green,Red_KeepRung,Red_SupersededKeepsRung,Red_ReplayKeepsRung,Red_RegisterRestarts,Red_ActivateRestarts,Red_ClockBackHolds}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Retry input and marker fencing",
+        name: "restart_rung_le_one / restart_never_later / restart_within_first_rung / restart_respects_backpressure / bump_climbs",
+        axis: Lean,
+        anchor: "crates/storage/src/stores/retry_info.rs RetryInfo::restart_after_delivery, RetryInfo::bump_with_schedule",
+        model_ref: "RetrySchedule (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Collection schema-version OCC",
         name: "INV_NoStaleSchemaWrite — a writer cannot commit against an obsolete structural version",
         axis: Tla,
