@@ -74,6 +74,7 @@ use defra_core::RequestContext;
 pub use access_hooks::AccessHooks;
 /// Re-exported so callers can name `Arc<dyn DocumentACP>` (the type
 /// [`Node::document_acp`] returns) without depending on `acp` directly.
+pub use acp::nac::NodePermission;
 pub use acp::{DocumentACP, DocumentPermission, Identity as AcpIdentity};
 #[cfg(not(target_arch = "wasm32"))]
 pub use background_tasks::BackgroundTasks;
@@ -107,6 +108,7 @@ pub use lens::{LensConfig, LensModule, TransformId};
 pub use managed_p2p::{ManagedP2PSystem, ShutdownHandle, TransportKind};
 pub use node_builder::{NodeBuilder, StorageBackend, StoreProfile};
 pub use peer_keyring::PeerKeyring;
+pub use query::owners::{DocumentAccessDecision, DocumentAccessMode};
 pub use query::QueryLimits;
 pub use query::{QueryExecutor, QueryRequest, QueryResponse, TransactionHandle};
 pub use schema::CollectionVersion;

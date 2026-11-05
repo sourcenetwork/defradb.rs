@@ -49,6 +49,31 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
             .await
             .map_err(|error| super::error::Error::Other(error.to_string()))
     }
+    async fn check_bound_active_permission_in_txn(
+        &self,
+        view: datastore::NamespaceView,
+        identity: &Did,
+        permission: NodePermission,
+    ) -> Result<Option<bool>> {
+        if !self.nac.supports_transactions() {
+            return Ok(None);
+        }
+        let scoped = self.nac.scoped(std::sync::Arc::new(
+            acp::zanzibar::store::TransactionZanzibarStore::new(view),
+        ));
+        scoped
+            .load()
+            .await
+            .map_err(|error| super::error::Error::Other(error.to_string()))?;
+        if scoped.status().await != NacStatus::Enabled {
+            return Ok(None);
+        }
+        scoped
+            .check_permission(identity, permission)
+            .await
+            .map(Some)
+            .map_err(|error| super::error::Error::Other(error.to_string()))
+    }
     async fn check_permission_persisted(
         &self,
         identity: &Did,

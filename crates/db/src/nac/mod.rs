@@ -71,6 +71,17 @@ pub trait NacManagerApi: defra_core::thread_bounds::MaybeSendSync {
     ) -> Result<bool> {
         self.check_permission(identity, permission).await
     }
+    /// Evaluate active NAC through the given transaction. None means that NAC
+    /// is inactive or the provider cannot bind to the view. The view must share
+    /// this manager's store; this method does not verify store identity.
+    async fn check_bound_active_permission_in_txn(
+        &self,
+        _view: datastore::NamespaceView,
+        _identity: &Did,
+        _permission: NodePermission,
+    ) -> Result<Option<bool>> {
+        Ok(None)
+    }
     async fn check_permission_persisted(
         &self,
         identity: &Did,
