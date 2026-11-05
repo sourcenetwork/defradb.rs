@@ -1,7 +1,8 @@
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use defra_core::signing::{RemoteSigner, SigningAuthorization, SigningConfig, SigningKeyType};
-use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
+use rapidhash::{HashMapExt, RapidHashMap};
 use schema::CollectionVersion;
 
 use super::{ClientCreateError, ClientCreateSignatures};
@@ -28,22 +29,31 @@ impl std::fmt::Debug for ClientCreateEvidence {
 }
 
 pub(super) struct ExactSignatures {
-    signatures: Arc<RapidHashMap<Vec<u8>, Vec<u8>>>,
-    consumed: Mutex<RapidHashSet<Vec<u8>>>,
+    signatures: Arc<RapidHashMap<Vec<u8>, (usize, Vec<u8>)>>,
+    consumed: Vec<AtomicBool>,
 }
 
 impl ExactSignatures {
     pub(super) fn new(signatures: RapidHashMap<Vec<u8>, Vec<u8>>) -> Self {
+        let count = signatures.len();
         Self {
-            signatures: Arc::new(signatures),
-            consumed: Mutex::new(RapidHashSet::new()),
+            signatures: Arc::new(
+                signatures
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, (block, signature))| (block, (index, signature)))
+                    .collect(),
+            ),
+            consumed: (0..count).map(|_| AtomicBool::new(false)).collect(),
         }
     }
 
     pub(super) fn fresh(&self) -> Self {
         Self {
             signatures: Arc::clone(&self.signatures),
-            consumed: Mutex::new(RapidHashSet::new()),
+            consumed: (0..self.consumed.len())
+                .map(|_| AtomicBool::new(false))
+                .collect(),
         }
     }
 }
@@ -55,25 +65,23 @@ pub struct VerifiedSignatureReceipt(pub(super) Arc<ExactSignatures>);
 
 impl VerifiedSignatureReceipt {
     pub fn is_complete(&self) -> bool {
-        self.0
-            .consumed
-            .lock()
-            .is_ok_and(|used| used.len() == self.0.signatures.len())
+        !self.0.consumed.is_empty()
+            && self
+                .0
+                .consumed
+                .iter()
+                .all(|used| used.load(Ordering::Acquire))
     }
 }
 
 impl RemoteSigner for ExactSignatures {
     fn sign_sync(&self, data: &[u8], _: Option<&SigningAuthorization>) -> Result<Vec<u8>, String> {
-        let signature = self
+        let (index, signature) = self
             .signatures
             .get(data)
-            .cloned()
             .ok_or_else(|| "block is outside the approved client graph".to_owned())?;
-        self.consumed
-            .lock()
-            .map_err(|_| "client graph receipt is unavailable".to_owned())?
-            .insert(data.to_vec());
-        Ok(signature)
+        self.consumed[*index].store(true, Ordering::Release);
+        Ok(signature.clone())
     }
 }
 
