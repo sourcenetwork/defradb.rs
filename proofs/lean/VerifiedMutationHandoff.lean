@@ -24,6 +24,7 @@ structure Input where
   claimedActor : String
   verified : Bool
   nativeAuthorized : Bool
+  authorityBound : Bool
   waveMatches : Bool
   commit : Bool
   deriving FromJson, ToJson
@@ -33,7 +34,7 @@ def accepts (input : Input) : Bool :=
     input.claimedActor == input.approved.signer && input.approved == input.offered
 
 def publishes (input : Input) : Bool :=
-  accepts input && input.nativeAuthorized && input.waveMatches && input.commit
+  accepts input && input.nativeAuthorized && input.authorityBound && input.waveMatches && input.commit
 
 theorem stale_wave_does_not_publish (input : Input) (h : input.waveMatches = false) :
     publishes input = false := by simp [publishes, h]
@@ -44,6 +45,9 @@ theorem unconsumed_wave_does_not_publish (input : Input) (h : input.waveMatches 
     publishes input = false := by simp [publishes, h]
 
 theorem evidence_is_not_authority (input : Input) (h : input.nativeAuthorized = false) :
+    publishes input = false := by simp [publishes, h]
+
+theorem unavailable_authority_does_not_publish (input : Input) (h : input.authorityBound = false) :
     publishes input = false := by simp [publishes, h]
 
 theorem no_signature_is_not_authority (input : Input) (h : input.approved.blocks = []) :

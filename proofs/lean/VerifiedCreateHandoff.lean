@@ -22,6 +22,7 @@ structure Input where
   verified : Bool
   typedOverride : Bool
   nativeAuthorized : Bool
+  authorityBound : Bool
   waveConsumed : Bool
   commit : Bool
   deriving FromJson, ToJson
@@ -30,7 +31,7 @@ def accepts (input : Input) : Bool :=
   input.verified && !input.typedOverride && input.claimedActor == input.approved.signer && input.approved == input.offered
 
 def creates (input : Input) : Bool :=
-  accepts input && input.nativeAuthorized && input.waveConsumed && input.commit
+  accepts input && input.nativeAuthorized && input.authorityBound && input.waveConsumed && input.commit
 
 theorem signature_evidence_is_not_authority (input : Input) (h : input.nativeAuthorized = false) :
     creates input = false := by simp [creates, h]
@@ -45,6 +46,11 @@ theorem failed_transaction_publishes_nothing (input : Input) (h : input.commit =
     creates input = false := by simp [creates, h]
 
 theorem unconsumed_graph_publishes_nothing (input : Input) (h : input.waveConsumed = false) :
+    creates input = false := by simp [creates, h]
+
+/-- An enforcing native authority must be bound to the same transaction.
+An absent policy or disabled NAC does not assert an enforcing authority. -/
+theorem unavailable_authority_does_not_publish (input : Input) (h : input.authorityBound = false) :
     creates input = false := by simp [creates, h]
 
 def evaluate (json : Json) : Except String Json := do
