@@ -170,7 +170,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "HTTP client-signed update",
-        name: "signed_document / signed_changes / signed_exact_wave / unchanged_skipped",
+        name: "signed_document / signed_changes / signed_exact_wave / unchanged_skipped / immutable_refused / mutable_allowed",
         axis: Lean,
         anchor: "crates/db/src/block/builder/client_update.rs; crates/db/src/block/builder/client_waves.rs ClientWaves::respond",
         model_ref: "ClientSignedUpdate (lake build); client_create_graph::trusted_update_graph_matches_model_and_rejects_unapproved_waves",

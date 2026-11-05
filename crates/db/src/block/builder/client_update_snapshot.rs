@@ -1,5 +1,7 @@
 use cid::Cid;
-use defra_core::block::{generate_cid_from_bytes, Block, CrdtDelta};
+use defra_core::block::{
+    generate_cid_from_bytes, Block, CrdtDelta, Signature, IMMUTABLE_LINK_NAME,
+};
 use document::DocID;
 use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 
@@ -18,6 +20,7 @@ pub struct ClientUpdateSnapshot {
     pub(super) priorities: RapidHashMap<String, u64>,
     pub(super) values: RapidHashMap<String, (u64, Vec<u8>)>,
     pub(super) max_priority: u64,
+    pub(super) immutable_fields: RapidHashSet<String>,
 }
 
 impl ClientUpdateSnapshot {
@@ -35,21 +38,31 @@ impl ClientUpdateSnapshot {
             return Err(ClientUpdateError::InvalidSnapshot);
         }
         let mut by_cid = RapidHashMap::new();
+        let mut signatures = RapidHashMap::new();
         for bytes in blocks {
-            let block =
-                Block::from_dag_cbor(bytes).map_err(|_| ClientUpdateError::InvalidSnapshot)?;
-            if block
-                .to_dag_cbor()
-                .map_err(|_| ClientUpdateError::InvalidSnapshot)?
-                != *bytes
-                || block.encryption.is_some()
-            {
-                return Err(ClientUpdateError::InvalidSnapshot);
-            }
             let cid =
                 generate_cid_from_bytes(bytes).map_err(|_| ClientUpdateError::InvalidSnapshot)?;
-            if by_cid.insert(cid, block).is_some() {
-                return Err(ClientUpdateError::InvalidSnapshot);
+            if let Ok(block) = Block::from_dag_cbor(bytes) {
+                if block
+                    .to_dag_cbor()
+                    .map_err(|_| ClientUpdateError::InvalidSnapshot)?
+                    != *bytes
+                    || block.encryption.is_some()
+                    || by_cid.insert(cid, block).is_some()
+                {
+                    return Err(ClientUpdateError::InvalidSnapshot);
+                }
+            } else {
+                let signature = Signature::from_dag_cbor(bytes)
+                    .map_err(|_| ClientUpdateError::InvalidSnapshot)?;
+                if signature
+                    .to_dag_cbor()
+                    .map_err(|_| ClientUpdateError::InvalidSnapshot)?
+                    != *bytes
+                    || signatures.insert(cid, signature).is_some()
+                {
+                    return Err(ClientUpdateError::InvalidSnapshot);
+                }
             }
         }
         let mut versions = RapidHashSet::new();
@@ -57,6 +70,7 @@ impl ClientUpdateSnapshot {
         let mut fields = Vec::new();
         let mut pending = composite_heads.to_vec();
         let mut found_genesis = false;
+        let mut immutable = RapidHashMap::new();
         while let Some(cid) = pending.pop() {
             if !visited.insert(cid) {
                 continue;
@@ -88,7 +102,34 @@ impl ClientUpdateSnapshot {
                 }
             }
             for link in block.links.as_deref().unwrap_or_default() {
-                fields.push((link.name.clone(), link.link));
+                if link.name == IMMUTABLE_LINK_NAME {
+                    if !parents.is_empty() || DocID::new_v0(cid).to_string() != doc_id {
+                        return Err(ClientUpdateError::InvalidSnapshot);
+                    }
+                    let signed = by_cid
+                        .get(&link.link)
+                        .ok_or(ClientUpdateError::InvalidSnapshot)?;
+                    let CrdtDelta::Immutable(delta) = &signed.delta else {
+                        return Err(ClientUpdateError::InvalidSnapshot);
+                    };
+                    if delta.priority != 1 || signed.heads.is_some() || signed.links.is_some() {
+                        return Err(ClientUpdateError::InvalidSnapshot);
+                    }
+                    let signature = signed
+                        .signature
+                        .and_then(|cid| signatures.get(&cid))
+                        .ok_or(ClientUpdateError::InvalidSnapshot)?;
+                    crate::block::verify::verified_signature_signer_did(signed, signature)
+                        .map_err(|_| ClientUpdateError::InvalidSnapshot)?;
+                    versions.insert(delta.collection_version_id.clone());
+                    for name in delta.fields.keys() {
+                        if immutable.insert(name.clone(), link.link).is_some() {
+                            return Err(ClientUpdateError::InvalidSnapshot);
+                        }
+                    }
+                } else {
+                    fields.push((link.name.clone(), link.link));
+                }
             }
         }
         if !found_genesis {
@@ -102,6 +143,9 @@ impl ClientUpdateSnapshot {
                     return Err(ClientUpdateError::InvalidSnapshot);
                 }
                 continue;
+            }
+            if immutable.contains_key(&name) {
+                return Err(ClientUpdateError::InvalidSnapshot);
             }
             let block = by_cid.get(&cid).ok_or(ClientUpdateError::InvalidSnapshot)?;
             let CrdtDelta::Lww(delta) = &block.delta else {
@@ -149,6 +193,12 @@ impl ClientUpdateSnapshot {
             *current = (*current).max(priority);
             max_priority = max_priority.max(priority);
         }
+        let immutable_fields = immutable.keys().cloned().collect();
+        for (name, cid) in immutable {
+            heads.insert(name.clone(), vec![cid]);
+            priorities.insert(name, 1);
+            max_priority = max_priority.max(1);
+        }
         for cid in composite_heads {
             let block = by_cid.get(cid).ok_or(ClientUpdateError::InvalidSnapshot)?;
             let priority = block.delta.priority();
@@ -164,6 +214,7 @@ impl ClientUpdateSnapshot {
             priorities,
             values,
             max_priority,
+            immutable_fields,
         })
     }
 }

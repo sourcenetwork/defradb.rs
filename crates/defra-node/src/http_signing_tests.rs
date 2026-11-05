@@ -116,6 +116,27 @@ fn http_client_signs_the_complete_agent_create_graph() {
             }
             assert_eq!(node.verified_block_signer_did(cid).await.unwrap(), caller);
             assert_ne!(Some(caller.as_str()), node.node_identity_did());
+            let doc_id = data[root][0]["_docID"].as_str().unwrap();
+            let history = defra_http::client_signed_update::history_request(doc_id);
+            let response: query::QueryResponse = http.post(format!("http://{address}/api/v0/graphql"))
+                .bearer_auth(&token).json(&json!({"query":history.query,"variables":history.variables}))
+                .send().await.unwrap().json().await.unwrap();
+            let snapshot = defra_http::client_signed_update::snapshot_from_response(doc_id, &response).unwrap();
+            let patch = json!({"display_name":"Updated"});
+            let mut update = db::block::builder::ClientUpdateSignatures::from_input(
+                &storage::Crdts::default(), &schema, doc_id, &patch, &snapshot, &signing,
+            ).unwrap();
+            let request = query::QueryRequest::new("mutation($id:ID!, $input:AgentMutationInputArg!) { update_Agent(docID:$id,input:$input) { _docID _version { cid } } }")
+                .with_variables(json!({"id":doc_id,"input":patch}));
+            let updated = defra_http::client_signed_update::execute(
+                &format!("ws://{address}/api/v0/graphql/client-sign"), &authorization, request, None, &mut update,
+            ).await.unwrap();
+            assert!(updated.errors.is_empty(), "{:?}", updated.errors);
+            let cid = updated.data.unwrap()["update_Agent"][0]["_version"][0]["cid"].as_str().unwrap().to_owned();
+            assert_eq!(node.verified_block_signer_did(&cid).await.unwrap(), caller);
+            assert!(db::block::builder::ClientUpdateSignatures::from_input(
+                &storage::Crdts::default(), &schema, doc_id, &json!({"node_did":"changed"}), &snapshot, &signing,
+            ).is_err());
         }
         node.shutdown().await.unwrap();
     }).unwrap();
