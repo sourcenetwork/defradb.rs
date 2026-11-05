@@ -501,7 +501,7 @@ fn trusted_update_graph_matches_model_and_rejects_unapproved_waves() {
     let inputs = cases.iter().map(|offered| json!({"intent":intent, "offered": {
         "collection":"Settings", "document":doc_id, "version":"settings-version", "heads":heads,
         "changes":changes, "blocks":offered.iter().map(hex::encode).collect::<Vec<_>>()
-    }, "changes":[{"name":"name","before":initial["name"].to_string(),"after":input["name"].to_string()},{"name":"tags","before":initial["tags"].to_string(),"after":input["tags"].to_string()}]})).collect::<Vec<_>>();
+    }, "requestedImmutable":[], "changes":[{"name":"name","before":initial["name"].to_string(),"after":input["name"].to_string()},{"name":"tags","before":initial["tags"].to_string(),"after":input["tags"].to_string()}]})).collect::<Vec<_>>();
     let expected = model("ClientSignedUpdate.lean", &json!(inputs));
     for (index, offered) in cases.iter().enumerate() {
         assert_eq!(
@@ -513,7 +513,7 @@ fn trusted_update_graph_matches_model_and_rejects_unapproved_waves() {
     let changed_target = json!({"collection":"Settings", "document":"wrong-document", "version":"settings-version", "heads":heads, "changes":changes, "blocks":blocks});
     let target_expectation = model(
         "ClientSignedUpdate.lean",
-        &json!([{"intent":intent, "offered":changed_target, "changes":[]} ]),
+        &json!([{"intent":intent, "offered":changed_target, "changes":[], "requestedImmutable":[]} ]),
     );
     assert!(graph.matches_input("Settings", &doc_id, &input));
     assert_eq!(
@@ -579,7 +579,7 @@ fn trusted_update_graph_matches_model_and_rejects_unapproved_waves() {
             .collect::<Vec<_>>();
         let modeled = model(
             "ClientSignedUpdate.lean",
-            &json!([{"intent":intent, "offered":intent, "changes":observations}]),
+            &json!([{"intent":intent, "offered":intent, "changes":observations, "requestedImmutable":[]}]),
         );
         let mut expected_fields = modeled[0]["writtenFields"]
             .as_array()
@@ -612,4 +612,80 @@ fn trusted_update_graph_matches_model_and_rejects_unapproved_waves() {
         assert_eq!(observed_fields, expected_fields);
         assert_eq!(candidate.is_complete(), expected_fields.is_empty());
     }
+}
+
+#[test]
+#[ignore = "Requires Lean; run in the Lean Conformance job"]
+fn immutable_genesis_is_verified_and_immutable_updates_are_refused() {
+    use db::block::builder::{ClientUpdateSignatures, ClientUpdateSnapshot};
+    let (doc, signer) = fixture();
+    let schema = doc.collection().clone();
+    let mut create =
+        ClientCreateSignatures::new(&storage::Crdts::default(), &doc, &signer).unwrap();
+    let children = create.child_blocks().to_vec();
+    let signatures = create.respond(&children).unwrap();
+    let mut history = Vec::new();
+    for (bytes, signature) in children.iter().zip(signatures) {
+        let mut block = Block::from_dag_cbor(bytes).unwrap();
+        let signature = Signature::new(
+            SignatureHeader::new(
+                SignatureType::EdDSA,
+                signer.public_key_hex.as_bytes().to_vec(),
+            ),
+            signature,
+        );
+        block.signature = Some(signature.generate_cid().unwrap());
+        if matches!(block.delta, CrdtDelta::Immutable(_)) {
+            history.push(signature.to_dag_cbor().unwrap());
+        }
+        history.push(block.to_dag_cbor().unwrap());
+    }
+    let composite = create.composite_block().to_vec();
+    let signature = create
+        .respond(std::slice::from_ref(&composite))
+        .unwrap()
+        .remove(0);
+    let mut block = Block::from_dag_cbor(&composite).unwrap();
+    block.signature = Some(
+        Signature::new(
+            SignatureHeader::new(
+                SignatureType::EdDSA,
+                signer.public_key_hex.as_bytes().to_vec(),
+            ),
+            signature,
+        )
+        .generate_cid()
+        .unwrap(),
+    );
+    let head = block.generate_cid().unwrap();
+    history.push(block.to_dag_cbor().unwrap());
+    let snapshot = ClientUpdateSnapshot::from_blocks(create.doc_id(), &history, &[head]).unwrap();
+    let patches = [
+        json!({"display_name":"changed"}),
+        json!({"agent_did":"did:key:other"}),
+        json!({"node_did":"did:key:other"}),
+    ];
+    let intent = json!({"collection":"Agent", "document":create.doc_id(), "version":schema.version_id, "heads":[], "changes":[], "blocks":[]});
+    let inputs = patches.iter().map(|patch| json!({"intent":intent,"offered":intent,"changes":[],"requestedImmutable":patch.as_object().unwrap().keys().map(|name| schema.field_by_name(name).unwrap().immutable).collect::<Vec<_>>() })).collect::<Vec<_>>();
+    let expected = model("ClientSignedUpdate.lean", &json!(inputs));
+    for (index, patch) in patches.iter().enumerate() {
+        assert_eq!(
+            ClientUpdateSignatures::from_input(
+                &storage::Crdts::default(),
+                &schema,
+                create.doc_id(),
+                patch,
+                &snapshot,
+                &signer
+            )
+            .is_ok(),
+            expected[index]["fieldsAllowed"].as_bool().unwrap()
+        );
+    }
+    let missing = history
+        .iter()
+        .filter(|bytes| Signature::from_dag_cbor(bytes).is_err())
+        .cloned()
+        .collect::<Vec<_>>();
+    assert!(ClientUpdateSnapshot::from_blocks(create.doc_id(), &missing, &[head]).is_err());
 }

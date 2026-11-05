@@ -4,7 +4,8 @@
 \* The update may commit only if its transaction still observes the approved
 \* written field and permission and both reads survive commit validation. A cancelled
 \* client releases no more signatures. A disjoint field can change concurrently.
-\* Real field versions and signed bytes are abstract atoms.
+\* Real field versions and signed bytes are abstract atoms. Exact intent
+\* excludes writes to immutable fields and checks their genesis signature.
 \* Rust owners: db client_update.rs and client_waves.rs, HTTP signing,
 \* and the transactional update and ACP reads.
 EXTENDS Naturals

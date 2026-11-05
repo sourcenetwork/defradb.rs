@@ -6,7 +6,9 @@ snapshot. The client constructs all block bytes from that intent and releases
 signatures only for the complete expected wave. The committing transaction validates its relevant field dependencies and
 authorization. A concurrent disjoint write can merge beside the approved graph. Encodings,
 cryptography, source authenticity and the native transactional read set are
-external premises. Ordinary block signatures can be replayed elsewhere.
+external premises. Immutable genesis blocks retain their independently verified
+signatures; no immutable field may appear in an update. Ordinary block
+signatures can be replayed elsewhere.
 Rust owners: crates/db/src/block/builder/client_update.rs,
 client_update_snapshot.rs and client_waves.rs; crates/http/src/client_signed_update.rs;
 the transactional update path and its ACP checks.
@@ -69,11 +71,25 @@ theorem unchanged_skipped (change : Change)
 def writtenFields (changes : List Change) : List String :=
   (changes.filter writes).map Change.name
 
+-- Only mutable fields can be named by an update.
+def writable (immutable : Bool) : Bool := !immutable
+
+-- An immutable field can never be requested as a write.
+theorem immutable_refused : writable true = false := by decide
+
+-- A mutable field remains eligible for the native LWW graph.
+theorem mutable_allowed : writable false = true := by decide
+
+-- Every field in the requested patch must be mutable.
+def acceptsFields (requestedImmutable : List Bool) : Bool :=
+  requestedImmutable.all writable
+
 -- The test supplies the observations to the executable owner.
 structure Input where
   intent : Intent
   offered : Intent
   changes : List Change
+  requestedImmutable : List Bool
   deriving FromJson, ToJson
 
 -- Emit the signing decision for each real input.
@@ -81,7 +97,8 @@ def evaluate (json : Json) : Except String Json := do
   let inputs : Array Input ← fromJson? json
   pure <| toJson <| inputs.map fun input => Json.mkObj
     [("input", toJson input), ("signs", toJson (signs input.intent input.offered)),
-     ("writtenFields", toJson (writtenFields input.changes))]
+     ("writtenFields", toJson (writtenFields input.changes)),
+     ("fieldsAllowed", toJson (acceptsFields input.requestedImmutable))]
 
 end ClientSignedUpdate
 

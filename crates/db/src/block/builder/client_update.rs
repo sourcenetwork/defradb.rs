@@ -95,6 +95,11 @@ impl ClientUpdateSignatures {
                         || !matches!(field.kind, FieldKind::Scalar(_) | FieldKind::ScalarArray(_))
                 })
             })
+            || snapshot.immutable_fields.iter().any(|name| {
+                schema
+                    .field_by_name(name)
+                    .is_none_or(|field| !field.immutable)
+            })
             || schema.field_by_name("C").is_some()
             || !schema.vector_embeddings.is_empty()
             || schema.downsample_source.is_some()
