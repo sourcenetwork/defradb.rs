@@ -38,6 +38,8 @@ mod dac_api_tests;
 mod db_impls;
 pub mod dense_search;
 mod error;
+#[cfg(feature = "http")]
+mod http_acp;
 #[cfg(feature = "libp2p")]
 mod libp2p_recovery;
 #[cfg(feature = "libp2p")]
@@ -670,8 +672,17 @@ impl Node {
         let (identity, collection, doc_id) = (owned(identity), owned(collection), owned(doc_id));
         let (relation, target) = (owned(relation), owned(target));
         self.on_acp(move || async move {
-            ops.add_dac_actor_relationship(&identity, &collection, &doc_id, &relation, &target)
-                .await
+            let context =
+                defra_core::RequestContext::default().with_identity(Some(identity.clone()));
+            ops.add_dac_actor_relationship(
+                &context,
+                &identity,
+                &collection,
+                &doc_id,
+                &relation,
+                &target,
+            )
+            .await
         })
         .await
     }
@@ -696,8 +707,17 @@ impl Node {
         let (identity, collection, doc_id) = (owned(identity), owned(collection), owned(doc_id));
         let (relation, target) = (owned(relation), owned(target));
         self.on_acp(move || async move {
-            ops.delete_dac_actor_relationship(&identity, &collection, &doc_id, &relation, &target)
-                .await
+            let context =
+                defra_core::RequestContext::default().with_identity(Some(identity.clone()));
+            ops.delete_dac_actor_relationship(
+                &context,
+                &identity,
+                &collection,
+                &doc_id,
+                &relation,
+                &target,
+            )
+            .await
         })
         .await
     }
@@ -1359,6 +1379,9 @@ mod owner_observation_tests;
 
 #[cfg(all(test, feature = "http"))]
 mod http_signing_tests;
+
+#[cfg(all(test, feature = "http"))]
+mod http_acp_tests;
 
 #[cfg(all(test, feature = "http"))]
 mod router_transform_tests;
