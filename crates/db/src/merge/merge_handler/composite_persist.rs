@@ -128,9 +128,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .map_err(|e| MergeError::Database(crate::error::Error::Storage(e)))?;
 
         // The retention rule judges the document the walk ends with, alive
-        // ones only: the walk merges older composites first, in the same
-        // attempt, and a refusal discards that attempt, ancestors included.
-        if context.is_root && !doc_is_tombstoned {
+        // ones only and not a restore an import replays: the walk merges older
+        // composites first, in the same attempt, and a refusal discards that
+        // attempt, ancestors included.
+        if context.is_root && !doc_is_tombstoned && !context.metadata.is_restore {
             if let Some(refusal) = self
                 .db
                 .options()

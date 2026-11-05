@@ -57,6 +57,7 @@ pub mod error;
 pub mod event;
 pub mod index;
 pub use event::emission::{BroadcastDone, TxnBroadcastEvent, TxnBroadcaster};
+pub mod kv_snapshot;
 pub mod merge;
 pub mod nac;
 pub mod read;

@@ -227,6 +227,10 @@ pub struct BlockMetadata<'a> {
     /// Schema blocks are governed by node-level access control (NAC) rather than
     /// document-level ACP. Doc-level permission checks must be skipped for schema blocks.
     pub is_schema_block: bool,
+    /// Whether this replays blocks a snapshot import stored (a restore the
+    /// node's operator runs), not blocks a peer pushed: the replication filter
+    /// and the retention floor, which gate what peers send, do not judge it.
+    pub is_restore: bool,
 }
 
 impl<'a> BlockMetadata<'a> {
@@ -248,6 +252,7 @@ impl<'a> BlockMetadata<'a> {
             verified_creator: None,
             is_recovery: false,
             is_schema_block: false,
+            is_restore: false,
         }
     }
 
@@ -267,6 +272,7 @@ impl<'a> BlockMetadata<'a> {
             verified_creator: None,
             is_recovery: false,
             is_schema_block: true,
+            is_restore: false,
         }
     }
 
@@ -286,6 +292,7 @@ impl<'a> BlockMetadata<'a> {
             verified_creator: None,
             is_recovery: true,
             is_schema_block: false,
+            is_restore: false,
         }
     }
 
@@ -309,6 +316,24 @@ impl<'a> BlockMetadata<'a> {
             verified_creator,
             is_recovery: true,
             is_schema_block: false,
+            is_restore: false,
+        }
+    }
+
+    /// Metadata for replaying a document's blocks from a snapshot import, as
+    /// `creator`. The document is found from its blocks.
+    pub fn restore(collection_id: Option<&'a str>, creator: Option<&'a str>) -> Self {
+        Self {
+            doc_id: None,
+            collection_id,
+            creator,
+            sender_peer: None,
+            is_explicit_replicator: false,
+            explicit_replay_authorization: None,
+            verified_creator: None,
+            is_recovery: false,
+            is_schema_block: false,
+            is_restore: true,
         }
     }
 

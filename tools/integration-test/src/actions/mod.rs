@@ -157,6 +157,7 @@ client_actions! {
         GetNACStatus,
         GetNodeIdentity,
         ImportBackup,
+        KvImport,
         ListActions,
         ListAllEncryptedIndexes,
         ListEncryptedIndexes,
