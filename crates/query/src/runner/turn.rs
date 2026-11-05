@@ -111,6 +111,11 @@ where
         let inputs = PreparedInputMemo::default();
         let context = self.context();
         loop {
+            if !request.context.authorization_valid_now() {
+                return Ok(QueryResponse::error(QueryResponseError::from_query_error(
+                    QueryError::permission_denied("request authorization expired before dispatch"),
+                )));
+            }
             let runner = self.scoped_runner(self.acp.clone());
             let attempt = request.clone();
             let memo = inputs.clone();

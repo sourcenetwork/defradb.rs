@@ -9,6 +9,7 @@
 
 mod batch_signing;
 mod build;
+mod client_create;
 pub mod collection;
 mod compute;
 mod immutable;
@@ -16,6 +17,7 @@ mod write;
 
 pub(crate) use batch_signing::collect_on_commit;
 pub use build::build_blocks_from_document;
+pub use client_create::{ClientCreateError, ClientCreateSignatures};
 pub use collection::write_collection_block;
 pub(crate) use collection::write_collection_block_with_inputs;
 pub(crate) use compute::compute_document_blocks_with_inputs;

@@ -48,6 +48,7 @@ pub fn route_permission(path: &str, method: &Method) -> RoutePermission {
         // =====================================================================
         // GraphQL
         // =====================================================================
+        "/api/v0/graphql/client-sign" => RoutePermission::Required(NodePermission::DocumentUpdate),
         "/api/v0/graphql" => match *method {
             // GET is always a read operation
             Method::GET => RoutePermission::Required(NodePermission::DocumentRead),

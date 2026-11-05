@@ -47,12 +47,12 @@ pub(crate) fn kms_input_request(
     )
 }
 
-/// Create blocks computed outside an auto-commit attempt. The schema version
-/// is checked at insertion time because a structural schema write can
-/// invalidate the payload before the mutation retries.
+/// Create blocks computed outside an auto-commit attempt. The complete schema
+/// is checked at insertion because field semantics can change without a new
+/// version ID.
 #[derive(Debug, Clone)]
 pub(crate) struct PreparedCreateBlocks {
-    pub collection_version_id: String,
+    pub schema: Arc<schema::CollectionVersion>,
     pub computed: crate::block::builder::ComputedBlocks,
 }
 
@@ -641,22 +641,50 @@ impl<S: Store + 'static> crate::AutoCommitMutator<S> {
         };
         if modified_fields.is_none() {
             if let Some(signing_config) = signing_config {
-                let blocks = crate::block::builder::compute_document_blocks(
-                    collection.crdts(),
-                    &doc,
-                    collection.schema(),
-                    identity,
-                    context.encryption(),
-                    Some(signing_config),
-                )
-                .map_err(|error| {
-                    query::error::QueryError::execution(format!(
-                        "failed to prepare signed create blocks: {error}"
-                    ))
-                })?;
+                let blocks = if signing_config.remote_signer.is_some() {
+                    let inputs = query::prepared::PreparedInputMemo::default();
+                    loop {
+                        match crate::block::builder::compute_document_blocks_with_inputs(
+                            collection.crdts(),
+                            &doc,
+                            collection.schema(),
+                            identity,
+                            context.encryption(),
+                            Some(signing_config),
+                            Some(&inputs),
+                        ) {
+                            Ok(blocks) => break blocks,
+                            Err(crate::block::builder::BuildError::NeedsInput(request)) => {
+                                inputs
+                                    .answer_wave(&request, |wave| {
+                                        resolve_inputs(&self.db, context, wave)
+                                    })
+                                    .await?;
+                            }
+                            Err(error) => {
+                                return Err(error
+                                    .into_query_error_in("failed to prepare signed create blocks"))
+                            }
+                        }
+                    }
+                } else {
+                    crate::block::builder::compute_document_blocks(
+                        collection.crdts(),
+                        &doc,
+                        collection.schema(),
+                        identity,
+                        context.encryption(),
+                        Some(signing_config),
+                    )
+                    .map_err(|error| {
+                        query::error::QueryError::execution(format!(
+                            "failed to prepare signed create blocks: {error}"
+                        ))
+                    })?
+                };
                 let mut write = (*preparation).clone();
                 write.set_payload(Arc::new(PreparedCreateBlocks {
-                    collection_version_id: collection.version_id().to_string(),
+                    schema: collection.schema_arc(),
                     computed: blocks,
                 }));
                 doc.set_write_preparation(Arc::new(write));

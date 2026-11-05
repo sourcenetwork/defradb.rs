@@ -29,11 +29,14 @@ def main():
         case = copy.deepcopy(base)
         case["reply"][field] = value
         cases.append((case, False, True))
-    for blocks in [["field-b", "field-a"], ["field-a"],
+    for blocks in [["field-a"],
                    ["field-a", "field-b", "field-c"], ["field-a", "field-a"]]:
         case = copy.deepcopy(base)
         case["reply"]["blocks"] = blocks
         cases.append((case, False, False))
+    reordered = copy.deepcopy(base)
+    reordered["reply"]["blocks"] = ["field-b", "field-a"]
+    cases.append((reordered, False, True))
     expired = copy.deepcopy(base)
     expired["capsule"]["live"] = False
     cases.append((expired, False, True))

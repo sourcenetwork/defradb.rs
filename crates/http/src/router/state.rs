@@ -23,6 +23,7 @@ pub struct AppStateFields {
     pub executor: Arc<dyn QueryExecutor>,
     /// The network runtime request work runs on.
     pub edge: Edge,
+    pub(crate) signing_slots: Arc<nuclei::sync::Semaphore>,
     /// The worker pool a request's storage work runs on, when the node has
     /// one.
     pub pool: Option<workers::Pool>,
@@ -406,6 +407,7 @@ impl AppStateBuilder {
     /// Build the AppState.
     pub fn build(self) -> AppState {
         AppState(Arc::new(AppStateFields {
+            signing_slots: Arc::new(nuclei::sync::Semaphore::new(32)),
             executor: self.executor,
             edge: self.edge,
             pool: self.pool,
