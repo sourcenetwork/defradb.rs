@@ -10,6 +10,9 @@ lean_lib EmbeddedHttpAcp where
 lean_lib SseDelivery where
 
 @[default_target]
+lean_lib ClientSignedCreate where
+
+@[default_target]
 lean_lib HttpRouterComposition where
 
 @[default_target]
