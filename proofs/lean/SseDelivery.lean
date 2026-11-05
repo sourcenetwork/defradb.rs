@@ -31,6 +31,17 @@ def decide (dropped : Bool) (result : Result) : Action :=
 theorem loss_requires_recovery (result : Result) : decide true result = .recover := by
   rfl
 
+-- An overflow closes only a subscription that opted into terminal loss.
+def closeAfterOverflow (closeOnOverflow : Bool) : Bool := closeOnOverflow
+
+-- A loss-aware stream closes even if its queue has already been drained.
+theorem loss_aware_closes : closeAfterOverflow true = true := by
+  rfl
+
+-- Ordinary raw subscribers keep their existing lossy queue behavior.
+theorem raw_stays_open : closeAfterOverflow false = false := by
+  rfl
+
 -- A failed query is never mistaken for a successful empty result.
 theorem errors_are_forwarded : decide false .error = .sendError := by
   rfl
