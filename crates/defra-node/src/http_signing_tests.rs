@@ -698,3 +698,133 @@ resources:
         node.shutdown().await.unwrap();
     }).unwrap();
 }
+
+#[test]
+fn client_signed_delete_obeys_owner_visibility_and_transaction_boundaries() {
+    use async_tungstenite::tungstenite::Message;
+    use crypto::{Key as _, PrivateKey as _};
+    use db::block::builder::{ClientCreateSignatures, ClientDeleteSignatures};
+    use defra_core::signing::{SigningConfig, SigningKeyType};
+    use futures::StreamExt;
+    use identity::Identity as _;
+
+    const POLICY: &str = r#"
+name: Signed delete
+resources:
+  - name: records
+    relations:
+      - name: reader
+        types: [actor]
+    permissions:
+      - name: read
+        expr: reader
+      - name: update
+      - name: delete
+"#;
+    edge::testing::edge().block_on(async {
+        let make_identity = || {
+            let private = crypto::generate_ed25519().unwrap();
+            let public = private.public_key();
+            let signing = SigningConfig { key_type: SigningKeyType::Ed25519,
+                private_key_bytes: private.raw_owned(), public_key_bytes: public.raw_owned(),
+                public_key_hex: hex::encode(public.raw()), remote_signer: None, signing_authorization: None };
+            (identity::RawIdentity::from_private_key(private).unwrap(), signing)
+        };
+        let (owner, owner_signing) = make_identity();
+        let (other, other_signing) = make_identity();
+        let owner_did = owner.did().unwrap().to_string();
+        let other_did = other.did().unwrap().to_string();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let node = Node::builder().enable_signing().with_node_acp_owner(owner_did.clone())
+            .with_http(HttpConfig::with_listener(listener).unwrap()).build().await.unwrap();
+        let context = defra_core::RequestContext::default().with_identity(Some(owner_did.clone()));
+        let policy = node.add_dac_policy_as(&context, POLICY).await.unwrap();
+        node.add_collection(&format!("type DeleteRecord @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
+        let schema = node.get_collection("DeleteRecord").unwrap().unwrap();
+        for permission in [acp::nac::NodePermission::DocumentRead, acp::nac::NodePermission::DocumentDelete, acp::nac::NodePermission::CollectionGet] {
+            node.add_nac_actor_relationship_as(&context, permission.as_str(), &other_did).await.unwrap();
+        }
+        let token = |identity: &identity::RawIdentity| String::from_utf8(identity::new_token(identity, Duration::from_secs(60), Some(address.to_string()), None).unwrap()).unwrap();
+        let owner_token = token(&owner);
+        let other_token = token(&other);
+        let auth = |token: &str| format!("Bearer {token}");
+        let ws = format!("ws://{address}/api/v0/graphql/client-sign");
+        let http = net::http::Client::builder(edge::testing::edge()).no_proxy().build().unwrap();
+        let input = json!({"name":"owned"});
+        let mut create = ClientCreateSignatures::from_input(&storage::Crdts::default(), &schema, &input, &owner_signing).unwrap();
+        let created = defra_http::client_signed_create::execute(&ws, &auth(&owner_token),
+            query::QueryRequest::new("mutation($input: DeleteRecordMutationInputArg!) { create_DeleteRecord(input:$input) {_docID} }")
+                .with_variables(json!({"input":input})), None, &mut create).await.unwrap();
+        assert!(created.errors.is_empty(), "{:?}", created.errors);
+        let doc_id = created.data.unwrap()["create_DeleteRecord"][0]["_docID"].as_str().unwrap().to_owned();
+        let history = defra_http::client_signed_update::history_request(&doc_id);
+        let query_history = |token: &str| http.post(format!("http://{address}/api/v0/graphql")).bearer_auth(token)
+            .json(&json!({"query":history.query,"variables":history.variables}));
+        let hidden: query::QueryResponse = query_history(&other_token).send().await.unwrap().json().await.unwrap();
+        assert!(defra_http::client_signed_update::snapshot_from_response(&doc_id, &hidden).is_err());
+        let visible: query::QueryResponse = query_history(&owner_token).send().await.unwrap().json().await.unwrap();
+        let snapshot = defra_http::client_signed_update::snapshot_from_response(&doc_id, &visible).unwrap();
+        let delete = || query::QueryRequest::new("mutation($id: ID!) { delete_DeleteRecord(docIDs: [$id]) { _docID } }").with_variables(json!({"id":doc_id}));
+        let make_graph = |signing: &SigningConfig| ClientDeleteSignatures::from_snapshot(&schema, &doc_id, &snapshot, signing).unwrap();
+        let mut hidden_graph = make_graph(&other_signing);
+        let hidden_result = defra_http::client_signed_delete::execute(&ws, &auth(&other_token), delete(), None, &mut hidden_graph).await;
+        assert!(hidden_result.is_err() || hidden_result.unwrap().has_errors());
+        node.add_dac_actor_relationship_as(&context, "DeleteRecord", &doc_id, "reader", &other_did).await.unwrap();
+        let mut denied_graph = make_graph(&other_signing);
+        let denied = defra_http::client_signed_delete::execute(&ws, &auth(&other_token), delete(), None, &mut denied_graph).await;
+        assert!(denied.is_err() || denied.unwrap().has_errors());
+        let new_tx = |token: &str| http.post(format!("http://{address}/api/v0/tx")).bearer_auth(token);
+        let other_tx: Value = new_tx(&other_token).send().await.unwrap().json().await.unwrap();
+        let other_tx = other_tx["id"].as_u64().unwrap().to_string();
+        let mut mismatch = make_graph(&owner_signing);
+        let result = defra_http::client_signed_delete::execute(&ws, &auth(&owner_token), delete(), Some(&other_tx), &mut mismatch).await;
+        assert!(result.is_err() || result.unwrap().has_errors());
+        http.delete(format!("http://{address}/api/v0/tx/{other_tx}")).bearer_auth(&other_token).send().await.unwrap().error_for_status().unwrap();
+        let owner_tx: Value = new_tx(&owner_token).send().await.unwrap().json().await.unwrap();
+        let owner_tx = owner_tx["id"].as_u64().unwrap().to_string();
+        let mut rolled_back = make_graph(&owner_signing);
+        let deleted = defra_http::client_signed_delete::execute(&ws, &auth(&owner_token), delete(), Some(&owner_tx), &mut rolled_back).await.unwrap();
+        assert!(!deleted.has_errors());
+        http.delete(format!("http://{address}/api/v0/tx/{owner_tx}")).bearer_auth(&owner_token).send().await.unwrap().error_for_status().unwrap();
+        let retained = node.execute_request(query::QueryRequest::new("{ DeleteRecord { _docID } }").with_identity(Some(owner.did().unwrap()))).await;
+        assert_eq!(retained.data.unwrap()["DeleteRecord"][0]["_docID"], doc_id);
+        let mut final_graph = make_graph(&owner_signing);
+        let mut block = defra_core::block::Block::from_dag_cbor(final_graph.composite_block()).unwrap();
+        let (signature_cid, _) = db::block::builder::compute_signature(&block, &owner_signing).unwrap().unwrap();
+        block.signature = Some(signature_cid);
+        let deleted_cid = block.generate_cid().unwrap().to_string();
+        let result = defra_http::client_signed_delete::execute(&ws, &auth(&owner_token), delete(), None, &mut final_graph).await.unwrap();
+        assert!(!result.has_errors());
+        assert_eq!(result.data.unwrap()["delete_DeleteRecord"][0]["_docID"], doc_id);
+        assert_eq!(node.verified_block_signer_did(&deleted_cid).await.unwrap(), owner_did);
+        let retained = node.execute_request(query::QueryRequest::new("{ DeleteRecord { _docID } }").with_identity(Some(owner.did().unwrap()))).await;
+        assert!(retained.data.unwrap()["DeleteRecord"].as_array().unwrap().is_empty());
+        let input = json!({"name":"unknown"});
+        let mut create = ClientCreateSignatures::from_input(&storage::Crdts::default(), &schema, &input, &owner_signing).unwrap();
+        let created = defra_http::client_signed_create::execute(&ws, &auth(&owner_token),
+            query::QueryRequest::new("mutation($input: DeleteRecordMutationInputArg!) { create_DeleteRecord(input:$input) {_docID} }")
+                .with_variables(json!({"input":input})), None, &mut create).await.unwrap();
+        let unknown_id = created.data.unwrap()["create_DeleteRecord"][0]["_docID"].as_str().unwrap().to_owned();
+        let query = defra_http::client_signed_update::history_request(&unknown_id);
+        let history: query::QueryResponse = http.post(format!("http://{address}/api/v0/graphql")).bearer_auth(&owner_token)
+            .json(&json!({"query":query.query,"variables":query.variables})).send().await.unwrap().json().await.unwrap();
+        let snapshot = defra_http::client_signed_update::snapshot_from_response(&unknown_id, &history).unwrap();
+        let mut unknown = ClientDeleteSignatures::from_snapshot(&schema, &unknown_id, &snapshot, &owner_signing).unwrap();
+        let handshake = defra_http::client_signed_create::websocket_request(&ws, &auth(&owner_token)).unwrap();
+        let stream = net::connect(handshake.uri()).await.unwrap();
+        let (mut socket, _) = async_tungstenite::client_async_with_config(handshake, stream, Some(defra_http::client_signed_create::websocket_config())).await.unwrap();
+        let operation = query::QueryRequest::new("mutation($id: ID!) { delete_DeleteRecord(docIDs: [$id]) { _docID } }").with_variables(json!({"id":unknown_id}));
+        socket.send(Message::Text(json!({"query":operation.query,"variables":operation.variables,"operationName":operation.operation_name,"txn_id":null,"public_key_hex":owner_signing.public_key_hex}).to_string().into())).await.unwrap();
+        let frame = edge::testing::edge().timeout(Duration::from_secs(5), socket.next()).await.unwrap().unwrap().unwrap();
+        let Message::Text(frame) = frame else { panic!("expected signing wave") };
+        let wave: Value = serde_json::from_str(&frame).unwrap();
+        let blocks = wave["blocks"].as_array().unwrap().iter().map(|value| hex::decode(value.as_str().unwrap()).unwrap()).collect::<Vec<_>>();
+        let signatures = unknown.respond(&blocks).unwrap().iter().map(hex::encode).collect::<Vec<_>>();
+        socket.send(Message::Text(json!({"signatures":signatures}).to_string().into())).await.unwrap();
+        drop(socket);
+        assert!(unknown.is_complete());
+        assert!(unknown.respond(&blocks).is_err());
+        node.shutdown().await.unwrap();
+    }).unwrap();
+}

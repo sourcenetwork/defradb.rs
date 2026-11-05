@@ -92,6 +92,7 @@ pub mod auth_error;
 pub mod auth_middleware;
 #[cfg(feature = "server")]
 pub mod client_signed_create;
+pub mod client_signed_delete;
 pub mod client_signed_update;
 #[cfg(feature = "server")]
 mod client_signer;

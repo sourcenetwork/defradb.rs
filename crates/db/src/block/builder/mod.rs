@@ -10,6 +10,7 @@
 mod batch_signing;
 mod build;
 mod client_create;
+mod client_delete;
 mod client_update;
 mod client_update_commits;
 mod client_update_snapshot;
@@ -22,6 +23,7 @@ mod write;
 pub(crate) use batch_signing::collect_on_commit;
 pub use build::build_blocks_from_document;
 pub use client_create::{ClientCreateError, ClientCreateSignatures};
+pub use client_delete::{ClientDeleteError, ClientDeleteSignatures};
 pub use client_update::{ClientUpdateError, ClientUpdateSignatures};
 pub use client_update_snapshot::ClientUpdateSnapshot;
 pub use collection::write_collection_block;

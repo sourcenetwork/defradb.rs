@@ -7,7 +7,8 @@ use query::executor::{QueryRequest, QueryResponse};
 use serde_json::{json, Value};
 
 use db::block::builder::{
-    ClientCreateError, ClientCreateSignatures, ClientUpdateError, ClientUpdateSignatures,
+    ClientCreateError, ClientCreateSignatures, ClientDeleteError, ClientDeleteSignatures,
+    ClientUpdateError, ClientUpdateSignatures,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -26,6 +27,8 @@ pub enum ClientSignedCreateError {
     Challenge(#[from] ClientCreateError),
     #[error("server requested a block outside the approved update graph: {0}")]
     UpdateChallenge(#[from] ClientUpdateError),
+    #[error("server requested a block outside the approved delete graph: {0}")]
+    DeleteChallenge(#[from] ClientDeleteError),
     #[error("server reported success before the approved graph was signed")]
     Incomplete,
     #[error("server returned a different document ID")]
@@ -57,6 +60,21 @@ impl ClientSigningGraph for ClientCreateSignatures {
 }
 
 impl ClientSigningGraph for ClientUpdateSignatures {
+    fn public_key_hex(&self) -> &str {
+        self.public_key_hex()
+    }
+    fn doc_id(&self) -> &str {
+        self.doc_id()
+    }
+    fn is_complete(&self) -> bool {
+        self.is_complete()
+    }
+    fn respond(&mut self, blocks: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, ClientSignedCreateError> {
+        Ok(self.respond(blocks)?)
+    }
+}
+
+impl ClientSigningGraph for ClientDeleteSignatures {
     fn public_key_hex(&self) -> &str {
         self.public_key_hex()
     }

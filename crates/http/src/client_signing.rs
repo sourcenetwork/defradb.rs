@@ -190,6 +190,9 @@ fn accepted_mutation(start: &Start, limits: query::QueryLimits) -> bool {
                 crate::client_signed_update::single_document_target(&mutations[0]).is_some()
                     && !mutations[0].update_input.is_empty()
             }
+            query::MutationType::Delete => {
+                crate::client_signed_delete::single_document_target(&mutations[0]).is_some()
+            }
             _ => false,
         }
 }
