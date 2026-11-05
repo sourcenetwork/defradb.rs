@@ -2145,6 +2145,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/access/nac_ops/mod.rs DB::nac_status_as, DB::disable_nac_as, DB::re_enable_nac_as, DB::add_nac_actor_relationship_as, DB::delete_nac_actor_relationship_as, DB::nac_relationship; crates/db/src/nac/toggle.rs NacManager::decide_toggle, NacManager::require; crates/db/src/nac/mod.rs NacManager::initialize",
         model_ref: "MC_NodeAcpOps_{Green,Red_*}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Node access control operations",
@@ -2153,6 +2154,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/nac/toggle.rs NacManager::toggle_as, NacManager::decide_toggle; crates/acp/src/zanzibar/store/transaction.rs OwnedZanzibarScope::commit; crates/db/tests/access/nac_toggle_race.rs",
         model_ref: "MC_NodeAcpOps_{Race_Green,Red_SplitScope,Red_OutsideGuard,Red_NoRetry}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Node access control operations",
@@ -2161,6 +2163,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/acp/src/nac/node_acp/mod.rs NodeACP::load; crates/acp/src/nac/node_acp/lifecycle.rs NodeACP::disable, NodeACP::re_enable; crates/db/src/nac/toggle.rs NacManager::decide_toggle",
         model_ref: "NacToggle (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Iroh solicited replies",
