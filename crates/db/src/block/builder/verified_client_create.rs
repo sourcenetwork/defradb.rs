@@ -28,8 +28,10 @@ impl std::fmt::Debug for ClientCreateEvidence {
     }
 }
 
+type IndexedSignatures = RapidHashMap<Vec<u8>, (usize, Vec<u8>)>;
+
 pub(super) struct ExactSignatures {
-    signatures: Arc<RapidHashMap<Vec<u8>, (usize, Vec<u8>)>>,
+    signatures: Arc<IndexedSignatures>,
     consumed: Vec<AtomicBool>,
 }
 
