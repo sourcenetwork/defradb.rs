@@ -401,11 +401,15 @@ RUNS=(
   "MC_DefaultPool_Red_StopAsksFirst.cfg DefaultPool.tla RED" # contract C1 broken, stop asks before it shuts down: its deadline lands on its own pool (INV_StopDeadlineElsewhere)
   "MC_DefaultPool_Red_ShutStarted.cfg DefaultPool.tla RED" # contract C2 broken, a caller shuts the started pool down: it is still handed out (INV_NeverHandsOutClosing)
   "MC_DefaultPool_Red_RegisterClosing.cfg DefaultPool.tla RED" # contract C3 broken, a closing pool registers: make_default says yes and is not the default (INV_MakeDefaultTellsTruth)
-  "MC_PushBacklog_Green.cfg MC_PushBacklog_Common.tla GREEN" # #1099: bounded queue + fixed workers + per-peer cap -> all bounds hold, healthy peers progress
-  "MC_PushBacklog_Red_SpawnPerItem.cfg MC_PushBacklog_Common.tla RED" # current main: task spawned per (write,peer) before the semaphore -> resident work unbounded (INV_QueueBounded)
+  "MC_PushBacklog_Green.cfg MC_PushBacklog_Common.tla GREEN" # #1099: bounded queue + fixed workers + per-peer cap + timeout park, demote on a failed probe -> all bounds hold, healthy peers progress
+  "MC_PushBacklog_Green_TwoDead.cfg MC_PushBacklog_Common.tla GREEN" # F24: two dead peers are parked on timeout and share one peer cap -> a worker always remains for the healthy peer
+  "MC_PushBacklog_Green_SharedCap.cfg MC_PushBacklog_Common.tla GREEN" # F24 with 3 workers, cap 2: several probes per unreachable peer, a reply mid-probe -> the shared cap still leaves a worker
+  "MC_PushBacklog_Red_TwoDead.cfg MC_PushBacklog_Common.tla RED" # F24, code before the fix: a timeout frees the worker and nothing else, two dead peers take the pool back (INV_UnreachableLeaveAWorker)
+  "MC_PushBacklog_Red_DemoteEveryTimeout.cfg MC_PushBacklog_Common.tla RED" # F24 review: every timeout demotes the queue, a peer that answers its next send loses it (ACT_DemoteAfterFailedProbe)
+  "MC_PushBacklog_Red_SpawnPerItem.cfg MC_PushBacklog_Common.tla RED" # old broadcast: task spawned per (write,peer) before the semaphore -> resident work unbounded (INV_QueueBounded)
   "MC_PushBacklog_Red_PermitLeak.cfg MC_PushBacklog_Common.tla RED" # completing job keeps its worker slot -> pool decays (INV_PermitConservation)
   "MC_PushBacklog_Red_RetainHandles.cfg MC_PushBacklog_Common.tla RED" # SyncShutdownHandle retains every completed JoinHandle (INV_HandlesBounded)
-  "MC_PushBacklog_Red_NoPeerCap.cfg MC_PushBacklog_Common.tla RED" # no per-peer cap: slow peer's stuck sends hold every worker -> healthy peers starve (LIVE_HealthyProgress)
+  "MC_PushBacklog_Red_NoPeerCap.cfg MC_PushBacklog_Common.tla RED" # no per-peer cap: the slow peer's sends hold every worker until they time out (INV_PeerLeavesAWorker)
   "MC_PushCoalescing_Green.cfg MC_PushCoalescing_Common.tla GREEN" # #1102: latest head retained while queued predecessors retire
   "MC_PushCoalescing_Red_AppendEvery.cfg MC_PushCoalescing_Common.tla RED" # no live coalescing -> two heads occupy one (doc,peer) queue
   "MC_PushCoalescing_Red_StaleRetry.cfg MC_PushCoalescing_Common.tla RED" # superseded failure registers the marker afresh, taking it from the newest job (INV_NoStaleRetry)

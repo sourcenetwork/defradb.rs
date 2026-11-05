@@ -172,6 +172,147 @@ async fn slow_peer_does_not_starve_healthy_peers() {
     backlog.close();
 }
 
+/// Audit F24: with the default pool (8 workers, 4 per peer) two replicators
+/// whose sends never answer hold every worker until their first sends time
+/// out. A timed-out peer is then parked, and the unreachable peers together
+/// stay within one peer's cap, so the healthy peer drains right after that
+/// first timeout instead of a few jobs per timeout.
+#[test]
+fn two_stalled_replicators_do_not_starve_healthy_peer() {
+    edge::testing::paused(|edge| async move {
+        use crate::sync::{
+            DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER, DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
+            DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY,
+            DEFAULT_PUSH_SEND_TIMEOUT,
+        };
+
+        const WRITES: u8 = 50;
+        let backlog = PushBacklog::new(
+            DEFAULT_PUSH_QUEUE_CAPACITY,
+            DEFAULT_PUSH_QUEUE_BYTE_CAPACITY,
+            DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER,
+            DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
+            edge.clone(),
+        );
+        let transport = TestTransport::new(Vec::new())
+            .with_stalled_peer("dead-1")
+            .with_stalled_peer("dead-2");
+        let (context, mut failures) = test_context(
+            transport.clone(),
+            Arc::clone(&backlog),
+            DEFAULT_PUSH_SEND_TIMEOUT,
+        );
+        crate::rt::spawn(async move { while failures.recv().await.is_some() {} }).detach();
+        let shutdown = SyncShutdownHandle::new(4, crate::network::Network::on(edge.clone()));
+        spawn_push_workers(context, &shutdown);
+        crate::rt::yield_now().await;
+
+        let started = crate::rt::time::Instant::now();
+        for write in 0..WRITES {
+            for peer in ["dead-1", "dead-2", "healthy"] {
+                assert_eq!(
+                    backlog.try_enqueue(job(peer, &[write])).await,
+                    EnqueueOutcome::Enqueued
+                );
+            }
+        }
+
+        let limit = DEFAULT_PUSH_SEND_TIMEOUT * 2;
+        loop {
+            let healthy_sent = transport
+                .sent()
+                .iter()
+                .filter(|push| push.peer_id == "healthy")
+                .count();
+            if healthy_sent == usize::from(WRITES) {
+                break;
+            }
+            assert!(
+                started.elapsed() <= limit,
+                "two stalled replicators starved the healthy peer: {healthy_sent}/{WRITES} sent after {:?}",
+                started.elapsed()
+            );
+            crate::rt::time::sleep(Duration::from_millis(100)).await;
+        }
+        backlog.close();
+    })
+}
+
+/// A peer whose first sends time out and that answers right afterwards keeps
+/// its queued jobs live. The timeouts park it, and only a failed probe (a send
+/// started after the park's cooldown ran out) moves its queue to the ledger.
+#[test]
+fn transient_transport_failure_keeps_queued_jobs_live() {
+    edge::testing::paused(|edge| async move {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use crate::sync::{
+            DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER, DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
+            DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY,
+            DEFAULT_PUSH_SEND_TIMEOUT,
+        };
+
+        const JOBS: u8 = 20;
+        let backlog = PushBacklog::new(
+            DEFAULT_PUSH_QUEUE_CAPACITY,
+            DEFAULT_PUSH_QUEUE_BYTE_CAPACITY,
+            DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER,
+            DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
+            edge.clone(),
+        );
+        let transport = TestTransport::new(Vec::new()).with_stalled_peer("flaky");
+        let (context, mut failures) = test_context(
+            transport.clone(),
+            Arc::clone(&backlog),
+            DEFAULT_PUSH_SEND_TIMEOUT,
+        );
+        let ledger = Arc::new(AtomicUsize::new(0));
+        let recorded = Arc::clone(&ledger);
+        crate::rt::spawn(async move {
+            while let Some(event) = failures.recv().await {
+                if event.create_retry {
+                    recorded.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        })
+        .detach();
+        let shutdown = SyncShutdownHandle::new(4, crate::network::Network::on(edge.clone()));
+        spawn_push_workers(context, &shutdown);
+        crate::rt::yield_now().await;
+
+        for seed in 0..JOBS {
+            assert_eq!(
+                backlog.try_enqueue(job("flaky", &[seed])).await,
+                EnqueueOutcome::Enqueued
+            );
+        }
+        crate::rt::time::sleep(Duration::from_secs(1)).await;
+        transport.unstall_peer("flaky");
+
+        let live = usize::from(JOBS) - DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER;
+        let started = crate::rt::time::Instant::now();
+        let limit = DEFAULT_PUSH_SEND_TIMEOUT * 2;
+        loop {
+            let sent = transport.sent().len();
+            if sent == live {
+                break;
+            }
+            assert!(
+                started.elapsed() <= limit,
+                "one transport failure cost a peer that answers its queue: {sent}/{live} sent live, {} handed to the ledger after {:?}",
+                ledger.load(Ordering::Relaxed),
+                started.elapsed()
+            );
+            crate::rt::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert_eq!(
+            ledger.load(Ordering::Relaxed),
+            DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER
+        );
+        backlog.close();
+    })
+}
+
 /// A stalled send fails via the send timeout, frees the worker, and lands
 /// in the persisted retry ladder through the failure channel.
 #[nuclei::test]

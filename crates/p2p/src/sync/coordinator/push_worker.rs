@@ -300,38 +300,52 @@ where
     if let Some(reason) = send_outcome.failure_reason {
         context.backlog.record_head_hint_failure(reason);
     }
-    // A saturated receiver parks the whole peer: every CID we would push next
-    // is going to be rejected for the same reason (defradb#1112).
-    if send_outcome.at_capacity || send_outcome.retry_after.is_some() {
+    let answered = !matches!(
+        send_outcome.failure_reason,
+        Some(HeadHintFailureReason::Transport | HeadHintFailureReason::Local)
+    );
+    // A saturated or unreachable receiver parks the whole peer: every CID we
+    // would push next fails for the same reason (defradb#1112).
+    let demoted = if send_outcome.failure_reason == Some(HeadHintFailureReason::Transport) {
+        context.backlog.park_peer_unreachable(job).await
+    } else if send_outcome.at_capacity || send_outcome.retry_after.is_some() {
         context
             .backlog
             .park_peer_with_retry_after(&job.peer_id, send_outcome.retry_after);
-        for queued_job in context.backlog.take_queued_for_peer(&job.peer_id).await {
-            let peer_id = queued_job.peer_id.clone();
-            let head_priority = queued_job.head_priority();
-            let _ = report_push_event(
-                &context.failure_tx,
-                &peer_id,
-                queued_job.doc_id,
-                queued_job.collection_id,
-                Some(queued_job.root_cid),
-                head_priority,
-                true,
-                false,
-                send_outcome.retry_after,
-                false,
-                queued_job.marker_generation,
-                false,
-            )
-            .await;
+        context.backlog.take_queued_for_peer(&job.peer_id).await
+    } else {
+        if answered {
+            context.backlog.record_peer_answered(&job.peer_id);
         }
+        Vec::new()
+    };
+    for queued_job in demoted {
+        let peer_id = queued_job.peer_id.clone();
+        let head_priority = queued_job.head_priority();
+        let _ = report_push_event(
+            &context.failure_tx,
+            &peer_id,
+            queued_job.doc_id,
+            queued_job.collection_id,
+            Some(queued_job.root_cid),
+            head_priority,
+            true,
+            false,
+            send_outcome.retry_after,
+            false,
+            queued_job.marker_generation,
+            false,
+        )
+        .await;
     }
     let send_failed = send_outcome.failed;
     let any_failed = root_missing || send_failed;
     match send_outcome.error {
-        Some(error) => context
-            .peer_state
-            .record_head_push_failed(job.peer_id.as_str(), error),
+        Some(error) => {
+            context
+                .peer_state
+                .record_head_push_failed(job.peer_id.as_str(), error, answered)
+        }
         None if !any_failed => context.peer_state.record_head_acked(job.peer_id.as_str()),
         None => {}
     }
