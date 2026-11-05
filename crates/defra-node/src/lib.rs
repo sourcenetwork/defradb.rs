@@ -277,21 +277,21 @@ trait VerifiedClientGraph {
     fn signer_did(&self) -> &str;
     fn doc_id(&self) -> &str;
     fn matches_mutation(&self, mutation: &query::mapper::Mutation) -> bool;
-    fn signing_config(&self) -> defra_core::signing::SigningConfig;
+    fn signing_config_for_execution(&self) -> (defra_core::signing::SigningConfig, db::block::builder::VerifiedSignatureReceipt);
 }
 
 impl VerifiedClientGraph for db::block::builder::VerifiedClientCreate {
     fn signer_did(&self) -> &str { self.signer_did() }
     fn doc_id(&self) -> &str { self.doc_id() }
     fn matches_mutation(&self, mutation: &query::mapper::Mutation) -> bool { self.matches_mutation(mutation) }
-    fn signing_config(&self) -> defra_core::signing::SigningConfig { self.signing_config() }
+    fn signing_config_for_execution(&self) -> (defra_core::signing::SigningConfig, db::block::builder::VerifiedSignatureReceipt) { self.signing_config_for_execution() }
 }
 
 impl VerifiedClientGraph for db::block::builder::VerifiedClientMutation {
     fn signer_did(&self) -> &str { self.signer_did() }
     fn doc_id(&self) -> &str { self.doc_id() }
     fn matches_mutation(&self, mutation: &query::mapper::Mutation) -> bool { self.matches_mutation(mutation) }
-    fn signing_config(&self) -> defra_core::signing::SigningConfig { self.signing_config() }
+    fn signing_config_for_execution(&self) -> (defra_core::signing::SigningConfig, db::block::builder::VerifiedSignatureReceipt) { self.signing_config_for_execution() }
 }
 
 impl Node {
@@ -449,12 +449,13 @@ impl Node {
                 let _ = self.discard_transaction(handle).await;
                 return unavailable_node_signer_response(node_did);
             };
+            let (signing_config, receipt) = graph.signing_config_for_execution();
             let response = execute_with_signing_context(
                 network.edge(),
                 self.runner.clone(),
                 request,
                 Some(handle.clone()),
-                graph.signing_config(),
+                signing_config,
                 node_did.to_owned(),
             )
             .await;
@@ -472,7 +473,7 @@ impl Node {
                         && rows[0].get("_docID").and_then(serde_json::Value::as_str)
                             == Some(graph.doc_id())
                 });
-            if !matches {
+            if !matches || !receipt.is_complete() {
                 // A failed or unconfirmed stage must not leave partial writes available to commit.
                 let _ = self.discard_transaction(handle).await;
                 return QueryResponse::error("verified create was not confirmed");

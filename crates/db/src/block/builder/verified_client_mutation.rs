@@ -8,6 +8,7 @@ use schema::CollectionVersion;
 use super::{
     client_waves::ClientWaves, verified_client_create::ExactSignatures, ClientDeleteError,
     ClientDeleteSignatures, ClientUpdateError, ClientUpdateSignatures, ClientUpdateSnapshot,
+    VerifiedSignatureReceipt,
 };
 
 /// Public evidence for the exact signed waves, without a client private key.
@@ -34,7 +35,9 @@ impl ClientMutationEvidence {
         }
     }
 
-    fn signing_config(&self) -> Result<(String, SigningConfig), VerifiedMutationError> {
+    fn signing_config(
+        &self,
+    ) -> Result<(String, SigningConfig, Arc<ExactSignatures>), VerifiedMutationError> {
         if self.child_blocks.len() != self.child_signatures.len() || self.composite_block.is_empty()
         {
             return Err(VerifiedMutationError::InvalidEvidence);
@@ -74,6 +77,7 @@ impl ClientMutationEvidence {
                 return Err(VerifiedMutationError::InvalidEvidence);
             }
         }
+        let exact_signatures = Arc::new(ExactSignatures::new(signatures));
         Ok((
             did,
             SigningConfig {
@@ -81,9 +85,10 @@ impl ClientMutationEvidence {
                 private_key_bytes: Vec::new(),
                 public_key_bytes: public.raw_owned(),
                 public_key_hex: self.public_key_hex.clone(),
-                remote_signer: Some(Arc::new(ExactSignatures(signatures))),
+                remote_signer: Some(exact_signatures.clone()),
                 signing_authorization: None,
             },
+            exact_signatures,
         ))
     }
 }
@@ -108,6 +113,7 @@ pub struct VerifiedClientMutation {
     graph: Graph,
     signer_did: String,
     signing_config: SigningConfig,
+    exact_signatures: Arc<ExactSignatures>,
 }
 
 impl VerifiedClientMutation {
@@ -119,7 +125,7 @@ impl VerifiedClientMutation {
         snapshot: &ClientUpdateSnapshot,
         evidence: ClientMutationEvidence,
     ) -> Result<Self, VerifiedMutationError> {
-        let (signer_did, signing_config) = evidence.signing_config()?;
+        let (signer_did, signing_config, exact_signatures) = evidence.signing_config()?;
         let graph =
             ClientUpdateSignatures::build(crdts, schema, doc_id, input, snapshot, &signing_config)?;
         if graph.evidence() != evidence {
@@ -129,6 +135,7 @@ impl VerifiedClientMutation {
             graph: Graph::Update(graph),
             signer_did,
             signing_config,
+            exact_signatures,
         })
     }
 
@@ -138,7 +145,7 @@ impl VerifiedClientMutation {
         snapshot: &ClientUpdateSnapshot,
         evidence: ClientMutationEvidence,
     ) -> Result<Self, VerifiedMutationError> {
-        let (signer_did, signing_config) = evidence.signing_config()?;
+        let (signer_did, signing_config, exact_signatures) = evidence.signing_config()?;
         let graph = ClientDeleteSignatures::build(schema, doc_id, snapshot, &signing_config)?;
         if graph.evidence() != evidence {
             return Err(VerifiedMutationError::InvalidEvidence);
@@ -147,6 +154,7 @@ impl VerifiedClientMutation {
             graph: Graph::Delete(graph),
             signer_did,
             signing_config,
+            exact_signatures,
         })
     }
 
@@ -184,9 +192,12 @@ impl VerifiedClientMutation {
             }
         }
     }
-    /// The signer releases signatures only for the verified graph's blocks.
+    /// The signer and receipt belong exclusively to one execution.
     #[doc(hidden)]
-    pub fn signing_config(&self) -> SigningConfig {
-        self.signing_config.clone()
+    pub fn signing_config_for_execution(&self) -> (SigningConfig, VerifiedSignatureReceipt) {
+        let signer = Arc::new(self.exact_signatures.fresh());
+        let mut config = self.signing_config.clone();
+        config.remote_signer = Some(signer.clone());
+        (config, VerifiedSignatureReceipt(signer))
     }
 }

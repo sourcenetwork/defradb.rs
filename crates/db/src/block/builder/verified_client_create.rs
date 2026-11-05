@@ -1,7 +1,7 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use defra_core::signing::{RemoteSigner, SigningAuthorization, SigningConfig, SigningKeyType};
-use rapidhash::{HashMapExt, RapidHashMap};
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use schema::CollectionVersion;
 
 use super::{ClientCreateError, ClientCreateSignatures};
@@ -27,13 +27,53 @@ impl std::fmt::Debug for ClientCreateEvidence {
     }
 }
 
-pub(super) struct ExactSignatures(pub(super) RapidHashMap<Vec<u8>, Vec<u8>>);
+pub(super) struct ExactSignatures {
+    signatures: Arc<RapidHashMap<Vec<u8>, Vec<u8>>>,
+    consumed: Mutex<RapidHashSet<Vec<u8>>>,
+}
+
+impl ExactSignatures {
+    pub(super) fn new(signatures: RapidHashMap<Vec<u8>, Vec<u8>>) -> Self {
+        Self {
+            signatures: Arc::new(signatures),
+            consumed: Mutex::new(RapidHashSet::new()),
+        }
+    }
+
+    pub(super) fn fresh(&self) -> Self {
+        Self {
+            signatures: Arc::clone(&self.signatures),
+            consumed: Mutex::new(RapidHashSet::new()),
+        }
+    }
+}
+
+/// An execution-local receipt. Graph verification and other executions cannot
+/// mark this receipt; every approved signature must be requested on this run.
+#[doc(hidden)]
+pub struct VerifiedSignatureReceipt(pub(super) Arc<ExactSignatures>);
+
+impl VerifiedSignatureReceipt {
+    pub fn is_complete(&self) -> bool {
+        self.0
+            .consumed
+            .lock()
+            .is_ok_and(|used| used.len() == self.0.signatures.len())
+    }
+}
+
 impl RemoteSigner for ExactSignatures {
     fn sign_sync(&self, data: &[u8], _: Option<&SigningAuthorization>) -> Result<Vec<u8>, String> {
-        self.0
+        let signature = self
+            .signatures
             .get(data)
             .cloned()
-            .ok_or_else(|| "block is outside the approved create graph".to_owned())
+            .ok_or_else(|| "block is outside the approved client graph".to_owned())?;
+        self.consumed
+            .lock()
+            .map_err(|_| "client graph receipt is unavailable".to_owned())?
+            .insert(data.to_vec());
+        Ok(signature)
     }
 }
 
@@ -43,6 +83,7 @@ pub struct VerifiedClientCreate {
     graph: ClientCreateSignatures,
     signer_did: String,
     signing_config: SigningConfig,
+    exact_signatures: Arc<ExactSignatures>,
 }
 
 impl VerifiedClientCreate {
@@ -89,12 +130,13 @@ impl VerifiedClientCreate {
                 return Err(ClientCreateError::InvalidGraph);
             }
         }
+        let exact_signatures = Arc::new(ExactSignatures::new(signatures));
         let signing_config = SigningConfig {
             key_type: SigningKeyType::Ed25519,
             private_key_bytes: Vec::new(),
             public_key_bytes: public.raw_owned(),
             public_key_hex: evidence.public_key_hex.clone(),
-            remote_signer: Some(Arc::new(ExactSignatures(signatures))),
+            remote_signer: Some(exact_signatures.clone()),
             signing_authorization: None,
         };
         let doc = ClientCreateSignatures::normalize_input(schema, input)
@@ -112,6 +154,7 @@ impl VerifiedClientCreate {
             graph,
             signer_did,
             signing_config,
+            exact_signatures,
         })
     }
 
@@ -133,9 +176,12 @@ impl VerifiedClientCreate {
                 .ok()
                 .is_some_and(|input| self.matches_input(&mutation.collection_name, &input))
     }
-    /// The returned signer can sign only the exact blocks in this verified graph.
+    /// The returned signer and receipt belong exclusively to one execution.
     #[doc(hidden)]
-    pub fn signing_config(&self) -> SigningConfig {
-        self.signing_config.clone()
+    pub fn signing_config_for_execution(&self) -> (SigningConfig, VerifiedSignatureReceipt) {
+        let signer = Arc::new(self.exact_signatures.fresh());
+        let mut config = self.signing_config.clone();
+        config.remote_signer = Some(signer.clone());
+        (config, VerifiedSignatureReceipt(signer))
     }
 }
