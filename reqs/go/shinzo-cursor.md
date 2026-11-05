@@ -101,7 +101,7 @@ A token holding only `{"d": <docID of the row aged 50>}` (no `k`) is still accep
 # `go.shinzo.cursor.deleted_docs`: Deleted documents and cursors
 
 - **Parents:** ["go.shinzo.cursor"]
-- **Go-Tests:** ["query/cursor/with_edge_cases_test.go::TestCursorEdgeCase_DeletedCursorDocContinuesToNext", "query/cursor/with_edge_cases_test.go::TestCursorEdgeCase_DeletedResultDocExcludedFromResults", "query/cursor/with_edge_cases_test.go::TestCursorEdgeCase_AllRemainingDocsDeletedReturnsEmpty", "query/cursor/with_edge_cases_test.go::TestCursorEdgeCase_DeletedBeforeCursorAtEndHasNoNextPage"]
+- **Go-Tests:** ["query/cursor/with_edge_cases_test.go::TestCursorEdgeCase_DeletedCursorDocContinuesToNext", "query/cursor/with_edge_cases_test.go::TestCursorEdgeCase_DeletedResultDocExcludedFromResults", "query/cursor/with_edge_cases_test.go::TestCursorEdgeCase_AllRemainingDocsDeletedReturnsEmpty"]
 - **Go-Ref:** "shinzo-develop 2a899b860"
 
 A deleted document never appears in a page, and a cursor whose row was deleted still marks a position. Over ages 25, 30, 35: deleting Bob (30) after taking his `endCursor` makes `first: 2, after` that cursor return [35] with `hasNext: false`, `hasPrev: true`; deleting Bob and Carol after taking Alice's cursor makes `first: 10, after` it return `[]`, `hasNext: false`, `hasPrev: true`, null cursors. Deleting Carol (35) from ages 25…45 makes `first: 5` return [25, 30, 40, 45] with `hasNext: false`. Deleting Eve (45) after taking her `endCursor` makes `last: 2, before` it return [35, 40] with `hasNext: false`, `hasPrev: true`.
@@ -159,11 +159,3 @@ On `User @index(includes: [{field: "name"}, {field: "age"}])` with (Addo 25), (A
 - **Go-Ref:** "shinzo-develop 2a899b860"
 
 `_cursor { users: User(first: 2, order: {age: ASC}) { name age } _pageInfo { hasNext hasPrev } }` returns the rows under `_cursor.users` (Alice 25, Bob 30, `hasNext: true`, `hasPrev: false`). `User(first: 10, groupBy: [age]) { age }` over ages 25, 25, 35, 45 returns the groups `{age: 25}`, `{age: 35}`, `{age: 45}` (in any order) with `hasNext: false`, `hasPrev: false`.
-
-# `go.shinzo.cursor.explain`: Explain output of a cursor query
-
-- **Parents:** ["go.shinzo.cursor"]
-- **Go-Tests:** ["explain/default/with_cursor_test.go::TestDefaultExplainCursorQueryWithFirstOnly", "explain/default/with_cursor_test.go::TestDefaultExplainCursorQueryWithFirstAndAfterNull", "explain/debug/with_cursor_test.go::TestDebugExplainCursorQueryWithFirst", "explain/debug/with_cursor_test.go::TestDebugExplainCursorQueryWithFirstAndAfterNull", "explain/execute/with_cursor_test.go::TestExecuteExplainCursorQueryWithFirst", "explain/execute/with_cursor_test.go::TestExecuteExplainCursorQueryWithFirstReturnsAllWhenFewerExist", "query/cursor/with_backward_explain_test.go::TestCursorBackwardExplain_SimpleShowsLastBeforeFields"]
-- **Go-Ref:** "shinzo-develop 2a899b860"
-
-Every explain type shows the plan `selectTopNode` → `cursorNode` → `selectNode` → `scanNode`. Simple explain gives `cursorNode` the attributes `first`, `after`, `last`, `before` and `cursorValue`: `User(first: 5, order: {age: ASC})` and `User(first: 3, after: null, …)` show `first: 5` (or `3`) and the other four `null`; `User(last: 2, …)` shows `last: 2` and `first`, `after`, `before` `null`. When a cursor is given, `cursorValue` is `{docID: <d>}` plus `keys: <k>` when the token has keys. Execute explain of `User(first: 2, order: {age: ASC}) { name }` over three rows reports `executionSuccess: true`, `sizeOfResult: 1`, `planExecutions: 2`, `cursorNode.iterations: 3`, `selectNode.iterations: 3`, `filterMatches: 3`, and `scanNode` `iterations: 3`, `docFetches: 3`, `fieldFetches: 6`, `indexFetches: 3`; with `first: 10` the iteration counts are 4 and the fetch counts are the same.
