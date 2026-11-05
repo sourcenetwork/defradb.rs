@@ -100,4 +100,135 @@ theorem exact_snapshot (e : Evidence) (snapshotOwner returned : Nat)
   · exact (Option.some.inj h).symm
   · contradiction
 
+/-- One native gateway observation supports delegated reads and named access.
+The gateway authenticates the actor separately and never returns document metadata.
+The transaction owner and a local authorization view are required in both modes.
+Delegated reads additionally require the transaction principal's node authority
+and use the actor's application and document read gates. Named observations
+instead require live registration and an active actor node permission; they do
+not silently assume that a named capability implies read access. -/
+inductive AccessMode where
+  | delegatedRead
+  | named
+  deriving DecidableEq, Repr
+
+-- An unavailable result is distinct from an active permission denial.
+inductive AccessDecision where
+  | allowed
+  | denied
+  | unavailable
+  | invalid
+  deriving DecidableEq, Repr
+
+-- Each input is supplied by its existing transaction or authorization owner.
+structure AccessEvidence where
+  ownsTransaction : Bool
+  bound : Bool
+  explicitContext : Bool
+  principalNodeRead : Bool
+  actorApplicationRead : Bool
+  actorDocumentRead : Bool
+  liveMember : Bool
+  registered : Bool
+  activeNodePolicy : Bool
+  actorNodePermission : Bool
+  actorNamedPermission : Bool
+  deriving DecidableEq, Repr
+
+-- Select exactly the gates the caller's explicit mode requires.
+def accessDecision (mode : AccessMode) (e : AccessEvidence) : AccessDecision :=
+  if e.ownsTransaction && e.explicitContext then
+    match mode with
+    | .delegatedRead =>
+      if !e.bound || !e.principalNodeRead then .invalid
+      else if e.actorApplicationRead && e.actorDocumentRead && e.liveMember then .allowed
+      else .unavailable
+    | .named =>
+      if !e.bound || !e.liveMember || !e.registered || !e.activeNodePolicy then .unavailable
+      else if e.actorNodePermission && e.actorNamedPermission then .allowed
+      else .denied
+  else .invalid
+
+-- A borrowed transaction never yields a decision.
+theorem access_requires_transaction_owner (mode : AccessMode) (e : AccessEvidence)
+    (h : e.ownsTransaction = false) : accessDecision mode e = .invalid := by
+  simp [accessDecision, h]
+
+-- A detached authorization view never certifies an observation.
+theorem access_requires_bound_view (mode : AccessMode) (e : AccessEvidence)
+    (h : e.bound = false) : accessDecision mode e ≠ .allowed := by
+  cases mode <;> simp [accessDecision, h] <;> (try split) <;> (try simp_all)
+
+-- An unsupported named authorization provider cannot be classified as denied.
+theorem named_unbound_not_denied (e : AccessEvidence) (h : e.bound = false) :
+    accessDecision .named e ≠ .denied := by
+  simp [accessDecision, h]
+  all_goals (try split) <;> (try simp_all)
+
+-- Ambient bypass cannot replace the explicit transaction context.
+theorem access_requires_explicit_context (mode : AccessMode) (e : AccessEvidence)
+    (h : e.explicitContext = false) : accessDecision mode e = .invalid := by
+  simp [accessDecision, h]
+
+-- A delegated read without the principal node gate is not a visibility result.
+theorem delegated_access_requires_principal (e : AccessEvidence)
+    (h : e.principalNodeRead = false) :
+    accessDecision .delegatedRead e ≠ .allowed := by
+  simp [accessDecision, h]
+
+-- Application read denial cannot be made visible by naming a document.
+theorem delegated_access_requires_application (e : AccessEvidence)
+    (h : e.actorApplicationRead = false) :
+    accessDecision .delegatedRead e ≠ .allowed := by
+  simp [accessDecision, h]
+  all_goals (try split) <;> (try simp_all)
+  all_goals (try split) <;> (try simp_all)
+
+-- Document read denial cannot be made visible by naming a document.
+theorem delegated_access_requires_document (e : AccessEvidence)
+    (h : e.actorDocumentRead = false) :
+    accessDecision .delegatedRead e ≠ .allowed := by
+  simp [accessDecision, h]
+  all_goals (try split) <;> (try simp_all)
+  all_goals (try split) <;> (try simp_all)
+
+-- A missing document cannot be granted or reported as an active denial.
+theorem named_missing_not_denied (e : AccessEvidence) (h : e.liveMember = false) :
+    accessDecision .named e ≠ .denied := by
+  simp [accessDecision, h]
+  all_goals (try split) <;> (try simp_all)
+  all_goals (try split) <;> (try simp_all)
+
+-- A missing registration cannot be reported as an active permission denial.
+theorem named_unregistered_not_denied (e : AccessEvidence) (h : e.registered = false) :
+    accessDecision .named e ≠ .denied := by
+  simp [accessDecision, h]
+  all_goals (try split) <;> (try simp_all)
+  all_goals (try split) <;> (try simp_all)
+
+-- An inactive NAC cannot be reported as an active permission denial.
+theorem named_inactive_not_denied (e : AccessEvidence) (h : e.activeNodePolicy = false) :
+    accessDecision .named e ≠ .denied := by
+  simp [accessDecision, h]
+  all_goals (try split) <;> (try simp_all)
+  all_goals (try split) <;> (try simp_all)
+
+-- A named grant still requires the actor's selected node permission.
+theorem named_requires_actor_node_permission (e : AccessEvidence)
+    (h : e.actorNodePermission = false) : accessDecision .named e ≠ .allowed := by
+  simp [accessDecision, h]
+  all_goals (try split) <;> (try simp_all)
+  all_goals (try split) <;> (try simp_all)
+
+-- A named grant still requires the named document permission.
+theorem named_requires_document_permission (e : AccessEvidence)
+    (h : e.actorNamedPermission = false) : accessDecision .named e ≠ .allowed := by
+  simp [accessDecision, h]
+  all_goals (try split) <;> (try simp_all)
+  all_goals (try split) <;> (try simp_all)
+
+-- The decision type exports no owner, document fields or hidden identifiers.
+example : accessDecision .named ⟨true, true, true, false, false, false, true, true, true, true, true⟩ = .allowed := by decide
+example : accessDecision .delegatedRead ⟨true, true, true, true, false, false, true, true, true, true, true⟩ = .unavailable := by decide
+
 end Acp.OwnerObservation

@@ -226,7 +226,20 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         doc_ids: &[String],
         identity: Option<identity::Did>,
     ) -> Result<Vec<crate::owners::DocumentOwnerObservation>> {
-        self.observe_owners(context, handle, collection, doc_ids, identity)
+        self.observe_owners(context, handle, collection, doc_ids, identity, false)
+            .await
+    }
+
+    async fn observe_document_access_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        collection: &str,
+        doc_ids: &[String],
+        actor: identity::Did,
+        mode: crate::owners::DocumentAccessMode,
+    ) -> Result<Vec<crate::owners::DocumentAccessDecision>> {
+        self.observe_access(context, handle, collection, doc_ids, actor, mode)
             .await
     }
 

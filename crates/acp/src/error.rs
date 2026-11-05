@@ -37,6 +37,10 @@ pub enum Error {
     #[error("unsupported subject for this backend: {0}")]
     UnsupportedSubject(String),
 
+    /// The backend cannot evaluate named document permissions.
+    #[error("named document permission checks are unsupported by this backend")]
+    UnsupportedNamedPermission,
+
     /// Not the owner of the document (UNAUTHORIZED)
     #[error("UNAUTHORIZED: not document owner, cannot {operation}")]
     NotOwner { operation: String },

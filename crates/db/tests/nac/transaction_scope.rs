@@ -83,3 +83,54 @@ fn authorized_writes_share_the_loaded_node_policy() {
     })
     .unwrap()
 }
+
+#[test]
+fn bound_active_check_is_unavailable_for_nontransactional_or_incomplete_nac() {
+    workers::block_on(async {
+        use acp::ZanzibarStore;
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let nontransactional =
+            NacManager::new(Arc::new(acp::MemoryZanzibarStore::new()), NacConfig::new());
+        let owner = Did::new("did:key:owner").unwrap();
+        let txn = BasicTxn::new(store.as_ref(), 1, false).await.unwrap();
+        assert_eq!(
+            nontransactional
+                .check_bound_active_permission_in_txn(
+                    txn.acpstore(),
+                    &owner,
+                    NodePermission::DocumentRead
+                )
+                .await
+                .unwrap(),
+            None
+        );
+        txn.discard().unwrap();
+        let nac_store = Arc::new(PersistentZanzibarStore::from_store(store.clone()));
+        let manager = NacManager::new(nac_store.clone(), NacConfig::new().with_enabled());
+        manager.initialize(Some(&owner)).await.unwrap();
+        let relation = acp::Relationship::with_entity(
+            acp::NODE_RESOURCE_NAME,
+            acp::NODE_OBJECT_ID,
+            acp::NAC_OWNER_RELATION,
+            owner.clone(),
+        );
+        assert!(nac_store
+            .delete_relationship(acp::NODE_POLICY_ID, &relation)
+            .await
+            .unwrap());
+        let txn = BasicTxn::new(store.as_ref(), 2, false).await.unwrap();
+        assert_eq!(
+            manager
+                .check_bound_active_permission_in_txn(
+                    txn.acpstore(),
+                    &owner,
+                    NodePermission::DocumentRead
+                )
+                .await
+                .unwrap(),
+            None
+        );
+        txn.discard().unwrap();
+    })
+    .unwrap();
+}

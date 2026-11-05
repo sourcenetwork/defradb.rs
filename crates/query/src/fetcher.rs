@@ -147,6 +147,15 @@ pub trait DocFetcher: MaybeSendSync {
         Ok(None)
     }
 
+    /// Evaluate active node authorization only when bound to this transaction.
+    async fn check_bound_active_node_permission(
+        &self,
+        _identity: &identity::Did,
+        _permission: acp::nac::NodePermission,
+    ) -> Result<Option<bool>> {
+        Ok(None)
+    }
+
     /// An authorization provider actually bound to this fetcher's transaction.
     /// A capability flag or an unbound provider cannot certify a row snapshot.
     async fn transaction_acp(

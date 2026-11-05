@@ -172,6 +172,20 @@ impl QueryExecutor for PooledExecutor {
             .await
     }
 
+    async fn observe_document_access_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        collection: &str,
+        doc_ids: &[String],
+        actor: identity::Did,
+        mode: crate::owners::DocumentAccessMode,
+    ) -> Result<Vec<crate::owners::DocumentAccessDecision>> {
+        self.inner
+            .observe_document_access_in_txn(context, handle, collection, doc_ids, actor, mode)
+            .await
+    }
+
     async fn begin_txn(
         &self,
         readonly: bool,
