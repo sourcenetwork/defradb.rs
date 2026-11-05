@@ -90,15 +90,7 @@ impl ClientSigningGraph for ClientDeleteSignatures {
 }
 
 pub(crate) fn valid_doc_id_selection(fields: &[query::mapper::Requestable]) -> bool {
-    fields.iter().any(|field| {
-        matches!(field, query::mapper::Requestable::Field(field) if field.name == "_docID" && field.alias.is_none())
-    }) && !fields.iter().any(|field| match field {
-        query::mapper::Requestable::Field(field) => field.output_name() == "_docID" && field.name != "_docID",
-        query::mapper::Requestable::Select(field) => field.field.output_name() == "_docID",
-        query::mapper::Requestable::Aggregate(field) => field.output_name() == "_docID",
-        query::mapper::Requestable::Similarity(field) => field.output_name() == "_docID",
-        query::mapper::Requestable::FullTextSearch(field) => field.output_name() == "_docID",
-    })
+    query::mapper::valid_unaliased_doc_id_selection(fields)
 }
 
 fn response_key(request: &QueryRequest, graph: &ClientCreateSignatures) -> Option<String> {

@@ -48,7 +48,10 @@ impl ClientCreateSignatures {
         Self::new(crdts, &doc, signer)
     }
 
-    fn normalize_input(schema: &CollectionVersion, input: &serde_json::Value) -> Option<Document> {
+    pub(super) fn normalize_input(
+        schema: &CollectionVersion,
+        input: &serde_json::Value,
+    ) -> Option<Document> {
         let input = input.as_object()?;
         if schema.fields.iter().any(|field| {
             if field.default_value.is_some() && !input.contains_key(&field.name) {
@@ -98,6 +101,14 @@ impl ClientCreateSignatures {
         {
             return Err(ClientCreateError::UnsupportedSigner);
         }
+        Self::build(crdts, doc, signer)
+    }
+
+    pub(super) fn build(
+        crdts: &crdt::Crdts,
+        doc: &Document,
+        signer: &SigningConfig,
+    ) -> Result<Self, ClientCreateError> {
         let schema = doc.collection();
         if doc.id().is_some()
             || doc.head().is_some()
@@ -204,6 +215,18 @@ impl ClientCreateSignatures {
 
     pub fn composite_block(&self) -> &[u8] {
         self.waves.composite()
+    }
+
+    /// Export only the public signatures and the exact blocks they approve.
+    pub fn evidence(&self) -> super::ClientCreateEvidence {
+        super::ClientCreateEvidence {
+            public_key_hex: self.public_key_hex.clone(),
+            doc_id: self.doc_id.clone(),
+            child_blocks: self.waves.children().to_vec(),
+            child_signatures: self.waves.child_signatures().to_vec(),
+            composite_block: self.waves.composite().to_vec(),
+            composite_signature: self.waves.composite_signature().to_vec(),
+        }
     }
 
     /// Return only signatures over the complete expected wave; reject extra,

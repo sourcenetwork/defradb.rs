@@ -53,6 +53,12 @@ impl ClientWaves {
     pub(super) fn composite(&self) -> &[u8] {
         &self.composite
     }
+    pub(super) fn child_signatures(&self) -> &[Vec<u8>] {
+        &self.child_signatures
+    }
+    pub(super) fn composite_signature(&self) -> &[u8] {
+        &self.composite_signature
+    }
 
     pub(super) fn respond(&mut self, wave: &[Vec<u8>]) -> Option<Vec<Vec<u8>>> {
         if self.phase == Phase::Composite {

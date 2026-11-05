@@ -18,6 +18,7 @@ mod client_waves;
 pub mod collection;
 mod compute;
 mod immutable;
+mod verified_client_create;
 mod write;
 
 pub(crate) use batch_signing::collect_on_commit;
@@ -30,6 +31,7 @@ pub use collection::write_collection_block;
 pub(crate) use collection::write_collection_block_with_inputs;
 pub(crate) use compute::compute_document_blocks_with_inputs;
 pub use compute::{compute_document_blocks, insert_computed_blocks, ComputedBlocks};
+pub use verified_client_create::{ClientCreateEvidence, VerifiedClientCreate};
 pub(crate) use write::{build_document_blocks, write_delete_block_with_inputs};
 pub(crate) use write::{fresh_nonce, inherited_encryption_policy};
 pub use write::{write_delete_block, write_document_blocks};

@@ -334,6 +334,108 @@ impl Node {
             .await
     }
 
+    /// Stage one verified client create in a node-owned transaction. Native ACP
+    /// still authorizes the graph's signer as the request actor; signature
+    /// evidence is not an authorization grant.
+    pub async fn execute_verified_create_in_txn(
+        &self,
+        mut request: QueryRequest,
+        handle: &TransactionHandle,
+        graph: &db::block::builder::VerifiedClientCreate,
+    ) -> QueryResponse {
+        if request.context.dac_bypass()
+            || request
+                .identity
+                .as_ref()
+                .map(ToString::to_string)
+                .as_deref()
+                != Some(graph.signer_did())
+        {
+            let _ = self.discard_transaction(handle).await;
+            return QueryResponse::error("verified create actor or DAC context does not match");
+        }
+        let variables = match &request.variables {
+            Some(serde_json::Value::Object(values)) => Some(
+                values
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect(),
+            ),
+            None => None,
+            _ => {
+                let _ = self.discard_transaction(handle).await;
+                return QueryResponse::error("verified create variables must be an object");
+            }
+        };
+        let Ok(query::query_parse::ParsedOperation::Mutation {
+            mutations,
+            explain: None,
+        }) = query::query_parse::parse_request_with_limits(
+            &request.query,
+            variables.as_ref(),
+            request.operation_name.as_deref(),
+            query::QueryLimits::default(),
+        )
+        else {
+            let _ = self.discard_transaction(handle).await;
+            return QueryResponse::error("verified create requires one matching mutation");
+        };
+        if mutations.len() != 1 || !graph.matches_mutation(&mutations[0]) {
+            let _ = self.discard_transaction(handle).await;
+            return QueryResponse::error("verified create requires one matching mutation");
+        }
+        let key = mutations[0].output_name();
+        // The graph supplies signatures only; no caller context may carry a
+        // separate actor, encryption, bearer, or transaction authority.
+        request.context = defra_core::RequestContext::default();
+        let Some(node_did) = self.node_identity_did.as_deref() else {
+            let _ = self.discard_transaction(handle).await;
+            return QueryResponse::error("verified create requires a configured node identity");
+        };
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (node_did, key);
+            let _ = self.discard_transaction(handle).await;
+            QueryResponse::error("verified create is unavailable on wasm32")
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let Some(network) = self.network.as_ref() else {
+                let _ = self.discard_transaction(handle).await;
+                return unavailable_node_signer_response(node_did);
+            };
+            let response = execute_with_signing_context(
+                network.edge(),
+                self.runner.clone(),
+                request,
+                Some(handle.clone()),
+                graph.signing_config(),
+                node_did.to_owned(),
+            )
+            .await;
+            if response.has_errors() {
+                let _ = self.discard_transaction(handle).await;
+                return response;
+            }
+            let matches = response
+                .data
+                .as_ref()
+                .and_then(|data| data.get(&key))
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|rows| {
+                    rows.len() == 1
+                        && rows[0].get("_docID").and_then(serde_json::Value::as_str)
+                            == Some(graph.doc_id())
+                });
+            if !matches {
+                // A failed or unconfirmed stage must not leave partial writes available to commit.
+                let _ = self.discard_transaction(handle).await;
+                return QueryResponse::error("verified create was not confirmed");
+            }
+            response
+        }
+    }
+
     async fn execute_with_embedded_signer(
         &self,
         request: QueryRequest,
@@ -1454,6 +1556,9 @@ mod transactional_relationship_tests;
 
 #[cfg(test)]
 mod delegated_relationship_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod verified_create_tests;
 
 #[cfg(all(test, feature = "http"))]
 mod http_signing_tests;
