@@ -207,6 +207,28 @@ impl<S: Store + 'static> LensedDocFetcher<S> {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
+    async fn check_verified_node_permission(
+        &self,
+        identity: &identity::Did,
+        permission: acp::nac::NodePermission,
+    ) -> query::error::Result<Option<bool>> {
+        let Some(nac) = self.db.nac_manager() else {
+            return Ok(Some(true));
+        };
+        let txn = &*self.shared_txn()?;
+        let view = txn
+            .acpstore()
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+        let bound = nac
+            .check_bound_permission_in_txn(view, identity, permission, false)
+            .await
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+        if bound.is_none() && !nac.is_enabled().await {
+            return Ok(Some(true));
+        }
+        Ok(bound)
+    }
+
     async fn check_node_permission(
         &self,
         identity: &identity::Did,

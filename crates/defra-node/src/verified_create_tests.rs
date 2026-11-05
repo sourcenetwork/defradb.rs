@@ -285,3 +285,24 @@ fn verified_update_and_delete_use_exact_actor_and_transaction_state() {
         node.shutdown().await.unwrap();
     }).unwrap();
 }
+
+#[test]
+fn verified_create_allows_disabled_nac_and_unbound_collection() {
+    edge::testing::edge().block_on(async {
+        let (user, signing) = actor();
+        let node = Node::builder().enable_signing().build().await.unwrap();
+        node.add_collection("type PlainVerifiedRecord { name: String }").await.unwrap();
+        let schema = node.get_collection("PlainVerifiedRecord").unwrap().unwrap();
+        let input = json!({"name":"plain"});
+        let crdts = storage::Crdts::default();
+        let signed = db::block::builder::ClientCreateSignatures::from_input(&crdts, &schema, &input, &signing).unwrap();
+        let graph = db::block::builder::VerifiedClientCreate::verify(&crdts, &schema, &input, signed.evidence()).unwrap();
+        let request = query::QueryRequest::new("mutation($input:PlainVerifiedRecordMutationInputArg!) { create_PlainVerifiedRecord(input:$input) {_docID} }")
+            .with_variables(json!({"input":input})).with_identity(Some(user.did().unwrap()));
+        let txn = node.begin_transaction(false).await.unwrap();
+        let result = node.execute_verified_create_in_txn(request, &txn, &graph).await;
+        assert!(!result.has_errors(), "{:?}", result.errors);
+        node.commit_transaction(&txn).await.unwrap();
+        node.shutdown().await.unwrap();
+    }).unwrap();
+}

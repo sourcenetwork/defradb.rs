@@ -388,7 +388,8 @@ impl Node {
     where
         G: VerifiedClientGraph,
     {
-        if request.context.dac_bypass()
+        if request.parsed.is_some()
+            || request.context.dac_bypass()
             || request
                 .identity
                 .as_ref()
@@ -432,7 +433,7 @@ impl Node {
         let key = mutations[0].output_name();
         // The graph supplies signatures only; no caller context may carry a
         // separate actor, encryption, bearer, or transaction authority.
-        request.context = defra_core::RequestContext::default();
+        request.context = defra_core::RequestContext::default().with_transactional_authority_required();
         let Some(node_did) = self.node_identity_did.as_deref() else {
             let _ = self.discard_transaction(handle).await;
             return QueryResponse::error("verified create requires a configured node identity");

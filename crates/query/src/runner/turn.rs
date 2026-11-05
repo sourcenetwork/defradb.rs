@@ -211,10 +211,17 @@ where
         delegation: Option<DelegatedAuthority>,
     ) -> std::result::Result<Turned, TransactionError> {
         let txn_ctx = turn.context()?;
+        let require_authority = request.context.transactional_authority_required();
         // The transaction's own provider, so its uncommitted schemas are visible.
-        let txn_provider = txn_ctx
-            .collection_provider()
-            .unwrap_or_else(|| self.collection_provider.clone());
+        let txn_provider = match txn_ctx.collection_provider() {
+            Some(provider) => provider,
+            None if require_authority => {
+                return Ok(Turned::Done(QueryResponse::error(
+                    "transaction-bound schema is unavailable for verified mutation",
+                )))
+            }
+            None => self.collection_provider.clone(),
+        };
 
         // Validate that all referenced collections exist before execution.
         if let Err(error) = validate_parsed_operation(&parsed, txn_provider.as_ref()).await {
@@ -227,19 +234,26 @@ where
             None => (request.identity.clone(), None),
         };
         let nac_identity = nac_actor.clone().unwrap_or_else(Did::wildcard);
-        let nac_check = turn_node_permission(
-            txn_ctx.doc_fetcher().as_ref(),
-            &nac_identity,
-            permission_for_operation(&parsed),
-            require_bound_nac,
-        )
-        .await;
+        let fetcher = txn_ctx.doc_fetcher();
+        let nac_check = if require_authority {
+            fetcher
+                .check_verified_node_permission(&nac_identity, permission_for_operation(&parsed))
+                .await
+        } else {
+            turn_node_permission(
+                fetcher.as_ref(),
+                &nac_identity,
+                permission_for_operation(&parsed),
+                require_bound_nac,
+            )
+            .await
+        };
         match nac_check {
             Ok(Some(false)) => {
                 return Ok(Turned::Done(QueryResponse::success(serde_json::json!({}))))
             }
             Ok(Some(true)) => {}
-            Ok(None) if require_bound_nac => {
+            Ok(None) if require_bound_nac || require_authority => {
                 return Ok(Turned::Done(QueryResponse::error(
                     "transaction-bound node authorization is unavailable",
                 )));
@@ -252,6 +266,39 @@ where
             Err(error) => return Ok(Turned::Done(QueryResponse::error(error.to_string()))),
         }
 
+        let bound_acp = if require_authority {
+            let mut enforcing = false;
+            if let ParsedOperation::Mutation { mutations, .. } = &parsed {
+                for mutation in mutations {
+                    match txn_provider.get_collection(&mutation.collection_name).await {
+                        Ok(Some(collection)) => enforcing |= collection.policy.is_some(),
+                        Ok(None) => {
+                            return Ok(Turned::Done(QueryResponse::error(
+                                "transaction-bound collection is unavailable",
+                            )))
+                        }
+                        Err(error) => {
+                            return Ok(Turned::Done(QueryResponse::error(error.to_string())))
+                        }
+                    }
+                }
+            }
+            if enforcing {
+                match fetcher.transaction_acp(self.acp.clone()).await {
+                    Ok(Some(acp)) => Some(acp),
+                    Ok(None) => {
+                        return Ok(Turned::Done(QueryResponse::error(
+                            "transaction-bound document authorization is unavailable",
+                        )))
+                    }
+                    Err(error) => return Ok(Turned::Done(QueryResponse::error(error.to_string()))),
+                }
+            } else {
+                bound_acp
+            }
+        } else {
+            bound_acp
+        };
         let identity = self.resolve_identity(request.identity);
         let mut warnings: Vec<GqlWarning> = Vec::new();
 

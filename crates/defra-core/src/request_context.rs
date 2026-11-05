@@ -31,6 +31,7 @@ pub struct RequestContext(Arc<Fields>);
 struct Fields {
     identity: Option<String>,
     dac_bypass: bool,
+    require_transactional_authority: bool,
     encryption: Option<EncryptionConfig>,
     signing: Option<SigningConfig>,
     batch_session: Option<String>,
@@ -43,6 +44,15 @@ struct Fields {
 }
 
 impl RequestContext {
+    /// Require each active native authority to be bound to the write transaction.
+    pub fn with_transactional_authority_required(mut self) -> Self {
+        Arc::make_mut(&mut self.0).require_transactional_authority = true;
+        self
+    }
+
+    pub fn transactional_authority_required(&self) -> bool {
+        self.0.require_transactional_authority
+    }
     /// The context a call that arrives without one runs in: the default
     /// anonymous context. Built for tests with the `ambient` feature, it
     /// carries what the test set through the thread-local API instead (see

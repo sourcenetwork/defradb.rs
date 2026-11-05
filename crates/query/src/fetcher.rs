@@ -139,6 +139,16 @@ impl IndexScanResult {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait DocFetcher: MaybeSendSync {
+    /// An active NAC must make its decision in this fetcher's transaction.
+    /// None means that an enforcing provider cannot bind to that transaction.
+    async fn check_verified_node_permission(
+        &self,
+        _identity: &identity::Did,
+        _permission: acp::nac::NodePermission,
+    ) -> Result<Option<bool>> {
+        Ok(None)
+    }
+
     async fn check_node_permission(
         &self,
         _identity: &identity::Did,
