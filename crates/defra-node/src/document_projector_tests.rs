@@ -24,7 +24,7 @@ impl db::DocumentMutationProjector for Projector {
         collection: &str,
         doc_id: &str,
     ) -> storage::corekv::Result<()> {
-        if collection != "ProjectedTool" {
+        if collection != "ProjectedTool" || doc_id.is_empty() {
             return Ok(());
         }
         let system = view.sibling(Namespace::Systemstore);
@@ -142,9 +142,9 @@ impl db::DocumentMutationProjector for RefusingProjector {
         &self,
         view: &db::DocumentMutationView,
         collection: &str,
-        _doc_id: &str,
+        doc_id: &str,
     ) -> storage::corekv::Result<()> {
-        if collection == "ProjectedTool" {
+        if collection == "ProjectedTool" && !doc_id.is_empty() {
             view.sibling(Namespace::Acpstore)
                 .set(b"test-projection", b"staged")
                 .await?;
