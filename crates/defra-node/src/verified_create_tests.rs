@@ -170,6 +170,9 @@ fn verified_update_and_delete_use_exact_actor_and_transaction_state() {
                 node.add_nac_actor_relationship_as(&admin_context, permission.as_str(), did).await.unwrap();
             }
         }
+        for permission in [acp::nac::NodePermission::DacRelationAdd, acp::nac::NodePermission::DacRelationDelete] {
+            node.add_nac_actor_relationship_as(&admin_context, permission.as_str(), &user_did).await.unwrap();
+        }
         let policy = node.add_dac_policy_as(&admin_context, POLICY).await.unwrap();
         node.add_collection(&format!("type VerifiedRecord @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}\ntype VerifiedMarker @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
         let schema = node.get_collection("VerifiedRecord").unwrap().unwrap();
