@@ -116,6 +116,17 @@ resources:
         .unwrap();
         assert_eq!(public.did().unwrap(), user_did);
         assert!(public.verify(&block.to_dag_cbor().unwrap(), &signature.value).unwrap());
+        let txn = node.begin_transaction(false).await.unwrap();
+        let next_marker = query::QueryRequest::new("mutation { create_Marker(input:{name:\"must-rollback\"}) {_docID} }")
+            .with_identity(Some(agent.did().unwrap()));
+        let staged = node.execute_request_in_txn_with_signer(next_marker, &txn, &signer).await;
+        assert!(!staged.has_errors(), "{:?}", staged.errors);
+        let duplicate = node.execute_verified_create_in_txn(replacement(&user_did, input.clone()), &txn, &graph).await;
+        assert!(duplicate.has_errors());
+        assert!(node.commit_transaction(&txn).await.is_err());
+        let markers = node.execute_request(query::QueryRequest::new("{ Marker {name} }")
+            .with_identity(Some(agent.did().unwrap()))).await;
+        assert_eq!(markers.data.unwrap()["Marker"].as_array().unwrap().len(), 1);
         let mine = node.execute_request(query::QueryRequest::new("{ Replacement {_docID} }")
             .with_identity(Some(identity::Did::new(&user_did).unwrap()))).await;
         assert_eq!(mine.data.unwrap()["Replacement"][0]["_docID"], graph.doc_id());
@@ -135,20 +146,22 @@ fn verified_update_and_delete_use_exact_actor_and_transaction_state() {
         let (admin, _) = actor();
         let (user, signing) = actor();
         let (other, other_signing) = actor();
+        let (agent, agent_signing) = actor();
         let admin_did = admin.did().unwrap().to_string();
         let user_did = user.did().unwrap().to_string();
         let other_did = other.did().unwrap().to_string();
+        let agent_did = agent.did().unwrap().to_string();
         let node = Node::builder().enable_signing().with_node_acp_owner(admin_did.clone()).build().await.unwrap();
         let admin_context = defra_core::RequestContext::default().with_identity(Some(admin_did));
         let node_did = node.node_identity_did().unwrap().to_owned();
-        for did in [&node_did, &user_did, &other_did] {
+        for did in [&node_did, &user_did, &other_did, &agent_did] {
             for permission in [acp::nac::NodePermission::DocumentRead, acp::nac::NodePermission::DocumentUpdate,
                 acp::nac::NodePermission::DocumentDelete, acp::nac::NodePermission::CollectionGet] {
                 node.add_nac_actor_relationship_as(&admin_context, permission.as_str(), did).await.unwrap();
             }
         }
         let policy = node.add_dac_policy_as(&admin_context, POLICY).await.unwrap();
-        node.add_collection(&format!("type VerifiedRecord @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
+        node.add_collection(&format!("type VerifiedRecord @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}\ntype VerifiedMarker @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
         let schema = node.get_collection("VerifiedRecord").unwrap().unwrap();
         let crdts = storage::Crdts::default();
         let input = json!({"name":"before"});
@@ -198,6 +211,18 @@ fn verified_update_and_delete_use_exact_actor_and_transaction_state() {
         assert!(!result.has_errors(), "{:?}", result.errors);
         node.commit_transaction(&txn).await.unwrap();
         assert_eq!(node.verified_block_signer_did(&update_cid).await.unwrap(), user_did);
+        let agent_signer = EmbeddedSigner::from_config(agent_signing).unwrap();
+        let txn = node.begin_transaction(false).await.unwrap();
+        let marker = query::QueryRequest::new("mutation { create_VerifiedMarker(input:{name:\"must-rollback\"}) {_docID} }")
+            .with_identity(Some(agent.did().unwrap()));
+        let staged = node.execute_request_in_txn_with_signer(marker, &txn, &agent_signer).await;
+        assert!(!staged.has_errors(), "{:?}", staged.errors);
+        let stale_equal = node.execute_verified_mutation_in_txn(update_request(&user_did), &txn, &update).await;
+        assert!(stale_equal.has_errors());
+        assert!(node.commit_transaction(&txn).await.is_err());
+        let marker = node.execute_request(query::QueryRequest::new("{ VerifiedMarker {_docID} }")
+            .with_identity(Some(agent.did().unwrap()))).await;
+        assert!(marker.data.unwrap()["VerifiedMarker"].as_array().unwrap().is_empty());
         let delete_request = || query::QueryRequest::new("mutation($id:ID!) { delete_VerifiedRecord(docIDs:[$id]) {_docID} }")
             .with_variables(json!({"id":doc_id})).with_identity(Some(user.did().unwrap()));
         let txn = node.begin_transaction(false).await.unwrap();

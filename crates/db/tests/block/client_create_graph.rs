@@ -867,7 +867,7 @@ fn signed_create_evidence_matches_the_modeled_exact_handoff() {
         .iter()
         .map(|(_, _, valid)| {
             json!({"approved":expected, "offered":expected,
-        "claimedActor":"user", "verified":valid, "nativeAuthorized":true, "commit":true})
+        "claimedActor":"user", "verified":valid, "nativeAuthorized":true, "waveConsumed":true, "commit":true})
         })
         .collect::<Vec<_>>();
     let modeled = model("VerifiedCreateHandoff.lean", &json!(inputs));
@@ -877,5 +877,24 @@ fn signed_create_evidence_matches_the_modeled_exact_handoff() {
             check(evidence, &input).is_ok(),
             expected["accepts"].as_bool().unwrap()
         );
+    }
+    let verified = check(serde_json::from_value(wire).unwrap(), &input).unwrap();
+    let (signing, receipt) = verified.signing_config_for_execution();
+    let (_, isolated) = verified.signing_config_for_execution();
+    let signer = signing.remote_signer.as_ref().unwrap();
+    let mut states = vec![receipt.is_complete()];
+    for child in graph.child_blocks() {
+        signer.sign_sync(child, None).unwrap();
+    }
+    states.push(receipt.is_complete());
+    signer.sign_sync(graph.composite_block(), None).unwrap();
+    states.push(receipt.is_complete());
+    assert!(!isolated.is_complete());
+    let inputs = states.iter().map(|consumed| json!({"approved":expected, "offered":expected,
+        "claimedActor":"user", "verified":true, "nativeAuthorized":true,
+        "waveConsumed":consumed, "commit":true})).collect::<Vec<_>>();
+    let modeled = model("VerifiedCreateHandoff.lean", &json!(inputs));
+    for (observed, expected) in states.into_iter().zip(modeled.as_array().unwrap()) {
+        assert_eq!(observed, expected["creates"].as_bool().unwrap());
     }
 }
