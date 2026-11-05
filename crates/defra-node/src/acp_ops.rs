@@ -4,12 +4,24 @@
 use crate::{Error, Result};
 use std::sync::Arc;
 
+use defra_core::RequestContext;
 use identity::Did;
 
 #[async_trait::async_trait]
 pub(crate) trait AcpOps: Send + Sync {
+    #[cfg(feature = "http")]
+    async fn check_doc_access(
+        &self,
+        context: &RequestContext,
+        actor: &Did,
+        permission: acp::DocumentPermission,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> Result<bool>;
     async fn add_dac_actor_relationship(
         &self,
+        context: &RequestContext,
         identity: &str,
         collection: &str,
         doc_id: &str,
@@ -18,6 +30,7 @@ pub(crate) trait AcpOps: Send + Sync {
     ) -> Result<bool>;
     async fn delete_dac_actor_relationship(
         &self,
+        context: &RequestContext,
         identity: &str,
         collection: &str,
         doc_id: &str,
@@ -151,8 +164,34 @@ impl<S: storage::corekv::Store + 'static> DbAcpOps<S> {
 
 #[async_trait::async_trait]
 impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
+    #[cfg(feature = "http")]
+    async fn check_doc_access(
+        &self,
+        context: &RequestContext,
+        actor: &Did,
+        permission: acp::DocumentPermission,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> Result<bool> {
+        self.database
+            .check_node_access_as(context, acp::nac::NodePermission::DacStatus)
+            .await?;
+        acp::bound_to_request(&self.document_acp, context)
+            .check_doc_access(
+                &acp::Identity::Authenticated(actor.clone()),
+                permission,
+                policy_id,
+                resource_name,
+                doc_id,
+            )
+            .await
+            .map_err(Error::Acp)
+    }
+
     async fn add_dac_actor_relationship(
         &self,
+        context: &RequestContext,
         identity: &str,
         collection: &str,
         doc_id: &str,
@@ -169,8 +208,7 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
             .relationship_target(collection, relation, target)
             .await?;
 
-        let added = self
-            .document_acp
+        let added = acp::bound_to_request(&self.document_acp, context)
             .add_relationship(
                 &requestor,
                 resolved.target,
@@ -196,6 +234,7 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
 
     async fn delete_dac_actor_relationship(
         &self,
+        context: &RequestContext,
         identity: &str,
         collection: &str,
         doc_id: &str,
@@ -214,7 +253,7 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
 
         // Local ACP relationships are node-local (matches Go): a revoke is not
         // propagated to peers. Cross-node access control is Vera's role.
-        self.document_acp
+        acp::bound_to_request(&self.document_acp, context)
             .delete_relationship(
                 &requestor,
                 resolved.target,
