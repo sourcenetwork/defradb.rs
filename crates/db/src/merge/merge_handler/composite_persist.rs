@@ -334,6 +334,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .await
             .map_err(|e| MergeError::Database(crate::error::Error::Storage(e)))?;
 
+        datastore
+            .project_document(collection.name(), context.doc_id_str)
+            .await
+            .map_err(|e| MergeError::Database(crate::error::Error::Storage(e)))?;
+
         if context.mode.is_standalone() {
             tracing::info!(
                 doc_id = %context.doc_id_str,

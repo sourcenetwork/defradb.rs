@@ -1,3 +1,4 @@
+use crate::NacManagerApi;
 /// Database struct for DefraDB matching Go's internal/db/db.go.
 ///
 /// The DB struct is the main entry point for DefraDB operations.
@@ -6,7 +7,6 @@
 use crate::error::{Error, Result};
 pub use crate::search::EmbeddingClientConfig;
 use crate::txn::DbTxn;
-use crate::NacManagerApi;
 use cid::Cid;
 use datastore::BasicTxn;
 use events::Bus;
@@ -14,8 +14,8 @@ use identity::{Identity, RawIdentity};
 use kovan_map::HopscotchMap;
 use lens::TransformStore;
 use rapidhash::fast::RandomState;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use storage::corekv::{Key, Store};
 
 pub mod action;
@@ -190,6 +190,7 @@ pub struct DB<S: Store> {
     pub(crate) collections: Arc<crate::collection::epoch::EpochedCollections>,
     /// PQ codes of resident-codes DiskANN indexes, shared by every search.
     pub(crate) vector_codes: Arc<crate::index::vector::engine::diskann::CodeCaches>,
+    document_projector: Option<Arc<dyn datastore::DocumentMutationProjector>>,
     /// Event bus for subscription notifications.
     event_bus: Option<Arc<dyn Bus>>,
     /// Lens transform store for schema migrations.
@@ -283,6 +284,7 @@ impl<S: Store> DB<S> {
                 crate::collection::CollectionMap::default(),
             )),
             vector_codes: Arc::default(),
+            document_projector: None,
             event_bus: None,
             lens_store,
             pending_migrations: HopscotchMap::with_hasher(RandomState::default()),
@@ -354,6 +356,7 @@ impl<S: Store> DB<S> {
                 crate::collection::CollectionMap::default(),
             )),
             vector_codes: Arc::default(),
+            document_projector: None,
             event_bus: None,
             lens_store,
             pending_migrations: HopscotchMap::with_hasher(RandomState::default()),
@@ -667,9 +670,33 @@ impl<S: Store> DB<S> {
 
     /// Wraps a BasicTxn created by a storage-owned retry attempt while keeping
     /// database-scoped caches shared with ordinary transactions.
-    pub(crate) fn new_db_txn(&self, basic_txn: BasicTxn) -> DbTxn<S> {
+    pub(crate) fn new_db_txn(&self, mut basic_txn: BasicTxn) -> DbTxn<S> {
+        if let Some(projector) = &self.document_projector {
+            basic_txn.set_document_projector(Arc::clone(projector));
+        }
         DbTxn::of_database(basic_txn, self.vector_codes.clone())
             .with_shared_collections(Arc::clone(&self.collections))
+    }
+
+    /// Install a trusted host projection before the database serves requests.
+    pub fn set_document_projector(
+        &mut self,
+        projector: Arc<dyn datastore::DocumentMutationProjector>,
+    ) {
+        self.document_projector = Some(projector);
+    }
+
+    /// Reconcile a trusted projection before exposing the node to requests.
+    pub async fn reconcile_document_projector(&self) -> Result<()> {
+        let Some(projector) = &self.document_projector else {
+            return Ok(());
+        };
+        let txn = self.new_txn(false).await?;
+        {
+            let view = txn.datastore()?;
+            projector.reconcile(&view).await.map_err(Error::Storage)?;
+        }
+        txn.commit().await
     }
 
     pub(crate) fn vector_codes(&self) -> &crate::index::vector::engine::diskann::CodeCaches {

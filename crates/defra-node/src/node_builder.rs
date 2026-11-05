@@ -4,13 +4,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[cfg(feature = "p2p")]
-use crate::assemble::check_access_hooks;
-use crate::assemble::{assemble, Extras};
-use crate::config::{NodeConfig, NodeSigning, Persistence, SigningKey, TransportConfig};
 use crate::Node;
 #[cfg(feature = "otel")]
 use crate::TelemetryHandle;
+#[cfg(feature = "p2p")]
+use crate::assemble::check_access_hooks;
+use crate::assemble::{Extras, assemble};
+use crate::config::{NodeConfig, NodeSigning, Persistence, SigningKey, TransportConfig};
 #[cfg(feature = "p2p")]
 use crate::{AccessHooks, P2PConfig};
 #[cfg(feature = "vera")]
@@ -66,6 +66,7 @@ pub struct NodeBuilder {
     telemetry_handle: Option<TelemetryHandle>,
     crdts: Vec<crdt::Registration>,
     txn_ownership: db::TxnOwnership,
+    document_projector: Option<Arc<dyn db::DocumentMutationProjector>>,
 }
 
 /// Durability is a separate builder setting, so it is applied over the
@@ -98,6 +99,16 @@ fn with_at_rest_keys(
 }
 
 impl NodeBuilder {
+    /// Install a trusted in-process document projector. It stages its changes
+    /// through the mutation's transaction and cannot be selected over HTTP.
+    pub fn with_document_projector(
+        mut self,
+        projector: Arc<dyn db::DocumentMutationProjector>,
+    ) -> Self {
+        self.document_projector = Some(projector);
+        self
+    }
+
     /// The worker pool the node's data path runs on. Unset, the pool's own
     /// defaults (`workers::Config::default()`).
     pub fn with_workers(mut self, config: workers::Config) -> Self {
@@ -439,6 +450,7 @@ impl NodeBuilder {
             embedding_model: self.embedding_model.take(),
             embedding_api_key: self.embedding_api_key.take(),
             txn_ownership: self.txn_ownership,
+            document_projector: self.document_projector.take(),
             #[cfg(feature = "http")]
             transaction_cleanup,
             #[cfg(feature = "http")]

@@ -27,6 +27,7 @@ pub(crate) struct Extras {
     pub embedding_model: Option<String>,
     pub embedding_api_key: Option<String>,
     pub txn_ownership: db::TxnOwnership,
+    pub document_projector: Option<Arc<dyn db::DocumentMutationProjector>>,
     #[cfg(feature = "http")]
     pub transaction_cleanup: Option<TransactionCleanupConfig>,
     #[cfg(feature = "http")]
@@ -167,6 +168,9 @@ where
     let mut database = db::DB::open_from_arc_with_options(store.clone(), db_options)
         .await
         .map_err(Error::DatabaseOpen)?;
+    if let Some(projector) = extras.document_projector {
+        database.set_document_projector(projector);
+    }
     database.set_event_bus(event_bus.clone());
     if let Some(network) = network.as_ref() {
         database.set_network(network.edge().clone());
@@ -187,6 +191,12 @@ where
     )
     .await?;
     database.set_nac_manager(nac_manager.clone());
+
+    close_on_error(
+        &database,
+        database.reconcile_document_projector().await.map_err(Error::DatabaseOpen),
+    )
+    .await?;
 
     let acp_setup = close_on_error(
         &database,
