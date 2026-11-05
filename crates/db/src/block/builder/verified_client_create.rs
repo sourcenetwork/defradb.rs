@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use crypto::Key as _;
 use defra_core::signing::{RemoteSigner, SigningAuthorization, SigningConfig, SigningKeyType};
 use rapidhash::{HashMapExt, RapidHashMap};
 use schema::CollectionVersion;

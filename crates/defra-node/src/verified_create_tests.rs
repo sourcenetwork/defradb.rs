@@ -101,7 +101,21 @@ resources:
         assert_eq!(row["_docID"], graph.doc_id());
         let cid = row["_version"][0]["cid"].as_str().unwrap().to_owned();
         node.commit_transaction(&txn).await.unwrap();
-        assert_eq!(node.verified_block_signer_did(&cid).await.unwrap(), user_did);
+        assert!(node.verified_block_signer_did(&cid).await.is_err());
+        let (block_bytes, signature_bytes) = node
+            .authorized_signed_block_bytes(&cid, Some(&user_did))
+            .await
+            .unwrap();
+        let mut block = defra_core::block::Block::from_dag_cbor(&block_bytes).unwrap();
+        let signature = defra_core::block::Signature::from_dag_cbor(&signature_bytes).unwrap();
+        assert_eq!(block.signature.take(), Some(signature.generate_cid().unwrap()));
+        let public = crypto::public_key_from_string(
+            crypto::KeyType::Ed25519,
+            &user_config.public_key_hex,
+        )
+        .unwrap();
+        assert_eq!(public.did().unwrap(), user_did);
+        assert!(public.verify(&block.to_dag_cbor().unwrap(), &signature.value).unwrap());
         let mine = node.execute_request(query::QueryRequest::new("{ Replacement {_docID} }")
             .with_identity(Some(identity::Did::new(&user_did).unwrap()))).await;
         assert_eq!(mine.data.unwrap()["Replacement"][0]["_docID"], graph.doc_id());
