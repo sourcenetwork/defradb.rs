@@ -210,7 +210,8 @@ fn resolve_embedded_config(options: &NodeInitOptions) -> Result<defra_node::Node
     };
 
     Ok(defra_node::NodeConfig {
-        peer_keyring: None,
+        // SAFETY: the caller promised a readable p2p_private_key.
+        peer_keyring: unsafe { crate::shinzo::peer_keyring(options)? },
         transport: defra_node::TransportConfig::None,
         edge: None,
         signing,

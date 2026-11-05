@@ -4898,6 +4898,7 @@ dependencies = [
  "futures-lite",
  "hex",
  "identity",
+ "keyring 0.5.0",
  "kovan",
  "kovan-channel",
  "kovan-map",
