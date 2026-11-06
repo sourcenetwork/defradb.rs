@@ -221,3 +221,6 @@ lean_lib VerifiedMutationHandoff where
 
 @[default_target]
 lean_lib AdministrativeRelationship where
+
+@[default_target]
+lean_lib CommitConflictReceipt where

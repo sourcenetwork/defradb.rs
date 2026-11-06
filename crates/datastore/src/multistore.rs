@@ -23,6 +23,11 @@ pub trait DocumentMutationProjector: storage::corekv::MaybeSendSync {
     async fn reconcile(&self, view: &NamespaceView) -> Result<()>;
 
     async fn project(&self, view: &NamespaceView, collection: &str, doc_id: &str) -> Result<()>;
+
+    /// Reconcile dependent sources after a trusted host source change.
+    async fn source_changed(&self, _view: &NamespaceView) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// One transaction shared by its namespace views.
@@ -285,6 +290,14 @@ pub struct NamespaceView {
 impl NamespaceView {
     pub fn has_document_projector(&self) -> bool {
         self.txn.projector.is_some()
+    }
+
+    /// Reconcile trusted host sources on this view's transaction.
+    pub async fn project_host_source_change(&self) -> Result<()> {
+        if let Some(projector) = &self.txn.projector {
+            projector.source_changed(self).await?;
+        }
+        Ok(())
     }
 
     /// Run the trusted document projector inside this view's transaction.
@@ -573,8 +586,8 @@ impl Iterator for NamespacedIterator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use storage::RegolithStore;
     use storage::corekv::Store;
+    use storage::RegolithStore;
 
     #[test]
     fn test_shared_txn_namespace_isolation() {

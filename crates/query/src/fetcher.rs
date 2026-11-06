@@ -196,6 +196,13 @@ pub trait DocFetcher: MaybeSendSync {
         Ok(None)
     }
 
+    /// Reconcile a trusted host source change on the same transaction view.
+    async fn project_host_source_change(&self) -> Result<()> {
+        Err(crate::error::QueryError::execution(
+            "transaction-bound host projection is unavailable",
+        ))
+    }
+
     /// An authorization provider actually bound to this fetcher's transaction.
     /// A capability flag or an unbound provider cannot certify a row snapshot.
     async fn transaction_acp(

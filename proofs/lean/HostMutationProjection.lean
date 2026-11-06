@@ -99,4 +99,35 @@ theorem disabled_source_is_removed (s : State) (route : Route) (a : Admission)
     (publish s route a document affected desired).sourced key = false := by
   simp [publish, authorized, admin, bound, registered, projected, committed, selected, disabled]
 
+/-- The embedded host capability is unavailable to HTTP and GraphQL callers.
+The real transaction owner remains the routing principal; the configured Node
+is checked separately against native source-administration authority on that
+same writable transaction. The capability changes source edges only. -/
+structure HostSourceAdmission where
+  trustedHost : Bool
+  ownerMatches : Bool
+  fresh : Bool
+  writable : Bool
+  configuredNode : Bool
+  nodeAdmin : Bool
+  relationAuthorized : Bool
+  sameTransaction : Bool
+  deriving Lean.FromJson, Lean.ToJson
+
+def hostSourceAllowed (a : HostSourceAdmission) : Bool :=
+  a.trustedHost && a.ownerMatches && a.fresh && a.writable && a.configuredNode &&
+    a.nodeAdmin && a.relationAuthorized && a.sameTransaction
+
+theorem untrusted_host_source_denied (a : HostSourceAdmission)
+    (h : a.trustedHost = false) : hostSourceAllowed a = false := by
+  simp [hostSourceAllowed, h]
+
+theorem wrong_transaction_owner_denied (a : HostSourceAdmission)
+    (h : a.ownerMatches = false) : hostSourceAllowed a = false := by
+  simp [hostSourceAllowed, h]
+
+theorem host_source_requires_native_admin (a : HostSourceAdmission)
+    (h : a.nodeAdmin = false) : hostSourceAllowed a = false := by
+  simp [hostSourceAllowed, h]
+
 end HostMutationProjection

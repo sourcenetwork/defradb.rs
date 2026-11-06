@@ -511,6 +511,9 @@ fn http_client_signs_a_single_document_update() {
         http.post(format!("http://{address}/api/v0/tx/{}", transactions[0])).bearer_auth(&token).send().await.unwrap().error_for_status().unwrap();
         let conflict = http.post(format!("http://{address}/api/v0/tx/{}", transactions[1])).bearer_auth(&token).send().await.unwrap();
         assert_eq!(conflict.status().as_u16(), 409);
+        let receipt: Value = conflict.json().await.unwrap();
+        assert_eq!(receipt["error"], query::executor::TXN_CONFLICT_MESSAGE);
+        assert_eq!(receipt["outcome"], "transaction_conflict_aborted");
         let current = node.execute_request(query::QueryRequest::new("{ Settings { name extra } }").with_identity(Some(identity.did().unwrap()))).await;
         assert!(!current.has_errors(), "{:?}", current.errors);
         assert_eq!(current.data.unwrap()["Settings"][0], json!({"name":"winner", "extra":"first"}));

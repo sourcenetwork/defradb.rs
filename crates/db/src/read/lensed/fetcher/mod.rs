@@ -219,9 +219,16 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         relation: &str,
         delete: bool,
     ) -> acp::Result<bool> {
-        let txn = &*self.shared_txn().map_err(|error| acp::Error::Storage(error.to_string()))?;
-        let view = txn.acpstore().map_err(|error| acp::Error::Storage(error.to_string()))?;
-        provider.change_node_admin_relationship(view, actor, target, policy_id, resource, doc_id, relation, delete)
+        let txn = &*self
+            .shared_txn()
+            .map_err(|error| acp::Error::Storage(error.to_string()))?;
+        let view = txn
+            .acpstore()
+            .map_err(|error| acp::Error::Storage(error.to_string()))?;
+        provider
+            .change_node_admin_relationship(
+                view, actor, target, policy_id, resource, doc_id, relation, delete,
+            )
             .await
     }
 
@@ -312,6 +319,16 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         )
         .await
         .map_err(|error| query::QueryError::execution(error.to_string()))
+    }
+
+    async fn project_host_source_change(&self) -> query::error::Result<()> {
+        let txn = &*self.shared_txn()?;
+        let view = txn
+            .datastore()
+            .map_err(|error| query::QueryError::execution(error.to_string()))?;
+        view.project_host_source_change()
+            .await
+            .map_err(|error| query::QueryError::execution(error.to_string()))
     }
 
     async fn transaction_acp(

@@ -283,3 +283,238 @@ fn cyclic_source_graph_does_not_grant_an_unrelated_actor() {
     })
     .unwrap();
 }
+
+#[test]
+fn trusted_host_source_change_keeps_user_transaction_owner() {
+    workers::block_on(async {
+        let node = Node::builder()
+            .enable_signing()
+            .with_node_acp_owner(OWNER)
+            .build()
+            .await
+            .unwrap();
+        let node_did = node.node_identity_did().unwrap().to_owned();
+        let owner = context(OWNER);
+        let user = context(ACTOR);
+        let (handle, tx) = begin(&node, &user).await;
+        let root = edge(None, "source", "plugin:installed", false);
+        assert!(node
+            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .await
+            .is_err());
+        node.runner().discard_txn_as(&user, &handle).await.unwrap();
+        node.add_nac_actor_relationship_as(&owner, "admin", &node_did)
+            .await
+            .unwrap();
+        let (handle, tx) = begin(&node, &user).await;
+        let wrong_owner = context(OTHER).with_txn(Some(handle.as_str().parse().unwrap()));
+        assert!(node
+            .change_host_nac_source_permission_in_txn(&wrong_owner, &root)
+            .await
+            .is_err());
+        for item in [
+            root.clone(),
+            edge(Some("plugin:installed"), "actor", OTHER, false),
+        ] {
+            assert!(node
+                .change_host_nac_source_permission_in_txn(&tx, &item)
+                .await
+                .unwrap());
+        }
+        assert!(!allowed(&node, OTHER).await);
+        node.runner().discard_txn_as(&user, &handle).await.unwrap();
+        assert!(!allowed(&node, OTHER).await);
+        let (handle, tx) = begin(&node, &user).await;
+        for item in [root, edge(Some("plugin:installed"), "actor", OTHER, false)] {
+            assert!(node
+                .change_host_nac_source_permission_in_txn(&tx, &item)
+                .await
+                .unwrap());
+        }
+        node.runner().commit_txn_as(&user, &handle).await.unwrap();
+        assert!(allowed(&node, OTHER).await);
+        node.shutdown().await.unwrap();
+    })
+    .unwrap();
+}
+
+struct HostSourceObserver {
+    fail: std::sync::atomic::AtomicBool,
+}
+
+#[async_trait::async_trait]
+impl db::DocumentMutationProjector for HostSourceObserver {
+    async fn reconcile(&self, _: &db::DocumentMutationContext<'_>) -> storage::corekv::Result<()> {
+        Ok(())
+    }
+
+    async fn project(
+        &self,
+        _: &db::DocumentMutationContext<'_>,
+        _: &str,
+        _: &str,
+    ) -> storage::corekv::Result<()> {
+        Ok(())
+    }
+
+    async fn source_changed(
+        &self,
+        _: &db::DocumentMutationContext<'_>,
+    ) -> storage::corekv::Result<()> {
+        if self.fail.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(storage::corekv::Error::Other(
+                "host source projection refused".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn failed_host_source_projection_rolls_back_its_source_statement() {
+    workers::block_on(async {
+        let observer = std::sync::Arc::new(HostSourceObserver {
+            fail: std::sync::atomic::AtomicBool::new(true),
+        });
+        let node = Node::builder()
+            .enable_signing()
+            .with_node_acp_enabled()
+            .with_document_projector(observer.clone())
+            .build()
+            .await
+            .unwrap();
+        let user = context(ACTOR);
+        let (handle, tx) = begin(&node, &user).await;
+        let root = edge(None, "source", "plugin:failed", false);
+        assert!(node
+            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .await
+            .is_err());
+        node.runner().commit_txn_as(&user, &handle).await.unwrap();
+        observer
+            .fail
+            .store(false, std::sync::atomic::Ordering::Release);
+        let (handle, tx) = begin(&node, &user).await;
+        node.change_host_nac_source_permission_in_txn(
+            &tx,
+            &edge(Some("plugin:failed"), "actor", OTHER, false),
+        )
+        .await
+        .unwrap();
+        node.runner().commit_txn_as(&user, &handle).await.unwrap();
+        assert!(!allowed(&node, OTHER).await);
+        let (handle, tx) = begin(&node, &user).await;
+        node.change_host_nac_source_permission_in_txn(&tx, &root)
+            .await
+            .unwrap();
+        node.runner().commit_txn_as(&user, &handle).await.unwrap();
+        assert!(allowed(&node, OTHER).await);
+        node.shutdown().await.unwrap();
+    })
+    .unwrap();
+}
+
+#[test]
+#[ignore = "Requires Lean; run in the Lean Conformance job"]
+fn host_source_admission_matches_executed_lean_model() {
+    use serde_json::json;
+    use std::io::Write as _;
+    use std::process::{Command, Stdio};
+
+    let observations = workers::block_on(async {
+        let node = Node::builder()
+            .enable_signing()
+            .with_node_acp_owner(OWNER)
+            .build()
+            .await
+            .unwrap();
+        let node_did = Did::new(node.node_identity_did().unwrap()).unwrap();
+        let owner = context(ACTOR);
+        let admin = context(OWNER);
+        let mut observations = Vec::new();
+        for (node_is_granted, readonly, different_owner, expired, omit_transaction) in [
+            (false, false, false, false, false),
+            (true, false, false, false, false),
+            (true, false, true, false, false),
+            (true, true, false, false, false),
+            (true, false, false, true, false),
+            (true, false, false, false, true),
+        ] {
+            if node_is_granted {
+                node.add_nac_actor_relationship_as(&admin, "admin", node_did.as_str())
+                    .await
+                    .unwrap();
+            }
+            let handle = node.runner().begin_txn_as(&owner, readonly).await.unwrap();
+            let actual_actor = if different_owner { OTHER } else { ACTOR };
+            let mut tx = context(actual_actor)
+                .with_authorization_expiration(expired.then_some(0));
+            if !omit_transaction {
+                tx = tx.with_txn(Some(handle.as_str().parse().unwrap()));
+            }
+            let inputs = json!({
+                "trustedHost": true,
+                "ownerMatches": tx.identity() == owner.identity(),
+                "fresh": tx.authorization_valid_now(),
+                "writable": !readonly,
+                "configuredNode": node.node_identity_did() == Some(node_did.as_str()),
+                "nodeAdmin": node.nac_manager().is_admin(&node_did).await.unwrap(),
+                "relationAuthorized": node.nac_manager().check_permission(&node_did, acp::NodePermission::NacRelationAdd).await.unwrap(),
+                "sameTransaction": tx.txn().is_some_and(|id| id.to_string() == handle.as_str()),
+            });
+            let accepted = node
+                .change_host_nac_source_permission_in_txn(
+                    &tx,
+                    &edge(None, "source", "test:modeled", false),
+                )
+                .await
+                .is_ok();
+            observations.push((inputs, accepted));
+            node.runner().discard_txn_as(&owner, &handle).await.unwrap();
+        }
+        node.shutdown().await.unwrap();
+        let no_identity = Node::builder().with_node_acp_owner(OWNER).build().await.unwrap();
+        let (handle, tx) = begin(&no_identity, &owner).await;
+        let inputs = json!({
+            "trustedHost": true,
+            "ownerMatches": tx.identity() == owner.identity(),
+            "fresh": tx.authorization_valid_now(),
+            "writable": true,
+            "configuredNode": no_identity.node_identity_did().is_some(),
+            "nodeAdmin": false,
+            "relationAuthorized": false,
+            "sameTransaction": tx.txn().is_some_and(|id| id.to_string() == handle.as_str()),
+        });
+        let accepted = no_identity
+            .change_host_nac_source_permission_in_txn(
+                &tx,
+                &edge(None, "source", "test:modeled", false),
+            )
+            .await
+            .is_ok();
+        observations.push((inputs, accepted));
+        no_identity.runner().discard_txn_as(&owner, &handle).await.unwrap();
+        no_identity.shutdown().await.unwrap();
+        observations
+    })
+    .unwrap();
+    let inputs: Vec<_> = observations
+        .iter()
+        .map(|(input, _)| input.clone())
+        .collect();
+    let mut lean = Command::new("lake")
+        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../proofs/lean"))
+        .args(["env", "lean", "--run", "HostSourceConformance.lean"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writeln!(lean.stdin.take().unwrap(), "{}", json!(inputs)).unwrap();
+    let output = lean.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let model: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(model.as_array().unwrap().len(), observations.len());
+    for (modeled, (_, actual)) in model.as_array().unwrap().iter().zip(observations) {
+        assert_eq!(modeled["allowed"].as_bool().unwrap(), actual, "{modeled}");
+    }
+}

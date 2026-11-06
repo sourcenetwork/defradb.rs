@@ -31,6 +31,30 @@ pub fn source_permission_job(
         .ok_or_else(|| TransactionError::operation("authenticated identity required"))?;
     let requestor =
         Did::new(requestor).map_err(|error| TransactionError::operation(error.to_string()))?;
+    source_permission_job_for(actor_context, requestor, edge, false)
+}
+
+/// Prepare a source-only host transaction turn. The caller must be the trusted
+/// embedded host; the owner context still controls transaction admission.
+pub fn host_source_permission_job(
+    owner_context: RequestContext,
+    node: Did,
+    edge: SourcePermission,
+) -> Result<TxnJob<Result<bool, TransactionError>>, TransactionError> {
+    if !owner_context.authorization_valid_now() || owner_context.identity().is_none() {
+        return Err(TransactionError::operation(
+            "fresh authenticated transaction owner required",
+        ));
+    }
+    source_permission_job_for(owner_context, node, edge, true)
+}
+
+fn source_permission_job_for(
+    actor_context: RequestContext,
+    requestor: Did,
+    edge: SourcePermission,
+    host: bool,
+) -> Result<TxnJob<Result<bool, TransactionError>>, TransactionError> {
     let permission = acp::NodePermission::parse(&edge.permission)
         .ok_or_else(|| TransactionError::operation("invalid node permission"))?;
     Ok(txn_job(move |turn| {
@@ -43,7 +67,8 @@ pub fn source_permission_job(
             turn.begin_statement()?;
             let result = async {
                 let ctx = turn.context()?;
-                ctx.doc_fetcher()
+                let fetcher = ctx.doc_fetcher();
+                let changed = fetcher
                     .change_source_node_permission(
                         &requestor,
                         permission,
@@ -58,7 +83,14 @@ pub fn source_permission_job(
                         TransactionError::not_supported(
                             "transaction-bound node authorization is unavailable",
                         )
-                    })
+                    })?;
+                if host && changed {
+                    fetcher
+                        .project_host_source_change()
+                        .await
+                        .map_err(|error| TransactionError::operation(error.to_string()))?;
+                }
+                Ok(changed)
             }
             .await;
             turn.end_statement(result.is_ok())?;

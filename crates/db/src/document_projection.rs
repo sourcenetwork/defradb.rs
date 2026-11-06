@@ -82,6 +82,11 @@ impl<S: Store + 'static> AccessChangeNotifier for DatabaseAccessNotifier<S> {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait DocumentMutationProjector: MaybeSendSync {
     async fn reconcile(&self, context: &DocumentMutationContext<'_>) -> Result<()>;
+    /// The host changed a source edge using the same transaction; no document
+    /// writer or transport can manufacture this notification.
+    async fn source_changed(&self, _context: &DocumentMutationContext<'_>) -> Result<()> {
+        Ok(())
+    }
     async fn project(
         &self,
         context: &DocumentMutationContext<'_>,
@@ -116,6 +121,17 @@ impl BoundProjection {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl datastore::DocumentMutationProjector for BoundProjection {
+    async fn source_changed(&self, view: &NamespaceView) -> Result<()> {
+        self.projector
+            .source_changed(&DocumentMutationContext {
+                view,
+                document_acp: self.document_acp.as_ref(),
+                node_did: &self.node_did,
+                notifier: self.notifier.as_ref(),
+            })
+            .await
+    }
+
     async fn reconcile(&self, view: &NamespaceView) -> Result<()> {
         self.projector
             .reconcile(&DocumentMutationContext {
