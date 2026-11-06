@@ -10,6 +10,9 @@ lean_lib LocalFetchPermit where
 lean_lib HostMutationProjection where
 
 @[default_target]
+lean_lib ProjectionAccessNotification where
+
+@[default_target]
 lean_lib EmbeddedSigner where
 
 @[default_target]
