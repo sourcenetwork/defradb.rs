@@ -77,6 +77,23 @@ impl DocumentAcpOperations for HttpDocumentAcp {
             .map_err(|error| error.to_string())
     }
 
+    async fn list_doc_relationships(
+        &self,
+        requestor: &Did,
+        collection: &str,
+        doc_id: &str,
+    ) -> Result<Vec<acp::DocumentRelationship>, String> {
+        let context = self
+            .context
+            .as_ref()
+            .filter(|context| context.identity() == Some(requestor.as_str()))
+            .ok_or_else(|| "request identity mismatch".to_owned())?;
+        self.ops
+            .list_dac_relationships(context, requestor.as_str(), collection, doc_id)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
     async fn delete_doc_relationship(
         &self,
         requestor: &Did,

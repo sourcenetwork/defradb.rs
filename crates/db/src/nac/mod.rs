@@ -136,6 +136,18 @@ pub trait NacManagerApi: defra_core::thread_bounds::MaybeSendSync {
         permission: NodePermission,
     ) -> Result<bool>;
     async fn info(&self) -> NacInfo;
+    /// Every way `subject` holds each node permission, for a requester who
+    /// is `subject`, an admin, or holds `NacStatus`. A refusal is
+    /// [`Error::PermissionDenied`].
+    async fn explain_subject(
+        &self,
+        _requestor: &Did,
+        _subject: &Did,
+    ) -> Result<Vec<acp::nac::PermissionProvenance>> {
+        Err(Error::Other(
+            "node permission explanations are unsupported by this provider".into(),
+        ))
+    }
 }
 
 /// NAC manager that provides config-aware NAC operations.
@@ -622,6 +634,46 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
     }
 
     /// Grant a specific permission to an identity.
+    /// Every way `subject` holds each node permission, read in one snapshot.
+    pub async fn explain_subject(
+        &self,
+        requestor: &Did,
+        subject: &Did,
+    ) -> Result<Vec<acp::nac::PermissionProvenance>> {
+        let refused = |error: acp::error::Error| match error {
+            acp::error::Error::NotOwner { .. } => Error::PermissionDenied,
+            other => Error::Acp(other.to_string()),
+        };
+        if let Some(scope) = self
+            .nac
+            .begin_scope(true)
+            .await
+            .map_err(|error| Error::Acp(error.to_string()))?
+        {
+            let scoped = self.scoped(scope.store());
+            scoped
+                .nac
+                .load()
+                .await
+                .map_err(|error| Error::Acp(error.to_string()))?;
+            let result = scoped
+                .nac
+                .explain_subject(requestor, subject)
+                .await
+                .map_err(refused)?;
+            drop(scoped);
+            scope
+                .commit()
+                .await
+                .map_err(|error| Error::Acp(error.to_string()))?;
+            return Ok(result);
+        }
+        self.nac
+            .explain_subject(requestor, subject)
+            .await
+            .map_err(refused)
+    }
+
     pub async fn add_permission_grant(
         &self,
         requestor: &Did,

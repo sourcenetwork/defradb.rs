@@ -128,6 +128,28 @@ pub async fn get_status(
     }))
 }
 
+/// Query for GET /api/v0/acp/node/explain.
+#[derive(Debug, serde::Deserialize)]
+pub struct ExplainQuery {
+    pub subject: String,
+}
+
+/// GET /api/v0/acp/node/explain?subject=<did>: every way the subject holds
+/// each node permission. The core allows the subject itself, an admin, or a
+/// caller holding `NacStatus`, as the embedded `Node::explain_nac_subject_as`.
+pub async fn explain_subject(
+    State(state): State<AppState>,
+    identity: ExtractIdentity,
+    axum::extract::Query(query): axum::extract::Query<ExplainQuery>,
+) -> Result<Json<Vec<acp::nac::PermissionProvenance>>, HttpError> {
+    Ok(Json(
+        state
+            .executor
+            .explain_nac_subject_as(&identity.context(), &query.subject)
+            .await?,
+    ))
+}
+
 /// POST /api/v0/acp/node/relationship. Go's
 /// `acpHandler.AddNACActorRelationship`.
 pub async fn go_add_relationship(

@@ -98,19 +98,6 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
             .load()
             .await
             .map_err(|error| super::error::Error::Other(error.to_string()))?;
-        let operation = if change.delete {
-            NodePermission::NacRelationDelete
-        } else {
-            NodePermission::NacRelationAdd
-        };
-        if scoped.status().await != NacStatus::Enabled
-            || !scoped
-                .check_permission(requestor, operation)
-                .await
-                .map_err(|error| super::error::Error::Other(error.to_string()))?
-        {
-            return Err(super::error::Error::PermissionDenied);
-        }
         scoped
             .change_source_permission(
                 requestor,
@@ -197,5 +184,12 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
     }
     async fn info(&self) -> NacInfo {
         NacManager::info(self).await
+    }
+    async fn explain_subject(
+        &self,
+        requestor: &Did,
+        subject: &Did,
+    ) -> Result<Vec<acp::nac::PermissionProvenance>> {
+        NacManager::explain_subject(self, requestor, subject).await
     }
 }

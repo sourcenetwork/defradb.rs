@@ -3,8 +3,10 @@ use std::fmt::Write as _;
 use identity::Did;
 use zanzibar::{Relationship, Subject, ZanzibarStore};
 
+use super::operations::ChangeSubject;
 use super::{NacStatus, NodeACP, NODE_OBJECT_ID};
 use crate::error::{Error, Result};
+use crate::nac::delegation::NacRelation;
 use crate::nac::permission::NodePermission;
 use crate::nac::policy::{NODE_POLICY_ID, NODE_RESOURCE_NAME};
 
@@ -85,7 +87,8 @@ impl NodeACP<crate::zanzibar::store::TransactionZanzibarStore> {
     }
 
     /// Change one independent edge in the node permission's source graph.
-    /// The transaction owner commits or discards the relationship.
+    /// The transaction owner commits or discards the relationship. The edge
+    /// passes the same authority gate as a direct grant of its permission.
     pub async fn change_source_permission(
         &self,
         requestor: &Did,
@@ -95,12 +98,26 @@ impl NodeACP<crate::zanzibar::store::TransactionZanzibarStore> {
         subject: &str,
         delete: bool,
     ) -> Result<bool> {
-        if self.status().await != NacStatus::Enabled || !self.is_admin(requestor).await? {
+        if self.status().await != NacStatus::Enabled {
             return Err(Error::NotOwner {
                 operation: "change source permission".into(),
             });
         }
         let relation = source_relationship(permission, parent_source, subject_kind, subject)?;
+        let wildcard = Did::wildcard();
+        let subject = match &relation.subject {
+            Subject::Entity(actor) => ChangeSubject::Actor(actor),
+            Subject::EntitySet { .. } => ChangeSubject::Source,
+            _ => ChangeSubject::Actor(&wildcard),
+        };
+        self.authorize_change(
+            requestor,
+            NacRelation::Permission(permission),
+            subject,
+            delete,
+            "change source permission",
+        )
+        .await?;
         let exists = self
             .store
             .has_relationship(

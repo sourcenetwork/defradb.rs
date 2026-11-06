@@ -724,6 +724,18 @@ pub trait QueryExecutor: MaybeSendSync {
         ))
     }
 
+    /// [`TransactionRegistry::explain_nac_subject_as`](crate::txn::TransactionRegistry::explain_nac_subject_as).
+    async fn explain_nac_subject_as(
+        &self,
+        context: &RequestContext,
+        subject: &str,
+    ) -> std::result::Result<Vec<acp::nac::PermissionProvenance>, TransactionError> {
+        let _ = (context, subject);
+        Err(TransactionError::not_supported(
+            "node access control is not supported by this executor",
+        ))
+    }
+
     /// [`TransactionRegistry::disable_nac_as`](crate::txn::TransactionRegistry::disable_nac_as).
     async fn disable_nac_as(
         &self,

@@ -56,6 +56,25 @@ impl Node {
         .await
     }
 
+    /// Every way `subject` (a DID) holds each node permission, for a caller
+    /// who is `subject`, an admin, or holds `NacStatus`: owner, admin, a
+    /// direct grant, or the shortest chain of sources.
+    pub async fn explain_nac_subject_as(
+        &self,
+        context: &RequestContext,
+        subject: &str,
+    ) -> Result<Vec<acp::nac::PermissionProvenance>> {
+        let runner = Arc::clone(self.runner());
+        let (context, subject) = (context.clone(), subject.to_owned());
+        self.on_pool(move || async move {
+            runner
+                .explain_nac_subject_as(&context, &subject)
+                .await
+                .map_err(transaction_error)
+        })
+        .await
+    }
+
     /// Turn NAC off, keeping its relationships. Go's `DisableNAC`.
     pub async fn disable_nac_as(&self, context: &RequestContext) -> Result<()> {
         let runner = Arc::clone(self.runner());

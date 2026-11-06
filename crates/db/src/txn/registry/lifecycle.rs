@@ -329,6 +329,17 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .map_err(|error| TransactionError::operation(error.to_string()))
     }
 
+    async fn explain_nac_subject_as(
+        &self,
+        context: &RequestContext,
+        subject: &str,
+    ) -> std::result::Result<Vec<acp::nac::PermissionProvenance>, TransactionError> {
+        self.db
+            .explain_nac_subject_as(context, subject)
+            .await
+            .map_err(|error| TransactionError::operation(error.to_string()))
+    }
+
     async fn disable_nac_as(
         &self,
         context: &RequestContext,

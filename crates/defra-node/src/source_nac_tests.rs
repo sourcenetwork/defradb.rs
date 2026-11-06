@@ -496,8 +496,10 @@ fn host_source_admission_matches_executed_lean_model() {
                 "fresh": tx.authorization_valid_now(),
                 "writable": !readonly,
                 "configuredNode": node.node_identity_did() == Some(node_did.as_str()),
-                "actorAdmin": node.nac_manager().is_admin(&Did::new(actual_actor).unwrap()).await.unwrap(),
-                "relationAuthorized": node.nac_manager().check_permission(&Did::new(actual_actor).unwrap(), acp::NodePermission::NacRelationAdd).await.unwrap(),
+                // The edge carries PERMISSION, outside the admin class, and names a source.
+                "actorAuthorized": node.nac_manager().is_admin(&Did::new(actual_actor).unwrap()).await.unwrap()
+                    || (node.nac_manager().check_permission(&Did::new(actual_actor).unwrap(), acp::NodePermission::NacRelationAdd).await.unwrap()
+                        && allowed(&node, actual_actor).await),
                 "sameTransaction": tx.txn().is_some_and(|id| id.to_string() == handle.as_str()),
                 "edgeChanged": true,
             });
@@ -520,8 +522,7 @@ fn host_source_admission_matches_executed_lean_model() {
             "fresh": tx.authorization_valid_now(),
             "writable": true,
             "configuredNode": no_identity.node_identity_did().is_some(),
-            "actorAdmin": false,
-            "relationAuthorized": false,
+            "actorAuthorized": false,
             "sameTransaction": tx.txn().is_some_and(|id| id.to_string() == handle.as_str()),
             "edgeChanged": true,
         });

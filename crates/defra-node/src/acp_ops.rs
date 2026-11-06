@@ -65,6 +65,17 @@ pub(crate) trait AcpOps: Send + Sync {
         relation: &str,
         target: &str,
     ) -> Result<bool>;
+    /// Every relationship on a document, for its owner or a requester holding
+    /// a relation that manages one on that resource.
+    async fn list_dac_relationships(
+        &self,
+        _context: &RequestContext,
+        _identity: &str,
+        _collection: &str,
+        _doc_id: &str,
+    ) -> Result<Vec<acp::DocumentRelationship>> {
+        Err(Error::Acp(acp::Error::UnsupportedRelationshipListing))
+    }
 }
 
 pub(crate) struct DbAcpOps<S: storage::corekv::Store + 'static> {
@@ -214,6 +225,32 @@ impl<S: storage::corekv::Store + 'static> DbAcpOps<S> {
 
 #[async_trait::async_trait]
 impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
+    async fn list_dac_relationships(
+        &self,
+        context: &RequestContext,
+        identity: &str,
+        collection: &str,
+        doc_id: &str,
+    ) -> Result<Vec<acp::DocumentRelationship>> {
+        let requestor = Did::new(identity).map_err(Error::InvalidIdentityDid)?;
+        let policy = self
+            .database
+            .get_collection(collection)
+            .map_err(|error| Error::CollectionLookup {
+                collection: collection.to_owned(),
+                source: error,
+            })?
+            .ok_or_else(|| Error::CollectionMissing(collection.to_owned()))?
+            .schema()
+            .policy
+            .clone()
+            .ok_or(Error::CollectionWithoutPolicy)?;
+        acp::bound_to_request(&self.document_acp, context)
+            .list_relationships(&requestor, &policy.id, &policy.resource_name, doc_id)
+            .await
+            .map_err(Error::Acp)
+    }
+
     async fn change_nac_source_for_in_txn(
         &self,
         transaction_context: &RequestContext,

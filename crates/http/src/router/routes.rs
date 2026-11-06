@@ -194,7 +194,7 @@ pub(crate) fn create_router_with_state_and_body_limits(
         )
         .route(
             "/document/relationships",
-            post(handlers::acp::add_doc_relationships),
+            post(handlers::acp::add_doc_relationships).get(handlers::acp::list_doc_relationships),
         )
         .route(
             "/document/relationship",
@@ -234,6 +234,7 @@ pub(crate) fn create_router_with_state_and_body_limits(
     //   POST /acp/node/re-enable
     let acp_node_routes = Router::new()
         .route("/status", get(handlers::nac::get_status))
+        .route("/explain", get(handlers::nac::explain_subject))
         .route("/enable", post(handlers::nac::enable))
         .route("/relationship", post(handlers::nac::go_add_relationship))
         .route("/relationships", post(handlers::nac::go_add_relationships))

@@ -7,7 +7,7 @@ use zanzibar::store::ZanzibarStore;
 use zanzibar::types::{Relationship, Subject};
 
 use super::{ZanzibarDocumentACP, OWNER_RELATION};
-use crate::dac::DocumentACP;
+use crate::dac::{DocumentACP, DocumentRelationship};
 use crate::error::{Error, Result};
 use crate::identity::Identity;
 use crate::permission::DocumentPermission;
@@ -250,6 +250,72 @@ impl<S: ZanzibarStore + ?Sized + 'static> DocumentACP for ZanzibarDocumentACP<S>
         }
 
         Ok(granted)
+    }
+
+    async fn list_relationships(
+        &self,
+        requestor: &Did,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> Result<Vec<DocumentRelationship>> {
+        if let Some(scope) = self.store.begin_scope(true).await? {
+            let scoped = self.scoped(scope.store());
+            let result = scoped
+                .list_relationships(requestor, policy_id, resource_name, doc_id)
+                .await?;
+            drop(scoped);
+            scope.commit().await?;
+            return Ok(result);
+        }
+        let refused = || Error::NotManager {
+            operation: "list relationships".into(),
+        };
+        if requestor.is_wildcard() {
+            return Err(refused());
+        }
+        let policy = self
+            .store
+            .get_policy(policy_id)
+            .await?
+            .unwrap_or_else(|| Self::create_default_policy(policy_id, resource_name));
+        let resource = policy
+            .get_resource(resource_name)
+            .ok_or_else(|| Error::ResourceNotFound(resource_name.to_owned()))?;
+        if !self
+            .is_owner(requestor, policy_id, resource_name, doc_id)
+            .await?
+        {
+            let mut engine = self.engine.snapshot();
+            engine.add_policy(&policy);
+            let mut manages = false;
+            for relation in resource.relations.iter().filter(|r| !r.manages.is_empty()) {
+                if engine
+                    .check(policy_id, resource_name, doc_id, &relation.name, requestor)
+                    .await?
+                {
+                    manages = true;
+                    break;
+                }
+            }
+            if !manages {
+                return Err(refused());
+            }
+        }
+        let mut relationships = Vec::new();
+        for relation in &resource.relations {
+            for subject in self
+                .store
+                .get_relation_subjects(policy_id, resource_name, doc_id, &relation.name)
+                .await?
+            {
+                relationships.push(DocumentRelationship {
+                    relation: relation.name.clone(),
+                    subject: subject.to_string(),
+                });
+            }
+        }
+        Ok(relationships)
     }
 
     async fn check_named_permission(

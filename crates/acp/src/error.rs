@@ -41,6 +41,10 @@ pub enum Error {
     #[error("named document permission checks are unsupported by this backend")]
     UnsupportedNamedPermission,
 
+    /// The backend cannot list a document's relationships.
+    #[error("listing document relationships is unsupported by this backend")]
+    UnsupportedRelationshipListing,
+
     /// This provider cannot bind native node-administrator relationship writes.
     #[error("transactional node-administrator relationship management is unsupported")]
     UnsupportedAdministrativeRelationship,
