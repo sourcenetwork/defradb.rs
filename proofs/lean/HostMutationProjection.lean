@@ -131,13 +131,29 @@ theorem host_source_requires_native_admin (a : HostSourceAdmission)
     (changed : a.edgeChanged = true) (h : a.actorAdmin = false) : hostSourceAllowed a = false := by
   simp [hostSourceAllowed, changed, h]
 
-/-- A host may leave an already identical edge untouched without a new grant. -/
+/-- Edge admission alone needs no new grant for an identical edge. Its
+dependent projection still has to succeed in the same transaction. -/
 theorem unchanged_host_source_allowed (a : HostSourceAdmission)
     (host : a.trustedHost = true) (owner : a.ownerMatches = true)
     (fresh : a.fresh = true) (write : a.writable = true)
     (node : a.configuredNode = true) (bound : a.sameTransaction = true)
     (unchanged : a.edgeChanged = false) : hostSourceAllowed a = true := by
   simp [hostSourceAllowed, host, owner, fresh, write, node, bound, unchanged]
+
+/-- Replaying an existing root also checks its desired descendants. A missing
+descendant is a real source change and uses the actual operator's authority. -/
+def hostReplayAllowed (descendantPresent actorAdmin actorRelation : Bool) : Bool :=
+  descendantPresent || (actorAdmin && actorRelation)
+
+/-- A complete projection can be replayed by a non-admin without a new grant. -/
+theorem host_replay_complete_allowed (admin relation : Bool) :
+    hostReplayAllowed true admin relation = true := by
+  simp [hostReplayAllowed]
+
+/-- A missing descendant cannot be created by a non-admin operator. -/
+theorem host_replay_missing_denied (relation : Bool) :
+    hostReplayAllowed false false relation = false := by
+  simp [hostReplayAllowed]
 
 /-- A request's source change is authorized by its actual actor. Startup,
 replication and callbacks with no authenticated actor are not repairs. An

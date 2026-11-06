@@ -55,6 +55,15 @@ use Tier::{Behavioral, Boundary, Contract};
 pub const PROPERTIES: &[Property] = &[
     Property {
         family: "Transactional node source grants",
+        name: "HostNoopProjection rechecks descendants with the original actor",
+        axis: Tla,
+        anchor: "crates/query/src/txn/source_nac.rs; crates/db/src/document_projection.rs",
+        model_ref: "MC_HostNoopProjection_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Transactional node source grants",
         name: "HostSourceNoop actual changes require authority and observations validate",
         axis: Tla,
         anchor: "crates/query/src/txn/source_nac.rs; crates/db/src/nac/trait_impl.rs",
