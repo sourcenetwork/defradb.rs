@@ -314,6 +314,13 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         .map_err(|error| query::QueryError::execution(error.to_string()))
     }
 
+    async fn project_host_source_change(&self) -> query::error::Result<()> {
+        let txn = &*self.shared_txn()?;
+        let view = txn.datastore().map_err(|error| query::QueryError::execution(error.to_string()))?;
+        view.project_document("PackInstallation", "").await
+            .map_err(|error| query::QueryError::execution(error.to_string()))
+    }
+
     async fn transaction_acp(
         &self,
         provider: Arc<dyn acp::DocumentACP>,
