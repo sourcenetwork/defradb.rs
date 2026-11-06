@@ -57,8 +57,9 @@ cargo_bin := env('CARGO_HOME', home_directory() / ".cargo") / "bin"
 elan_bin  := env('ELAN_HOME', home_directory() / ".elan") / "bin"
 export PATH := tooling_bin + ":" + go_root + "/bin" + ":" + cargo_bin + ":" + elan_bin + ":" + env('PATH')
 
-# Integration areas, each a [[test]] binary in tools/integration-test.
-integration_suites := "basic query vector acp nac p2p encryption identity backup vera verars fts p2p_iroh cursor"
+# Integration areas: the top-level modules of the testo and legacy test binaries
+# in tools/integration-test. An area in both runs in both.
+integration_suites := "acp backup collection collection_version encryption explain export index issues matchers mutation net node query searchable_encryption signature subscription txn view basic cursor fts identity nac p2p p2p_iroh vector vera verars"
 
 # Cargo profile for the build and test recipes. `dev` is the stock debug
 # profile and the default; `just profile=super-dev test` opts into the lean
@@ -564,26 +565,26 @@ integration:
 # One integration area: `just integration-suite acp`, `just integration-suite p2p`.
 [group('test')]
 integration-suite suite *args:
-    cargo nextest run -p integration-test --test {{ suite }} --cargo-profile {{ profile }} {{ args }}
+    cargo nextest run -p integration-test -E 'test(/^{{ suite }}::/)' --cargo-profile {{ profile }} {{ args }}
 
 # The basic and query areas with every node's data path on a one-worker pool
 # (`DEFRA_WORKERS=1`): the same suites the default pool runs, on one worker.
 [group('test')]
 integration-one-worker *args:
-    DEFRA_WORKERS=1 cargo nextest run -p integration-test --test basic --test query --cargo-profile {{ profile }} {{ args }}
+    DEFRA_WORKERS=1 cargo nextest run -p integration-test --test legacy -E 'test(/^(basic|query)::/)' --cargo-profile {{ profile }} {{ args }}
 
-# The pure-Rust half of the P2P topologies, serialized. `--skip ::go_` drops the
+# The pure-Rust half of the P2P topologies, serialized. The `::go_` filter drops the
 # dual-runtime variants; the harness port allocator has a bind race in parallel
 # (see the P2P Integration job's comment in ci.yml).
 [doc("Pure-Rust P2P topologies, serialized (skips the go_ variants).")]
 [group('test')]
 integration-p2p:
-    cargo nextest run -p integration-test --test p2p --cargo-profile {{ profile }} -- --skip ::go_
+    cargo nextest run -p integration-test --test legacy -E 'test(/^p2p::/) & not test(/^[a-z0-9_]+::.*::go_/)' --cargo-profile {{ profile }}
 
 # The go_* half, which needs a Go DefraDB binary on PATH.
 [group('test')]
 integration-go:
-    cargo nextest run -p integration-test --test p2p --cargo-profile {{ profile }} -- ::go_
+    cargo nextest run -p integration-test --test legacy -E 'test(/^p2p::/) & test(/^[a-z0-9_]+::.*::go_/)' --cargo-profile {{ profile }}
 
 # The ffi-test tool's own unit tests. No Go checkout or generated header needed.
 [group('test')]
@@ -601,7 +602,7 @@ integration-all:
     failed=()
     for suite in {{ integration_suites }}; do
         echo "== $suite =="
-        cargo nextest run -p integration-test --test "$suite" --cargo-profile {{ profile }} || failed+=("$suite")
+        cargo nextest run -p integration-test -E "test(/^$suite::/)" --cargo-profile {{ profile }} || failed+=("$suite")
     done
     total=$(echo {{ integration_suites }} | wc -w | tr -d ' ')
     if [ ${#failed[@]} -gt 0 ]; then

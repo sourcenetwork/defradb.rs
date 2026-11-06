@@ -115,7 +115,7 @@ both pass it before the view shows either record.
 ## Conformance fence
 
 The Rust-side fence for the same invariant is the fan-in integration test
-(`tools/integration-test/tests/p2p/`, #1088 W5) plus the coordinator unit tests around
+(`tools/integration-test/tests/legacy/p2p/`, #1088 W5) plus the coordinator unit tests around
 the capacity-nack reply — both assert that no document is success-acked on a pusher
 while unmerged and unregistered on the hub. For siblings:
 `sibling_heads_from_one_sender_are_both_retained` and
