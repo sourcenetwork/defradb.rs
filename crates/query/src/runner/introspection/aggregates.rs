@@ -13,23 +13,38 @@ pub(super) fn build_aggregate_types_for_collection(
 
     // {Collection}__CountSelector: filter, groupBy, limit, offset
     let count_selector = InputObject::new(format!("{}__CountSelector", coll_name))
-        .field(InputValue::new(
-            "filter",
-            TypeRef::named(format!("{}FilterArg", coll_name)),
-        ))
-        .field(InputValue::new(
-            "groupBy",
-            TypeRef::named_nn_list(format!("{}Field", coll_name)),
-        ))
-        .field(InputValue::new("limit", TypeRef::named("Int")))
-        .field(InputValue::new("offset", TypeRef::named("Int")));
+        .field(
+            InputValue::new("filter", TypeRef::named(format!("{}FilterArg", coll_name)))
+                .description(super::descriptions::AGGREGATE_FILTER_ARG),
+        )
+        .field(
+            InputValue::new(
+                "groupBy",
+                TypeRef::named_nn_list(format!("{}Field", coll_name)),
+            )
+            .description(super::descriptions::GROUP_BY_ARG),
+        )
+        .field(
+            InputValue::new("limit", TypeRef::named("Int"))
+                .description(super::descriptions::LIMIT_ARG),
+        )
+        .field(
+            InputValue::new("offset", TypeRef::named("Int"))
+                .description(super::descriptions::OFFSET_ARG),
+        );
     types.push(count_selector.into());
 
     // {Collection}___version__CountSelector: limit, offset
     let version_count_selector =
         InputObject::new(format!("{}___version__CountSelector", coll_name))
-            .field(InputValue::new("limit", TypeRef::named("Int")))
-            .field(InputValue::new("offset", TypeRef::named("Int")));
+            .field(
+                InputValue::new("limit", TypeRef::named("Int"))
+                    .description(super::descriptions::LIMIT_ARG),
+            )
+            .field(
+                InputValue::new("offset", TypeRef::named("Int"))
+                    .description(super::descriptions::OFFSET_ARG),
+            );
     types.push(version_count_selector.into());
 
     // {Collection}__NumericSelector: field, filter, limit, offset, order
@@ -42,16 +57,25 @@ pub(super) fn build_aggregate_types_for_collection(
             "field",
             TypeRef::named_nn(&numeric_enum_name),
         ))
-        .field(InputValue::new(
-            "filter",
-            TypeRef::named(format!("{}FilterArg", coll_name)),
-        ))
-        .field(InputValue::new("limit", TypeRef::named("Int")))
-        .field(InputValue::new("offset", TypeRef::named("Int")))
-        .field(InputValue::new(
-            "order",
-            TypeRef::named_list(format!("{}OrderArg", coll_name)),
-        ));
+        .field(
+            InputValue::new("filter", TypeRef::named(format!("{}FilterArg", coll_name)))
+                .description(super::descriptions::AGGREGATE_FILTER_ARG),
+        )
+        .field(
+            InputValue::new("limit", TypeRef::named("Int"))
+                .description(super::descriptions::LIMIT_ARG),
+        )
+        .field(
+            InputValue::new("offset", TypeRef::named("Int"))
+                .description(super::descriptions::OFFSET_ARG),
+        )
+        .field(
+            InputValue::new(
+                "order",
+                TypeRef::named_list(format!("{}OrderArg", coll_name)),
+            )
+            .description(super::descriptions::ORDER_ARG),
+        );
     types.push(numeric_selector.into());
 
     // Per-field selectors for inline arrays
@@ -78,9 +102,18 @@ pub(super) fn build_aggregate_types_for_collection(
 
             let inline_count =
                 InputObject::new(format!("{}__{}__CountSelector", coll_name, field_name))
-                    .field(InputValue::new("filter", TypeRef::named(filter_type)))
-                    .field(InputValue::new("limit", TypeRef::named("Int")))
-                    .field(InputValue::new("offset", TypeRef::named("Int")));
+                    .field(
+                        InputValue::new("filter", TypeRef::named(filter_type))
+                            .description(super::descriptions::AGGREGATE_FILTER_ARG),
+                    )
+                    .field(
+                        InputValue::new("limit", TypeRef::named("Int"))
+                            .description(super::descriptions::LIMIT_ARG),
+                    )
+                    .field(
+                        InputValue::new("offset", TypeRef::named("Int"))
+                            .description(super::descriptions::OFFSET_ARG),
+                    );
             types.push(inline_count.into());
 
             // Numeric arrays also get NumericSelector
@@ -96,10 +129,22 @@ pub(super) fn build_aggregate_types_for_collection(
             if is_numeric {
                 let inline_numeric =
                     InputObject::new(format!("{}__{}__NumericSelector", coll_name, field_name))
-                        .field(InputValue::new("filter", TypeRef::named(filter_type)))
-                        .field(InputValue::new("limit", TypeRef::named("Int")))
-                        .field(InputValue::new("offset", TypeRef::named("Int")))
-                        .field(InputValue::new("order", TypeRef::named("Ordering")));
+                        .field(
+                            InputValue::new("filter", TypeRef::named(filter_type))
+                                .description(super::descriptions::AGGREGATE_FILTER_ARG),
+                        )
+                        .field(
+                            InputValue::new("limit", TypeRef::named("Int"))
+                                .description(super::descriptions::LIMIT_ARG),
+                        )
+                        .field(
+                            InputValue::new("offset", TypeRef::named("Int"))
+                                .description(super::descriptions::OFFSET_ARG),
+                        )
+                        .field(
+                            InputValue::new("order", TypeRef::named("Ordering"))
+                                .description(super::descriptions::ORDER_ARG),
+                        );
                 types.push(inline_numeric.into());
             }
         }
@@ -121,12 +166,21 @@ pub(super) fn build_aggregate_types_for_collection(
                 // {Collection}__{field}__CountSelector
                 let rel_count =
                     InputObject::new(format!("{}__{}__CountSelector", coll_name, field_name))
-                        .field(InputValue::new(
-                            "filter",
-                            TypeRef::named(format!("{}FilterArg", related_name)),
-                        ))
-                        .field(InputValue::new("limit", TypeRef::named("Int")))
-                        .field(InputValue::new("offset", TypeRef::named("Int")));
+                        .field(
+                            InputValue::new(
+                                "filter",
+                                TypeRef::named(format!("{}FilterArg", related_name)),
+                            )
+                            .description(super::descriptions::AGGREGATE_FILTER_ARG),
+                        )
+                        .field(
+                            InputValue::new("limit", TypeRef::named("Int"))
+                                .description(super::descriptions::LIMIT_ARG),
+                        )
+                        .field(
+                            InputValue::new("offset", TypeRef::named("Int"))
+                                .description(super::descriptions::OFFSET_ARG),
+                        );
                 types.push(rel_count.into());
             }
             _ => {}

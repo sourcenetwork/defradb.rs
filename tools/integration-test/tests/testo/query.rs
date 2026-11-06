@@ -37,6 +37,7 @@ mod commits {
 }
 mod cyclic_fragments;
 mod optional_variables;
+mod schema_descriptions;
 mod inline_array {
     mod simple;
     mod with_average;

@@ -219,6 +219,13 @@ A nullable variable with no default that the request leaves out is not an error 
 
 In `_commits { links { fieldName delta } heads { delta } }`, each link and head shows the base64 `delta` and `collectionVersionId` of the block it points to, as Go does: after an update that sets `genre: "Dystopia"`, the composite commit's `genre` link shows `aER5c3RvcGlh`, and a composite head shows `null`, since composites carry no field delta. An Immutable block shows the delta of the field the link names. defradb.rs showed `null` for every link before (#2625).
 
+# `defra.request.schema_descriptions`: The GraphQL schema describes itself like Go's
+
+- **Parents:** ["defra.request"]
+- **Scenarios:** ["query::schema_descriptions::introspection_shows_go_descriptions"]
+
+Introspection returns Go DefraDB's descriptions, byte for byte, for every type, field, argument, input field and enum value both schemas share: collection objects (`_docID`, `_deleted`, `_version`, `GROUP` and the aggregates), filter, selector and operator blocks, `Commit`, `Signature`, the `_commits` query, mutations, `Ordering` and the custom scalars. A GraphQL client such as GraphiQL shows them in its docs pane. Exceptions: the built-in `ID`, `Int`, `Float` and `String` scalars keep async-graphql's texts, `docID` on update and delete is one ID in defradb.rs and is described as one, and `BlobOperatorBlock` says Blob where Go says String (#2106).
+
 # `defra.index.range_filter`: A two-sided range filter fetches only the range
 
 - **Parents:** ["defra.index"]

@@ -8,6 +8,7 @@ mod aggregates;
 pub(crate) mod cache;
 mod collection;
 mod commits;
+mod descriptions;
 mod input_types;
 mod mutations;
 mod operators;
@@ -19,6 +20,8 @@ use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
 use crate::error::{QueryError, Result};
+
+use descriptions as d;
 
 use aggregates::{build_aggregate_types_for_collection, build_numeric_fields_enum};
 use collection::{build_collection_type, build_commit_type};
@@ -134,23 +137,37 @@ pub fn build_introspection_schema(
                 TypeRef::named_nn_list_nn(&collection.name),
                 move |_ctx| FieldFuture::new(async move { Ok(Some(GqlValue::List(vec![]))) }),
             )
-            .argument(InputValue::new("cid", TypeRef::named_nn_list("ID")))
-            .argument(InputValue::new("docID", TypeRef::named_nn_list("ID")))
-            .argument(InputValue::new(
-                "filter",
-                TypeRef::named(format!("{}FilterArg", collection_name)),
-            ))
-            .argument(InputValue::new(
-                "groupBy",
-                TypeRef::named_list(format!("{}Field", collection_name)),
-            ))
-            .argument(InputValue::new("limit", TypeRef::named("Int")))
-            .argument(InputValue::new("offset", TypeRef::named("Int")))
-            .argument(InputValue::new(
-                "order",
-                TypeRef::named_list(format!("{}OrderArg", collection_name)),
-            ))
-            .argument(InputValue::new("showDeleted", TypeRef::named("Boolean"))),
+            .argument(InputValue::new("cid", TypeRef::named_nn_list("ID")).description(d::CID_ARG))
+            .argument(
+                InputValue::new("docID", TypeRef::named_nn_list("ID")).description(d::DOC_IDS_ARG),
+            )
+            .argument(
+                InputValue::new(
+                    "filter",
+                    TypeRef::named(format!("{}FilterArg", collection_name)),
+                )
+                .description(d::SELECT_FILTER_ARG),
+            )
+            .argument(
+                InputValue::new(
+                    "groupBy",
+                    TypeRef::named_list(format!("{}Field", collection_name)),
+                )
+                .description(d::GROUP_BY_ARG),
+            )
+            .argument(InputValue::new("limit", TypeRef::named("Int")).description(d::LIMIT_ARG))
+            .argument(InputValue::new("offset", TypeRef::named("Int")).description(d::OFFSET_ARG))
+            .argument(
+                InputValue::new(
+                    "order",
+                    TypeRef::named_list(format!("{}OrderArg", collection_name)),
+                )
+                .description(d::ORDER_ARG),
+            )
+            .argument(
+                InputValue::new("showDeleted", TypeRef::named("Boolean"))
+                    .description(d::SHOW_DELETED_ARG),
+            ),
         );
     }
 
@@ -235,32 +252,38 @@ pub fn build_introspection_schema(
         Field::new("_commits", TypeRef::named_list("Commit"), |_| {
             FieldFuture::new(async { Ok(Some(GqlValue::List(vec![]))) })
         })
-        .argument(InputValue::new("cid", TypeRef::named_nn_list("ID")))
-        .argument(InputValue::new("depth", TypeRef::named("Int")))
-        .argument(InputValue::new("docID", TypeRef::named_nn_list("ID")))
-        .argument(InputValue::new(
-            "filter",
-            TypeRef::named("CommitsFilterArg"),
-        ))
-        .argument(InputValue::new(
-            "groupBy",
-            TypeRef::named_nn_list("commitFields"),
-        ))
-        .argument(InputValue::new("limit", TypeRef::named("Int")))
-        .argument(InputValue::new("offset", TypeRef::named("Int")))
-        .argument(InputValue::new(
-            "order",
-            TypeRef::named_list("commitsOrderArg"),
-        )),
+        .description(d::COMMITS_QUERY)
+        .argument(
+            InputValue::new("cid", TypeRef::named_nn_list("ID")).description(d::COMMIT_CID_ARG),
+        )
+        .argument(InputValue::new("depth", TypeRef::named("Int")).description(d::COMMITS_DEPTH_ARG))
+        .argument(
+            InputValue::new("docID", TypeRef::named_nn_list("ID"))
+                .description(d::COMMIT_DOC_ID_ARG),
+        )
+        .argument(
+            InputValue::new("filter", TypeRef::named("CommitsFilterArg"))
+                .description(d::COMMIT_FILTER_ARG),
+        )
+        .argument(
+            InputValue::new("groupBy", TypeRef::named_nn_list("commitFields"))
+                .description(d::GROUP_BY_ARG),
+        )
+        .argument(InputValue::new("limit", TypeRef::named("Int")).description(d::LIMIT_ARG))
+        .argument(InputValue::new("offset", TypeRef::named("Int")).description(d::OFFSET_ARG))
+        .argument(
+            InputValue::new("order", TypeRef::named_list("commitsOrderArg"))
+                .description(d::ORDER_ARG),
+        ),
     );
 
     // Register standard scalars and filter types
     schema_builder = schema_builder
-        .register(Scalar::new("DateTime"))
-        .register(Scalar::new("Blob"))
-        .register(Scalar::new("JSON"))
-        .register(Scalar::new("Float32"))
-        .register(Scalar::new("Float64"))
+        .register(Scalar::new("DateTime").description(d::DATETIME_SCALAR))
+        .register(Scalar::new("Blob").description(d::BLOB_SCALAR))
+        .register(Scalar::new("JSON").description(d::JSON_SCALAR))
+        .register(Scalar::new("Float32").description(d::FLOAT32_SCALAR))
+        .register(Scalar::new("Float64").description(d::FLOAT64_SCALAR))
         .register(build_explain_enum())
         .register(build_ordering_enum())
         .register(build_id_operator_block())
@@ -299,7 +322,8 @@ pub fn build_introspection_schema(
         // _count: takes one arg per non-embedded collection
         let mut count_field = Field::new("COUNT", TypeRef::named_nn("Int"), |_| {
             FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
-        });
+        })
+        .description(d::COUNT);
         for collection in collections {
             if collection.is_embedded_only {
                 continue;
@@ -312,10 +336,11 @@ pub fn build_introspection_schema(
         query_type = query_type.field(count_field);
 
         // _sum, _avg: takes one arg per non-embedded collection
-        for agg_name in &["SUM", "AVG"] {
+        for (agg_name, description) in &[("SUM", d::SUM), ("AVG", d::AVG)] {
             let mut agg_field = Field::new(*agg_name, TypeRef::named_nn("Float"), |_| {
                 FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
-            });
+            })
+            .description(*description);
             for collection in collections {
                 if collection.is_embedded_only {
                     continue;
