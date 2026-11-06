@@ -24,10 +24,10 @@ if [ -n "${DEFRA_CONFORMANCE_BINARY:-}" ]; then
   # Serial: each test spins up real nodes (some restart/2-node) — parallel
   # execution contends on CPU/timing and flakes poll deadlines.
   ( cd "$ROOT" && cargo test -p conformance --test tla_conformance -- --test-threads=1 ); behav=$?
-elif [ -x "$ROOT/target/release/defra" ]; then
+elif [ -x "$ROOT/target/release/defradb" ]; then
   # Drive the optimized release binary explicitly (the test default is the debug
   # binary; see proofs/tests/support.rs::release_binary).
-  ( cd "$ROOT" && DEFRA_CONFORMANCE_BINARY="$ROOT/target/release/defra" \
+  ( cd "$ROOT" && DEFRA_CONFORMANCE_BINARY="$ROOT/target/release/defradb" \
       cargo test -p conformance --test tla_conformance -- --test-threads=1 ); behav=$?
 else
   echo "SKIP — no release binary. Build it: cargo build --release -p cli"

@@ -651,7 +651,7 @@ conformance: lean
 [doc("Model-to-code binding, TLA axis against the release binary.")]
 [group('proofs')]
 conformance-behavioral: build-fast
-    DEFRA_CONFORMANCE_BINARY="{{ root }}/target/release-fast/defra" \
+    DEFRA_CONFORMANCE_BINARY="{{ root }}/target/release-fast/defradb" \
         cargo nextest run -p conformance --test tla_conformance
 
 # ---------------------------------------------------------------------------

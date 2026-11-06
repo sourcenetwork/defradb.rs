@@ -163,7 +163,7 @@ impl Node {
         // Feed the keyring-loaded searchable-encryption key into the same SE
         // path the FFI uses (BroadcastMutator::set_se_options for live writes,
         // DbMergeHandler::set_se_enc_key for merged/replicated docs). This lets
-        // a `defra start` node produce and verify SE artifacts.
+        // a `defradb start` node produce and verify SE artifacts.
         if let Some(key) = se_key {
             if let Err(e) =
                 replication

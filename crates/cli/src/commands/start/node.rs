@@ -289,7 +289,7 @@ impl Node {
         // Load the cluster-shared searchable-encryption key from the keyring
         // (Go's getOrCreateSearchableEncryptionKey). `None` when SE or the
         // keyring is disabled. Fed into the P2P broadcast/merge SE path so a
-        // `defra start` node produces and verifies SE artifacts.
+        // `defradb start` node produces and verifies SE artifacts.
         let se_key = Self::load_or_create_searchable_encryption_key(&config)?;
         if se_key.is_some() {
             info!("Searchable encryption key loaded from keyring");
