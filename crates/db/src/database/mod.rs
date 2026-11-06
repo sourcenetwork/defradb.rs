@@ -680,13 +680,21 @@ impl<S: Store> DB<S> {
 
     /// Install a trusted host projection before the database serves requests.
     pub fn set_document_projector(
-        &self,
+        self: &Arc<Self>,
         projector: Arc<dyn crate::DocumentMutationProjector>,
         document_acp: Arc<dyn acp::DocumentACP>,
         node_did: identity::Did,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        S: 'static,
+    {
         let bound: Arc<dyn datastore::DocumentMutationProjector> = Arc::new(
-            crate::document_projection::BoundProjection { projector, document_acp, node_did },
+            crate::document_projection::BoundProjection::new(
+                projector,
+                document_acp,
+                node_did,
+                Arc::downgrade(self),
+            ),
         );
         self.document_projector.set(bound).map_err(|_| Error::Other("document projector already installed".into()))
     }
