@@ -1606,6 +1606,9 @@ mod document_projector_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod projection_access_notification_tests;
 #[cfg(test)]
+mod userset_manager_tests;
+
+#[cfg(test)]
 mod transactional_relationship_tests;
 
 #[cfg(test)]
