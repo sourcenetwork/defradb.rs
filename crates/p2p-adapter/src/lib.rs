@@ -112,6 +112,7 @@ where
 /// `names` plus their `@chunk` collections, which replicate and subscribe with
 /// their parent. A `filtered` parent keeps its chunks out, since a chunk can't
 /// be matched against its parent's filter.
+#[cfg(any(feature = "iroh", feature = "libp2p"))]
 pub fn with_chunk_collections<F>(
     pusher: Option<&Arc<dyn TransportDocPusher>>,
     names: Vec<String>,
