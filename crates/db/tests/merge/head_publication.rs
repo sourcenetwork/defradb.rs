@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use blockstore::DefraBlockstore;
 use db::{merge::merge_handler::DbMergeHandler, DB};
-use defra_core::merge::{BlockMetadata, MergeBlock, MergeHandler};
+use defra_core::merge::{BlockMetadata, MergeBlock, MergeHandler, MergeOutcome};
 use query::mutator::DocMutator;
 use storage::corekv::IterOptions;
 use storage::merge::head_set::Set;
@@ -107,6 +107,57 @@ fn a_replayed_create_after_a_local_update_stays_superseded() {
 
         merge(&db, &blocks, &genesis).await;
         assert_eq!(heads(&db).await, (updated, 0));
+    })
+    .unwrap()
+}
+
+/// A merged head replayed through a fresh handler, as after a restart, is a
+/// terminal skip that names it applied, on the single and the batch path. The
+/// replication layer forwards such a head to its replicators before it marks
+/// it merged, which is how a forward cut short by a restart is still made.
+#[test]
+fn a_merged_head_replayed_after_a_restart_reads_as_applied() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(DB::from_arc(store.clone()).unwrap());
+        for mut schema in query::parse_sdl("type Users { name: String age: Int }").unwrap() {
+            schema.version_id = "v1".to_string();
+            schema.collection_id = "col-users".to_string();
+            db.create_collection(schema).await.unwrap();
+        }
+        let blocks = Arc::new(DefraBlockstore::new(store, true));
+        let head = super::merge_handler_tests::build_merge_block(&blocks, "Alice", 30).await;
+        let metadata = BlockMetadata::normal(
+            &head.doc_id,
+            &head.collection_id,
+            &head.creator,
+            head.sender_peer.as_deref(),
+            false,
+        );
+        let restarted = || DbMergeHandler::new(db.clone(), blocks.clone());
+        let applied = |outcome: &MergeOutcome| {
+            matches!(outcome, MergeOutcome::Skipped { reason, terminal: true }
+                if MergeOutcome::skip_reason_is_applied(reason))
+        };
+
+        let first = restarted()
+            .handle_block(&head.cid, &head.block_data, metadata.clone())
+            .await
+            .unwrap();
+        assert_eq!(first, MergeOutcome::Merged);
+
+        let single = restarted()
+            .handle_block(&head.cid, &head.block_data, metadata)
+            .await
+            .unwrap();
+        assert!(applied(&single), "{single:?}");
+        let batch = restarted()
+            .handle_block_batch(std::slice::from_ref(&head))
+            .await;
+        assert!(
+            matches!(&batch[..], [Ok(outcome)] if applied(outcome)),
+            "{batch:?}"
+        );
     })
     .unwrap()
 }

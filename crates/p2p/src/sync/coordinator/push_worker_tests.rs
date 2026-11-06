@@ -65,6 +65,7 @@ fn test_context_with_admission(
         failure_tx: Arc::new(AtomOption::some(tx)),
         send_timeout,
         peer_state: Arc::new(crate::sync::peer_state::PeerStateTracker::new()),
+        head_provider: Arc::new(crate::sync::NoOpHeadProvider),
     });
     (context, rx)
 }
@@ -169,6 +170,147 @@ async fn slow_peer_does_not_starve_healthy_peers() {
         .count();
     assert_eq!(healthy_sent, 5);
     backlog.close();
+}
+
+/// Audit F24: with the default pool (8 workers, 4 per peer) two replicators
+/// whose sends never answer hold every worker until their first sends time
+/// out. A timed-out peer is then parked, and the unreachable peers together
+/// stay within one peer's cap, so the healthy peer drains right after that
+/// first timeout instead of a few jobs per timeout.
+#[test]
+fn two_stalled_replicators_do_not_starve_healthy_peer() {
+    edge::testing::paused(|edge| async move {
+        use crate::sync::{
+            DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER, DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
+            DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY,
+            DEFAULT_PUSH_SEND_TIMEOUT,
+        };
+
+        const WRITES: u8 = 50;
+        let backlog = PushBacklog::new(
+            DEFAULT_PUSH_QUEUE_CAPACITY,
+            DEFAULT_PUSH_QUEUE_BYTE_CAPACITY,
+            DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER,
+            DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
+            edge.clone(),
+        );
+        let transport = TestTransport::new(Vec::new())
+            .with_stalled_peer("dead-1")
+            .with_stalled_peer("dead-2");
+        let (context, mut failures) = test_context(
+            transport.clone(),
+            Arc::clone(&backlog),
+            DEFAULT_PUSH_SEND_TIMEOUT,
+        );
+        crate::rt::spawn(async move { while failures.recv().await.is_some() {} }).detach();
+        let shutdown = SyncShutdownHandle::new(4, crate::network::Network::on(edge.clone()));
+        spawn_push_workers(context, &shutdown);
+        crate::rt::yield_now().await;
+
+        let started = crate::rt::time::Instant::now();
+        for write in 0..WRITES {
+            for peer in ["dead-1", "dead-2", "healthy"] {
+                assert_eq!(
+                    backlog.try_enqueue(job(peer, &[write])).await,
+                    EnqueueOutcome::Enqueued
+                );
+            }
+        }
+
+        let limit = DEFAULT_PUSH_SEND_TIMEOUT * 2;
+        loop {
+            let healthy_sent = transport
+                .sent()
+                .iter()
+                .filter(|push| push.peer_id == "healthy")
+                .count();
+            if healthy_sent == usize::from(WRITES) {
+                break;
+            }
+            assert!(
+                started.elapsed() <= limit,
+                "two stalled replicators starved the healthy peer: {healthy_sent}/{WRITES} sent after {:?}",
+                started.elapsed()
+            );
+            crate::rt::time::sleep(Duration::from_millis(100)).await;
+        }
+        backlog.close();
+    })
+}
+
+/// A peer whose first sends time out and that answers right afterwards keeps
+/// its queued jobs live. The timeouts park it, and only a failed probe (a send
+/// started after the park's cooldown ran out) moves its queue to the ledger.
+#[test]
+fn transient_transport_failure_keeps_queued_jobs_live() {
+    edge::testing::paused(|edge| async move {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use crate::sync::{
+            DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER, DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
+            DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY,
+            DEFAULT_PUSH_SEND_TIMEOUT,
+        };
+
+        const JOBS: u8 = 20;
+        let backlog = PushBacklog::new(
+            DEFAULT_PUSH_QUEUE_CAPACITY,
+            DEFAULT_PUSH_QUEUE_BYTE_CAPACITY,
+            DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER,
+            DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
+            edge.clone(),
+        );
+        let transport = TestTransport::new(Vec::new()).with_stalled_peer("flaky");
+        let (context, mut failures) = test_context(
+            transport.clone(),
+            Arc::clone(&backlog),
+            DEFAULT_PUSH_SEND_TIMEOUT,
+        );
+        let ledger = Arc::new(AtomicUsize::new(0));
+        let recorded = Arc::clone(&ledger);
+        crate::rt::spawn(async move {
+            while let Some(event) = failures.recv().await {
+                if event.create_retry {
+                    recorded.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        })
+        .detach();
+        let shutdown = SyncShutdownHandle::new(4, crate::network::Network::on(edge.clone()));
+        spawn_push_workers(context, &shutdown);
+        crate::rt::yield_now().await;
+
+        for seed in 0..JOBS {
+            assert_eq!(
+                backlog.try_enqueue(job("flaky", &[seed])).await,
+                EnqueueOutcome::Enqueued
+            );
+        }
+        crate::rt::time::sleep(Duration::from_secs(1)).await;
+        transport.unstall_peer("flaky");
+
+        let live = usize::from(JOBS) - DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER;
+        let started = crate::rt::time::Instant::now();
+        let limit = DEFAULT_PUSH_SEND_TIMEOUT * 2;
+        loop {
+            let sent = transport.sent().len();
+            if sent == live {
+                break;
+            }
+            assert!(
+                started.elapsed() <= limit,
+                "one transport failure cost a peer that answers its queue: {sent}/{live} sent live, {} handed to the ledger after {:?}",
+                ledger.load(Ordering::Relaxed),
+                started.elapsed()
+            );
+            crate::rt::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert_eq!(
+            ledger.load(Ordering::Relaxed),
+            DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER
+        );
+        backlog.close();
+    })
 }
 
 /// A stalled send fails via the send timeout, frees the worker, and lands
@@ -522,6 +664,43 @@ async fn superseded_active_failure_never_enters_persisted_retry() {
     assert!(events.iter().any(|event| !event.create_retry));
     assert!(events.iter().all(|event| !event.create_retry));
     assert_eq!(backlog.snapshot().await.stale_head_retirements_total, 1);
+    backlog.close();
+}
+
+/// A push the peer acknowledged after a newer head replaced it is retired, and
+/// its acknowledgement still reaches the recorder with the generation that
+/// fences it, so the peer's retry clock sees the delivery.
+#[nuclei::test]
+async fn superseded_acknowledged_push_reports_its_delivery() {
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
+    let transport = TestTransport::new(Vec::new()).with_send_delay(Duration::from_millis(50));
+    let (context, mut failures) =
+        test_context(transport.clone(), backlog.clone(), Duration::from_secs(1));
+    let mut older = versioned_job("peer", 1);
+    older.marker_generation = Some(7);
+    backlog.try_enqueue(older).await;
+    let active = backlog.next_job().await.unwrap();
+    let push = {
+        let (context, active) = (Arc::clone(&context), active.clone());
+        crate::rt::spawn(async move { run_push_job(&context, &active).await })
+    };
+    let deadline = crate::rt::time::Instant::now() + Duration::from_secs(1);
+    while transport.sent().is_empty() {
+        assert!(crate::rt::time::Instant::now() < deadline);
+        crate::rt::time::sleep(Duration::from_millis(2)).await;
+    }
+    let mut newer = versioned_job("peer", 2);
+    newer.marker_generation = Some(8);
+    backlog.try_enqueue(newer).await;
+
+    assert_eq!(push.join().await.unwrap(), JobCompletion::Retired);
+    let reported = crate::rt::time::timeout(Duration::from_secs(1), failures.recv())
+        .await
+        .expect("the superseded acknowledgement never reached the recorder")
+        .unwrap();
+    assert!(reported.acknowledged);
+    assert_eq!(reported.marker_generation, Some(7));
+    backlog.job_done(&active, JobCompletion::Retired).await;
     backlog.close();
 }
 

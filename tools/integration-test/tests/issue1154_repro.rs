@@ -209,9 +209,13 @@ async fn hub_restart_recovers_success_acked_pending_dags() {
             });
             let status = sync_status(&cluster, 0).await;
             let (sender_markers, _) = sender_retry_snapshot(&cluster).await;
+        // Each pusher may hold one durable registration on the hub (its
+        // share of a durable cap of four): the one-slot map takes the first,
+        // the others are acknowledged on their records alone, and every
+        // later push is nacked at the share.
             if acknowledged
                 && status["pending_dag_capacity_shed"].as_u64().unwrap_or(0) > 0
-                && sender_markers >= MIN_DOCS - 1
+            && sender_markers >= MIN_DOCS - PUSHERS
             {
                 break;
             }
@@ -224,14 +228,28 @@ async fn hub_restart_recovers_success_acked_pending_dags() {
         // Hold beyond the ten-second CAR-first fallback window. A CAR-only gate
         // would allow libp2p Bitswap to discharge the supposedly frozen root.
         nuclei::time::sleep(Duration::from_secs(12)).await;
-        assert_eq!(pending_dags(&hub_api).await, 1);
-        assert_eq!(sync_status(&cluster, 0).await["persisted_pending_dags"], 1);
+    // The map's one entry, or none once its root, never served, gave the
+    // entry up to a durable root waiting for the next resync sweep.
+    assert!(pending_dags(&hub_api).await <= 1);
+    let persisted = sync_status(&cluster, 0).await["persisted_pending_dags"]
+        .as_u64()
+        .expect("persisted pending count");
+    assert!(
+        (1..=PUSHERS as u64).contains(&persisted),
+        "each pusher holds at most its one-record share: {persisted}"
+    );
+    // Every registration made before the kill must merge after it, the ones
+    // acknowledged on their records alone included.
+    let registered = registered_doc_ids(&hub_log);
+    assert!(registered.contains(pending_doc));
         let before_crash = hub.query("query { User { _docID } }").expect("hub query");
         assert!(before_crash["User"]
             .as_array()
             .unwrap()
             .iter()
-            .all(|row| row["_docID"] != pending_doc));
+        .all(|row| row["_docID"]
+            .as_str()
+            .is_none_or(|doc_id| !registered.contains(doc_id))));
 
         cluster.nodes[0].process.kill();
 
@@ -293,7 +311,10 @@ async fn hub_restart_recovers_success_acked_pending_dags() {
         // obligation and by the sender marker its unacknowledged push retained.
         let hub = cluster.client(0);
         let converge_start = Instant::now();
-        let deadline = Instant::now() + Duration::from_secs(240);
+    // The one-slot map admits one durable root per resync sweep (60 s).
+    let deadline = Instant::now()
+        + Duration::from_secs(240)
+        + Duration::from_secs(60) * registered.len() as u32;
         let mut next_progress_log = Instant::now() + Duration::from_secs(30);
         loop {
             // Bracket the receiver observation with sender snapshots. Marker

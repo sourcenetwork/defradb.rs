@@ -168,6 +168,36 @@ fn a_collection_block_whose_link_is_not_held_installs_no_head() {
     .unwrap()
 }
 
+/// A merged collection block replayed through a fresh handler, as after a
+/// restart, is a terminal skip that names it applied, on the single and the
+/// batch path, so replication forwards it before it marks it merged.
+#[test]
+fn a_merged_collection_block_replayed_after_a_restart_reads_as_applied() {
+    workers::block_on(async {
+        let (db, handler, blockstore) = node().await;
+        let (composite_cid, blocks) = document("first");
+        for (block_cid, block_bytes) in &blocks {
+            blockstore.put(block_cid, block_bytes).await.unwrap();
+        }
+        let (cid, bytes) = collection_block(&[composite_cid]);
+        blockstore.put(&cid, &bytes).await.unwrap();
+        assert_eq!(merge(&handler, &cid, &bytes).await, MergeOutcome::Merged);
+
+        let restarted = || DbMergeHandler::new(db.clone(), blockstore.clone());
+        for outcome in [
+            merge(&restarted(), &cid, &bytes).await,
+            merge_batch(&restarted(), &cid, &bytes).await,
+        ] {
+            assert!(
+                matches!(&outcome, MergeOutcome::Skipped { reason, terminal: true }
+                    if MergeOutcome::skip_reason_is_applied(reason)),
+                "{outcome:?}"
+            );
+        }
+    })
+    .unwrap()
+}
+
 #[test]
 fn a_collection_block_whose_links_are_held_merges_and_installs_its_head() {
     workers::block_on(async {

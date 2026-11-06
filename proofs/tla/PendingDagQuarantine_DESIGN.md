@@ -31,20 +31,20 @@ resolution's degenerate arms: internal index-state inconsistency such as a corru
 entry with no identifiable holder, not a live conflict between two alive documents,
 which #1126 now resolves deterministically instead of rejecting) are rejected on every
 attempt —
-`crates/db/src/merge/merge_handler/composite.rs:261-284` converts
-`MergeError::UniqueConstraintViolation` into `MergeOutcome::Rejected` (defined at
-`crates/p2p/src/sync/merge.rs:89-97`), which
-`crates/p2p/src/sync/replication/handlers.rs:353-362` routes to
+`crates/db/src/merge/merge_handler/composite.rs` converts
+`MergeError::UniqueConstraintViolation` into `MergeOutcome::Rejected` (defined in
+`crates/defra-core/src/merge.rs`), which `handle_block_received` and
+`process_merge_batch` in `crates/p2p/src/sync/replication/handlers.rs` route to
 `SyncManager::quarantine_pending_dag`. **Sound** docs merge, possibly after one
 transient hiccup first (network blip, lock contention — not a function of content).
 
-`quarantine_pending_dag` (`crates/p2p/src/sync/manager/process/pending_dag.rs:838-880`)
+`quarantine_pending_dag` (`crates/p2p/src/sync/manager/process/pending_dag.rs`)
 writes the durable quarantine record **before** deleting the live
 `/p2p/pending_dag/` record, so a crash in that window leaves both records on disk
 rather than losing the live one; the resync sweep's `is_quarantined` check
-(`pending_dag.rs:712-723`) treats a leftover live record for an already-quarantined
-root as cleanup, not a recovery obligation — the crash window self-heals instead of
-re-driving a merge now known to fail forever.
+(`resync_persisted_pending_dags_inner`) treats a leftover live record for an
+already-quarantined root as cleanup, not a recovery obligation — the crash window
+self-heals instead of re-driving a merge now known to fail forever.
 
 One knob, three settings — each isolates one way to get the disposition wrong:
 

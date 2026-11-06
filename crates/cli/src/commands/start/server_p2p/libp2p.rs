@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use tracing::{error, info, warn};
 
-use super::super::node::{Node, P2PTasks};
+use super::super::node::{Libp2pTasks, Node, P2PTasks};
 use super::P2PSetup;
 use crate::config::Config;
 use crate::error::{Error, Result};
@@ -527,14 +527,14 @@ impl Node {
 
         Ok(P2PSetup {
             host_handle: Some(handle),
-            p2p_tasks: Some(P2PTasks::Libp2p {
+            p2p_tasks: Some(P2PTasks::Libp2p(Box::new(Libp2pTasks {
                 coordinator: coordinator.shutdown_handle(),
                 host_task,
                 replication_task,
                 event_handler_task,
                 failure_recorder_task,
                 retry_loop_task,
-            }),
+            }))),
             mutator: broadcast_mutator,
             http_adapter: Some(manage_controller.clone()),
             wire_merge_acp: Some(Box::new(move |acp| {

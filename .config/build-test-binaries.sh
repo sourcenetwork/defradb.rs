@@ -31,6 +31,7 @@ case "${1:-}" in
     # Conformance would otherwise launch `target/debug/defra`, which nextest never rebuilds.
     conformance)
         build DEFRA_CONFORMANCE_BINARY defra
+        build DEFRA_CONFORMANCE_IROH_BINARY defra-iroh --features iroh
         ;;
     *)
         echo "usage: $0 integration|vera|conformance" >&2

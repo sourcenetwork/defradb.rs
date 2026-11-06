@@ -7,7 +7,10 @@
 //! with no identity, no HTTP server and no P2P starts no runtime at all.
 //! Either way the node's work goes through a scope of its own, so shutting
 //! the node down stops accepting and drains the node's work alone, then
-//! stops a runtime the node started.
+//! stops a runtime the node started. Requests (signed queries, in-process
+//! queries and transaction commits, the HTTP server) go through a child
+//! scope, drained first: a request then never writes while P2P, which its
+//! writes' durable head markers need, shuts down on the node's scope.
 
 use crate::Result;
 use std::num::NonZeroUsize;
@@ -27,6 +30,7 @@ pub(crate) struct NodeEdge {
     #[cfg(any(feature = "otel", feature = "p2p"))]
     runtime: Edge,
     scope: Scope,
+    requests: Scope,
     owned: SegQueue<EdgeRuntime>,
 }
 
@@ -50,8 +54,10 @@ impl NodeEdge {
             }
             None => return Ok(None),
         };
+        let scope = edge.scope();
         Ok(Some(Self {
-            scope: edge.scope(),
+            requests: scope.edge().scope(),
+            scope,
             #[cfg(any(feature = "otel", feature = "p2p"))]
             runtime: edge,
             owned,
@@ -61,6 +67,13 @@ impl NodeEdge {
     /// The handle the node's network work is submitted through.
     pub(crate) fn edge(&self) -> &Edge {
         self.scope.edge()
+    }
+
+    /// The handle requests (signed queries, in-process queries and commits,
+    /// the HTTP server) are admitted through: a scope of the node's, which
+    /// stops accepting first.
+    pub(crate) fn requests(&self) -> &Edge {
+        self.requests.edge()
     }
 
     /// The runtime the node's scope is part of, which still accepts work
@@ -77,10 +90,25 @@ impl NodeEdge {
         self.runtime.scope()
     }
 
+    /// Stops admitting requests, which stops the HTTP accept loop, then waits
+    /// up to [`NETWORK_DRAIN_TIMEOUT`] for those in flight. The node's scope
+    /// keeps accepting the rest of its network work.
+    pub(crate) async fn drain_requests(&self) {
+        drain(
+            &self.requests,
+            "timed out draining the node's requests during shutdown",
+        )
+        .await;
+    }
+
     /// Stops accepting the node's network work, which stops its services,
     /// then waits up to [`NETWORK_DRAIN_TIMEOUT`] for the rest.
     pub(crate) async fn drain(&self) {
-        drain(&self.scope).await;
+        drain(
+            &self.scope,
+            "timed out draining the node's network work during shutdown",
+        )
+        .await;
     }
 
     /// Shuts down the runtime the node started, if it started one.
@@ -96,13 +124,13 @@ impl NodeEdge {
 
 /// Stops accepting work through `scope`, which stops its services, then
 /// waits up to [`NETWORK_DRAIN_TIMEOUT`] for the rest.
-pub(crate) async fn drain(scope: &Scope) {
+pub(crate) async fn drain(scope: &Scope, message: &'static str) {
     let drained = scope.drain(NETWORK_DRAIN_TIMEOUT).await;
     if !drained.is_complete() {
         tracing::warn!(
             remaining = drained.remaining,
             timeout_secs = NETWORK_DRAIN_TIMEOUT.as_secs(),
-            "timed out draining the node's network work during shutdown"
+            "{message}"
         );
     }
 }
@@ -125,6 +153,9 @@ mod tests {
 
         assert!(network.owned.is_empty());
         assert_ne!(network.edge(), &given);
+        given.block_on(network.drain_requests()).unwrap();
+        assert!(network.requests().is_closed());
+        assert!(!network.edge().is_closed());
         given.block_on(network.drain()).unwrap();
         assert!(network.edge().is_closed());
         assert!(!given.is_closed());
@@ -144,7 +175,7 @@ mod tests {
                 network.drain().await;
                 assert!(network.edge().is_closed());
                 assert_eq!(sibling.edge().spawn(async { 1 }).await, Ok(1));
-                super::drain(&sibling).await;
+                super::drain(&sibling, "timed out draining the sibling scope").await;
             })
             .unwrap();
         assert!(sibling.edge().is_closed());

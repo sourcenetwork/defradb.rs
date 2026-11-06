@@ -392,7 +392,9 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
     /// Re-merge deferred composites whose awaited CIDs have merged, through
     /// the normal path: signatures are verified and the validator judges each
     /// one again. Bounded by [`REDRIVE_BUDGET`] per call; composites released
-    /// by a re-driven merge join the same drain.
+    /// by a re-driven merge join the same drain. A composite the database
+    /// already holds but no mark covers goes to the sink too: the mark follows
+    /// a successful forward, so its forward may still be owed.
     pub async fn redrive_deferred(&self) {
         let mut budget = REDRIVE_BUDGET;
         while budget > 0 {
@@ -423,7 +425,18 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
             metadata.creator = metadata.creator.filter(|creator| !creator.is_empty());
             let outcome = self.merge_with_retries(&entry.cid, &data, metadata).await;
             tracing::debug!(cid = %entry.cid, ?outcome, "Re-drove deferred composite");
-            if matches!(outcome, Ok(MergeOutcome::Merged)) {
+            let forward = match &outcome {
+                Ok(MergeOutcome::Merged) => true,
+                Ok(MergeOutcome::Skipped {
+                    reason,
+                    terminal: true,
+                }) => {
+                    MergeOutcome::skip_reason_is_applied(reason)
+                        && !matches!(self.blockstore.is_merged(&entry.cid).await, Ok(true))
+                }
+                _ => false,
+            };
+            if forward {
                 if let Some(sink) = self.redriven_merge_sink() {
                     sink.forward(RedrivenMerge::new(&entry, data)).await;
                 }

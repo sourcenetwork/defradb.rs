@@ -1172,6 +1172,11 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                     .await,
             );
         } else {
+            p2p::model_trace!(Commit {
+                doc: &block_result.doc_id,
+                head: block_result.cid.to_string(),
+                parents: p2p::model_trace::parents_of(&block_result.block),
+            });
             capture_marker_error(
                 &mut marker_error,
                 self.sync
