@@ -93,6 +93,20 @@ impl<S: Store> CommitsFetcher<S> {
         Ok(docs)
     }
 
+    /// A linked block's delta as a commit shows it, base64 encoded. An
+    /// Immutable block carries several fields, so it shows the one named.
+    fn encoded_delta(&self, delta: &CrdtDelta, field_name: Option<&str>) -> Option<String> {
+        let data = match delta {
+            CrdtDelta::Immutable(payload) => payload
+                .fields
+                .iter()
+                .find(|(name, _)| Some(name.as_str()) == field_name)
+                .map(|(_, data)| data.to_vec()),
+            delta => self.get_delta_data(delta),
+        }?;
+        Some(base64::engine::general_purpose::STANDARD.encode(data))
+    }
+
     /// Convert a block to a commit document.
     ///
     /// Loads linked blocks and head blocks to populate the `height` field
@@ -160,10 +174,13 @@ impl<S: Store> CommitsFetcher<S> {
                         let nested_links = self.build_simple_links(txn, &linked_block).await;
                         let nested_heads = self.build_simple_heads(txn, &linked_block).await;
 
+                        let delta = self.encoded_delta(&linked_block.delta, Some(&field_name));
                         links.push(json!({
                             "cid": link.link.to_string(),
                             "fieldName": field_name,
                             "height": height,
+                            "delta": delta,
+                            "collectionVersionId": self.get_collection_version_id(&linked_block.delta),
                             "docID": doc_id,
                             "links": nested_links,
                             "heads": nested_heads,
@@ -192,10 +209,13 @@ impl<S: Store> CommitsFetcher<S> {
                         let nested_links = self.build_simple_links(txn, &head_block).await;
                         let nested_heads = self.build_simple_heads(txn, &head_block).await;
 
+                        let delta = self.encoded_delta(&head_block.delta, field_name.as_deref());
                         heads.push(json!({
                             "cid": head_cid.to_string(),
                             "height": height,
                             "fieldName": field_name,
+                            "delta": delta,
+                            "collectionVersionId": self.get_collection_version_id(&head_block.delta),
                             "docID": doc_id,
                             "links": nested_links,
                             "heads": nested_heads,

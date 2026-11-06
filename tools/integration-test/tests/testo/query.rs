@@ -31,6 +31,7 @@ mod commits {
     mod with_doc_id_typename;
     mod with_filter_compound;
     mod with_filter_in;
+    mod with_link_delta;
     mod with_nested_links;
     mod with_null_input;
 }
