@@ -251,6 +251,15 @@ pub struct StartArgs {
     #[arg(long, env = "DEFRA_P2P_MAX_PENDING_DAGS")]
     pub p2p_max_pending_dags: Option<usize>,
 
+    /// Max concurrent DAG fetches across all peers. Default: 4.
+    #[arg(long, env = "DEFRA_P2P_MAX_CONCURRENT_DAG_FETCHES")]
+    pub p2p_max_concurrent_dag_fetches: Option<usize>,
+
+    /// Seconds an unacknowledged pending-DAG entry lives before eviction; an
+    /// acknowledged entry does not expire. Default: 300.
+    #[arg(long, env = "DEFRA_P2P_PENDING_DAG_TTL_SECS")]
+    pub p2p_pending_dag_ttl_secs: Option<u64>,
+
     /// Re-announce blocks merged from peers on their gossip topics, so
     /// subscribers with no transport route to the author still receive them
     /// through whichever peer merged them (multi-hop propagation). Bare
@@ -575,6 +584,12 @@ impl StartArgs {
         }
         if let Some(max) = self.p2p_max_pending_dags {
             config.net.p2p_max_pending_dags = max;
+        }
+        if let Some(max) = self.p2p_max_concurrent_dag_fetches {
+            config.net.p2p_max_concurrent_dag_fetches = max;
+        }
+        if let Some(secs) = self.p2p_pending_dag_ttl_secs {
+            config.net.p2p_pending_dag_ttl_secs = secs;
         }
         if let Some(rebroadcast) = self.p2p_rebroadcast_on_merge {
             config.net.p2p_rebroadcast_on_merge = rebroadcast;

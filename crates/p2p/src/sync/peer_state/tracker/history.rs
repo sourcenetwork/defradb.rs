@@ -93,12 +93,19 @@ impl PeerStateTracker {
         self.enforce_global_limits();
     }
 
-    /// Record that pushing a document head to the peer failed.
+    /// Record that pushing a document head to the peer failed. Only a failure
+    /// the peer `answered` (a nack) marks it seen; a timeout or a lost
+    /// connection does not.
     ///
     /// Creates a peer entry if one doesn't exist.
-    pub fn record_head_push_failed(&self, peer_id: &str, error: String) {
+    pub fn record_head_push_failed(&self, peer_id: &str, error: String, answered: bool) {
         let info = self.peer_entry(peer_id);
-        info.heads_pushed.fail(self.touch(&info), error);
+        let at_ms = if answered {
+            self.touch(&info)
+        } else {
+            self.unix_ms(self.now())
+        };
+        info.heads_pushed.fail(at_ms, error);
         self.enforce_global_limits();
     }
 

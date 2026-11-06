@@ -150,6 +150,9 @@ fn view() -> Arc<PersistedView> {
     Arc::new(PersistedView::default())
 }
 
+/// A share no test peer reaches, for the tests of the cap alone.
+const NO_SHARE: usize = usize::MAX;
+
 async fn register(
     store: &PendingDagStore<RegolithStore>,
     view: &Arc<PersistedView>,
@@ -157,12 +160,40 @@ async fn register(
     record: &PersistedPendingDag,
     capacity: usize,
 ) -> Admission {
+    register_over(store, view, root, &[], record, capacity).await
+}
+
+/// Registers `root`, which links `parents`.
+async fn register_over(
+    store: &PendingDagStore<RegolithStore>,
+    view: &Arc<PersistedView>,
+    root: Cid,
+    parents: &[Cid],
+    record: &PersistedPendingDag,
+    capacity: usize,
+) -> Admission {
+    register_within(store, view, root, parents, record, capacity, NO_SHARE).await
+}
+
+/// Registers `root`, which links `parents`, under a share of `peer_capacity`
+/// records for its peer.
+async fn register_within<S: Store + 'static>(
+    store: &PendingDagStore<S>,
+    view: &Arc<PersistedView>,
+    root: Cid,
+    parents: &[Cid],
+    record: &PersistedPendingDag,
+    capacity: usize,
+    peer_capacity: usize,
+) -> Admission {
     store
         .register(
             Registration {
                 root,
+                parents,
                 record,
                 capacity,
+                peer_capacity,
             },
             view,
         )
@@ -252,7 +283,7 @@ async fn a_registered_record_reads_as_the_registration_alone() {
     let root = cid(b"slotted");
     assert_eq!(
         register(&store, &view(), root, &record("doc"), 4).await,
-        Admission::Registered
+        Admission::Registered { retired: None }
     );
 
     let txn = Systemstore::new(inner).new_txn(true).await.unwrap();
@@ -278,11 +309,11 @@ async fn the_cap_refuses_a_new_root_until_a_slot_frees() {
     let (a, b, c) = (cid(b"a"), cid(b"b"), cid(b"c"));
     assert_eq!(
         register(&store, &view, a, &record("doc-a"), 2).await,
-        Admission::Registered
+        Admission::Registered { retired: None }
     );
     assert_eq!(
         register(&store, &view, b, &record("doc-b"), 2).await,
-        Admission::Registered
+        Admission::Registered { retired: None }
     );
     assert_eq!(
         register(&store, &view, c, &record("doc-c"), 2).await,
@@ -297,7 +328,7 @@ async fn the_cap_refuses_a_new_root_until_a_slot_frees() {
 
     assert_eq!(
         register(&store, &view, a, &record("doc-a"), 2).await,
-        Admission::Registered,
+        Admission::Registered { retired: None },
         "a root that holds a record keeps its slot"
     );
 
@@ -305,7 +336,7 @@ async fn the_cap_refuses_a_new_root_until_a_slot_frees() {
     assert!(!store.remove(&a, &view).await.unwrap(), "already gone");
     assert_eq!(
         register(&store, &view, c, &record("doc-c"), 2).await,
-        Admission::Registered
+        Admission::Registered { retired: None }
     );
     assert!(view.contains(&b) && view.contains(&c) && !view.contains(&a));
     assert_eq!(view.len(), 2);
@@ -329,8 +360,10 @@ async fn concurrent_registrations_never_exceed_the_cap() {
                 .register(
                     Registration {
                         root,
+                        parents: &[],
                         record: &record,
                         capacity: 4,
+                        peer_capacity: NO_SHARE,
                     },
                     &view,
                 )
@@ -341,9 +374,9 @@ async fn concurrent_registrations_never_exceed_the_cap() {
     let mut registered = 0;
     for task in tasks {
         match task.join().await.unwrap() {
-            Admission::Registered => registered += 1,
+            Admission::Registered { .. } => registered += 1,
             Admission::AtCapacity => {}
-            Admission::Covered => panic!("no root belongs to a scope"),
+            Admission::AtPeerCapacity => panic!("no share binds"),
         }
     }
     assert_eq!(registered, 4);
@@ -351,62 +384,76 @@ async fn concurrent_registrations_never_exceed_the_cap() {
     assert_eq!(view.len(), 4);
 }
 
-/// Within a sender scope the newer head retires the older one, takes over
-/// its slot even at the cap, and an older head that comes later is covered.
+/// Within a sender scope a head retires the current head it links as a
+/// parent and takes over its slot even at the cap. A head that does not link
+/// it, older or a sibling, keeps a record and a slot of its own.
 #[nuclei::test]
-async fn a_newer_head_retires_the_older_one_and_takes_its_slot() {
+async fn a_head_retires_the_current_head_it_links_and_takes_its_slot() {
     let store = memory_store();
     let view = view();
-    let (old, new) = (cid(b"old"), cid(b"new"));
+    let (old, new, sibling) = (cid(b"old"), cid(b"new"), cid(b"sibling"));
     assert_eq!(
         register(&store, &view, old, &head(1), 1).await,
-        Admission::Registered
+        Admission::Registered { retired: None }
     );
     assert_eq!(
-        register(&store, &view, new, &head(2), 1).await,
-        Admission::Registered
+        register_over(&store, &view, new, &[old], &head(2), 1).await,
+        Admission::Registered { retired: Some(old) }
     );
     assert_eq!(store.load_all().await.unwrap(), vec![(new, head(2))]);
     assert!(view.contains(&new) && !view.contains(&old));
 
     assert_eq!(
         register(&store, &view, old, &head(1), 1).await,
-        Admission::Covered
+        Admission::AtCapacity,
+        "an older head the current one may not link needs a slot of its own"
     );
-    assert_eq!(store.load_all().await.unwrap(), vec![(new, head(2))]);
-
-    assert!(store.remove(&new, &view).await.unwrap());
     assert_eq!(
-        register(&store, &view, old, &head(1), 1).await,
-        Admission::Registered,
-        "a discharged head leaves its scope without a current head"
+        register_over(&store, &view, sibling, &[old], &head(2), 3).await,
+        Admission::Registered { retired: None }
+    );
+    assert_eq!(
+        register(&store, &view, old, &head(1), 3).await,
+        Admission::Registered { retired: None }
+    );
+    assert_eq!(
+        sorted_roots(store.load_all().await.unwrap()),
+        sorted_roots(vec![(old, head(1)), (new, head(2)), (sibling, head(2))]),
+        "a sibling never retires the current head, and a lower head is never covered"
     );
 }
 
-/// Concurrent heads of one sender scope settle to the newest: the scope's
-/// durable head is read and written by every registration of the scope, so
-/// the engine orders them and the store never keeps an older head beside it.
+/// Concurrent siblings of one sender scope that all link its current head:
+/// the scope's durable head is read and written by every registration of the
+/// scope, so the engine orders them. The first to commit retires the parent;
+/// every sibling keeps its record, and a merge head that links them all
+/// retires only the current one.
 #[nuclei::test(threads = 4)]
-async fn concurrent_heads_of_one_scope_leave_the_newest_alone() {
+async fn concurrent_siblings_of_one_scope_each_keep_their_record() {
     let store = Arc::new(memory_store().with_max_txn_retries(64));
     let view = view();
+    let base = cid(b"head-1");
     assert_eq!(
-        register(&store, &view, cid(b"head-1"), &head(1), 8).await,
-        Admission::Registered
+        register(&store, &view, base, &head(1), 9).await,
+        Admission::Registered { retired: None }
     );
+    let siblings: Vec<Cid> = (2..10u32)
+        .map(|index| cid(format!("head-{index}").as_bytes()))
+        .collect();
     let mut tasks = Vec::new();
-    for priority in 2..10u64 {
+    for root in siblings.iter().copied() {
         let store = Arc::clone(&store);
         let view = Arc::clone(&view);
         tasks.push(crate::rt::spawn(async move {
-            let root = cid(format!("head-{priority}").as_bytes());
-            let record = head(priority);
+            let record = head(2);
             store
                 .register(
                     Registration {
                         root,
+                        parents: &[base],
                         record: &record,
-                        capacity: 8,
+                        capacity: 9,
+                        peer_capacity: NO_SHARE,
                     },
                     &view,
                 )
@@ -415,11 +462,186 @@ async fn concurrent_heads_of_one_scope_leave_the_newest_alone() {
         }));
     }
     for task in tasks {
-        assert_ne!(task.join().await.unwrap(), Admission::AtCapacity);
+        assert!(matches!(
+            task.join().await.unwrap(),
+            Admission::Registered { .. }
+        ));
     }
-    let newest = cid(b"head-9");
-    assert_eq!(store.load_all().await.unwrap(), vec![(newest, head(9))]);
-    assert_eq!(view.roots(), vec![newest]);
+    let mut expected = siblings.clone();
+    expected.sort();
+    assert_eq!(sorted_roots(store.load_all().await.unwrap()), expected);
+
+    let merge = cid(b"merge");
+    assert!(matches!(
+        register_over(&store, &view, merge, &siblings, &head(3), 9).await,
+        Admission::Registered { retired: Some(_) }
+    ));
+    let roots = sorted_roots(store.load_all().await.unwrap());
+    assert_eq!(roots.len(), siblings.len());
+    assert!(roots.contains(&merge) && !roots.contains(&base));
+    assert_eq!(view.len(), siblings.len());
+}
+
+/// A peer holds at most its share of the records: a root new to the store is
+/// refused at the share and nothing is written, a newer head of a scope
+/// takes over the older head's place in the share, and a discharge gives the
+/// place back.
+#[nuclei::test]
+async fn a_peer_holds_its_share_and_a_discharge_gives_a_place_back() {
+    let store = memory_store();
+    let view = view();
+    let (old, new, other) = (cid(b"old"), cid(b"new"), cid(b"other"));
+    assert_eq!(
+        register_within(&store, &view, old, &[], &head(1), 4, 1).await,
+        Admission::Registered { retired: None }
+    );
+    assert_eq!(
+        register_within(&store, &view, new, &[old], &head(2), 4, 1).await,
+        Admission::Registered { retired: Some(old) },
+        "a newer head takes over the older head's place"
+    );
+    assert_eq!(
+        register_within(&store, &view, other, &[], &record("doc-other"), 4, 1).await,
+        Admission::AtPeerCapacity
+    );
+    assert_eq!(store.load_all().await.unwrap(), vec![(new, head(2))]);
+    let other_peer = PersistedPendingDag {
+        source_peer: Some("peer-2".to_string()),
+        ..record("doc-other")
+    };
+    assert_eq!(
+        register_within(&store, &view, other, &[], &other_peer, 4, 1).await,
+        Admission::Registered { retired: None },
+        "another peer has a share of its own"
+    );
+
+    assert!(store.remove(&new, &view).await.unwrap());
+    let third = cid(b"third");
+    assert_eq!(
+        register_within(&store, &view, third, &[], &record("doc-third"), 4, 1).await,
+        Admission::Registered { retired: None }
+    );
+}
+
+/// Commits a registration of its own root, of the same peer, between the
+/// first attempt of the transition it runs and that attempt's commit, as a
+/// registration that ran at the same moment would.
+struct RegistersBeside {
+    inner: Arc<RegolithStore>,
+    root: Cid,
+    record: PersistedPendingDag,
+    view: Arc<PersistedView>,
+    owed: Arc<std::sync::atomic::AtomicBool>,
+    attempt_calls: Arc<AtomicUsize>,
+}
+
+impl storage::corekv::private::Sealed for RegistersBeside {}
+
+#[async_trait]
+impl Store for RegistersBeside {
+    fn crdts(&self) -> &storage::Crdts {
+        self.inner.crdts()
+    }
+
+    async fn allocate(
+        &self,
+        key: &[u8],
+        count: u64,
+    ) -> storage::corekv::Result<std::ops::Range<u64>> {
+        self.inner.allocate(key, count).await
+    }
+
+    fn transaction_stats_handle(&self) -> Option<storage::backends::TransactionStatsHandle> {
+        self.inner.transaction_stats_handle()
+    }
+
+    async fn new_txn(&self, readonly: bool) -> storage::corekv::Result<Box<dyn Txn>> {
+        self.inner.new_txn(readonly).await
+    }
+
+    async fn transact_retry(
+        &self,
+        options: RetryOptions,
+        attempt: storage::corekv::RetryAttempt,
+    ) -> std::result::Result<RetryAttemptValue, storage::corekv::RetryAttemptError> {
+        let wrapped = Box::new(RegisterBeside {
+            inner: attempt,
+            store: Arc::clone(&self.inner),
+            root: self.root,
+            record: self.record.clone(),
+            view: Arc::clone(&self.view),
+            owed: Arc::clone(&self.owed),
+            attempt_calls: Arc::clone(&self.attempt_calls),
+        });
+        self.inner.transact_retry(options, wrapped).await
+    }
+
+    async fn close(&self) -> storage::corekv::Result<()> {
+        self.inner.close().await
+    }
+}
+
+struct RegisterBeside {
+    inner: storage::corekv::RetryAttempt,
+    store: Arc<RegolithStore>,
+    root: Cid,
+    record: PersistedPendingDag,
+    view: Arc<PersistedView>,
+    owed: Arc<std::sync::atomic::AtomicBool>,
+    attempt_calls: Arc<AtomicUsize>,
+}
+
+impl RetryAttemptFn for RegisterBeside {
+    fn run<'a>(&'a mut self, retry: &'a mut dyn RetryTxn) -> RetryAttemptFuture<'a> {
+        Box::pin(async move {
+            self.attempt_calls.fetch_add(1, Ordering::SeqCst);
+            let output = self.inner.run(retry).await?;
+            if self.owed.swap(false, Ordering::SeqCst) {
+                let beside = PendingDagStore::new(Arc::clone(&self.store));
+                assert_eq!(
+                    register_within(&beside, &self.view, self.root, &[], &self.record, 4, 1).await,
+                    Admission::Registered { retired: None },
+                    "the registration beside it runs first and commits"
+                );
+            }
+            Ok(output)
+        })
+    }
+}
+
+/// Two registrations of one peer that run at the same moment both read the
+/// peer's count before either commits. The read is validated, so the one
+/// that commits second runs again, reads the count the other wrote, and is
+/// refused at the share: the peer never holds more than its share.
+#[nuclei::test]
+async fn a_registration_beside_another_of_its_peer_is_refused_at_the_share() {
+    let inner = Arc::new(RegolithStore::in_memory().unwrap());
+    let view = view();
+    let (first, beside) = (cid(b"first"), cid(b"beside"));
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let store = PendingDagStore::new(Arc::new(RegistersBeside {
+        inner: Arc::clone(&inner),
+        root: beside,
+        record: record("doc-beside"),
+        view: Arc::clone(&view),
+        owed: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        attempt_calls: Arc::clone(&attempts),
+    }));
+
+    assert_eq!(
+        register_within(&store, &view, first, &[], &record("doc-first"), 4, 1).await,
+        Admission::AtPeerCapacity,
+        "a peer with a share of one holds one record"
+    );
+    assert_eq!(
+        attempts.load(Ordering::SeqCst),
+        2,
+        "the first attempt read the count the registration beside it wrote"
+    );
+    assert_eq!(
+        PendingDagStore::new(inner).load_all().await.unwrap(),
+        vec![(beside, record("doc-beside"))]
+    );
 }
 
 /// A quarantine moves the root out of the live keyspace in one transaction,
@@ -431,7 +653,7 @@ async fn quarantine_moves_the_root_and_counts_it_once() {
     let root = cid(b"rejected");
     assert_eq!(
         register(&store, &view, root, &record("doc"), 1).await,
-        Admission::Registered
+        Admission::Registered { retired: None }
     );
 
     let entry = quarantined("doc", "unique constraint violation");
@@ -444,7 +666,7 @@ async fn quarantine_moves_the_root_and_counts_it_once() {
     assert_eq!(view.quarantined(), 1);
     assert_eq!(
         register(&store, &view, cid(b"next"), &record("doc-next"), 1).await,
-        Admission::Registered,
+        Admission::Registered { retired: None },
         "the quarantined root's slot is free"
     );
 }
@@ -458,7 +680,7 @@ async fn a_sweep_makes_the_view_the_records() {
     let (kept, orphan) = (cid(b"kept"), cid(b"orphan"));
     assert_eq!(
         register(&store, &view, kept, &record("doc-kept"), 4).await,
-        Admission::Registered
+        Admission::Registered { retired: None }
     );
     store.put(&orphan, &record("doc-orphan")).await.unwrap();
     assert!(store

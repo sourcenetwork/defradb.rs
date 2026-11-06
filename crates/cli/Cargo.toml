@@ -141,6 +141,8 @@ iroh = ["p2p/iroh-transport", "p2p/kms", "defra-p2p-adapter/iroh", "defra-p2p-ad
 # Host an iroh relay server (`net.iroh_relay_server`) alongside the endpoint.
 iroh-relay-server = ["iroh", "p2p/iroh-relay-server"]
 profiling = ["dep:tracing-chrome"]
+# Log the P2P delivery trace events proofs/tla/Trace_P2PDelivery.tla replays.
+model-trace = ["p2p/model-trace"]
 # OpenTelemetry OTLP exporter. Mirrors Go's `//go:build telemetry`: compile-time
 # opt-in. When built with this feature, runtime default is on (Go parity); use
 # `--no-telemetry` to disable at runtime.

@@ -74,6 +74,11 @@ impl TestTransport {
         self
     }
 
+    /// Later sends to this peer complete; sends already stalled stay stalled.
+    pub(in crate::sync::coordinator) fn unstall_peer(&self, peer: &str) {
+        self.stalled_peers.remove(peer);
+    }
+
     pub(in crate::sync::coordinator) fn with_sign_failures(self, count: usize) -> Self {
         self.sign_failures_remaining.store(count, Ordering::Relaxed);
         self
@@ -426,4 +431,144 @@ async fn head_hint_timeout_is_terminal_for_the_live_attempt() {
 
     assert!(any_failed.failed);
     assert_eq!(transport.sent_cids(), vec![cid1.to_bytes()]);
+}
+
+#[nuclei::test]
+async fn fanout_registration_failure_is_peer_local() {
+    use super::super::access_tests::NoopTransport;
+    use crate::bitswap::{AccessMode, ReplicatorRegistry};
+    use crate::replicator::EqOnlyFilterMatcher;
+    use crate::sync::collection_store::MemoryCollectionStorage;
+    use crate::sync::head_provider::DocumentHeadProvider;
+    use defra_core::{Block, CompositeDeltaPayload, CrdtDelta};
+
+    /// The pushed head is the document's whole frontier.
+    struct PushedHead(Cid);
+
+    #[async_trait]
+    impl DocumentHeadProvider for PushedHead {
+        async fn get_document_heads(&self, _doc_id: &str) -> P2PResult<Vec<Cid>> {
+            Ok(vec![self.0])
+        }
+
+        async fn get_collection_heads(&self, _collection_id: &str) -> P2PResult<Vec<Cid>> {
+            Ok(Vec::new())
+        }
+    }
+
+    let block = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            collection_version_id: "collection1".to_string(),
+            priority: 1,
+            status: 1,
+        }),
+        vec![],
+        vec![],
+    );
+    let data = block.to_dag_cbor().unwrap();
+    let cid = block.generate_cid().unwrap();
+
+    let transport = NoopTransport::new();
+    let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(blockstore::DefraBlockstore::new(store, true));
+    let (mut coordinator, _events) = SyncCoordinator::with_head_provider(
+        transport.clone(),
+        blockstore,
+        crate::network::test_network(),
+        crate::sync::SyncConfig::default(),
+        AccessMode::Open,
+        Arc::new(ReplicatorRegistry::new()),
+        Arc::new(MemoryCollectionStorage::default()),
+        Arc::new(PushedHead(cid)),
+        Arc::new(EqOnlyFilterMatcher),
+    )
+    .await
+    .unwrap();
+    let (failure_tx, mut failure_rx) = crate::rt::mpsc::channel::<crate::sync::PushFailure>(16);
+    coordinator.set_failure_channel(failure_tx);
+    let registrations = Arc::new(Atom::new(Vec::<(String, bool)>::new()));
+    let acked = Arc::new(Atom::new(Vec::<String>::new()));
+    let recorder = {
+        let registrations = Arc::clone(&registrations);
+        let acked = Arc::clone(&acked);
+        crate::rt::spawn(async move {
+            while let Some(mut event) = failure_rx.recv().await {
+                let Some(reply) = event.durable_tx.take() else {
+                    continue;
+                };
+                let registration =
+                    !event.admission_only && !event.acknowledged && !event.create_retry;
+                let generation = if registration {
+                    let accepted = registrations.peek(|seen| seen.len()) != 1;
+                    let entry = (event.peer_id.clone(), accepted);
+                    registrations.rcu(|seen| {
+                        let mut next = seen.clone();
+                        next.push(entry.clone());
+                        next
+                    });
+                    accepted.then_some(1)
+                } else {
+                    if event.acknowledged {
+                        acked.rcu(|peers| {
+                            let mut next = peers.clone();
+                            next.push(event.peer_id.clone());
+                            next
+                        });
+                    }
+                    event.marker_generation
+                };
+                let _ = reply.send(generation);
+            }
+        })
+    };
+    for peer in ["fanout-a", "fanout-b", "fanout-c"] {
+        transport
+            .create_replicator(
+                &PeerId::new(peer.to_string()),
+                vec!["collection1".to_string()],
+            )
+            .await
+            .unwrap();
+    }
+
+    let error = coordinator
+        .push_to_replicators(&cid, &data, "doc1", "collection1")
+        .await
+        .expect_err("the replicator whose registration failed has no durable marker");
+    assert!(matches!(error, crate::error::Error::DurableHeadMarker(_)));
+
+    let registrations = registrations.load_clone();
+    assert_eq!(
+        registrations.len(),
+        3,
+        "a failed registration must not skip the remaining replicators: {registrations:?}"
+    );
+    let mut registered: Vec<String> = registrations
+        .iter()
+        .filter(|(_, accepted)| *accepted)
+        .map(|(peer, _)| peer.clone())
+        .collect();
+    registered.sort();
+    let snapshot = coordinator.sync_status().await.push_backlog;
+    assert_eq!(snapshot.head_hints_failed_local, 1);
+    assert_eq!(
+        snapshot.enqueued_total, 2,
+        "every registered replicator keeps its job"
+    );
+    let delivered = crate::rt::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let mut peers = acked.load_clone();
+            if peers.len() >= registered.len() {
+                peers.sort();
+                break peers;
+            }
+            crate::rt::yield_now().await;
+        }
+    })
+    .await
+    .expect("registered replicators were never pushed");
+    assert_eq!(delivered, registered);
+
+    coordinator.shutdown().await;
+    recorder.abort();
 }
