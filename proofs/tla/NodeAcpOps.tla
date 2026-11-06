@@ -55,7 +55,7 @@
 \*     DB::nac_status_as                    the status check
 \*     DB::disable_nac_as                   hands the caller to NacManager::disable_as
 \*     DB::re_enable_nac_as                 hands the caller to NacManager::re_enable_as
-\*     DB::add_nac_actor_relationship_as    the add checks (DB::nac_relationship), then the grant
+\*     DB::add_nac_actor_relationship_as    parses the request; NacManager::decide_relationship checks it
 \*     DB::delete_nac_actor_relationship_as the same checks but target, then the
 \*                                          revocation, or "not found" for a non-DID
 \*   crates/db/src/nac/toggle.rs
@@ -411,7 +411,7 @@ RelInit ==
 
 \* The guard: the client reads the status. NAC off, it stops with Go's error.
 \* Otherwise it notes the version it read, as part of its write, unless the
-\* RED switch reads it only before the write (the pre-check in nac_ops).
+\* RED switch reads it only before the write (the pre-check nac_ops once had).
 RelGuard ==
   /\ relPc = "guard"
   /\ IF relNac = "off"

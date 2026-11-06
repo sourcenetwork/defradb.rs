@@ -427,3 +427,24 @@ fn a_write_that_loses_every_try_is_a_conflict() {
     })
     .unwrap()
 }
+
+#[test]
+fn a_relationship_change_decides_on_the_stored_status_not_a_stale_copy() {
+    workers::block_on(async {
+        let shared: Shared = Arc::new(PersistentZanzibarStore::from_store(Arc::new(
+            RegolithStore::in_memory().unwrap(),
+        )));
+        let (stale_db, _) = node_over(shared.clone()).await;
+        let (other_db, _) = node_over(shared.clone()).await;
+        stale_db.disable_nac_as(&acting(OWNER)).await.unwrap();
+        other_db.re_enable_nac_as(&acting(OWNER)).await.unwrap();
+
+        let existed = stale_db
+            .add_nac_actor_relationship_as(&acting(OWNER), "admin", WRITER)
+            .await
+            .unwrap();
+        assert!(!existed, "the admin relationship was new");
+        assert_eq!(stored_status(shared.clone()).await, NacStatus::Enabled);
+    })
+    .unwrap()
+}

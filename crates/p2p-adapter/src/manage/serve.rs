@@ -486,10 +486,7 @@ mod tests {
         async fn change_relationship_as(
             &self,
             _caller: &db::NacCaller,
-            _requestor: &Did,
-            _change: db::NacChange,
-            _relation: db::NacRelation,
-            _target: &Did,
+            _request: &db::NacRelationshipRequest,
         ) -> db::nac::Result<bool> {
             unimplemented!()
         }

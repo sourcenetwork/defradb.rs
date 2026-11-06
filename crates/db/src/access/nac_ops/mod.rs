@@ -5,8 +5,6 @@
 
 mod error;
 
-use std::sync::Arc;
-
 use acp::nac::{NacStatus, NodePermission};
 use defra_core::RequestContext;
 use identity::Did;
@@ -15,7 +13,7 @@ use storage::corekv::Store;
 use crate::access::nac::acting_did;
 use crate::database::DB;
 use crate::error::Error;
-use crate::nac::{NacCaller, NacChange, NacManagerApi, NacRelation};
+use crate::nac::{NacCaller, NacChange, NacRelation, NacRelationshipRequest};
 
 pub use error::NodeAcpError;
 
@@ -63,24 +61,8 @@ where
         relation: &str,
         target_actor: &str,
     ) -> Result<bool, NodeAcpError> {
-        let (nac, requestor, relation, target) = self
-            .nac_relationship(
-                context,
-                NodePermission::NacRelationAdd,
-                relation,
-                target_actor,
-            )
-            .await?;
-        let target = target.ok_or(NodeAcpError::InvalidActor)?;
-        nac.change_relationship_as(
-            &self.nac_caller(context),
-            &requestor,
-            NacChange::Add,
-            relation,
-            &target,
-        )
-        .await
-        .map_err(|error| refused(error, NodePermission::NacRelationAdd))
+        self.change_nac_relationship(context, NacChange::Add, relation, target_actor)
+            .await
     }
 
     /// Take `relation` on the node from `target_actor`, the caller asking.
@@ -93,26 +75,8 @@ where
         relation: &str,
         target_actor: &str,
     ) -> Result<bool, NodeAcpError> {
-        let (nac, requestor, relation, target) = self
-            .nac_relationship(
-                context,
-                NodePermission::NacRelationDelete,
-                relation,
-                target_actor,
-            )
-            .await?;
-        let Some(target) = target else {
-            return Ok(false);
-        };
-        nac.change_relationship_as(
-            &self.nac_caller(context),
-            &requestor,
-            NacChange::Remove,
-            relation,
-            &target,
-        )
-        .await
-        .map_err(|error| refused(error, NodePermission::NacRelationDelete))
+        self.change_nac_relationship(context, NacChange::Remove, relation, target_actor)
+            .await
     }
 
     /// Who asks in `context`, with the node's own identity beside it.
@@ -123,45 +87,35 @@ where
         }
     }
 
-    /// The node's NAC manager, once NAC was set up.
-    async fn configured_nac(&self) -> Result<Arc<dyn NacManagerApi>, NodeAcpError> {
-        let nac = self.nac_manager().ok_or(NodeAcpError::NotConfigured)?;
-        match nac.status().await {
-            NacStatus::NotConfigured => Err(NodeAcpError::NotConfigured),
-            _ => Ok(nac),
-        }
-    }
-
-    /// Everything a relationship operation needs, checked in Go's order:
-    /// NAC set up, the caller's `permission`, NAC on, an identity acting,
-    /// then the relation; the target, `None` when it is neither a DID nor
-    /// `*`, is the operation's to judge. These checks give the refusal Go
-    /// gives; the write decides again on what it reads, so one that commits
-    /// first cannot slip past them.
-    async fn nac_relationship(
+    /// Make `change` of `relation` for `target_actor`. The relation and the
+    /// target are only parsed here; every check, in Go's order, runs in the
+    /// write that makes the change.
+    async fn change_nac_relationship(
         &self,
         context: &RequestContext,
-        permission: NodePermission,
+        change: NacChange,
         relation: &str,
         target_actor: &str,
-    ) -> Result<(Arc<dyn NacManagerApi>, Did, NacRelation, Option<Did>), NodeAcpError> {
-        let nac = self.configured_nac().await?;
-        self.check_node_access_as(context, permission).await?;
-        if nac.status().await != NacStatus::Enabled {
-            return Err(NodeAcpError::AcpNotAvailable);
-        }
-        let requestor = acting_did(context).ok_or(NodeAcpError::RequiresIdentity)?;
-        let grant = match relation {
-            ADMIN_RELATION => NacRelation::Admin,
-            other => NacRelation::Permission(
-                NodePermission::parse(other).ok_or(NodeAcpError::RelationNotInResource)?,
-            ),
+    ) -> Result<bool, NodeAcpError> {
+        let nac = self.nac_manager().ok_or(NodeAcpError::NotConfigured)?;
+        let request = NacRelationshipRequest {
+            change,
+            relation: match relation {
+                ADMIN_RELATION => Some(NacRelation::Admin),
+                other => NodePermission::parse(other).map(NacRelation::Permission),
+            },
+            target: match target_actor {
+                "*" => Some(Did::wildcard()),
+                did => Did::new(did).ok(),
+            },
         };
-        let target = match target_actor {
-            "*" => Some(Did::wildcard()),
-            did => Did::new(did).ok(),
+        let permission = match change {
+            NacChange::Add => NodePermission::NacRelationAdd,
+            NacChange::Remove => NodePermission::NacRelationDelete,
         };
-        Ok((nac, requestor, grant, target))
+        nac.change_relationship_as(&self.nac_caller(context), &request)
+            .await
+            .map_err(|error| refused(error, permission))
     }
 }
 

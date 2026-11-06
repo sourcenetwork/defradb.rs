@@ -11,7 +11,7 @@ pub use factory::create_memory_nac_manager;
 #[cfg(not(target_arch = "wasm32"))]
 pub use factory::create_persistent_nac_manager;
 pub use toggle::NacCaller;
-pub use write::{NacChange, NacRelation};
+pub use write::{NacChange, NacRelation, NacRelationshipRequest};
 
 use std::sync::Arc;
 
@@ -107,10 +107,7 @@ pub trait NacManagerApi: defra_core::thread_bounds::MaybeSendSync {
     async fn change_relationship_as(
         &self,
         caller: &NacCaller,
-        requestor: &Did,
-        change: NacChange,
-        relation: NacRelation,
-        target: &Did,
+        request: &NacRelationshipRequest,
     ) -> Result<bool>;
     async fn purge(&self, requestor: &Did) -> Result<()>;
     async fn add_admin(&self, requestor: &Did, target: &Did) -> Result<bool>;

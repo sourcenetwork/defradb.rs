@@ -38,6 +38,15 @@ impl NacChange {
     }
 }
 
+/// A relationship change as asked, parsed but not yet checked: the relation
+/// and the target are `None` when they named nothing the policy has.
+#[derive(Debug, Clone)]
+pub struct NacRelationshipRequest {
+    pub change: NacChange,
+    pub relation: Option<NacRelation>,
+    pub target: Option<Did>,
+}
+
 /// The winning try's value with the status and owner it committed.
 type Committed<T> = (T, NacStatus, Option<Did>);
 
@@ -102,55 +111,51 @@ where
         }
     }
 
-    /// Add or remove `relation` for `target`, `requestor` asking, deciding in
-    /// the write: NAC set up, the caller's permission for the change, NAC on,
-    /// then the change itself, which checks that `requestor` manages
-    /// `relation`. Whether the relationship was there before.
+    /// Make `request` for `caller`, deciding in the write. Whether the
+    /// relationship was there before.
     pub async fn change_relationship_as(
         &self,
         caller: &NacCaller,
-        requestor: &Did,
-        change: NacChange,
-        relation: NacRelation,
-        target: &Did,
+        request: &NacRelationshipRequest,
     ) -> Result<bool> {
-        let asked = (caller.clone(), requestor.clone(), target.clone());
+        let asked = (caller.clone(), request.clone());
         let decided = self
             .in_write(move |manager| {
-                let (caller, requestor, target) = asked.clone();
-                async move {
-                    manager
-                        .decide_relationship(&caller, &requestor, change, relation, &target)
-                        .await
-                }
+                let (caller, request) = asked.clone();
+                async move { manager.decide_relationship(&caller, &request).await }
             })
             .await?;
         match decided {
             Some(existed) => Ok(existed),
-            None => {
-                self.decide_relationship(caller, requestor, change, relation, target)
-                    .await
-            }
+            None => self.decide_relationship(caller, request).await,
         }
     }
 
-    /// The relationship checks in Go's order, then the change, on this
-    /// manager's store.
+    /// Go's checks in Go's order on this manager's store: NAC set up, the
+    /// caller's permission for the change, NAC on, an identity acting, the
+    /// relation, the target; then the change, which checks that the identity
+    /// manages the relation. A removal for a target that is no DID finds
+    /// nothing to take.
     async fn decide_relationship(
         &self,
         caller: &NacCaller,
-        requestor: &Did,
-        change: NacChange,
-        relation: NacRelation,
-        target: &Did,
+        request: &NacRelationshipRequest,
     ) -> Result<bool> {
         if self.nac.status().await == NacStatus::NotConfigured {
             return Err(Error::NotConfigured);
         }
+        let change = request.change;
         self.require(caller, change.permission()).await?;
         if self.nac.status().await != NacStatus::Enabled {
             return Err(Error::NotEnabled);
         }
+        let requestor = caller.identity.as_ref().ok_or(Error::RequiresIdentity)?;
+        let relation = request.relation.ok_or(Error::RelationNotInResource)?;
+        let target = match (&request.target, change) {
+            (Some(target), _) => target,
+            (None, NacChange::Add) => return Err(Error::InvalidActor),
+            (None, NacChange::Remove) => return Ok(false),
+        };
         match (change, relation) {
             (NacChange::Add, NacRelation::Admin) => self
                 .add_admin_direct(requestor, target)

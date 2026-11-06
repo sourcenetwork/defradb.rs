@@ -41,6 +41,9 @@ impl From<crate::nac::Error> for NodeAcpError {
             crate::nac::Error::AlreadyDisabled => NodeAcpError::AlreadyDisabled,
             crate::nac::Error::AlreadyEnabled => NodeAcpError::AlreadyEnabled,
             crate::nac::Error::NotEnabled => NodeAcpError::AcpNotAvailable,
+            crate::nac::Error::RequiresIdentity => NodeAcpError::RequiresIdentity,
+            crate::nac::Error::RelationNotInResource => NodeAcpError::RelationNotInResource,
+            crate::nac::Error::InvalidActor => NodeAcpError::InvalidActor,
             crate::nac::Error::NotAuthorized(permission) => Error::NotAuthorized {
                 permission: permission.as_str().to_owned(),
             }

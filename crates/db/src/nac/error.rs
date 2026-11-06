@@ -26,6 +26,18 @@ pub enum Error {
     #[error("operation requires ACP, but ACP not available")]
     NotEnabled,
 
+    /// A relationship change with no identity acting in the request.
+    #[error("node acp relationship operation requires identity")]
+    RequiresIdentity,
+
+    /// The relation is not one the node's policy has.
+    #[error("relation not in resource")]
+    RelationNotInResource,
+
+    /// The target actor is neither a DID nor `*`.
+    #[error("actor must be a valid did")]
+    InvalidActor,
+
     /// Every try of a NAC write lost its commit to another write.
     #[error("transaction conflict: {0}")]
     Conflict(String),
