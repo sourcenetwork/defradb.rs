@@ -183,7 +183,9 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Node {
     // match with both, as the FFI's `defra_init` sets them for Go's suite.
     crypto::encryption::nonce::set_deterministic_nonce(true);
     defra_core::encryption::set_deterministic_encryption_key(true);
-    let mut builder = Node::builder();
+    // Go's suite drives each node from one process and sends each request as
+    // its own identity, so a transaction is not bound to the identity that began it.
+    let mut builder = Node::builder().with_txn_ownership(db::TxnOwnership::Embedder);
     if let Some(dir) = &spec.dir {
         builder = builder.data_path(dir.path());
     }
