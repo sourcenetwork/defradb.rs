@@ -2470,6 +2470,17 @@ mod acknowledgment;
 
 struct ReplicatedDocumentProjector;
 
+async fn wait_for_projector_peer(node: &Node, context: &defra_core::RequestContext) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if !node.active_peers_as(context).await.expect("active peers").is_empty() {
+            return;
+        }
+        assert!(Instant::now() < deadline, "node never reported a connected peer");
+        edge::testing::edge().sleep(Duration::from_millis(100)).await;
+    }
+}
+
 #[async_trait::async_trait]
 impl db::DocumentMutationProjector for ReplicatedDocumentProjector {
     async fn reconcile(&self, _context: &db::DocumentMutationContext<'_>) -> storage::corekv::Result<()> {
@@ -2523,15 +2534,14 @@ fn accepted_replicated_document_runs_transactional_projector() {
         node1.add_collection_as(&context1, &schema).await.unwrap();
         let addr0 = wait_for_listen_addr(&node0).await;
         let addr1 = wait_for_listen_addr(&node1).await;
-        let p2p0 = node0.p2p().unwrap();
-        let p2p1 = node1.p2p().unwrap();
-        p2p0.connect_peer(&addr1).await.unwrap();
-        wait_for_connected_peer(&node0).await;
-        wait_for_connected_peer(&node1).await;
-        p2p0.add_collections(vec!["ProjectedPeerDoc".to_owned()]).await.unwrap();
-        p2p1.add_collections(vec!["ProjectedPeerDoc".to_owned()]).await.unwrap();
-        p2p1.add_replicator(vec!["ProjectedPeerDoc".to_owned()], Some(&addr0), Default::default(), Vec::new(), None).await.unwrap();
-        p2p0.add_replicator(vec!["ProjectedPeerDoc".to_owned()], Some(&addr1), Default::default(), Vec::new(), None).await.unwrap();
+        node0.connect_as(&context0, std::slice::from_ref(&addr1)).await.unwrap();
+        wait_for_projector_peer(&node0, &context0).await;
+        wait_for_projector_peer(&node1, &context1).await;
+        let collections = vec!["ProjectedPeerDoc".to_owned()];
+        node0.add_p2p_collections_as(&context0, &collections).await.unwrap();
+        node1.add_p2p_collections_as(&context1, &collections).await.unwrap();
+        node1.add_replicator_as(&context1, std::slice::from_ref(&addr0), &collections).await.unwrap();
+        node0.add_replicator_as(&context0, std::slice::from_ref(&addr1), &collections).await.unwrap();
         let response = node0.execute("mutation { add_ProjectedPeerDoc(input: {name:\"one\"}) { _docID } }").await;
         assert!(response.errors.is_empty(), "{:?}", response.errors);
         let id = extract_created_doc_id(&response, "add_ProjectedPeerDoc");
