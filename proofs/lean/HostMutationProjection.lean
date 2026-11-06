@@ -112,11 +112,12 @@ structure HostSourceAdmission where
   actorAdmin : Bool
   relationAuthorized : Bool
   sameTransaction : Bool
+  edgeChanged : Bool
   deriving Lean.FromJson, Lean.ToJson
 
 def hostSourceAllowed (a : HostSourceAdmission) : Bool :=
   a.trustedHost && a.ownerMatches && a.fresh && a.writable && a.configuredNode &&
-    a.actorAdmin && a.relationAuthorized && a.sameTransaction
+    a.sameTransaction && (!a.edgeChanged || (a.actorAdmin && a.relationAuthorized))
 
 theorem untrusted_host_source_denied (a : HostSourceAdmission)
     (h : a.trustedHost = false) : hostSourceAllowed a = false := by
@@ -127,8 +128,16 @@ theorem wrong_transaction_owner_denied (a : HostSourceAdmission)
   simp [hostSourceAllowed, h]
 
 theorem host_source_requires_native_admin (a : HostSourceAdmission)
-    (h : a.actorAdmin = false) : hostSourceAllowed a = false := by
-  simp [hostSourceAllowed, h]
+    (changed : a.edgeChanged = true) (h : a.actorAdmin = false) : hostSourceAllowed a = false := by
+  simp [hostSourceAllowed, changed, h]
+
+/-- A host may leave an already identical edge untouched without a new grant. -/
+theorem unchanged_host_source_allowed (a : HostSourceAdmission)
+    (host : a.trustedHost = true) (owner : a.ownerMatches = true)
+    (fresh : a.fresh = true) (write : a.writable = true)
+    (node : a.configuredNode = true) (bound : a.sameTransaction = true)
+    (unchanged : a.edgeChanged = false) : hostSourceAllowed a = true := by
+  simp [hostSourceAllowed, host, owner, fresh, write, node, bound, unchanged]
 
 /-- A request's source change is authorized by its actual actor. Startup,
 replication and callbacks with no authenticated actor are not repairs. An
