@@ -28,6 +28,9 @@ lean_lib UsersetRelationManager where
 lean_lib SourceScopedNac where
 
 @[default_target]
+lean_lib NodeAcpDelegation where
+
+@[default_target]
 lean_lib EmbeddedHttpAcp where
 
 @[default_target]

@@ -367,6 +367,7 @@ RUNS=(
   "MC_NodeAcpOps_Red_Identity.cfg NodeAcpOps.tla RED" # identity check left out (INV_NoGrantUnlessAllChecksPass)
   "MC_NodeAcpOps_Red_Relation.cfg NodeAcpOps.tla RED" # relation check left out (INV_NoGrantUnlessAllChecksPass)
   "MC_NodeAcpOps_Red_Target.cfg NodeAcpOps.tla RED" # target check left out (INV_NoGrantUnlessAllChecksPass)
+  "MC_NodeAcpOps_Red_Authority.cfg NodeAcpOps.tla RED" # admin-or-delegate authority check left out (INV_NoGrantUnlessAllChecksPass)
   "MC_NodeAcpOps_Red_StartReEnables.cfg NodeAcpOps.tla RED" # a restart re-enables a disabled NAC, as before (INV_RestartKeepsStatus)
   "MC_NodeAcpOps_Red_Order.cfg NodeAcpOps.tla RED" # re-enable checks already-on before the caller (INV_GoOrder)
   "M1Convergence.cfg            M1Convergence.tla            GREEN"  # B3 control (S1')
