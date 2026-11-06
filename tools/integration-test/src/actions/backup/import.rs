@@ -74,6 +74,12 @@ impl HttpRun for ImportBackup {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             action.check_arguments()?;
+            if state.node(action.common.node())?.is_go() {
+                return Err(Failure::unsupported(format!(
+                    "{} on a Go node: Go's backup route takes a file on the server",
+                    Self::name()
+                )));
+            }
             let content = action.import_content.as_str().to_owned();
             state
                 .http_on(action.common.node(), |client| async move {

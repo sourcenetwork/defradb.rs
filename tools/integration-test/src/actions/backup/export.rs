@@ -86,6 +86,12 @@ impl HttpRun for ExportBackup {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             action.check_arguments()?;
+            if state.node(action.common.node())?.is_go() {
+                return Err(Failure::unsupported(format!(
+                    "{} on a Go node: Go's backup route takes a file on the server",
+                    Self::name()
+                )));
+            }
             let collections = Some(action.collections.clone()).filter(|names| !names.is_empty());
             let pretty = action.pretty;
             state
