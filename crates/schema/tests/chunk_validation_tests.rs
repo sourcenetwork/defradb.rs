@@ -106,3 +106,37 @@ fn filling_a_placeholder_with_a_chunk_collection_is_refused() {
         "{err}"
     );
 }
+
+fn embedding(field: &str, source: &str, model: &str) -> schema::VectorEmbeddingDescription {
+    schema::VectorEmbeddingDescription::new(field, model, "openai").with_fields(vec![source.into()])
+}
+
+#[test]
+fn changing_a_chunk_collections_embedding_is_refused() {
+    let mut embedded = chunk();
+    embedded
+        .vector_embeddings
+        .push(embedding("body_v", "text", "m1"));
+    for patched in [vec![], vec![embedding("body_v", "text", "m2")]] {
+        let mut changed = embedded.clone();
+        changed.vector_embeddings = patched;
+        let err = check(vec![article(), embedded.clone()], vec![article(), changed]).unwrap_err();
+        assert!(
+            err.contains("a generated chunk collection's embeddings cannot be mutated. Collection: Article__body_chunk"),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn an_embedding_of_a_chunked_field_on_the_parent_is_refused() {
+    let mut patched = article();
+    patched
+        .vector_embeddings
+        .push(embedding("body_v", "body", "m1"));
+    let err = check(vec![article(), chunk()], vec![patched, chunk()]).unwrap_err();
+    assert!(
+        err.contains("an embedding over a chunked field belongs to its chunk collection. Field: Article.body_v"),
+        "{err}"
+    );
+}

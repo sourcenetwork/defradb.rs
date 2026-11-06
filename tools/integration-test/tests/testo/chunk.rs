@@ -7,6 +7,7 @@ mod declare_definition;
 mod declare_string_only;
 mod embed_chunks;
 mod embed_declare;
+mod embed_patch;
 mod embed_replicate;
 mod embed_search;
 mod embed_support;

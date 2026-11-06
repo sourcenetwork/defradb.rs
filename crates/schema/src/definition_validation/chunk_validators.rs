@@ -49,6 +49,24 @@ pub(super) fn validate_chunks_not_modified(
                 "a generated chunk collection's fields cannot be mutated. Collection: {}",
                 new_col.name
             ));
+        } else if old_col.is_generated() && new_col.vector_embeddings != old_col.vector_embeddings {
+            errs.push(format!(
+                "a generated chunk collection's embeddings cannot be mutated. Collection: {}",
+                new_col.name
+            ));
+        }
+        // The SDL moves such an embedding onto the chunks; on the parent it would embed the whole text.
+        for embedding in &new_col.vector_embeddings {
+            if embedding
+                .fields
+                .iter()
+                .any(|source| new_col.chunked_field(source).is_some())
+            {
+                errs.push(format!(
+                    "an embedding over a chunked field belongs to its chunk collection. Field: {}.{}",
+                    new_col.name, embedding.field_name
+                ));
+            }
         }
         for chunked in &old_col.chunked_fields {
             let list = chunked.list_field();

@@ -206,6 +206,13 @@ With `body: String @chunk` and `body_v: [Float32!] @embedding(fields: ["body"], 
 
 Adding `Article` with `body_v: [Float32!] @embedding(fields: ["title", "body"], ...)` over the chunked `body` fails with `@embedding over a @chunk field must embed only that field. Field: Article.body_v`. An embedding with a `template` over a chunked field fails the same way.
 
+# `defra.chunk.embed.patch`: A patch cannot move or change a chunk embedding
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_patch::a_patch_cannot_move_or_change_a_chunk_embedding"]
+
+Replacing the model of `/Article__body_chunk/VectorEmbeddings/0`, or removing it, fails with `a generated chunk collection's embeddings cannot be mutated. Collection: Article__body_chunk`. Adding to `/Article/VectorEmbeddings` an embedding whose `Fields` name `body` fails with `an embedding over a chunked field belongs to its chunk collection. Field: Article.title`.
+
 # `defra.chunk.embed.chunks`: Each chunk is embedded on its own text
 
 - **Parents:** ["defra.chunk.embed"]
