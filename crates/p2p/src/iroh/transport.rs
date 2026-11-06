@@ -28,7 +28,9 @@ use crate::QueryId;
 use super::command::{CommandSender, EndpointStopped, IrohCommand};
 use super::endpoint_config::AdmissionAuthority;
 use super::peer_map::endpoint_id_to_peer_id;
+use super::protocol_stream::{ProtocolRecvStream, ProtocolSendStream};
 use super::records::{ServiceProfile, ServiceRecord};
+use super::stream_protocols::StreamProtocol;
 
 /// Iroh-backed P2P transport.
 ///
@@ -280,6 +282,42 @@ impl IrohTransport {
         let did = identity::Identity::did(&token_identity)
             .map_err(|error| Error::Transport(format!("peer identity DID failed: {error}")))?;
         Ok(Some(did))
+    }
+
+    /// Open a stream to `peer_id` for `protocol` and write `request` as its
+    /// first message. Finish the send half once the protocol has nothing more
+    /// to send; dropping it unfinished resets the stream.
+    ///
+    /// The stream rides the connection every Defra protocol shares with the
+    /// peer. With none open, the peer is dialled as [`P2PTransport::dial`]
+    /// dials it: at `addrs`, else at an address this node already knows, else
+    /// through discovery.
+    pub async fn open_stream(
+        &self,
+        peer_id: &PeerId,
+        addrs: Vec<PeerAddr>,
+        protocol: &StreamProtocol,
+        request: Vec<u8>,
+    ) -> Result<(ProtocolSendStream, ProtocolRecvStream)> {
+        protocol.validate()?;
+        if request.len() > protocol.max_message {
+            return Err(Error::InvalidConfig(format!(
+                "a request of {} bytes is larger than stream protocol {:?} accepts ({} bytes)",
+                request.len(),
+                String::from_utf8_lossy(protocol.tag),
+                protocol.max_message
+            )));
+        }
+        let (send, recv) = self
+            .send_command(|reply| IrohCommand::OpenStream {
+                peer_id: peer_id.clone(),
+                addrs,
+                protocol: *protocol,
+                request,
+                reply,
+            })
+            .await?;
+        Ok((ProtocolSendStream::new(send), ProtocolRecvStream::new(recv)))
     }
 }
 

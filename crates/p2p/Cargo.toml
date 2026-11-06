@@ -146,6 +146,7 @@ sha2 = { workspace = true, features = ["asm"] }
 edge = { path = "../edge", features = ["testing"] }
 # Test swarms on nuclei sockets.
 net = { path = "../net", features = ["libp2p"] }
+mantra-macros = "0.9"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tempfile = "3"

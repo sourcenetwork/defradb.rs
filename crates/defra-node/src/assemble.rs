@@ -33,6 +33,8 @@ pub(crate) struct Extras {
     pub serves_http: bool,
     #[cfg(feature = "p2p")]
     pub access_hooks: Option<AccessHooks>,
+    #[cfg(feature = "p2p")]
+    pub stream_protocols: Vec<p2p::iroh::StreamRegistration>,
     #[cfg(feature = "otel")]
     pub telemetry: Option<TelemetryHandle>,
 }
@@ -244,6 +246,7 @@ where
                 strict_replicated_doc_access,
                 peer_keyring.as_ref(),
                 network.sibling(),
+                extras.stream_protocols,
             )
             .await
             .map(Some),

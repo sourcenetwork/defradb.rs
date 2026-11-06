@@ -53,6 +53,10 @@ pub enum Error {
     #[error("connection closed")]
     ConnectionClosed,
 
+    /// The peer reset or stopped a stream, with this QUIC code.
+    #[error("stream reset by the peer with code {0}")]
+    StreamReset(u64),
+
     /// Protocol negotiation failed.
     #[error("protocol negotiation failed: {0}")]
     ProtocolNegotiation(String),

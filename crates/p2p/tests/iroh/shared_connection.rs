@@ -124,6 +124,7 @@ async fn reverse_rpc_uses_inbound(retain_old: bool) {
         fetch_stats: Arc::default(),
         records: RecordsHandle::new(),
         solicited: Arc::new(Solicited::new()),
+        stream_protocols: Default::default(),
     };
     let key = iroh::SecretKey::generate();
     let peer = PeerId::new(key.public().to_string());

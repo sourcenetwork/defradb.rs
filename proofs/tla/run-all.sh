@@ -561,6 +561,12 @@ RUNS=(
   "MC_InboundAdmission_Red_NoDeadline.cfg MC_InboundAdmission_Common.tla RED" # no deadline: a stream waits for budget forever (LIVE_WaitEnds)
   "MC_InboundAdmission_Red_NoReadDeadline.cfg MC_InboundAdmission_Common.tla RED" # no read deadline: a stalled body holds control forever (LIVE_HealthyHandled)
   "MC_InboundAdmission_Red_IdleOnly.cfg MC_InboundAdmission_Common.tla RED" # idle deadline only: a trickling body holds control forever (LIVE_HealthyHandled)
+  "MC_EmbedderStream_Green.cfg MC_EmbedderStream_Common.tla GREEN" # an embedder's stream: registered tags only, no room held while served, deadline, revocation and shutdown end it
+  "MC_EmbedderStream_Red_AnyTag.cfg MC_EmbedderStream_Common.tla RED" # no tag check: an unregistered tag is read (INV_OnlyRegisteredServed)
+  "MC_EmbedderStream_Red_HoldLease.cfg MC_EmbedderStream_Common.tla RED" # room held until the handler returns: a hung handler locks its peer out (INV_ServingHoldsNoLease)
+  "MC_EmbedderStream_Red_NoDeadline.cfg MC_EmbedderStream_Common.tla RED" # no deadline: a hung handler runs forever (LIVE_HandlerEnds)
+  "MC_EmbedderStream_Red_BarOnly.cfg MC_EmbedderStream_Common.tla RED" # revocation only bars new connections: the revoked peer stays connected (INV_RevokedIsCut)
+  "MC_EmbedderStream_Red_NoAbort.cfg MC_EmbedderStream_Common.tla RED" # shutdown leaves tasks running (INV_ShutdownLeavesNone)
   "MC_GossipOwnership_Green.cfg MC_GossipOwnership_Common.tla GREEN" # #2078: gossip rides the mux connection; a revoked peer has no gossip, gossip never closes a shared connection
   "MC_GossipOwnership_Red_OwnConnection.cfg MC_GossipOwnership_Common.tla RED" # former design: gossip dials its own connection and re-reaches a revoked peer (INV_RevokedHasNoGossip)
   "MC_GossipOwnership_Red_NoRecheck.cfg MC_GossipOwnership_Common.tla RED" # no admission check after connecting: a revoke during the dial is missed (INV_RevokedHasNoGossip)
