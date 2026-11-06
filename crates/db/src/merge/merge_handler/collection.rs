@@ -65,7 +65,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     }
                     if self.has_merged_collection(&cid) {
                         if is_root {
-                            return Ok(MergeOutcome::terminal_skip("collection already merged"));
+                            return Ok(MergeOutcome::terminal_skip(
+                                MergeOutcome::COLLECTION_ALREADY_MERGED,
+                            ));
                         }
                         continue;
                     }
@@ -110,7 +112,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 } => {
                     if self.has_merged_collection(&cid) {
                         if is_root {
-                            return Ok(MergeOutcome::terminal_skip("collection already merged"));
+                            return Ok(MergeOutcome::terminal_skip(
+                                MergeOutcome::COLLECTION_ALREADY_MERGED,
+                            ));
                         }
                         continue;
                     }
@@ -135,7 +139,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
         }
 
-        Ok(MergeOutcome::terminal_skip("collection already merged"))
+        Ok(MergeOutcome::terminal_skip(
+            MergeOutcome::COLLECTION_ALREADY_MERGED,
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -352,7 +358,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             Ok(MergeOutcome::Merged)
         } else {
             Ok(MergeOutcome::terminal_skip(
-                "no linked composites needed merging",
+                MergeOutcome::NO_LINKED_COMPOSITES_NEEDED_MERGING,
             ))
         }
     }
@@ -401,14 +407,16 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     }
                     if self.has_merged_collection(&cid) {
                         if is_root {
-                            return Ok(MergeOutcome::terminal_skip("collection already merged"));
+                            return Ok(MergeOutcome::terminal_skip(
+                                MergeOutcome::COLLECTION_ALREADY_MERGED,
+                            ));
                         }
                         continue;
                     }
                     if Self::has_batch_merged_collection(batch_merged_collections, &cid) {
                         if is_root {
                             return Ok(MergeOutcome::terminal_skip(
-                                "collection already merged in batch",
+                                MergeOutcome::COLLECTION_ALREADY_MERGED_IN_BATCH,
                             ));
                         }
                         continue;
@@ -453,7 +461,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         || Self::has_batch_merged_collection(batch_merged_collections, &cid)
                     {
                         if is_root {
-                            return Ok(MergeOutcome::terminal_skip("collection already merged"));
+                            return Ok(MergeOutcome::terminal_skip(
+                                MergeOutcome::COLLECTION_ALREADY_MERGED,
+                            ));
                         }
                         continue;
                     }
@@ -491,7 +501,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
         }
 
-        Ok(MergeOutcome::terminal_skip("collection already merged"))
+        Ok(MergeOutcome::terminal_skip(
+            MergeOutcome::COLLECTION_ALREADY_MERGED,
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -678,7 +690,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             Ok(MergeOutcome::Merged)
         } else {
             Ok(MergeOutcome::terminal_skip(
-                "no linked composites needed merging",
+                MergeOutcome::NO_LINKED_COMPOSITES_NEEDED_MERGING,
             ))
         }
     }

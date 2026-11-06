@@ -459,7 +459,7 @@ impl NodeBuilder {
             let server = defra_http::Server::from_arc_with_config(
                 node.runner.clone(),
                 server_config,
-                network.edge().clone(),
+                network.requests().clone(),
             )
             .with_event_bus_arc(node.event_bus.clone())
             .with_pool(node.pool.clone())
@@ -510,9 +510,9 @@ impl NodeBuilder {
             };
             let addr = http_cfg.address;
             let bound = http_cfg.listener;
-            // The server runs in the node's scope: draining it stops the
-            // server accepting and waits for its requests in flight.
-            drop(network.edge().spawn(async move {
+            // The server runs in the node's request scope: draining it
+            // stops the server accepting first and waits for its requests.
+            drop(network.requests().spawn(async move {
                 let served = match bound {
                     Some(listener) => server.serve_on(listener).await,
                     None => server.run().await,

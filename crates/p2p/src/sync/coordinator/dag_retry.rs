@@ -11,12 +11,13 @@ use rapidhash::{HashMapExt, HashSetExt};
 ///
 /// Each attempt spends up to 20s on the CAR phase (a 10s bounded request
 /// round-trip plus a 10s arrival watch), a stall budget of one full provider
-/// rotation (providers × 30s) on stalled selective windows, and at most
-/// `MAX_FREE_REFUSALS` fast refusals (each under `FAST_REFUSAL`, so together
-/// about one more window), so three attempts bound the worst-case
-/// dead-provider task lifetime at roughly 9 minutes at the 4-provider cap —
-/// independent of how many batches the missing frontier spans — while still
-/// surviving a transiently overloaded or reconnecting provider set.
+/// rotation (providers × `BLOCK_SYNC_COMPLETION_WATCHDOG`, 35s) on stalled
+/// selective windows, and at most `MAX_FREE_REFUSALS` fast refusals (each
+/// under `FAST_REFUSAL`, so together about one more window), so three attempts
+/// bound the worst-case dead-provider task lifetime at roughly 10 minutes at
+/// the 4-provider cap — independent of how many batches the missing frontier
+/// spans — while still surviving a transiently overloaded or reconnecting
+/// provider set.
 /// `proofs/tla/DagFetchBudget.tla` models this bound.
 pub(super) const MAX_FETCH_ATTEMPTS: u32 = 3;
 
@@ -31,7 +32,7 @@ pub(super) const MAX_FREE_REFUSALS: usize = 11;
 /// Base backoff between attempts; doubles per retry (2s, then 4s).
 ///
 /// The backoff mainly de-synchronizes fleet-wide retry waves — the per-batch
-/// 30s fetch window is the dominant wait, not the backoff itself.
+/// 35s fetch window is the dominant wait, not the backoff itself.
 const FETCH_RETRY_BACKOFF_BASE: Duration = Duration::from_secs(2);
 
 /// How long a clock-dispatched attempt that keeps making progress may hold its
@@ -39,7 +40,7 @@ const FETCH_RETRY_BACKOFF_BASE: Duration = Duration::from_secs(2);
 /// every block it fetched, and its root is due again at once, behind every
 /// root already due: a provider that trickles blocks cannot hold a slot for
 /// as long as its DAG takes.
-pub(super) const CLOCK_ATTEMPT_QUANTUM: Duration = Duration::from_secs(60);
+pub const CLOCK_ATTEMPT_QUANTUM: Duration = Duration::from_secs(60);
 
 /// Shed attempts a reply-driven fetch retries in place: rides out a momentary
 /// saturation without hammering a saturated hub. A clock-dispatched fetch

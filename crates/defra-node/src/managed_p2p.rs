@@ -237,7 +237,11 @@ impl ShutdownHandle {
             #[cfg(feature = "p2p")]
             ShutdownKind::Iroh { peer, scope } => {
                 peer.shutdown().await;
-                crate::network::drain(scope).await;
+                crate::network::drain(
+                    scope,
+                    "timed out draining the node's network work during shutdown",
+                )
+                .await;
             }
         }
     }

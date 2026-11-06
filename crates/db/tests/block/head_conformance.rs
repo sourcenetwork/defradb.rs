@@ -166,6 +166,10 @@ fn cases() -> Vec<Vec<Action>> {
 fn head_queries_match_executable_lean() {
     workers::block_on(async {
         if Command::new("lake").arg("--version").output().is_err() {
+            assert!(
+                std::env::var("DEFRA_REQUIRE_LAKE").as_deref() != Ok("1"),
+                "DEFRA_REQUIRE_LAKE=1 and lake is not runnable"
+            );
             eprintln!(
                 "head_queries_match_executable_lean requires lake; run the proof conformance gate"
             );

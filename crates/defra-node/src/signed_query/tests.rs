@@ -9,8 +9,8 @@ use query::QueryRequest;
 mod executors;
 
 use executors::{
-    context_observing_executor, slow_signing_executor, spawning_signing_executor,
-    test_signing_config,
+    context_observing_executor, held_signing_executor, slow_signing_executor,
+    spawning_signing_executor, test_signing_config,
 };
 
 #[test]
@@ -126,4 +126,64 @@ fn a_signed_query_after_the_node_began_shutting_down_is_refused() {
         );
     })
     .unwrap()
+}
+
+#[test]
+fn a_signed_query_remains_admitted_past_the_edge_deadline() {
+    use std::time::Duration;
+
+    let runtime = edge::EdgeRuntime::start(edge::EdgeConfig {
+        deadline: Duration::from_millis(50),
+        ..edge::EdgeConfig::default()
+    })
+    .unwrap();
+    let edge = runtime.edge().clone();
+    let scope = edge.scope();
+    let pool = workers::Pool::start(workers::Config::unplaced(1)).unwrap();
+    let started = Arc::new(regolith::sync::Event::new());
+    let release = Arc::new(regolith::sync::Event::new());
+    let executor = query::pooled::PooledExecutor::wrap(
+        held_signing_executor(Arc::clone(&started), Arc::clone(&release)),
+        Some(&pool),
+    );
+
+    let (drained_early, response) = edge
+        .block_on(async {
+            let request_edge = scope.edge().clone();
+            let query = edge
+                .spawn(async move {
+                    super::execute_with_signing_context(
+                        &request_edge,
+                        executor,
+                        QueryRequest::new("mutation { held }"),
+                        None,
+                        test_signing_config(),
+                        "did:key:zHeldTest".to_string(),
+                    )
+                    .await
+                })
+                .within(Duration::MAX);
+            started.wait().await;
+            edge.sleep(Duration::from_millis(150)).await;
+            let drain = scope.drain(Duration::from_secs(3));
+            let mut drain = pin!(drain);
+            let drained_early = edge
+                .timeout(Duration::from_millis(100), &mut drain)
+                .await
+                .is_ok();
+            release.set();
+            let response = query.await.unwrap();
+            if !drained_early {
+                let _ = drain.await;
+            }
+            (drained_early, response)
+        })
+        .unwrap();
+    pool.shutdown_blocking().unwrap();
+    runtime.shutdown().unwrap();
+    assert!(
+        !drained_early,
+        "the signed query stopped counting while its pool work was running"
+    );
+    assert!(!response.has_errors(), "{:?}", response.errors);
 }

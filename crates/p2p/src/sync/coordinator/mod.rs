@@ -98,7 +98,7 @@ use edge::EdgeError;
 
 use super::broadcaster::Broadcaster;
 use super::head_provider::DocumentHeadProvider;
-use super::manager::{PendingDag, SyncManager};
+use super::manager::{DagFetchPeerPermit, PendingDag, SyncManager};
 use super::peer_state::PeerStateTracker;
 use super::rate_limiter::PeerRateLimiter;
 
@@ -381,17 +381,42 @@ impl DagFetchLimiter {
             })
     }
 
-    pub(crate) async fn acquire(&self, source_peer: &PeerId) -> Option<DagFetchPermits> {
-        let peer_key = source_peer.to_string();
-        let peer_semaphore = match self.per_peer.get(&peer_key) {
+    fn peer_semaphore(&self, source_peer: &str) -> Arc<Semaphore> {
+        match self.per_peer.get(source_peer) {
             Some(semaphore) => semaphore,
-            None => self
-                .per_peer
-                .get_or_insert(peer_key, Arc::new(Semaphore::new(self.peer_limit))),
-        };
+            None => self.per_peer.get_or_insert(
+                source_peer.to_string(),
+                Arc::new(Semaphore::new(self.peer_limit)),
+            ),
+        }
+    }
 
+    /// Takes one of `source_peer`'s permits if one is free now, without
+    /// waiting. Unlike tokio's semaphore, regolith's lets a request take free
+    /// permits while others wait (up to its bypass bound), so this can pass a
+    /// queued fetch of the same peer.
+    pub(crate) fn try_reserve_peer(&self, source_peer: &str) -> Option<OwnedSemaphorePermit> {
+        if self.closed.is_set() {
+            return None;
+        }
+        self.peer_semaphore(source_peer)
+            .acquire_owned(1)
+            .now_or_never()
+    }
+
+    /// Waits for `source_peer`'s permit, unless the fetch already holds one
+    /// (`reserved`), then for a global one.
+    pub(crate) async fn acquire(
+        &self,
+        source_peer: &PeerId,
+        reserved: Option<OwnedSemaphorePermit>,
+    ) -> Option<DagFetchPermits> {
+        let peer_semaphore = self.peer_semaphore(source_peer.as_str());
         let permits = async {
-            let peer_permit = peer_semaphore.acquire_owned(1).await;
+            let peer_permit = match reserved {
+                Some(permit) => permit,
+                None => peer_semaphore.acquire_owned(1).await,
+            };
             let global_permit = self.global.acquire_owned(1).await;
             DagFetchPermits {
                 _global: global_permit,
@@ -402,6 +427,12 @@ impl DagFetchLimiter {
             () = self.closed.wait().fuse() => None,
             permits = permits.fuse() => Some(permits),
         }
+    }
+
+    /// Whether a fetch that holds its source peer's permit gets a global one
+    /// without waiting.
+    pub(crate) fn has_global_permit(&self) -> bool {
+        self.global.available_permits() > 0
     }
 
     fn close(&self) {
@@ -1112,9 +1143,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         }
         let mut retry_tick = crate::rt::time::interval(interval);
         retry_tick.set_missed_tick_behavior(crate::rt::time::MissedTickBehavior::Skip);
-        // One sender for the clock's whole life, so its readiness carries
-        // over from one dispatch to the next.
-        let event_tx = self.manager.event_sender();
         loop {
             if self.runtime.shutdown.is_shutting_down() {
                 return Ok(());
@@ -1124,33 +1152,38 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 _ = self.manager.pending_dag_ready().fuse() => {}
                 _ = self.runtime.shutdown.cancelled().fuse() => return Ok(()),
             }
-            self.dispatch_due_pending_dag_fetches(&event_tx, crate::rt::time::Instant::now());
+            self.dispatch_due_pending_dag_fetches(crate::rt::time::Instant::now());
         }
     }
 
-    fn dispatch_due_pending_dag_fetches(
-        &self,
-        event_tx: &mpsc::Sender<crate::sync::SyncEvent>,
-        now: crate::rt::time::Instant,
-    ) -> usize {
+    /// Each dispatch takes the clock's own lane into the merge loop, which
+    /// has room for one per fetch slot and which the merge loop empties
+    /// before its channel of merge work: a dispatch never competes with the
+    /// senders waiting for room in that channel.
+    fn dispatch_due_pending_dag_fetches(&self, now: crate::rt::time::Instant) -> usize {
         let due = self.manager.due_pending_dag_retries(now);
         let mut available = self.runtime.shutdown.available_pending_dag_fetch_slots();
         let mut count = 0;
         for (root_cid, dag) in due {
-            if available == 0 {
+            if available == 0 || !self.manager.can_dispatch() {
                 break;
             }
+            // A slot given to a root whose peer has no permit free would sit
+            // idle while its fetch waited, with other peers' roots behind it.
+            let peer_permit = match dag.source_peer.as_deref() {
+                Some(source_peer) if !dag.merge_continuation => {
+                    match self.runtime.dag_fetch_limiter.try_reserve_peer(source_peer) {
+                        Some(permit) => DagFetchPeerPermit::new(permit),
+                        None => continue,
+                    }
+                }
+                _ => DagFetchPeerPermit::default(),
+            };
             if !self.runtime.shutdown.reserve_pending_dag_fetch(root_cid) {
                 continue;
             }
             available -= 1;
 
-            let Ok(permit) = event_tx.try_reserve() else {
-                self.runtime
-                    .shutdown
-                    .release_pending_dag_fetch_reservation(&root_cid);
-                break;
-            };
             if !self.manager.try_claim_pending_dag_dispatch(&root_cid, now) {
                 self.runtime
                     .shutdown
@@ -1159,7 +1192,29 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 continue;
             }
 
-            self.dispatch_pending_dag_fetch(root_cid, &dag, permit);
+            if dag.dispatches > 0 {
+                crate::model_trace!(BecomeDue {
+                    head: root_cid.to_string(),
+                });
+            }
+            crate::model_trace!(Schedule {
+                doc: &dag.doc_id,
+                head: root_cid.to_string(),
+                mode: if self.runtime.dag_fetch_limiter.has_global_permit() {
+                    crate::model_trace::SlotMode::Run
+                } else {
+                    crate::model_trace::SlotMode::Wait
+                },
+            });
+            if !self
+                .manager
+                .dispatch(self.pending_dag_dispatch(root_cid, &dag, peer_permit))
+            {
+                self.runtime
+                    .shutdown
+                    .release_pending_dag_fetch_reservation(&root_cid);
+                break;
+            }
             count += 1;
         }
         count
@@ -1170,21 +1225,21 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         &self,
         now: crate::rt::time::Instant,
     ) -> usize {
-        self.dispatch_due_pending_dag_fetches(&self.manager.event_sender(), now)
+        self.dispatch_due_pending_dag_fetches(now)
     }
 
     /// Build the provider list for a fetch dispatch from positive per-CID
     /// availability evidence plus the authenticated DAG origin. A newly
     /// connected or root-only peer may expedite the receiver clock, but it
     /// must not become a linked-DAG provider merely by doing so (#1512).
-    fn dispatch_pending_dag_fetch(
+    fn pending_dag_dispatch(
         &self,
         root_cid: Cid,
         dag: &PendingDag,
-        permit: mpsc::Permit<'_, crate::sync::SyncEvent>,
-    ) {
+        peer_permit: DagFetchPeerPermit,
+    ) -> crate::sync::SyncEvent {
         if dag.merge_continuation {
-            permit.send(crate::sync::SyncEvent::DagReady {
+            return crate::sync::SyncEvent::DagReady {
                 root_cid,
                 doc_id: dag.doc_id.clone(),
                 collection_id: dag.collection_id.clone(),
@@ -1192,8 +1247,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 sender_peer: dag.source_peer.clone(),
                 is_explicit_replicator: dag.is_explicit_replicator,
                 explicit_replay_authorization: dag.explicit_replay_authorization.clone(),
-            });
-            return;
+            };
         }
         let missing: Vec<_> = dag.missing.iter().copied().collect();
         let mut providers = self.manager.get_providers_for_cids(&missing);
@@ -1217,7 +1271,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             fetch_failures = dag.fetch_failures,
             "Dispatching pending DAG fetch"
         );
-        permit.send(crate::sync::SyncEvent::DagNeedsFetch {
+        crate::sync::SyncEvent::DagNeedsFetch {
             root_cid,
             missing,
             providers,
@@ -1227,16 +1281,17 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             sender_peer: dag.source_peer.clone(),
             is_explicit_replicator: dag.is_explicit_replicator,
             explicit_replay_authorization: dag.explicit_replay_authorization.clone(),
-        });
+            peer_permit,
+        }
     }
 
     #[cfg(test)]
     fn dispatch_pending_dag_fetch_for_test(&self, root_cid: Cid, dag: &PendingDag) {
-        let event_tx = self.manager.event_sender();
-        let permit = event_tx
-            .try_reserve()
-            .expect("test event receiver must have capacity and be open");
-        self.dispatch_pending_dag_fetch(root_cid, dag, permit);
+        assert!(
+            self.manager
+                .dispatch(self.pending_dag_dispatch(root_cid, dag, Default::default())),
+            "the dispatch lane must have room"
+        );
     }
 
     pub fn shutdown_handle(&self) -> SyncShutdownHandle {
@@ -1484,21 +1539,28 @@ mod dag_fetch_limiter_tests {
 
         let mut flooder_permits = Vec::new();
         for _ in 0..3 {
-            flooder_permits.push(limiter.acquire(&flooder).await.expect("flooder permit"));
+            flooder_permits.push(
+                limiter
+                    .acquire(&flooder, None)
+                    .await
+                    .expect("flooder permit"),
+            );
         }
 
         assert!(
-            crate::rt::time::timeout(Duration::from_millis(20), limiter.acquire(&flooder))
+            crate::rt::time::timeout(Duration::from_millis(20), limiter.acquire(&flooder, None))
                 .await
                 .is_err(),
             "one peer should be capped below the global limit"
         );
 
-        let legitimate_permit =
-            crate::rt::time::timeout(Duration::from_millis(20), limiter.acquire(&legitimate))
-                .await
-                .expect("legitimate peer should get reserved capacity")
-                .expect("limiter open");
+        let legitimate_permit = crate::rt::time::timeout(
+            Duration::from_millis(20),
+            limiter.acquire(&legitimate, None),
+        )
+        .await
+        .expect("legitimate peer should get reserved capacity")
+        .expect("limiter open");
 
         drop(legitimate_permit);
         drop(flooder_permits);
@@ -1508,11 +1570,11 @@ mod dag_fetch_limiter_tests {
     async fn closing_ends_waiting_and_later_acquires() {
         let limiter = DagFetchLimiter::new(1);
         let peer = PeerId::new("peer".to_string());
-        let held = limiter.acquire(&peer).await.expect("first permit");
+        let held = limiter.acquire(&peer, None).await.expect("first permit");
         let waiting = {
             let limiter = limiter.clone();
             let peer = peer.clone();
-            crate::rt::spawn(async move { limiter.acquire(&peer).await.is_none() })
+            crate::rt::spawn(async move { limiter.acquire(&peer, None).await.is_none() })
         };
         crate::rt::yield_now().await;
 
@@ -1523,7 +1585,7 @@ mod dag_fetch_limiter_tests {
         );
         drop(held);
         assert!(
-            limiter.acquire(&peer).await.is_none(),
+            limiter.acquire(&peer, None).await.is_none(),
             "an acquire after close fails even with permits free"
         );
     }

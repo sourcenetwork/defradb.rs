@@ -31,7 +31,8 @@ pub const DEFAULT_PUSH_QUEUE_BYTE_CAPACITY: usize = 32 * 1024 * 1024;
 /// Default maximum push jobs concurrently in flight to one peer (#1099).
 ///
 /// Must stay below `max_concurrent_push_tasks` so one nonresponsive peer
-/// cannot occupy every worker.
+/// cannot occupy every worker. Peers whose last send failed on transport
+/// share one such cap, so any number of them cannot either.
 pub const DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER: usize = 4;
 
 /// Default maximum document IDs accepted in one DocSync request.
@@ -121,6 +122,11 @@ pub struct SyncConfig {
     /// Values below 1 are normalized to 1 (a zero cap would reject every
     /// missing-link push forever).
     pub max_pending_dags: usize,
+
+    /// How long an unacknowledged pending-DAG entry lives before it is
+    /// evicted (`PendingDag::is_expired`); an acknowledged entry never
+    /// expires. Values below one second are normalized to one second.
+    pub pending_dag_ttl: Duration,
 }
 
 impl Default for SyncConfig {
@@ -138,6 +144,7 @@ impl Default for SyncConfig {
             rate_limit_backoff: default_rate_limit_backoff(),
             push_send_timeout: DEFAULT_PUSH_SEND_TIMEOUT,
             max_pending_dags: DEFAULT_MAX_PENDING_DAGS,
+            pending_dag_ttl: super::pending::PENDING_DAG_TTL,
         }
     }
 }

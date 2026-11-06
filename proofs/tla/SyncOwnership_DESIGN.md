@@ -29,7 +29,7 @@ pending map; see *In-memory pending map* below.
 current composite or collection head CIDs with monotone versions.
 
 - `dirty` is the permitted sender durability: a set of scopes only.
-- `payloadLedger` is the current-main countermodel: sender durability contains
+- `payloadLedger` is the superseded-policy countermodel: sender durability contains
   a scope plus a particular CID/version.
 - `inflight` contains idempotent head hints.
 - `pending` is the receiver's bounded durable want queue (`Cap`). `FetchCap`
@@ -109,6 +109,33 @@ current composite or collection head CIDs with monotone versions.
 
 `Update` records sender durability before exposing the live hint. `ReHintMarker`
 has no stored version to replay and therefore must read `localV[scope]`.
+
+`MarkerHandoff` splits `Update` for a transactional write, whose scope markers
+are registered after its commit by a coordinator task handed off in
+commit-receipt order (`merge/txn_broadcaster.rs`
+`SyncTxnBroadcaster::submit_update`, called from `event/emission.rs`
+`register_update_event_callback`). The commit call waits for that task and
+returns when it ends or is dropped unrun; only then is the writer told the
+write committed.
+
+- `handoff` holds the scopes committed but not yet registered: their
+  `ordered_transaction_broadcast` tasks, each holding the `BroadcastDone` its
+  commit call waits on. It is volatile.
+- `senderUp` is false once the sender's P2P stopped or its process died
+  (`SyncCoordinator::spawn_background_task` no longer accepts tasks).
+- `Commit` makes the new head current; `RegisterMarker` records the marker,
+  sends the hint and returns the commit call.
+- `SenderStop` is P2P's graceful shutdown. Under `Drained`, Node::shutdown
+  drains the requests it admitted before P2P stops (`NodeShutdown.tla`
+  `INV_AdmittedWritesMarked`), so nothing is pending then. Under `Undrained`
+  P2P stops with registrations pending, refuses or aborts them, and each
+  dropped task returns its commit call.
+- `SenderCrash` is a kill between a commit and its registration: the
+  registration is lost, and no writer was told the write committed.
+
+`Atomic` keeps the one-step `Update` for every other configuration: without a
+sender stop or crash between them, no receiver action can observe the step
+between a commit and its registration.
 `ProcessMerged` and `ProcessRegister` are the only success-ack actions.
 `ProcessNack` leaves sender ownership intact. Every failed delivery, including
 an actionable capacity nack, advances the one durable per-peer retry clock on
@@ -170,10 +197,15 @@ independently authenticated direct announcer becomes serviceable only after it
 owns the complete DAG, and `ClaimFetch` cannot run until that qualified
 provider is durable.
 
-`ProcessRegister` rejects an arriving version already covered by an equal or
-newer pending head. Both green configurations use `MaxV = 2`, so supersession,
-late arrival of the stale lower version, and stale-ack protection are reachable
-rather than vacuously excluded by the model constants.
+`ProcessRegister` acks a root already pending as it is. Any other head
+registers on its own, and retires the scope's current head (`ScopeHead`, the
+newest registered) only when it links it: each write links the head before
+it, so `<<s, v - 1>>` is the one parent. Nothing is acked on another head's
+strength, so a stale lower version that arrives after its child takes its own
+registration until the child merges. Both green configurations use
+`MaxV = 2`, so supersession, late arrival of the stale lower version, and
+stale-ack protection are reachable rather than vacuously excluded by the model
+constants.
 
 The two full green configurations check the cross-scope safety product. The
 fairness checks are split into document, collection, and Iroh relay-chain
@@ -190,6 +222,41 @@ explicit-replicator fanout independently of optional gossip rebroadcast, so
 stage 3 does not enable the stage-4 gossip-direction change. A root-only gossip
 relay has not completed `Merge` and therefore cannot become the downstream
 provider.
+
+The hand-off between the two hops is modelled, not assumed. The receiver is
+the hub B: `fwdDirty` is B's durable B→C scope marker, `downV` is the head C
+holds, and `DeliverDownstream` abstracts C's instance of this same protocol
+(the one-hop machine is what delivers a durable marker). B's upstream record
+in `pending` and B's downstream marker must overlap: `ClaimTerminal` records
+the marker before `CompleteTerminal` discharges the record. In Rust,
+`replication/handlers.rs` `forward_merged` registers B's replicator markers
+before `mark_as_merged` discharges the pending record. The terminal step's
+guard is what the handler checks durably (`forward_owed`): the database holds
+the root, because it merged it or answers a terminal skip that
+`MergeOutcome::skip_reason_is_applied` accepts, and the root's merged bit is
+unset. The bit is set only after a durable forward, so every route to the
+terminal step forwards first: a fresh merge, and an "already merged" re-drive
+in the same process or after a restart (the database answers from its durable
+head publication, not by merging again). The re-driven-merge sink in
+`db/src/merge/redriven_sink.rs` keeps the same order, and
+`merge_handler/dispatch.rs` `redrive_deferred` hands it an applied skip whose
+merged bit is unset as well as a merge. A forward that fails is
+the terminal step not having happened: the root stays unmarked, its record
+stays, and the receiver clock re-drives it.
+
+`MergeMode = "DischargeBeforeForward"` is the order this replaced:
+`mark_as_merged` first, then the forward from the still-running handler
+(`fwdDue`, volatile). A crash between the two (`Crash`), a forward that fails
+after the discharge (`ForwardFail`: shutdown, an unreadable replicator list,
+or a recorder that cannot make the marker durable), or a re-drive that finds
+the root already merged after a crash, each leaves a head C lacks with nothing
+on B that still owes it.
+
+`MergeMode = "OwedInMemory"` keeps the forward before the mark but decides it
+from process memory: the terminal step forwards only a root the running
+process merged or failed to forward (`fwdDue`). A crash between the merge
+commit and the terminal step empties that memory, the re-drive gets the
+database's durable "already merged", and the root is discharged unforwarded.
 
 Reconnect is evidence that an existing sender scope marker is deliverable
 again, so the runtime moves that peer's existing marker schedule to "due now"
@@ -236,8 +303,8 @@ their scope markers on the success reply.
   deadline the claim set: it can pass while the attempt runs, and when the
   attempt fails the root is due ahead of every head acknowledged meanwhile.
 - `ExpiryMode = "AckRetained"`: an acknowledged entry never expires
-  (`PendingDag::is_expired`); it leaves on merge, quarantine or a newer head of
-  its scope and counts against `max_pending_dags` meanwhile, whose overflow
+  (`PendingDag::is_expired`); it leaves on merge, quarantine or a head of its
+  scope that links it and counts against `max_pending_dags` meanwhile, whose overflow
   nacks so the sender keeps its marker. `"WallClockTtl"` lets `Expire` drop an
   acknowledged root that has not been fetched. The model does not credit the
   durable resync: with a pending store it re-registers such a root within a
@@ -254,6 +321,29 @@ their scope markers on the success reply.
   already due (`FetchTaskEnd::Preempted`, `finish_attempt(preempted)`).
   `"Unbounded"`, the rule before, ends an attempt only on a window without
   progress, so a trickling attempt keeps its slot as long as its DAG takes.
+- An attempt also needs a fetch permit of its source peer (`DagFetchLimiter`:
+  one fewer per peer than the global limit, so one peer cannot hold them all).
+  `SharedPeer` names the scopes one source peer announces, each with
+  `PeerPermits` permits; every other scope's peer announces only it. Pull
+  fetches of that peer (DocSync and BranchableSync replies) take its permits
+  too, with no slot (`PullBegin`, at most `MaxPulls` at once; `PullEnd`).
+  `PermitMode = "WithSlot"`: the clock takes a root's slot and a permit of its
+  peer together (`DagFetchLimiter::try_reserve_peer` in
+  `dispatch_due_pending_dag_fetches`; the `DagNeedsFetch` event carries the
+  permit to the fetch), and a root whose peer has none free is not eligible:
+  it is passed over and keeps its place in the due order. `"AfterSlot"`, the
+  rule before, reserved the slot and let the fetch wait for the permit in
+  `DagFetchLimiter::acquire` (`parked`: waiters on the peer's semaphore), so
+  after a restart the first spoke's due roots held every slot, one of them
+  waiting for a permit of that spoke, while the other peers' heads waited for
+  a slot. `INV_NoSlotWaitsForPermit`: no slot is held by a fetch waiting for a
+  permit while a root that could start at once waits for a slot. The
+  limiter's global permit is not modelled: the slot pool and the global limit
+  are the same number, so clock fetches alone never wait for one, and a fetch
+  waits for one only while pull fetches hold it, in a queue every peer's root
+  would join too. That queue is regolith's `Semaphore`, which is not FIFO: an
+  acquire may take a free permit past the waiters, but a waiter passed over
+  `MAX_BYPASS` times is owed the next one, so its wait ends.
 
 The checks use two documents, one fetch slot, `MaxV = 1` and one restart. The
 liveness run makes only the receiver fair, and only at the scheduler level:
@@ -266,7 +356,7 @@ for ever. Per root there are only timers: a deadline passes (`BecomeDue`),
 an attempt's windows end (`WFail`: each window is bounded), a quantum ends
 (`Preempt`).
 
-`LIVE_AckedRootMerged` rests on one environment assumption, stated as strong
+`LIVE_AckedRootMerged` rests on an environment assumption, stated as strong
 fairness on some `WComplete`: a fetch that can complete eventually does.
 Reachability alone does not give it, since a reachable provider can answer
 busy every time. The assumption is a `Boundary` in `proofs/src/registry.rs`.
@@ -279,31 +369,167 @@ unrestricted, the dead-provider check fails, which is why the assumption is
 needed. `MC_SyncOwnership_Red_UnboundedProductive` drops the quantum: a
 trickling root claims the only slot and d2 is never dispatched.
 
+The permit checks need a second peer. `MC_SyncOwnership_Green_Dispatch_PeerPermits`
+uses three documents and two slots: one spoke announces d1 and d2 with one
+permit, d1's provider trickles, and d3 comes from another peer. It checks
+safety only, since its liveness run takes close to a minute;
+`MC_SyncOwnership_Red_SlotBeforePermit` is the same configuration under
+`"AfterSlot"`. `MC_SyncOwnership_Green_Dispatch_PullPermit` checks liveness
+with two documents, one slot and a pull fetch that may hold d1's peer's only
+permit: d1 is passed over while it does and still merges. A passed-over root
+has no fairness of its own: its turn follows from the due order once a
+permit comes back. The liveness runs also assume that pull fetches, which
+answer this node's own sync requests, come in bursts that end: from some
+point on none starts (`<>[][~PullBegin]_allVars` in `WFairSpec`). Without
+that assumption, or without weak fairness on `PullEnd` (a pull fetch that
+never ends), d1 is never dispatched and the liveness check fails, so the
+result is not vacuous.
+
+The clock does not start a fetch itself: it hands the root to the merge loop
+(`DagNeedsFetch`, or `DagReady` for a merge continuation), which starts it.
+The merge loop drains one bounded channel of merge work (`event_buffer_size`,
+256), one event at a time. In a catch-up storm other senders keep that
+channel full and wait for room: pull-sync replies, finished fetches
+reporting `DagReady`, transport handlers that complete another root's DAG,
+and the merge loop itself when it handles a block-sync completion that was
+latched before it registered the query. A freed cell goes to the oldest
+waiting sender, so `try_reserve` finds room only when nobody waits.
+
+- `fifo` is that channel (`FifoCap` cells) and `blocked` the senders waiting
+  for room in it, oldest first, both code state: the channel's buffer, with
+  a finished fetch's `DagReady` kept by its root and other merge work only as
+  `Work`, and the `Sender::send` calls awaiting their permits. `Storm` turns
+  on `StormSend`, the environment's merge work; it gets no fairness and is
+  never made to stop. `Drain` is the merge loop taking its next event, once
+  the merge it is on is done, with weak fairness; `Admit` is a waiting
+  sender taking the cell it is owed, with weak fairness. A fetch's outcomes
+  need the merge loop to have taken its dispatch and the fetch to be still
+  running (`Fetching`). A finished fetch reports its `DagReady` under its
+  slot (`WComplete`): it waits for room like any other sender, oldest
+  first, and gives its slot back once the report is queued. Its root merges
+  where the merge loop takes that report (`Drain` claims the merge), not by
+  a fairness of its own.
+- `DispatchPath = "OwnLane"`: the clock's dispatches take a lane of their own
+  (`lane`; `DispatchLane`, one per fetch slot, checked by `can_dispatch`),
+  which the merge loop takes from before the channel
+  (`SyncEventReceiver::recv`). No waiting sender is owed the lane's room.
+  `"MergeFifo"`, the rule before, takes a cell of the channel with
+  `try_reserve`.
+- `LaneTurns = "Bounded"`: the lane goes first for at most as many
+  dispatches in a row as it has slots (`turns`,
+  `SyncEventReceiver::turns`); then waiting merge work is taken, and that
+  gives the lane its turns back. A dispatch waits behind at most one event
+  of merge work. `"Always"`, the rule before, lets roots the clock
+  re-dispatches before every receive (a trickling attempt at its quantum, a
+  local merge continuation) keep queued merge work waiting for good.
+- `HandlerSend = "TryThenClock"`: a PushLog, peer-connect or completion
+  handler that completes another root's DAG, and the merge loop doing so
+  inline, try the channel once; when it is full they make the root due at
+  once and the clock dispatches it (`retry_pending_dag`), so a handler never
+  waits in its lane slot and the merge loop never waits on itself.
+  `"Blocking"`, the rule before, waits for room: a handler while it holds the
+  admission lane slot and the CID guard
+  (`INV_AdmissionNeverWaitsOnMergeLoop`), the merge loop with nobody left to
+  drain its channel (`INV_MergeLoopNeverWaitsOnItself`).
+
+`MC_SyncOwnership_Green_Dispatch_Storm` checks one document across a restart
+with the storm on: the head merges, no handler waits in its admission slot
+and the merge loop never waits on itself.
+`MC_SyncOwnership_Red_MergeFifoDispatch` puts the dispatch back in the
+channel: the waiting sender takes every freed cell and the next one waits
+again, so the head is never dispatched. It fails under `WStrongClockSpec`, a
+strongly fair clock, so the starvation does not come from the clock looking
+at the wrong moments. `MC_SyncOwnership_Red_BlockingHandlerSend` lets a
+handler wait in its admission slot, and
+`MC_SyncOwnership_Red_LoopWaitsOnItself` lets the merge loop wait for room
+in its own channel. `MC_SyncOwnership_Green_Dispatch_LaneTurns` gives d1 a
+trickling provider and two slots, so d1 is re-dispatched at every quantum
+before the merge loop looks again; d2's `DagReady` still gets its turn and
+d2 merges. `MC_SyncOwnership_Red_LaneAlwaysFirst` lets the lane always go
+first, and d2's `DagReady` waits behind d1 for good. Pull-sync replies (`DocSyncReply`,
+`BranchableSyncReply`) still wait for room in their completion lane slot;
+they have no clock to hand their blocks to, and the model keeps them as
+`StormSend("pull")`.
+
 ## In-memory pending map
 
 `MC_SyncOwnership_Memory.tla` runs every action of this model with the
 receiver's bounded in-memory map in front of `pending`. Only roots in memory
-(`mem`) can be claimed, and a registration needs an entry first
-(`try_insert_pending_dag`): with the map full the push is nacked (`MNack`)
-before anything is durable, so the sender keeps its marker. The durable set
-can be larger than the map: before the one restart the map holds the whole
-durable set, after it `MemCap` entries, which is an upgrade or a lower cap. The
-restart restores only what fits (`Resync`). Roots of `Dead` scopes sort first
-in key order, the worst case for a key-order sweep.
+(`mem`) can be claimed, and a new entry needs room in the map and in its
+sender peer's quota of a quarter of the map (`max_pending_dags_per_peer`).
+The shared peer is the one `PeerScopes` entry with more than one scope; every
+other peer pushes one scope. A local continuation counts against the peer it
+was pulled from, as in `continue_merge`. The durable set can be larger than
+the map: before the one restart the map holds the whole durable set, after it
+`MemCap` entries, which is an upgrade or a lower cap. The restart restores
+only what fits (`Resync`). Roots of `Dead` scopes sort first in key order,
+the shared peer's after the others: the worst case for a key-order sweep.
 
 - As in the dispatch model, every variable is code state, mapped in the
   module header: `mem` and `conts` are the map's keys by `PendingDag::origin`,
   `dispatches` is `PendingDag::dispatches` (counted up to `RotateAfter`),
-  `dueOrder` and `backoff` are `next_retry_at` by its order, and `cursor` is
-  `pending_resync_cursor`.
+  `dueOrder` and `backoff` are `next_retry_at` by its order, `cursor` is
+  `pending_resync_cursor`, and `peerCursor` is the shared peer's entry in
+  `pending_resync_peer_cursors`.
+- Admission has two tiers (`process_block_inner`). A new head takes an entry
+  and its durable record (`MRegister`, `try_insert_pending_dag`). With the map
+  or its peer's share of it full it takes the durable record alone and is
+  acknowledged
+  (`MRegisterDurable`); it waits like any durable root without an entry, the
+  rotation below gives it one, and it holds its place in the store's key order
+  like the others. `AdmissionMode = "MemoryOnly"`, the rule before, nacks it
+  instead (`MNack`) while the store has room: the sender keeps its marker,
+  parks the peer and offers it again, and with the map full of acknowledged
+  roots whose providers never serve, no durable root waits, nothing gives an
+  entry up, and the head is nacked for ever.
+- Each sending peer (`PeerScopes`) holds at most `DurableQuota` durable roots
+  (`max_persisted_pending_per_peer`, a quarter of the durable cap, as the
+  map's per-peer quota is a quarter of the map), in either tier. A head that
+  would take its peer past it is nacked; nothing else is, except at the
+  store's own cap (`ProcessNack`). With no quota (`DurableQuota = Cap`) one
+  peer's never-serving roots fill the store and every other peer's head is
+  nacked for ever. With the quota they hold their peer's share for good: a
+  durable record ends only at a merge or a quarantine, so four peers' such
+  roots still fill the store (a Boundary row in `registry.rs`).
+- The acknowledgement of a head on its durable record alone rests on the
+  record the store committed (`Processed::DurablyRegistered`), not on the
+  view: `PersistedView` learns of a commit in commit-receipt order, which an
+  earlier commit's hook on the same store holds back past the reply.
+  `MRegisterDurable` registers and acknowledges in one step for that reason;
+  `PushLogAdmission.tla` (`GuardMode`) checks the guard itself. The store
+  holds the quota in the registration's own transaction: it reads the peer's
+  count of records (`pending_store/shares.rs`), validated, and writes the
+  record and the count together, so the model checks the quota against the
+  durable set in the registration's step. Admission also reads the view's
+  `source_count` first (`durable_share_admits`) to nack most heads past the
+  share before the map takes an entry; registrations of one peer whose events
+  have not gone out yet pass that check together, and the store refuses those
+  past the share (`PushLogAdmission.tla`, `QuotaMode`).
+- The second tier ends the nacks; it bounds no wait. A root without an entry
+  gets one only from the resync sweep (every 60 s, or on a peer connect),
+  which walks the waiting records in key order after the cursor and gives a
+  fresh head no precedence. `finish_attempt` gives an entry up only while the
+  map is full or the root's peer is at its in-memory quota, so after one
+  rotation per saturated class the freed entries wait for the next sweep. A
+  head acknowledged behind K waiting roots therefore waits on the order of K
+  divided by the entries freed per sweep: minutes to hours for a full store.
+  The wait a nack used to leave with the sender is now the receiver's, and
+  the sender sees only the acknowledgement. The models promise such a head
+  an eventual merge (`LIVE_WrittenHeadMerged`), not a bound.
 - `OverflowMode = "Rotate"`: a root whose `dispatches` reached `RotateAfter`
-  (`PENDING_ROTATE_AFTER_DISPATCHES`; 1 in the configurations) gives its
-  entry up once its attempt has ended, while the map is full and a durable
-  root waits, keeping its record (`Yield`; `PendingDagLease::finish_attempt`).
-  The sweep resumes after the root it
-  admitted last (`records_after_resync_cursor`). `"KeyOrder"` yields but
-  sweeps from the first key, re-admitting the root that just gave its entry up.
-  `"Retained"`, the rule before, never gives an acknowledged entry up.
+  (`PENDING_ROTATE_AFTER_DISPATCHES`; 1 in the configurations) gives its entry
+  up as its attempt ends, while a durable root waits and the map is full or
+  its peer is at its quota, keeping its record (`EndAttempt`, part of `MFail`
+  and `MComplete`; `PendingDagLease::finish_attempt`). The sweep visits the
+  places in key order after the place at which it admitted last, gives a
+  peer's places to that peer's roots in key order after the one it admitted
+  last, and admits the first waiting root that fits, passing the others
+  (`records_after_resync_cursor`). `"PassOver"`, the rule before, gives each
+  place its own root: a root left waiting on its peer's quota is passed by the
+  places after it, and when the peer's place is free a root of the same peer
+  that sorts first takes it again. `"KeyOrder"` yields but sweeps from the
+  first key, re-admitting the root that just gave its entry up. `"Retained"`,
+  the rule before rotation, never gives an acknowledged entry up.
 - Entries record their origin (`PendingOrigin`): `Push`, `Restored` or
   `LocalContinuation`. A pull-sync merge that yields its work budget leaves a
   local continuation (`PullYield`, `continue_merge`); it is never an
@@ -327,13 +553,34 @@ dispatch model's scheduler-level fairness and environment assumption. Claims
 follow `next_retry_at` order (`dueOrder`), as in the dispatch model, so no
 root needs claim fairness of its own here either. Nothing is recorded only to
 state a property: the end of a continuation is the liveness property
-`LIVE_ContinuationEnds` over the map itself.
+`LIVE_ContinuationEnds` over the map itself. The durable quota checks add a third
+document: one peer pushes `d1` and `d2`, both dead, the other `d3`. Senders
+get fairness per peer, never per scope: each peer's retry ledger offers one of
+its dirty markers again, and the receiver answers one of that peer's hints, so
+a peer may keep offering a nacked head instead of another.
+`LIVE_WrittenHeadMerged` promises a merge only to scopes of peers with no
+never-serving scope, since such a root can hold its peer's quota.
+The in-memory quota checks use three
+documents, `d1` and `d2` from one peer, `d1` and `d3` dead, key order `d3`,
+`d1`, `d2`, and a map of two after the restart, so the peer's quota is one
+entry. Giving an entry up has no fairness of its own: it is part of the end
+of an attempt, as in `finish_attempt`, so a spent root that holds a contended
+place gives it up when its attempt ends.
 
 ## Checked properties
 
 - `INV_ObligationConservation`: when a receiver is behind the sender's current
   head, that exact current obligation is in sender durability, in flight,
   durably registered, or merged.
+- `ACT_AckedWriteOwned`: a step that returns a commit call to its writer
+  (`RegisterMarker`, or `SenderStop` dropping the registration unrun) leaves
+  its head owed to the receiver, by the durable scope marker or a hint or
+  durable registration of it or a newer head, unless already merged. A crash
+  returns no commit call, so a head whose sender crashed before registering
+  it was never acknowledged and is outside the promise.
+- `INV_ConservedWhileSenderUp`: `INV_ObligationConservation`, counting a
+  pending registration, while the sender runs. It does not hold across a
+  crash between a commit and its registration.
 - `INV_SingleFlight`: at most one fetch owner exists for an exact root/CID.
 - `INV_FetchOwnersBounded`: scheduled and running fetch ownership never
   exceeds `FetchCap`, including the receiver-clock event handoff.
@@ -352,9 +599,9 @@ state a property: the end of a continuation is the liveness property
   complete-DAG offer has been durably admitted. `qualifiedProvider` abstracts
   a non-empty bounded candidate set; the exact three-alternate cap and
   principal identities are enforced by Rust conformance tests.
-- `INV_OnePendingHeadPerScope`: one sender retains only its current durable
-  receiver obligation for a document or collection scope; a newer causal head
-  atomically supersedes that sender's older root.
+- `ACT_LinkingHeadRetiresScopeHead`: a head registered while its parent is
+  the scope's current head atomically takes over that registration, so heads
+  that arrive in order keep one durable obligation per scope.
 - `INV_PendingServiceable`: every success-acked pending root retains a
   restart-safe CAR-serving path.
 - `INV_PendingHasRoutableProvider`: every success-acked root retains the
@@ -391,13 +638,26 @@ state a property: the end of a continuation is the liveness property
   its root behind every root already waiting. Together a due root waiting for
   a fetch slot is never passed by a root that became due after it, so a head
   acknowledged after a restart is not starved by catch-up roots retrying.
+  A root whose source peer has no fetch permit free cannot run and may be
+  passed.
+- `INV_NoSlotWaitsForPermit` (dispatch): no fetch slot is held by a fetch
+  waiting for its source peer's permit while a root that could start at once
+  waits for a slot. `INV_PeerPermitsBounded`: no peer has more permits in use
+  than it has.
 - `INV_DueOrBackoff` (dispatch): an idle pending root is either due or waiting
   out its backoff.
 - `ACT_AckedRootLeavesOwned` (dispatch), a property of every step: an
   acknowledged head leaves the receiver only while someone else (sender
   marker, a hint, a newer pending head or the merge) still owns it.
 - `LIVE_AckedRootMerged` (dispatch): every acknowledged head whose provider
-  eventually serves is merged (the environment assumption above).
+  eventually serves is merged (the environment assumption above), however
+  long a storm keeps the merge loop's channel full and however often the
+  clock re-dispatches ahead of its `DagReady`.
+- `INV_AdmissionNeverWaitsOnMergeLoop` (dispatch): no transport handler waits
+  for room in the merge loop's channel while it holds an admission lane
+  slot.
+- `INV_MergeLoopNeverWaitsOnItself` (dispatch): the merge loop never waits
+  for room in its own channel.
 - `INV_MemoryBounded`, `INV_MemoryHoldsDurable` (memory): the map never holds
   more entries than it may, and an acknowledged entry always has its record.
 - `INV_ContinuationsNeverAcked` (memory): a local continuation is never an
@@ -406,6 +666,18 @@ state a property: the end of a continuation is the liveness property
   provider serves is merged, however many never-serving roots were restored
   ahead of it into a map too small for all of them.
 - `LIVE_ContinuationEnds` (memory): every local continuation leaves the map.
+- `INV_ForwardObligationOwned`: a head the hub merged and its downstream
+  replicator lacks is still owed by the hub's durable downstream marker, by the
+  upstream pending record of that head or a newer one, or by a running handler.
+- `LIVE_EventualDownstreamCurrency`: every head the sender writes eventually
+  reaches the hub's downstream replicator, despite drops, nacks and one hub
+  restart. The forward and the downstream hop are fair at the scheduler level
+  only.
+- `INV_DurablePeerQuota` (memory): no peer holds more durable roots than its
+  quota.
+- `LIVE_WrittenHeadMerged` (memory): every head a sender writes, on a serving
+  scope of a peer whose quota no never-serving root can hold, is merged: a
+  full map never leaves it nacked, and owned by the sender, for ever.
 
 The register-then-ack deviation from Go remains honest because `pending` is
 durable in the green policy. An optimistic acknowledgement for an in-flight
@@ -420,8 +692,9 @@ fetch owner is deliberately not expressible.
 | `MC_SyncOwnership_Green_Liveness_IrohRelay.cfg` | GREEN | immutable signed origin plus durable qualified same-root alternate reaches currency |
 | `MC_SyncOwnership_Green_Liveness_Doc.cfg` | GREEN | two-version document supersession eventually reaches currency and quiescence |
 | `MC_SyncOwnership_Green_Liveness_Collection.cfg` | GREEN | two-version collection supersession eventually reaches currency and quiescence |
+| `MC_SyncOwnership_Green_MarkerHandoff.cfg` | GREEN | a transactional commit returns only after its marker registration, P2P stops only after admitted writes drained, and a crash between commit and registration acknowledges nothing |
 | `MC_SyncOwnership_Red_DocOnlyMarkers.cfg` | RED | a collection update is dropped after no collection marker was recorded |
-| `MC_SyncOwnership_Red_PayloadLedger.cfg` | RED | current-main CID/payload-valued sender durability violates marker-only ownership |
+| `MC_SyncOwnership_Red_PayloadLedger.cfg` | RED | superseded CID/payload-valued sender durability violates marker-only ownership |
 | `MC_SyncOwnership_Red_VolatileRegistration.cfg` | RED | restart destroys the only state behind a success ack |
 | `MC_SyncOwnership_Red_DuplicateFetch.cfg` | RED | two triggers claim the same root concurrently |
 | `MC_SyncOwnership_Red_StaleAckClears.cfg` | RED | an old ack clears the marker for a newer head |
@@ -437,6 +710,8 @@ fetch owner is deliberately not expressible.
 | `MC_SyncOwnership_Red_EveryRoot.cfg` | RED | successive current heads from one sender/scope accumulate obsolete durable roots |
 | `MC_SyncOwnership_Red_ParallelMerge.cfg` | RED | frontend-selected parallel merge workers overlap independent receiver writers |
 | `MC_SyncOwnership_Red_DuplicateTerminal.cfg` | RED | two terminal observations concurrently delete the same durable pending root |
+| `MC_SyncOwnership_Red_DischargeBeforeForward.cfg` | RED | the hub discharges a merged head's upstream record before its downstream marker is durable; a failed forward or a crash between loses the head for the downstream replicator |
+| `MC_SyncOwnership_Red_OwedInMemory.cfg` | RED | the hub forwards in the terminal step only a root its running process remembers merging; a crash between the merge commit and the terminal step loses the head for the downstream replicator |
 | `MC_SyncOwnership_Red_EdgeTriggeredCompletion.cfg` | RED | a fast CAR failure is discarded before the fetch owner registers its completion waiter |
 | `MC_SyncOwnership_Red_WorkerSaturatedCompletion.cfg` | RED | saturated spawned workers stop draining the CAR completion required by an active fetch owner |
 | `MC_SyncOwnership_Red_SharedServeWorkers.cfg` | RED | slow ownership registration consumes every worker needed to serve receiver-owned CAR recovery |
@@ -450,10 +725,19 @@ fetch owner is deliberately not expressible.
 | `MC_SyncOwnership_Red_HeldSlot.cfg` | RED | a fetch keeps its slot through all of its attempts and starts the next ahead of a head acknowledged while it held the slot (`ACT_AttemptsStartInDueOrder`) |
 | `MC_SyncOwnership_Red_ClaimTimeRearm.cfg` | RED | the root's next deadline is fixed when it is claimed and passes during the attempt, so the failed root ends due ahead of heads acknowledged during its attempt (`ACT_EndedAttemptQueuesBehind`) |
 | `MC_SyncOwnership_Red_AckedTtl.cfg` | RED | the pending TTL drops an acknowledged head whose sender already ended its marker (`ACT_AckedRootLeavesOwned`) |
-| `MC_SyncOwnership_Green_Memory.cfg` | GREEN | durable roots past the in-memory cap take turns, so a never-serving root restored first does not keep the other from merging; a local continuation ends when it stops yielding |
+| `MC_SyncOwnership_Green_Dispatch_PeerPermits.cfg` | GREEN | the clock takes a slot with a permit of the root's source peer: while d1's trickling attempt holds its spoke's only permit, d2 is passed over and the second slot goes to d3, from another peer |
+| `MC_SyncOwnership_Green_Dispatch_PullPermit.cfg` | GREEN | a pull fetch holds d1's peer's only permit: d1 is passed over, d2 takes the slot, and both heads merge across a restart |
+| `MC_SyncOwnership_Red_SlotBeforePermit.cfg` | RED | the slot is reserved first and the fetch waits for its peer's permit inside it: d2 waits in the second slot while d3, able to start at once, finds none (`INV_NoSlotWaitsForPermit`) |
+| `MC_SyncOwnership_Green_Memory.cfg` | GREEN | durable roots past the in-memory cap take turns, so a never-serving root restored first does not keep the other from merging; a head written while the map is full is acknowledged on its durable record and merges; a local continuation ends when it stops yielding |
 | `MC_SyncOwnership_Red_RetainedOverflow.cfg` | RED | an acknowledged root never gives its entry up: the never-serving root restored first holds the only entry for good (`LIVE_DurableRootMerged`) |
 | `MC_SyncOwnership_Red_KeyOrderResync.cfg` | RED | the root gives its entry up but the sweep restarts at the first key and re-admits it ahead of the other (`LIVE_DurableRootMerged`) |
 | `MC_SyncOwnership_Red_ImmortalContinuation.cfg` | RED | a local continuation whose turn skips keeps its entry and is re-driven for ever (`LIVE_ContinuationEnds`) |
+| `MC_SyncOwnership_Red_UndrainedMarker.cfg` | RED | P2P stops with a transactional write's marker registration pending; the dropped task returns the commit, which is acknowledged with no marker owing its head |
+| `MC_SyncOwnership_Green_TwoTierQuota.cfg` | GREEN | one peer's two never-serving scopes and another peer's serving scope: the first peer is held at its quota of one durable root, and the other's head is acknowledged in either tier and merges |
+| `MC_SyncOwnership_Red_MemoryOnlyAdmission.cfg` | RED | a full map nacks `d2`'s head while the store has room; `d1` never gives its entry up because no durable root waits, so the head is nacked and offered again for ever and its marker stays with the sender (`LIVE_WrittenHeadMerged`) |
+| `MC_SyncOwnership_Red_NoDurablePeerQuota.cfg` | RED | no per-peer quota: one peer's two never-serving roots fill the durable store and the other peer's head is nacked for ever (`LIVE_WrittenHeadMerged`) |
+| `MC_SyncOwnership_Green_Memory_Quota.cfg` | GREEN | `d2` waits on its peer's quota while the never-serving `d1` holds the peer's place; the sweep gives the peer's place to its roots in turn, so when `d1` gives it up `d2` takes it and merges |
+| `MC_SyncOwnership_Red_QuotaPassOver.cfg` | RED | each place goes to its own root: the sweep passes `d2`, admits `d3`, which keeps giving its entry up and coming back, and re-admits `d1` ahead of `d2` whenever `d1` frees the peer's place (`LIVE_DurableRootMerged`) |
 | `MC_SyncOwnership_Red_ShedAsStall.cfg` | RED | a provider that sheds a CAR request as busy is read as a stalled window, so repeated shedding by a saturated hub burns the attempt budget into terminal provider exhaustion. `ProviderShed` is the release of an attempt in which every provider shed one batch, or in which a provider shed and none delivered, including a busy hub beside alternates that do not hold the root; like `BusyExhaustion`, this guards the classification, and the provider mix itself is tested in `busy_provider_rotation.rs` |
 
 Each red configuration checks only type safety plus the property it is meant to

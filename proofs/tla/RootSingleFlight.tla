@@ -10,9 +10,11 @@
 \* an explicit replicator ("Trusted") lets the merge replay blocks a plain
 \* peer's reply cannot, so a trusted merge covers a plain reply but not the
 \* reverse. The claim is keyed by the root and that trust: a reply waits only
-\* behind a fetch whose merge covers it, and a reply that starts nothing then
-\* loses nothing, because the running fetch already tries every connected
-\* peer, the replier included.
+\* behind a fetch whose merge covers it. A reply that starts nothing loses
+\* nothing only if the running fetch reaches a holder. The model assumes it
+\* does; the code tries the claimant's replier and up to
+\* MAX_PENDING_DAG_ALTERNATE_PROVIDERS connected alternates, and a pull it
+\* fails is not re-driven: the caller owns completion.
 \*
 \* Who acts: the peers (replying, R of them, each plain or trusted), the
 \* fetch (succeeding or failing, for instance on a timeout).
