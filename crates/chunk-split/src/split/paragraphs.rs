@@ -12,8 +12,10 @@ pub struct Para<'a> {
     pub chars: usize,
     /// Whether it is a heading (`# Title`, or a line underlined with `===` or `---`).
     pub heading: bool,
-    /// Whether a segment may start here. Its hash picks about one paragraph in four.
-    pub pick: bool,
+    /// Its characters without the surrounding whitespace.
+    pub weight: usize,
+    /// A number from its hash, which with `weight` decides whether a segment starts here.
+    pub roll: u64,
 }
 
 struct Open {
@@ -84,7 +86,8 @@ fn push<'a>(paras: &mut Vec<Para<'a>>, text: &'a str, from: usize, to: usize, he
         start,
         chars: part.chars().count(),
         heading,
-        pick: picked(part),
+        weight: part.trim().chars().count(),
+        roll: roll(part),
     });
 }
 
@@ -107,6 +110,9 @@ fn is_setext_underline(line: &str) -> bool {
 }
 
 // Hash only the words, so adding or removing a blank line doesn't move a boundary.
-fn picked(part: &str) -> bool {
-    Sha256::digest(part.trim().as_bytes())[0] % 4 == 3
+fn roll(part: &str) -> u64 {
+    let digest = Sha256::digest(part.trim().as_bytes());
+    let mut first = [0; 8];
+    first.copy_from_slice(&digest[..8]);
+    u64::from_be_bytes(first)
 }

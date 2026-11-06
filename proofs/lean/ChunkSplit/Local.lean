@@ -11,15 +11,16 @@ signed, replicated or embedded again.
 
 When does an edit stay local? The edited paragraph `p` becomes `p'`. If the
 fence before it and the fence after it are decided the same way for `p'` as for
-`p` (it did not become a heading, did not grow past the limit, and its hash
-picked it or not the same way), then every segment except the one holding the
-paragraph is unchanged, and so are all their chunks.
+`p`, then every segment except the one holding the paragraph is unchanged, and
+so are all their chunks. The fence after it reads only whether it is a heading,
+so an edit that keeps it a heading or a plain paragraph only has to keep the
+fence before it (its roll against its weight).
 
 What must never happen: an edit in one place shifting chunk boundaries far away.
 Plain greedy packing over the whole text does exactly that (one longer
 paragraph pushes every later boundary), which is why segments exist.
 
-The promises are `deterministic` and `local_edit`.
+The promises are `deterministic`, `local_edit` and `local_edit_keeps_heading`.
 -/
 
 namespace ChunkSplit
@@ -202,5 +203,22 @@ theorem local_edit (cfg : Config) (pre post : List Para) (p p' : Para)
   refine ⟨L, R, SL, SR, ?_, ?_⟩
   · simp [split, hA, List.flatMap_append]
   · simp [split, hB, List.flatMap_append]
+
+-- Promise (local_edit_keeps_heading): an edit that keeps the paragraph a heading or
+-- not, and keeps the fence before it, leaves every chunk outside its segment the same.
+theorem local_edit_keeps_heading (cfg : Config) (pre post : List Para) (p p' : Para)
+    -- The fence before the edited paragraph is decided the same for `p` and `p'`,
+    (hprev : ∀ a, pre.getLast? = some a → fence cfg a p = fence cfg a p')
+    -- and the edit keeps it a heading or a plain paragraph.
+    (hh : p.heading = p'.heading) :
+    -- The same three parts as in `local_edit`.
+    ∃ (L R : List (List Para)) (SL SR : List Para),
+      split cfg (pre ++ p :: post) =
+        L.flatMap (segChunks cfg) ++ segChunks cfg (SL ++ p :: SR) ++ R.flatMap (segChunks cfg) ∧
+      split cfg (pre ++ p' :: post) =
+        L.flatMap (segChunks cfg) ++ segChunks cfg (SL ++ p' :: SR) ++ R.flatMap (segChunks cfg) :=
+  -- The fence after the paragraph reads only its heading flag, so it is kept too.
+  local_edit cfg pre post p p' hprev
+    (fun b _ => fence_after_reads_only_the_heading cfg p p' b hh)
 
 end ChunkSplit

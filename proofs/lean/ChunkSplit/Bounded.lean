@@ -10,7 +10,8 @@ borrowed sentences still fits.
 
 How it holds: every atom fits (a too-long paragraph is cut down until each
 piece fits, all the way to single characters), packing only adds an atom to a
-core when the sum still fits, and the overlap only borrows a prefix that keeps
+core when the sum still fits (closing early before a heading only makes cores
+shorter), and the overlap only borrows a prefix that keeps
 the chunk within the limit.
 
 The promise is `bounded`. It needs the limit to be at least 1, since a single
@@ -89,20 +90,20 @@ theorem atoms_fit (cfg : Config) (hmax : 1 ≤ cfg.max) (p : Para) :
 
 -- Promise: packing atoms that fit makes cores that fit.
 theorem packFrom_fits (max : Nat) :
-    -- For any atoms and any core being filled,
-    ∀ (as : List (List Char)) (cur : List Char),
+    -- For any atoms, any core being filled, and any heading flag before it,
+    ∀ (as : List Atom) (cur : List Char) (h : Bool),
       -- if the core is within the limit and every atom fits,
-      cur.length ≤ max → (∀ a ∈ as, Fits max a) →
+      cur.length ≤ max → (∀ a ∈ as, Fits max a.text) →
       -- every emitted core fits.
-      ∀ c ∈ packFrom max cur as, Fits max c := by
+      ∀ c ∈ packFrom max cur h as, Fits max c := by
   -- Take the atoms.
   intro as
   -- Go through them one at a time.
   induction as with
   -- No atoms left:
   | nil =>
-    -- take the core, its bound, and an emitted core;
-    intro cur hcur _ c hc
+    -- take the core, the flag, its bound, and an emitted core;
+    intro cur h hcur _ c hc
     -- open the definition,
     simp only [packFrom] at hc
     split at hc
@@ -117,32 +118,57 @@ theorem packFrom_fits (max : Nat) :
       simp [h] at hne
   -- One more atom `a`:
   | cons a as ih =>
-    -- take the core, its bound, the atoms' bounds, and an emitted core;
-    intro cur hcur has c hc
+    -- take the core, the flag, its bound, the atoms' bounds, and an emitted core;
+    intro cur h hcur has c hc
     -- `a` fits,
-    have ha : Fits max a := has a (by simp)
+    have ha : Fits max a.text := has a (by simp)
     -- and so do the atoms after it.
-    have hrest : ∀ b ∈ as, Fits max b := fun b m => has b (by simp [m])
+    have hrest : ∀ b ∈ as, Fits max b.text := fun b m => has b (by simp [m])
+    -- Emitting the current core and starting again from `a` keeps every core within the limit.
+    have emit : cur ≠ [] → ∀ c ∈ cur :: packFrom max a.text a.heading as, Fits max c := by
+      intro hne c hc
+      simp only [List.mem_cons] at hc
+      rcases hc with rfl | hc
+      -- the emitted core is not empty and is within the limit;
+      · exact ⟨hne, hcur⟩
+      -- the later cores come from `a` onwards, and they fit.
+      · exact ih a.text a.heading ha.2 hrest c hc
     -- Open the definition and follow what happens to `a`.
     simp only [packFrom] at hc
     split at hc
     -- The core was empty: `a` becomes the core, and it is within the limit.
-    · exact ih a ha.2 hrest c hc
+    · exact ih a.text a.heading ha.2 hrest c hc
     -- The core was not empty:
     · rename_i hne
+      have hne' : cur ≠ [] := by
+        intro h
+        simp [h] at hne
       split at hc
-      -- `a` joins it because the sum fits, so the bigger core is within the limit;
+      -- `a` would fit:
       · rename_i hle
-        exact ih (cur ++ a) (by simpa using hle) hrest c hc
-      -- or the core is emitted and `a` starts the next one:
-      · simp only [List.mem_cons] at hc
-        rcases hc with rfl | hc
-        -- the emitted core is not empty and is within the limit;
-        · refine ⟨?_, hcur⟩
-          intro h
-          simp [h] at hne
-        -- the later cores come from `a` onwards, and they fit.
-        · exact ih a ha.2 hrest c hc
+        split at hc
+        -- a heading closes the core first: emitted as above;
+        · exact emit hne' c hc
+        -- or `a` joins it because the sum fits, so the bigger core is within the limit.
+        · exact ih (cur ++ a.text) a.heading (by simpa using hle) hrest c hc
+      -- `a` does not fit: the core is emitted and `a` starts the next one.
+      · exact emit hne' c hc
+
+-- Promise: every marked atom is one of the paragraph's atoms.
+theorem mem_tag (h : Bool) (xs : List (List Char)) :
+    -- Any marked atom's characters are among the atoms we started with.
+    ∀ a ∈ tag h xs, a.text ∈ xs := by
+  -- Look at whether there are any atoms.
+  cases xs with
+  -- None: nothing is marked.
+  | nil => simp [tag]
+  -- Some: the first keeps its text, and so does every other one.
+  | cons x xs =>
+    intro a ha
+    simp only [tag, List.mem_cons, List.mem_map] at ha
+    rcases ha with rfl | ⟨t, ht, rfl⟩
+    · simp
+    · simp [ht]
 
 -- Promise: the overlap prefix never pushes a chunk over the limit.
 theorem pickPre_fits (cfg : Config) (prev core : List Char) (hcore : core.length ≤ cfg.max) :
@@ -217,13 +243,13 @@ theorem bounded (cfg : Config) (hmax : 1 ≤ cfg.max) (ps : List Para) :
   -- With overlap they fit if every packed core fits,
   refine overlapFrom_bounded cfg _ none ?_ ch hch
   -- and packed cores fit if packing starts empty and every atom fits.
-  apply packFrom_fits cfg.max _ [] (by simp)
+  apply packFrom_fits cfg.max _ [] false (by simp)
   -- Take an atom.
   intro a ha
-  -- It is an atom of some paragraph of the segment,
-  simp only [List.mem_flatMap] at ha
+  -- It is a marked atom of some paragraph of the segment,
+  simp only [segAtoms, List.mem_flatMap] at ha
   obtain ⟨p, _, ha⟩ := ha
-  -- and every paragraph's atoms fit.
-  exact atoms_fit cfg hmax p a ha
+  -- so its characters are one of that paragraph's atoms, and those fit.
+  exact atoms_fit cfg hmax p a.text (mem_tag p.heading _ a ha)
 
 end ChunkSplit

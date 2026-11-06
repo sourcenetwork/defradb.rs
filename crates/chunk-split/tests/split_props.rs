@@ -86,8 +86,20 @@ proptest! {
         }
     }
 
-    // Mirrors `local_edit`: editing one paragraph without moving a boundary leaves
-    // every chunk outside its segment unchanged.
+    // Mirrors `fence_after_reads_only_the_heading`: the fence after a paragraph
+    // depends on its heading flag, not on its text.
+    #[test]
+    fn fence_after_reads_only_the_heading(text in text(), other in paragraph(), max in 1usize..5000) {
+        let paras = paragraphs(&text);
+        let others = paragraphs(&other);
+        prop_assume!(paras.len() >= 2 && others.len() == 1);
+        let replaced = &others[0];
+        prop_assume!(replaced.heading == paras[0].heading);
+        prop_assert_eq!(fence_before(&paras[0], &paras[1], max), fence_before(replaced, &paras[1], max));
+    }
+
+    // Mirrors `local_edit_keeps_heading`: editing one paragraph without moving the
+    // fence before it leaves every chunk outside its segment unchanged.
     #[test]
     fn local_edit(text in text(), config in config(), pick in any::<prop::sample::Index>(), insert in "[a-z]{1,6}") {
         let max = config.max_chars;
@@ -106,8 +118,7 @@ proptest! {
         let q = &new_paras[at];
         prop_assume!(q.heading == p.heading);
         let keeps_fence_before = at == 0 || fence_before(&paras[at - 1], p, max) == fence_before(&new_paras[at - 1], q, max);
-        let keeps_fence_after = at + 1 == paras.len() || fence_before(p, &paras[at + 1], max) == fence_before(q, &new_paras[at + 1], max);
-        prop_assume!(keeps_fence_before && keeps_fence_after);
+        prop_assume!(keeps_fence_before);
 
         let seg_start = (1..=at).rev().find(|&i| fence_before(&paras[i - 1], &paras[i], max)).unwrap_or(0);
         let seg_end = (at + 1..paras.len()).find(|&i| fence_before(&paras[i - 1], &paras[i], max)).unwrap_or(paras.len());

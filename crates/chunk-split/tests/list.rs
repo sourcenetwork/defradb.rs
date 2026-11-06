@@ -21,7 +21,7 @@ fn list_starts_with_the_text_hash_then_chunks_in_order() {
 
 #[test]
 fn repeated_text_needs_one_chunk_document() {
-    let text = "# Chorus\n\nLa la la.\n\n# Chorus\n\nLa la la.\n\n# Verse\n\nSomething else.\n";
+    let text = "# Chorus\n\nLa la la la la la la la.\n\n# Chorus\n\nLa la la la la la la la.\n\n# Verse\n\nSomething else.\n";
     let chunks = split(
         text,
         &ChunkConfig {

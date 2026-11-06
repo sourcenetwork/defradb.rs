@@ -125,18 +125,18 @@ theorem atoms_flatten (cfg : Config) (h : LevelsJoin cfg) (p : Para) :
 
 -- Promise: packing keeps the characters: the cores join to what was being filled plus the atoms.
 theorem packFrom_flatten (max : Nat) :
-    -- For any atoms and any core being filled,
-    ∀ (as : List (List Char)) (cur : List Char),
-      -- the packed cores join to the core followed by all the atoms.
-      (packFrom max cur as).flatten = cur ++ as.flatten := by
+    -- For any atoms, any core being filled, and any heading flag before it,
+    ∀ (as : List Atom) (cur : List Char) (h : Bool),
+      -- the packed cores join to the core followed by all the atoms' characters.
+      (packFrom max cur h as).flatten = cur ++ (as.map Atom.text).flatten := by
   -- Take the atoms.
   intro as
   -- Go through them one at a time.
   induction as with
   -- No atoms left:
   | nil =>
-    -- take the core,
-    intro cur
+    -- take the core and the flag,
+    intro cur h
     -- open the definition,
     simp only [packFrom]
     -- and split on whether the core is empty.
@@ -148,8 +148,8 @@ theorem packFrom_flatten (max : Nat) :
     · simp
   -- One more atom `a`:
   | cons a as ih =>
-    -- take the core,
-    intro cur
+    -- take the core and the flag,
+    intro cur h
     -- open the definition,
     simp only [packFrom]
     -- and split on what happens to `a`.
@@ -159,10 +159,23 @@ theorem packFrom_flatten (max : Nat) :
       simp [ih, List.isEmpty_iff.mp he]
     -- The core was not empty:
     · split
-      -- `a` fits next to it and joins it;
+      -- `a` would fit:
+      · split
+        -- but a heading closes the core first, and `a` starts the next one;
+        · simp [ih]
+        -- or `a` joins it.
+        · simp [ih]
+      -- `a` does not fit: the core is emitted and `a` starts the next one.
       · simp [ih]
-      -- or the core is emitted and `a` starts the next one.
-      · simp [ih]
+
+-- Promise: marking atoms with a heading flag keeps their characters.
+theorem tag_text (h : Bool) (xs : List (List Char)) :
+    -- The marked atoms' characters are the atoms we started with.
+    (tag h xs).map Atom.text = xs := by
+  -- Look at whether there are any atoms; marking only adds the flag.
+  cases xs with
+  | nil => simp [tag]
+  | cons x xs => simp [tag, Function.comp_def]
 
 -- Promise: adding overlap prefixes leaves every core as it was, in order.
 theorem overlapFrom_cores (cfg : Config) :
@@ -221,7 +234,9 @@ theorem segChunks_cores (cfg : Config) (h : LevelsJoin cfg) (seg : List Para) :
     ((segChunks cfg seg).map Chunk.core).flatten = joined seg := by
   -- Overlap keeps the cores, and packing keeps the atoms' characters.
   simp only [segChunks, overlapFrom_cores, pack, packFrom_flatten, List.nil_append]
-  -- Joining the paragraphs' atoms is joining each paragraph's atoms,
+  -- Marking keeps each paragraph's atoms as they were,
+  simp only [segAtoms, List.map_flatMap, tag_text]
+  -- joining the paragraphs' atoms is joining each paragraph's atoms,
   rw [flatten_flatMap]
   -- and each paragraph's atoms join to the paragraph.
   simp only [atoms_flatten cfg h]

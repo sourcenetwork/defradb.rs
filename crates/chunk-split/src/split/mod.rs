@@ -1,13 +1,15 @@
 //! The `@chunk` splitter.
 //!
-//! It splits the text into paragraphs, groups them into segments, and packs
-//! each segment into chunks of at most `max_chars` characters. A chunk can
-//! repeat the last sentences of the chunk before it. Lengths count characters,
-//! not bytes.
+//! It splits the text into paragraphs, groups them into segments of a few
+//! `max_chars` each, and packs each segment into chunks of at most `max_chars`
+//! characters. A heading starts a new chunk once the current one is half full.
+//! A chunk can repeat the last sentences of the chunk before it. Lengths count
+//! characters, not bytes.
 //!
 //! The Lean proof `proofs/lean/ChunkSplit` shows that the chunks cover the text
 //! with no gaps, that no chunk is too long, and that an edit which keeps its
-//! paragraph's fences only changes the chunks of its segment.
+//! paragraph's heading flag and the fence before it only changes the chunks of
+//! its segment.
 
 mod atoms;
 mod overlap;
@@ -17,7 +19,7 @@ mod segments;
 
 pub use atoms::{cut_sentences, cut_words};
 pub use paragraphs::{paragraphs, Para};
-pub use segments::fence_before;
+pub use segments::{fence_before, SEGMENT_CHUNKS};
 
 use crate::list::text_hash;
 
@@ -48,9 +50,17 @@ pub fn split(text: &str, config: &ChunkConfig) -> Vec<Chunk> {
     let mut chunks = Vec::new();
     for segment in segments::segments(&paras, max) {
         let start = segment[0].start;
-        let atoms: Vec<&str> = segment
+        let atoms: Vec<pack::Atom<'_>> = segment
             .iter()
-            .flat_map(|para| atoms::atoms(para.text, max))
+            .flat_map(|para| {
+                atoms::atoms(para.text, max)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, text)| pack::Atom {
+                        text,
+                        heading: para.heading && i == 0,
+                    })
+            })
             .collect();
         let cores = pack::pack(&atoms, max);
         let mut offset = start;
