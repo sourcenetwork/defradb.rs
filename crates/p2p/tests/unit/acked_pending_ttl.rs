@@ -6,7 +6,7 @@ use crate::sync::pending_store::{PendingDagStorage, PendingDagStore};
 /// receiver's pending entry is the only owner of the head. An acknowledged
 /// head stays pending past the TTL, stays due on the clock, and the lease of
 /// a fetch already running for it stays current.
-#[tokio::test]
+#[nuclei::test]
 async fn an_acknowledged_head_outlives_the_pending_ttl() {
     let manager = test_manager();
     let pending_store = Arc::new(PendingDagStore::new(Arc::new(
@@ -35,7 +35,7 @@ async fn an_acknowledged_head_outlives_the_pending_ttl() {
     });
 
     let due: Vec<Cid> = manager
-        .claim_due_pending_dag_retries(n0_future::time::Instant::now())
+        .claim_due_pending_dag_retries(crate::rt::time::Instant::now())
         .into_iter()
         .map(|(root, _)| root)
         .collect();

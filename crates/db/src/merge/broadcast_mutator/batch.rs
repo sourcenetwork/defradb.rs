@@ -178,6 +178,11 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport + 'static>
             )
             .await?;
         } else {
+            p2p::model_trace!(Commit {
+                doc: &pending.doc_id,
+                head: pending.cid.to_string(),
+                parents: p2p::model_trace::parents_of(&pending.block),
+            });
             sync.push_to_replicators_with_creator(
                 &pending.cid,
                 &pending.block,

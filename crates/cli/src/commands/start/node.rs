@@ -2,8 +2,7 @@
 
 use std::sync::Arc;
 
-use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
+use nuclei::sync::mpsc;
 use tracing::{info, warn};
 
 use crate::config::{Config, DatastoreType};
@@ -11,21 +10,7 @@ use crate::error::Result;
 
 /// Tracks spawned P2P background tasks for graceful shutdown.
 pub(super) enum P2PTasks {
-    Libp2p {
-        /// Coordinator-owned background replication shutdown.
-        coordinator: p2p::sync::SyncShutdownHandle,
-        /// P2P host event loop task
-        host_task: JoinHandle<()>,
-        /// Replication loop task (processes incoming blocks)
-        replication_task: JoinHandle<()>,
-        /// Host event handler task (processes P2P events through coordinator)
-        event_handler_task: Option<JoinHandle<()>>,
-        /// Records push failures for retry, on the worker pool
-        failure_recorder_task: workers::Background,
-        /// Periodically retries failed doc pushes with exponential backoff, on
-        /// the network edge
-        retry_loop_task: edge::Task<()>,
-    },
+    Libp2p(Box<Libp2pTasks>),
     #[cfg(feature = "iroh")]
     Iroh {
         peer: defra_p2p_adapter::IrohPeerShutdown,
@@ -33,6 +18,21 @@ pub(super) enum P2PTasks {
         #[cfg(feature = "iroh-relay-server")]
         relay_server: Option<p2p::iroh::IrohRelayServer>,
     },
+}
+
+pub(super) struct Libp2pTasks {
+    /// Coordinator-owned background replication shutdown.
+    pub(super) coordinator: p2p::sync::SyncShutdownHandle,
+    /// P2P host event loop task.
+    pub(super) host_task: edge::Service,
+    /// Replication loop task (processes incoming blocks).
+    pub(super) replication_task: edge::Service,
+    /// Host event handler task (processes P2P events through coordinator).
+    pub(super) event_handler_task: Option<edge::Service>,
+    /// Records push failures for retry, on the worker pool.
+    pub(super) failure_recorder_task: workers::Background,
+    /// Periodically retries failed doc pushes with exponential backoff, on the network edge.
+    pub(super) retry_loop_task: edge::Task<()>,
 }
 
 /// Servers and background tasks produced by store/server initialization.
@@ -45,6 +45,7 @@ pub(super) struct ServerSetup {
     pub vector_rebuild_task: Option<workers::Background>,
     pub txn_cleanup_task: Option<workers::Background>,
     pub http_server: defra_http::Server,
+    pub http_scope: edge::Scope,
     #[cfg(feature = "postgres")]
     pub pg_server: Option<pg_compat::PgServer>,
 }
@@ -62,6 +63,8 @@ pub struct Node {
     pub(super) vector_rebuild_task: Option<workers::Background>,
     pub(super) txn_cleanup_task: Option<workers::Background>,
     pub(super) http_server: Option<defra_http::Server>,
+    /// Where the HTTP server's work runs, drained at shutdown.
+    pub(super) http_scope: edge::Scope,
     #[cfg(feature = "postgres")]
     pub(super) pg_server: Option<pg_compat::PgServer>,
     /// Shutdown signal sender (for tests)
@@ -72,6 +75,8 @@ pub struct Node {
     /// Stored for future use in request context injection.
     #[allow(dead_code)]
     user_identity: Option<std::sync::Arc<identity::RawIdentity>>,
+    /// The network runtime the node's servers and listeners run on.
+    pub(super) edge: edge::Edge,
 }
 
 impl Node {
@@ -261,6 +266,7 @@ impl Node {
                 defra_http::TlsConfig::from_pem_file(
                     &config.api.pubkey_path,
                     &config.api.privkey_path,
+                    &edge,
                 )
                 .await
                 .map_err(|e| crate::error::Error::InvalidConfig(format!("HTTP TLS: {e}")))?,
@@ -373,11 +379,13 @@ impl Node {
             vector_rebuild_task: servers.vector_rebuild_task,
             txn_cleanup_task: servers.txn_cleanup_task,
             http_server: Some(servers.http_server),
+            http_scope: servers.http_scope,
             #[cfg(feature = "postgres")]
             pg_server: servers.pg_server,
             shutdown_tx,
             shutdown_rx,
             user_identity,
+            edge,
         })
     }
 }

@@ -35,7 +35,7 @@ dependencies = [
 [[package]]
 name = "acp-light-client"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=501bff096be8a3e1de1d203f4cad0f95e8d4883a#501bff096be8a3e1de1d203f4cad0f95e8d4883a"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=330e38f184215f40a2bc926480b542bb75051b6d#330e38f184215f40a2bc926480b542bb75051b6d"
 dependencies = [
  "alloy-primitives",
  "commonware-codec",
@@ -47,7 +47,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
- "tokio-tungstenite 0.26.2",
+ "tokio-tungstenite",
  "tracing",
  "vera-domain",
  "vera-modules",
@@ -722,7 +722,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -733,7 +733,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1280,6 +1280,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-compat"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c97d7ff3c25d6c10d64170c12acaf5d4245e76dece3779c1d92b153a64f11df"
+dependencies = [
+ "futures-core",
+ "futures-io",
+ "once_cell",
+ "pin-project-lite",
+ "tokio",
+]
+
+[[package]]
 name = "async-graphql"
 version = "7.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1469,6 +1482,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-tungstenite"
+version = "0.29.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef0f7efedeac57d9b26170f72965ecfd31473ca52ca7a64e925b0b6f5f079886"
+dependencies = [
+ "atomic-waker",
+ "futures-core",
+ "futures-io",
+ "futures-task",
+ "futures-util",
+ "log",
+ "pin-project-lite",
+ "tungstenite",
+]
+
+[[package]]
 name = "async_io_stream"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1587,7 +1616,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "31b698c5f9a010f6573133b09e0de5408834d0c82f8d7475a89fc1867a71cd90"
 dependencies = [
  "axum-core",
- "base64 0.22.1",
  "bytes",
  "form_urlencoded",
  "futures-util",
@@ -1606,10 +1634,8 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "serde_urlencoded",
- "sha1 0.10.7",
  "sync_wrapper 1.0.2",
  "tokio",
- "tokio-tungstenite 0.29.0",
  "tower",
  "tower-layer",
  "tower-service",
@@ -1633,28 +1659,6 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
-]
-
-[[package]]
-name = "axum-server"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1df331683d982a0b9492b38127151e6453639cd34926eb9c07d4cd8c6d22bfc"
-dependencies = [
- "arc-swap",
- "bytes",
- "either",
- "fs-err",
- "http 1.5.0",
- "http-body 1.1.0",
- "hyper 1.12.0",
- "hyper-util",
- "pin-project-lite",
- "rustls 0.23.46",
- "rustls-pki-types",
- "tokio",
- "tokio-rustls 0.26.6",
- "tower-service",
 ]
 
 [[package]]
@@ -1763,6 +1767,7 @@ dependencies = [
  "lru",
  "mimalloc",
  "multihash",
+ "nuclei",
  "p2p",
  "query",
  "rapidhash",
@@ -1774,7 +1779,6 @@ dependencies = [
  "storage",
  "telemetry",
  "tempfile",
- "tokio",
  "tower",
  "workers",
  "x25519-dalek 2.0.1",
@@ -1881,6 +1885,7 @@ dependencies = [
  "asynchronous-codec",
  "bytes",
  "cid",
+ "edge",
  "futures",
  "hex",
  "keyed_priority_queue",
@@ -1890,13 +1895,13 @@ dependencies = [
  "multihash",
  "multihash-codetable",
  "multistream-select",
+ "net",
+ "nuclei",
  "prost 0.14.4",
  "rapidhash",
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.21",
- "tokio",
- "tokio-util",
  "tracing",
  "unsigned-varint 0.8.0",
 ]
@@ -2458,6 +2463,8 @@ dependencies = [
  "libc",
  "libp2p",
  "mimalloc",
+ "net",
+ "nuclei",
  "orbis",
  "p2p",
  "pg-compat",
@@ -2468,7 +2475,6 @@ dependencies = [
  "rcgen 0.13.2",
  "regolith",
  "replication-filter",
- "reqwest 0.12.28",
  "rlimit",
  "rustls 0.23.46",
  "schema",
@@ -2481,7 +2487,6 @@ dependencies = [
  "telemetry",
  "tempfile",
  "thiserror 2.0.21",
- "tokio",
  "toml 0.9.12+spec-1.1.0",
  "tower",
  "tracing",
@@ -2964,10 +2969,12 @@ name = "conformance"
 version = "0.1.0"
 dependencies = [
  "defra-harness",
+ "edge",
+ "nuclei",
+ "p2p",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
- "tokio",
 ]
 
 [[package]]
@@ -3366,7 +3373,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tinytemplate",
- "tokio",
  "walkdir",
 ]
 
@@ -3837,6 +3843,7 @@ dependencies = [
  "edge",
  "events",
  "futures",
+ "futures-lite",
  "getrandom 0.2.17",
  "hex",
  "identity",
@@ -3856,7 +3863,6 @@ dependencies = [
  "rand 0.8.8",
  "rapidhash",
  "regolith",
- "reqwest 0.12.28",
  "schema",
  "serde",
  "serde_bytes",
@@ -3946,6 +3952,7 @@ dependencies = [
  "multibase",
  "multihash",
  "multihash-codetable",
+ "nuclei",
  "proptest",
  "rand 0.8.8",
  "rapidhash",
@@ -3956,7 +3963,6 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.21",
- "tokio",
  "tracing",
  "uuid",
  "workers",
@@ -3966,7 +3972,7 @@ dependencies = [
 [[package]]
 name = "defra-harness"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=501bff096be8a3e1de1d203f4cad0f95e8d4883a#501bff096be8a3e1de1d203f4cad0f95e8d4883a"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=330e38f184215f40a2bc926480b542bb75051b6d#330e38f184215f40a2bc926480b542bb75051b6d"
 dependencies = [
  "eyre",
  "futures",
@@ -3980,7 +3986,7 @@ dependencies = [
  "test-infra",
  "tokio",
  "tracing",
- "vera-harness 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=501bff096be8a3e1de1d203f4cad0f95e8d4883a)",
+ "vera-harness 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=330e38f184215f40a2bc926480b542bb75051b6d)",
 ]
 
 [[package]]
@@ -3991,7 +3997,6 @@ dependencies = [
  "async-stream",
  "async-trait",
  "axum",
- "axum-server",
  "base64 0.23.1",
  "cid",
  "crypto",
@@ -4010,6 +4015,8 @@ dependencies = [
  "kovan-map",
  "kovan-queue",
  "lens",
+ "net",
+ "nuclei",
  "query",
  "rapidhash",
  "regolith",
@@ -4020,8 +4027,6 @@ dependencies = [
  "storage",
  "telemetry",
  "thiserror 2.0.21",
- "tokio",
- "tokio-stream",
  "tower",
  "tower-http",
  "tracing",
@@ -4057,12 +4062,12 @@ dependencies = [
  "lens",
  "libp2p",
  "mimalloc",
+ "net",
  "p2p",
  "query",
  "rapidhash",
  "regolith",
  "replication-filter",
- "reqwest 0.12.28",
  "schema",
  "serde",
  "serde_json",
@@ -4097,6 +4102,8 @@ dependencies = [
  "document",
  "edge",
  "events",
+ "futures",
+ "futures-lite",
  "hex",
  "identity",
  "iroh",
@@ -4107,6 +4114,7 @@ dependencies = [
  "lens",
  "libp2p",
  "n0-future",
+ "nuclei",
  "p2p",
  "query",
  "rapidhash",
@@ -4120,8 +4128,8 @@ dependencies = [
  "sha2 0.10.9",
  "storage",
  "thiserror 2.0.21",
- "tokio",
  "tracing",
+ "tracing-subscriber",
  "web-time",
  "workers",
  "zeroize",
@@ -4558,8 +4566,13 @@ dependencies = [
 name = "edge"
 version = "0.5.0"
 dependencies = [
+ "async-compat",
  "defra-core",
+ "futures",
+ "futures-lite",
+ "futures-timer",
  "n0-future",
+ "nuclei",
  "regolith",
  "thiserror 2.0.21",
  "tokio",
@@ -4739,7 +4752,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4883,6 +4896,7 @@ dependencies = [
  "document",
  "edge",
  "events",
+ "futures-lite",
  "hex",
  "identity",
  "kovan",
@@ -4904,7 +4918,6 @@ dependencies = [
  "storage",
  "tempfile",
  "thiserror 2.0.21",
- "tokio",
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
@@ -4922,11 +4935,13 @@ dependencies = [
  "colored",
  "defra-version",
  "dirs",
+ "edge",
+ "net",
+ "nuclei",
  "rapidhash",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
- "tokio",
 ]
 
 [[package]]
@@ -5046,16 +5061,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
-]
-
-[[package]]
-name = "fs-err"
-version = "3.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5c95b673b8f6f7235229ae11c5642d81b04c2e64c1e2fb417bc0cf73ca45f29"
-dependencies = [
- "autocfg",
- "tokio",
 ]
 
 [[package]]
@@ -5822,22 +5827,8 @@ dependencies = [
  "hyper 1.12.0",
  "hyper-util",
  "rustls 0.23.46",
- "rustls-native-certs 0.8.5",
  "tokio",
  "tokio-rustls 0.26.6",
- "tower-service",
-]
-
-[[package]]
-name = "hyper-timeout"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b90d566bffbce6a75bd8b09a05aa8c2cb1fabb6cb348f8840c9e4c90a0d83b0"
-dependencies = [
- "hyper 1.12.0",
- "hyper-util",
- "pin-project-lite",
- "tokio",
  "tower-service",
 ]
 
@@ -5895,7 +5886,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.57.0",
 ]
 
 [[package]]
@@ -6216,10 +6207,16 @@ version = "0.5.0"
 dependencies = [
  "defra-core",
  "edge",
+ "futures",
+ "futures-lite",
  "n0-future",
+ "net",
+ "nuclei",
  "rapidhash",
  "regolith",
- "tokio",
+ "reqwest 0.12.28",
+ "serde_json",
+ "thiserror 2.0.21",
  "tracing",
  "workers",
 ]
@@ -6253,12 +6250,13 @@ dependencies = [
  "libc",
  "mach2 0.4.3",
  "mantra-macros",
+ "net",
+ "nuclei",
  "p2p",
  "paste",
  "query",
  "rapidhash",
  "regolith",
- "reqwest 0.12.28",
  "schema",
  "serde",
  "serde_json",
@@ -6266,11 +6264,11 @@ dependencies = [
  "tempfile",
  "testo",
  "thiserror 2.0.21",
- "tokio",
+ "tracing-subscriber",
  "vera",
  "vera-client",
  "vera-domain",
- "vera-harness 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d)",
+ "vera-harness 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9)",
  "vera-modules",
  "workers",
 ]
@@ -6818,7 +6816,7 @@ dependencies = [
 [[package]]
 name = "jsonrpsee-server"
 version = "0.26.1"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d#696538b9e3be3be058ff159d93878264807a925d"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "futures-util",
  "http 1.5.0",
@@ -6999,6 +6997,7 @@ dependencies = [
  "kovan",
  "kovan-map",
  "kovan-queue",
+ "nuclei",
  "orbis",
  "rand 0.8.8",
  "rapidhash",
@@ -7006,7 +7005,6 @@ dependencies = [
  "serde",
  "serde_bytes",
  "thiserror 2.0.21",
- "tokio",
  "tracing",
  "uuid",
  "vera",
@@ -7130,8 +7128,8 @@ name = "lens-host"
 version = "0.5.0"
 dependencies = [
  "lens",
+ "nuclei",
  "serde_json",
- "tokio",
 ]
 
 [[package]]
@@ -8128,6 +8126,40 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
 
 [[package]]
+name = "net"
+version = "0.5.0"
+dependencies = [
+ "bytes",
+ "edge",
+ "futures",
+ "futures-core",
+ "futures-io",
+ "futures-rustls",
+ "http 1.5.0",
+ "http-body 1.1.0",
+ "http-body-util",
+ "hyper 1.12.0",
+ "hyper-util",
+ "if-addrs",
+ "libp2p",
+ "nuclei",
+ "rapidhash",
+ "rcgen 0.13.2",
+ "regolith",
+ "rustls 0.23.46",
+ "rustls-native-certs 0.8.5",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "socket2 0.6.5",
+ "thiserror 2.0.21",
+ "tower",
+ "tower-service",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "netdev"
 version = "0.45.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8439,8 +8471,31 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
+
+[[package]]
+name = "nuclei"
+version = "0.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "207ad3a6e71e173329e081b56c01aa6b0fac4f53bbbbf0b0d2b06354e0cc3b8d"
+dependencies = [
+ "futures-core",
+ "futures-io",
+ "kovan",
+ "kovan-channel",
+ "kovan-map",
+ "kovan-queue",
+ "libc",
+ "log",
+ "nuclei-macros",
+]
+
+[[package]]
+name = "nuclei-macros"
+version = "0.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "704ff8c43ecf352c8fa7b93d4a041ba8004fc73a7edd5c75bf722f7e647090a2"
 
 [[package]]
 name = "num"
@@ -8895,14 +8950,14 @@ dependencies = [
  "edge",
  "hex",
  "identity",
+ "net",
+ "nuclei",
  "prost 0.14.4",
  "rapidhash",
  "regolith",
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.21",
- "tokio",
- "tokio-stream",
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
@@ -8912,7 +8967,8 @@ dependencies = [
 [[package]]
 name = "orbis-reporting"
 version = "0.0.1"
-source = "git+https://github.com/sourcenetwork/orbis-rs?rev=06cc2d86ade4e3eb5ddbc82baf60e5f1fdd663d6#06cc2d86ade4e3eb5ddbc82baf60e5f1fdd663d6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "996617442e5ba5804850c4d71ec5b402371b4f7f8fbd5afe7442164b7503997e"
 dependencies = [
  "hex",
  "serde",
@@ -8975,6 +9031,7 @@ dependencies = [
  "document",
  "edge",
  "futures",
+ "futures-lite",
  "getrandom 0.3.4",
  "hex",
  "identity",
@@ -8994,7 +9051,9 @@ dependencies = [
  "multiaddr",
  "multihash-codetable",
  "n0-future",
+ "net",
  "noq",
+ "nuclei",
  "postcard",
  "rand 0.10.3",
  "rapidhash",
@@ -9010,7 +9069,6 @@ dependencies = [
  "sysinfo 0.33.1",
  "tempfile",
  "thiserror 2.0.21",
- "tokio",
  "tracing",
  "unsigned-varint 0.8.0",
  "uuid",
@@ -9242,19 +9300,22 @@ name = "pg-compat"
 version = "0.5.0"
 dependencies = [
  "async-trait",
+ "bytes",
+ "edge",
  "futures",
  "identity",
  "kovan",
+ "nuclei",
  "pgwire",
  "query",
  "rapidhash",
  "regex",
  "regolith",
+ "rustls 0.23.46",
  "schema",
  "serde_json",
  "sqlparser",
  "thiserror 2.0.21",
- "tokio",
  "tracing",
 ]
 
@@ -9844,7 +9905,7 @@ version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03da047801ff44bb6a4d407d4860c05fd70bb81714e6b2f3812603d5b145b042"
 dependencies = [
- "heck 0.5.0",
+ "heck 0.4.1",
  "itertools 0.14.0",
  "log",
  "multimap",
@@ -10094,7 +10155,7 @@ dependencies = [
  "once_cell",
  "socket2 0.6.5",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -10427,9 +10488,9 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "regolith"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "650ad12f8bf7f5430c17a29c2fad05c00a5f2730883d45b5f21da92938fa1b48"
+checksum = "23437deaa1237042a0ca3cd786c5f5d6181531263253ae710f62b16ba2758391"
 dependencies = [
  "aes-gcm-siv",
  "getrandom 0.4.3",
@@ -10549,9 +10610,6 @@ dependencies = [
  "native-tls",
  "percent-encoding",
  "pin-project-lite",
- "quinn",
- "rustls 0.23.46",
- "rustls-native-certs 0.8.5",
  "rustls-pki-types",
  "serde",
  "serde_json",
@@ -10559,7 +10617,6 @@ dependencies = [
  "sync_wrapper 1.0.2",
  "tokio",
  "tokio-native-tls",
- "tokio-rustls 0.26.6",
  "tokio-util",
  "tower",
  "tower-http",
@@ -11025,7 +11082,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11171,7 +11228,7 @@ dependencies = [
  "security-framework 3.7.0",
  "security-framework-sys",
  "webpki-root-certs 1.0.11",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11986,7 +12043,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -12104,7 +12161,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -12439,14 +12496,17 @@ checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 name = "telemetry"
 version = "0.5.0"
 dependencies = [
+ "async-trait",
+ "edge",
  "kovan",
+ "net",
  "opentelemetry",
+ "opentelemetry-http",
  "opentelemetry-otlp",
  "opentelemetry-semantic-conventions",
  "opentelemetry_sdk",
  "rapidhash",
  "regolith",
- "reqwest 0.13.5",
  "thiserror 2.0.21",
  "tracing",
  "tracing-opentelemetry",
@@ -12463,7 +12523,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -12570,7 +12630,7 @@ dependencies = [
 [[package]]
 name = "test-infra"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=501bff096be8a3e1de1d203f4cad0f95e8d4883a#501bff096be8a3e1de1d203f4cad0f95e8d4883a"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=330e38f184215f40a2bc926480b542bb75051b6d#330e38f184215f40a2bc926480b542bb75051b6d"
 dependencies = [
  "eyre",
  "futures",
@@ -12822,24 +12882,8 @@ checksum = "7a9daff607c6d2bf6c16fd681ccb7eecc83e4e2cdc1ca067ffaadfca5de7f084"
 dependencies = [
  "futures-util",
  "log",
- "rustls 0.23.46",
- "rustls-pki-types",
  "tokio",
- "tokio-rustls 0.26.6",
- "tungstenite 0.26.2",
- "webpki-roots 0.26.11",
-]
-
-[[package]]
-name = "tokio-tungstenite"
-version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f72a05e828585856dacd553fba484c242c46e391fb0e58917c942ee9202915c"
-dependencies = [
- "futures-util",
- "log",
- "tokio",
- "tungstenite 0.29.0",
+ "tungstenite",
 ]
 
 [[package]]
@@ -13004,24 +13048,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2cdfc673aabd30fe8fee92e65837b644c37c5d47f0f97ae6d5e0f1237d15e1b"
 dependencies = [
  "async-trait",
- "axum",
  "base64 0.22.1",
  "bytes",
- "h2 0.4.20",
  "http 1.5.0",
  "http-body 1.1.0",
  "http-body-util",
- "hyper 1.12.0",
- "hyper-timeout",
- "hyper-util",
  "percent-encoding",
  "pin-project",
- "socket2 0.6.5",
  "sync_wrapper 1.0.2",
- "tokio",
  "tokio-stream",
  "tokio-util",
- "tower",
  "tower-layer",
  "tower-service",
  "tracing",
@@ -13074,9 +13110,7 @@ checksum = "ebe5ef63511595f1344e2d5cfa636d973292adc0eec1f0ad45fae9f0851ab1d4"
 dependencies = [
  "futures-core",
  "futures-util",
- "indexmap 2.14.2",
  "pin-project-lite",
- "slab",
  "sync_wrapper 1.0.2",
  "tokio",
  "tokio-util",
@@ -13242,27 +13276,9 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.9.5",
- "rustls 0.23.46",
- "rustls-pki-types",
  "sha1 0.10.7",
  "thiserror 2.0.21",
  "utf-8",
-]
-
-[[package]]
-name = "tungstenite"
-version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c01152af293afb9c7c2a57e4b559c5620b421f6d133261c60dd2d0cdb38e6b8"
-dependencies = [
- "bytes",
- "data-encoding",
- "http 1.5.0",
- "httparse",
- "log",
- "rand 0.9.5",
- "sha1 0.10.7",
- "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -13291,7 +13307,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -13503,6 +13519,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "async-trait",
+ "async-tungstenite",
  "base64 0.23.1",
  "bs58",
  "commonware-codec",
@@ -13520,6 +13537,9 @@ dependencies = [
  "kovan",
  "kovan-map",
  "kovan-queue",
+ "n0-future",
+ "net",
+ "nuclei",
  "prost 0.14.4",
  "rapidhash",
  "regolith",
@@ -13529,8 +13549,6 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.21",
- "tokio",
- "tokio-tungstenite 0.26.2",
  "tonic",
  "tonic-prost",
  "tracing",
@@ -13543,7 +13561,7 @@ dependencies = [
 [[package]]
 name = "vera-acp"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d#696538b9e3be3be058ff159d93878264807a925d"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "async-trait",
  "serde",
@@ -13558,7 +13576,7 @@ dependencies = [
 [[package]]
 name = "vera-app"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d#696538b9e3be3be058ff159d93878264807a925d"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -13586,7 +13604,7 @@ dependencies = [
 [[package]]
 name = "vera-backend"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d#696538b9e3be3be058ff159d93878264807a925d"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "alloy-primitives",
  "bytes",
@@ -13610,7 +13628,7 @@ dependencies = [
 [[package]]
 name = "vera-cli"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d#696538b9e3be3be058ff159d93878264807a925d"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "libc",
 ]
@@ -13618,13 +13636,11 @@ dependencies = [
 [[package]]
 name = "vera-client"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d#696538b9e3be3be058ff159d93878264807a925d"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
- "alloy-signer",
- "alloy-signer-local",
  "alloy-sol-types",
  "ark-bls12-381 0.4.0",
  "ark-ec 0.4.2",
@@ -13657,7 +13673,7 @@ dependencies = [
 [[package]]
 name = "vera-config"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d#696538b9e3be3be058ff159d93878264807a925d"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "commonware-codec",
  "commonware-cryptography",
@@ -13672,7 +13688,7 @@ dependencies = [
 [[package]]
 name = "vera-consensus"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d#696538b9e3be3be058ff159d93878264807a925d"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "commonware-codec",
  "parking_lot",
@@ -13683,7 +13699,7 @@ dependencies = [
 [[package]]
 name = "vera-crypto"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d#696538b9e3be3be058ff159d93878264807a925d"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "alloy-primitives",
  "ark-bls12-381 0.4.0",
@@ -13707,7 +13723,7 @@ dependencies = [
 [[package]]
 name = "vera-domain"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d#696538b9e3be3be058ff159d93878264807a925d"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "alloy-consensus",
  "alloy-evm",
@@ -13730,7 +13746,7 @@ dependencies = [
 [[package]]
 name = "vera-executor"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d#696538b9e3be3be058ff159d93878264807a925d"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -13760,7 +13776,7 @@ dependencies = [
 [[package]]
 name = "vera-genesis"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d#696538b9e3be3be058ff159d93878264807a925d"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "alloy-evm",
  "commonware-codec",
@@ -13777,23 +13793,7 @@ dependencies = [
 [[package]]
 name = "vera-harness"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=501bff096be8a3e1de1d203f4cad0f95e8d4883a#501bff096be8a3e1de1d203f4cad0f95e8d4883a"
-dependencies = [
- "cosmrs",
- "eyre",
- "hex",
- "regex",
- "reqwest 0.12.28",
- "serde_json",
- "test-infra",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "vera-harness"
-version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d#696538b9e3be3be058ff159d93878264807a925d"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -13823,9 +13823,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "vera-harness"
+version = "0.1.0"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=330e38f184215f40a2bc926480b542bb75051b6d#330e38f184215f40a2bc926480b542bb75051b6d"
+dependencies = [
+ "cosmrs",
+ "eyre",
+ "hex",
+ "regex",
+ "reqwest 0.12.28",
+ "serde_json",
+ "test-infra",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "vera-identity"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d#696538b9e3be3be058ff159d93878264807a925d"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "hex",
  "serde",
@@ -13836,7 +13852,7 @@ dependencies = [
 [[package]]
 name = "vera-indexer"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d#696538b9e3be3be058ff159d93878264807a925d"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "alloy-primitives",
  "parking_lot",
@@ -13847,7 +13863,7 @@ dependencies = [
 [[package]]
 name = "vera-jsonrpc"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d#696538b9e3be3be058ff159d93878264807a925d"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -13873,7 +13889,7 @@ dependencies = [
 [[package]]
 name = "vera-modules"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d#696538b9e3be3be058ff159d93878264807a925d"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -13899,7 +13915,7 @@ dependencies = [
 [[package]]
 name = "vera-node"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d#696538b9e3be3be058ff159d93878264807a925d"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -13952,7 +13968,7 @@ dependencies = [
 [[package]]
 name = "vera-overlay"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d#696538b9e3be3be058ff159d93878264807a925d"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "alloy-primitives",
  "vera-qmdb",
@@ -13962,7 +13978,7 @@ dependencies = [
 [[package]]
 name = "vera-permission"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d#696538b9e3be3be058ff159d93878264807a925d"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "alloy-primitives",
  "bytes",
@@ -13981,7 +13997,7 @@ dependencies = [
 [[package]]
 name = "vera-qmdb"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d#696538b9e3be3be058ff159d93878264807a925d"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "alloy-primitives",
  "thiserror 2.0.21",
@@ -13990,7 +14006,7 @@ dependencies = [
 [[package]]
 name = "vera-test-infra"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d#696538b9e3be3be058ff159d93878264807a925d"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "eyre",
  "futures",
@@ -14006,7 +14022,7 @@ dependencies = [
 [[package]]
 name = "vera-traits"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d#696538b9e3be3be058ff159d93878264807a925d"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "alloy-primitives",
  "thiserror 2.0.21",
@@ -14016,7 +14032,7 @@ dependencies = [
 [[package]]
 name = "vera-zanzibar"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=696538b9e3be3be058ff159d93878264807a925d#696538b9e3be3be058ff159d93878264807a925d"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "async-lock",
  "async-trait",
@@ -14537,7 +14553,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

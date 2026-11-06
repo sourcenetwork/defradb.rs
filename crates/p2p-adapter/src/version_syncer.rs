@@ -104,7 +104,9 @@ async fn sync_lens<S: storage::corekv::Store + 'static, B: Blockstore>(
 ) -> P2PResult<()> {
     use defra_core::{LensConfigBlock, LensModuleBlock, LensWasmBlock};
 
-    let network = db.network();
+    let network = db
+        .network()
+        .map_err(|error| P2PError::internal(error.to_string()))?;
 
     let config_data = fetch_block(
         *transform_cid,
@@ -235,7 +237,10 @@ impl<S: storage::corekv::Store + 'static, B: Blockstore + 'static> DbVersionSync
         version_ids: Vec<String>,
         connected_peers: Vec<libp2p::PeerId>,
     ) -> P2PResult<()> {
-        let network = self.db.network();
+        let network = self
+            .db
+            .network()
+            .map_err(|error| P2PError::internal(error.to_string()))?;
         for version_id_str in &version_ids {
             let version_cid = cid::Cid::try_from(version_id_str.as_str())
                 .map_err(|error| P2PError::invalid_input(format!("invalid cid: {error}")))?;

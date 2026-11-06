@@ -2,20 +2,37 @@
 #[path = "client_naming_tests.rs"]
 mod naming_tests;
 
+#[cfg(target_arch = "wasm32")]
+use n0_future::time::sleep;
+#[cfg(not(target_arch = "wasm32"))]
+use nuclei::time::sleep;
+
+/// HTTP: nuclei sockets natively, the browser's fetch on wasm32. Both have
+/// the same names.
+#[cfg(not(target_arch = "wasm32"))]
+use net::http as http_client;
+#[cfg(target_arch = "wasm32")]
+use reqwest as http_client;
+
+/// The gRPC channel to Vera, on nuclei sockets.
+#[cfg(not(target_arch = "wasm32"))]
+type GrpcChannel = net::grpc::Channel<tonic::body::Body>;
+
 /// Client for Vera ACP queries and CometBFT transaction broadcast.
 pub(crate) struct VeraClient {
     /// LCD/REST base URL.
     lcd_address: String,
-    /// Reusable gRPC channel. Cloning a channel preserves its connection pool.
+    /// The gRPC channel; it connects on its first call, and clones share its
+    /// connections.
     #[cfg(not(target_arch = "wasm32"))]
-    grpc_channel: tonic::transport::Channel,
+    grpc_channel: GrpcChannel,
     /// Whole-operation budget for gRPC authorization.
     #[cfg(not(target_arch = "wasm32"))]
     request_timeout: std::time::Duration,
     /// CometBFT RPC address for broadcast_tx_sync
     comet_rpc_address: String,
     /// HTTP client for REST queries (configured with per-request timeout)
-    http: reqwest::Client,
+    http: http_client::Client,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -69,21 +86,30 @@ struct VerifyAccessResponse {
 }
 
 impl VeraClient {
+    /// A client whose connections run on `edge`.
     pub(crate) fn new(
         lcd_address: String,
         grpc_address: String,
         comet_rpc_address: String,
         request_timeout: std::time::Duration,
+        edge: &edge::Edge,
     ) -> Result<Self, ClientError> {
-        let http = reqwest::Client::builder()
+        #[cfg(not(target_arch = "wasm32"))]
+        let http = http_client::Client::builder(edge.clone());
+        #[cfg(target_arch = "wasm32")]
+        let http = {
+            let _ = edge;
+            http_client::Client::builder()
+        };
+        let http = http
             .timeout(request_timeout)
             .build()
             .map_err(ClientError::Http)?;
         #[cfg(not(target_arch = "wasm32"))]
         let grpc_channel =
-            tonic::transport::Endpoint::from_shared(normalize_base_url(&grpc_address))
-                .map_err(|error| ClientError::QueryFailed(error.to_string()))?
-                .connect_lazy();
+            net::grpc::Endpoint::from_shared(normalize_base_url(&grpc_address), edge.clone())
+                .and_then(net::grpc::Endpoint::connect_lazy)
+                .map_err(|error| ClientError::QueryFailed(error.to_string()))?;
         #[cfg(target_arch = "wasm32")]
         let _ = grpc_address;
         Ok(Self {
@@ -108,7 +134,7 @@ impl VeraClient {
             policy_id
         );
         let resp = self.http.get(&url).send().await?;
-        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        if resp.status() == http_client::StatusCode::NOT_FOUND {
             return Ok(None);
         }
         if !resp.status().is_success() {
@@ -219,7 +245,7 @@ impl VeraClient {
                 tracing::debug!(permission, actor_did, valid, "verify_access result");
                 Ok(valid)
             };
-            tokio::time::timeout(self.request_timeout, operation)
+            nuclei::time::timeout(self.request_timeout, operation)
                 .await
                 .map_err(|_| {
                     ClientError::Timeout(format!(
@@ -320,7 +346,7 @@ impl VeraClient {
                     }
                 }
             }
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            sleep(std::time::Duration::from_millis(500)).await;
         }
     }
 
@@ -372,7 +398,7 @@ pub(crate) struct PolicyInfo {
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ClientError {
     #[error("HTTP request failed: {0}")]
-    Http(reqwest::Error),
+    Http(http_client::Error),
 
     #[error("query failed: {0}")]
     QueryFailed(String),
@@ -393,8 +419,8 @@ pub(crate) enum ClientError {
     Json(#[from] serde_json::Error),
 }
 
-impl From<reqwest::Error> for ClientError {
-    fn from(e: reqwest::Error) -> Self {
+impl From<http_client::Error> for ClientError {
+    fn from(e: http_client::Error) -> Self {
         if e.is_timeout() || e.is_connect() {
             ClientError::Timeout(e.to_string())
         } else {
@@ -407,11 +433,11 @@ impl From<reqwest::Error> for ClientError {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use tokio::net::TcpListener;
+    use nuclei::net::TcpListener;
 
     use super::{ClientError, VeraClient};
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn grpc_access_verification_obeys_request_timeout() {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -419,10 +445,13 @@ mod tests {
         let address = format!(
             "http://{}",
             listener
+                .get_ref()
                 .local_addr()
                 .expect("stalled gRPC server should have an address")
         );
-        tokio::spawn(async move {
+        // Held, not detached: nuclei drops a detached task that no waker can
+        // reach, which would close the stalled connection at once.
+        let _server = nuclei::spawn(async move {
             let _connection = listener
                 .accept()
                 .await
@@ -430,8 +459,14 @@ mod tests {
             std::future::pending::<()>().await;
         });
         let timeout = Duration::from_millis(50);
-        let client = VeraClient::new(address.clone(), address.clone(), address, timeout)
-            .expect("client should build");
+        let client = VeraClient::new(
+            address.clone(),
+            address.clone(),
+            address,
+            timeout,
+            &edge::testing::edge(),
+        )
+        .expect("client should build");
 
         let started = Instant::now();
         let result = client

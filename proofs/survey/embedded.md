@@ -19,7 +19,7 @@ the spawn/shutdown lifecycle.
 - **Event fan-out** (`spawn_*_event_handler`): routes `TransportEvent`s, special-casing
   SE artifact push / SE query request/reply, else dispatches to the coordinator under a
   32-permit semaphore with inline-ordering for ordered events. Pure dispatch.
-- **Recovery** (`node_recovery.rs`): on boot, re-subscribe restored replicators/docs
+- **Recovery** (`libp2p_recovery.rs`, `iroh_restore.rs`): on boot, re-subscribe restored replicators/docs
   from the peerstore. Idempotent replay of persisted state.
 
 ## Candidates

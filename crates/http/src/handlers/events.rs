@@ -174,7 +174,7 @@ pub async fn events_sse(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     Query(params): Query<EventsQuery>,
-) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>>, HttpError> {
+) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, HttpError> {
     let filter = parse_event_filter(params.event.as_deref())?;
     for permission in filter.permissions {
         require_permission(&state, &identity, *permission).await?;

@@ -4,7 +4,7 @@ use std::task::Context;
 
 use cid::Cid;
 use libp2p::PeerId;
-use tokio::sync::mpsc;
+use nuclei::sync::mpsc;
 
 use super::Bitswap;
 use crate::block::Block;

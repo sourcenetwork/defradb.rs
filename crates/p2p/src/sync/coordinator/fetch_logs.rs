@@ -122,6 +122,7 @@ pub(super) fn log_exhausted(
     let slot = slot(failures);
     let admission = logs.exhausted[slot].admit();
     count_toward_summary(
+        logs.network(),
         &logs.exhausted_by_providers,
         providers,
         slot,
@@ -147,6 +148,7 @@ pub(super) fn log_exhausted(
 /// The first exhaustion against a provider set with nothing pending schedules
 /// that set's summary line for when the window closes.
 fn count_toward_summary(
+    network: Option<&crate::network::Network>,
     tallies: &ExhaustionTallies,
     providers: &ProviderRotation,
     slot: usize,
@@ -157,11 +159,13 @@ fn count_toward_summary(
     let key = peers.join(",");
     let tally = tallies.get_or_insert(key.clone(), Arc::default());
     if tally.pending.fetch_add(1, Ordering::AcqRel) == 0 {
-        drop(n0_future::task::spawn(log_exhaustion_summary(
-            Arc::clone(tallies),
-            key,
-            Arc::clone(&tally),
-        )));
+        if let Some(network) = network {
+            network.spawn(log_exhaustion_summary(
+                Arc::clone(tallies),
+                key,
+                Arc::clone(&tally),
+            ));
+        }
     }
     tally.roots[slot].fetch_add(1, Ordering::AcqRel);
     if logged_full {
@@ -177,7 +181,7 @@ async fn log_exhaustion_summary(
     tally: Arc<ExhaustionTally>,
 ) {
     loop {
-        n0_future::time::sleep(LOG_THROTTLE_WINDOW).await;
+        crate::rt::time::sleep(LOG_THROTTLE_WINDOW).await;
         let logged_full = tally.logged_full.swap(0, Ordering::AcqRel);
         let (mut total, mut breakdown) = (0, String::new());
         for (slot, roots) in tally.roots.iter().enumerate() {

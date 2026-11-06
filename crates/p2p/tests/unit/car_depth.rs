@@ -32,7 +32,7 @@ async fn chain(store: &impl Blockstore, tag: &str, len: usize) -> Vec<Cid> {
 
 /// The cut keeps a block when its shortest distance from any root is within
 /// the bound, and the shared visited set still serves each block once.
-#[tokio::test]
+#[nuclei::test(threads = 0)]
 async fn depth_cut_keeps_blocks_within_their_shortest_distance_of_a_root() {
     let store = DefraBlockstore::new(Arc::new(RegolithStore::in_memory().unwrap()), true);
     let deep = chain(&store, "deep", 4).await;

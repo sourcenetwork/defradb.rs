@@ -104,6 +104,12 @@ jobs:
           -p storage -p datastore -p blockstore -p crdt -p defra-core -p query -p db
           -p acp -p zanzibar -p lens -p kms -p events
           -- -A clippy::all -D clippy::disallowed_methods
+      - name: Network edge confinement
+        env:
+          CLIPPY_CONF_DIR: .github/clippy/edge
+        run: >-
+          cargo clippy --lib --no-deps --workspace --exclude edge
+          -- -A clippy::all -D clippy::disallowed_methods
 
   feature-checks:
     name: Feature checks (${{ matrix.group }})
@@ -123,6 +129,7 @@ jobs:
               cargo clippy -p defra-node --features otel --all-targets -- -D warnings
               cargo clippy -p defra-node --features p2p --all-targets -- -D warnings
               cargo clippy -p db --features p2p --all-targets -- -D warnings
+              cargo clippy -p cli --features iroh,model-trace --all-targets -- -D warnings
           - group: minimal
             commands: |
               cargo clippy -p defra-node --no-default-features --features native --all-targets -- -D warnings
@@ -328,6 +335,8 @@ jobs:
           cp target/super-dev/defra artifacts/ci/defra
           cargo build -p cli --profile super-dev --features iroh
           cp target/super-dev/defra artifacts/ci/defra-iroh
+          cargo build -p cli --profile super-dev --features iroh,model-trace
+          cp target/super-dev/defra artifacts/ci/defra-trace
       - uses: actions/upload-artifact@v4
         with:
           name: defra-ci-binaries
@@ -430,6 +439,8 @@ jobs:
     name: Lean Conformance
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
     timeout-minutes: 20
+    env:
+      DEFRA_REQUIRE_LAKE: '1'
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -467,20 +478,32 @@ jobs:
         run: cargo test -p db --test merge selected_document_transfers_match_executed_model -- --ignored
       - name: Check HTTP router composition model binding
         run: cargo test -p defra-http --lib server::router_transform_tests::forwarding_filter_matches_executed_model -- --exact --ignored
+      - name: Check collection head set model binding
+        run: cargo test -p db --test block head_conformance::head_queries_match_executable_lean -- --exact
       - name: Check Lean-to-Rust conformance
         run: cargo nextest run -p conformance --lib --test lean_conformance
 
   conformance:
-    name: Conformance
+    name: ${{ matrix.io.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        io:
+          - { name: 'Conformance', suffix: '', backend: '', recv: '' }
+          - { name: 'Conformance (epoll)', suffix: '-epoll', backend: epoll, recv: '' }
+          - { name: 'Conformance (no receive buffers)', suffix: '-no-recv-buffers', backend: '', recv: '0' }
     needs: [ci-scope, build-binaries]
     if: needs.ci-scope.outputs.full == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
     timeout-minutes: 45
     env:
       DEFRA_CONFORMANCE_BINARY: ${{ github.workspace }}/target/ci/defra
+      DEFRA_CONFORMANCE_IROH_BINARY: ${{ github.workspace }}/target/ci/defra-iroh
       DEFRA_WORKSPACE_ROOT: ${{ github.workspace }}
       DEFRA_E2E_KEEP: '1'
       RUST_LOG: info
+      NUCLEI_BACKEND: ${{ matrix.io.backend }}
+      DEFRA_NUCLEI_RECV_BUFFERS: ${{ matrix.io.recv }}
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -499,15 +522,27 @@ jobs:
         with:
           name: defra-ci-binaries
           path: target/ci
-      - run: chmod +x target/ci/defra target/ci/defra-iroh
+      - run: chmod +x target/ci/defra target/ci/defra-iroh target/ci/defra-trace
       - name: Run conformance tests
         run: cargo nextest run --cargo-profile super-dev -p conformance --lib --test tla_conformance
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Replay recorded P2P delivery runs through TLC
+        env:
+          DEFRA_TRACE_BINARY: ${{ github.workspace }}/target/ci/defra-trace
+        run: >-
+          cargo nextest run --cargo-profile super-dev -p conformance --test tla_conformance
+          -- --ignored model_trace::
       - name: Upload harness node logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: conformance-e2e-logs
-          path: target/e2e/**/logs/*.log
+          name: conformance-e2e-logs${{ matrix.io.suffix }}
+          path: |
+            target/e2e/**/logs/*.log
+            target/model-trace/**
           retention-days: 7
           if-no-files-found: ignore
 
@@ -597,35 +632,28 @@ jobs:
       - name: Run rust integration tests (basic)
         if: matrix.suite == 'rust' || matrix.suite == 'signed-docs'
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test --test basic
-          -- --skip ::go_
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^basic::/) & not test(/^[a-z0-9_]+::.*::go_/)'
       - name: Run rust integration tests (core suites)
         if: matrix.suite == 'rust' || matrix.suite == 'signed-docs'
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test
-          --test query --test acp --test nac --test encryption --test identity
-          --test backup --test fts --test vector --test acp_replay_outage_repro
-          --test matchers --test export --test issue1211_repro --test issue1294_bytes_json
-          -- --skip ::go_
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E
+          'test(/^(query|acp|nac|encryption|identity|backup|fts|vector|acp_replay_outage_repro|issue1211_repro|issue1294_bytes_json)::/) & not test(/^[a-z0-9_]+::.*::go_/)'
       - name: Run rust integration tests on a one-worker pool (basic, query)
         if: matrix.suite == 'one-worker'
         env:
           # Every node the suites start runs its data path on one worker.
           DEFRA_WORKERS: '1'
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test --test basic --test query
-          -- --skip ::go_
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^(basic|query)::/) & not test(/^[a-z0-9_]+::.*::go_/)'
       - name: Run rust P2P integration tests
         if: matrix.suite == 'rust' || matrix.suite == 'signed-docs'
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p
-          -- --skip ::go_
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p::/) & not test(/^[a-z0-9_]+::.*::go_/)'
       - name: Run go-compat integration tests
         if: matrix.suite == 'go-compat'
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test
-          --test basic --test query --test acp --test nac --test backup --test p2p --test identity
-          --test encryption --test vera
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E
+          'test(/^(basic|query|acp|nac|backup|p2p|identity|encryption|vera)::/)'
           -- go_
           --skip go_acp_link_collection_nonexistent_policy_reject
           --skip go_acp_link_collection_nonexistent_resource_reject
@@ -646,15 +674,15 @@ jobs:
       - name: Run iroh integration tests
         if: matrix.suite == 'iroh'
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_iroh
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_iroh::/)'
           -- connection::
           sync::version::initial_col_version sync::version::patch_version_of_
       - name: Run iroh sync ownership fences
         if: matrix.suite == 'iroh'
         run: |
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_iroh \
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_iroh::/)' \
             peer::create::create_propagates_to_last_node_in_chain
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_iroh \
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_iroh::/)' \
             peer::create::head_hint_fanout_above_car_worker_bound_quiesces
       - name: Upload harness node logs
         if: failure()
@@ -666,7 +694,14 @@ jobs:
           if-no-files-found: ignore
 
   p2p-linux:
-    name: P2P Integration (Linux)
+    name: ${{ matrix.io.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        io:
+          - { name: 'P2P Integration (Linux)', suffix: '', backend: '', recv: '' }
+          - { name: 'P2P Integration (Linux) (epoll)', suffix: '-epoll', backend: epoll, recv: '' }
+          - { name: 'P2P Integration (Linux) (no receive buffers)', suffix: '-no-recv-buffers', backend: '', recv: '0' }
     needs: [ci-scope, build-binaries]
     if: needs.ci-scope.outputs.full == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
@@ -677,6 +712,8 @@ jobs:
       DEFRA_WORKSPACE_ROOT: ${{ github.workspace }}
       DEFRA_E2E_KEEP: '1'
       RUST_LOG: info
+      NUCLEI_BACKEND: ${{ matrix.io.backend }}
+      DEFRA_NUCLEI_RECV_BUFFERS: ${{ matrix.io.recv }}
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -698,17 +735,16 @@ jobs:
       - run: chmod +x target/ci/defra target/ci/defra-iroh
       - name: Run rust P2P integration tests
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p
-          -- --skip ::go_
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p::/) & not test(/^[a-z0-9_]+::.*::go_/)'
       - name: Run P2P ownership durability fences
         run: |
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_admission
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_admission_restart
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_admission_fairness
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_backlog
-          cargo nextest run --cargo-profile super-dev -p integration-test --test issue1154_repro
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_deep_catchup
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_push_storm
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_admission::/)'
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_admission_restart::/)'
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_admission_fairness::/)'
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_backlog::/)'
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^issue1154_repro::/)'
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_deep_catchup::/)'
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_push_storm::/)'
       # Not run: p2p_interop_bench, whose one test is an ignored benchmark that
       # prints latencies. p2p_push_storm's storm test stays ignored too: a
       # profiling harness whose gates are opt-in DEFRA_PUSH_STORM_* variables.
@@ -716,7 +752,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: p2p-linux-e2e-logs
+          name: p2p-linux-e2e-logs${{ matrix.io.suffix }}
           path: target/e2e/**/logs/*.log
           retention-days: 7
           if-no-files-found: ignore
@@ -746,25 +782,23 @@ jobs:
       DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defra-iroh
       DEFRADB_GO_REPO: ${{ github.workspace }}/target/go-repo
       DEFRA_E2E_KEEP: '1'
-      # basic holds legacy tests and one testo module, txn_context.
+      # A failing scenario shows its in-process nodes' P2P trace.
+      DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,warn
       TESTO: >-
-        --test acp_scenarios --test backup_scenarios --test collection
-        --test collection_version --test encryption_scenarios --test explain
-        --test index --test issues --test mutation --test net --test node
-        --test query_scenarios --test searchable_encryption --test signature
-        --test subscription --test txn --test view --test basic
-      TESTO_FILTER: not binary(=basic) | test(/^txn_context::/)
+        --test testo
+      TESTO_FILTER: all()
       # Not run anywhere: p2p_interop_bench, whose one test is an ignored
       # benchmark that prints latencies, and verars, whose cluster needs the
       # verad validator binary from vera.rs, which CI does not build.
       LEGACY: >-
-        --test cursor --test http_contract --test issue1194_repro
-        --test acp_replay_outage_cross_runtime
+        --test legacy
       # c_rust_to_go_outage_replay (#2089) flips between runs: the Go receiver
       # sometimes misses the protected document written while it was down. A
       # known-failure entry would fail every run it passes, so the test is left
       # out here instead of listed; run it again once #2089 is fixed.
-      LEGACY_FILTER: not test(=c_rust_to_go_outage_replay)
+      LEGACY_FILTER: >-
+        test(/^(cursor|http_contract|issue1194_repro|acp_replay_outage_cross_runtime)::/)
+        & not test(=acp_replay_outage_cross_runtime::c_rust_to_go_outage_replay)
       # Go gives Foo the wrong ID beside FooBar only in some runs (#2528), so a
       # known-failure entry would fail the runs it passes; go-http leaves it out.
       GO_HTTP_FILTER: "& not test(=collection::deterministic_ids::a_collection_beside_a_longer_namesake_gets_one_id)"

@@ -5,7 +5,7 @@ use bitswap::client::{Client, Outgoing, MAX_OUTSTANDING_WANTS_PER_PEER, REQUEST_
 use bitswap::{BitswapMessage, Block, ProtocolId};
 use cid::Cid;
 use libp2p::PeerId;
-use tokio::sync::mpsc::error::TryRecvError;
+use nuclei::sync::mpsc::error::TryRecvError;
 
 mod common;
 use common::block_v1;
@@ -66,7 +66,7 @@ fn presence(client: &mut Client, from: &PeerId, of: &Block, have: bool) {
     client.on_message(from, &message);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_large_fetch_issues_in_fifo_windows() {
     let all = blocks("big", 2048);
     let p0 = PeerId::random();
@@ -100,7 +100,7 @@ async fn a_large_fetch_issues_in_fifo_windows() {
     assert!(client.is_idle());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn the_window_is_shared_by_concurrent_fetches() {
     let (a, b) = (blocks("a", 400), blocks("b", 400));
     let p0 = PeerId::random();
@@ -121,7 +121,7 @@ async fn the_window_is_shared_by_concurrent_fetches() {
     assert_eq!(wants(&sent, p0).len(), 800 - CAP - 100);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn dont_have_cancels_once_and_frees_the_slot() {
     let all = blocks("dh", CAP + 1);
     let p0 = PeerId::random();
@@ -140,7 +140,7 @@ async fn dont_have_cancels_once_and_frees_the_slot() {
     assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn block_and_have_free_the_slot_without_a_cancel() {
     let all = blocks("bh", CAP + 2);
     let (p0, p1) = (PeerId::random(), PeerId::random());
@@ -161,7 +161,7 @@ async fn block_and_have_free_the_slot_without_a_cancel() {
     assert!(cancels(&sent, p1).is_empty());
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn timeout_cancels_and_frees_the_slots() {
     let all = blocks("to", CAP + 1);
     let p0 = PeerId::random();
@@ -169,7 +169,7 @@ async fn timeout_cancels_and_frees_the_slots() {
     let (_, mut rx) = client.fetch(cids(&all), vec![p0]);
     flush(&mut client);
 
-    tokio::time::advance(REQUEST_TIMEOUT + Duration::from_millis(1)).await;
+    nuclei::time::advance(REQUEST_TIMEOUT + Duration::from_millis(1)).await;
     client.expire();
     let sent = flush(&mut client);
     assert_eq!(cancels(&sent, p0).len(), CAP);
@@ -177,7 +177,7 @@ async fn timeout_cancels_and_frees_the_slots() {
     assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn send_failure_frees_the_slots_without_a_cancel() {
     let all = blocks("sf", CAP + 1);
     let p0 = PeerId::random();
@@ -192,7 +192,7 @@ async fn send_failure_frees_the_slots_without_a_cancel() {
     assert!(cancels(&sent, p0).is_empty());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn disconnect_frees_the_window_without_a_cancel() {
     let all = blocks("dc", CAP + 1);
     let p0 = PeerId::random();
@@ -206,7 +206,7 @@ async fn disconnect_frees_the_window_without_a_cancel() {
     assert!(client.is_idle());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_dropped_receiver_stops_the_backlog_and_cancels_outstanding_wants() {
     let all = blocks("drop", CAP + 88);
     let p0 = PeerId::random();
@@ -225,7 +225,7 @@ async fn a_dropped_receiver_stops_the_backlog_and_cancels_outstanding_wants() {
     assert!(client.is_idle());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_block_for_a_dropped_receiver_cancels_the_rest() {
     let all = blocks("drop-block", CAP + 8);
     let p0 = PeerId::random();

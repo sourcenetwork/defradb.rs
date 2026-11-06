@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::rt::time::Instant;
 use kovan_map::HopscotchMap;
-use n0_future::time::Instant;
 
 pub(crate) const LOG_THROTTLE_WINDOW: Duration = Duration::from_secs(60);
 
@@ -85,6 +85,21 @@ pub(crate) struct DagFetchLogThrottles {
     pub(crate) retry: [LogThrottle; DAG_FETCH_LOG_SLOTS],
     pub(crate) exhausted: [LogThrottle; DAG_FETCH_LOG_SLOTS],
     pub(crate) exhausted_by_providers: ExhaustionTallies,
+    /// Where the summary tasks run; set once by the coordinator that owns
+    /// these throttles. Until it is set, exhaustions are counted but no
+    /// summary line is scheduled.
+    network: regolith::sync::OnceCell<crate::network::Network>,
+}
+
+impl DagFetchLogThrottles {
+    /// Runs the summary tasks on `network`. The first call wins.
+    pub(crate) fn use_network(&self, network: crate::network::Network) {
+        let _ = self.network.set(network);
+    }
+
+    pub(crate) fn network(&self) -> Option<&crate::network::Network> {
+        self.network.get()
+    }
 }
 
 impl Default for DagFetchLogThrottles {
@@ -94,6 +109,7 @@ impl Default for DagFetchLogThrottles {
             retry: Default::default(),
             exhausted: Default::default(),
             exhausted_by_providers: Arc::new(HopscotchMap::with_hasher(Default::default())),
+            network: regolith::sync::OnceCell::new(),
         }
     }
 }
@@ -102,7 +118,7 @@ impl Default for DagFetchLogThrottles {
 mod tests {
     use super::*;
 
-    #[tokio::test(start_paused = true)]
+    #[nuclei::test(start_paused = true)]
     async fn one_full_line_per_window_reports_the_suppressed_count() {
         let throttle = LogThrottle::default();
         assert_eq!(throttle.admit(), LogAdmission::Full { suppressed: 0 });
@@ -110,10 +126,10 @@ mod tests {
             assert_eq!(throttle.admit(), LogAdmission::Suppressed);
         }
 
-        tokio::time::advance(LOG_THROTTLE_WINDOW - Duration::from_secs(1)).await;
+        nuclei::time::advance(LOG_THROTTLE_WINDOW - Duration::from_secs(1)).await;
         assert_eq!(throttle.admit(), LogAdmission::Suppressed);
 
-        tokio::time::advance(Duration::from_secs(1)).await;
+        nuclei::time::advance(Duration::from_secs(1)).await;
         assert_eq!(throttle.admit(), LogAdmission::Full { suppressed: 10 });
         assert_eq!(throttle.admit(), LogAdmission::Suppressed);
     }

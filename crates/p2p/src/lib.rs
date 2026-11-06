@@ -23,17 +23,17 @@
 //! use blockstore::DefraBlockstore;
 //! use std::sync::Arc;
 //!
-//! #[tokio::main]
-//! async fn main() -> p2p::Result<()> {
+//! async fn serve(edge: edge::Edge) -> p2p::Result<()> {
 //!     // Create a blockstore for Bitswap
 //!     let blockstore = Arc::new(DefraBlockstore::new(/* storage backend */));
 //!     let bitswap_store = BitswapStoreAdapter::new(blockstore);
 //!
-//!     // Create a new P2P host with the blockstore
-//!     let (host, handle, mut events) = P2PHost::new(bitswap_store)?;
+//!     // Create a new P2P host with the blockstore, on the network edge
+//!     let (host, handle, mut events, _replicators) =
+//!         P2PHost::new(bitswap_store, edge.clone()).await?;
 //!
 //!     // Spawn the host event loop
-//!     n0_future::task::spawn(host.run());
+//!     let _host = edge.spawn_service(host.run());
 //!
 //!     // Start listening
 //!     handle.listen("/ip4/0.0.0.0/tcp/9000".parse().unwrap()).await?;
@@ -69,12 +69,14 @@ pub mod host;
 pub mod kms;
 pub mod manage_correlator;
 pub mod message;
+pub mod model_trace;
 pub mod network;
 pub mod peer_identity;
 pub mod protocol;
 #[cfg(any(feature = "kms", feature = "libp2p-transport"))]
 pub mod pubsub_rpc;
 pub mod replicator;
+pub mod rt;
 pub mod se_correlator;
 pub mod signing;
 pub mod sync;
@@ -145,11 +147,13 @@ pub use transport::{
 pub use sync::IrohSyncCoordinator;
 #[cfg(feature = "libp2p-transport")]
 pub use sync::Libp2pSyncCoordinator;
-pub use sync::PENDING_RECOVERY_WORST_CASE_SECS;
 pub use sync::{
     Broadcaster, CreateReplicatorResult, DagSync, DagSyncConfig, DagSyncState,
     LoadReplicatorsResult, NeedsFetchData, PeerHistory, PeerStateTracker, PeerSummary,
     ProcessQueue, SyncConfig, SyncCoordinator, SyncEvent, SyncManager, SyncPlan,
+};
+pub use sync::{
+    BLOCK_SYNC_COMPLETION_WATCHDOG, CLOCK_ATTEMPT_QUANTUM, PENDING_RECOVERY_WORST_CASE_SECS,
 };
 
 // Re-export bitswap types

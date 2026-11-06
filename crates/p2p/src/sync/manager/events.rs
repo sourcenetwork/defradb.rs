@@ -4,8 +4,28 @@ use cid::Cid;
 
 use crate::ExplicitReplayAuthorization;
 
-/// The channel the sync coordinator emits its [`SyncEvent`]s on.
-pub type SyncEventReceiver = tokio::sync::mpsc::Receiver<SyncEvent>;
+/// A fetch permit of a root's source peer, taken by the retry clock together
+/// with the root's fetch slot, so the fetch never holds a slot while it waits
+/// for a permit. Only the fetch it was taken for uses it: a clone of the
+/// event carries none.
+#[derive(Debug, Default)]
+pub struct DagFetchPeerPermit(Option<regolith::sync::OwnedSemaphorePermit>);
+
+impl DagFetchPeerPermit {
+    pub(crate) fn new(permit: regolith::sync::OwnedSemaphorePermit) -> Self {
+        Self(Some(permit))
+    }
+
+    pub(crate) fn take(&mut self) -> Option<regolith::sync::OwnedSemaphorePermit> {
+        self.0.take()
+    }
+}
+
+impl Clone for DagFetchPeerPermit {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
 
 /// Events emitted by the SyncManager for higher layers to process.
 #[derive(Debug, Clone)]
@@ -61,6 +81,8 @@ pub enum SyncEvent {
         is_explicit_replicator: bool,
         /// Capability-based explicit replay authorization carried by two-stream pushes.
         explicit_replay_authorization: Option<ExplicitReplayAuthorization>,
+        /// The `sender_peer` fetch permit the retry clock took with this root's slot.
+        peer_permit: DagFetchPeerPermit,
     },
 
     /// DAG is ready for merge after Bitswap fetch completed.

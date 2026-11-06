@@ -4,6 +4,7 @@
 use super::*;
 use crate::sync::manager::log_throttle::LOG_THROTTLE_WINDOW;
 use kovan_queue::seg_queue::SegQueue;
+use regolith::sync::Lazy;
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
 use tracing::{Event, Level, Metadata, Subscriber};
@@ -65,6 +66,75 @@ impl Subscriber for Capture {
     }
     fn enter(&self, _: &Id) {}
     fn exit(&self, _: &Id) {}
+}
+
+/// The summary task runs on the paused edge's worker thread, where a scoped
+/// subscriber does not reach. These tests install one process-wide
+/// subscriber instead, keeping only the events of that worker and of this
+/// module's own tests, and take turns so one test's lines never reach the
+/// other.
+static SUMMARY_LINES: Lazy<Capture> = Lazy::new(|| {
+    let capture = Capture::default();
+    tracing::subscriber::set_global_default(OwnThreads(capture.clone()))
+        .expect("no other test installs a process-wide subscriber");
+    capture
+});
+
+static SUMMARY_TURN: Lazy<regolith::sync::Mutex<()>> = Lazy::new(|| regolith::sync::Mutex::new(()));
+
+struct OwnThreads(Capture);
+
+impl Subscriber for OwnThreads {
+    fn enabled(&self, metadata: &Metadata<'_>) -> bool {
+        self.0.enabled(metadata)
+    }
+    fn new_span(&self, attributes: &Attributes<'_>) -> Id {
+        self.0.new_span(attributes)
+    }
+    fn record(&self, span: &Id, values: &Record<'_>) {
+        self.0.record(span, values);
+    }
+    fn record_follows_from(&self, span: &Id, follows: &Id) {
+        self.0.record_follows_from(span, follows);
+    }
+    fn event(&self, event: &Event<'_>) {
+        let thread = std::thread::current();
+        let own = thread.name().is_some_and(|name| {
+            name == "defra-edge-paused-test" || name.contains("::dag_fetch_logs::")
+        });
+        if own {
+            self.0.event(event);
+        }
+    }
+    fn enter(&self, span: &Id) {
+        self.0.enter(span);
+    }
+    fn exit(&self, span: &Id) {
+        self.0.exit(span);
+    }
+}
+
+/// The captured lines once `errors` of them are at ERROR. The summary task
+/// runs on the edge's worker and may register its timer after the test's
+/// own, so the paused clock is advanced a second at a time, yielding to the
+/// worker between steps, under a real deadline.
+async fn lines_with_errors(capture: &Capture, errors: usize) -> Vec<Line> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let mut lines = Vec::new();
+    while std::time::Instant::now() < deadline {
+        lines.extend(capture.lines());
+        if lines
+            .iter()
+            .filter(|line| line.level == Level::ERROR)
+            .count()
+            >= errors
+        {
+            break;
+        }
+        nuclei::time::advance(Duration::from_secs(1)).await;
+        crate::rt::yield_now().await;
+    }
+    lines
 }
 
 struct Fetch {
@@ -134,7 +204,7 @@ async fn fetch_until_exhausted(fetch: Fetch, diagnostics: &Arc<SyncDiagnostics>)
     .await;
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn each_window_ending_is_classified_by_what_ended_it() {
     let superseded = {
         let fetch = fetch(None);
@@ -168,7 +238,7 @@ async fn each_window_ending_is_classified_by_what_ended_it() {
         ),
     ];
     for (fetch, expected, ends_after) in cases {
-        let started = n0_future::time::Instant::now();
+        let started = crate::rt::time::Instant::now();
         let outcome = poll_fetch_blocks(
             &fetch.root_cid,
             &[fetch.child_cid],
@@ -191,12 +261,12 @@ async fn each_window_ending_is_classified_by_what_ended_it() {
 
 /// Fast refusals rotate at once and spend the attempt's free refusals, not its
 /// stall budget, and are still reported as refused.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn refusing_providers_rotate_and_are_reported_as_refused() {
     let fetch = refused();
     let mut providers = ProviderRotation::new(peers(&["hub", "spoke"]));
     let diagnostics = diagnostics();
-    let started = n0_future::time::Instant::now();
+    let started = crate::rt::time::Instant::now();
     let mut state = ProviderFetchState::new(&mut providers, None, diagnostics.as_ref());
 
     let outcome = poll_fetch_blocks_rotating(
@@ -221,19 +291,19 @@ async fn refusing_providers_rotate_and_are_reported_as_refused() {
         ),
         (2, MAX_FREE_REFUSALS - 2, 2)
     );
-    assert_eq!(n0_future::time::Instant::now(), started);
+    assert_eq!(crate::rt::time::Instant::now(), started);
 }
 
 /// Each failure kind gets its own full line per window, refusals are
 /// throttled rather than hidden, the exhausted line keeps the whole provider
 /// set, and the next full line reports what the throttle demoted.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn fetch_lines_name_their_cause_and_are_throttled_per_kind() {
     let capture = Capture::default();
     let _guard = tracing::subscriber::set_default(capture.clone());
     let diagnostics = diagnostics();
 
-    tokio::join!(
+    futures::join!(
         fetch_until_exhausted(transport_timeout(), &diagnostics),
         fetch_until_exhausted(refused(), &diagnostics),
         fetch_until_exhausted(refused(), &diagnostics),
@@ -272,7 +342,7 @@ async fn fetch_lines_name_their_cause_and_are_throttled_per_kind() {
         && line.message == RETRY
         && line.field("refused").is_some_and(|count| count != "0")));
 
-    tokio::time::advance(LOG_THROTTLE_WINDOW).await;
+    nuclei::time::advance(LOG_THROTTLE_WINDOW).await;
     fetch_until_exhausted(refused(), &diagnostics).await;
     let next = capture
         .lines()
@@ -285,68 +355,78 @@ async fn fetch_lines_name_their_cause_and_are_throttled_per_kind() {
 
 /// A burst against one refusing provider followed by quiet still reports
 /// the burst's volume once its window closes.
-#[tokio::test(start_paused = true)]
-async fn an_exhaustion_burst_then_quiet_logs_one_full_line_and_one_summary() {
-    let capture = Capture::default();
-    let _guard = tracing::subscriber::set_default(capture.clone());
-    let diagnostics = diagnostics();
+#[test]
+fn an_exhaustion_burst_then_quiet_logs_one_full_line_and_one_summary() {
+    edge::testing::paused(|edge| async move {
+        let _turn = SUMMARY_TURN.lock().await;
+        let capture = SUMMARY_LINES.clone();
+        capture.lines();
+        let diagnostics = diagnostics();
+        diagnostics
+            .dag_fetch_logs()
+            .use_network(crate::network::Network::on(edge));
 
-    tokio::join!(
-        fetch_until_exhausted(refused(), &diagnostics),
-        fetch_until_exhausted(refused(), &diagnostics),
-        fetch_until_exhausted(refused(), &diagnostics),
-        fetch_until_exhausted(refused(), &diagnostics),
-    );
-    tokio::time::sleep(LOG_THROTTLE_WINDOW + Duration::from_secs(1)).await;
-    let lines = capture.lines();
+        futures::join!(
+            fetch_until_exhausted(refused(), &diagnostics),
+            fetch_until_exhausted(refused(), &diagnostics),
+            fetch_until_exhausted(refused(), &diagnostics),
+            fetch_until_exhausted(refused(), &diagnostics),
+        );
+        let lines = lines_with_errors(&capture, 2).await;
 
-    assert_eq!(diagnostics.snapshot().pending_dag_fetch_exhausted, 4);
-    let errors: Vec<_> = lines
-        .iter()
-        .filter(|line| line.level == Level::ERROR)
-        .map(|line| line.message.as_str())
-        .collect();
-    assert_eq!(errors.len(), 2, "{errors:?}");
-    assert!(errors[0].starts_with(EXHAUSTED));
-    assert_eq!(
-        errors[1],
-        "4 roots exhausted against remote-peer in last 60s: refused=4"
-    );
+        assert_eq!(diagnostics.snapshot().pending_dag_fetch_exhausted, 4);
+        let errors: Vec<_> = lines
+            .iter()
+            .filter(|line| line.level == Level::ERROR)
+            .map(|line| line.message.as_str())
+            .collect();
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        assert!(errors[0].starts_with(EXHAUSTED));
+        assert_eq!(
+            errors[1],
+            "4 roots exhausted against remote-peer in last 60s: refused=4"
+        );
+    })
 }
 
 /// A lone exhaustion the throttle demoted, against a provider set of its own,
 /// still reaches ERROR through that set's summary.
-#[tokio::test(start_paused = true)]
-async fn a_demoted_lone_exhaustion_is_summarized_for_its_provider_set() {
-    let capture = Capture::default();
-    let _guard = tracing::subscriber::set_default(capture.clone());
-    let diagnostics = diagnostics();
-    let mut elsewhere = refused();
-    elsewhere.context.source_peer = PeerId::new("other-peer".to_string());
+#[test]
+fn a_demoted_lone_exhaustion_is_summarized_for_its_provider_set() {
+    edge::testing::paused(|edge| async move {
+        let _turn = SUMMARY_TURN.lock().await;
+        let capture = SUMMARY_LINES.clone();
+        capture.lines();
+        let diagnostics = diagnostics();
+        diagnostics
+            .dag_fetch_logs()
+            .use_network(crate::network::Network::on(edge));
+        let mut elsewhere = refused();
+        elsewhere.context.source_peer = PeerId::new("other-peer".to_string());
 
-    fetch_until_exhausted(refused(), &diagnostics).await;
-    fetch_until_exhausted(elsewhere, &diagnostics).await;
-    tokio::time::sleep(LOG_THROTTLE_WINDOW + Duration::from_secs(1)).await;
+        fetch_until_exhausted(refused(), &diagnostics).await;
+        fetch_until_exhausted(elsewhere, &diagnostics).await;
 
-    let errors: Vec<_> = capture
-        .lines()
-        .into_iter()
-        .filter(|line| line.level == Level::ERROR)
-        .map(|line| line.message)
-        .collect();
-    assert_eq!(errors.len(), 2, "{errors:?}");
-    assert!(errors[0].starts_with(EXHAUSTED));
-    assert_eq!(
-        errors[1],
-        "1 roots exhausted against other-peer in last 60s: refused=1"
-    );
+        let errors: Vec<_> = lines_with_errors(&capture, 2)
+            .await
+            .into_iter()
+            .filter(|line| line.level == Level::ERROR)
+            .map(|line| line.message)
+            .collect();
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        assert!(errors[0].starts_with(EXHAUSTED));
+        assert_eq!(
+            errors[1],
+            "1 roots exhausted against other-peer in last 60s: refused=1"
+        );
+    })
 }
 
 /// A fetch the per-root clock dispatched makes one attempt, so a stalled
 /// root comes back to the fetcher once per attempt. Terminal exhaustion (the
 /// counter, the ERROR line, the summary and the dead-Bitswap hang-up) still
 /// happens once per `MAX_FETCH_ATTEMPTS` incomplete attempts of the root.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn clock_dispatches_report_exhaustion_once_per_attempt_budget() {
     use crate::sync::pending_store::{PendingDagStorage, PendingDagStore, PersistedPendingDag};
 

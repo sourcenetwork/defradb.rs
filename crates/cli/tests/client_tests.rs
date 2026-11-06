@@ -213,6 +213,7 @@ fn test_client_context_with_identity() {
         tx_id: None,
         development: false,
         verbose: false,
+        edge: edge::testing::edge(),
     };
 
     // Verify auth_token is set
@@ -233,6 +234,7 @@ fn test_client_context_without_identity() {
         tx_id: None,
         development: false,
         verbose: false,
+        edge: edge::testing::edge(),
     };
 
     assert!(ctx.auth_token.is_none());
@@ -248,6 +250,7 @@ fn test_client_context_with_tx() {
         tx_id: Some("12345".to_string()),
         development: false,
         verbose: false,
+        edge: edge::testing::edge(),
     };
 
     assert_eq!(ctx.tx_id, Some("12345".to_string()));

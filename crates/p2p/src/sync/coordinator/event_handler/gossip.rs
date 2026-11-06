@@ -29,6 +29,18 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         let topic_matches_collection = topic == message.collection_id;
         let topic_matches_document = !message.doc_id.is_empty() && topic == message.doc_id;
         let is_subscribed = self.is_locally_subscribed_collection(&message.collection_id);
+        if topic_matches_document && !is_subscribed && !self.is_followed_document(&message.doc_id) {
+            self.access
+                .gossip_unfollowed_dropped
+                .fetch_add(1, Ordering::Relaxed);
+            tracing::debug!(
+                peer_id = %propagation_source,
+                doc_id = %message.doc_id,
+                collection_id = %message.collection_id,
+                "Dropping document-topic GossipSub message for an unfollowed document"
+            );
+            return Ok(());
+        }
         let is_open_access = self.access.access_mode.is_open();
         let is_outbound_replicator_target =
             self.is_registered_replicator(propagation_source.as_str(), &message.collection_id);
@@ -109,7 +121,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         // keeps its own overlay and can hand us a hint straight from its
         // origin over a connection the transport never made, and a durable
         // obligation bound to an unreachable origin defers until it
-        // "reconnects" — which never happens. Only a peer the transport
+        // "reconnects", which never happens. Only a peer the transport
         // reports as connected can serve a rooted fetch.
         let origin_is_routable = self.access.peer_state.is_connected(authenticated_origin);
         if !origin_is_routable {

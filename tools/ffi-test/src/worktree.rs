@@ -1,5 +1,5 @@
+use nuclei::process::Command;
 use std::path::{Path, PathBuf};
-use tokio::process::Command;
 
 use crate::config::{GO_REPO_ENV, GO_WORKTREE_PREFIX, RUST_WORKTREE_PREFIX};
 use crate::error::{FfiTestError, Result};
@@ -246,7 +246,7 @@ pub async fn list_rust_worktrees() -> Result<Vec<(PathBuf, String)>> {
     let base = repository_base(&rust_root)?;
     let mut worktrees = Vec::new();
 
-    let mut entries = tokio::fs::read_dir(&base).await?;
+    let mut entries = nuclei::fs::read_dir(&base).await?;
     while let Some(entry) = entries.next_entry().await? {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();

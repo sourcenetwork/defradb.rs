@@ -4,8 +4,8 @@ use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::rt::mpsc;
 use blockstore::Blockstore;
-use tokio::sync::mpsc;
 
 #[cfg(feature = "libp2p-transport")]
 use super::authorizer::AccessAuthorizer;
@@ -17,12 +17,13 @@ use crate::bitswap::{
     AccessMode, BlockClassifier, DefaultBlockClassifier, LateBoundServeAcp, ReplicatorRegistry,
 };
 use crate::error::Result;
+use crate::network::Network;
 use crate::replicator::{EqOnlyFilterMatcher, ReplicationFilterMatcher};
 use crate::sync::broadcaster::Broadcaster;
 use crate::sync::collection_store::{MemoryCollectionStorage, P2PCollectionStorage};
 use crate::sync::head_provider::{DocumentHeadProvider, NoOpHeadProvider};
 use crate::sync::manager::{
-    SyncConfig, SyncEvent, SyncManager, DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
+    SyncConfig, SyncEventReceiver, SyncManager, DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
     DEFAULT_PUSH_SEND_TIMEOUT,
 };
 use crate::sync::peer_state::PeerStateTracker;
@@ -36,11 +37,13 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     pub async fn new(
         transport: T,
         blockstore: Arc<B>,
+        network: Network,
         config: SyncConfig,
-    ) -> Result<(Self, mpsc::Receiver<SyncEvent>)> {
+    ) -> Result<(Self, SyncEventReceiver)> {
         Self::with_access_control(
             transport,
             blockstore,
+            network,
             config,
             AccessMode::Open,
             Arc::new(ReplicatorRegistry::new()),
@@ -56,13 +59,15 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     pub async fn with_collection_store(
         transport: T,
         blockstore: Arc<B>,
+        network: Network,
         config: SyncConfig,
         access_mode: AccessMode,
         collection_store: Arc<dyn P2PCollectionStorage>,
-    ) -> Result<(Self, mpsc::Receiver<SyncEvent>)> {
+    ) -> Result<(Self, SyncEventReceiver)> {
         Self::with_access_control(
             transport,
             blockstore,
+            network,
             config,
             access_mode,
             Arc::new(ReplicatorRegistry::new()),
@@ -79,15 +84,17 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     pub async fn with_access_control(
         transport: T,
         blockstore: Arc<B>,
+        network: Network,
         config: SyncConfig,
         access_mode: AccessMode,
         replicators: Arc<ReplicatorRegistry>,
         collection_store: Arc<dyn P2PCollectionStorage>,
         filter_matcher: Arc<dyn ReplicationFilterMatcher>,
-    ) -> Result<(Self, mpsc::Receiver<SyncEvent>)> {
+    ) -> Result<(Self, SyncEventReceiver)> {
         Self::with_access_control_and_serve_gate(
             transport,
             blockstore,
+            network,
             config,
             access_mode,
             replicators,
@@ -105,6 +112,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     pub async fn with_access_control_and_serve_gate(
         transport: T,
         blockstore: Arc<B>,
+        network: Network,
         config: SyncConfig,
         access_mode: AccessMode,
         replicators: Arc<ReplicatorRegistry>,
@@ -112,10 +120,11 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         filter_matcher: Arc<dyn ReplicationFilterMatcher>,
         classifier: Arc<dyn BlockClassifier>,
         serve_acp: Arc<LateBoundServeAcp>,
-    ) -> Result<(Self, mpsc::Receiver<SyncEvent>)> {
+    ) -> Result<(Self, SyncEventReceiver)> {
         Self::with_head_provider_and_serve_gate(
             transport,
             blockstore,
+            network,
             config,
             access_mode,
             replicators,
@@ -135,16 +144,18 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     pub async fn with_head_provider(
         transport: T,
         blockstore: Arc<B>,
+        network: Network,
         config: SyncConfig,
         access_mode: AccessMode,
         replicators: Arc<ReplicatorRegistry>,
         collection_store: Arc<dyn P2PCollectionStorage>,
         head_provider: Arc<dyn DocumentHeadProvider>,
         filter_matcher: Arc<dyn ReplicationFilterMatcher>,
-    ) -> Result<(Self, mpsc::Receiver<SyncEvent>)> {
+    ) -> Result<(Self, SyncEventReceiver)> {
         Self::with_head_provider_and_serve_gate(
             transport,
             blockstore,
+            network,
             config,
             access_mode,
             replicators,
@@ -163,6 +174,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     pub async fn with_head_provider_and_serve_gate(
         transport: T,
         blockstore: Arc<B>,
+        network: Network,
         config: SyncConfig,
         access_mode: AccessMode,
         replicators: Arc<ReplicatorRegistry>,
@@ -171,7 +183,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         filter_matcher: Arc<dyn ReplicationFilterMatcher>,
         classifier: Arc<dyn BlockClassifier>,
         serve_acp: Arc<LateBoundServeAcp>,
-    ) -> Result<(Self, mpsc::Receiver<SyncEvent>)> {
+    ) -> Result<(Self, SyncEventReceiver)> {
         let local_peer_id = transport.local_peer_id().to_string();
         let broadcaster = Broadcaster::new(transport.clone());
         let peer_state = Arc::new(PeerStateTracker::new());
@@ -182,6 +194,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             config.push_queue_byte_capacity,
             config.max_active_pushes_per_peer,
             max_push_tasks,
+            network.edge().clone(),
         );
         let broadcast_coalescer =
             Arc::new(crate::sync::broadcast_coalescer::BroadcastCoalescer::default());
@@ -200,6 +213,10 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         };
         let (manager, events) =
             SyncManager::new(Arc::clone(&blockstore), peer_state.clone(), config);
+        manager
+            .diagnostics()
+            .dag_fetch_logs()
+            .use_network(network.clone());
 
         let authorizer = Arc::new(RuntimeAuthorizer::new(
             transport.clone(),
@@ -216,7 +233,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
 
         let failure_tx: Arc<kovan::AtomOption<mpsc::Sender<super::PushFailure>>> =
             Arc::new(kovan::AtomOption::none());
-        let shutdown = super::SyncShutdownHandle::new(max_dag_fetches);
+        let shutdown = super::SyncShutdownHandle::new(max_dag_fetches, network);
         let collections = super::subscriptions::CollectionSubscriptions::new(
             collection_store,
             broadcaster.clone(),
@@ -230,6 +247,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 failure_tx: Arc::clone(&failure_tx),
                 send_timeout: push_send_timeout,
                 peer_state: Arc::clone(&peer_state),
+                head_provider: Arc::clone(&head_provider),
             }),
             &shutdown,
         );
@@ -265,6 +283,10 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     access_mode,
                     replicators,
                     gossip_direction_filtered: AtomicU64::new(0),
+                    followed_documents: Arc::new(super::FollowedDocuments::with_hasher(
+                        rapidhash::fast::RandomState::default(),
+                    )),
+                    gossip_unfollowed_dropped: std::sync::atomic::AtomicU64::new(0),
                 },
                 subscriptions: SyncSubscriptionState {
                     collections,
@@ -286,14 +308,14 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     }
 
     /// Set the failure channel for reporting push failures to the FFI layer.
-    pub fn set_failure_channel(&mut self, tx: tokio::sync::mpsc::Sender<super::PushFailure>) {
+    pub fn set_failure_channel(&mut self, tx: mpsc::Sender<super::PushFailure>) {
         self.runtime.failure_tx.store_some(tx);
     }
 
     /// A bounded channel of `capacity` push failures, installed as this
     /// coordinator's failure channel; the receiver is the caller's.
     pub fn attach_failure_channel(&mut self, capacity: usize) -> super::PushFailureReceiver {
-        let (tx, rx) = tokio::sync::mpsc::channel(capacity);
+        let (tx, rx) = mpsc::channel(capacity.max(1));
         self.set_failure_channel(tx);
         rx
     }

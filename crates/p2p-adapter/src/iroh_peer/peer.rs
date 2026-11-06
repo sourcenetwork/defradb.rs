@@ -89,9 +89,12 @@ impl<S: Store + 'static> IrohPeer<S> {
 
         let secret_key = endpoint.secret_key.clone();
         let (command_tx, events, replicators, endpoint_task) =
-            p2p::iroh::spawn_endpoint(endpoint).await?;
+            p2p::iroh::spawn_endpoint(endpoint, edge.clone()).await?;
         let transport = IrohTransport::new(command_tx, secret_key);
         let local_peer_id = transport.local_peer_id().to_string();
+        p2p::model_trace!(Crash {
+            node: &local_peer_id,
+        });
 
         let blockstore = Arc::new(
             IrohBlockstore::new(Arc::clone(&store), true)
@@ -103,12 +106,16 @@ impl<S: Store + 'static> IrohPeer<S> {
             match p2p::sync::SyncCoordinator::with_head_provider_and_serve_gate(
                 transport.clone(),
                 Arc::clone(&blockstore),
+                p2p::network::Network::on(edge.clone()),
                 sync,
                 access_mode,
                 replicators,
-                Arc::new(
-                    p2p::sync::P2PCollectionStore::new(Arc::clone(&store))
-                        .with_max_txn_retries(database.options().max_txn_retries()),
+                p2p::sync::pooled_collection_store(
+                    Arc::new(
+                        p2p::sync::P2PCollectionStore::new(Arc::clone(&store))
+                            .with_max_txn_retries(database.options().max_txn_retries()),
+                    ),
+                    database.pool(),
                 ),
                 Arc::new(db::merge::create_head_provider(Arc::clone(&database))),
                 Arc::new(replication_filter::QueryReplicationFilterMatcher::new()),
@@ -126,9 +133,6 @@ impl<S: Store + 'static> IrohPeer<S> {
 
         let failure_rx = db::merge::attach_failure_channel(&mut coordinator, 1024);
         let coordinator = Arc::new(coordinator);
-        // Its network work runs on the edge, also when a write on a pool
-        // worker hands it a broadcast.
-        coordinator.use_network(p2p::network::Network::on(edge.clone()));
         // Its durable registrations change on the database's worker pool.
         coordinator
             .install_pending_dag_store(p2p::sync::pooled_pending_store(
@@ -231,7 +235,7 @@ impl<S: Store + 'static> IrohPeer<S> {
         let replication_bus = Arc::clone(&event_bus);
         let replication_peer = local_peer_id.clone();
         tracing::info!("Starting replication loop for P2P sync (iroh)");
-        let replication_task = n0_future::task::spawn(async move {
+        let replication_task = edge.spawn_service(async move {
             p2p::sync::ReplicationLoop::run(
                 replication_coordinator,
                 sync_events,
@@ -309,6 +313,7 @@ impl<S: Store + 'static> IrohPeer<S> {
             manage_hooks.clone(),
             #[cfg(not(target_arch = "wasm32"))]
             se_correlator.clone(),
+            &edge,
         );
 
         let failure_recorder_task = crate::spawn_failure_recorder(
@@ -317,8 +322,8 @@ impl<S: Store + 'static> IrohPeer<S> {
                 .with_retry_schedule(retry_schedule.clone()),
             failure_rx,
         );
-        let se_repusher: Arc<dyn db::merge::SeArtifactRepusher> =
-            replication.broadcast_mutator.clone();
+        let se_repusher =
+            db::merge::pooled_se_repusher(replication.broadcast_mutator.clone(), database.pool());
         #[cfg(not(target_arch = "wasm32"))]
         replication
             .merge_handler_inner
@@ -339,6 +344,7 @@ impl<S: Store + 'static> IrohPeer<S> {
         );
         let restored_doc_ids =
             crate::restore_iroh_p2p_state(Arc::clone(&store), &transport, &coordinator).await;
+        p2p::model_trace!(RestoreReplicators);
         let mut adapter = IrohP2PAdapter::with_full_context(
             transport.clone(),
             Arc::clone(&coordinator),
@@ -411,7 +417,7 @@ impl<S: Store + 'static> IrohPeer<S> {
     }
 }
 
-async fn stop_endpoint(transport: &IrohTransport, endpoint_task: n0_future::task::JoinHandle<()>) {
+async fn stop_endpoint(transport: &IrohTransport, endpoint_task: edge::Task<()>) {
     if let Err(error) = transport.shutdown().await {
         tracing::debug!(%error, "failed to signal iroh endpoint during setup rollback");
     }

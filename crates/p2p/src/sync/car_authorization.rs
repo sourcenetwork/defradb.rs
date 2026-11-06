@@ -79,7 +79,7 @@ impl WalkState {
             self.queue.push_front(cid);
         }
         self.expanded = 0;
-        let outcome = n0_future::time::timeout(budget, async {
+        let outcome = crate::rt::time::timeout(budget, async {
             loop {
                 if self.remaining.is_empty() {
                     self.in_flight = None;
@@ -104,7 +104,7 @@ impl WalkState {
                 // budget and other bounded serve tasks can make progress on
                 // deep graphs.
                 if self.expanded.is_multiple_of(128) {
-                    tokio::task::yield_now().await;
+                    crate::rt::yield_now().await;
                 }
                 let size = match blockstore.get_size(&cid).await {
                     Ok(size) => size,

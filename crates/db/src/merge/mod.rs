@@ -25,7 +25,9 @@ pub mod se_query_transport;
 pub mod txn_broadcaster;
 
 pub use acp_merge_handler::{AcpMergeError, AcpMergeHandler};
-pub use broadcast_mutator::{BroadcastMutator, BroadcastSeOptions, SeArtifactRepusher};
+pub use broadcast_mutator::{
+    pooled_se_repusher, BroadcastMutator, BroadcastSeOptions, SeArtifactRepusher,
+};
 pub use head_provider::DbHeadProvider;
 pub use merge_handler::{DbMergeHandler, MergeError, DEFAULT_MAX_MERGE_DEPTH};
 #[cfg(all(not(target_arch = "wasm32"), feature = "p2p"))]

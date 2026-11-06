@@ -6,7 +6,7 @@ use crate::sync::pending_store::{PendingDagStorage, PendingDagStore};
 /// node restarted. Its record still owns the head, so a re-push of it, from
 /// its sender or another peer, is acknowledged rather than nacked as not
 /// durable (which the sender reads as rate limiting and parks the peer).
-#[tokio::test]
+#[nuclei::test]
 async fn a_repush_of_a_durable_root_without_an_entry_is_acknowledged() {
     let manager = test_manager();
     let pending_store = Arc::new(PendingDagStore::new(Arc::new(

@@ -9,6 +9,7 @@
 
 use std::time::Duration;
 
+pub mod arbitration;
 mod broadcast_coalescer;
 mod broadcaster;
 pub(crate) mod car;
@@ -22,7 +23,10 @@ mod head_provider;
 mod head_scope;
 mod manager;
 
-pub use manager::pending::PENDING_RECOVERY_WORST_CASE_SECS;
+pub use coordinator::{
+    dag_fetcher::BLOCK_SYNC_COMPLETION_WATCHDOG, dag_retry::CLOCK_ATTEMPT_QUANTUM,
+};
+pub use manager::pending::{PENDING_DAG_TTL, PENDING_RECOVERY_WORST_CASE_SECS};
 mod merge;
 mod peer_state;
 pub mod pending_store;
@@ -33,15 +37,17 @@ pub mod receive_gate;
 mod replication;
 
 pub use broadcaster::{BroadcastResult, Broadcaster};
-pub use collection_store::{MemoryCollectionStorage, P2PCollectionStorage, P2PCollectionStore};
+pub use collection_store::{
+    pooled_collection_store, MemoryCollectionStorage, P2PCollectionStorage, P2PCollectionStore,
+};
 #[cfg(feature = "iroh-transport")]
 pub use coordinator::IrohSyncCoordinator;
 #[cfg(feature = "libp2p-transport")]
 pub use coordinator::Libp2pSyncCoordinator;
 pub use coordinator::{
-    CreateReplicatorResult, HeadHintCarAuthority, HeadHintCarGrant, LoadReplicatorsResult,
-    PeerDetails, PendingFetch, PushFailure, PushFailureReceiver, QuarantinedRoot, SyncCoordinator,
-    SyncShutdownHandle, SyncStatus,
+    CreateReplicatorResult, FollowedDocuments, HeadHintCarAuthority, HeadHintCarGrant,
+    LoadReplicatorsResult, PeerDetails, PendingFetch, PushFailure, PushFailureReceiver,
+    QuarantinedRoot, SyncCoordinator, SyncShutdownHandle, SyncStatus,
 };
 pub use dag_sync::{DagSync, DagSyncConfig, DagSyncState, NeedsFetchData, SyncPlan};
 pub use dispatch_queue::{
@@ -54,9 +60,9 @@ pub use head_provider::{DocumentHeadProvider, NoOpHeadProvider};
 #[cfg(any(feature = "libp2p-transport", feature = "iroh-transport"))]
 pub(crate) use manager::record_gossip_decode_failure_sample;
 pub use manager::{
-    default_rate_limit_backoff, GossipDecodeFailureSample, GossipTransport, SyncConfig,
-    SyncDiagnostics, SyncDiagnosticsSnapshot, SyncEvent, SyncEventReceiver, SyncManager,
-    DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER, DEFAULT_MAX_CONCURRENT_DAG_FETCHES,
+    default_rate_limit_backoff, DagFetchPeerPermit, GossipDecodeFailureSample, GossipTransport,
+    SyncConfig, SyncDiagnostics, SyncDiagnosticsSnapshot, SyncEvent, SyncEventReceiver,
+    SyncManager, DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER, DEFAULT_MAX_CONCURRENT_DAG_FETCHES,
     DEFAULT_MAX_CONCURRENT_PUSH_TASKS, DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
     DEFAULT_MAX_PENDING_DAGS, DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY,
     DEFAULT_PUSH_SEND_TIMEOUT, DEFAULT_RATE_LIMIT_BACKOFF_SECS, DEFAULT_RATE_LIMIT_BURST,

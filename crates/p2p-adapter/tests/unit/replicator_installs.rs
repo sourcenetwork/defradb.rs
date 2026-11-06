@@ -1,7 +1,7 @@
 use super::ReplicatorInstalls;
 use std::time::Duration;
 
-#[tokio::test]
+#[nuclei::test]
 async fn notifications_are_scoped_to_one_peer_and_install() {
     let installs = ReplicatorInstalls::default();
     let first = installs.watch("first", 1);
@@ -10,12 +10,12 @@ async fn notifications_are_scoped_to_one_peer_and_install() {
     installs.finish("first", 1);
     first.wait().await;
     assert!(
-        n0_future::time::timeout(Duration::from_millis(1), next.wait())
+        p2p::rt::time::timeout(Duration::from_millis(1), next.wait())
             .await
             .is_err()
     );
     assert!(
-        n0_future::time::timeout(Duration::from_millis(1), other.wait())
+        p2p::rt::time::timeout(Duration::from_millis(1), other.wait())
             .await
             .is_err()
     );
@@ -23,7 +23,7 @@ async fn notifications_are_scoped_to_one_peer_and_install() {
     assert!(installs.waiters.is_empty());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn cancelled_waiter_wakes_peers_to_recheck_without_retaining_entries() {
     let installs = ReplicatorInstalls::default();
     let first = installs.watch("peer", 1);

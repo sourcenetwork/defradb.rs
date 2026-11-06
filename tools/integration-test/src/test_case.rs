@@ -230,6 +230,7 @@ impl TestCase {
             eprintln!("skipped: {reason}");
             return;
         }
+        trace_from_env();
         for client_type in active_client_types() {
             let actions = client_type.apply(&self.actions);
             drop(testo::action::execute(State::default(), &actions));
@@ -255,6 +256,19 @@ impl TestCase {
             panic!("{}: {reason}", self.id);
         }
     }
+}
+
+/// With `DEFRA_TEST_TRACE` set (a tracing filter, such as `p2p=debug`), the in-process nodes' traces
+/// go to the test's own output, which the test runner shows only when the test fails.
+fn trace_from_env() {
+    let Ok(filter) = std::env::var("DEFRA_TEST_TRACE") else {
+        return;
+    };
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::new(filter))
+        .with_ansi(false)
+        .with_test_writer()
+        .try_init();
 }
 
 /// The client types named by `DEFRA_CLIENT` (comma separated), or in-process.

@@ -345,21 +345,21 @@ mod tests {
         assert!(queue.try_acquire(&cid).is_ok());
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn test_waiter_notified_on_release() {
         let queue = ProcessQueue::new();
         let cid = test_cid();
 
         let guard = queue.try_acquire(&cid).unwrap();
         let wait = queue.try_acquire(&cid).unwrap_err();
-        let waiter = n0_future::task::spawn(async move {
+        let waiter = crate::rt::spawn(async move {
             wait.released().await;
             true
         });
 
         guard.release().await;
 
-        let result = n0_future::time::timeout(Duration::from_secs(5), waiter).await;
+        let result = crate::rt::time::timeout(Duration::from_secs(5), waiter.join()).await;
         assert!(result.is_ok(), "Waiter should be notified");
         assert!(
             result.unwrap().unwrap(),
@@ -367,7 +367,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn test_multiple_waiters_all_notified() {
         let queue = ProcessQueue::new();
         let cid = test_cid();
@@ -376,14 +376,14 @@ mod tests {
         let handles: Vec<_> = (0..5)
             .map(|_| {
                 let wait = queue.try_acquire(&cid).unwrap_err();
-                n0_future::task::spawn(wait.released())
+                crate::rt::spawn(wait.released())
             })
             .collect();
 
         guard.release().await;
 
         for handle in handles {
-            let result = n0_future::time::timeout(Duration::from_secs(5), handle).await;
+            let result = crate::rt::time::timeout(Duration::from_secs(5), handle).await;
             assert!(result.is_ok(), "All waiters should be notified");
         }
     }

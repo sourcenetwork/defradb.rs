@@ -16,7 +16,10 @@ use super::{
 
 /// Application state shared across handlers.
 #[derive(Clone)]
-pub struct AppState {
+pub struct AppState(Arc<AppStateFields>);
+
+/// What [`AppState`] holds; its fields read through `AppState`.
+pub struct AppStateFields {
     pub executor: Arc<dyn QueryExecutor>,
     /// The network runtime request work runs on.
     pub edge: Edge,
@@ -44,7 +47,21 @@ pub struct AppState {
     pub query_limits: QueryLimits,
 }
 
+impl std::ops::Deref for AppState {
+    type Target = AppStateFields;
+
+    fn deref(&self) -> &AppStateFields {
+        &self.0
+    }
+}
+
 impl std::fmt::Debug for AppState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::fmt::Debug for AppStateFields {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AppState")
             .field("executor", &"<QueryExecutor>")
@@ -388,7 +405,7 @@ impl AppStateBuilder {
 
     /// Build the AppState.
     pub fn build(self) -> AppState {
-        AppState {
+        AppState(Arc::new(AppStateFields {
             executor: self.executor,
             edge: self.edge,
             pool: self.pool,
@@ -411,6 +428,6 @@ impl AppStateBuilder {
             signing_enabled: self.signing_enabled,
             dev_mode: self.dev_mode,
             query_limits: self.query_limits,
-        }
+        }))
     }
 }

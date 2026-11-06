@@ -291,8 +291,8 @@ impl NodeBuilder {
     /// calling this twice is a compile error rather than a silent overwrite.
     ///
     /// For a one-call ergonomic version, callers can write
-    /// `.with_telemetry(telemetry::init(cfg)?.0)` — `init` requires a Tokio
-    /// runtime and returns `(TelemetryHandle, SdkTracer)`.
+    /// `.with_telemetry(telemetry::init(cfg, edge)?.0)` — `init` exports on
+    /// the given network `edge` and returns `(TelemetryHandle, SdkTracer)`.
     #[cfg(feature = "otel")]
     pub fn with_telemetry(mut self, handle: TelemetryHandle) -> Self {
         self.telemetry_handle = Some(handle);
@@ -459,7 +459,7 @@ impl NodeBuilder {
             let server = defra_http::Server::from_arc_with_config(
                 node.runner.clone(),
                 server_config,
-                network.edge().clone(),
+                network.requests().clone(),
             )
             .with_event_bus_arc(node.event_bus.clone())
             .with_pool(node.pool.clone())
@@ -501,9 +501,9 @@ impl NodeBuilder {
             };
             let addr = http_cfg.address;
             let bound = http_cfg.listener;
-            // The accept loop is a service of the node's scope: shutting the
-            // node down stops it accepting.
-            let service = network.edge().spawn_service(async move {
+            // The server runs in the node's request scope: draining it
+            // stops the server accepting first and waits for its requests.
+            drop(network.requests().spawn(async move {
                 let served = match bound {
                     Some(listener) => server.serve_on(listener).await,
                     None => server.run().await,
@@ -511,8 +511,7 @@ impl NodeBuilder {
                 if let Err(e) = served {
                     tracing::error!(error = %e, address = %addr, "HTTP server exited with error");
                 }
-            });
-            service.detach();
+            }));
             tracing::info!(address = %addr, "HTTP server started");
         }
         #[cfg(not(feature = "http"))]

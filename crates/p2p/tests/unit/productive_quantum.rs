@@ -98,161 +98,172 @@ fn record(doc_id: &str, source_peer: &str) -> PersistedPendingDag {
 /// dispatched within one attempt quantum: a productive attempt gives its slot
 /// back at the quantum, keeps what it fetched, and is due again behind the
 /// roots that were waiting. Ending an attempt that way is not a failure.
-#[tokio::test(start_paused = true)]
-async fn an_acked_root_is_dispatched_within_a_quantum_of_trickling_holders() {
-    const DRIP: Duration = Duration::from_secs(10);
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let blockstore = Arc::new(DefraBlockstore::new(store, true));
-    let pending_store = Arc::new(PendingDagStore::new(Arc::new(
-        RegolithStore::in_memory().unwrap(),
-    )));
+#[test]
+fn an_acked_root_is_dispatched_within_a_quantum_of_trickling_holders() {
+    edge::testing::paused(|edge| async move {
+        const DRIP: Duration = Duration::from_secs(10);
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(DefraBlockstore::new(store, true));
+        let pending_store = Arc::new(PendingDagStore::new(Arc::new(
+            RegolithStore::in_memory().unwrap(),
+        )));
 
-    let mut served = RapidHashMap::new();
-    let mut catch_up = Vec::new();
-    let mut histories = Vec::new();
-    let mut connected = Vec::new();
-    for slot in 0..DEFAULT_MAX_CONCURRENT_DAG_FETCHES {
-        let (root, root_data, chain) = long_history(slot, 1_000);
-        blockstore.put(&root, &root_data).await.unwrap();
-        let provider = format!("trickle-{slot}");
-        pending_store
-            .put(&root, &record(&format!("catch-up-{slot}"), &provider))
-            .await
-            .unwrap();
-        connected.push(PeerId::new(provider));
-        histories.push(chain.iter().map(|(cid, _)| *cid).collect::<Vec<_>>());
-        served.extend(chain);
-        catch_up.push(root);
-    }
-    let (fresh, fresh_data, leaf, leaf_data) = head_missing_its_field();
-    served.insert(leaf, leaf_data);
-    connected.push(PeerId::new("fresh-peer".to_string()));
-
-    let transport = TestTransport::new(
-        blockstore.clone(),
-        fresh,
-        fresh_data.clone(),
-        RapidHashMap::new(),
-        served,
-    );
-    transport.set_force_rooted_sync();
-    transport.set_drip_delay(DRIP);
-    transport.set_connected_peers(connected);
-
-    let (coordinator, mut events) =
-        SyncCoordinator::new(transport, blockstore.clone(), SyncConfig::default())
-            .await
-            .unwrap();
-    let coordinator = Arc::new(coordinator);
-    coordinator
-        .install_pending_dag_store(pending_store.clone())
-        .await;
-    assert_eq!(
-        coordinator.restore_pending_dags().await,
-        DEFAULT_MAX_CONCURRENT_DAG_FETCHES
-    );
-
-    let dispatched = Arc::new(SegQueue::new());
-    let pump = {
-        let coordinator = Arc::clone(&coordinator);
-        let dispatched = Arc::clone(&dispatched);
-        n0_future::task::spawn(async move {
-            let config = ReplicationConfig::default();
-            loop {
-                match ReplicationLoop::process_next(&coordinator, &mut events, &NoMerge, &config)
-                    .await
-                {
-                    ReplicationResult::DagFetchStarted { root_cid } => {
-                        dispatched.push((root_cid, n0_future::time::Instant::now()));
-                    }
-                    ReplicationResult::ChannelClosed => return,
-                    _ => {}
-                }
-            }
-        })
-    };
-    let clock = {
-        let coordinator = Arc::clone(&coordinator);
-        n0_future::task::spawn(async move {
-            coordinator
-                .run_pending_dag_retry_clock(Duration::from_secs(2))
+        let mut served = RapidHashMap::new();
+        let mut catch_up = Vec::new();
+        let mut histories = Vec::new();
+        let mut connected = Vec::new();
+        for slot in 0..DEFAULT_MAX_CONCURRENT_DAG_FETCHES {
+            let (root, root_data, chain) = long_history(slot, 1_000);
+            blockstore.put(&root, &root_data).await.unwrap();
+            let provider = format!("trickle-{slot}");
+            pending_store
+                .put(&root, &record(&format!("catch-up-{slot}"), &provider))
                 .await
                 .unwrap();
-        })
-    };
+            connected.push(PeerId::new(provider));
+            histories.push(chain.iter().map(|(cid, _)| *cid).collect::<Vec<_>>());
+            served.extend(chain);
+            catch_up.push(root);
+        }
+        let (fresh, fresh_data, leaf, leaf_data) = head_missing_its_field();
+        served.insert(leaf, leaf_data);
+        connected.push(PeerId::new("fresh-peer".to_string()));
 
-    n0_future::time::sleep(DRIP).await;
-    coordinator
-        .manager()
-        .process_pushlog(
-            &PushLogBroadcast::new(
-                "fresh".to_string(),
-                bytes::Bytes::from(fresh.to_bytes()),
-                "collection".to_string(),
-                "creator".to_string(),
-                bytes::Bytes::from(fresh_data),
-            ),
-            Some("fresh-peer"),
-            false,
-            None,
+        let transport = TestTransport::new(
+            blockstore.clone(),
+            fresh,
+            fresh_data.clone(),
+            RapidHashMap::new(),
+            served,
+        );
+        transport.set_force_rooted_sync();
+        transport.set_drip_delay(DRIP);
+        transport.set_connected_peers(connected);
+
+        let (coordinator, mut events) = SyncCoordinator::new(
+            transport,
+            blockstore.clone(),
+            crate::network::Network::on(edge.clone()),
+            SyncConfig::default(),
         )
         .await
-        .expect("the fresh head is acknowledged");
-    let acked_at = n0_future::time::Instant::now();
+        .unwrap();
+        let coordinator = Arc::new(coordinator);
+        coordinator
+            .install_pending_dag_store(pending_store.clone())
+            .await;
+        assert_eq!(
+            coordinator.restore_pending_dags().await,
+            DEFAULT_MAX_CONCURRENT_DAG_FETCHES
+        );
 
-    let mut order = Vec::new();
-    let deadline = acked_at + Duration::from_secs(30 * 60);
-    while !order.iter().any(|(root, _)| *root == fresh)
-        && n0_future::time::Instant::now() < deadline
-    {
-        n0_future::time::sleep(Duration::from_millis(100)).await;
+        let dispatched = Arc::new(SegQueue::new());
+        let pump = {
+            let coordinator = Arc::clone(&coordinator);
+            let dispatched = Arc::clone(&dispatched);
+            crate::rt::spawn(async move {
+                let config = ReplicationConfig::default();
+                loop {
+                    match ReplicationLoop::process_next(
+                        &coordinator,
+                        &mut events,
+                        &NoMerge,
+                        &config,
+                    )
+                    .await
+                    {
+                        ReplicationResult::DagFetchStarted { root_cid } => {
+                            dispatched.push((root_cid, crate::rt::time::Instant::now()));
+                        }
+                        ReplicationResult::ChannelClosed => return,
+                        _ => {}
+                    }
+                }
+            })
+        };
+        let clock = {
+            let coordinator = Arc::clone(&coordinator);
+            crate::rt::spawn(async move {
+                coordinator
+                    .run_pending_dag_retry_clock(Duration::from_secs(2))
+                    .await
+                    .unwrap();
+            })
+        };
+
+        crate::rt::time::sleep(DRIP).await;
+        coordinator
+            .manager()
+            .process_pushlog(
+                &PushLogBroadcast::new(
+                    "fresh".to_string(),
+                    bytes::Bytes::from(fresh.to_bytes()),
+                    "collection".to_string(),
+                    "creator".to_string(),
+                    bytes::Bytes::from(fresh_data),
+                ),
+                Some("fresh-peer"),
+                false,
+                None,
+            )
+            .await
+            .expect("the fresh head is acknowledged");
+        let acked_at = crate::rt::time::Instant::now();
+
+        let mut order = Vec::new();
+        let deadline = acked_at + Duration::from_secs(30 * 60);
+        while !order.iter().any(|(root, _)| *root == fresh)
+            && crate::rt::time::Instant::now() < deadline
+        {
+            crate::rt::time::sleep(Duration::from_millis(100)).await;
+            order.extend(std::iter::from_fn(|| dispatched.pop()));
+        }
+        let waited = order
+            .iter()
+            .find(|(root, _)| *root == fresh)
+            .map(|(_, at)| at.duration_since(acked_at));
+
+        // The holders keep their progress and come back for more.
+        crate::rt::time::sleep(CLOCK_ATTEMPT_QUANTUM).await;
         order.extend(std::iter::from_fn(|| dispatched.pop()));
-    }
-    let waited = order
-        .iter()
-        .find(|(root, _)| *root == fresh)
-        .map(|(_, at)| at.duration_since(acked_at));
-
-    // The holders keep their progress and come back for more.
-    n0_future::time::sleep(CLOCK_ATTEMPT_QUANTUM).await;
-    order.extend(std::iter::from_fn(|| dispatched.pop()));
-    let mut fetched = 0;
-    for history in &histories {
-        for cid in history {
-            if matches!(blockstore.has(cid).await, Ok(true)) {
-                fetched += 1;
+        let mut fetched = 0;
+        for history in &histories {
+            for cid in history {
+                if matches!(blockstore.has(cid).await, Ok(true)) {
+                    fetched += 1;
+                }
             }
         }
-    }
-    let exhausted = coordinator
-        .manager()
-        .diagnostics()
-        .snapshot()
-        .pending_dag_fetch_exhausted;
+        let exhausted = coordinator
+            .manager()
+            .diagnostics()
+            .snapshot()
+            .pending_dag_fetch_exhausted;
 
-    coordinator.shutdown().await;
-    clock.await.unwrap();
-    pump.abort();
+        coordinator.shutdown().await;
+        clock.await;
+        pump.abort();
 
-    let waited = waited.expect("the acked root is dispatched within 30 minutes");
-    assert!(
-        waited <= CLOCK_ATTEMPT_QUANTUM + 2 * BLOCK_SYNC_COMPLETION_WATCHDOG,
-        "the acked root waited {waited:?} for a slot"
-    );
-    let redispatched = order
-        .iter()
-        .filter(|(root, _)| catch_up.contains(root))
-        .count();
-    assert!(
-        redispatched > DEFAULT_MAX_CONCURRENT_DAG_FETCHES,
-        "the trickling roots are due again after giving their slots back ({redispatched} dispatches)"
-    );
-    assert!(
-        fetched
-            > DEFAULT_MAX_CONCURRENT_DAG_FETCHES
-                * (CLOCK_ATTEMPT_QUANTUM.as_secs() / DRIP.as_secs()) as usize
-                / 2,
-        "blocks fetched before a quantum ended are kept ({fetched})"
-    );
-    assert_eq!(exhausted, 0, "a quantum is not a failure");
+        let waited = waited.expect("the acked root is dispatched within 30 minutes");
+        assert!(
+            waited <= CLOCK_ATTEMPT_QUANTUM + 2 * BLOCK_SYNC_COMPLETION_WATCHDOG,
+            "the acked root waited {waited:?} for a slot"
+        );
+        let redispatched = order
+            .iter()
+            .filter(|(root, _)| catch_up.contains(root))
+            .count();
+        assert!(
+            redispatched > DEFAULT_MAX_CONCURRENT_DAG_FETCHES,
+            "the trickling roots are due again after giving their slots back ({redispatched} dispatches)"
+        );
+        assert!(
+            fetched
+                > DEFAULT_MAX_CONCURRENT_DAG_FETCHES
+                    * (CLOCK_ATTEMPT_QUANTUM.as_secs() / DRIP.as_secs()) as usize
+                    / 2,
+            "blocks fetched before a quantum ended are kept ({fetched})"
+        );
+        assert_eq!(exhausted, 0, "a quantum is not a failure");
+    })
 }

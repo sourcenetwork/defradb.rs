@@ -11,6 +11,9 @@
 
 mod batch;
 pub mod broadcast;
+mod pooled_repusher;
+
+pub use pooled_repusher::pooled_se_repusher;
 
 use async_trait::async_trait;
 use blockstore::Blockstore;
@@ -1169,6 +1172,11 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                     .await,
             );
         } else {
+            p2p::model_trace!(Commit {
+                doc: &block_result.doc_id,
+                head: block_result.cid.to_string(),
+                parents: p2p::model_trace::parents_of(&block_result.block),
+            });
             capture_marker_error(
                 &mut marker_error,
                 self.sync

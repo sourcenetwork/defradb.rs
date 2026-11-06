@@ -7,6 +7,7 @@ use super::config::ReplicationConfig;
 use super::result::ReplicationResult;
 use crate::sync::coordinator::dag_context::DagFetchContext;
 use crate::sync::coordinator::SyncCoordinator;
+use crate::sync::manager::links::find_all_missing_links;
 use crate::sync::manager::SyncEvent;
 use crate::sync::merge::{
     BlockMetadata, MergeBlock, MergeErrorDisposition, MergeHandler, MergeOutcome,
@@ -25,6 +26,7 @@ pub(super) struct DagFetchRequest {
     sender_peer: Option<String>,
     is_explicit_replicator: bool,
     explicit_replay_authorization: Option<crate::ExplicitReplayAuthorization>,
+    peer_permit: crate::sync::DagFetchPeerPermit,
 }
 
 struct MergeEventMetadata {
@@ -89,6 +91,90 @@ fn recovered_metadata_error(cid: Cid, details: impl Into<String>) -> Replication
     }
 }
 
+/// Forward a root merged here to this node's replicators.
+///
+/// Match Go's post-merge Update -> SendUpdate replicator fanout: once this
+/// node has merged the complete DAG it may become the authenticated serving
+/// origin for its configured downstream replicators. This is independent of
+/// optional gossip rebroadcast, which remains disabled in production for
+/// stage 3. The replicators' durable markers must exist before the root is
+/// marked merged, because the mark discharges the root's upstream pending
+/// record; a forward that fails leaves the root unmarked, and so still owed
+/// to the next re-drive of it. Returns the failure's result, if the forward
+/// failed.
+async fn forward_merged<B, T>(
+    coordinator: &SyncCoordinator<B, T>,
+    cid: Cid,
+    block_data: &[u8],
+    doc_id: &str,
+    collection_id: &str,
+    creator: &str,
+) -> Option<ReplicationResult>
+where
+    B: Blockstore + 'static,
+    T: P2PTransport,
+{
+    if collection_id.is_empty() {
+        return None;
+    }
+    coordinator
+        .push_to_replicators_with_creator(
+            &cid,
+            block_data,
+            doc_id,
+            collection_id,
+            (!creator.is_empty()).then_some(creator),
+        )
+        .await
+        .err()
+        .map(|error| ReplicationResult::MergedButBroadcastFailed {
+            cid,
+            doc_id: doc_id.to_string(),
+            collection_id: collection_id.to_string(),
+            broadcast_error: error.to_string(),
+        })
+}
+
+/// Whether a terminal skip still owes the root's forward: the database holds
+/// the root, and the root is not marked merged. The mark follows a durable
+/// forward, so such a root may have merged here, in this process or before a
+/// restart, without its forward. An unreadable merged bit counts as owed.
+async fn forward_owed<B, T>(coordinator: &SyncCoordinator<B, T>, cid: &Cid, reason: &str) -> bool
+where
+    B: Blockstore + 'static,
+    T: P2PTransport,
+{
+    MergeOutcome::skip_reason_is_applied(reason)
+        && !matches!(coordinator.is_merged(cid).await, Ok(true))
+}
+
+/// Forward a root merged here, then mark it merged. Returns the failure's
+/// result, if either step failed.
+async fn forward_then_mark<B, T>(
+    coordinator: &SyncCoordinator<B, T>,
+    cid: Cid,
+    block_data: &[u8],
+    doc_id: &str,
+    collection_id: &str,
+    creator: &str,
+) -> Option<ReplicationResult>
+where
+    B: Blockstore + 'static,
+    T: P2PTransport,
+{
+    if let Some(failure) =
+        forward_merged(coordinator, cid, block_data, doc_id, collection_id, creator).await
+    {
+        return Some(failure);
+    }
+    coordinator.mark_as_merged(&cid).await.err().map(|error| {
+        ReplicationResult::MergedButNotMarked {
+            cid,
+            error: error.to_string(),
+        }
+    })
+}
+
 /// Handle a DagNeedsFetch event by initiating a Bitswap sync.
 pub(super) async fn handle_dag_needs_fetch<B, T>(
     coordinator: &SyncCoordinator<B, T>,
@@ -108,6 +194,7 @@ where
         sender_peer,
         is_explicit_replicator,
         explicit_replay_authorization,
+        peer_permit,
     } = request;
 
     tracing::debug!(
@@ -146,13 +233,14 @@ where
             .with_explicit_replicator(is_explicit_replicator)
             .with_explicit_replay_authorization(explicit_replay_authorization)
             .with_pending_lease(coordinator.manager().pending_dag_lease(root_cid))
+            .with_peer_permit(peer_permit)
             .with_block_sync_completions(coordinator.manager().block_sync_completion_tracker())
             .with_rooted_car_completions(coordinator.manager().rooted_car_completion_tracker())
             .with_rooted_provider_discovery();
 
         let attempt = context.clone();
         coordinator.spawn_pending_dag_fetch_task(root_cid, "pushlog_fetch_dag", async move {
-            let end = crate::sync::coordinator::dag_fetcher::poll_fetch_dag(
+            let (end, sample) = crate::sync::coordinator::dag_fetcher::poll_fetch_dag(
                 transport,
                 blockstore,
                 event_tx,
@@ -162,7 +250,7 @@ where
                 diagnostics,
             )
             .await;
-            attempt.finish_clock_attempt(end);
+            attempt.finish_clock_attempt(end, sample);
         });
 
         return ReplicationResult::DagFetchStarted { root_cid };
@@ -359,40 +447,22 @@ where
             if let Some(peer_id) = sender_peer {
                 coordinator.peer_state().record_block_received(peer_id);
             }
-            // Merge successful - mark as merged
-            if let Err(e) = coordinator.mark_as_merged(&cid).await {
-                // Return a distinct result so callers know the merge succeeded
-                // but bookkeeping failed (block will be reprocessed on restart)
-                return ReplicationResult::MergedButNotMarked {
-                    cid,
-                    error: e.to_string(),
-                };
+            if let Some(result) = forward_then_mark(
+                coordinator,
+                cid,
+                &block_data,
+                &doc_id_for_result,
+                collection_id_for_broadcast,
+                &creator_for_forward,
+            )
+            .await
+            {
+                return result;
             }
-
-            // Match Go's post-merge Update -> SendUpdate replicator fanout:
-            // once this node has merged the complete DAG it may become the
-            // authenticated serving origin for its configured downstream
-            // replicators. This is independent of optional gossip
-            // rebroadcast, which remains disabled in production for stage 3.
-            if !collection_id_for_broadcast.is_empty() {
-                if let Err(error) = coordinator
-                    .push_to_replicators_with_creator(
-                        &cid,
-                        &block_data,
-                        &doc_id_for_result,
-                        collection_id_for_broadcast,
-                        (!creator_for_forward.is_empty()).then_some(creator_for_forward.as_str()),
-                    )
-                    .await
-                {
-                    return ReplicationResult::MergedButBroadcastFailed {
-                        cid,
-                        doc_id: doc_id_for_result,
-                        collection_id: collection_id_for_result,
-                        broadcast_error: error.to_string(),
-                    };
-                }
-            }
+            crate::model_trace!(Merge {
+                doc: &doc_id_for_result,
+                head: cid.to_string(),
+            });
 
             // Optionally re-broadcast (skip if metadata incomplete - can't broadcast without doc/collection IDs)
             if config.rebroadcast_on_merge && !collection_id_for_broadcast.is_empty() {
@@ -467,11 +537,26 @@ where
         }
         Ok(MergeOutcome::Skipped { reason, terminal }) => {
             if terminal {
-                if let Err(e) = coordinator.mark_as_merged(&cid).await {
-                    return ReplicationResult::MergedButNotMarked {
+                let failed = if forward_owed(coordinator, &cid, &reason).await {
+                    forward_then_mark(
+                        coordinator,
                         cid,
-                        error: format!("skipped but failed to mark: {}", e),
-                    };
+                        &block_data,
+                        &doc_id_for_result,
+                        collection_id_for_broadcast,
+                        &creator_for_forward,
+                    )
+                    .await
+                } else {
+                    coordinator.mark_as_merged(&cid).await.err().map(|e| {
+                        ReplicationResult::MergedButNotMarked {
+                            cid,
+                            error: format!("skipped but failed to mark: {}", e),
+                        }
+                    })
+                };
+                if let Some(result) = failed {
+                    return result;
                 }
             }
 
@@ -574,7 +659,7 @@ fn already_merged_result(cid: Cid, doc_id: &str, collection_id: &str) -> Replica
         cid,
         doc_id: doc_id.to_string(),
         collection_id: collection_id.to_string(),
-        reason: "already merged".to_string(),
+        reason: MergeOutcome::ALREADY_MERGED.to_string(),
         terminal: true,
     }
 }
@@ -720,15 +805,12 @@ where
     let batch_result_start = results.len();
     let batch_results = handler.handle_block_batch(&merge_blocks).await;
 
-    // Collect CIDs to mark as merged
-    let mut merged_cids = Vec::new();
     for (block, result) in merge_blocks.iter().zip(batch_results) {
         match result {
             Ok(MergeOutcome::Merged) => {
                 if let Some(peer_id) = &block.sender_peer {
                     coordinator.peer_state().record_block_received(peer_id);
                 }
-                merged_cids.push(block.cid);
                 results.push(ReplicationResult::Merged {
                     cid: block.cid,
                     doc_id: block.doc_id.clone(),
@@ -764,9 +846,6 @@ where
                 });
             }
             Ok(MergeOutcome::Skipped { reason, terminal }) => {
-                if terminal {
-                    merged_cids.push(block.cid);
-                }
                 results.push(ReplicationResult::Skipped {
                     cid: block.cid,
                     doc_id: block.doc_id.clone(),
@@ -821,6 +900,40 @@ where
         }
     }
 
+    // A merged receiver may be the configured sender for a downstream hop.
+    // Forward only to explicit replicators here, before the batch mark
+    // discharges the upstream pending records; gossip rebroadcast remains
+    // controlled by `rebroadcast_on_merge` below.
+    let mut merged_cids = Vec::new();
+    for (index, block) in merge_blocks.iter().enumerate() {
+        let result_index = batch_result_start + index;
+        let forward = match &results[result_index] {
+            ReplicationResult::Merged { .. } => true,
+            ReplicationResult::Skipped {
+                terminal: true,
+                reason,
+                ..
+            } => forward_owed(coordinator, &block.cid, reason).await,
+            _ => continue,
+        };
+        if forward {
+            if let Some(result) = forward_merged(
+                coordinator,
+                block.cid,
+                block.block_data.as_ref(),
+                &block.doc_id,
+                &block.collection_id,
+                &block.creator,
+            )
+            .await
+            {
+                results[result_index] = result;
+                continue;
+            }
+        }
+        merged_cids.push(block.cid);
+    }
+
     // Batch mark_as_merged in one txn
     if !merged_cids.is_empty() {
         if let Err(e) = coordinator.mark_batch_as_merged(&merged_cids).await {
@@ -848,35 +961,16 @@ where
                     };
                 }
             }
-        }
-    }
-
-    // A merged receiver may be the configured sender for a downstream hop.
-    // Forward only to explicit replicators here; gossip rebroadcast remains
-    // controlled by `rebroadcast_on_merge` below.
-    for (index, block) in merge_blocks.iter().enumerate() {
-        let result_index = batch_result_start + index;
-        if block.collection_id.is_empty()
-            || !matches!(results[result_index], ReplicationResult::Merged { .. })
-        {
-            continue;
-        }
-        if let Err(error) = coordinator
-            .push_to_replicators_with_creator(
-                &block.cid,
-                block.block_data.as_ref(),
-                &block.doc_id,
-                &block.collection_id,
-                (!block.creator.is_empty()).then_some(block.creator.as_str()),
-            )
-            .await
-        {
-            results[result_index] = ReplicationResult::MergedButBroadcastFailed {
-                cid: block.cid,
-                doc_id: block.doc_id.clone(),
-                collection_id: block.collection_id.clone(),
-                broadcast_error: error.to_string(),
-            };
+        } else if crate::model_trace::ENABLED {
+            for block in merge_blocks
+                .iter()
+                .filter(|block| merged_cids.contains(&block.cid))
+            {
+                crate::model_trace!(Merge {
+                    doc: &block.doc_id,
+                    head: block.cid.to_string(),
+                });
+            }
         }
     }
 
@@ -985,6 +1079,7 @@ where
             sender_peer,
             is_explicit_replicator,
             explicit_replay_authorization,
+            peer_permit,
         } => {
             handle_dag_needs_fetch(
                 coordinator,
@@ -998,6 +1093,7 @@ where
                     sender_peer,
                     is_explicit_replicator,
                     explicit_replay_authorization,
+                    peer_permit,
                 },
             )
             .await
@@ -1036,6 +1132,53 @@ where
     }
 }
 
+/// The root of a dispatch that names no source peer and misses no block.
+fn sourceless_complete_dispatch(event: &SyncEvent) -> Option<Cid> {
+    match event {
+        SyncEvent::DagNeedsFetch {
+            root_cid,
+            missing,
+            sender_peer: None,
+            ..
+        } if missing.is_empty() => Some(*root_cid),
+        _ => None,
+    }
+}
+
+/// Whether the root block and every block it links are stored.
+async fn dag_is_local<B: Blockstore>(blockstore: &B, root_cid: &Cid) -> bool {
+    match blockstore.get(root_cid).await {
+        Ok(Some(root_data)) => find_all_missing_links(blockstore, &root_data)
+            .await
+            .is_ok_and(|missing| missing.is_empty()),
+        _ => false,
+    }
+}
+
+fn into_dag_ready(event: SyncEvent) -> SyncEvent {
+    match event {
+        SyncEvent::DagNeedsFetch {
+            root_cid,
+            doc_id,
+            collection_id,
+            creator,
+            sender_peer,
+            is_explicit_replicator,
+            explicit_replay_authorization,
+            ..
+        } => SyncEvent::DagReady {
+            root_cid,
+            doc_id,
+            collection_id,
+            creator,
+            sender_peer,
+            is_explicit_replicator,
+            explicit_replay_authorization,
+        },
+        other => other,
+    }
+}
+
 /// Process one sync event, unless the block it would merge already merged.
 ///
 /// It takes no merge lock and waits for no other merge or fetch of the CID: one
@@ -1054,8 +1197,24 @@ where
     H: MergeHandler + ?Sized + 'static,
 {
     // Own the queued slot before reconciliation can return without merging.
-    let _pending_owner =
-        event_merge_cid(&event).and_then(|cid| coordinator.pending_dag_merge_guard(cid));
+    // A dispatch without a source peer goes to transport block sync, which
+    // asks for the whole DAG when nothing is missing: a complete root merges
+    // here instead.
+    let (event, _pending_owner) = match sourceless_complete_dispatch(&event) {
+        Some(root_cid) => {
+            let owner = coordinator.pending_dag_merge_guard(root_cid);
+            if dag_is_local(coordinator.blockstore().as_ref(), &root_cid).await {
+                (into_dag_ready(event), owner)
+            } else {
+                (event, None)
+            }
+        }
+        None => {
+            let owner =
+                event_merge_cid(&event).and_then(|cid| coordinator.pending_dag_merge_guard(cid));
+            (event, owner)
+        }
+    };
     if let Some(cid) = event_merge_cid(&event) {
         if let Some(result) = skipped_if_already_merged(coordinator, &event, cid).await {
             return result;

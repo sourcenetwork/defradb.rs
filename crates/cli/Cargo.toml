@@ -54,7 +54,7 @@ telemetry = { path = "../telemetry", default-features = false }
 clap = { version = "4.5", features = ["derive", "env"] }
 
 # Async runtime
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "fs", "signal", "sync", "time"] }
+nuclei.workspace = true
 futures = { workspace = true }
 async-trait = { workspace = true }
 
@@ -97,13 +97,8 @@ serde_bytes = { workspace = true }
 libp2p = { workspace = true }
 
 # HTTP client for CLI client commands
-reqwest = { version = "0.12", default-features = false, features = [
-    "json",
-    "charset",
-    "http2",
-    "system-proxy",
-    "rustls-tls-native-roots",
-] }
+# HTTP on nuclei sockets.
+net = { path = "../net" }
 
 # URL parsing
 url = "2.5"
@@ -146,6 +141,8 @@ iroh = ["p2p/iroh-transport", "p2p/kms", "defra-p2p-adapter/iroh", "defra-p2p-ad
 # Host an iroh relay server (`net.iroh_relay_server`) alongside the endpoint.
 iroh-relay-server = ["iroh", "p2p/iroh-relay-server"]
 profiling = ["dep:tracing-chrome"]
+# Log the P2P delivery trace events proofs/tla/Trace_P2PDelivery.tla replays.
+model-trace = ["p2p/model-trace"]
 # OpenTelemetry OTLP exporter. Mirrors Go's `//go:build telemetry`: compile-time
 # opt-in. When built with this feature, runtime default is on (Go parity); use
 # `--no-telemetry` to disable at runtime.
@@ -157,7 +154,6 @@ axum.workspace = true
 tower = { workspace = true, features = ["util"] }
 defra-http = { path = "../http", features = ["test-utils"] }
 kovan.workspace = true
-tokio = { workspace = true, features = ["process"] }
 rcgen = "0.13"
 toml = "0.9"
 tempfile = "3.17"

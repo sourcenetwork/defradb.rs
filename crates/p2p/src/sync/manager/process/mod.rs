@@ -13,6 +13,7 @@
 //! This matches Go's architecture where p2p calls db.Merge().
 
 mod bitswap;
+mod estimates;
 mod join;
 mod pending_dag;
 mod pushlog;
@@ -20,12 +21,12 @@ mod pushlog;
 pub(crate) use bitswap::{BlockSyncCompletionTracker, FetchCompletion, RootedCarCompletionTracker};
 pub(crate) use pending_dag::PendingDagLease;
 
+use crate::rt::mpsc;
 use crate::QueryId;
 use cid::Cid;
 use kovan_map::HopscotchMap;
 use rapidhash::fast::RandomState;
 use std::sync::Arc;
-use tokio::sync::mpsc;
 
 use blockstore::Blockstore;
 
@@ -34,9 +35,9 @@ use crate::sync::PeerStateTracker;
 use super::super::queue::ProcessQueue;
 use super::config::SyncConfig;
 use super::diagnostics::SyncDiagnostics;
+use super::event_lanes::{DispatchLane, SyncEventReceiver};
 use super::events::SyncEvent;
 use super::pending::SharedPendingDags;
-use crate::sync::head_scope::ScopeDecision;
 use crate::sync::pending_store::{PendingDagStorage, PersistedView};
 
 /// Manager for P2P block synchronization.
@@ -78,6 +79,9 @@ pub struct SyncManager<B: Blockstore> {
     /// Channel for emitting sync events
     pub(super) event_tx: mpsc::Sender<SyncEvent>,
 
+    /// The receiver clock's own lane into the merge loop, taken first.
+    pub(super) dispatch_lane: Arc<DispatchLane>,
+
     /// Peer state tracker for finding providers
     pub(super) peer_state: Arc<PeerStateTracker>,
 
@@ -87,6 +91,9 @@ pub struct SyncManager<B: Blockstore> {
 
     /// Coalesced wakeup for the sole bounded receiver dispatch owner.
     pub(super) pending_dag_ready: regolith::sync::Notify,
+
+    /// How much of the pending map each source peer holds, over minutes.
+    pub(super) pending_occupancy: crate::sync::arbitration::PendingOccupancy,
 
     /// Maps Bitswap QueryId → root CID for tracking completions.
     pub(super) query_to_root: HopscotchMap<QueryId, Cid, RandomState>,
@@ -107,6 +114,9 @@ pub struct SyncManager<B: Blockstore> {
     /// Capacity of `pending_dags`; overflow is rejected with a backpressure nack.
     pub(super) max_pending_dags: usize,
 
+    /// Lifetime of an unacknowledged `pending_dags` entry.
+    pub(super) pending_dag_ttl: std::time::Duration,
+
     /// Durable backing for push-originated pending registrations (#1099).
     /// Empty until the embedding layer installs a store; process-local
     /// semantics apply while empty.
@@ -123,10 +133,17 @@ pub struct SyncManager<B: Blockstore> {
     /// early-exit so store/set desyncs from rare races self-heal.
     pub(super) pending_resync_tick: std::sync::atomic::AtomicUsize,
 
-    /// The durable root the last resync sweep admitted. The next sweep
-    /// resumes after it in key order, so roots past the in-memory cap take
-    /// turns instead of the first keys being admitted every time.
+    /// The place in key order at which the last resync sweep admitted a root
+    /// last; the next sweep resumes after it. Roots past the in-memory cap
+    /// take turns instead of the first keys being admitted every time.
     pub(super) pending_resync_cursor: kovan::Atom<Option<Cid>>,
+
+    /// For each source peer with a durable record, the root of that peer the
+    /// resync sweep admitted last. The sweep gives the peer's places to its
+    /// roots in key order after this one, so a root left waiting on its
+    /// peer's quota takes the next place its peer frees, and a peer held at
+    /// its quota does not move the cursor for the others.
+    pub(super) pending_resync_peer_cursors: kovan::Atom<rapidhash::RapidHashMap<String, Cid>>,
 }
 
 /// Every Nth resync is a forced full sweep (see `pending_resync_tick`).
@@ -140,42 +157,13 @@ pub(super) const PENDING_RESYNC_FORCED_TICK: usize = 10;
 pub(super) const PERSISTED_PENDING_CAP_FACTOR: usize = 4;
 
 impl<B: Blockstore + 'static> SyncManager<B> {
-    /// True when a newer head for the same sender scope is already durable
-    /// or pending, so this root's work is subsumed rather than dropped.
-    ///
-    /// Retiring a superseded root is deliberate: the newer head carries the
-    /// same document forward, and driving both would duplicate the fetch.
-    pub(super) fn scope_head_is_covered_by_current(
-        &self,
-        root_cid: Cid,
-        source_peer: Option<&str>,
-        collection_id: &str,
-        doc_id: &str,
-        head_priority: Option<u64>,
-    ) -> bool {
-        matches!(
-            self.persisted.scope_decision(
-                root_cid,
-                source_peer,
-                collection_id,
-                doc_id,
-                head_priority
-            ),
-            ScopeDecision::CoveredByCurrent
-        ) || self.pending_dags.read(|pending| {
-            pending.scope_head_is_covered_by_current(
-                root_cid,
-                source_peer,
-                collection_id,
-                doc_id,
-                head_priority,
-            )
-        })
-    }
-
+    /// True when the head is its scope's current pending or durable head, or
+    /// links it as a parent: registering it retires that head and so takes
+    /// no new slot.
     pub(super) fn scope_head_is_refresh_or_newer(
         &self,
         root_cid: Cid,
+        parents: &[Cid],
         source_peer: Option<&str>,
         collection_id: &str,
         doc_id: &str,
@@ -183,6 +171,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     ) -> bool {
         self.persisted.refreshes_or_supersedes(
             root_cid,
+            parents,
             source_peer,
             collection_id,
             doc_id,
@@ -190,6 +179,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         ) || self.pending_dags.read(|pending| {
             pending.scope_head_is_refresh_or_newer(
                 root_cid,
+                parents,
                 source_peer,
                 collection_id,
                 doc_id,
@@ -211,16 +201,19 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         blockstore: Arc<B>,
         peer_state: Arc<PeerStateTracker>,
         config: SyncConfig,
-    ) -> (Self, mpsc::Receiver<SyncEvent>) {
-        let (event_tx, event_rx) = mpsc::channel(config.event_buffer_size);
+    ) -> (Self, SyncEventReceiver) {
+        let (event_tx, event_rx) = mpsc::channel(config.event_buffer_size.max(1));
+        let dispatch_lane = Arc::new(DispatchLane::new(config.max_concurrent_dag_fetches));
 
         let manager = Self {
             blockstore,
             process_queue: ProcessQueue::new(),
             event_tx,
+            dispatch_lane: Arc::clone(&dispatch_lane),
             peer_state,
             pending_dags: Arc::new(SharedPendingDags::default()),
             pending_dag_ready: regolith::sync::Notify::new(),
+            pending_occupancy: crate::sync::arbitration::PendingOccupancy::default(),
             query_to_root: HopscotchMap::with_hasher(RandomState::default()),
             block_sync_completions: BlockSyncCompletionTracker::with_capacity(
                 config.max_pending_dags.max(1),
@@ -231,14 +224,18 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             // A zero cap would reject every missing-link push forever
             // (permanent admission outage); normalize to a 1-slot map.
             max_pending_dags: config.max_pending_dags.max(1),
+            pending_dag_ttl: config
+                .pending_dag_ttl
+                .max(std::time::Duration::from_secs(1)),
             pending_store: regolith::sync::OnceCell::new(),
             persisted: Arc::new(PersistedView::default()),
             pending_resync_in_flight: std::sync::atomic::AtomicBool::new(false),
             pending_resync_tick: std::sync::atomic::AtomicUsize::new(0),
             pending_resync_cursor: kovan::Atom::new(None),
+            pending_resync_peer_cursors: kovan::Atom::new(rapidhash::RapidHashMap::default()),
         };
 
-        (manager, event_rx)
+        (manager, SyncEventReceiver::new(dispatch_lane, event_rx))
     }
 
     /// Check if a block exists and is merged.
@@ -344,6 +341,17 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// Get a clone of the sync event sender for spawning background tasks.
     pub fn event_sender(&self) -> mpsc::Sender<SyncEvent> {
         self.event_tx.clone()
+    }
+
+    /// Whether the receiver clock's lane into the merge loop has room.
+    pub(crate) fn can_dispatch(&self) -> bool {
+        self.dispatch_lane.has_room()
+    }
+
+    /// Hands a receiver-clock dispatch to the merge loop ahead of its queued
+    /// merge work; `false` when the lane is full.
+    pub(crate) fn dispatch(&self, event: SyncEvent) -> bool {
+        self.dispatch_lane.push(event)
     }
 
     /// Shared reference to the sync diagnostics counters.

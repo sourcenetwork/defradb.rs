@@ -30,7 +30,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | DAG convergence (partition / eviction / restart) | TLA+ | p2p, db-merge, blockstore |
 | CRDT merge laws | Lean | crdt, defra-core |
 | Replicator lifecycle (no-loss / resume) | TLA+ | p2p, db-merge, embedded |
-| Sync ownership transfer (head hint / receiver pull) | TLA+ | p2p, db-merge, storage, embedded |
+| Sync ownership transfer (head hint / receiver pull) | TLA+ | p2p, db-merge, storage, embedded, defra-node |
 | Multi-instance claim | TLA+ | gents |
 | Block integrity / signatures | TLA+ | db-merge, defra-core, blockstore |
 | KMS key distribution | TLA+ / Lean | kms, db, db-merge |
@@ -57,7 +57,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | DiskANN shared quantizer | TLA+ & Lean | db-index (vector), db-write |
 | RobustPrune blocked covered checks | Lean | db-index (vector), defra-core |
 | DiskANN back-edges in place | Lean | db-index (vector) |
-| Retry input and marker fencing | TLA+ | db, query, storage |
+| Retry input and marker fencing | TLA+ & Lean | db, query, storage, p2p, p2p-adapter |
 | Collection schema-version OCC | TLA+ | db |
 | Schema publication completion | TLA+ / Lean | storage, db |
 | Peer connection observation | TLA+ / Lean | p2p |
@@ -66,11 +66,12 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Engine ticker export | TLA+ & Lean | telemetry, storage |
 | Worker pool CPU ledger | TLA+ & Lean | workers |
 | Worker default pool | TLA+ & Lean | workers |
-| Node shutdown order | TLA+ | defra-node, embedded, edge, acp |
+| Node shutdown order | TLA+ / Lean | defra-node, embedded, edge, acp, http, query, db, storage |
 | Inbound stream admission | TLA+, Lean | p2p |
 | Vector index link maintenance | TLA+ | storage, db-index |
 | Peer fetch stats | Lean | p2p |
 | DAG fetch provider ranking | TLA+, Lean | p2p |
+| DAG fetch arbitration (EWMA) | Lean | p2p |
 | Gossip connection ownership | TLA+, Lean | p2p |
 | Iroh service records | TLA+, Lean | p2p |
 | Iroh solicited replies | TLA+ | p2p |
@@ -79,11 +80,20 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Index drop during backfill | TLA+ | db-index |
 | Purge by DocID | TLA+ | db |
 | Replication filter | TLA+ | db-merge |
-| Node startup | TLA+, Lean | embedded, storage |
+| Node startup | TLA+, Lean | defra-node, storage |
 | Text CRDT convergence | TLA+ & Lean | crdt, db-merge |
 | JSON CRDT per-path merge | TLA+ & Lean | crdt, db-merge (specified before the code, #2129) |
 | Custom CRDT types | TLA+ & Lean | crdt, schema, db-merge, p2p (#2183) |
 | Document write pipeline | TLA+ | db, db-block-builder |
+| Postgres wire connection loop | TLA+ | pg-compat |
+| HTTP client redirects and body deadline | Lean | net |
+| Connect fallback race | TLA+ | net |
+| Coordinator shutdown drain | TLA+ | p2p, edge |
+| Edge completion | TLA+ | edge |
+| Edge gate continuation | TLA+ | edge, net (#2546) |
+| Iroh dial outcome | TLA+ | p2p, p2p-adapter |
+| Server drain | TLA+ | net, pg-compat, edge |
+| Document topic ingress | TLA+ | p2p, p2p-adapter (#2545) |
 | Add collection | TLA+ | db |
 | Collection truncate | TLA+ | db |
 | Add DAC policy | TLA+ | db, acp, vera, http, cli, ffi, defra-node |
@@ -91,6 +101,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Orphan block sweep | TLA+ & Lean | db, storage |
 | Per-peer stream cap | TLA+ | p2p |
 | Receive gate | TLA+ | p2p, db |
+| P2P delivery liveness | TLA+ | p2p, p2p-adapter, db-merge, storage |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is
@@ -148,7 +159,17 @@ substrate) — so a green run never reads as "this was proven against the
 artifact." The modeled families are the registry's families, so adding a model
 is one `PROPERTIES` entry and one row above;
 `matrix::readme_lists_exactly_the_modeled_families` names any family that has
-one without the other.
+one without the other. `anchor::every_registry_anchor_resolves` resolves each
+anchor's files and symbols against the tree, so a rename that moves modeled code
+fails until its anchor follows it. A `Contract` or `Behavioral` row names the
+tests that bind it in `bound_by`, and `matrix::every_bound_tier_names_its_tests`
+fails when one names none or names a test that is not declared.
+
+[`src/constants.rs`](src/constants.rs) states once each P2P constant the models
+depend on: the Rust constant that sets it, and the model constants that restate
+it exactly or check a scaled-down instance of it.
+`constants::every_constant_agrees` fails when the code, a restating model or the
+table disagree.
 
 ### Realized status — all 21 families bound
 
@@ -165,9 +186,9 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 | Family | Binding | Where |
 |---|---|---|
 | B3 filtered replication | Behavioral | `replication.rs` |
-| DAG convergence | Behavioral | `replication.rs` (live-forward) + `partition.rs` (partition heal; concurrent same-doc merge — the bug it found+fixed) |
+| DAG convergence | Boundary | `replication.rs` (live-forward under a configured replicator) + `partition.rs` (converges after an explicit replicator re-set; concurrent same-doc merge — the bug it found+fixed). Head rediscovery is embedder-owned |
 | Replicator lifecycle | Behavioral | `replicator_lifecycle.rs` (backfill no-loss + resume across node restart) |
-| Sync ownership transfer | Boundary + external integration | deterministic full-DAG/head-hint A/B fence; `p2p_admission_restart`; marker migration/storage tests; mixed Go/Rust PushLog fixture. These run in repository CI, not this conformance binary's `tests/behavioral/` harness. |
+| Sync ownership transfer | Boundary + external integration | deterministic full-DAG/head-hint A/B fence; `p2p_admission_restart`; `p2p_backlog` (outbound push backlog with a SIGSTOPped replicator); marker migration/storage tests; mixed Go/Rust PushLog fixture. These run in repository CI, not this conformance binary's `tests/behavioral/` harness. |
 | ACP soundness + revocation + commits | Behavioral + Contract | `acp.rs`; `RelationExpression` vocab |
 | Storage transaction validation | Behavioral | `ssi.rs` (real `409 Conflict` on write-skew) |
 | Management-channel auth (NAC gate) | Behavioral | `nac.rs` |
@@ -186,12 +207,69 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 | JWT issuer / algorithm binding | Boundary | DID-binding via `acp.rs`; forge unreachable via CLI |
 | Order-preserving key encoding | Boundary | ordered query may sort in memory; consts `pub(crate)` |
 | DiskANN resident code table | Boundary | in-memory search cache, not observable on the wire; `DiskAnnCodes`; unit tests in `crates/db/tests/vector/diskann_resident.rs` |
+| P2P delivery liveness | Behavioral (trace) + Boundary | `model_trace.rs` replays recorded runs through `Trace_P2PDelivery.tla`; eventual connectivity, the bounded instance and the restart scenarios stay Boundary |
 
 ```bash
 proofs/verify-all.sh                 # TLA + Lean + conformance (behavioral if binary present)
 cargo build -p cli                   # produce fresh target/debug/defra
 cargo test -p conformance            # Lean axis + behavioral; DEFRA_CONFORMANCE_BINARY overrides target
+                                     # iroh families: DEFRA_CONFORMANCE_IROH_BINARY, else built with --features iroh
 ```
+
+### Trace validation (P2P delivery)
+
+A `defra` built with `--features model-trace` logs one JSON event per
+[`P2PDelivery`](tla/P2PDelivery.tla) action under the `model_trace` log target
+(`crates/p2p/src/model_trace.rs`; the event table and its code sites are in
+[`P2PDelivery_DESIGN.md`](tla/P2PDelivery_DESIGN.md)). Without the feature the
+`model_trace!` sites compile to nothing. [`src/model_trace.rs`] reads the
+events from each node's log, orders them by time, names the nodes and the heads
+of one document, and writes a TLA+ module and TLC configuration that
+[`Trace_P2PDelivery.tla`](tla/Trace_P2PDelivery.tla) replays: each event must
+be a model step from the state the earlier events left, under the fixed
+design's knobs, with the model's invariants holding and the run settled at the
+end. A deadlock names the first event the model forbids.
+
+```bash
+cargo build -p cli --features iroh,model-trace && cp target/debug/defra target/defra-trace
+DEFRA_TRACE_BINARY=$PWD/target/defra-trace cargo test -p conformance --test tla_conformance -- --ignored model_trace::
+```
+
+Each run leaves `events.jsonl`, the module, the configuration and `tlc.out` in
+`target/model-trace/<Scenario>/`. A replay is accepted only when TLC starts
+from one state and walks past every event, so a trace whose start the model
+rules out cannot pass by checking nothing. The recorded runs
+`MC_P2PDelivery_Trace_TwoNode` and `MC_P2PDelivery_Trace_HubRelay` and eleven
+RED configurations of planted mutants (`MC_P2PDelivery_Trace_Mutants.tla`, one
+per replay guard) also run in `tla/run-all.sh`, so the replay is checked
+without a binary. Their rows say where the replay must end: `TRACE:<n>` walks
+`n` states (events + 1) with no error, `DEADLOCK:<l>` stops at event `l`.
+
+To add a trace for a new scenario:
+
+1. Write a test in `tests/behavioral/model_trace.rs` that builds its cluster
+   with `cluster(n)`, connects the nodes and sets every replicator before the
+   first write (the model's edges exist from the start), writes one document
+   and waits until every node the edges lead to has each write.
+2. Call `replay(&cluster, names, edges, &doc, "<Scenario>", story)` with the
+   nodes' model names in cluster order, the edges by name and the document to
+   follow. It asserts that TLC accepts the run.
+3. Assert the steps you meant to exercise are in the trace (`Trace::count`,
+   `Trace::steps`), so an empty run cannot pass.
+4. To pin the run, copy the generated `MC_P2PDelivery_Trace_<Scenario>.{tla,cfg}`
+   into `tla/`, add a `TRACE:<events + 1>` row to `run-all.sh`, and plant RED
+   mutants of it in a mutants module, each with a `DEADLOCK:<index>` row.
+5. A code path that takes a model step nobody logs yet gets a
+   `p2p::model_trace!(Variant { .. })` at its site, a case in
+   `Trace_P2PDelivery.tla`'s `Replay`, and, for a new field, a line in
+   `model_trace::step`.
+
+A trace follows one document, and every head in it must be written during the
+run. Pull sync (`p2p_collection_add`) runs advisory fetches the model counts only
+from one provider, so scenarios replicate through replicators alone. A scenario
+that drives a behaviour main still has (a RED of `P2PDelivery`) fails the replay
+under the fixed design's knobs; setting that one knob to main's value in the
+generated configuration confirms it is the known defect.
 
 ## Conventions (follow these in new slices)
 
@@ -218,11 +296,17 @@ Read this before trusting a verdict; it states the model's honest reach.
   fetch, a datum on a block), not quantity-sensitive — but this is exhaustive over the
   bound, not a proof for all deployments.
 - **Environment assumptions (encoded, not proven):** `ProviderAvailable` (a fetch needs a
-  reachable holder of the block); **eventual connectivity** + fair head rediscovery for
-  the convergence liveness results; weak fairness on protocol actions; an **eventually
+  reachable holder of the block); **eventual connectivity**, with the heads owed by a
+  retry marker or a durable pending record, for the convergence liveness results (head
+  rediscovery is the embedder's); weak fairness on protocol actions; an **eventually
   serving provider** (strong fairness on some completed fetch) for the SyncOwnership
   dispatch and memory liveness results, whose `Dead` and `Trickle` providers get no
-  merge promise. Those results give fairness to the scheduler only, never to a root.
+  merge promise. Those results give fairness to the scheduler only, never to a root; the
+  memory results give it to each sending peer's retry ledger and to the receiver's answers
+  to that peer, never to a scope, and promise nothing to a peer whose durable quota a
+  never-serving root can hold.
+  The PushBacklog liveness result assumes every running push send ends, by a reply or
+  its send timeout; its dispatch fairness is the scheduler's only, never a peer's.
 - **Crypto boundary (KMS):** ECIES is abstracted — a node can use an envelope iff it is
   the intended recipient. Real ECIES/IND-CCA security is assumed, not modeled.
 - **Float counter divergence (proven, real):** IEEE-754 addition is not associative, so
@@ -262,7 +346,11 @@ once keys and reopen through the adapter.
 an attempt and reused after a commit conflict; its RED cases run provider work
 inside an attempt or clear the memo and repeat provider work. It does not establish that every remote ACP/Vera/KMS/decrypt call
 is lifted out of retry attempts. `RetryMarkerGeneration.tla` models generation
-compare-delete and the peer-incarnation fence on clear across forget/re-add.
+compare-delete and the peer-incarnation fence on clear across forget/re-add,
+and the sweep over several scopes: a tick reads one probe and at most one page
+after a durable cursor, and a purged document's marker is discharged with only
+the tick, the pass and the clock fair. Its mutants read every marker before the
+due check, keep the vanished marker, or never move the cursor.
 `RetryPushAdmission.tla` checks that queued pushes still own the exact live marker
 and satisfy backpressure at admission. Its mutants remove presence, generation
 or deadline checks; already-admitted external I/O is outside that boundary. Their
@@ -281,7 +369,24 @@ Core directly and retains the sibling, pruning, abort and old-snapshot cases.
 `RetryRegistrationFence.tla` separates token allocation from registration commit.
 It checks that a delayed registration cannot cross forget/re-add or replace a
 newer pending marker. Its negative variants remove the incarnation or ordering
-check. This finite model does not verify the Rust implementation.
+check. It also models the fan-out caller that registers a committed head with
+each replicator. `INV_FanOutPeerLocal` requires that a gone, re-incarnated,
+covered or failed peer is decided on its own, and that every registered peer
+is queued. `Red_FanOutAbort` aborts the fan-out on the first rejection. This
+finite model does not verify the Rust implementation.
+
+`RetrySchedule.tla` models the one retry clock a sender keeps per peer. An
+acknowledged delivery, live, fenced by a newer marker generation, or replayed,
+returns it to the first rung, never later than it was, so a push that fails
+after an acknowledgement, or a timeout after a pass the cap cut short, is not
+charged the rung an outage earned; a new marker and a reconnect keep the rung,
+so a peer that keeps failing still climbs the ladder; and the sweep reads a
+deadline past the longest rung, which only a backward step of the wall clock
+leaves, as due. Its negative variants keep the escalated clock after any
+delivery, a fenced one or a replayed one, restart it on a new marker or a
+reconnect, or honor the stepped-back deadline.
+`RetrySchedule.Delivery` proves the restart's arithmetic in Lean. Time is
+abstract and which marker a bounded pass reaches first is out of scope.
 
 The adapter-owned `Ssi.tla` and `SsiRange.tla` families and their eight TLC
 configurations are retired. They modeled the removed `ConflictTracker`, including

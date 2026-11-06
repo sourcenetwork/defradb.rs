@@ -2,15 +2,18 @@
 
 Models the hub-side pending-DAG registration's survival of a process restart for issue
 **#1099**, abstracting `crates/p2p/src/sync/manager/process/pushlog.rs`
-(`insert_pending_dag`) plus the pusher's persisted retry ladder. Companion to
+(`process_block_inner`: `try_insert_pending_dag`, then the pending store's
+`register`) plus the pusher's persisted retry ladder. Companion to
 `PushLogAdmission.tla` (#1088 W1): that slice fixed the **reply decision** at capacity —
 kept here as `HubOverflowNack` — while this slice asks what survives a hub **crash**
 after an *honest* success reply.
 
-> **Status: the RED config is current-main behavior.** Pending-DAG registrations live
-> only in the hub's in-memory map. A hub crash after the success ack destroys the
-> registration while the pusher has already deleted its persisted retry record — silent,
-> permanent loss. The GREEN config persists registrations and restores them on restart.
+> **Status: the GREEN config is current-main behavior.** `process_block_inner` persists
+> a push-originated registration through `crates/p2p/src/sync/pending_store/` before the
+> success reply. The RED config is the pre-#1099 behavior: registrations lived only in the
+> hub's in-memory map, so a hub crash after the success ack destroyed the registration
+> while the pusher had already deleted its persisted retry record — silent, permanent
+> loss.
 
 ## Mechanism
 
@@ -25,7 +28,7 @@ One knob:
 
 - `RecoveryMode = "Persist"` — `HubAdmit` persists alongside the in-memory
   registration; `Restore` reloads after a crash. [GREEN]
-- `RecoveryMode = "ProcessLocal"` — current behavior: registrations die with the
+- `RecoveryMode = "ProcessLocal"` — pre-#1099 behavior: registrations die with the
   process. [RED]
 
 ## Property
@@ -41,8 +44,9 @@ what the ack promised.
 
 ## Abstractions
 
-- **As in `PushLogAdmission`**: docs are the unit, "the pusher" is the per-doc
-  ack/retry record, and how a push comes to have missing links is irrelevant.
+- **As in `PushLogAdmission`'s independent-head configurations**: docs are the unit,
+  "the pusher" is the per-doc ack/retry record, and how a push comes to have missing
+  links is irrelevant.
 - **The pusher process survives the hub crash** — its records are in another process.
 - **The crash is one-shot and atomic with restart** (the hub is immediately back up);
   a modeled down-window adds states without adding durability-relevant behaviors.
@@ -60,7 +64,7 @@ what the ack promised.
 ## Conformance fence
 
 The Rust-side fence for the same invariant is the restart integration test
-`tools/integration-test/tests/p2p_admission_restart.rs`
+`tools/integration-test/tests/legacy/p2p_admission_restart.rs`
 (`hub_restart_recovers_success_acked_pending_dags`) — kill and restart the hub after it
 success-acks a missing-links push, then assert the doc still merges — plus the
 `crates/p2p` unit tests around pending-DAG persistence

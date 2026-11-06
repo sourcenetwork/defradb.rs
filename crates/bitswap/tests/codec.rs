@@ -24,17 +24,11 @@ fn sample() -> BitswapMessage {
     m
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn framed_roundtrip_v1() {
-    let (a, b) = tokio::io::duplex(64 * 1024);
-    let mut tx = Framed::new(
-        tokio_util::compat::TokioAsyncReadCompatExt::compat(a),
-        codec(ProtocolId::Bitswap120),
-    );
-    let mut rx = Framed::new(
-        tokio_util::compat::TokioAsyncReadCompatExt::compat(b),
-        codec(ProtocolId::Bitswap120),
-    );
+    let (a, b) = nuclei::io::duplex(64 * 1024);
+    let mut tx = Framed::new(a, codec(ProtocolId::Bitswap120));
+    let mut rx = Framed::new(b, codec(ProtocolId::Bitswap120));
     let m = sample();
     tx.send(m.clone()).await.unwrap();
     let (got, proto) = rx.next().await.unwrap().unwrap();

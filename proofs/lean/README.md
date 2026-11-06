@@ -3,7 +3,7 @@
 The proof split is intentional:
 
 - TLA+ (`proofs/tla/Convergence.tla`) models distributed delivery: partitions,
-  reconnects, head rediscovery, synced-CID eviction, and restart.
+  reconnects, retry markers, durable pending records, and restart.
 - Lean (`proofs/lean/`) models the local merge/apply state machine after delivery.
 
 ## Lean Theorems
@@ -19,6 +19,7 @@ The model proves:
 
 | Theorem | Meaning | Rust source |
 |---|---|---|
+| `RequestDrain.start_keeps_permit`, `finish_keeps_permit`, `dropped_waiter_keeps_permit`, `expired_task_loses_permit`, `task_guard_survives_cancellation`, `caller_guard_is_abandoned`, `begin_open_has_owner`, `abandoned_begin_is_closed` | A running worker keeps its admission, and an edge-admitted commit task owns its guard when the caller stops waiting. | `crates/defra-node/src/signed_query/mod.rs`, `crates/defra-node/src/transaction.rs` |
 | `lwwState_merge_comm`, `lwwState_merge_assoc`, `lwwState_merge_idem` | LWW is a join over the deterministic priority/value key. | `crates/crdt/src/field/lww.rs` |
 | `word64Add_comm`, `word64Add_assoc` | Int64 counter accumulation is order-independent under wrapping addition. | `crates/crdt/src/field/counter.rs` |
 | `word64Add_not_idempotent` | Raw counter merge is not idempotent. Duplicate suppression is not local to `CounterField::merge`. | `crates/crdt/src/field/counter.rs` |
@@ -31,15 +32,41 @@ The model proves:
 | `DiskAnnCodes.get_returns_inserted` / `get_in_bounds` / `insert_refuses_other_length` | Resident DiskANN codes in one flat array: with equal lengths and distinct ids each read returns its own code, every slot's slice is inside the array, and a code of another length is refused. | `crates/db/src/index/vector/engine/diskann/cache.rs` |
 | `DocumentMaterialization.active_age_after_delete_keeps_deleted` / `delete_active_age_converge` | Document status is a component of materialization: active field rematerialization may update retained bytes, but cannot clear a tombstone. | `crates/db/src/merge/merge_handler/composite_persist.rs`; `crates/defra-core/src/block_delta.rs` |
 | `RetrySchedule.new_valid` / `new_accepts_valid` / `cap_mem` / `cap_positive` / `cap_follows_ladder` / `cap_repeats_last` / `default_accepted` | A replicator retry ladder is accepted exactly when it is non-empty and positive, kept as given, and every retry waits one of its rungs: rung `n` for attempt `n`, then the last rung for every attempt past it. | `crates/storage/src/stores/retry_info.rs` |
+| `HttpClient.credentials_stay_with_their_origin` / `at_most_limit_plus_one_exchanges` / `endless_redirects_fail` / `same_origin_redirect_keeps_credentials` / `cross_origin_redirect_strips_credentials` | Across any chain of redirects, a credential from the request or the client's defaults is sent only to the request's own origin (scheme, host and port), a proxy credential only on its own hop; a request makes at most eleven exchanges. The witnesses `per_hop_defaults_leak`, `host_only_downgrade_leaks`, `host_only_port_leaks` and `unlimited_runs_past_the_limit` show each guard is needed. | `crates/net/src/http/client.rs` |
+| `HttpClient.BodyDeadline.ends_after_timeout` / `at_most_one_timeout` / `deadline_wins_over_a_ready_piece` / `never_waits_past_the_deadline` / `no_timeout_before_the_deadline` / `no_limit_no_timeout` | A body stream gives one timeout once the limit passes, even with a piece ready, then only its end; `old_reads_after_timeout` and `late_reads_past_the_deadline` are the code before each fix. | `crates/net/src/http/response.rs` |
+| `RetrySchedule.restart_rung_le_one` / `restart_never_later` / `restart_within_first_rung` / `restart_respects_backpressure` / `bump_climbs` | A delivery returns a peer's retry clock to the first rung at most, never later than its deadline, and never before the receiver's backpressure deadline; a failed pass climbs one rung. | `crates/storage/src/stores/retry_info.rs` |
 | `TxnAdmission.embedder_admits_every` / `byIdentity_admits_iff` / `byIdentity_turns_away_stranger` / `admits_beginner` / `default_is_byIdentity` | An embedder registry lets every request into its transactions; an identity registry, the default, lets in exactly the identity that began one; the beginner always gets in. | `crates/db/src/txn/registry/mod.rs` |
 | `ProviderHealth.rank_perm` / `rank_keeps_healthy_source_first` / `rank_all_healthy` / `next_delay_in_range` / `stale_starts_over` / `forget_keeps_fresh` / `forget_drops_stale` | Ranking a root's fetch providers only reorders them and keeps a healthy announcer first; a fast-failure cool-down stays within 2..30 s, starts over once stale, and pruning drops exactly the stale entries. | `crates/p2p/src/sync/coordinator/provider_health.rs` |
+| `LocalFetchPermit.released_before_send` / `release_preserves_queue` | A locally complete fetch returns its peer permit before waiting to send its merge event, without changing queue occupancy. | `crates/p2p/src/sync/coordinator/dag_fetcher.rs` |
+| `Arbitration.roll_le_bound` / `troll_le_bound` / `record_first` / `troll_full` / `iter_monotone_up` / `iter_stays_below` / `decay_geometric` / `troll_decay_up` / `troll_decay_down` / `dither_mean` / `expected_useful_le` | The arbitration estimators stay within what they were fed (no overflow), take their first sample as is, approach a steady input without overshoot, decay geometrically (per sample, or by `2^(-Δt/H)` per unit of time), move by their exact share on average under the dither (so a sub-unit share never freezes them), and the expected time to a useful fetch is at most 64 fetches' cost. | `crates/p2p/src/sync/arbitration/` |
+| `Arbitration.bucket_order_any_score` / `bucket_apart_keeps_order` / `inversion_within_bucket` / `same_score_keeps_due_order` / `rearmed_root_goes_behind` | Ordering due roots by (1 s bucket, score, due time) keeps bucket order for any score: a root is passed only by roots due less than one bucket after it (`ACT_AttemptsStartInDueOrder` at bucket resolution), and a root re-armed a backoff of at least a bucket still queues behind (`ACT_EndedAttemptQueuesBehind`). | `crates/p2p/src/sync/arbitration/due_order.rs` |
+| `Arbitration.table_is_floor` / `table_decreasing` / `table_wraps` / `weight_le_one` / `weight_full_after_silence` / `weight_zero_gap` / `weight_first_ms` and the side conditions on the constants | The Q16 weight table is exactly `⌊65536 · 2^(-i/64)⌋` and falls step by step, the interpolated Q32 weight never exceeds one, a long silence starts the estimate over, a zero gap (a clock gone backwards) moves nothing and a 1 ms gap already moves something; the side conditions hold on the values `Conformance.lean` binds to the Rust constants. | `crates/p2p/src/sync/arbitration/{mod,ewma}.rs` |
 
 `#print axioms` status checked with Lean 4.18:
+
+HTTP client redirects (`HttpClient.Redirect`):
+
+- `HttpClient.credentials_stay_with_their_origin`, `at_most_limit_plus_one_exchanges`, `shipped_limit`, `same_origin_redirect_keeps_credentials`, `cross_origin_redirect_strips_credentials`: `[propext]`
+- `HttpClient.endless_redirects_fail`: `[propext, Quot.sound]`
+- `HttpClient.per_hop_defaults_leak`, `shipped_defaults_stay_home`, `host_only_downgrade_leaks`, `host_only_port_leaks`, `shipped_strips_downgrade_and_port`, `unlimited_runs_past_the_limit`, `shipped_stops_at_the_limit`: *(no axioms)*
+
+HTTP body deadline (`HttpClient.BodyDeadline`):
+
+- `HttpClient.BodyDeadline.ends_after_timeout`, `at_most_one_timeout`: `[propext, Quot.sound]`
+- `HttpClient.BodyDeadline.deadline_wins_over_a_ready_piece`, `never_waits_past_the_deadline`, `no_timeout_before_the_deadline`, `no_limit_no_timeout`: `[propext]`
+- `HttpClient.BodyDeadline.old_reads_after_timeout`, `keep_times_out_twice`, `late_reads_past_the_deadline`, `shipped_times_out_once`: *(no axioms)*
 
 Provider ranking (`ProviderHealth.Ranking`):
 
 - `ProviderHealth.rank_perm`, `rank_keeps_healthy_source_first`, `stale_starts_over`, `forget_keeps_fresh`, `forget_drops_stale`: `[propext]`
 - `ProviderHealth.rank_all_healthy`, `next_delay_in_range`: `[propext, Classical.choice, Quot.sound]`
+
+DAG fetch arbitration (`Arbitration`, 48 theorems):
+
+- `table_shape`, `table_is_floor` (by `decide +kernel`), `table_decreasing`, `table_wraps`, `weight_le_one`, `weight_first_ms`, `packed_word_fits`, `ppm_fits_value`, `troll_product_fits`, `expected_useful_fits`, `timestamp_lasts`, `tie_bucket_le_backoff_floor`, `useful_floor_is_one_64th`, `occupancy_half_life_ticks`, `lex_keeps_due_order`, `bucket_order_any_score`, `same_score_keeps_due_order`: *(no axioms)*
+- `div_mono`, `record_first`, `expected_useful_le`: `[propext]`
+- `keep_mono`, `div_add_le`, `share_le`, `share_ge`, `troll_full`, `sum_shift`, `dither_mean`, `decay_step`, `decay_geometric`, `weight_full_after_silence`, `weight_zero_gap`, `bucket_keeps_order`, `inversion_within_quantum`, `rearmed_root_goes_behind`, `bucket_apart_keeps_order`, `inversion_within_bucket`: `[propext, Quot.sound]`
+- `roll_between_up`, `roll_between_down`, `roll_le_bound`, `troll_between_up`, `troll_between_down`, `troll_le_bound`, `troll_decay_up`, `troll_decay_down`, `iter_stays_below`, `iter_monotone_up`, `decay_step_up`, `decay_step_down`: `[propext, Classical.choice, Quot.sound]`
 
 Transaction admission (`TxnAdmission.Key`): every theorem depends on no axioms.
 
@@ -49,6 +76,11 @@ Retry ladder (`RetrySchedule.Ladder`):
 - `RetrySchedule.cap_mem`, `cap_positive`: `[propext]`
 - `RetrySchedule.cap_follows_ladder`, `cap_repeats_last`: `[propext, Quot.sound]`
 - `RetrySchedule.default_accepted`: `[propext, Quot.sound]`
+
+Retry clock after a delivery (`RetrySchedule.Delivery`):
+
+- `RetrySchedule.restart_rung_le_one`, `restart_never_later`, `restart_within_first_rung`, `restart_respects_backpressure`: `[propext, Quot.sound]`
+- `RetrySchedule.bump_climbs`: *(no axioms)*
 
 Convergence:
 

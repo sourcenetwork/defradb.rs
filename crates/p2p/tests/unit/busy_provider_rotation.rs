@@ -83,10 +83,10 @@ fn peers(names: &[&str]) -> Vec<String> {
     names.iter().map(|name| name.to_string()).collect()
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_busy_reply_ends_the_window_at_once_as_busy_not_stalled() {
     let f = Fixture::new(&["remote-peer"], false).await;
-    let started = n0_future::time::Instant::now();
+    let started = crate::rt::time::Instant::now();
 
     let outcome = poll_fetch_blocks(
         &f.root,
@@ -100,11 +100,11 @@ async fn a_busy_reply_ends_the_window_at_once_as_busy_not_stalled() {
     .await;
 
     assert_eq!(outcome, ProviderWindowOutcome::Busy);
-    assert_eq!(n0_future::time::Instant::now(), started);
+    assert_eq!(crate::rt::time::Instant::now(), started);
     assert_eq!(f.transport.cancelled_queries(), vec![1]);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_busy_provider_is_rotated_past_without_spending_stall_budget() {
     let f = Fixture::new(&["remote-peer"], true).await;
     let context = f.alt_context();
@@ -138,15 +138,15 @@ async fn a_busy_provider_is_rotated_past_without_spending_stall_budget() {
     assert_eq!(snapshot.provider_rotations, 1);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn every_provider_busy_defers_to_the_root_clock_without_exhaustion() {
     let f = Fixture::new(&["remote-peer", "alt-peer"], true).await;
-    let started = n0_future::time::Instant::now();
+    let started = crate::rt::time::Instant::now();
 
     assert!(f.fetch_dag(f.alt_context()).await.is_none());
 
     assert_eq!(
-        n0_future::time::Instant::now() - started,
+        crate::rt::time::Instant::now() - started,
         retry_backoff(2),
         "busy providers cost no fetch window, only the one busy retry's backoff"
     );
@@ -163,7 +163,7 @@ async fn every_provider_busy_defers_to_the_root_clock_without_exhaustion() {
 
 /// A busy hub whose alternate does not hold the fresh write yet and answers
 /// empty: the attempt proves only saturation, so it must not exhaust the root.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_busy_publisher_with_empty_alternates_defers_instead_of_exhausting() {
     let f = Fixture::new(&["remote-peer"], true).await;
     f.transport.set_failure_answer(
@@ -185,7 +185,7 @@ async fn a_busy_publisher_with_empty_alternates_defers_instead_of_exhausting() {
     assert!(f.transport.disconnected_peers().is_empty());
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn empty_providers_without_a_busy_reply_still_exhaust() {
     let f = Fixture::new(&[], true).await;
     f.transport.set_failure_answer(
@@ -201,7 +201,7 @@ async fn empty_providers_without_a_busy_reply_still_exhaust() {
     assert_eq!(snapshot.pending_dag_fetch_deferred_busy, 0);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_lone_busy_publisher_is_asked_once_per_pass_and_kept_connected() {
     let f = Fixture::new(&["remote-peer"], false).await;
     f.transport.set_busy_car_answer(f.rooted_car.clone());
@@ -229,13 +229,13 @@ async fn a_lone_busy_publisher_is_asked_once_per_pass_and_kept_connected() {
 
 /// A busy answer must not mark the publisher answered: that is the liveness
 /// evidence the dead-Bitswap hang-up needs.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_busy_rooted_car_answer_is_busy_and_not_an_answer() {
     let f = Fixture::new(&[], false).await;
     f.transport.set_busy_car_answer(f.rooted_car.clone());
     let context = f.rooted_context();
     let mut answered = false;
-    let started = n0_future::time::Instant::now();
+    let started = crate::rt::time::Instant::now();
 
     let outcome = poll_fetch_rooted_car(
         &f.root,
@@ -251,12 +251,12 @@ async fn a_busy_rooted_car_answer_is_busy_and_not_an_answer() {
     assert_eq!(outcome, ProviderWindowOutcome::Busy);
     assert!(!answered, "a busy publisher is alive, not silent");
     assert!(
-        n0_future::time::Instant::now() - started < Duration::from_secs(1),
+        crate::rt::time::Instant::now() - started < Duration::from_secs(1),
         "a busy answer does not wait out the 10 s rooted deadline"
     );
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_busy_rooted_window_rotates_to_the_alternate() {
     let f = Fixture::new(&[], false).await;
     f.transport.set_busy_car_answer(f.rooted_car.clone());
@@ -280,16 +280,17 @@ async fn a_busy_rooted_window_rotates_to_the_alternate() {
     assert_eq!(snapshot.pending_dag_fetch_deferred_busy, 0);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_momentary_all_busy_moment_retries_within_the_dispatch() {
     let f = Fixture::new(&["remote-peer"], true).await;
     f.transport
         .set_connected_peers(vec![PeerId::new("remote-peer".to_string())]);
     let busy = f.transport.busy_providers.clone();
-    n0_future::task::spawn(async move {
-        n0_future::time::sleep(Duration::from_secs(1)).await;
+    crate::rt::spawn(async move {
+        crate::rt::time::sleep(Duration::from_secs(1)).await;
         busy.remove("remote-peer");
-    });
+    })
+    .detach();
     let context = f.rooted_context();
 
     assert!(matches!(
@@ -301,4 +302,27 @@ async fn a_momentary_all_busy_moment_retries_within_the_dispatch() {
     let snapshot = f.diagnostics.snapshot();
     assert_eq!(snapshot.pending_dag_fetch_deferred_busy, 0);
     assert_eq!(snapshot.pending_dag_fetch_exhausted, 0);
+}
+
+/// An attempt whose rooted CAR delivered the root and whose descendants are
+/// then shed ends `ProviderBusy`, yet it advanced the root: its sample says so.
+#[nuclei::test(start_paused = true)]
+async fn a_shed_attempt_that_delivered_first_still_counts_its_progress() {
+    let f = Fixture::new(&[], false).await;
+    f.transport.set_busy_from_batch(0, f.completions.clone());
+    let context = f.lone_context();
+    let mut providers = ProviderRotation::new(context.providers());
+    let mut state = ProviderFetchState::new(&mut providers, None, f.diagnostics.as_ref());
+    let started = Instant::now();
+
+    let outcome =
+        fetch_dag_attempt(&f.transport, &f.blockstore, f.root, &context, &mut state).await;
+
+    assert_eq!(outcome, FetchAttemptOutcome::ProviderBusy);
+    assert!(f.blockstore.has(&f.root).await.unwrap());
+    assert!(!f.blockstore.has(&f.child).await.unwrap());
+    assert_eq!(
+        attempt_sample(&outcome, started.elapsed(), providers.attempt_progressed()),
+        AttemptSample::Shed { progressed: true }
+    );
 }
