@@ -9,6 +9,14 @@ pub(super) struct PreparationFetcher<'a> {
     pub documents: &'a [(String, String, Option<Document>)],
 }
 
+impl PreparationFetcher<'_> {
+    /// Whether an earlier statement of this request staged a document of
+    /// `collection`, which the base fetcher cannot see.
+    fn shadows(&self, collection: &str) -> bool {
+        self.documents.iter().any(|(name, _, _)| name == collection)
+    }
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl DocFetcher for PreparationFetcher<'_> {
@@ -76,10 +84,16 @@ impl DocFetcher for PreparationFetcher<'_> {
 
     async fn stream_by_doc_short_ids(
         &self,
-        _: &str,
-        _: &[u64],
-        _: bool,
+        collection: &str,
+        short_ids: &[u64],
+        with_deleted: bool,
     ) -> Result<Box<dyn crate::doc_stream::DocStream>> {
+        if !self.shadows(collection) {
+            return self
+                .base
+                .stream_by_doc_short_ids(collection, short_ids, with_deleted)
+                .await;
+        }
         Err(QueryError::execution(
             "key preparation does not stream documents",
         ))
@@ -87,15 +101,29 @@ impl DocFetcher for PreparationFetcher<'_> {
 
     async fn stream_all_with_deleted(
         &self,
-        _: &str,
-        _: bool,
+        collection: &str,
+        with_deleted: bool,
     ) -> Result<Box<dyn crate::doc_stream::DocStream>> {
+        if !self.shadows(collection) {
+            return self
+                .base
+                .stream_all_with_deleted(collection, with_deleted)
+                .await;
+        }
         Err(QueryError::execution(
             "key preparation does not stream documents",
         ))
     }
 
-    async fn get_by_field_value(&self, _: &str, _: &str, _: &str) -> Result<Vec<Document>> {
+    async fn get_by_field_value(
+        &self,
+        collection: &str,
+        field: &str,
+        value: &str,
+    ) -> Result<Vec<Document>> {
+        if !self.shadows(collection) {
+            return self.base.get_by_field_value(collection, field, value).await;
+        }
         Err(QueryError::execution(
             "key preparation does not resolve relations",
         ))

@@ -139,7 +139,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             let collection = self.get_collection(&mutation.collection_name).await?;
             let mapping = self.build_mutation_mapping(mutation)?;
             let resolved_doc_ids = self
-                .resolve_filter_to_doc_ids(mutation, self.fetcher.as_ref())
+                .resolve_filter_to_doc_ids(mutation, self.fetcher.as_ref(), &caller_identity)
                 .await?;
 
             let mut plan: Box<dyn crate::planner::PlanNode> = match mutation.mutation_type {
