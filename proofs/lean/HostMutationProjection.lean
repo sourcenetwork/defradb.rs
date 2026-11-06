@@ -112,6 +112,7 @@ structure HostSourceAdmission where
   nodeAdmin : Bool
   relationAuthorized : Bool
   sameTransaction : Bool
+  deriving Lean.FromJson, Lean.ToJson
 
 def hostSourceAllowed (a : HostSourceAdmission) : Bool :=
   a.trustedHost && a.ownerMatches && a.fresh && a.writable && a.configuredNode &&
