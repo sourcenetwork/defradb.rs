@@ -1,9 +1,9 @@
 import Lean
 
 /-!
-A host-installed projection is trusted node code, not a request parameter. The
-native transaction authorizes the document mutation as its actual writer and
-the source changes as the node administrator. Both stage in one transaction:
+A host-installed projection is trusted node code, not a request parameter. A
+trusted host repair authorizes its source changes as the node administrator;
+an ordinary request uses the actual writer's native authority. Both stage in one transaction:
 neither a failed projection nor a failed commit publishes either half.
 
 This contract assumes the host receives every relevant resolved document
@@ -129,5 +129,51 @@ theorem wrong_transaction_owner_denied (a : HostSourceAdmission)
 theorem host_source_requires_native_admin (a : HostSourceAdmission)
     (h : a.nodeAdmin = false) : hostSourceAllowed a = false := by
   simp [hostSourceAllowed, h]
+
+/-- A request's source change is authorized by its actual actor. Startup,
+replication and callbacks with no authenticated actor are not repairs. An
+explicit repair is a separate trusted host operation. The transaction owns
+both the document and every required source edge. -/
+inductive ProjectionOrigin where
+  | request | repair | absent
+  deriving BEq, DecidableEq
+
+structure ProjectionAdmission where
+  origin : ProjectionOrigin
+  actorAdmin : Bool
+  actorRelation : Bool
+  repairAuthorized : Bool
+  sameTransaction : Bool
+
+def projectionSourceAllowed (a : ProjectionAdmission) : Bool :=
+  a.sameTransaction &&
+    match a.origin with
+    | .request => a.actorAdmin && a.actorRelation
+    | .repair => a.repairAuthorized
+    | .absent => false
+
+/-- An absent actor can never be replaced by the node. -/
+theorem absent_origin_denied (a : ProjectionAdmission)
+    (h : a.origin = .absent) : projectionSourceAllowed a = false := by
+  simp [projectionSourceAllowed, h]
+
+/-- The writer needs native source-administration authority. -/
+theorem nonadmin_request_denied (a : ProjectionAdmission)
+    (h : a.origin = .request) (denied : a.actorAdmin = false) :
+    projectionSourceAllowed a = false := by
+  simp [projectionSourceAllowed, h, denied]
+
+/-- Every source change shares the document transaction. -/
+theorem unbound_projection_denied (a : ProjectionAdmission)
+    (h : a.sameTransaction = false) : projectionSourceAllowed a = false := by
+  simp [projectionSourceAllowed, h]
+
+/-- An unchanged source needs no source-administration operation. -/
+def projectionStatementAllowed (sourceChanged : Bool) (a : ProjectionAdmission) : Bool :=
+  !sourceChanged || projectionSourceAllowed a
+
+theorem unchanged_source_allowed (a : ProjectionAdmission) :
+    projectionStatementAllowed false a = true := by
+  simp [projectionStatementAllowed]
 
 end HostMutationProjection
