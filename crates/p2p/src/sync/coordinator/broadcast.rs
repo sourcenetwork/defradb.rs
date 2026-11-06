@@ -9,6 +9,7 @@ use blockstore::Blockstore;
 use bytes::Bytes;
 use cid::Cid;
 use serde_json::Value as JsonValue;
+use std::sync::Arc;
 
 use super::push_worker::{report_observed_head, report_push_failure};
 use super::SyncCoordinator;
@@ -27,7 +28,7 @@ struct PendingPush {
     creator: String,
     document: Option<JsonValue>,
     /// The parent's document, for a `@chunk` chunk: its filter decides the chunk.
-    source: Option<JsonValue>,
+    source: Option<Arc<JsonValue>>,
 }
 
 /// Whether a replicator's filter lets a push through.
@@ -267,7 +268,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         block: &[u8],
         doc_id: &str,
         collection_id: &str,
-        source: Option<&JsonValue>,
+        source: Option<&Arc<JsonValue>>,
         creator_override: Option<&str>,
     ) -> Result<()> {
         let creator = creator_override.unwrap_or(&self.access.local_peer_id);
@@ -364,7 +365,19 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 missing_documents += 1;
                 continue;
             }
-            match push.admission(rep, self.runtime.filter_matcher.as_ref()) {
+            let admission = push.admission(rep, self.runtime.filter_matcher.as_ref());
+            if admission != Admission::Admit && rep.is_filtered_chunk(&push.collection_id) {
+                tracing::debug!(
+                    target: "p2p::sync::delivery_admission",
+                    peer_id = %peer_id,
+                    chunks = %push.collection_id,
+                    parent = ?rep.chunk_sources.get(&push.collection_id),
+                    doc_id = %push.doc_id,
+                    outcome = ?admission,
+                    "Chunk not pushed to a filtered replicator"
+                );
+            }
+            match admission {
                 Admission::Admit => {}
                 Admission::NoDocument => {
                     missing_documents += 1;

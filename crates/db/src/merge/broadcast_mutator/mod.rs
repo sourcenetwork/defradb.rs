@@ -53,14 +53,19 @@ fn capture_marker_error(slot: &mut Option<String>, result: p2p::error::Result<()
     }
 }
 
-// The parent as its replication filter sees it, only when it has chunks to push.
+// One shared copy of the parent for all its chunks. A parent that does not
+// encode gives none, so its chunks fail closed instead of matching `{}`.
 fn parent_source(
     derived: &[query::mutator::DerivedWrite],
     parent: &Document,
-) -> Option<serde_json::Value> {
-    (!derived.is_empty()).then(|| {
-        serde_json::Value::Object(parent.to_map().unwrap_or_default().into_iter().collect())
-    })
+) -> Option<Arc<serde_json::Value>> {
+    if derived.is_empty() {
+        return None;
+    }
+    let map = parent.to_map().ok()?;
+    Some(Arc::new(serde_json::Value::Object(
+        map.into_iter().collect(),
+    )))
 }
 
 fn marker_broadcast_status(error: Option<String>) -> BroadcastStatus {
@@ -293,7 +298,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
         &self,
         context: &RequestContext,
         derived: &[query::mutator::DerivedWrite],
-        source: Option<&serde_json::Value>,
+        source: Option<&Arc<serde_json::Value>>,
     ) -> Option<String> {
         if derived.is_empty() {
             return None;
@@ -1168,11 +1173,15 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
         )
         .await
         {
-            Ok(Some(document)) => Some(serde_json::Value::Object(
-                document.to_map().unwrap_or_default().into_iter().collect(),
-            )),
+            Ok(Some(document)) => document
+                .to_map()
+                .ok()
+                .map(|map| serde_json::Value::Object(map.into_iter().collect())),
             _ => None,
         };
+        let source = (!collection.schema().chunked_fields.is_empty())
+            .then(|| pre_delete_document_json.clone().map(Arc::new))
+            .flatten();
 
         // Execute the delete mutation
         let result = self
@@ -1180,7 +1189,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             .delete_as(context, collection_name, doc_id)
             .await?;
         let derived_error = self
-            .publish_derived(context, &result.derived, pre_delete_document_json.as_ref())
+            .publish_derived(context, &result.derived, source.as_ref())
             .await;
 
         // No-op delete (missing doc): the inner mutator wrote nothing, so

@@ -64,7 +64,7 @@ where
         text: String,
         hash: String,
         encrypt: bool,
-        source: Option<&serde_json::Value>,
+        source: Option<&std::sync::Arc<serde_json::Value>>,
     ) -> Result<DerivedWrite> {
         let collection = &target.collection;
         let mut doc = Document::new(collection.schema_arc());
@@ -163,7 +163,7 @@ where
         &self,
         target: &ChunkCollection,
         doc_short_id: u64,
-        source: Option<&serde_json::Value>,
+        source: Option<&std::sync::Arc<serde_json::Value>>,
     ) -> Result<Option<DerivedWrite>> {
         let collection = &target.collection;
         let Some(doc_id) = crate::docid::map::get_doc_id(&target.systemstore, doc_short_id)
@@ -231,7 +231,7 @@ where
         doc_id: &DocID,
         cid: cid::Cid,
         block: bytes::Bytes,
-        source: Option<&serde_json::Value>,
+        source: Option<&std::sync::Arc<serde_json::Value>>,
     ) -> Result<()> {
         // Only an explicit transaction's broadcaster reads the parent here.
         let source = self.broadcaster.and(source).cloned();

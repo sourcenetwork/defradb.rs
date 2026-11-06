@@ -29,11 +29,11 @@ fn document_json_value(doc: &Document) -> Option<serde_json::Value> {
 fn chunk_source(
     derived: &[query::mutator::DerivedWrite],
     document_json: Option<&serde_json::Value>,
-) -> Option<serde_json::Value> {
+) -> Option<Arc<serde_json::Value>> {
     if derived.is_empty() {
         return None;
     }
-    document_json.cloned()
+    document_json.cloned().map(Arc::new)
 }
 
 struct PendingBroadcast {
@@ -180,7 +180,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport + 'static>
         &self,
         context: &RequestContext,
         derived: &[query::mutator::DerivedWrite],
-        source: Option<&serde_json::Value>,
+        source: Option<&std::sync::Arc<serde_json::Value>>,
     ) -> query::error::Result<()> {
         for write in derived {
             let doc_id = write.doc_id.to_string();

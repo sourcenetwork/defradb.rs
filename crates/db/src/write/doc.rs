@@ -33,11 +33,11 @@ fn document_json_value(doc: &Document) -> Option<serde_json::Value> {
 fn chunk_source(
     plans: &[crate::chunk::sync::FieldChunks],
     document_json: Option<&serde_json::Value>,
-) -> Option<serde_json::Value> {
+) -> Option<std::sync::Arc<serde_json::Value>> {
     if plans.is_empty() {
         return None;
     }
-    document_json.cloned()
+    document_json.cloned().map(std::sync::Arc::new)
 }
 
 /// Document mutator that uses a database transaction.
@@ -696,7 +696,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         };
 
         let source = (!collection.schema().chunked_fields.is_empty())
-            .then(|| pre_delete_document_json.clone())
+            .then(|| pre_delete_document_json.clone().map(std::sync::Arc::new))
             .flatten();
         self.register_update_callback(
             collection_name.to_string(),

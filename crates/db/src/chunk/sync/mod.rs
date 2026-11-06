@@ -128,7 +128,7 @@ where
     pub(crate) async fn create_missing(
         &self,
         parent_doc_id: &str,
-        source: Option<&serde_json::Value>,
+        source: Option<&std::sync::Arc<serde_json::Value>>,
         plans: Vec<FieldChunks>,
     ) -> Result<Vec<DerivedWrite>> {
         let mut written = Vec::new();
@@ -155,7 +155,7 @@ where
         &self,
         parent: &CollectionVersion,
         parent_doc_id: &str,
-        source: Option<&serde_json::Value>,
+        source: Option<&std::sync::Arc<serde_json::Value>>,
     ) -> Result<Vec<DerivedWrite>> {
         let mut written = Vec::new();
         for chunked in &parent.chunked_fields {

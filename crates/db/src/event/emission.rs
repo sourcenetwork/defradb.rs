@@ -17,14 +17,12 @@ use crate::txn::DbTxn;
 /// The document a filtered replicator decides a committed write by.
 #[derive(Debug, Clone)]
 pub enum FilterDocument {
-    /// The write's own document, when it encoded.
     Own(Option<serde_json::Value>),
     /// A `@chunk` chunk's parent document, never the chunk's own.
-    Parent(Option<serde_json::Value>),
+    Parent(Option<std::sync::Arc<serde_json::Value>>),
 }
 
 impl FilterDocument {
-    /// The write's own document, `None` for a chunk.
     pub fn own(&self) -> Option<&serde_json::Value> {
         match self {
             Self::Own(document) => document.as_ref(),
