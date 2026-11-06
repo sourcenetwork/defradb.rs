@@ -54,6 +54,15 @@ impl NacConfig {
     }
 }
 
+/// One source-scoped native permission relationship change.
+pub struct SourcePermissionChange<'a> {
+    pub permission: NodePermission,
+    pub parent_source: Option<&'a str>,
+    pub subject_kind: &'a str,
+    pub subject: &'a str,
+    pub delete: bool,
+}
+
 /// Trait for NAC manager operations, enabling dynamic dispatch over different store backends.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -88,11 +97,7 @@ pub trait NacManagerApi: defra_core::thread_bounds::MaybeSendSync {
         &self,
         _view: datastore::NamespaceView,
         _requestor: &Did,
-        _permission: NodePermission,
-        _parent_source: Option<&str>,
-        _subject_kind: &str,
-        _subject: &str,
-        _delete: bool,
+        _change: &SourcePermissionChange<'_>,
     ) -> Result<Option<bool>> {
         Ok(None)
     }

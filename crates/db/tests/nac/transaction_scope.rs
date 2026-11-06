@@ -166,11 +166,13 @@ fn source_mutation_rejects_unbound_persistent_store() {
                 .change_source_permission_in_txn(
                     txn.acpstore(),
                     &owner,
-                    NodePermission::CollectionPatch,
-                    None,
-                    "source",
-                    "tools:one",
-                    false,
+                    &db::nac::SourcePermissionChange {
+                        permission: NodePermission::CollectionPatch,
+                        parent_source: None,
+                        subject_kind: "source",
+                        subject: "tools:one",
+                        delete: false,
+                    },
                 )
                 .await
                 .unwrap(),

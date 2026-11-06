@@ -86,11 +86,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
         &self,
         view: datastore::NamespaceView,
         requestor: &Did,
-        permission: NodePermission,
-        parent_source: Option<&str>,
-        subject_kind: &str,
-        subject: &str,
-        delete: bool,
+        change: &super::SourcePermissionChange<'_>,
     ) -> Result<Option<bool>> {
         if !self.transaction_store_bound || !self.nac.supports_transactions() {
             return Ok(None);
@@ -102,7 +98,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
             .load()
             .await
             .map_err(|error| super::error::Error::Other(error.to_string()))?;
-        let operation = if delete {
+        let operation = if change.delete {
             NodePermission::NacRelationDelete
         } else {
             NodePermission::NacRelationAdd
@@ -120,11 +116,11 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
         scoped
             .change_source_permission(
                 requestor,
-                permission,
-                parent_source,
-                subject_kind,
-                subject,
-                delete,
+                change.permission,
+                change.parent_source,
+                change.subject_kind,
+                change.subject,
+                change.delete,
             )
             .await
             .map(Some)

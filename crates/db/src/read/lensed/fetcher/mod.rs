@@ -302,11 +302,13 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         nac.change_source_permission_in_txn(
             view,
             requestor,
-            permission,
-            parent_source,
-            subject_kind,
-            subject,
-            delete,
+            &crate::nac::SourcePermissionChange {
+                permission,
+                parent_source,
+                subject_kind,
+                subject,
+                delete,
+            },
         )
         .await
         .map_err(|error| query::QueryError::execution(error.to_string()))
