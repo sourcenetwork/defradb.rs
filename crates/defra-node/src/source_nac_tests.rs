@@ -337,3 +337,79 @@ fn trusted_host_source_change_keeps_user_transaction_owner() {
     })
     .unwrap();
 }
+
+struct HostSourceObserver {
+    fail: std::sync::atomic::AtomicBool,
+}
+
+#[async_trait::async_trait]
+impl db::DocumentMutationProjector for HostSourceObserver {
+    async fn reconcile(&self, _: &db::DocumentMutationContext<'_>) -> storage::corekv::Result<()> {
+        Ok(())
+    }
+
+    async fn project(
+        &self,
+        _: &db::DocumentMutationContext<'_>,
+        _: &str,
+        _: &str,
+    ) -> storage::corekv::Result<()> {
+        Ok(())
+    }
+
+    async fn source_changed(
+        &self,
+        _: &db::DocumentMutationContext<'_>,
+    ) -> storage::corekv::Result<()> {
+        if self.fail.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(storage::corekv::Error::Other(
+                "host source projection refused".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn failed_host_source_projection_rolls_back_its_source_statement() {
+    workers::block_on(async {
+        let observer = std::sync::Arc::new(HostSourceObserver {
+            fail: std::sync::atomic::AtomicBool::new(true),
+        });
+        let node = Node::builder()
+            .enable_signing()
+            .with_node_acp_enabled()
+            .with_document_projector(observer.clone())
+            .build()
+            .await
+            .unwrap();
+        let user = context(ACTOR);
+        let (handle, tx) = begin(&node, &user).await;
+        let root = edge(None, "source", "plugin:failed", false);
+        assert!(node
+            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .await
+            .is_err());
+        node.runner().commit_txn_as(&user, &handle).await.unwrap();
+        observer
+            .fail
+            .store(false, std::sync::atomic::Ordering::Release);
+        let (handle, tx) = begin(&node, &user).await;
+        node.change_host_nac_source_permission_in_txn(
+            &tx,
+            &edge(Some("plugin:failed"), "actor", OTHER, false),
+        )
+        .await
+        .unwrap();
+        node.runner().commit_txn_as(&user, &handle).await.unwrap();
+        assert!(!allowed(&node, OTHER).await);
+        let (handle, tx) = begin(&node, &user).await;
+        node.change_host_nac_source_permission_in_txn(&tx, &root)
+            .await
+            .unwrap();
+        node.runner().commit_txn_as(&user, &handle).await.unwrap();
+        assert!(allowed(&node, OTHER).await);
+        node.shutdown().await.unwrap();
+    })
+    .unwrap();
+}
