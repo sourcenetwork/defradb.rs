@@ -2177,6 +2177,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/chunk-split/src/split/mod.rs split; segments.rs fence_before; atoms.rs atoms; pack.rs pack; overlap.rs with_overlap",
         model_ref: "ChunkSplit (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Text chunking",
@@ -2185,6 +2186,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/schema/src/cid.rs build_collection_delta; crates/query/src/sdl_parse/chunk.rs synthesize_chunk_types; crates/db/src/merge/merge_handler/definition.rs process_collection_definition_delta",
         model_ref: "ChunkSplit (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // One task serves a pg-compat connection: one deadline read at the
