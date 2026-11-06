@@ -13,13 +13,14 @@ vars == <<manager, pending, actor, observed, document, grant, accepted, valid>>
 Init == /\ manager = TRUE /\ pending = FALSE /\ actor = "none"
         /\ observed = FALSE /\ document = FALSE /\ grant = FALSE
         /\ accepted = FALSE /\ valid = TRUE
-\* A request or an explicitly invoked repair starts from one snapshot.
+\* A request or an explicitly invoked Node-owned repair starts from one snapshot.
 Start(a) == /\ ~pending /\ ~accepted
             /\ pending' = TRUE /\ actor' = a /\ observed' = manager
             /\ UNCHANGED <<manager, document, grant, accepted, valid>>
 \* An independent transaction may revoke the request actor's authority.
 Revoke == /\ manager /\ manager' = FALSE
           /\ UNCHANGED <<pending, actor, observed, document, grant, accepted, valid>>
+\* The repair actor is the authenticated Node, not a substitute for a writer.
 \* Successful enablement publishes the document and source together.
 Commit == /\ pending
           /\ (actor = "repair" \/ (actor = "admin" /\ observed /\ manager)
