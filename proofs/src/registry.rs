@@ -2177,6 +2177,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/chunk/sync/mod.rs set_lists, ChunkWrites::create_missing, ChunkWrites::delete_all; crates/db/src/write/autocommit/one_op.rs AutoCommitMutator::in_batch; crates/db/src/write/autocommit/batch.rs BatchMutator::update_as, delete_as; crates/db/src/write/doc.rs DbDocMutator",
         model_ref: "MC_ParentChunks_Green.cfg / MC_ParentChunks_Red_SeparateTxn.cfg / MC_ParentChunks_Red_NoCascade.cfg / MC_ParentChunks_Red_NoValidation.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Text chunking",
@@ -2221,6 +2222,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/collection/ops/delete.rs delete_collection_with_txn; crates/db/src/collection/ops/chunk_versions.rs chunk_versions_to_add",
         model_ref: "ChunkSplit (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Text chunking",
@@ -2229,6 +2231,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/collection/ops/truncate/all.rs truncate_all; crates/db/src/collection/ops/purge.rs purge_documents",
         model_ref: "MC_TruncateChunks_Green.cfg / MC_TruncateChunks_Red_ParentsFirst.cfg / MC_TruncateChunks_Red_PurgeLeavesChunks.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // One task serves a pg-compat connection: one deadline read at the
