@@ -24,6 +24,7 @@ RUNS=(
   "MC_HostMutationProjection_Red_Direct.cfg HostMutationProjection.tla RED"
   "MC_HostMutationProjection_Red_Other.cfg HostMutationProjection.tla RED"
   "MC_HostMutationProjection_Red_Authority.cfg HostMutationProjection.tla RED"
+  "MC_HostMutationProjection_Red_Owner.cfg HostMutationProjection.tla RED"
   "MC_LocalFetchPermit_Green.cfg LocalFetchPermit.tla GREEN"
   "MC_LocalFetchPermit_Red_Hold.cfg LocalFetchPermit.tla RED"
   "MC_VerifiedClientGraph_Green.cfg VerifiedClientGraph.tla GREEN"

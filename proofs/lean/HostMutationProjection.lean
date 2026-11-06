@@ -33,6 +33,7 @@ structure Admission where
   documentAuthorized : Bool
   nodeAdministrator : Bool
   sameTransaction : Bool
+  verifiedRegistration : Bool
   projectionSucceeded : Bool
   commitSucceeded : Bool
 
@@ -40,7 +41,7 @@ structure Admission where
 mutation or transport. Source identities isolate independent grant paths. -/
 def publish (s : State) (_route : Route) (a : Admission) (document : String)
     (affected desired : Source → Bool) : State :=
-  if a.documentAuthorized && a.nodeAdministrator && a.sameTransaction &&
+  if a.documentAuthorized && a.nodeAdministrator && a.sameTransaction && a.verifiedRegistration &&
       a.projectionSucceeded && a.commitSucceeded then
     { document := document, direct := s.direct,
       sourced := fun key => if affected key then desired key else s.sourced key }
@@ -55,6 +56,12 @@ theorem rejected_document_changes_nothing (s : State) (route : Route)
 theorem failed_projection_changes_nothing (s : State) (route : Route)
     (a : Admission) (document : String) (affected desired : Source → Bool)
     (h : a.projectionSucceeded = false) :
+    publish s route a document affected desired = s := by
+  simp [publish, h]
+
+theorem unregistered_owner_changes_nothing (s : State) (route : Route)
+    (a : Admission) (document : String) (affected desired : Source → Bool)
+    (h : a.verifiedRegistration = false) :
     publish s route a document affected desired = s := by
   simp [publish, h]
 
@@ -85,10 +92,11 @@ theorem route_does_not_select_the_projector (s : State) (first second : Route)
 theorem disabled_source_is_removed (s : State) (route : Route) (a : Admission)
     (document : String) (affected desired : Source → Bool) (key : Source)
     (authorized : a.documentAuthorized = true) (admin : a.nodeAdministrator = true)
-    (bound : a.sameTransaction = true) (projected : a.projectionSucceeded = true)
+    (bound : a.sameTransaction = true) (registered : a.verifiedRegistration = true)
+    (projected : a.projectionSucceeded = true)
     (committed : a.commitSucceeded = true) (selected : affected key = true)
     (disabled : desired key = false) :
     (publish s route a document affected desired).sourced key = false := by
-  simp [publish, authorized, admin, bound, projected, committed, selected, disabled]
+  simp [publish, authorized, admin, bound, registered, projected, committed, selected, disabled]
 
 end HostMutationProjection
