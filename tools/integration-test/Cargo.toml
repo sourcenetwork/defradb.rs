@@ -14,6 +14,10 @@ path = "tests/testo/main.rs"
 name = "legacy"
 path = "tests/legacy/main.rs"
 
+[[test]]
+name = "verars"
+path = "tests/verars/main.rs"
+
 [dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "523de40514848e9f0349f3bf7d5a0e9d161402c9" }

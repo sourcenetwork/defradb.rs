@@ -438,8 +438,8 @@ cargo nextest run -p integration-test --test legacy -- acp::negative::
 cargo nextest run -p integration-test --test legacy -- acp::basic::rust_acp_basic
 ```
 
-Integration tests live in `tools/integration-test/tests/` and build into two
-test binaries, `testo` and `legacy`. Each top-level module is an area, so a
+Integration tests live in `tools/integration-test/tests/` and build into three
+test binaries: `testo`, `legacy` and `verars`. Each top-level module is an area, so a
 test's name starts with its area (`query::simple::…`), and `just
 integration-suite <area>` runs one area in both binaries.
 
@@ -447,6 +447,7 @@ integration-suite <area>` runs one area in both binaries.
 |--------|--------|------|
 | `testo` | `tests/testo/` | testo scenarios (`TestCase` + actions), run under every client by `DEFRA_CLIENT` (in-process, rust-http, go-http, cli). Most are generated from the Go corpus by `scripts/generate_scenarios.sh`. Every new integration test goes here. Areas: `acp`, `backup`, `collection`, `collection_version`, `encryption`, `explain`, `index`, `issues`, `mutation`, `net`, `node`, `query`, `searchable_encryption`, `signature`, `subscription`, `txn`, `view`, plus the framework self-tests `matchers` and `export`. |
 | `legacy` | `tests/legacy/` | hand-written `TestCluster`/`DefraClient` tests, deleted as testo covers them. Areas below. |
+| `verars` | `tests/verars/` | vera.rs native ACP tests (compartments, native_worker, p2p_acp, policy_generations, policy_lifecycle, smoke, verified_records). Its own binary so the Native consumer workflow builds only these in release; run with `--test verars`. |
 
 Legacy areas with submodules:
 
@@ -465,7 +466,6 @@ Legacy areas with submodules:
 | Backup | `backup::` | dev_mode, dump, purge, restore |
 | Cursor | `cursor::` | composite_index, error_paths, reindex_datetime_visibility, smoke |
 | Vera | `vera::` | acp_tuning, compartments, encryption_acp, p2p_acp, policy_lifecycle, resilience, smoke |
-| Vera.rs | `verars::` | compartments, p2p_acp, policy_lifecycle, smoke |
 
 Single-purpose legacy areas, one file each:
 

@@ -565,7 +565,7 @@ integration:
 # One integration area: `just integration-suite acp`, `just integration-suite p2p`.
 [group('test')]
 integration-suite suite *args:
-    cargo nextest run -p integration-test -E 'test(/^{{ suite }}::/)' --cargo-profile {{ profile }} {{ args }}
+    cargo nextest run -p integration-test -E 'test(/^{{ suite }}::/) | binary({{ suite }})' --cargo-profile {{ profile }} {{ args }}
 
 # The basic and query areas with every node's data path on a one-worker pool
 # (`DEFRA_WORKERS=1`): the same suites the default pool runs, on one worker.
@@ -602,7 +602,7 @@ integration-all:
     failed=()
     for suite in {{ integration_suites }}; do
         echo "== $suite =="
-        cargo nextest run -p integration-test -E "test(/^$suite::/)" --cargo-profile {{ profile }} || failed+=("$suite")
+        cargo nextest run -p integration-test -E "test(/^$suite::/) | binary($suite)" --cargo-profile {{ profile }} || failed+=("$suite")
     done
     total=$(echo {{ integration_suites }} | wc -w | tr -d ' ')
     if [ ${#failed[@]} -gt 0 ]; then

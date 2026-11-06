@@ -27,4 +27,3 @@ mod query;
 mod replicator_retry_common;
 mod vector;
 mod vera;
-mod verars;
