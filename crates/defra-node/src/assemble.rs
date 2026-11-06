@@ -176,9 +176,10 @@ where
     let database = Arc::new(database);
 
     // Node access control: always present, off until enabled. At startup it is
-    // enabled only when asked for, and then the node identity owns the
-    // policy, so DB-layer node operations run by the node itself are always
-    // allowed (the node-DID bypass in check_node_access).
+    // enabled only when asked for, and then the configured owner, or else the
+    // node identity, owns the policy (see nac_owner). DB-layer node operations
+    // run by the node itself are always allowed (the node-DID bypass in
+    // check_node_access).
     let nac_manager = close_on_error(
         &database,
         node_acp::create_nac_manager(
