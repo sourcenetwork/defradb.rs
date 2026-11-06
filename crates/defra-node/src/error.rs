@@ -218,6 +218,9 @@ pub enum Error {
     /// Node ACP needs a node identity.
     #[error("can not start nac without identity")]
     NodeAcpNeedsIdentity,
+    /// A trusted document projector needs the node's actual DID.
+    #[error("document projector requires a node identity DID")]
+    DocumentProjectorNeedsIdentity,
     /// The node identity given for node ACP is invalid.
     #[error("invalid node identity DID for node ACP: {0}")]
     InvalidNodeAcpIdentity(#[source] identity::Error),

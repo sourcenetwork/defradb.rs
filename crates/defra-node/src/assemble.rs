@@ -168,9 +168,6 @@ where
     let mut database = db::DB::open_from_arc_with_options(store.clone(), db_options)
         .await
         .map_err(Error::DatabaseOpen)?;
-    if let Some(projector) = extras.document_projector {
-        database.set_document_projector(projector);
-    }
     database.set_event_bus(event_bus.clone());
     if let Some(network) = network.as_ref() {
         database.set_network(network.edge().clone());
@@ -192,12 +189,6 @@ where
     .await?;
     database.set_nac_manager(nac_manager.clone());
 
-    close_on_error(
-        &database,
-        database.reconcile_document_projector().await.map_err(Error::DatabaseOpen),
-    )
-    .await?;
-
     let acp_setup = close_on_error(
         &database,
         node_acp::create_document_acp(
@@ -209,7 +200,22 @@ where
         .await,
     )
     .await?;
-    let document_acp = acp_setup.document_acp.clone();
+    database.set_document_acp(acp_setup.document_acp.clone());
+    let document_acp = database.document_acp().expect("document ACP was just installed").clone();
+    if let Some(projector) = extras.document_projector {
+        let actor = close_on_error(
+            &database,
+            node_query_identity.clone().ok_or(Error::DocumentProjectorNeedsIdentity),
+        ).await?;
+        close_on_error(
+            &database,
+            database.set_document_projector(projector, document_acp.clone(), actor).map_err(Error::DatabaseOpen),
+        ).await?;
+        close_on_error(
+            &database,
+            database.reconcile_document_projector().await.map_err(Error::DatabaseOpen),
+        ).await?;
+    }
     #[cfg(feature = "vera")]
     let remote_acp = acp_setup.vera_acp.is_some();
     #[cfg(not(feature = "vera"))]

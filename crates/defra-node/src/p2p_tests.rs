@@ -2472,20 +2472,34 @@ struct ReplicatedDocumentProjector;
 
 #[async_trait::async_trait]
 impl db::DocumentMutationProjector for ReplicatedDocumentProjector {
-    async fn reconcile(&self, _view: &db::DocumentMutationView) -> storage::corekv::Result<()> {
+    async fn reconcile(&self, _context: &db::DocumentMutationContext<'_>) -> storage::corekv::Result<()> {
         Ok(())
     }
 
     async fn project(
         &self,
-        view: &db::DocumentMutationView,
+        context: &db::DocumentMutationContext<'_>,
         collection: &str,
         doc_id: &str,
     ) -> storage::corekv::Result<()> {
         if collection == "ProjectedPeerDoc" && !doc_id.is_empty() {
-            view.sibling(storage::namespace::Namespace::Acpstore)
-                .set(b"test-replicated-projection", doc_id.as_bytes())
-                .await?;
+            let system = context.view.sibling(storage::namespace::Namespace::Systemstore);
+            let collection = db::collection::loader::load_collection_from_systemstore(&system, collection)
+                .await.map_err(|e| storage::corekv::Error::Other(e.to_string()))?
+                .ok_or_else(|| storage::corekv::Error::Other("missing collection".into()))?;
+            let policy = collection.schema().policy.as_ref().ok_or_else(|| storage::corekv::Error::Other("missing policy".into()))?;
+            let acp_view = context.view.sibling(storage::namespace::Namespace::Acpstore);
+            let scoped = context.document_acp.bind_transaction(acp_view.clone())
+                .ok_or_else(|| storage::corekv::Error::Other("ACP cannot bind".into()))?;
+            let owner = scoped.get_doc_owner(&policy.id, &policy.resource_name, doc_id).await
+                .map_err(|e| storage::corekv::Error::Other(e.to_string()))?
+                .ok_or_else(|| storage::corekv::Error::Other("verified creator not registered".into()))?;
+            if &owner == context.node_did {
+                return Err(storage::corekv::Error::Other("expected foreign creator".into()));
+            }
+            context.document_acp.change_node_admin_relationship(acp_view, context.node_did,
+                acp::Subject::wildcard(), &policy.id, &policy.resource_name, doc_id, "reader", false)
+                .await.map_err(|e| storage::corekv::Error::Other(e.to_string()))?;
         }
         Ok(())
     }
@@ -2494,12 +2508,19 @@ impl db::DocumentMutationProjector for ReplicatedDocumentProjector {
 #[test]
 fn accepted_replicated_document_runs_transactional_projector() {
     edge::testing::edge().block_on(async {
-        let node0 = Node::builder().with_p2p(test_p2p_config()).build().await.unwrap();
-        let node1 = Node::builder().with_p2p(test_p2p_config())
+        let node0 = Node::builder().enable_signing().with_node_acp_enabled().with_p2p(test_p2p_config()).build().await.unwrap();
+        let node1 = Node::builder().enable_signing().with_node_acp_enabled().with_p2p(test_p2p_config())
             .with_document_projector(std::sync::Arc::new(ReplicatedDocumentProjector))
             .build().await.unwrap();
-        node0.add_collection("type ProjectedPeerDoc { name: String }").await.unwrap();
-        node1.add_collection("type ProjectedPeerDoc { name: String }").await.unwrap();
+        let context0 = defra_core::RequestContext::default().with_identity(Some(node0.node_identity_did().unwrap().to_owned()));
+        let context1 = defra_core::RequestContext::default().with_identity(Some(node1.node_identity_did().unwrap().to_owned()));
+        let yaml = "name: P2P projection\nresources:\n  - name: records\n    relations:\n      - name: reader\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n";
+        let policy = node0.add_dac_policy_with_counter_as(&context0, yaml, 1).await.unwrap();
+        let policy1 = node1.add_dac_policy_with_counter_as(&context1, yaml, 1).await.unwrap();
+        assert_eq!(policy, policy1);
+        let schema = format!("type ProjectedPeerDoc @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}");
+        node0.add_collection_as(&context0, &schema).await.unwrap();
+        node1.add_collection_as(&context1, &schema).await.unwrap();
         let addr0 = wait_for_listen_addr(&node0).await;
         let addr1 = wait_for_listen_addr(&node1).await;
         let p2p0 = node0.p2p().unwrap();
@@ -2515,10 +2536,9 @@ fn accepted_replicated_document_runs_transactional_projector() {
         assert!(response.errors.is_empty(), "{:?}", response.errors);
         let id = extract_created_doc_id(&response, "add_ProjectedPeerDoc");
         wait_for_collection_len(&node1, "ProjectedPeerDoc", 1).await;
-        let txn = node1.database().new_txn(true).await.unwrap();
-        let projected = txn.acpstore().unwrap().get(b"test-replicated-projection").await.unwrap();
-        assert_eq!(projected.as_deref(), Some(id.as_bytes()));
-        txn.discard().unwrap();
+        let owner = node1.document_acp().get_doc_owner(&policy, "records", &id).await.unwrap();
+        assert_eq!(owner.as_ref().map(identity::Did::as_str), node0.node_identity_did());
+        assert!(node1.document_acp().check_named_permission(&identity::Did::new("did:key:reader").unwrap(), "read", &policy, "records", &id).await.unwrap());
         node0.shutdown().await.unwrap();
         node1.shutdown().await.unwrap();
     }).unwrap();

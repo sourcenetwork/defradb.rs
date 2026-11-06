@@ -14,16 +14,17 @@ struct Projector;
 
 #[async_trait::async_trait]
 impl db::DocumentMutationProjector for Projector {
-    async fn reconcile(&self, _view: &db::DocumentMutationView) -> storage::corekv::Result<()> {
+    async fn reconcile(&self, _context: &db::DocumentMutationContext<'_>) -> storage::corekv::Result<()> {
         Ok(())
     }
 
     async fn project(
         &self,
-        view: &db::DocumentMutationView,
+        context: &db::DocumentMutationContext<'_>,
         collection: &str,
         doc_id: &str,
     ) -> storage::corekv::Result<()> {
+        let view = context.view;
         if collection != "ProjectedTool" || doc_id.is_empty() {
             return Ok(());
         }
@@ -95,6 +96,7 @@ fn raw_document_mutations_stage_sources_in_the_same_transaction() {
     workers::block_on(async {
         let node = Node::builder()
             .with_node_acp_owner(OWNER)
+            .with_node_identity_did(OWNER)
             .with_document_projector(Arc::new(Projector))
             .build().await.unwrap();
         let owner = defra_core::RequestContext::default().with_identity(Some(OWNER.to_owned()));
@@ -134,16 +136,17 @@ struct RefusingProjector;
 
 #[async_trait::async_trait]
 impl db::DocumentMutationProjector for RefusingProjector {
-    async fn reconcile(&self, _view: &db::DocumentMutationView) -> storage::corekv::Result<()> {
+    async fn reconcile(&self, _context: &db::DocumentMutationContext<'_>) -> storage::corekv::Result<()> {
         Ok(())
     }
 
     async fn project(
         &self,
-        view: &db::DocumentMutationView,
+        context: &db::DocumentMutationContext<'_>,
         collection: &str,
         doc_id: &str,
     ) -> storage::corekv::Result<()> {
+        let view = context.view;
         if collection == "ProjectedTool" && !doc_id.is_empty() {
             view.sibling(Namespace::Acpstore)
                 .set(b"test-projection", b"staged")
@@ -158,6 +161,7 @@ impl db::DocumentMutationProjector for RefusingProjector {
 fn refused_projection_rolls_back_document_and_staged_native_changes() {
     workers::block_on(async {
         let node = Node::builder()
+            .with_node_identity_did(OWNER)
             .with_document_projector(Arc::new(RefusingProjector))
             .build()
             .await
@@ -190,4 +194,83 @@ fn refused_projection_rolls_back_document_and_staged_native_changes() {
         node.shutdown().await.unwrap();
     })
     .unwrap();
+}
+
+struct ForeignOwnerProjector;
+
+#[async_trait::async_trait]
+impl db::DocumentMutationProjector for ForeignOwnerProjector {
+    async fn reconcile(&self, _context: &db::DocumentMutationContext<'_>) -> storage::corekv::Result<()> {
+        Ok(())
+    }
+
+    async fn project(
+        &self,
+        context: &db::DocumentMutationContext<'_>,
+        collection: &str,
+        doc_id: &str,
+    ) -> storage::corekv::Result<()> {
+        if collection != "ForeignProjected" || doc_id.is_empty() {
+            return Ok(());
+        }
+        let system = context.view.sibling(Namespace::Systemstore);
+        let collection = db::collection::loader::load_collection_from_systemstore(&system, collection)
+            .await.map_err(|e| storage::corekv::Error::Other(e.to_string()))?
+            .ok_or_else(|| storage::corekv::Error::Other("missing projected schema".into()))?;
+        let policy = collection.schema().policy.as_ref()
+            .ok_or_else(|| storage::corekv::Error::Other("missing projected policy".into()))?;
+        let acp_view = context.view.sibling(Namespace::Acpstore);
+        let scoped = context.document_acp.bind_transaction(acp_view.clone())
+            .ok_or_else(|| storage::corekv::Error::Other("configured ACP cannot bind".into()))?;
+        let owner = scoped.get_doc_owner(&policy.id, &policy.resource_name, doc_id).await
+            .map_err(|e| storage::corekv::Error::Other(e.to_string()))?
+            .ok_or_else(|| storage::corekv::Error::Other("creator not registered".into()))?;
+        if &owner == context.node_did {
+            return Err(storage::corekv::Error::Other("expected foreign document owner".into()));
+        }
+        context.document_acp.change_node_admin_relationship(
+            acp_view, context.node_did, acp::Subject::wildcard(), &policy.id,
+            &policy.resource_name, doc_id, "reader", false,
+        ).await.map_err(|e| storage::corekv::Error::Other(e.to_string()))?;
+        Ok(())
+    }
+}
+
+#[test]
+fn local_signed_foreign_creator_is_registered_before_projector_admin_grant() {
+    use crypto::{Key as _, PrivateKey as _};
+    use identity::Identity as _;
+    workers::block_on(async {
+        let private = crypto::generate_ed25519().unwrap();
+        let public = private.public_key();
+        let signing = defra_core::signing::SigningConfig {
+            key_type: defra_core::signing::SigningKeyType::Ed25519,
+            private_key_bytes: private.raw_owned(),
+            public_key_bytes: public.raw_owned(),
+            public_key_hex: hex::encode(public.raw()),
+            remote_signer: None,
+            signing_authorization: None,
+        };
+        let user = identity::RawIdentity::from_private_key(private).unwrap();
+        let user_did = user.did().unwrap();
+        let node = Node::builder().enable_signing().with_node_acp_enabled()
+            .with_document_projector(Arc::new(ForeignOwnerProjector)).build().await.unwrap();
+        let node_did = node.node_identity_did().unwrap().to_owned();
+        let owner = defra_core::RequestContext::default().with_identity(Some(node_did));
+        for permission in [NodePermission::DocumentUpdate, NodePermission::DocumentRead, NodePermission::CollectionGet] {
+            node.add_nac_actor_relationship_as(&owner, permission.as_str(), user_did.as_str()).await.unwrap();
+        }
+        let policy = node.add_dac_policy_as(&owner, "name: Projection fixture\nresources:\n  - name: records\n    relations:\n      - name: reader\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n").await.unwrap();
+        node.add_collection_as(&owner, &format!("type ForeignProjected @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
+        let response = node.execute_request_with_signer(
+            QueryRequest::new("mutation { create_ForeignProjected(input:{name:\"one\"}) { _docID } }")
+                .with_identity(Some(user_did.clone())),
+            &crate::EmbeddedSigner::from_config(signing).unwrap(),
+        ).await;
+        assert!(!response.has_errors(), "{:?}", response.errors);
+        let doc_id = response.data.unwrap()["add_ForeignProjected"][0]["_docID"].as_str().unwrap().to_owned();
+        assert_eq!(node.document_acp().get_doc_owner(&policy, "records", &doc_id).await.unwrap(), Some(user_did));
+        assert!(node.document_acp().check_named_permission(&Did::new("did:key:reader").unwrap(), "read", &policy, "records", &doc_id).await.unwrap());
+        node.shutdown().await.unwrap();
+    }).unwrap();
 }

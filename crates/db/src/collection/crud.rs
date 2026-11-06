@@ -676,8 +676,10 @@ impl Collection {
         doc: &Document,
         doc_short_id: u64,
     ) -> Result<DocID> {
-        self.save_with_datastore_priorities(datastore, doc, doc_short_id, None)
-            .await
+        let doc_id = self.save_with_datastore_priorities(datastore, doc, doc_short_id, None)
+            .await?;
+        datastore.project_document(self.name(), &doc_id.to_string()).await.map_err(Error::Storage)?;
+        Ok(doc_id)
     }
 
     pub(crate) async fn save_with_datastore_priorities(
@@ -738,11 +740,6 @@ impl Collection {
         let version = doc.collection_version_id().unwrap_or(&self.def.version_id);
         self.store_document_version(datastore, doc_short_id, version)
             .await?;
-
-        datastore
-            .project_document(self.name(), &doc_id.to_string())
-            .await
-            .map_err(Error::Storage)?;
 
         Ok(doc_id)
     }
