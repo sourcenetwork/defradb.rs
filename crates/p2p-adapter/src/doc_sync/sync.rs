@@ -7,7 +7,9 @@ use crate::doc_sync::dispatch::DocSyncDispatch;
 use crate::{P2PError, P2PErrorExt as _};
 
 /// Explicit document sync: ask every connected peer for `doc_ids`, then wait
-/// for the merges those requests trigger.
+/// until each document has merged, from whichever peer had it first. A peer
+/// without a document merges nothing, so waiting for a merge per peer would
+/// only ever end in the idle timeouts.
 ///
 /// `overall_timeout` and `parallelism` are the only points where the two
 /// transports differ: iroh waits 10s and dispatches up to 16 sends at once,
@@ -33,18 +35,16 @@ where
     }
 
     let mut sub = event_bus.subscribe(&[events::EventName::MergeComplete]);
-    let total_expected = connected_peers.len() * doc_ids.len();
-    let mut total_received = 0;
+    let mut unmerged: RapidHashSet<String> = doc_ids.iter().cloned().collect();
+    let requested = unmerged.len();
     let mut last_unanswered = 0;
     let mut dispatched = false;
     let idle_timeout = std::time::Duration::from_secs(3);
     let start = web_time::Instant::now();
-    let doc_set: RapidHashSet<String> = doc_ids.iter().cloned().collect();
 
     for _attempt in 0..3 {
-        // Completion first: an empty `doc_ids` makes `total_expected` zero, and
-        // asking for nothing is not a timeout.
-        if total_received >= total_expected {
+        // Completion first: asking for nothing is not a timeout.
+        if unmerged.is_empty() {
             break;
         }
         // Go builds an already-expired context from a zero or negative timeout
@@ -96,7 +96,7 @@ where
         // nothing to contribute — e.g. source-side explicit sync while
         // collection replication delivers the doc out of band.
         let mut last_merge = web_time::Instant::now();
-        while total_received < total_expected && start.elapsed() < overall_timeout {
+        while !unmerged.is_empty() && start.elapsed() < overall_timeout {
             if last_merge.elapsed() > idle_timeout {
                 break;
             }
@@ -104,8 +104,7 @@ where
             match p2p::rt::time::timeout(std::time::Duration::from_millis(100), sub.recv()).await {
                 Ok(Some(msg)) => {
                     if let Some(data) = msg.as_merge_complete() {
-                        if doc_set.contains(&data.doc_id) {
-                            total_received += 1;
+                        if unmerged.remove(&data.doc_id) {
                             last_merge = web_time::Instant::now();
                         }
                     }
@@ -122,7 +121,7 @@ where
     // back (`sync_doc.go:155-158`). Only a transport whose send confirms a
     // reply can tell that from a send that merely left the machine, so libp2p
     // keeps returning `Ok` here rather than inventing a timeout it cannot see.
-    if D::SEND_CONFIRMS_REPLY && last_unanswered > 0 && total_received == 0 {
+    if D::SEND_CONFIRMS_REPLY && last_unanswered > 0 && unmerged.len() == requested {
         return Err(P2PError::transport("timeout while syncing doc"));
     }
     Ok(())
@@ -419,5 +418,51 @@ mod tests {
         )
         .await
         .expect("dispatch succeeded and the peer had nothing to send");
+    }
+
+    /// Of two connected peers only one has the document: its merge ends the
+    /// wait, where a merge per peer would never come and the idle timeouts
+    /// would have to.
+    #[nuclei::test]
+    async fn a_documents_first_merge_ends_the_wait() {
+        use events::Bus as _;
+
+        let dispatch = Arc::new(MixedDispatch::<false>::new(2, 0));
+        let bus = Arc::new(events::ChannelBus::default());
+        let network = p2p::network::Network::on(edge::testing::edge());
+        let doc_id = "bae-merged".to_string();
+        let started = web_time::Instant::now();
+
+        let sync = super::sync_documents(
+            Arc::clone(&dispatch),
+            bus.as_ref(),
+            &network,
+            vec![doc_id.clone()],
+            Duration::from_secs(30),
+            1,
+        );
+        let merge = async {
+            p2p::rt::time::sleep(Duration::from_millis(50)).await;
+            bus.publish(events::Message::merge_complete(events::MergeCompleteData {
+                doc_id: doc_id.clone(),
+                subject_doc_id: None,
+                cid: cid::Cid::default(),
+                collection_id: "collection".to_string(),
+                by_peer: "peer".to_string(),
+            }));
+            std::future::pending::<()>().await;
+        };
+        futures::pin_mut!(sync, merge);
+        let futures::future::Either::Left((result, _)) = futures::future::select(sync, merge).await
+        else {
+            unreachable!("the merge never ends");
+        };
+
+        result.expect("the document merged");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "the wait took {:?}, as long as the idle timeouts",
+            started.elapsed()
+        );
     }
 }
