@@ -7,7 +7,6 @@ use storage::namespace::Namespace;
 
 use crate::{Node, QueryRequest};
 
-const OWNER: &str = "did:key:owner";
 const AGENT: &str = "did:key:agent";
 
 struct Projector;
@@ -53,10 +52,10 @@ impl db::DocumentMutationProjector for Projector {
         nac.load()
             .await
             .map_err(|e| storage::corekv::Error::Other(e.to_string()))?;
-        let owner = Did::new(OWNER).unwrap();
+        let owner = context.node_did;
         if enabled {
             nac.change_source_permission(
-                &owner,
+                owner,
                 NodePermission::CollectionPatch,
                 Some(&source),
                 "actor",
@@ -67,7 +66,7 @@ impl db::DocumentMutationProjector for Projector {
             .map_err(|e| storage::corekv::Error::Other(e.to_string()))?;
         }
         nac.change_source_permission(
-            &owner,
+            owner,
             NodePermission::CollectionPatch,
             None,
             "source",
@@ -81,7 +80,7 @@ impl db::DocumentMutationProjector for Projector {
 }
 
 fn request(text: String) -> QueryRequest {
-    QueryRequest::new(text).with_identity(Some(Did::new(OWNER).unwrap()))
+    QueryRequest::new(text)
 }
 
 async fn allowed(node: &Node) -> bool {
@@ -95,11 +94,11 @@ async fn allowed(node: &Node) -> bool {
 fn raw_document_mutations_stage_sources_in_the_same_transaction() {
     workers::block_on(async {
         let node = Node::builder()
-            .with_node_acp_owner(OWNER)
-            .with_node_identity_did(OWNER)
+            .enable_signing()
+            .with_node_acp_enabled()
             .with_document_projector(Arc::new(Projector))
             .build().await.unwrap();
-        let owner = defra_core::RequestContext::default().with_identity(Some(OWNER.to_owned()));
+        let owner = defra_core::RequestContext::default().with_identity(Some(node.node_identity_did().unwrap().to_owned()));
         node.add_collection_as(&owner, "type ProjectedTool { enabled: Boolean, name: String }").await.unwrap();
         let created = node.execute_request(request("mutation { create_ProjectedTool(input:{enabled:true, name:\"one\"}) { _docID } }".into())).await;
         assert!(!created.has_errors(), "{:?}", created.errors);
@@ -161,7 +160,7 @@ impl db::DocumentMutationProjector for RefusingProjector {
 fn refused_projection_rolls_back_document_and_staged_native_changes() {
     workers::block_on(async {
         let node = Node::builder()
-            .with_node_identity_did(OWNER)
+            .enable_signing()
             .with_document_projector(Arc::new(RefusingProjector))
             .build()
             .await
