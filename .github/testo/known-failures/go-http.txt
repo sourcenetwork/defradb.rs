@@ -16,3 +16,6 @@ testo encryption::field_commit::doc_encryption_field_with_encryption_on_field_sh
 testo index::range_filter::a_closed_range_fetches_only_the_range #2527
 testo index::range_filter::an_empty_range_fetches_nothing #2527
 testo index::range_filter::an_open_range_on_a_descending_index_fetches_only_the_range #2527
+testo query::cyclic_fragments::a_fragment_spreading_itself_fails_validation #2619
+testo query::cyclic_fragments::fragments_spreading_each_other_fail_validation #2619
+testo query::cyclic_fragments::a_cycle_no_field_spreads_still_fails_validation #2619

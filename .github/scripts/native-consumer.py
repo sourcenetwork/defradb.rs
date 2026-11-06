@@ -301,14 +301,14 @@ def qualify(runner):
     runner.env["DEFRA_VERA_BINARY"] = runner.env["DEFRA_RUST_BINARY"]
     log = runner.run("compile-provider", CARGO + ["test", *BUILD, "-p", "vera", "--lib", "--no-run", "--message-format=json"])
     provider = runner.stage(log, "vera", "provider-tests")
-    log = runner.run("compile-native", CARGO + ["test", *BUILD, "-p", "integration-test", "--test", "verars", "--no-run", "--message-format=json"])
-    native = runner.stage(log, "verars", "native-tests")
+    log = runner.run("compile-native", CARGO + ["test", *BUILD, "-p", "integration-test", "--test", "legacy", "--no-run", "--message-format=json"])
+    native = runner.stage(log, "legacy", "native-tests")
     runner.test("provider-units", provider, ["vera_rs::"], UNIT_TESTS)
     for phase, suffix in LIVE_CASES:
-        selector = "policy_generations::" + suffix
+        selector = "verars::policy_generations::" + suffix
         runner.test(phase, native, [selector, "--exact"], [selector])
     runner.run("lint-provider", CARGO + ["clippy", *BUILD, "-p", "vera", "-p", "cli", "--features", "cli/vera", "--lib", "--tests", "--", "-D", "warnings"])
-    runner.run("lint-native", CARGO + ["clippy", *BUILD, "-p", "integration-test", "--test", "verars", "--", "-D", "warnings"])
+    runner.run("lint-native", CARGO + ["clippy", *BUILD, "-p", "integration-test", "--test", "legacy", "--", "-D", "warnings"])
 
 
 def main():
