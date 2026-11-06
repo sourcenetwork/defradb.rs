@@ -1599,6 +1599,8 @@ mod p2p_tests;
 mod owner_observation_tests;
 
 #[cfg(test)]
+mod delegated_nac_tests;
+#[cfg(test)]
 mod source_nac_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
