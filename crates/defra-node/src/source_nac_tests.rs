@@ -283,3 +283,39 @@ fn cyclic_source_graph_does_not_grant_an_unrelated_actor() {
     })
     .unwrap();
 }
+
+#[test]
+fn trusted_host_source_change_keeps_user_transaction_owner() {
+    workers::block_on(async {
+        let node = Node::builder()
+            .enable_signing()
+            .with_node_acp_owner(OWNER)
+            .build()
+            .await
+            .unwrap();
+        let node_did = node.node_identity_did().unwrap().to_owned();
+        let owner = context(OWNER);
+        let user = context(ACTOR);
+        let (handle, tx) = begin(&node, &user).await;
+        let root = edge(None, "source", "plugin:installed", false);
+        assert!(node.change_host_nac_source_permission_in_txn(&tx, &root).await.is_err());
+        node.runner().discard_txn_as(&user, &handle).await.unwrap();
+        node.add_nac_actor_relationship_as(&owner, "admin", &node_did).await.unwrap();
+        let (handle, tx) = begin(&node, &user).await;
+        let wrong_owner = context(OTHER).with_txn(Some(handle.as_str().parse().unwrap()));
+        assert!(node.change_host_nac_source_permission_in_txn(&wrong_owner, &root).await.is_err());
+        for item in [root.clone(), edge(Some("plugin:installed"), "actor", OTHER, false)] {
+            assert!(node.change_host_nac_source_permission_in_txn(&tx, &item).await.unwrap());
+        }
+        assert!(!allowed(&node, OTHER).await);
+        node.runner().discard_txn_as(&user, &handle).await.unwrap();
+        assert!(!allowed(&node, OTHER).await);
+        let (handle, tx) = begin(&node, &user).await;
+        for item in [root, edge(Some("plugin:installed"), "actor", OTHER, false)] {
+            assert!(node.change_host_nac_source_permission_in_txn(&tx, &item).await.unwrap());
+        }
+        node.runner().commit_txn_as(&user, &handle).await.unwrap();
+        assert!(allowed(&node, OTHER).await);
+        node.shutdown().await.unwrap();
+    }).unwrap();
+}
