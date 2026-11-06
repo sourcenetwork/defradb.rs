@@ -2030,3 +2030,24 @@ fn test_one_to_many_collection_ids_match_go() {
         Some(book.collection_id.as_str()),
     );
 }
+
+/// An unknown member of the nested `ordered:` block is reported against that
+/// block, since the same name may be a valid argument of `@index` itself.
+#[test]
+fn test_unknown_ordered_member_names_the_ordered_block() {
+    let error = parse_sdl(r#"type Book { title: String @index(ordered: {name: "book_title"}) }"#)
+        .expect_err("name is not an ordered member")
+        .to_string();
+    assert!(
+        error.contains("@index ordered has no argument named 'name'"),
+        "got: {error}"
+    );
+
+    let error = parse_sdl(r#"type Book { title: String @index(bogus: true) }"#)
+        .expect_err("bogus is not an @index argument")
+        .to_string();
+    assert!(
+        error.contains("@index has no argument named 'bogus'"),
+        "got: {error}"
+    );
+}
