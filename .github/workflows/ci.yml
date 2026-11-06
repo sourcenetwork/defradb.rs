@@ -85,12 +85,12 @@ jobs:
 
             // The other nuclei io backends run on main and in the merge queue:
             // on a pull request they tripled P2P Linux and Conformance.
-            const io = [{ name: '', suffix: '', backend: '', recv: '' }];
+            const ioVariants = [{ name: '', suffix: '', backend: '', recv: '' }];
             if (context.eventName !== 'pull_request') {
-              io.push({ name: ' (epoll)', suffix: '-epoll', backend: 'epoll', recv: '' });
-              io.push({ name: ' (no receive buffers)', suffix: '-no-recv-buffers', backend: '', recv: '0' });
+              ioVariants.push({ name: ' (epoll)', suffix: '-epoll', backend: 'epoll', recv: '' });
+              ioVariants.push({ name: ' (no receive buffers)', suffix: '-no-recv-buffers', backend: '', recv: '0' });
             }
-            core.setOutput('io_variants', JSON.stringify(io));
+            core.setOutput('io_variants', JSON.stringify(ioVariants));
 
   lint-default:
     name: Lint (default)
