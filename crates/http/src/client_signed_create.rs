@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use async_tungstenite::tungstenite::client::IntoClientRequest;
 use async_tungstenite::tungstenite::Message;
-use futures::{Sink, SinkExt, Stream, StreamExt};
+use futures::{Sink, Stream};
 use query::executor::{QueryRequest, QueryResponse};
 use serde_json::{json, Value};
 
@@ -21,6 +21,10 @@ pub enum ClientSignedCreateError {
     Request(String),
     #[error("signing connection failed: {0}")]
     Connection(String),
+    /// A request or response exceeded the signing transport limit. If the
+    /// request was dispatched, its commit outcome may be unknown.
+    #[error("signing message exceeds the 16 MiB limit; a dispatched operation may have completed")]
+    MessageTooLarge,
     #[error("invalid signing conversation: {0}")]
     Protocol(String),
     #[error("server requested a block outside the approved graph: {0}")]
@@ -186,8 +190,8 @@ pub fn websocket_request(
 /// Bound incoming frames before the transport allocates their payloads.
 pub fn websocket_config() -> async_tungstenite::tungstenite::protocol::WebSocketConfig {
     async_tungstenite::tungstenite::protocol::WebSocketConfig::default()
-        .max_message_size(Some(1024 * 1024))
-        .max_frame_size(Some(1024 * 1024))
+        .max_message_size(Some(crate::client_signing_wire::MAX_MESSAGE))
+        .max_frame_size(Some(crate::client_signing_wire::MAX_FRAME))
 }
 
 /// Run the native signing conversation on a caller-connected WebSocket.
@@ -232,6 +236,18 @@ where
     conversation_on_socket(&mut socket, request, txn_id, graph, response_key).await
 }
 
+fn map_wire_error(error: crate::client_signing_wire::WireError) -> ClientSignedCreateError {
+    match error {
+        crate::client_signing_wire::WireError::TooLarge => ClientSignedCreateError::MessageTooLarge,
+        crate::client_signing_wire::WireError::Connection(error) => {
+            ClientSignedCreateError::Connection(error)
+        }
+        crate::client_signing_wire::WireError::Protocol(error) => {
+            ClientSignedCreateError::Protocol(error)
+        }
+    }
+}
+
 pub(crate) async fn conversation_on_socket<S, E, G>(
     socket: &mut S,
     request: QueryRequest,
@@ -245,25 +261,16 @@ where
     G: ClientSigningGraph,
 {
     let start = json!({"query":request.query, "operationName":request.operation_name, "variables":request.variables, "txn_id":txn_id, "public_key_hex":graph.public_key_hex()});
-    socket
-        .send(Message::Text(start.to_string().into()))
+    crate::client_signing_wire::send(socket, &start)
         .await
-        .map_err(|error| ClientSignedCreateError::Connection(error.to_string()))?;
-    while let Some(message) = socket.next().await {
-        let message =
-            message.map_err(|error| ClientSignedCreateError::Connection(error.to_string()))?;
-        let Message::Text(text) = message else {
-            return Err(ClientSignedCreateError::Protocol(
-                "expected a text message".into(),
-            ));
-        };
-        if text.len() > 1024 * 1024 {
-            return Err(ClientSignedCreateError::Protocol(
-                "message too large".into(),
-            ));
+        .map_err(map_wire_error)?;
+    loop {
+        let value = crate::client_signing_wire::receive(socket)
+            .await
+            .map_err(map_wire_error)?;
+        if value.get("error").and_then(Value::as_str) == Some("message_too_large") {
+            return Err(ClientSignedCreateError::MessageTooLarge);
         }
-        let value: Value = serde_json::from_str(&text)
-            .map_err(|error| ClientSignedCreateError::Protocol(error.to_string()))?;
         if let Some(blocks) = value.get("blocks").and_then(Value::as_array) {
             let blocks = blocks
                 .iter()
@@ -280,12 +287,9 @@ where
                 .collect::<Result<Vec<_>, _>>()?;
             let signatures = graph.respond(&blocks)?;
             let signatures = signatures.iter().map(hex::encode).collect::<Vec<_>>();
-            socket
-                .send(Message::Text(
-                    json!({"signatures":signatures}).to_string().into(),
-                ))
+            crate::client_signing_wire::send(socket, &json!({"signatures":signatures}))
                 .await
-                .map_err(|error| ClientSignedCreateError::Connection(error.to_string()))?;
+                .map_err(map_wire_error)?;
         } else if let Some(response) = value.get("response") {
             let response: QueryResponse = serde_json::from_value(response.clone())
                 .map_err(|error| ClientSignedCreateError::Protocol(error.to_string()))?;
@@ -313,7 +317,4 @@ where
             ));
         }
     }
-    Err(ClientSignedCreateError::Connection(
-        "connection closed before a response".into(),
-    ))
 }

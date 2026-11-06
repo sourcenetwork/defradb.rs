@@ -100,6 +100,7 @@ mod client_signer;
 mod client_signer_tests;
 #[cfg(feature = "server")]
 mod client_signing;
+mod client_signing_wire;
 #[cfg(feature = "server")]
 pub mod error;
 #[cfg(feature = "server")]

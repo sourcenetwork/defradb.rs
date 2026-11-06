@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use async_tungstenite::tungstenite::{handshake::derive_accept_key, protocol::Role, Message};
+use async_tungstenite::tungstenite::{handshake::derive_accept_key, protocol::Role};
 use async_tungstenite::WebSocketStream;
 use axum::body::Body;
 use axum::extract::State;
@@ -21,7 +21,6 @@ use crate::identity_extractor::{ExtractIdentity, ExtractTokenIdentity};
 use crate::nac_guard::require_permission;
 use crate::router::{AppState, NodePermission};
 
-const MAX_MESSAGE: usize = 1024 * 1024;
 const SESSION_TIMEOUT: Duration = Duration::from_secs(90);
 
 type Socket = WebSocketStream<net::rt::FromHyper<hyper::upgrade::Upgraded>>;
@@ -124,8 +123,8 @@ pub(crate) async fn upgrade(
             if let Ok(Ok(stream)) = nuclei::time::timeout(lifetime, upgraded).await {
                 let mut config =
                     async_tungstenite::tungstenite::protocol::WebSocketConfig::default();
-                config.max_message_size = Some(MAX_MESSAGE);
-                config.max_frame_size = Some(MAX_MESSAGE);
+                config.max_message_size = Some(crate::client_signing_wire::MAX_MESSAGE);
+                config.max_frame_size = Some(crate::client_signing_wire::MAX_FRAME);
                 let socket = WebSocketStream::from_raw_socket(
                     net::rt::FromHyper::new(stream),
                     Role::Server,
@@ -155,11 +154,21 @@ async fn next_json<T>(socket: &mut Socket) -> Option<T>
 where
     T: serde::de::DeserializeOwned,
 {
-    let message = socket.next().await?.ok()?;
-    let Message::Text(text) = message else {
-        return None;
-    };
-    serde_json::from_str(&text).ok()
+    let value = crate::client_signing_wire::receive(socket).await.ok()?;
+    serde_json::from_value(value).ok()
+}
+
+async fn send_session(socket: &mut Socket, value: &serde_json::Value) -> bool {
+    match crate::client_signing_wire::send(socket, value).await {
+        Ok(()) => true,
+        Err(crate::client_signing_wire::WireError::TooLarge) => {
+            let _ =
+                crate::client_signing_wire::send(socket, &json!({"error": "message_too_large"}))
+                    .await;
+            false
+        }
+        Err(_) => false,
+    }
 }
 
 fn accepted_mutation(start: &Start, limits: query::QueryLimits) -> bool {
@@ -257,11 +266,7 @@ async fn run(mut socket: Socket, state: AppState, identity: ExtractIdentity, exp
         };
         match event {
             Event::Done(result) => {
-                let _ = socket
-                    .send(Message::Text(
-                        json!({"response": result}).to_string().into(),
-                    ))
-                    .await;
+                let _ = send_session(&mut socket, &json!({"response": result})).await;
                 return;
             }
             Event::Wave(Some(wave)) => {
@@ -269,13 +274,7 @@ async fn run(mut socket: Socket, state: AppState, identity: ExtractIdentity, exp
                     return;
                 }
                 let payloads = wave.payloads.iter().map(hex::encode).collect::<Vec<_>>();
-                if socket
-                    .send(Message::Text(
-                        json!({"blocks": payloads}).to_string().into(),
-                    ))
-                    .await
-                    .is_err()
-                {
+                if !send_session(&mut socket, &json!({"blocks": payloads})).await {
                     return;
                 }
                 let Some(answer) = next_json::<Answer>(&mut socket).await else {
