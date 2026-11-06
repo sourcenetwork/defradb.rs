@@ -23,21 +23,6 @@ use storage::keys::systemstore::{CollectionKey, CollectionNameKey, CollectionVer
 use tracing::instrument;
 
 impl<S: Store> crate::database::DB<S> {
-    /// [`Self::patch_collection_as`] for `identity`, or for the identity acting in [`defra_core::RequestContext::ambient`] when there is none.
-    pub async fn patch_collection(
-        &self,
-        collection_name: &str,
-        patch: &str,
-        identity: Option<&identity::Did>,
-    ) -> Result<CollectionVersion> {
-        self.patch_collection_as(
-            &crate::access::nac::ambient_as(identity),
-            collection_name,
-            patch,
-        )
-        .await
-    }
-
     /// Apply a JSON Patch to a collection schema.
     ///
     /// This method takes a JSON Patch document (RFC 6902) and applies it to
@@ -67,56 +52,34 @@ impl<S: Store> crate::database::DB<S> {
     /// - `CollectionNotFound` if the collection doesn't exist
     /// - `InvalidPatch` if the patch is invalid or cannot be applied
     /// - `Schema` if the resulting schema is invalid
-    pub async fn patch_collection_as(
+    #[instrument(skip(self, context, patch, migration), name = "db.patch_collection")]
+    pub async fn patch_collection(
         &self,
         context: &defra_core::RequestContext,
-        collection_name: &str,
-        patch: &str,
-    ) -> Result<CollectionVersion> {
-        self.patch_collection_with_migration_as(context, collection_name, patch, None)
-            .await
-    }
-
-    /// [`Self::patch_collection_with_migration_as`] for `identity`, or for the identity acting in [`defra_core::RequestContext::ambient`] when there is none.
-    pub async fn patch_collection_with_migration(
-        &self,
-        collection_name: &str,
         patch: &str,
         migration: Option<lens::LensConfig>,
-        identity: Option<&identity::Did>,
-    ) -> Result<CollectionVersion> {
-        self.patch_collection_with_migration_as(
-            &crate::access::nac::ambient_as(identity),
-            collection_name,
-            patch,
-            migration,
-        )
-        .await
-    }
-
-    /// Apply a JSON Patch and its migration as one operation.
-    #[instrument(skip(self, patch, migration), fields(collection = %collection_name), name = "db.patch_collection")]
-    pub async fn patch_collection_with_migration_as(
-        &self,
-        context: &defra_core::RequestContext,
-        collection_name: &str,
-        patch: &str,
-        migration: Option<lens::LensConfig>,
-    ) -> Result<CollectionVersion> {
+    ) -> Result<()> {
         self.check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
             .await?;
+
+        // todo - limiting the patch to a single collection is undesirable,
+        // rework this as part of https://github.com/sourcenetwork/defradb.rs/issues/2375
+        let ops: serde_json::Value =
+            serde_json::from_str(patch).map_err(|e| Error::InvalidPatch(e.to_string()))?;
+        let collection_name = patch_target(&ops)?;
+
         // Parse the patch early - needed for both collection lookup fallbacks and processing
         let patch_ops: serde_json::Value =
             serde_json::from_str(patch).map_err(|e| Error::InvalidPatch(e.to_string()))?;
 
         // Get the current schema - try by name first, then by version ID (including KV store),
         // then check for collection-level move/copy targeting a non-existent collection
-        let collection = match self.get_collection(collection_name)? {
+        let collection = match self.get_collection(&collection_name)? {
             Some(c) => c,
             None => {
                 // Try looking up by version ID - search both cache and KV store
                 match self
-                    .get_collection_by_version_id_full(collection_name)
+                    .get_collection_by_version_id_full(&collection_name)
                     .await?
                 {
                     Some(c) => c,
@@ -125,8 +88,9 @@ impl<S: Store> crate::database::DB<S> {
                         // Check if the patch is a collection-level move/copy where the
                         // "path" targets a non-existent collection (e.g., move /Users → /Books)
                         return self
-                            .handle_unknown_collection_patch(collection_name, &patch_ops)
-                            .await;
+                            .handle_unknown_collection_patch(&collection_name, &patch_ops)
+                            .await
+                            .map(|_| ());
                     }
                 }
             }
@@ -247,7 +211,7 @@ impl<S: Store> crate::database::DB<S> {
                 if !is_transform_only_change {
                     new_schema.previous_version = old_schema.previous_version.clone();
                 }
-                return Ok(new_schema);
+                return Ok(());
             }
 
             // Keep original version_id
@@ -360,7 +324,7 @@ impl<S: Store> crate::database::DB<S> {
                 "Updated collection version in place"
             );
 
-            return Ok(new_schema);
+            return Ok(());
         }
 
         self.store_new_version(
@@ -369,33 +333,12 @@ impl<S: Store> crate::database::DB<S> {
             &old_version_id,
             &actual_name,
             &collection_id,
-            collection_name,
+            &collection_name,
             is_active_explicitly_set,
             migration,
         )
         .await
-    }
-}
-
-impl<S> crate::database::DB<S>
-where
-    S: Store,
-{
-    /// Go's `PatchCollection`: apply `patch` to the collection its paths
-    /// name (`/<Name>/...`) for `context`'s caller, with `migration` as the
-    /// migration to the version it adds.
-    pub async fn patch_collections_as(
-        &self,
-        context: &defra_core::RequestContext,
-        patch: &str,
-        migration: Option<lens::LensConfig>,
-    ) -> Result<()> {
-        let ops: serde_json::Value =
-            serde_json::from_str(patch).map_err(|e| Error::InvalidPatch(e.to_string()))?;
-        let name = patch_target(&ops)?;
-        self.patch_collection_with_migration_as(context, &name, patch, migration)
-            .await
-            .map(|_| ())
+        .map(|_| ())
     }
 }
 
