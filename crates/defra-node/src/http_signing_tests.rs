@@ -828,3 +828,60 @@ resources:
         node.shutdown().await.unwrap();
     }).unwrap();
 }
+
+#[test]
+fn http_client_signs_large_document_in_an_explicit_transaction() {
+    use crypto::{Key as _, PrivateKey as _};
+    use defra_core::signing::{SigningConfig, SigningKeyType};
+    use document::{Document, NormalValue};
+    use identity::Identity as _;
+
+    edge::testing::edge().block_on(async {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let node = Node::builder().enable_signing()
+            .with_http(HttpConfig::with_listener(listener).unwrap())
+            .build().await.unwrap();
+        node.add_collection("type LargeRecord { contents: String }").await.unwrap();
+        let schema = node.get_collection("LargeRecord").unwrap().unwrap();
+        let private = crypto::generate_ed25519().unwrap();
+        let public = private.public_key();
+        let signing = SigningConfig {
+            key_type: SigningKeyType::Ed25519,
+            private_key_bytes: private.raw_owned(),
+            public_key_bytes: public.raw_owned(),
+            public_key_hex: hex::encode(public.raw()),
+            remote_signer: None,
+            signing_authorization: None,
+        };
+        let identity = identity::RawIdentity::from_private_key(private).unwrap();
+        let caller = identity.did().unwrap().to_string();
+        let token = String::from_utf8(identity::new_token(&identity, Duration::from_secs(60), Some(address.to_string()), None).unwrap()).unwrap();
+        let http = net::http::Client::builder(edge::testing::edge()).no_proxy().build().unwrap();
+        let txn: Value = http.post(format!("http://{address}/api/v0/tx")).bearer_auth(&token)
+            .send().await.unwrap().json().await.unwrap();
+        let txn = txn["id"].as_u64().unwrap().to_string();
+        let mut doc = Document::new(schema);
+        let text = "session history ✓".repeat(120_000);
+        assert!(text.len() > 1024 * 1024);
+        doc.set("contents", NormalValue::String(text.clone())).unwrap();
+        let request = query::QueryRequest::new("mutation($input: LargeRecordMutationInputArg!) { create_LargeRecord(input:$input) { _docID _version { cid } } }")
+            .with_variables(json!({"input": doc.to_map().unwrap()}));
+        let mut graph = db::block::builder::ClientCreateSignatures::new(&storage::Crdts::default(), &doc, &signing).unwrap();
+        let response = defra_http::client_signed_create::execute(
+            &format!("ws://{address}/api/v0/graphql/client-sign"), &format!("Bearer {token}"), request, Some(&txn), &mut graph,
+        ).await.unwrap();
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        let data = response.data.unwrap();
+        let cid = data["add_LargeRecord"][0]["_version"][0]["cid"].as_str().unwrap();
+        assert!(node.verified_block_signer_did(cid).await.is_err());
+        http.post(format!("http://{address}/api/v0/tx/{txn}"))
+            .bearer_auth(&token).send().await.unwrap().error_for_status().unwrap();
+        assert_eq!(node.verified_block_signer_did(cid).await.unwrap(), caller);
+        let response: Value = http.post(format!("http://{address}/api/v0/graphql"))
+            .bearer_auth(&token).json(&json!({"query":"{ LargeRecord { contents } }"}))
+            .send().await.unwrap().json().await.unwrap();
+        assert_eq!(response["data"]["LargeRecord"][0]["contents"], text);
+        node.shutdown().await.unwrap();
+    }).unwrap();
+}
