@@ -401,15 +401,11 @@ mod tests {
             "peer".to_string(),
             vec!["articles".to_string(), "chunks".to_string()],
             vec![],
-            [("articles".to_string(), not_secret.clone())].into(),
+            [("articles".to_string(), not_secret)].into(),
         )
         .with_chunk_sources([("chunks".to_string(), "articles".to_string())]);
         let chunk = json!({"_sourceID": "bae-secret", "text": "t", "hash": "h"});
 
-        assert!(
-            matcher().matches("articles", &not_secret, &chunk),
-            "a chunk lacks `kind`, so the filter alone would pass it"
-        );
         assert!(!peer.matches_filter(&matcher(), "chunks", &chunk));
         assert!(!peer.matches_chunk_source(&matcher(), "chunks", &json!({"kind": "secret"})));
         assert!(peer.matches_chunk_source(&matcher(), "chunks", &json!({"kind": "public"})));

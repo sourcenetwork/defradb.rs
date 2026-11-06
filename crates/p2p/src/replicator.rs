@@ -578,3 +578,7 @@ impl ReplicatorInfo {
         serde_json::from_slice(bytes)
     }
 }
+
+#[cfg(test)]
+#[path = "replicator_chunk_tests.rs"]
+pub(crate) mod chunk_tests;

@@ -3,30 +3,14 @@ use cid::Cid;
 use serde_json::json;
 
 use super::{Admission, PendingPush};
-use crate::replicator::{EqOnlyFilterMatcher, ReplicationFilter, ReplicatorInfo};
-
-const ARTICLES: &str = "articles";
-const CHUNKS: &str = "articles__body_chunk";
-
-// A peer that takes only public articles, with their chunks.
-fn public_articles_peer() -> ReplicatorInfo {
-    ReplicatorInfo::from_raw_with_filters(
-        "peer".to_string(),
-        vec![ARTICLES.to_string(), CHUNKS.to_string()],
-        Vec::new(),
-        [(
-            ARTICLES.to_string(),
-            ReplicationFilter::eq("kind", json!("public")),
-        )]
-        .into(),
-    )
-    .with_chunk_sources([(CHUNKS.to_string(), ARTICLES.to_string())])
-}
+use crate::replicator::chunk_tests::{public_articles_peer, CHUNKS};
+use crate::replicator::EqOnlyFilterMatcher;
 
 fn chunk_push(
     document: Option<serde_json::Value>,
     source: Option<serde_json::Value>,
 ) -> PendingPush {
+    let source = source.map(std::sync::Arc::new);
     PendingPush {
         cid: Cid::default(),
         block: Bytes::new(),
