@@ -141,8 +141,9 @@ RUNS=(
   "MC_FilteredChunkPush_Red_DropChunks.cfg FilteredChunkPush.tla RED" # chunks of a filtered article left out (INV_SettledHasMatchingChunks)
   "MC_FilteredChunkPush_Red_ChunkUnfiltered.cfg FilteredChunkPush.tla RED" # chunk collection not filtered with its article (INV_NoChunkOfUnmatchedArticle)
   "MC_FilteredChunkPush_Red_MatchOwnDoc.cfg FilteredChunkPush.tla RED" # chunk matched on its own document (INV_NoChunkOfUnmatchedArticle)
-  "MC_FilteredChunkPush_Red_RetryWithoutSource.cfg FilteredChunkPush.tla RED" # no article document lets the chunk through (INV_NoChunkOfUnmatchedArticle)
+  "MC_FilteredChunkPush_Red_ForwardWithoutSource.cfg FilteredChunkPush.tla RED" # no article document lets the chunk through (INV_NoChunkOfUnmatchedArticle)
   "MC_FilteredChunkPush_Red_TxnNoSource.cfg FilteredChunkPush.tla RED" # explicit transaction drops the article document (INV_SettledHasMatchingChunks)
+  "MC_FilteredChunkPush_Red_DropWaitingChunk.cfg FilteredChunkPush.tla RED" # retry clears a chunk waiting for its article (INV_SettledHasMatchingChunks)
   "MC_PeerConnection_Green.cfg PeerConnection.tla GREEN"
   "MC_PeerConnection_Red_StaleObservation.cfg PeerConnection.tla RED"
   "MC_SharedRpcConnection_Green.cfg SharedRpcConnection.tla GREEN"

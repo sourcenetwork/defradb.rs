@@ -14,6 +14,9 @@ use crate::merge::push_docs_creator::resolve_push_creator;
 use crate::merge::push_docs_replay::{
     persist_replay_failures, ReplayDocumentFailure, ReplayPushConfig, ReplayPushGate,
 };
+use crate::merge::push_filter::{
+    deciding_filter, document_matches_filter, FilterCheck, FilterDecision,
+};
 
 enum PushOwnership {
     Replicator,
@@ -24,129 +27,6 @@ enum PushOwnership {
 pub struct PushExistingDocsSeOptions<'a> {
     pub encryption_key: Option<&'a [u8]>,
     pub identity_pubkey: Option<&'a [u8]>,
-}
-
-async fn stored_document<R: Reader + ?Sized>(
-    datastore: &R,
-    collection: &crate::collection::Collection,
-    doc_short_id: u64,
-) -> Result<Option<document::Document>, String> {
-    let mut doc_key = format!("/d/{}/", collection.collection_id()).into_bytes();
-    doc_key.extend_from_slice(&storage::keys::doc_id_index::encode_doc_short_id(
-        doc_short_id,
-    ));
-    let Some(doc_data) = datastore
-        .get(&doc_key)
-        .await
-        .map_err(|e| format!("failed to read document for replication filter: {}", e))?
-    else {
-        return Ok(None);
-    };
-    crdt::stored::document_from_storage(&doc_data, collection.schema_arc(), collection.crdts())
-        .map(Some)
-        .map_err(|e| format!("failed to decode document for replication filter: {}", e))
-}
-
-async fn document_matches_filter<R: Reader + ?Sized>(
-    datastore: &R,
-    collection: &crate::collection::Collection,
-    doc_short_id: u64,
-    filter: &p2p::ReplicationFilter,
-    matcher: &dyn p2p::replicator::ReplicationFilterMatcher,
-) -> Result<bool, String> {
-    let Some(doc) = stored_document(datastore, collection, doc_short_id).await? else {
-        return Ok(false);
-    };
-    let document_json = serde_json::Value::Object(
-        doc.to_map()
-            .map_err(|e| format!("failed to encode document for replication filter: {}", e))?
-            .into_iter()
-            .collect(),
-    );
-    Ok(matcher.matches("", filter, &document_json))
-}
-
-/// The filter a peer decides a collection's documents by.
-enum DecidingFilter<'a> {
-    Own(&'a p2p::ReplicationFilter),
-    /// A `@chunk` collection is decided by its parent's filter on the parent's document.
-    Parent {
-        parent: crate::collection::Collection,
-        filter: &'a p2p::ReplicationFilter,
-    },
-}
-
-fn deciding_filter<'a, S: Store + 'static>(
-    db: &DB<S>,
-    collection: &crate::collection::Collection,
-    filters: &'a p2p::ReplicationFilters,
-) -> Result<Option<DecidingFilter<'a>>, String> {
-    if let Some(filter) = filters.get(collection.collection_id()) {
-        return Ok(Some(DecidingFilter::Own(filter)));
-    }
-    let Some(source) = &collection.schema().chunk_of else {
-        return Ok(None);
-    };
-    let parent = db
-        .get_collection(&source.collection)
-        .map_err(|e| format!("failed to get chunk parent collection: {e}"))?
-        .ok_or_else(|| format!("chunk parent collection '{}' not found", source.collection))?;
-    Ok(filters
-        .get(parent.collection_id())
-        .map(|filter| DecidingFilter::Parent { parent, filter }))
-}
-
-async fn passes_filter<R: Reader + ?Sized>(
-    datastore: &R,
-    systemstore: &datastore::NamespaceView,
-    collection: &crate::collection::Collection,
-    doc_short_id: u64,
-    deciding: &DecidingFilter<'_>,
-    matcher: &dyn p2p::replicator::ReplicationFilterMatcher,
-) -> Result<bool, String> {
-    match deciding {
-        DecidingFilter::Own(filter) => {
-            document_matches_filter(datastore, collection, doc_short_id, filter, matcher).await
-        }
-        DecidingFilter::Parent { parent, filter } => {
-            chunk_matches_filter(
-                datastore,
-                systemstore,
-                collection,
-                doc_short_id,
-                parent,
-                filter,
-                matcher,
-            )
-            .await
-        }
-    }
-}
-
-/// A chunk passes only when its parent is here and the parent's document passes.
-async fn chunk_matches_filter<R: Reader + ?Sized>(
-    datastore: &R,
-    systemstore: &datastore::NamespaceView,
-    chunks_col: &crate::collection::Collection,
-    doc_short_id: u64,
-    parent: &crate::collection::Collection,
-    filter: &p2p::ReplicationFilter,
-    matcher: &dyn p2p::replicator::ReplicationFilterMatcher,
-) -> Result<bool, String> {
-    let Some(chunk) = stored_document(datastore, chunks_col, doc_short_id).await? else {
-        return Ok(false);
-    };
-    let Some(document::NormalValue::String(parent_id)) = chunk.get(schema::CHUNK_SOURCE_ID_FIELD)
-    else {
-        return Ok(false);
-    };
-    let Some(parent_ref) = crate::docid::map::get_doc_ref(systemstore, parent_id)
-        .await
-        .map_err(|e| format!("chunk parent lookup failed: {e}"))?
-    else {
-        return Ok(false);
-    };
-    document_matches_filter(datastore, parent, parent_ref.doc_short_id, filter, matcher).await
 }
 
 /// Index an optional `(collection_name, doc_id)` allowlist.
@@ -346,6 +226,7 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
     let replay_gate = Arc::new(ReplayPushGate::new(replay_config, network.clone()));
     let allowlist_by_collection = allowlist_index(allowlist);
 
+    let mut filter_check = FilterCheck::new(&datastore, &systemstore, matcher, peer_id.as_str());
     let preparation: Result<(), String> = async {
         for col_name in collections {
             if let Some(ref allowed) = allowlist_by_collection {
@@ -419,17 +300,23 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                 }
 
                 if let Some(deciding) = &deciding {
-                    if !passes_filter(
-                        &datastore,
-                        &systemstore,
-                        &collection,
-                        *doc_short_id,
-                        deciding,
-                        matcher,
-                    )
-                    .await?
-                    {
-                        continue;
+                    match filter_check.decide(&collection, *doc_short_id, deciding).await? {
+                        FilterDecision::Pass => {}
+                        FilterDecision::Refuse => continue,
+                        // The retry sends it once its parent is here.
+                        FilterDecision::ParentMissing => {
+                            peerstore
+                                .observe_push_head_with_generation(
+                                    peer_id.as_str(),
+                                    doc_id,
+                                    collection.collection_id(),
+                                )
+                                .await
+                                .map_err(|error| {
+                                    format!("failed to register replay marker: {error}")
+                                })?;
+                            continue;
+                        }
                     }
                 }
 
@@ -993,16 +880,15 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
         let systemstore = txn
             .systemstore()
             .map_err(|e| format!("failed to get systemstore: {}", e))?;
-        if !passes_filter(
-            &datastore,
-            &systemstore,
-            &collection,
-            doc_short_id,
-            &deciding,
-            matcher,
-        )
-        .await?
-        {
+        let decision = FilterCheck::new(&datastore, &systemstore, matcher, peer_id.as_str())
+            .decide(&collection, doc_short_id, &deciding)
+            .await?;
+        if decision == FilterDecision::ParentMissing {
+            return Err(format!(
+                "chunk {doc_id} waits for its parent before it can be matched"
+            ));
+        }
+        if decision == FilterDecision::Refuse {
             peerstore
                 .complete_retry_scope(
                     peer_id.as_str(),
