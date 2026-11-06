@@ -29,6 +29,7 @@ edge = { path = "../../crates/edge", features = ["testing"] }
 nuclei.workspace = true
 net = { path = "../../crates/net" }
 serde_json = "1.0"
+graphql-parser.workspace = true
 futures.workspace = true
 paste = "1.0"
 ctor = "0.2"
