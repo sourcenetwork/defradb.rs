@@ -296,8 +296,8 @@ def qualify(runner):
         runner.target = runner.cache_dir / "defra-target"
         runner.env["CARGO_TARGET_DIR"] = str(runner.target)
     runner.run("fetch-defra", fetch)
-    log = runner.run("build-defra", CARGO + ["build", *BUILD, "-p", "cli", "--bin", "defra", "--features", "vera", "--message-format=json"])
-    runner.env["DEFRA_RUST_BINARY"] = runner.stage(log, "defra", "defra")
+    log = runner.run("build-defra", CARGO + ["build", *BUILD, "-p", "cli", "--bin", "defradb", "--features", "vera", "--message-format=json"])
+    runner.env["DEFRA_RUST_BINARY"] = runner.stage(log, "defradb", "defradb")
     runner.env["DEFRA_VERA_BINARY"] = runner.env["DEFRA_RUST_BINARY"]
     log = runner.run("compile-provider", CARGO + ["test", *BUILD, "-p", "vera", "--lib", "--no-run", "--message-format=json"])
     provider = runner.stage(log, "vera", "provider-tests")
