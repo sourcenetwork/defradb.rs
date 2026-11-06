@@ -326,6 +326,35 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         })
     }
 
+    async fn source_node_permission_matches(
+        &self,
+        permission: acp::nac::NodePermission,
+        parent_source: Option<&str>,
+        subject_kind: &str,
+        subject: &str,
+        delete: bool,
+    ) -> query::error::Result<Option<bool>> {
+        let Some(nac) = self.db.nac_manager() else {
+            return Ok(None);
+        };
+        let txn = &*self.shared_txn()?;
+        let view = txn
+            .acpstore()
+            .map_err(|error| query::QueryError::execution(error.to_string()))?;
+        nac.source_permission_matches_in_txn(
+            view,
+            &crate::nac::SourcePermissionChange {
+                permission,
+                parent_source,
+                subject_kind,
+                subject,
+                delete,
+            },
+        )
+        .await
+        .map_err(|error| query::QueryError::execution(error.to_string()))
+    }
+
     async fn project_host_source_change(
         &self,
         actor: &defra_core::RequestContext,

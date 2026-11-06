@@ -101,6 +101,14 @@ pub trait NacManagerApi: defra_core::thread_bounds::MaybeSendSync {
     ) -> Result<Option<bool>> {
         Ok(None)
     }
+    /// Observe whether a source edge already matches, on the bound transaction.
+    async fn source_permission_matches_in_txn(
+        &self,
+        _view: datastore::NamespaceView,
+        _change: &SourcePermissionChange<'_>,
+    ) -> Result<Option<bool>> {
+        Ok(None)
+    }
     async fn check_permission_persisted(
         &self,
         identity: &Did,

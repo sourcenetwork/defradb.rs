@@ -453,3 +453,48 @@ fn source_projection_authorizes_the_actual_mutation_actor_atomically() {
         node.shutdown().await.unwrap();
     }).unwrap();
 }
+
+#[test]
+fn revoked_source_manager_conflicts_with_the_staged_document_and_grant() {
+    use crypto::{Key as _, PrivateKey as _};
+    use identity::Identity as _;
+    workers::block_on(async {
+        let private = crypto::generate_ed25519().unwrap();
+        let public = private.public_key();
+        let signing = defra_core::signing::SigningConfig {
+            key_type: defra_core::signing::SigningKeyType::Ed25519,
+            private_key_bytes: private.raw_owned(),
+            public_key_bytes: public.raw_owned(),
+            public_key_hex: hex::encode(public.raw()),
+            remote_signer: None,
+            signing_authorization: None,
+        };
+        let actor = identity::RawIdentity::from_private_key(private).unwrap().did().unwrap();
+        let signer = crate::EmbeddedSigner::from_config(signing).unwrap();
+        let node = Node::builder().enable_signing().with_node_acp_enabled()
+            .with_document_projector(Arc::new(ActorAuthorizedProjector)).build().await.unwrap();
+        let owner = defra_core::RequestContext::default()
+            .with_identity(Some(node.node_identity_did().unwrap().to_owned()));
+        for permission in [NodePermission::DocumentUpdate, NodePermission::DocumentRead, NodePermission::CollectionGet] {
+            node.add_nac_actor_relationship_as(&owner, permission.as_str(), actor.as_str()).await.unwrap();
+        }
+        node.add_nac_actor_relationship_as(&owner, "admin", actor.as_str()).await.unwrap();
+        node.add_collection_as(&owner, "type ActorProjectedTool { enabled: Boolean, name: String }").await.unwrap();
+        let created = node.execute_request(request("mutation { create_ActorProjectedTool(input:{enabled:false,name:\"before\"}) {_docID} }".into())).await;
+        assert!(!created.has_errors(), "{:?}", created.errors);
+        let id = created.data.unwrap()["add_ActorProjectedTool"][0]["_docID"].as_str().unwrap().to_owned();
+        let handle = node.runner().begin_txn_as(&owner, false).await.unwrap();
+        let mutation = QueryRequest::new(format!("mutation {{ update_ActorProjectedTool(docID:\"{id}\",input:{{enabled:true}}) {{_docID}} }}"))
+            .with_identity(Some(actor.clone()));
+        let staged = node.execute_request_in_txn_with_signer(mutation, &handle, &signer).await;
+        assert!(!staged.has_errors(), "{:?}", staged.errors);
+        assert!(!allowed(&node).await);
+        assert!(node.delete_nac_actor_relationship_as(&owner, "admin", actor.as_str()).await.unwrap());
+        assert!(node.runner().commit_txn_as(&owner, &handle).await.is_err(), "revoked source authority must conflict at commit");
+        assert!(!allowed(&node).await);
+        let current = node.execute_request(request(format!("{{ ActorProjectedTool(docID:\"{id}\") {{ enabled }} }}"))).await;
+        assert!(!current.has_errors(), "{:?}", current.errors);
+        assert_eq!(current.data.unwrap()["ActorProjectedTool"][0]["enabled"], false);
+        node.shutdown().await.unwrap();
+    }).unwrap();
+}

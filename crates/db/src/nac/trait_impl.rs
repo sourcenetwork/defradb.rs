@@ -129,6 +129,29 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
                 other => super::error::Error::Other(other.to_string()),
             })
     }
+    async fn source_permission_matches_in_txn(
+        &self,
+        view: datastore::NamespaceView,
+        change: &super::SourcePermissionChange<'_>,
+    ) -> Result<Option<bool>> {
+        if !self.transaction_store_bound || !self.nac.supports_transactions() {
+            return Ok(None);
+        }
+        let scoped = self.nac.scoped(std::sync::Arc::new(
+            acp::zanzibar::store::TransactionZanzibarStore::new(view),
+        ));
+        scoped
+            .source_permission_matches(
+                change.permission,
+                change.parent_source,
+                change.subject_kind,
+                change.subject,
+                change.delete,
+            )
+            .await
+            .map(Some)
+            .map_err(|error| super::error::Error::Other(error.to_string()))
+    }
     async fn is_admin(&self, identity: &Did) -> Result<bool> {
         NacManager::is_admin(self, identity).await
     }

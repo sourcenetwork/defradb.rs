@@ -34,11 +34,11 @@ impl Node {
                 "configured Node identity required",
             ))
         })?;
-        let node = identity::Did::new(node).map_err(|error| {
+        identity::Did::new(node).map_err(|error| {
             crate::Error::Transaction(query::TransactionError::operation(error.to_string()))
         })?;
         self.txn_registry
-            .change_host_nac_source_permission(owner, node, edge.clone())
+            .change_host_nac_source_permission(owner, edge.clone())
             .await
             .map_err(transaction_error)
     }

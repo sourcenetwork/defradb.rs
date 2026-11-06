@@ -38,14 +38,13 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
     pub async fn change_host_nac_source_permission(
         &self,
         owner: &RequestContext,
-        node: identity::Did,
         edge: query::txn::SourcePermission,
     ) -> std::result::Result<bool, TransactionError> {
         let id = owner
             .txn()
             .ok_or_else(|| TransactionError::operation("an explicit transaction is required"))?;
         let handle = TransactionHandle::new(id.to_string());
-        let job = query::txn::host_source_permission_job(owner.clone(), node, edge)?;
+        let job = query::txn::host_source_permission_job(owner.clone(), edge)?;
         self.run_as(owner, &handle, None, job).await?
     }
 }

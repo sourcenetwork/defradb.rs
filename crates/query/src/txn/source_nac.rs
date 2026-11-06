@@ -38,7 +38,6 @@ pub fn source_permission_job(
 /// embedded host; the transaction owner also supplies the native authority.
 pub fn host_source_permission_job(
     owner_context: RequestContext,
-    _node: Did,
     edge: SourcePermission,
 ) -> Result<TxnJob<Result<bool, TransactionError>>, TransactionError> {
     if !owner_context.authorization_valid_now() || owner_context.identity().is_none() {
@@ -70,6 +69,25 @@ fn source_permission_job_for(
             let result = async {
                 let ctx = turn.context()?;
                 let fetcher = ctx.doc_fetcher();
+                if host
+                    && fetcher
+                        .source_node_permission_matches(
+                            permission,
+                            edge.parent_source.as_deref(),
+                            &edge.subject_kind,
+                            &edge.subject,
+                            edge.delete,
+                        )
+                        .await
+                        .map_err(|error| TransactionError::operation(error.to_string()))?
+                        .ok_or_else(|| {
+                            TransactionError::not_supported(
+                                "transaction-bound node authorization is unavailable",
+                            )
+                        })?
+                {
+                    return Ok(false);
+                }
                 let changed = fetcher
                     .change_source_node_permission(
                         &requestor,

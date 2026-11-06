@@ -499,6 +499,7 @@ fn host_source_admission_matches_executed_lean_model() {
                 "actorAdmin": node.nac_manager().is_admin(&Did::new(actual_actor).unwrap()).await.unwrap(),
                 "relationAuthorized": node.nac_manager().check_permission(&Did::new(actual_actor).unwrap(), acp::NodePermission::NacRelationAdd).await.unwrap(),
                 "sameTransaction": tx.txn().is_some_and(|id| id.to_string() == handle.as_str()),
+                "edgeChanged": true,
             });
             let accepted = node
                 .change_host_nac_source_permission_in_txn(
@@ -522,6 +523,7 @@ fn host_source_admission_matches_executed_lean_model() {
             "actorAdmin": false,
             "relationAuthorized": false,
             "sameTransaction": tx.txn().is_some_and(|id| id.to_string() == handle.as_str()),
+            "edgeChanged": true,
         });
         let accepted = no_identity
             .change_host_nac_source_permission_in_txn(
@@ -555,4 +557,69 @@ fn host_source_admission_matches_executed_lean_model() {
     for (modeled, (_, actual)) in model.as_array().unwrap().iter().zip(observations) {
         assert_eq!(modeled["allowed"].as_bool().unwrap(), actual, "{modeled}");
     }
+}
+
+#[test]
+fn host_source_noop_validates_the_edge_and_does_not_borrow_node_authority() {
+    workers::block_on(async {
+        let node = Node::builder()
+            .enable_signing()
+            .with_node_acp_enabled()
+            .build()
+            .await
+            .unwrap();
+        let owner = context(node.node_identity_did().unwrap());
+        let user = context(ACTOR);
+        let root = edge(None, "source", "plugin:stable", false);
+        let (handle, tx) = begin(&node, &owner).await;
+        assert!(node
+            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .await
+            .unwrap());
+        node.runner().commit_txn_as(&owner, &handle).await.unwrap();
+
+        let (pending, tx) = begin(&node, &user).await;
+        assert!(!node
+            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .await
+            .unwrap());
+        let (remove, tx_owner) = begin(&node, &owner).await;
+        assert!(node
+            .change_host_nac_source_permission_in_txn(
+                &tx_owner,
+                &edge(None, "source", "plugin:stable", true)
+            )
+            .await
+            .unwrap());
+        node.runner().commit_txn_as(&owner, &remove).await.unwrap();
+        assert!(
+            node.runner().commit_txn_as(&user, &pending).await.is_err(),
+            "a changed observed edge must conflict"
+        );
+
+        let (handle, tx) = begin(&node, &user).await;
+        assert!(!node
+            .change_host_nac_source_permission_in_txn(
+                &tx,
+                &edge(None, "source", "plugin:stable", true)
+            )
+            .await
+            .unwrap());
+        let denied = node
+            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                &denied,
+                crate::Error::Transaction(query::TransactionError::Storage(
+                    storage::Error::ProjectionPermissionDenied
+                ))
+            ),
+            "{denied:?}"
+        );
+        node.runner().commit_txn_as(&user, &handle).await.unwrap();
+        node.shutdown().await.unwrap();
+    })
+    .unwrap();
 }
