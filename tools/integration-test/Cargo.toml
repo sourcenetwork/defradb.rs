@@ -7,124 +7,16 @@ license = "Apache-2.0 OR MIT"
 autotests = false
 
 [[test]]
-name = "matchers"
-path = "tests/matchers.rs"
+name = "testo"
+path = "tests/testo/main.rs"
 
 [[test]]
-name = "export"
-path = "tests/export.rs"
-
-[[test]]
-name = "basic"
-path = "tests/basic.rs"
-
-[[test]]
-name = "collection_version"
-path = "tests/collection_version.rs"
-
-[[test]]
-name = "query"
-path = "tests/query.rs"
-
-[[test]]
-name = "vector"
-path = "tests/vector.rs"
-
-[[test]]
-name = "acp"
-path = "tests/acp.rs"
-
-[[test]]
-name = "nac"
-path = "tests/nac.rs"
-
-[[test]]
-name = "p2p"
-path = "tests/p2p.rs"
-
-[[test]]
-name = "p2p_admission"
-path = "tests/p2p_admission.rs"
-
-[[test]]
-name = "p2p_admission_restart"
-path = "tests/p2p_admission_restart.rs"
-
-[[test]]
-name = "p2p_admission_fairness"
-path = "tests/p2p_admission_fairness.rs"
-
-[[test]]
-name = "p2p_interop_bench"
-path = "tests/p2p_interop_bench.rs"
-
-[[test]]
-name = "issue1154_repro"
-path = "tests/issue1154_repro.rs"
-
-[[test]]
-name = "issue1194_repro"
-path = "tests/issue1194_repro.rs"
-
-[[test]]
-name = "issue1211_repro"
-path = "tests/issue1211_repro.rs"
-
-[[test]]
-name = "issue1294_bytes_json"
-path = "tests/issue1294_bytes_json.rs"
-
-[[test]]
-name = "p2p_backlog"
-path = "tests/p2p_backlog.rs"
-
-[[test]]
-name = "p2p_push_storm"
-path = "tests/p2p_push_storm.rs"
-
-[[test]]
-name = "p2p_deep_catchup"
-path = "tests/p2p_deep_catchup.rs"
-
-[[test]]
-name = "encryption"
-path = "tests/encryption.rs"
-
-[[test]]
-name = "identity"
-path = "tests/identity.rs"
-
-[[test]]
-name = "backup"
-path = "tests/backup.rs"
-
-[[test]]
-name = "vera"
-path = "tests/vera.rs"
+name = "legacy"
+path = "tests/legacy/main.rs"
 
 [[test]]
 name = "verars"
-path = "tests/verars.rs"
-
-[[test]]
-name = "fts"
-path = "tests/fts.rs"
-
-[[test]]
-name = "chunk"
-path = "tests/chunk.rs"
-
-[[test]]
-name = "p2p_iroh"
-path = "tests/p2p_iroh/main.rs"
-
-[[test]]
-name = "cursor"
-path = "tests/cursor.rs"
-
-[[test]]
-name = "http_contract"
-path = "tests/http_contract.rs"
+path = "tests/verars/main.rs"
 
 [dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
@@ -190,74 +82,3 @@ workspace = true
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 mach2 = "0.4"
 
-[[test]]
-name = "acp_replay_outage_repro"
-path = "tests/acp_replay_outage_repro.rs"
-
-[[test]]
-name = "acp_replay_outage_cross_runtime"
-path = "tests/acp_replay_outage_cross_runtime.rs"
-
-[[test]]
-name = "index"
-path = "tests/index.rs"
-
-[[test]]
-name = "query_scenarios"
-path = "tests/query_scenarios.rs"
-
-[[test]]
-name = "acp_scenarios"
-path = "tests/acp_scenarios.rs"
-
-[[test]]
-name = "backup_scenarios"
-path = "tests/backup_scenarios.rs"
-
-[[test]]
-name = "collection"
-path = "tests/collection.rs"
-
-[[test]]
-name = "encryption_scenarios"
-path = "tests/encryption_scenarios.rs"
-
-[[test]]
-name = "explain"
-path = "tests/explain.rs"
-
-[[test]]
-name = "issues"
-path = "tests/issues.rs"
-
-[[test]]
-name = "mutation"
-path = "tests/mutation.rs"
-
-[[test]]
-name = "net"
-path = "tests/net.rs"
-
-[[test]]
-name = "node"
-path = "tests/node.rs"
-
-[[test]]
-name = "searchable_encryption"
-path = "tests/searchable_encryption.rs"
-
-[[test]]
-name = "signature"
-path = "tests/signature.rs"
-
-[[test]]
-name = "subscription"
-path = "tests/subscription.rs"
-
-[[test]]
-name = "txn"
-path = "tests/txn.rs"
-
-[[test]]
-name = "view"
-path = "tests/view.rs"

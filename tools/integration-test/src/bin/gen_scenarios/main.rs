@@ -135,9 +135,8 @@ fn generate(args: &Args) -> Result<()> {
 
     let mut formatted: Vec<PathBuf> = Vec::new();
     for (path, items) in &placed {
-        let top = &path[0];
-        let bin = names::binary(top);
-        trees.entry(bin.clone()).or_default().insert(&path[1..]);
+        let area = &path[0];
+        trees.entry(area.clone()).or_default().insert(&path[1..]);
         let mut body = String::new();
         let mut used = emit::Used::default();
         let mut taken: RapidHashSet<String> = RapidHashSet::default();
@@ -160,23 +159,21 @@ fn generate(args: &Args) -> Result<()> {
             body.push('\n');
         }
         let header = emit::file_header(items[0], body.contains("m::"), &used, &body);
-        let file = tree::file_path(&tests, &bin, path);
+        let file = tree::file_path(&tests, area, path);
         tree::write_file(&file, &format!("{header}{body}"))?;
         formatted.push(file);
     }
     for modules in &kept {
         trees
-            .entry(names::binary(&modules[0]))
+            .entry(modules[0].clone())
             .or_default()
             .insert(&modules[1..]);
     }
-    for (bin, tree) in &trees {
-        let top = tree_top(&placed, bin);
-        let directory = (bin != &top).then_some(bin.as_str());
-        let root = tests.join(format!("{bin}.rs"));
-        tree::write_file(&root, &tree.root_source(&top, directory))?;
+    for (area, tree) in &trees {
+        let root = tests.join(format!("{area}.rs"));
+        tree::write_file(&root, &tree.root_source())?;
     }
-    register_binaries(&tests, trees.keys())?;
+    register_areas(&tests, trees.keys())?;
     for chunk in formatted.chunks(100) {
         let out = io(
             &chunk[0],
@@ -198,7 +195,7 @@ fn generate(args: &Args) -> Result<()> {
         println!("  {area}: {generated} {drifted}");
     }
     println!(
-        "binaries: {}",
+        "areas: {}",
         trees.keys().cloned().collect::<Vec<_>>().join(" ")
     );
     println!("drift-skipped scenarios: {}", skipped_drift.len());
@@ -216,29 +213,26 @@ fn generate(args: &Args) -> Result<()> {
     Ok(())
 }
 
-/// Adds a `[[test]]` entry to the crate's Cargo.toml for each new binary.
-fn register_binaries<'a, I>(tests: &std::path::Path, bins: I) -> Result<()>
+/// Declares each new area as a module of the testo binary, `tests/testo/main.rs`.
+fn register_areas<'a, I>(tests: &std::path::Path, areas: I) -> Result<()>
 where
     I: IntoIterator<Item = &'a String>,
 {
-    let manifest = tests.join("../Cargo.toml");
-    let mut text = io(&manifest, std::fs::read_to_string(&manifest))?;
-    for bin in bins {
-        if !text.contains(&format!("path = \"tests/{bin}.rs\"")) {
-            text.push_str(&format!(
-                "\n[[test]]\nname = \"{bin}\"\npath = \"tests/{bin}.rs\"\n"
-            ));
+    let main = tests.join("main.rs");
+    let text = io(&main, std::fs::read_to_string(&main))?;
+    let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    for area in areas {
+        let declaration = format!("mod {area};");
+        if !lines.contains(&declaration) {
+            lines.push(declaration);
         }
     }
-    io(&manifest, std::fs::write(&manifest, text))
-}
-
-fn tree_top(placed: &BTreeMap<Vec<String>, Vec<&corpus::Loaded>>, bin: &str) -> String {
-    placed
-        .keys()
-        .map(|path| path[0].clone())
-        .find(|top| names::binary(top) == bin)
-        .unwrap_or_else(|| bin.to_owned())
+    let first = lines
+        .iter()
+        .position(|line| line.starts_with("mod "))
+        .unwrap_or(lines.len());
+    lines[first..].sort();
+    io(&main, std::fs::write(&main, lines.join("\n") + "\n"))
 }
 
 fn check(args: &Args) -> Result<()> {

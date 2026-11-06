@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use super::error::{io, Result};
 
-/// The module tree of one test binary, as nested inline `mod` blocks.
+/// The module tree of one testo area, as nested inline `mod` blocks.
 #[derive(Default)]
 pub struct Tree {
     children: BTreeMap<String, Tree>,
@@ -29,15 +29,13 @@ impl Tree {
         out.push_str(&format!("{pad}}}\n"));
     }
 
-    pub fn root_source(&self, top: &str, directory: Option<&str>) -> String {
-        let mut out = String::from(concat!(
-            "#![recursion_limit = \"4096\"]\n",
-            "#![allow(clippy::approx_constant, clippy::needless_update, clippy::module_inception)]\n\n"
-        ));
-        if let Some(directory) = directory {
-            out.push_str(&format!("#[path = \"{directory}\"]\n"));
+    /// The area file `tests/testo/<area>.rs`: the area's module tree, whose
+    /// files sit under `tests/testo/<area>/`.
+    pub fn root_source(&self) -> String {
+        let mut out = String::new();
+        for (child, tree) in &self.children {
+            tree.write(child, 0, &mut out);
         }
-        self.write(top, 0, &mut out);
         out
     }
 }
@@ -49,9 +47,9 @@ pub fn write_file(path: &Path, text: &str) -> Result<()> {
     io(path, std::fs::write(path, text))
 }
 
-/// `tests/<bin>/<modules[1..]>.rs`.
-pub fn file_path(tests: &Path, bin: &str, modules: &[String]) -> PathBuf {
-    let mut path = tests.join(bin);
+/// `tests/testo/<area>/<modules[1..]>.rs`.
+pub fn file_path(tests: &Path, area: &str, modules: &[String]) -> PathBuf {
+    let mut path = tests.join(area);
     for module in &modules[1..] {
         path.push(module);
     }
