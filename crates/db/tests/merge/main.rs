@@ -5,6 +5,7 @@ mod common;
 
 mod acp_merge_handler;
 mod acp_protected_update;
+mod broadcast_chunk_filter;
 mod broadcast_mutator_broadcast;
 mod chunk_definition;
 mod chunk_forged;
