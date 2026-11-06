@@ -67,7 +67,9 @@ pub mod search;
 pub mod txn;
 pub(crate) mod view;
 pub mod write;
-pub use datastore::{DocumentMutationProjector, NamespaceView as DocumentMutationView};
+pub mod document_projection;
+pub use document_projection::{DocumentMutationContext, DocumentMutationProjector};
+pub use datastore::NamespaceView as DocumentMutationView;
 
 // Re-export commonly used types
 pub use crate::block::builder::{build_blocks_from_document, BlockResult};
