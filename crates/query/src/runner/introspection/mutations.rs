@@ -3,6 +3,8 @@ use async_graphql::Value as GqlValue;
 use schema::CollectionVersion;
 use std::sync::Arc;
 
+use super::descriptions as d;
+
 /// Build the Mutation type.
 pub(super) fn build_mutation_type(collections: &[Arc<CollectionVersion>]) -> Object {
     let mut mutation = Object::new("Mutation").description("Root mutation type");
@@ -23,7 +25,11 @@ pub(super) fn build_mutation_type(collections: &[Arc<CollectionVersion>]) -> Obj
                 TypeRef::named_nn(&coll_name),
                 |_| FieldFuture::new(async { Ok(Some(GqlValue::Null)) }),
             )
-            .argument(InputValue::new("input", TypeRef::named_nn(&input_type))),
+            .description(d::ADD_DOCUMENTS)
+            .argument(
+                InputValue::new("input", TypeRef::named_nn(&input_type))
+                    .description(format!("Add {coll_name} documents")),
+            ),
         );
 
         // update_<Collection>
@@ -35,12 +41,15 @@ pub(super) fn build_mutation_type(collections: &[Arc<CollectionVersion>]) -> Obj
                 TypeRef::named_nn_list_nn(&update_coll_name),
                 |_| FieldFuture::new(async { Ok(Some(GqlValue::Null)) }),
             )
-            .argument(InputValue::new("docID", TypeRef::named("ID")))
-            .argument(InputValue::new("docIDs", TypeRef::named_list("ID")))
-            .argument(InputValue::new(
-                "input",
-                TypeRef::named_nn(&update_input_type),
-            )),
+            .description(d::UPDATE_DOCUMENTS)
+            .argument(InputValue::new("docID", TypeRef::named("ID")).description(d::UPDATE_ID_ARG))
+            .argument(
+                InputValue::new("docIDs", TypeRef::named_list("ID")).description(d::UPDATE_IDS_ARG),
+            )
+            .argument(
+                InputValue::new("input", TypeRef::named_nn(&update_input_type))
+                    .description(d::UPDATE_INPUT_ARG),
+            ),
         );
 
         // delete_<Collection>
@@ -51,12 +60,18 @@ pub(super) fn build_mutation_type(collections: &[Arc<CollectionVersion>]) -> Obj
                 TypeRef::named_nn_list_nn(&del_coll_name),
                 |_| FieldFuture::new(async { Ok(Some(GqlValue::Null)) }),
             )
-            .argument(InputValue::new("docID", TypeRef::named("ID")))
-            .argument(InputValue::new("docIDs", TypeRef::named_list("ID")))
-            .argument(InputValue::new(
-                "filter",
-                TypeRef::named(format!("{}FilterArg", del_coll_name)),
-            )),
+            .description(d::DELETE_DOCUMENTS)
+            .argument(InputValue::new("docID", TypeRef::named("ID")).description(d::DELETE_ID_ARG))
+            .argument(
+                InputValue::new("docIDs", TypeRef::named_list("ID")).description(d::DELETE_IDS_ARG),
+            )
+            .argument(
+                InputValue::new(
+                    "filter",
+                    TypeRef::named(format!("{}FilterArg", del_coll_name)),
+                )
+                .description(d::DELETE_FILTER_ARG),
+            ),
         );
 
         // truncate_<Collection>
@@ -67,10 +82,14 @@ pub(super) fn build_mutation_type(collections: &[Arc<CollectionVersion>]) -> Obj
                 TypeRef::named_nn(TypeRef::BOOLEAN),
                 |_| FieldFuture::new(async { Ok(Some(GqlValue::Null)) }),
             )
-            .argument(InputValue::new(
-                "filter",
-                TypeRef::named(format!("{}FilterArg", truncate_coll_name)),
-            )),
+            .description(d::TRUNCATE_DOCUMENTS)
+            .argument(
+                InputValue::new(
+                    "filter",
+                    TypeRef::named(format!("{}FilterArg", truncate_coll_name)),
+                )
+                .description(d::TRUNCATE_FILTER_ARG),
+            ),
         );
     }
 
@@ -99,6 +118,6 @@ pub(super) fn build_explain_enum() -> Enum {
 /// Build the Ordering enum.
 pub(super) fn build_ordering_enum() -> Enum {
     Enum::new("Ordering")
-        .item(EnumItem::new("ASC"))
-        .item(EnumItem::new("DESC"))
+        .item(EnumItem::new("ASC").description(d::ORDER_ASC))
+        .item(EnumItem::new("DESC").description(d::ORDER_DESC))
 }
