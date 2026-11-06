@@ -326,7 +326,7 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         let view = txn
             .datastore()
             .map_err(|error| query::QueryError::execution(error.to_string()))?;
-        view.project_document("PackInstallation", "")
+        view.project_host_source_change()
             .await
             .map_err(|error| query::QueryError::execution(error.to_string()))
     }
