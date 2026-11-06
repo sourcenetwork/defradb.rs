@@ -2,9 +2,10 @@
 
 use document::NormalValue;
 use query::error::{QueryError, Result};
+use rapidhash::RapidHashSet;
 use schema::CHUNK_SOURCE_ID_FIELD;
 use storage::corekv::Store;
-use storage::index::IndexIterator;
+use storage::index::{IndexEntry, IndexIterator};
 
 use crate::collection::loader::get_collection_with_index_manager;
 
@@ -63,29 +64,23 @@ where
         })
     }
 
-    pub(super) async fn exists(
+    /// The hashes of the chunk documents `parent` has.
+    pub(super) async fn hashes_of(
         &self,
         target: &ChunkCollection,
         parent: &str,
-        hash: &str,
-    ) -> Result<bool> {
-        let index = target
-            .index_manager
-            .get_index(&target.index_name)
-            .ok_or_else(|| QueryError::execution("chunk source index is not loaded"))?;
-        let values = [
-            NormalValue::String(parent.to_string()),
-            NormalValue::String(hash.to_string()),
-        ];
-        let mut entries = index
-            .get(&target.datastore, &values)
-            .await
-            .map_err(|e| QueryError::execution(format!("chunk lookup failed: {e}")))?;
-        let found = entries
-            .next()
-            .await
-            .map_err(|e| QueryError::execution(format!("chunk lookup failed: {e}")))?;
-        Ok(found.is_some())
+    ) -> Result<RapidHashSet<String>> {
+        Ok(self
+            .entries_of(target, parent)
+            .await?
+            .into_iter()
+            // An index key does not record that the hash was a string.
+            .filter_map(|entry| match entry.values.into_iter().nth(1) {
+                Some(NormalValue::Bytes(hash)) => String::from_utf8(hash).ok(),
+                Some(NormalValue::String(hash)) => Some(hash),
+                _ => None,
+            })
+            .collect())
     }
 
     pub(super) async fn chunks_of(
@@ -93,6 +88,15 @@ where
         target: &ChunkCollection,
         parent: &str,
     ) -> Result<Vec<u64>> {
+        Ok(self
+            .entries_of(target, parent)
+            .await?
+            .into_iter()
+            .map(|entry| entry.doc_short_id)
+            .collect())
+    }
+
+    async fn entries_of(&self, target: &ChunkCollection, parent: &str) -> Result<Vec<IndexEntry>> {
         let index = target
             .index_manager
             .get_index(&target.index_name)
@@ -105,13 +109,9 @@ where
             )
             .await
             .map_err(|e| QueryError::execution(format!("chunk scan failed: {e}")))?;
-        let entries = entries
+        entries
             .collect_all()
             .await
-            .map_err(|e| QueryError::execution(format!("chunk scan failed: {e}")))?;
-        Ok(entries
-            .into_iter()
-            .map(|entry| entry.doc_short_id)
-            .collect())
+            .map_err(|e| QueryError::execution(format!("chunk scan failed: {e}")))
     }
 }

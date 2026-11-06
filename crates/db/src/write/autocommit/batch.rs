@@ -515,7 +515,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         result.derived = {
             let txn = self.shared_txn()?;
             self.chunk_writes(&txn, context)
-                .create_missing(&parent_id, chunk_plans)
+                .create_all(&parent_id, chunk_plans)
                 .await?
         };
         Ok(result)

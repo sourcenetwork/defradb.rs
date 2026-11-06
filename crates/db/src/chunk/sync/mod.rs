@@ -128,6 +128,15 @@ impl<S> ChunkWrites<'_, S>
 where
     S: Store + 'static,
 {
+    /// Creates the chunk documents of a parent this write creates, which has none yet.
+    pub(crate) async fn create_all(
+        &self,
+        parent_doc_id: &str,
+        plans: Vec<FieldChunks>,
+    ) -> Result<Vec<DerivedWrite>> {
+        self.write_plans(parent_doc_id, plans, false).await
+    }
+
     /// Creates the chunk documents in `plans` that don't exist yet. An existing
     /// chunk is never rewritten, since the same hash means the same content.
     pub(crate) async fn create_missing(
@@ -135,14 +144,29 @@ where
         parent_doc_id: &str,
         plans: Vec<FieldChunks>,
     ) -> Result<Vec<DerivedWrite>> {
+        self.write_plans(parent_doc_id, plans, true).await
+    }
+
+    async fn write_plans(
+        &self,
+        parent_doc_id: &str,
+        plans: Vec<FieldChunks>,
+        may_exist: bool,
+    ) -> Result<Vec<DerivedWrite>> {
         let mut written = Vec::new();
         for plan in plans {
             let target = self.open(&plan.chunk_collection).await?;
             // An update keeps the text encrypted when earlier writes did, even
             // without the flag, so its chunks must be too.
             let encrypt = plan.encrypt || self.parent_encrypts(parent_doc_id, &plan.field).await?;
+            // One scan per field: a lookup per chunk would cost a pass over the
+            // transaction's writes each time.
+            let existing = match may_exist {
+                true => self.hashes_of(&target, parent_doc_id).await?,
+                false => RapidHashSet::default(),
+            };
             for (text, hash) in plan.chunks {
-                if self.exists(&target, parent_doc_id, &hash).await? {
+                if existing.contains(&hash) {
                     continue;
                 }
                 written.push(

@@ -386,7 +386,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         let derived = {
             let txn = self.shared_txn()?;
             self.chunk_writes(&txn, context)
-                .create_missing(&created.doc_id.to_string(), chunk_plans)
+                .create_all(&created.doc_id.to_string(), chunk_plans)
                 .await?
         };
 
