@@ -295,6 +295,7 @@ fn test_resources(endpoint: Endpoint, allowlist: AllowlistState) -> EndpointReso
         fetch_stats: Arc::default(),
         records: RecordsHandle::new(),
         solicited: Arc::new(Solicited::new()),
+        stream_protocols: Default::default(),
     }
 }
 

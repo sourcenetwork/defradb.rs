@@ -16,15 +16,17 @@ use super::addr::{endpoint_addr_from_parts, endpoint_ticket_string};
 use super::command::IrohCommand;
 use super::endpoint::{peer_direct_addr, spawn_task, ActiveSync, EndpointResources, RawTopics};
 use super::endpoint_rpc::{
-    close_peer_connections, connect_mux, handle_block_sync, handle_car_request_response,
-    handle_fire_and_forget, handle_reply_on_stream, handle_request_response,
-    handle_two_stream_request, reply_on_stream, BlockSyncResources, REQUEST_RESPONSE_TIMEOUT,
+    cached_connection, close_peer_connections, connect_mux, handle_block_sync,
+    handle_car_request_response, handle_fire_and_forget, handle_reply_on_stream,
+    handle_request_response, handle_two_stream_request, open_protocol_stream, reply_on_stream,
+    BlockSyncResources, REQUEST_RESPONSE_TIMEOUT,
 };
 use super::endpoint_streams::{adopt_new_connection, ConnectionDirection, ConnectionLifecycle};
 use super::gossip::{AddrInfo, EventSender, Network};
 use super::peer_map::{endpoint_id_to_peer_id, parse_endpoint_id};
 use super::protocols;
 use super::records::Input as RecordsInput;
+use super::stream_protocols::StreamProtocol;
 
 /// Handle a command from `IrohTransport`.
 ///
@@ -241,6 +243,21 @@ pub(super) async fn handle_command(
         }
         IrohCommand::TopicPeers { topic, reply } => {
             let _ = reply.send(Ok(gossip.topic_peers(&topic.to_string())));
+        }
+        IrohCommand::OpenStream {
+            peer_id,
+            addrs,
+            protocol,
+            request,
+            reply,
+        } => {
+            let ctx = DialContext {
+                resources: resources.clone(),
+                event_tx: event_tx.clone(),
+            };
+            let _ = spawn_task(spawned_tasks, async move {
+                let _ = reply.send(open_stream(ctx, peer_id, addrs, protocol, request).await);
+            });
         }
         IrohCommand::ReplyOnStream {
             send_stream,
@@ -674,6 +691,34 @@ impl Network for GossipDialer {
     fn local_addr(&self) -> AddrInfo {
         self.0.resources.endpoint.addr().into()
     }
+}
+
+/// Open a stream for an embedder's protocol on the peer's shared connection.
+/// A peer with no open connection is dialled at `addrs` the way `connect_peer`
+/// dials it, so the connection also serves the streams the peer opens back.
+async fn open_stream(
+    ctx: DialContext,
+    peer_id: PeerId,
+    addrs: Vec<PeerAddr>,
+    protocol: StreamProtocol,
+    request: Vec<u8>,
+) -> crate::error::Result<(iroh::endpoint::SendStream, iroh::endpoint::RecvStream)> {
+    // ponytail: two first opens racing may both dial; the peer map counts both
+    // connections and the cache keeps one.
+    if cached_connection(&ctx.resources.connection_cache, &peer_id)?.is_none() {
+        handle_dial(ctx.clone(), &peer_id, addrs).await?;
+    }
+    let resources = &ctx.resources;
+    open_protocol_stream(
+        &resources.endpoint,
+        &peer_id,
+        &protocol,
+        &request,
+        peer_direct_addr(&resources.peer_map, &peer_id),
+        &resources.connection_cache,
+        &resources.admission,
+    )
+    .await
 }
 
 /// Dial a peer by EndpointId.

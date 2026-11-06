@@ -1121,6 +1121,34 @@ impl Node {
         ops.deny_peer(&peer_id).await.map_err(Error::PeerRevoke)
     }
 
+    /// Open a stream for `protocol` to the iroh peer `peer` and write
+    /// `request` as its first message. The peer serves it if it registered
+    /// `protocol` with [`NodeBuilder::with_stream_protocol`]. Finish the send
+    /// half once the protocol has nothing more to send; dropping it
+    /// unfinished resets the stream.
+    ///
+    /// `peer` is a peer ID or any address `connect_peer` takes. The stream
+    /// rides the connection the two nodes share; with none open, this dials
+    /// one just as `connect_peer` does, which then serves both nodes' streams.
+    #[cfg(feature = "p2p")]
+    pub async fn open_p2p_stream(
+        &self,
+        peer: &str,
+        protocol: &p2p::iroh::StreamProtocol,
+        request: Vec<u8>,
+    ) -> Result<(p2p::iroh::ProtocolSendStream, p2p::iroh::ProtocolRecvStream)> {
+        let transport = self
+            .p2p
+            .as_ref()
+            .ok_or(Error::P2pDisabled)?
+            .iroh_transport()
+            .ok_or(Error::StreamProtocolsNeedIroh)?;
+        let (peer_id, addrs) = p2p::iroh::parse_public_peer_addr(peer)?;
+        Ok(transport
+            .open_stream(&peer_id, addrs, protocol, request)
+            .await?)
+    }
+
     /// Gracefully stop background services owned by this node.
     ///
     /// **The node should not be used after this call.** When the `otel`

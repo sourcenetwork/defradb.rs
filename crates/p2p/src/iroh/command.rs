@@ -2,7 +2,7 @@
 
 use crate::rt::{mpsc, oneshot};
 use cid::Cid;
-use iroh::endpoint::SendStream;
+use iroh::endpoint::{RecvStream, SendStream};
 
 use crate::message::{
     BranchableSyncRequest, DocSyncRequest, ManageQueryReply, ManageQueryRequest, ManageReply,
@@ -12,6 +12,8 @@ use crate::message::{
 use crate::replicator::ReplicatorInfo;
 use crate::transport::{MessageId, PeerAddr, PeerId};
 use crate::QueryId;
+
+use super::stream_protocols::StreamProtocol;
 
 /// Where the endpoint answers a command.
 pub type Reply<T> = oneshot::Sender<crate::error::Result<T>>;
@@ -170,6 +172,15 @@ pub enum IrohCommand {
     },
 
     // Messaging
+    /// Open a stream for an embedder's protocol, dialling the peer if no
+    /// connection is open, and write its request.
+    OpenStream {
+        peer_id: PeerId,
+        addrs: Vec<PeerAddr>,
+        protocol: StreamProtocol,
+        request: Vec<u8>,
+        reply: Reply<(SendStream, RecvStream)>,
+    },
     /// Write an encoded reply on its request's stream and finish it.
     ReplyOnStream {
         send_stream: SendStream,

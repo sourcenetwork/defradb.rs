@@ -345,6 +345,11 @@ pub enum Error {
     #[cfg(feature = "p2p")]
     #[error("access hooks require the iroh transport")]
     AccessHooksNeedIroh,
+    /// Stream protocols were given to, or opened from, a node whose transport
+    /// is not iroh.
+    #[cfg(feature = "p2p")]
+    #[error("stream protocols require the iroh transport")]
+    StreamProtocolsNeedIroh,
     /// The P2P assembly did not finish on the network runtime.
     #[cfg(feature = "libp2p")]
     #[error("P2P setup did not finish on the network runtime: {0}")]

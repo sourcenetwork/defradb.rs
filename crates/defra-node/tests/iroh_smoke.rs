@@ -8,12 +8,53 @@ mod clock;
 mod outcome;
 
 use clock::sleep;
-use defra_node::{NodeBuilder, P2PConfig};
+use defra_node::{Node, NodeBuilder, P2PConfig};
 use outcome::Result;
+use p2p::iroh::{InboundStream, Priority, StreamHandler, StreamProtocol};
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 const BOOK_SDL: &str = "type Book { title: String }";
 const REPLICATED_TITLE: &str = "Replicated over iroh";
+
+const QUERY: StreamProtocol = StreamProtocol {
+    tag: b"/test/query/1",
+    priority: Priority::Sync,
+    max_message: 1024,
+    deadline: Duration::from_secs(30),
+};
+
+/// Runs the request as a GraphQL query on its node and replies with the
+/// result's data. The node is reached through the request path, which runs
+/// the query on a database worker, never on this network task.
+#[derive(Default)]
+struct Query {
+    node: regolith::sync::OnceCell<Weak<Node>>,
+    peers: regolith::sync::OnceCell<String>,
+}
+
+#[async_trait::async_trait]
+impl StreamHandler for Query {
+    async fn handle(&self, stream: InboundStream) {
+        let InboundStream {
+            peer,
+            request,
+            mut send,
+            ..
+        } = stream;
+        let _ = self.peers.set(peer.to_string());
+        // Dropping `send` unfinished resets the stream: the node is gone.
+        let Some(node) = self.node.get().and_then(Weak::upgrade) else {
+            return;
+        };
+        let query = String::from_utf8_lossy(&request);
+        let response = node.execute(&query).await;
+        let reply = serde_json::to_vec(&response.data).unwrap_or_default();
+        if send.write_all(&reply).await.is_ok() {
+            let _ = send.finish();
+        }
+    }
+}
 
 #[test]
 fn two_embedded_iroh_nodes_connect_and_replicate() -> Result<()> {
@@ -122,6 +163,82 @@ fn an_explicit_allowlist_admits_the_peer_it_is_given() -> Result<()> {
             dialer_p2p.shutdown().await;
             listener.database().close().await?;
             dialer.database().close().await?;
+            Ok(())
+        })
+        .unwrap()
+}
+
+/// The app's stream protocol, served by one node and opened from another
+/// that never connected to it, carries a query and its result. The handler
+/// reads the database through its node's request path.
+#[test]
+#[mantra_macros::req_test("defra.stream_protocols.round_trip")]
+fn an_apps_stream_protocol_round_trips_between_embedded_nodes() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async {
+            let handler = Arc::new(Query::default());
+            let server = Arc::new(
+                NodeBuilder::default()
+                    .with_p2p(test_iroh_config())
+                    .with_stream_protocol(QUERY, handler.clone())
+                    .build()
+                    .await?,
+            );
+            let _ = handler.node.set(Arc::downgrade(&server));
+            let client = NodeBuilder::default()
+                .with_p2p(test_iroh_config())
+                .build()
+                .await?;
+            server.add_collection(BOOK_SDL).await?;
+            let created = server
+                .execute(
+                    r#"mutation { add_Book(input: {title: "Served over a stream"}) { _docID } }"#,
+                )
+                .await;
+            ensure_success(&created, "add_Book")?;
+
+            let server_p2p = server.p2p_system().cloned().expect("server p2p");
+            let client_p2p = client.p2p_system().cloned().expect("client p2p");
+            let server_addr = wait_for_connectable_iroh_addr(&server_p2p).await?;
+
+            let (send, mut recv) = client
+                .open_p2p_stream(&server_addr, &QUERY, b"{ Book { title } }".to_vec())
+                .await?;
+            send.finish().expect("finish the request");
+            let reply = recv.read_to_end(64 * 1024).await.expect("read the reply");
+            let data: serde_json::Value = serde_json::from_slice(&reply)?;
+            assert_eq!(data["Book"][0]["title"], "Served over a stream");
+            let client_peer = client_p2p.ops().local_peer_id().await?;
+            assert_eq!(handler.peers.get(), Some(&client_peer));
+
+            server_p2p.shutdown().await;
+            client_p2p.shutdown().await;
+            server.database().close().await?;
+            client.database().close().await?;
+            Ok(())
+        })
+        .unwrap()
+}
+
+/// Only an iroh node serves or opens a stream protocol.
+#[test]
+#[mantra_macros::req_test("defra.stream_protocols.registration")]
+fn a_node_without_iroh_refuses_stream_protocols() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async {
+            let built = NodeBuilder::default()
+                .with_stream_protocol(QUERY, Arc::new(Query::default()))
+                .build()
+                .await;
+            assert!(matches!(
+                built,
+                Err(defra_node::Error::StreamProtocolsNeedIroh)
+            ));
+
+            let node = NodeBuilder::default().build().await?;
+            let opened = node.open_p2p_stream("peer", &QUERY, Vec::new()).await;
+            assert!(matches!(opened, Err(defra_node::Error::P2pDisabled)));
+            node.database().close().await?;
             Ok(())
         })
         .unwrap()
