@@ -393,4 +393,25 @@ mod tests {
         assert!(m.matches("col", &f, &json!({"agent_did": "did:b"})));
         assert!(!m.matches("col", &f, &json!({"agent_did": "did:z"})));
     }
+
+    #[test]
+    fn a_negative_filter_decides_a_chunk_by_its_parent_never_its_own_document() {
+        let not_secret = predicate(json!({"kind": {"_ne": "secret"}}));
+        let peer = p2p::ReplicatorInfo::from_raw_with_filters(
+            "peer".to_string(),
+            vec!["articles".to_string(), "chunks".to_string()],
+            vec![],
+            [("articles".to_string(), not_secret.clone())].into(),
+        )
+        .with_chunk_sources([("chunks".to_string(), "articles".to_string())]);
+        let chunk = json!({"_sourceID": "bae-secret", "text": "t", "hash": "h"});
+
+        assert!(
+            matcher().matches("articles", &not_secret, &chunk),
+            "a chunk lacks `kind`, so the filter alone would pass it"
+        );
+        assert!(!peer.matches_filter(&matcher(), "chunks", &chunk));
+        assert!(!peer.matches_chunk_source(&matcher(), "chunks", &json!({"kind": "secret"})));
+        assert!(peer.matches_chunk_source(&matcher(), "chunks", &json!({"kind": "public"})));
+    }
 }

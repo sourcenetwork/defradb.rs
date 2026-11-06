@@ -464,8 +464,7 @@ impl ReplicatorInfo {
         }
     }
 
-    /// Whether `document` of `collection_id` passes this peer's filter. A
-    /// chunk never passes on its own document: it has none of the parent's
+    /// A chunk never passes on its own document: it lacks the parent's
     /// fields, so a negative filter would let it through.
     pub fn matches_filter(
         &self,
