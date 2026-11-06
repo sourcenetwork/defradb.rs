@@ -687,9 +687,14 @@ pub(super) async fn open_protocol_stream(
     };
     // Only fails on a stream that is already closed, which the write below reports.
     let _ = send.set_priority(protocol.priority.send_priority());
-    if let Err(error) = protocols::write_payload(&mut send, request).await {
-        evict_if_closed(cache, peer_id, &connection);
-        return Err(error);
+    // Written here rather than with `write_payload`, so a peer that refuses the
+    // request (busy, too large) surfaces as `StreamReset` with its code.
+    let len = (request.len() as u32).to_be_bytes();
+    for part in [&len[..], request] {
+        if let Err(error) = send.write_all(part).await {
+            evict_if_closed(cache, peer_id, &connection);
+            return Err(super::protocol_stream::write_error(error));
+        }
     }
     Ok((send, recv))
 }

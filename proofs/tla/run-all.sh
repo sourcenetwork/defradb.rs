@@ -848,9 +848,9 @@ RUNS=(
   "MC_InboundAdmission_Red_NoDeadline.cfg MC_InboundAdmission_Common.tla RED" # no deadline: a stream waits for budget forever (LIVE_WaitEnds)
   "MC_InboundAdmission_Red_NoReadDeadline.cfg MC_InboundAdmission_Common.tla RED" # no read deadline: a stalled body holds control forever (LIVE_HealthyHandled)
   "MC_InboundAdmission_Red_IdleOnly.cfg MC_InboundAdmission_Common.tla RED" # idle deadline only: a trickling body holds control forever (LIVE_HealthyHandled)
-  "MC_EmbedderStream_Green.cfg MC_EmbedderStream_Common.tla GREEN" # an embedder's stream: registered tags only, no room held while served, deadline, revocation and shutdown end it
+  "MC_EmbedderStream_Green.cfg MC_EmbedderStream_Common.tla GREEN" # an embedder's stream: registered tags only, room held only while the request is kept, deadline, revocation and shutdown end it
   "MC_EmbedderStream_Red_AnyTag.cfg MC_EmbedderStream_Common.tla RED" # no tag check: an unregistered tag is read (INV_OnlyRegisteredServed)
-  "MC_EmbedderStream_Red_HoldLease.cfg MC_EmbedderStream_Common.tla RED" # room held until the handler returns: a hung handler locks its peer out (INV_ServingHoldsNoLease)
+  "MC_EmbedderStream_Red_UntilReturn.cfg MC_EmbedderStream_Common.tla RED" # room held until the handler returns: a hung handler that dropped its request still locks its peer out (INV_RoomIsTheRequest)
   "MC_EmbedderStream_Red_NoDeadline.cfg MC_EmbedderStream_Common.tla RED" # no deadline: a hung handler runs forever (LIVE_HandlerEnds)
   "MC_EmbedderStream_Red_BarOnly.cfg MC_EmbedderStream_Common.tla RED" # revocation only bars new connections: the revoked peer stays connected (INV_RevokedIsCut)
   "MC_EmbedderStream_Red_NoAbort.cfg MC_EmbedderStream_Common.tla RED" # shutdown leaves tasks running (INV_ShutdownLeavesNone)

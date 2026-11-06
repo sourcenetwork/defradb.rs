@@ -2308,10 +2308,10 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Inbound stream admission",
-        name: "INV_OnlyRegisteredServed / INV_ShareBound / INV_ServingHoldsNoLease / INV_RevokedIsCut / INV_ShutdownLeavesNone / LIVE_HandlerEnds",
+        name: "INV_OnlyRegisteredServed / INV_ShareBound / INV_RoomIsTheRequest / INV_RevokedIsCut / INV_ShutdownLeavesNone / LIVE_HandlerEnds",
         axis: Tla,
-        anchor: "crates/p2p/src/iroh/endpoint_streams.rs admit_stream, handle_connection_streams, serve_protocol_stream; crates/p2p/src/iroh/stream_protocols.rs StreamProtocols::get; crates/p2p/src/iroh/endpoint_commands.rs handle_deny_peer; crates/p2p/src/iroh/task_registry.rs TaskRegistry::close",
-        model_ref: "MC_EmbedderStream_{Green,Red_AnyTag,Red_HoldLease,Red_NoDeadline,Red_BarOnly,Red_NoAbort}.cfg",
+        anchor: "crates/p2p/src/iroh/endpoint_streams.rs admit_stream, handle_connection_streams, serve_protocol_stream; crates/p2p/src/iroh/stream_protocols.rs StreamProtocols::get, ProtocolRequest; crates/p2p/src/iroh/endpoint_commands.rs handle_deny_peer; crates/p2p/src/iroh/task_registry.rs TaskRegistry::close",
+        model_ref: "MC_EmbedderStream_{Green,Red_AnyTag,Red_UntilReturn,Red_NoDeadline,Red_BarOnly,Red_NoAbort}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },

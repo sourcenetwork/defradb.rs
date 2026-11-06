@@ -238,8 +238,9 @@ const fn share_of(capacity: usize) -> usize {
 }
 
 /// The bytes one peer may hold at `priority`: the largest message a service
-/// of that priority can admit.
-pub(super) const fn peer_share_bytes(priority: Priority) -> usize {
+/// of that priority can admit, and so the largest
+/// [`StreamProtocol::max_message`](super::StreamProtocol::max_message) accepted.
+pub const fn peer_share_bytes(priority: Priority) -> usize {
     share_of(BUDGET_BYTES[priority.index()])
 }
 

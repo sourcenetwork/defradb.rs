@@ -33,8 +33,10 @@ const IO_TIMEOUT: Duration = Duration::from_secs(10);
 enum Behaviour {
     /// Replies with the request reversed.
     Echo,
-    /// Never returns.
+    /// Drops the request, then never returns.
     Stuck,
+    /// Keeps the request, and never returns.
+    Hold,
 }
 
 /// What a probe handler reports: the peer of each stream it starts, and each
@@ -77,10 +79,11 @@ impl Drop for OnDrop {
 #[async_trait]
 impl StreamHandler for Probe {
     async fn handle(&self, stream: InboundStream) {
-        let _ = self.started.try_send(stream.peer.clone());
         let _dropped = OnDrop(self.dropped.clone());
+        let peer = stream.peer.clone();
         match self.behaviour {
             Behaviour::Echo => {
+                let _ = self.started.try_send(peer);
                 let InboundStream {
                     request, mut send, ..
                 } = stream;
@@ -89,7 +92,20 @@ impl StreamHandler for Probe {
                 let _ = send.finish();
             }
             Behaviour::Stuck => {
+                let InboundStream {
+                    request,
+                    send,
+                    recv,
+                    ..
+                } = stream;
+                drop(request);
+                let _halves = (send, recv);
+                let _ = self.started.try_send(peer);
+                std::future::pending::<()>().await;
+            }
+            Behaviour::Hold => {
                 let _held = stream;
+                let _ = self.started.try_send(peer);
                 std::future::pending::<()>().await;
             }
         }
@@ -251,19 +267,70 @@ async fn a_peer_the_allowlist_refuses_cannot_open_the_protocol() {
     shutdown_all(client, server, client_task, server_task).await;
 }
 
-/// Two requests each as large as the peer's whole share of the priority are
-/// both handed to a handler that never returns: the first gave its room back
-/// once admitted, so nothing is held while the handlers run.
-#[nuclei::test(threads = 0)]
-#[mantra_macros::req_test("defra.stream_protocols.budget")]
-async fn a_stuck_handler_holds_none_of_the_peers_budget() {
-    let share = peer_share_bytes(Priority::Control);
-    let large = StreamProtocol {
+fn large() -> StreamProtocol {
+    StreamProtocol {
         tag: b"/test/large/1",
         priority: Priority::Control,
-        max_message: share,
+        max_message: peer_share_bytes(Priority::Control),
         deadline: Duration::from_secs(60),
+    }
+}
+
+async fn control_class(server: &IrohTransport) -> crate::transport::InboundClassSnapshot {
+    server
+        .inbound_budget()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|class| class.class == Priority::Control.name())
+        .unwrap()
+}
+
+/// A handler that keeps its request holds the request's room, so a second
+/// request as large as the peer's whole share is reset busy (code 4).
+#[nuclei::test(threads = 0)]
+#[mantra_macros::req_test("defra.stream_protocols.budget")]
+async fn a_handler_that_keeps_its_request_holds_its_room() {
+    let large = large();
+    let share = large.max_message;
+    let (hold, signals) = probe(Behaviour::Hold);
+    let (server, server_task) =
+        spawn_node(IrohAllowlistConfig::AcceptAll, vec![(large, hold)]).await;
+    let (client, client_task) = spawn_node(IrohAllowlistConfig::AcceptAll, Vec::new()).await;
+
+    let _first = open(&client, &server, &large, vec![1; share])
+        .await
+        .unwrap();
+    signals.started().await;
+    assert_eq!(control_class(&server).await.held_bytes, share);
+    // The opener sees the busy reset while still writing the request, or on its read.
+    let refused = match open(&client, &server, &large, vec![2; share]).await {
+        Err(error) => error.to_string(),
+        Ok((_send, mut recv)) => match timeout(IO_TIMEOUT, recv.read_to_end(1)).await {
+            Ok(Err(error)) => error.to_string(),
+            other => panic!("the second request was not refused: {other:?}"),
+        },
     };
+    assert!(
+        refused.contains("error 4") || refused.contains("code 4"),
+        "{refused}"
+    );
+    assert!(
+        signals.started.try_recv().is_none(),
+        "the second request reached a handler"
+    );
+
+    shutdown_all(client, server, client_task, server_task).await;
+}
+
+/// Two requests each as large as the peer's whole share of the priority are
+/// both handed to handlers that drop their request and never return: the room
+/// went back with each request, so nothing is held while the handlers run.
+#[nuclei::test(threads = 0)]
+#[mantra_macros::req_test("defra.stream_protocols.budget")]
+async fn a_stuck_handler_that_dropped_its_request_holds_none_of_the_peers_budget() {
+    let large = large();
+    let share = large.max_message;
     let (stuck, signals) = probe(Behaviour::Stuck);
     let (server, server_task) =
         spawn_node(IrohAllowlistConfig::AcceptAll, vec![(large, stuck)]).await;
@@ -278,13 +345,7 @@ async fn a_stuck_handler_holds_none_of_the_peers_budget() {
         .unwrap();
     signals.started().await;
 
-    let control = server
-        .inbound_budget()
-        .await
-        .unwrap()
-        .into_iter()
-        .find(|class| class.class == Priority::Control.name())
-        .unwrap();
+    let control = control_class(&server).await;
     assert_eq!(control.held_bytes, 0);
     assert_eq!(control.busy_resets, 0);
 
