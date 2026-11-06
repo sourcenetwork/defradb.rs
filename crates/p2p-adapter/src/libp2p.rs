@@ -513,7 +513,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             replication_filters.clone(),
         )
         .with_chunk_sources(crate::chunk_source_ids(
-            self.doc_pusher.as_ref(),
+            &crate::chunk_parents(self.doc_pusher.as_ref(), &effective_collections),
             &effective_collections,
             &collection_cids,
         ));

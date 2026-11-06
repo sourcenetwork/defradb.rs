@@ -131,25 +131,29 @@ pub fn chunk_parents(
     pusher: Option<&Arc<dyn TransportDocPusher>>,
     names: &[String],
 ) -> Vec<(String, String)> {
-    let Some(pusher) = pusher else {
-        return Vec::new();
-    };
+    match pusher {
+        Some(pusher) => chunk_parents_of(names, |name| pusher.chunk_collections(name)),
+        None => Vec::new(),
+    }
+}
+
+fn chunk_parents_of<F>(names: &[String], chunks_of: F) -> Vec<(String, String)>
+where
+    F: Fn(&str) -> Vec<String>,
+{
     names
         .iter()
         .flat_map(|name| {
-            pusher
-                .chunk_collections(name)
+            chunks_of(name)
                 .into_iter()
                 .map(move |chunks| (chunks, name.clone()))
         })
         .collect()
 }
 
-/// The `(chunks, parent)` collection IDs for the chunk collections in `names`,
-/// given `ids`, the ID of each name at the same position.
-#[cfg(any(feature = "iroh", feature = "libp2p"))]
+/// `pairs` of names as collection IDs; `ids[i]` is the ID of `names[i]`.
 pub fn chunk_source_ids(
-    pusher: Option<&Arc<dyn TransportDocPusher>>,
+    pairs: &[(String, String)],
     names: &[String],
     ids: &[String],
 ) -> Vec<(String, String)> {
@@ -157,11 +161,11 @@ pub fn chunk_source_ids(
         names
             .iter()
             .position(|candidate| candidate == name)
-            .map(|index| ids[index].clone())
+            .and_then(|index| ids.get(index).cloned())
     };
-    chunk_parents(pusher, names)
-        .into_iter()
-        .filter_map(|(chunks, parent)| Some((id_of(&chunks)?, id_of(&parent)?)))
+    pairs
+        .iter()
+        .filter_map(|(chunks, parent)| Some((id_of(chunks)?, id_of(parent)?)))
         .collect()
 }
 
@@ -313,7 +317,7 @@ pub fn merge_live_replicators_with_persisted_metadata(
 #[cfg(test)]
 mod resolve_remove_collections_tests {
     use super::{
-        collections_requiring_replay, collections_with_changed_capabilities,
+        chunk_source_ids, collections_requiring_replay, collections_with_changed_capabilities,
         merge_live_replicators_with_persisted_metadata, resolve_remove_collections,
     };
     use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
@@ -452,6 +456,28 @@ mod resolve_remove_collections_tests {
         );
 
         assert_eq!(replay_collections, effective_collections);
+    }
+
+    #[test]
+    fn each_chunk_collection_is_paired_with_its_parent_by_id() {
+        let names = vec!["Article".to_string(), "Article__body_chunk".to_string()];
+        let ids = vec!["cid-article".to_string(), "cid-chunks".to_string()];
+        let pairs =
+            super::chunk_parents_of(&names[..1], |name| vec![format!("{name}__body_chunk")]);
+
+        assert_eq!(
+            chunk_source_ids(&pairs, &names, &ids),
+            vec![("cid-chunks".to_string(), "cid-article".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_chunk_collection_without_an_id_gets_no_pair() {
+        let names = vec!["Article".to_string()];
+        let ids = vec!["cid-article".to_string()];
+        let pairs = vec![("Article__body_chunk".to_string(), "Article".to_string())];
+
+        assert!(chunk_source_ids(&pairs, &names, &ids).is_empty());
     }
 
     fn replicator(collections: &[String], filters: p2p::ReplicationFilters) -> p2p::ReplicatorInfo {
