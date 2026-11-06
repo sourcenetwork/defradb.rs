@@ -135,6 +135,43 @@ fn commit_has_abort_receipt(error: Option<&TransactionError>) -> bool {
     matches!(error, Some(TransactionError::Conflict(_)))
 }
 
+/// Discard/rollback a transaction (Go-compatible).
+///
+/// DELETE /api/v0/tx/{id}
+///
+/// Go DefraDB uses DELETE method with path parameter for transaction ID.
+/// Returns empty body on success.
+///
+/// The registry enforces caller ownership; node permissions are checked per operation.
+pub async fn tx_discard(
+    State(state): State<AppState>,
+    CallerContext(context): CallerContext,
+    Path(params): Path<TxPathParam>,
+) -> Result<impl IntoResponse, HttpError> {
+    // Parse transaction ID as u64 (Go format)
+    let _txn_id: u64 = params
+        .id
+        .parse()
+        .map_err(|_| HttpError::BadRequest("invalid transaction id".to_string()))?;
+
+    let handle = params
+        .id
+        .parse()
+        .map_err(|_| HttpError::BadRequest("invalid transaction id".to_string()))?;
+
+    match state.executor.discard_txn_as(&context, &handle).await {
+        Ok(()) => {
+            tracing::info!(txn_id = %handle, "Transaction discarded");
+            // Go returns 200 OK with empty body
+            Ok(StatusCode::OK.into_response())
+        }
+        Err(e) => {
+            tracing::error!(txn_id = %handle, error = %e, "Failed to discard transaction");
+            Ok(HttpError::from(e).into_response())
+        }
+    }
+}
+
 #[cfg(test)]
 mod commit_receipt_tests {
     use super::*;
@@ -179,42 +216,5 @@ mod commit_receipt_tests {
             .map(commit_has_abort_receipt)
             .collect();
         assert_eq!(actual, expected);
-    }
-}
-
-/// Discard/rollback a transaction (Go-compatible).
-///
-/// DELETE /api/v0/tx/{id}
-///
-/// Go DefraDB uses DELETE method with path parameter for transaction ID.
-/// Returns empty body on success.
-///
-/// The registry enforces caller ownership; node permissions are checked per operation.
-pub async fn tx_discard(
-    State(state): State<AppState>,
-    CallerContext(context): CallerContext,
-    Path(params): Path<TxPathParam>,
-) -> Result<impl IntoResponse, HttpError> {
-    // Parse transaction ID as u64 (Go format)
-    let _txn_id: u64 = params
-        .id
-        .parse()
-        .map_err(|_| HttpError::BadRequest("invalid transaction id".to_string()))?;
-
-    let handle = params
-        .id
-        .parse()
-        .map_err(|_| HttpError::BadRequest("invalid transaction id".to_string()))?;
-
-    match state.executor.discard_txn_as(&context, &handle).await {
-        Ok(()) => {
-            tracing::info!(txn_id = %handle, "Transaction discarded");
-            // Go returns 200 OK with empty body
-            Ok(StatusCode::OK.into_response())
-        }
-        Err(e) => {
-            tracing::error!(txn_id = %handle, error = %e, "Failed to discard transaction");
-            Ok(HttpError::from(e).into_response())
-        }
     }
 }
