@@ -378,6 +378,20 @@ fn explain_reports_provenance_behind_its_gate() {
             .explain_nac_subject_as(&RequestContext::default(), HOLDER)
             .await
             .is_err());
+
+        node.disable_nac_as(&context(OWNER)).await.unwrap();
+        for requestor in [DELEGATE, OTHER] {
+            assert!(
+                node.explain_nac_subject_as(&context(requestor), HOLDER)
+                    .await
+                    .is_err(),
+                "disabling NAC must not disclose another subject's grants"
+            );
+        }
+        assert!(node
+            .explain_nac_subject_as(&context(AUDITOR), HOLDER)
+            .await
+            .is_ok());
         assert!(node
             .explain_nac_subject_as(&context(OWNER), "*")
             .await

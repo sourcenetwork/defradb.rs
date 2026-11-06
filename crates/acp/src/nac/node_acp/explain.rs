@@ -28,17 +28,19 @@ impl<S: ZanzibarStore + ?Sized + 'static> NodeACP<S> {
     /// relationships, for a requester who is `subject`, an admin, or holds
     /// `NacStatus`. The Zanzibar engine's explanation decides whether each
     /// permission is held; the stored tuples name how. A source path is the
-    /// shortest chain of sources, outermost first. While NAC is not enabled
-    /// every operation is allowed whatever this reports.
+    /// shortest chain of sources, outermost first. The requester gate reads
+    /// stored relationships, so disabling NAC never discloses other subjects'
+    /// grants; while NAC is not enabled every operation is allowed whatever
+    /// this reports.
     pub async fn explain_subject(
         &self,
         requestor: &Did,
         subject: &Did,
     ) -> Result<Vec<PermissionProvenance>> {
         if requestor != subject
-            && !self.is_admin(requestor).await?
+            && !self.is_admin_persisted(requestor).await?
             && !self
-                .check_permission(requestor, NodePermission::NacStatus)
+                .check_permission_persisted(requestor, NodePermission::NacStatus)
                 .await?
         {
             return Err(Error::NotOwner {
