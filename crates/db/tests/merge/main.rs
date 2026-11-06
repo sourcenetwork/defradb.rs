@@ -29,6 +29,7 @@ mod merge_handler_tests;
 mod parked_encrypted;
 mod parked_errors;
 mod peer_identity;
+mod push_docs_chunk_filter;
 mod push_docs_common;
 mod push_docs_creator;
 mod push_docs_replay;
