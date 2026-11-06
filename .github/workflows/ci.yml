@@ -878,7 +878,9 @@ jobs:
             fi
           fi
       - name: Point the tests at the archive
-        run: echo "ARCHIVE=--archive-file testo.tar.zst --workspace-remap . --extract-to $RUNNER_TEMP/nextest --extract-overwrite" >> "$GITHUB_ENV"
+        run: |
+          mkdir -p "$RUNNER_TEMP/nextest"
+          echo "ARCHIVE=--archive-file testo.tar.zst --workspace-remap . --extract-to $RUNNER_TEMP/nextest --extract-overwrite" >> "$GITHUB_ENV"
       - uses: oven-sh/setup-bun@v2.2.0
         with:
           bun-version: 1.3.6
