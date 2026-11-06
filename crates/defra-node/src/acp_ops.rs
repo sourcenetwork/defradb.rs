@@ -162,12 +162,23 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
         let requestor = self
             .authorize(identity, acp::nac::NodePermission::DacRelationAdd)
             .await?;
+        if collection.is_empty() {
+            return Err(Error::EmptyCollectionName);
+        }
+        if doc_id.is_empty() || relation.is_empty() || target.is_empty() {
+            return Err(Error::MissingAddDocActorRelationshipArgument);
+        }
         if relation == acp::OWNER_RELATION {
             return Err(Error::OwnerRelationAdd);
         }
+        let refused = |error| Error::AddDocActorRelationship(Box::new(error));
         let resolved = self
             .relationship_target(collection, relation, target)
-            .await?;
+            .await
+            .map_err(|error| match error {
+                Error::RelationNotFound { .. } | Error::InvalidTarget(_) => refused(error),
+                other => other,
+            })?;
 
         let added = self
             .document_acp
@@ -181,7 +192,7 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
                 &resolved.managing_relations,
             )
             .await
-            .map_err(Error::Acp)?;
+            .map_err(|error| refused(Error::Acp(error)))?;
 
         // Local ACP relationships are node-local (matches Go): a grant is not
         // propagated to peers. Cross-node access control is Vera's role.
