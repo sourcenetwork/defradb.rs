@@ -220,6 +220,9 @@ RUNS=(
   "MC_KvImport_Red_Overwrite.cfg KvImport.tla RED" # a raw write, as Go imports, loses a live write (INV_NoLostLiveWrite)
   "MC_KvImport_Red_Judged.cfg KvImport.tla RED" # the filter judges the restore (INV_Complete)
   "MC_KvImport_Red_Silent.cfg KvImport.tla RED" # an unnamed document dropped unreported (INV_Complete)
+  "MC_KvImport_Red_SigAlways.cfg KvImport.tla RED" # #2608: a peer's push merged without its signature block (INV_NoUnsignedPush)
+  "MC_KvImport_Red_SigNever.cfg KvImport.tla RED" # #2608: the restore refuses a missing signature block (INV_Complete)
+  "MC_KvImport_Red_EncSkip.cfg KvImport.tla RED" # #2608: an encrypted document's blocks stored unreadable (INV_NoUnreadableStored)
   "MC_Retention_Green.cfg Retention.tla GREEN" # #2450: the head's document decides, alone, never relayed
   "MC_Retention_Green_ZeroFloor.cfg Retention.tla GREEN" # #2450: a floor of 0 refuses nothing by height
   "MC_Retention_Green_Branchable.cfg Retention.tla GREEN" # #2450: a branchable collection is not judged

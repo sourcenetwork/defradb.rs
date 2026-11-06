@@ -24,7 +24,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let decoded_block = Block::from_dag_cbor(&block.block_data)
             .map_err(|error| MergeError::BlockDecode(error.to_string()))?;
         let verified_creator = self
-            .verify_block_signature(&block.cid, &decoded_block, &block.block_data)
+            .verify_block_signature(&block.cid, &decoded_block, false)
             .await?;
         let effective_creator = verified_creator
             .as_deref()

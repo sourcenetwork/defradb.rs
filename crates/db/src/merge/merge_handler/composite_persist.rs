@@ -147,8 +147,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 if let (Some(provider), Some(policy), Some(signer)) = (
                     self.db.document_acp(),
                     collection.schema().policy.as_ref(),
-                    self.verify_block_signature(context.cid, context.block, &[])
-                        .await?,
+                    self.verify_block_signature(
+                        context.cid,
+                        context.block,
+                        context.metadata.is_restore,
+                    )
+                    .await?,
                 ) {
                     if let Some(scoped) = provider.bind_transaction(
                         systemstore.sibling(storage::namespace::Namespace::Acpstore),

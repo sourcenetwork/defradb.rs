@@ -480,7 +480,9 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         // set verified_creator from the cryptographic verification result.
         let mut metadata = metadata.clone();
         if !metadata.is_recovery {
-            let verified = self.verify_block_signature(cid, &block, block_data).await?;
+            let verified = self
+                .verify_block_signature(cid, &block, metadata.is_restore)
+                .await?;
             metadata.verified_creator = verified;
         }
 

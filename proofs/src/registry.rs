@@ -2131,12 +2131,14 @@ pub const PROPERTIES: &[Property] = &[
     Property {
         // KV snapshot import (#2440): one document at a time, blocks stored
         // before the merge, no merge without the first version, a restore
-        // not judged, live writes kept across a rerun.
+        // not judged, live writes kept across a rerun; a missing signature
+        // block taken only by the restore, an unreadable document never
+        // stored (#2608).
         family: "KV snapshot",
-        name: "INV_MergedHasBlocks / INV_NoDocWithoutFirst / INV_NoLostLiveWrite / INV_Complete",
+        name: "INV_MergedHasBlocks / INV_NoDocWithoutFirst / INV_NoLostLiveWrite / INV_NoUnsignedPush / INV_NoUnreadableStored / INV_Complete",
         axis: Tla,
-        anchor: "crates/db/src/kv_snapshot/import.rs DB::import_kv_snapshot_as, DB::restore_document, reaches_genesis; crates/defra-core/src/merge.rs BlockMetadata::restore; crates/db/src/merge/merge_handler/composite_persist.rs persist_merged_document; crates/db/src/merge/merge_handler/composite_fields.rs process_linked_field_blocks",
-        model_ref: "MC_KvImport_{Green,Red_StoreAfter,Red_NoGenesisCheck,Red_Overwrite,Red_Judged,Red_Silent}.cfg",
+        anchor: "crates/db/src/kv_snapshot/import.rs DB::import_kv_snapshot_as, DB::restore_document, unreadable, reaches_genesis; crates/defra-core/src/merge.rs BlockMetadata::restore; crates/db/src/merge/merge_handler/signature.rs DbMergeHandler::verify_block_signature; crates/db/src/merge/merge_handler/batch.rs process_block_in_txn; crates/db/src/merge/merge_handler/composite_persist.rs persist_merged_document; crates/db/src/merge/merge_handler/composite_fields.rs process_linked_field_blocks",
+        model_ref: "MC_KvImport_{Green,Red_StoreAfter,Red_NoGenesisCheck,Red_Overwrite,Red_Judged,Red_Silent,Red_SigAlways,Red_SigNever,Red_EncSkip}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },

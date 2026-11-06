@@ -26,8 +26,9 @@ query() { client query "$1" | sed -n 's/.*"_docID": *"\([^"]*\)".*/\1/p' | head 
 # commands against it, then stops it.
 node() {
   local root=$WORK/$1
-  # Unsigned and unencrypted, as testo starts Go nodes: Go's export leaves out
-  # signature blocks, so a signed document's snapshot does not import (#2608).
+  # Unsigned and unencrypted, as testo starts Go nodes. Over HTTP Go signs
+  # nothing anyway: it signs only with a request identity holding its private
+  # key, so signed() and encrypted() below add their documents in-process.
   "$WORK/defradb" start --rootdir "$root" --url "$URL" --no-p2p --no-keyring --development \
     --no-signing --no-encryption --no-searchable-encryption --no-telemetry >"$root.log" 2>&1 &
   local pid=$!
@@ -62,6 +63,14 @@ node users "$USERS $LOGS" users
 node updated "$USERS" updated
 node email 'type User { name: String @index age: Int email: String }' email
 
+# Signed by a fresh Ed25519 identity, as a signing Go Shinzo node does: Go's
+# export leaves out the signature blocks the blocks link (#2608). The
+# encrypted one also leaves out the encryption blocks and the key.
+# shellcheck disable=SC2086 # $2 is a flag or nothing
+added() { mkdir -p "$WORK/$1" && "$WORK/kvsnap" add $2 "$WORK/$1" "$USERS" User "${@:3}" >"$WORK/$1.User" 2>"$WORK/$1.log"; }
+added signed '' '{"name": "Alice", "age": 40}' '{"name": "Bob", "age": 7}'
+added encrypted --encrypt '{"name": "Alice", "age": 40}'
+
 mkdir -p "$OUT"
 kv() {
   # shellcheck disable=SC2046 # one argument per DocID
@@ -72,4 +81,8 @@ kv export-datastore users User users-datastore.kv
 kv export users Log logs.kv
 kv export updated User users-updated.kv
 kv export email User users-email.kv
+kv export signed User users-signed.kv
+kv export encrypted User users-encrypted.kv
+# The signed documents' DocIDs depend on the fresh signer, so the tests name them.
+head "$WORK/signed.User" "$WORK/encrypted.User"
 ls -l "$OUT"

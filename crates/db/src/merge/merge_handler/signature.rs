@@ -14,11 +14,16 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     /// - `Ok(Some(identity))` -- signature valid, identity is the verified signer
     /// - `Ok(None)` -- unsigned block
     /// - `Err(SignatureVerificationFailed)` -- invalid signature, block MUST be rejected
+    ///
+    /// A `restore` takes a block whose signature block is missing as
+    /// unsigned: Go Shinzo's KV export never writes signature blocks, and the
+    /// operator vouches for the snapshot (#2608). A signature block that is
+    /// there still has to verify, and every other merge refuses the gap.
     pub async fn verify_block_signature(
         &self,
         cid: &Cid,
         block: &Block,
-        _block_data: &[u8],
+        restore: bool,
     ) -> Result<Option<String>, MergeError> {
         let sig_cid = match &block.signature {
             Some(sig_cid) => sig_cid,
@@ -36,6 +41,14 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
 
         let sig_data = match self.blockstore.get(sig_cid).await {
             Ok(Some(data)) => data,
+            Ok(None) if restore => {
+                tracing::debug!(
+                    cid = %cid,
+                    signature = %sig_cid,
+                    "Restored block without its signature block"
+                );
+                return Ok(None);
+            }
             Ok(None) => {
                 return Err(MergeError::SignatureVerificationFailed {
                     cid: *cid,

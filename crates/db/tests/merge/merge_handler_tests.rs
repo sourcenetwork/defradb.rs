@@ -454,11 +454,8 @@ fn verify_unsigned_block_returns_none() {
         let (handler, _bs) = make_handler();
         let block = make_lww_block(None);
         let cid = block.generate_cid().unwrap();
-        let block_data = block.to_dag_cbor().unwrap();
 
-        let result = handler
-            .verify_block_signature(&cid, &block, &block_data)
-            .await;
+        let result = handler.verify_block_signature(&cid, &block, false).await;
         assert!(result.is_ok());
         assert!(
             result.unwrap().is_none(),
@@ -504,11 +501,8 @@ fn verify_valid_ed25519_signature_returns_did() {
         let (_priv_key, _pub_hex, did) = sign_block_ed25519(&mut block, &blockstore).await;
 
         let cid = block.generate_cid().unwrap();
-        let block_data = block.to_dag_cbor().unwrap();
 
-        let result = handler
-            .verify_block_signature(&cid, &block, &block_data)
-            .await;
+        let result = handler.verify_block_signature(&cid, &block, false).await;
         let verified_identity = result.expect("valid signature should succeed");
         assert_eq!(
             verified_identity.as_deref(),
@@ -654,7 +648,33 @@ fn malformed_block_is_a_terminal_merge_rejection() {
     .unwrap()
 }
 
+/// A block signed elsewhere, whose signature block this node lacks: a restore
+/// takes it as unsigned, every other merge refuses it (#2608).
 #[test]
+#[mantra_macros::req_test("go.shinzo.kv_snapshot.signatures")]
+fn missing_signature_block_passes_only_a_restore() {
+    workers::block_on(async {
+        let (handler, _blockstore) = make_handler();
+        let (_, elsewhere) = make_handler();
+        let mut block = make_lww_block(None);
+        sign_block_ed25519(&mut block, &elsewhere).await;
+        let cid = block.generate_cid().unwrap();
+
+        let restored = handler.verify_block_signature(&cid, &block, true).await;
+        assert!(matches!(restored, Ok(None)), "{restored:?}");
+
+        let pushed = handler.verify_block_signature(&cid, &block, false).await;
+        assert!(
+            matches!(&pushed, Err(MergeError::SignatureVerificationFailed { reason, .. })
+                if reason.contains("not found in blockstore")),
+            "{pushed:?}"
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+#[mantra_macros::req_test("go.shinzo.kv_snapshot.signatures")]
 fn verify_tampered_block_returns_error() {
     workers::block_on(async {
         let (handler, blockstore) = make_handler();
@@ -682,7 +702,7 @@ fn verify_tampered_block_returns_error() {
         let block_data = tampered_block.to_dag_cbor().unwrap();
 
         let result = handler
-            .verify_block_signature(&cid, &tampered_block, &block_data)
+            .verify_block_signature(&cid, &tampered_block, false)
             .await;
         assert!(result.is_err(), "tampered block should be rejected");
         assert!(
@@ -691,6 +711,15 @@ fn verify_tampered_block_returns_error() {
                 MergeError::SignatureVerificationFailed { .. }
             ),
             "expected SignatureVerificationFailed"
+        );
+        assert!(
+            matches!(
+                handler
+                    .verify_block_signature(&cid, &tampered_block, true)
+                    .await,
+                Err(MergeError::SignatureVerificationFailed { .. })
+            ),
+            "a restore must still refuse a signature that is there but does not verify"
         );
 
         let outcome = handler
@@ -718,11 +747,8 @@ fn verify_missing_signature_block_returns_error() {
         let fake_sig_cid = defra_core::block::generate_cid_from_bytes(b"nonexistent").unwrap();
         let block = make_lww_block(Some(fake_sig_cid));
         let cid = block.generate_cid().unwrap();
-        let block_data = block.to_dag_cbor().unwrap();
 
-        let result = handler
-            .verify_block_signature(&cid, &block, &block_data)
-            .await;
+        let result = handler.verify_block_signature(&cid, &block, false).await;
         assert!(
             result.is_err(),
             "missing signature block should be rejected"
@@ -749,11 +775,8 @@ fn verify_corrupt_signature_block_returns_error() {
 
         let block = make_lww_block(Some(garbage_cid));
         let cid = block.generate_cid().unwrap();
-        let block_data = block.to_dag_cbor().unwrap();
 
-        let result = handler
-            .verify_block_signature(&cid, &block, &block_data)
-            .await;
+        let result = handler.verify_block_signature(&cid, &block, false).await;
         assert!(
             result.is_err(),
             "corrupt signature block should be rejected"
@@ -786,11 +809,7 @@ fn verify_signature_rejects_non_utf8_identity() {
             .unwrap();
         block.signature = Some(signature_cid);
         let result = handler
-            .verify_block_signature(
-                &block.generate_cid().unwrap(),
-                &block,
-                &block.to_dag_cbor().unwrap(),
-            )
+            .verify_block_signature(&block.generate_cid().unwrap(), &block, false)
             .await;
         assert!(
             matches!(result, Err(MergeError::SignatureVerificationFailed { reason, .. })
@@ -844,11 +863,8 @@ fn verify_valid_bls_signature_returns_did() {
         let (_pub_hex, did) = sign_block_bls(&mut block, &blockstore).await;
 
         let cid = block.generate_cid().unwrap();
-        let block_data = block.to_dag_cbor().unwrap();
 
-        let result = handler
-            .verify_block_signature(&cid, &block, &block_data)
-            .await;
+        let result = handler.verify_block_signature(&cid, &block, false).await;
         let verified_identity = result.expect("valid BLS signature should succeed");
         assert_eq!(
             verified_identity.as_deref(),
@@ -888,10 +904,9 @@ fn verify_forged_bls_signature_returns_error() {
             signature: Some(sig_cid),
         };
         let cid = tampered_block.generate_cid().unwrap();
-        let block_data = tampered_block.to_dag_cbor().unwrap();
 
         let result = handler
-            .verify_block_signature(&cid, &tampered_block, &block_data)
+            .verify_block_signature(&cid, &tampered_block, false)
             .await;
         assert!(result.is_err(), "forged BLS signature should be rejected");
         assert!(matches!(
@@ -918,12 +933,9 @@ fn verify_attacker_identity_not_victim() {
         let victim_did = "did:key:z6MkVICTIM_FAKE_DID";
 
         let cid = block.generate_cid().unwrap();
-        let block_data = block.to_dag_cbor().unwrap();
 
         // Verification succeeds and returns ATTACKER's actual DID
-        let result = handler
-            .verify_block_signature(&cid, &block, &block_data)
-            .await;
+        let result = handler.verify_block_signature(&cid, &block, false).await;
         let verified = result.expect("valid signature should succeed");
         assert_eq!(
             verified.as_deref(),

@@ -32,7 +32,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
 
         // A signature that fails to verify names no one, so it is judged as
         // unsigned; the root's own failure is already refused at dispatch.
-        let signer = match self.verify_block_signature(cid, block, &[]).await {
+        let signer = match self.verify_block_signature(cid, block, false).await {
             Ok(signer) => signer,
             Err(error) => {
                 tracing::debug!(%cid, %error, "Composite signature did not verify");

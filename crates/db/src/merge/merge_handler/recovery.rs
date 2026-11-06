@@ -38,7 +38,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             return Ok(None);
         };
 
-        let Some(creator) = self.verify_block_signature(cid, &block, block_data).await? else {
+        let Some(creator) = self.verify_block_signature(cid, &block, false).await? else {
             return Ok(None);
         };
 

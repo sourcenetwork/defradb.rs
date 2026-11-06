@@ -56,7 +56,7 @@ A snapshot is a sequence of frames `[key length: u32 big-endian][key][value leng
 - **Go-Ref:** "shinzo-develop 2a899b860"
 - **Interop:** "a snapshot an old Go Shinzo node exported imports into a Rust node"
 
-defradb.rs imports a document by storing its blocks and merging its composite heads, as a local replay of a replicated document: the first version names its DocID, the merge gives it this node's short IDs and its values, and the document reads back with the DocID and values it has on the Go node, the DocID a Rust node gives the same document. Go exports a document's heads and the blocks they link, never earlier versions, so a document updated since it was created cannot be named: the others are imported, and the import fails with `… so their DocIDs cannot be recovered and they were not imported (N other documents were): Go Shinzo exports only a document's newest version, so a document updated since it was created has to be replicated from a peer instead`. A snapshot with no heads for a document (`datastoreOnly`) fails with `a datastore-only snapshot carries no DocIDs or history, so it cannot be imported`.
+defradb.rs imports a document by storing its blocks and merging its composite heads, as a local replay of a replicated document: the first version names its DocID, the merge gives it this node's short IDs and its values, and the document reads back with the DocID and values it has on the Go node, the DocID a Rust node gives the same document. Go exports a document's heads and the blocks they link, never earlier versions, so a document updated since it was created cannot be named and is not imported (`go.shinzo.kv_snapshot.history`). A snapshot with no heads for a document (`datastoreOnly`) fails with `a datastore-only snapshot carries no DocIDs or history, so it cannot be imported`.
 
 The import reads the source's field mapping, the JSON Go's `ExportFieldMapping` writes: `{"collectionName": <name>, "collectionShortID": <the source's collection short ID>, "fields": [{"name": <field>, "fieldID": <global field ID>, "shortID": <the snapshot's field short ID>}, …]}`. The collection it names must exist (`collection not found`) with every field it names (`the field mapping names field <name> (<field ID>), which collection <collection> does not have: add the field before importing`), checked before anything is written. It runs as the caller, under the update-document node permission, and returns the frames read and the documents imported. `proofs/tla/KvImport.tla` models it.
 
@@ -70,6 +70,31 @@ The import reads the source's field mapping, the JSON Go's `ExportFieldMapping` 
 - **Go-Ref:** "shinzo-develop 2a899b860"
 
 The replication filter (`go.shinzo.p2p.replication_filter`) and the retention floor (`go.shinzo.retention`) judge what peers send. A snapshot import is the node's operator restoring documents, so neither judges it: a Log at blockNumber 5, under a floor of 100 and a filter refusing blockNumber 100 or less, is imported. Go's import writes raw keys and passes through neither.
+
+# `go.shinzo.kv_snapshot.history`: A document whose create block the snapshot lacks is reported, not imported
+
+- **Parents:** ["go.shinzo.kv_snapshot"]
+- **Scenarios:** ["shinzo::kv_snapshot::kv_a_go_snapshot_of_an_updated_document_has_no_history"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+Go derives a DocID from the document's create block (its first composite), and none of its deltas encodes it (`internal/core/crdt/delta_doc_id_test.go` `TestDocumentDeltasDoNotEncodeDocID`). Its export (`exportBlockDAG`) follows a block's `Links`, never its `Heads`, so the snapshot of a document updated since it was created holds only its newest version and no frame names its DocID. Such a document is not imported, and its blocks are not merged; the other documents of the snapshot are, and the import then fails with `the KV snapshot holds no history back to the first version of the documents with short IDs [<short ID>, …]: it has no create block for them, and a DocID is derived from the create block, so their DocIDs cannot be recovered and they were not imported (N other documents were): Go Shinzo exports only a document's newest version, so a document updated since it was created has to be replicated from a peer instead`. The short ID is the one the snapshot gives the document, the only name it carries.
+
+# `go.shinzo.kv_snapshot.signatures`: A signed block whose signature block the snapshot lacks is restored as unsigned
+
+- **Parents:** ["go.shinzo.kv_snapshot"]
+- **Scenarios:** ["shinzo::kv_snapshot::kv_a_signed_go_snapshot_imports_without_its_signature_blocks", "db::merge::merge_handler_tests::missing_signature_block_passes_only_a_restore", "db::merge::merge_handler_tests::verify_tampered_block_returns_error"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+- **Interop:** "a snapshot a signing Go Shinzo node exported imports into a Rust node"
+
+Go Shinzo signs a block when the request's identity holds its private key, and its export (`exportBlockDAG`) follows only a block's `Links`, never its `Signature`, so a signing node's snapshot links signature blocks it does not carry. The import accepts each such block as unsigned, and the documents read back with the values and the DocIDs they have on the Go node. Only a restore does: a block a peer pushes whose signature block is missing still fails with `block signature verification failed for cid=…: signature block … not found in blockstore`, and a signature block that is there but does not verify fails a restore too. `proofs/tla/KvImport.tla` models the rule.
+
+# `go.shinzo.kv_snapshot.encryption`: An encrypted document the snapshot cannot decrypt is reported, not stored
+
+- **Parents:** ["go.shinzo.kv_snapshot"]
+- **Scenarios:** ["shinzo::kv_snapshot::kv_an_encrypted_go_document_is_reported_not_stored"]
+- **Go-Ref:** "shinzo-develop 2a899b860"
+
+Go's export leaves out a block's `Encryption` link as it does its signature, and the document's key stays in the Go node's key store, so an encrypted document's blocks cannot be read where the snapshot is imported. A document with a block whose encryption block neither the snapshot nor the node holds is not stored; the others are imported, and the import fails with `the KV snapshot's documents [<DocID>] are encrypted, and it carries neither their encryption blocks nor their keys, so their values cannot be read and they were not imported (…)`, naming the document by its DocID, or by its short ID when its first version is missing.
 
 # `go.shinzo.kv_snapshot.batches`: An interrupted import is completed by running it again, and live writes are kept
 

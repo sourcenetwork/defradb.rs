@@ -2,7 +2,9 @@
 //! old Go Shinzo node exported. The snapshots are fixtures in
 //! `tests/shinzo/fixtures/`, exported once by Go Shinzo shinzo-develop
 //! 2a899b860 with `tools/go-shinzo-kv/fixtures.sh`, which says what each one
-//! holds. No test starts a Go node.
+//! holds. No test starts a Go node. `users-signed.kv` and
+//! `users-encrypted.kv` were made the same way on 2026-11-05, by `kvsnap add`
+//! with signing on, as a signing Go Shinzo node writes its blocks.
 //!
 //! The Go node made Alice (40) and Bob (7) in `User`, and a Log at
 //! blockNumber 5. A second Rust node makes the same documents here: the
@@ -131,11 +133,18 @@ fn kv_a_go_snapshot_imports_with_its_docids_and_indexes() {
 
 #[test]
 #[mantra_macros::req_test("go.shinzo.kv_snapshot.import")]
+#[mantra_macros::req_test("go.shinzo.kv_snapshot.history")]
 fn kv_a_go_snapshot_of_an_updated_document_has_no_history() {
+    // `users-updated.kv`: Alice (short ID 1) was updated to 41, so the
+    // snapshot holds only her newest version; Bob (short ID 2) is whole.
     let mut actions = made_users();
     actions.extend([
         KvImport {
-            expected_error: Some("holds no history back to the first version".into()),
+            expected_error: Some(
+                "the documents with short IDs [1]: it has no create block for them, and a DocID \
+                 is derived from the create block"
+                    .into(),
+            ),
             ..import("users-updated.kv")
         }
         .into(),
@@ -171,6 +180,52 @@ fn kv_a_datastore_only_snapshot_is_refused() {
             ..import("users-datastore.kv")
         }
         .into(),
+    ])
+    .execute();
+}
+
+/// `users-signed.kv`: Alice (40) and Bob (7), added in-process by a fresh
+/// Ed25519 identity with signing on (`kvsnap add`, in `fixtures.sh`), as a
+/// signing Go Shinzo node writes them. Every block links a signature block the
+/// export left out. The DocIDs are the ones the Go node printed: a signed
+/// first version's CID names its signature, so they are the signer's own.
+#[test]
+#[mantra_macros::req_test("go.shinzo.kv_snapshot.signatures")]
+fn kv_a_signed_go_snapshot_imports_without_its_signature_blocks() {
+    TestCase::from_actions(vec![
+        rust(IMPORTING).into(),
+        collection(IMPORTING, USERS),
+        import("users-signed.kv").into(),
+        users(json!([
+            { "_docID": "bae-a3782ddd-fd6e-579a-addb-e18f30bc353e", "name": "Alice", "age": 40 },
+            { "_docID": "bae-b7c5a503-b53b-5323-9923-269efd858a37", "name": "Bob", "age": 7 },
+        ])),
+        query(
+            r#"query { User(filter: {name: {_eq: "Bob"}}) { age } }"#,
+            json!({ "User": [{ "age": 7 }] }),
+        ),
+    ])
+    .execute();
+}
+
+/// `users-encrypted.kv`: Alice (40), added like `users-signed.kv` but
+/// encrypted (`kvsnap add --encrypt`). Her blocks link an encryption block
+/// the export left out, and the key stays on the Go node, so her values
+/// cannot be read: the import names her and stores nothing of her.
+#[test]
+#[mantra_macros::req_test("go.shinzo.kv_snapshot.encryption")]
+fn kv_an_encrypted_go_document_is_reported_not_stored() {
+    TestCase::from_actions(vec![
+        rust(IMPORTING).into(),
+        collection(IMPORTING, USERS),
+        KvImport {
+            expected_error: Some(
+                r#"documents ["bae-cce93ba4-d0ce-52ab-91d0-d74fcaa6c3f5"] are encrypted"#.into(),
+            ),
+            ..import("users-encrypted.kv")
+        }
+        .into(),
+        users(json!([])),
     ])
     .execute();
 }

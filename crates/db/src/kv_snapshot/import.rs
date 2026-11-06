@@ -42,8 +42,9 @@ where
     /// With the source's `mapping`, the collection it names must exist here
     /// with every field it names. Each document is merged from its blocks;
     /// one whose history the snapshot does not carry back to its first
-    /// version cannot be given its DocID, and is reported after the others
-    /// are imported. Importing a snapshot again changes nothing.
+    /// version cannot be given its DocID, and one whose values cannot be
+    /// read is not stored; both are reported after the others are imported.
+    /// Importing a snapshot again changes nothing.
     pub async fn import_kv_snapshot_as<R>(
         self: &Arc<Self>,
         context: &defra_core::RequestContext,
@@ -70,6 +71,7 @@ where
         let mut frames = 0;
         let mut documents = 0;
         let mut without_history = Vec::new();
+        let mut unreadable = Vec::new();
         let mut pending: Option<Pending> = None;
         let mut slice = workers::Budget::new(16);
         loop {
@@ -100,8 +102,9 @@ where
                         )
                         .await?
                     {
-                        true => documents += 1,
-                        false => without_history.push(doc_short_id),
+                        Restored::Merged => documents += 1,
+                        Restored::NoHistory => without_history.push(doc_short_id),
+                        Restored::Unreadable(document) => unreadable.push(document),
                     }
                 }
             }
@@ -133,6 +136,13 @@ where
                 }
                 _ => {}
             }
+        }
+        if !unreadable.is_empty() {
+            return Err(KvSnapshotError::Unreadable {
+                documents: unreadable,
+                without_history,
+                imported: documents,
+            });
         }
         if !without_history.is_empty() {
             return Err(KvSnapshotError::NoHistory {
@@ -169,9 +179,9 @@ where
         Ok(collection.collection_id().to_owned())
     }
 
-    /// Store one document's blocks and merge its composite heads. `false`
-    /// when its history does not reach its first version, so its DocID, which
-    /// that version names, cannot be known.
+    /// Store one document's blocks and merge its composite heads, unless its
+    /// values cannot be read, or its history does not reach its first
+    /// version, so its DocID, which that version names, cannot be known.
     async fn restore_document<B>(
         &self,
         handler: &crate::merge::DbMergeHandler<S, B>,
@@ -179,7 +189,7 @@ where
         pending: Pending,
         collection_id: Option<&str>,
         creator: Option<&str>,
-    ) -> Result<bool, KvSnapshotError>
+    ) -> Result<Restored, KvSnapshotError>
     where
         B: Blockstore + 'static,
     {
@@ -187,6 +197,9 @@ where
             return Err(KvSnapshotError::NoHeads {
                 doc_short_id: pending.doc_short_id,
             });
+        }
+        if let Some(document) = unreadable(blockstore, &pending).await? {
+            return Ok(Restored::Unreadable(document));
         }
         let blocks: Vec<(&Cid, &[u8])> = pending
             .blocks
@@ -198,7 +211,7 @@ where
             .await
             .map_err(|error| KvSnapshotError::Malformed(format!("storing blocks: {error}")))?;
         if !reaches_genesis(blockstore, &pending).await? {
-            return Ok(false);
+            return Ok(Restored::NoHistory);
         }
         for head in &pending.heads {
             let bytes = match pending.blocks.get(head) {
@@ -236,8 +249,51 @@ where
                 }
             }
         }
-        Ok(true)
+        Ok(Restored::Merged)
     }
+}
+
+/// What became of one document.
+enum Restored {
+    Merged,
+    /// Its history does not reach its first version.
+    NoHistory,
+    /// Its values cannot be read; the document, as its DocID or short ID.
+    Unreadable(String),
+}
+
+/// The document, named by its DocID (or its short ID when its first version
+/// is missing), when one of its blocks is encrypted under an encryption block
+/// neither the snapshot nor this node holds. Go Shinzo exports neither those
+/// blocks nor the keys, so its values cannot be read, and storing them would
+/// keep data no query can return.
+async fn unreadable<B>(blockstore: &B, pending: &Pending) -> Result<Option<String>, KvSnapshotError>
+where
+    B: Blockstore,
+{
+    let mut genesis = None;
+    let mut missing = false;
+    for (cid, bytes) in &pending.blocks {
+        let Ok(block) = defra_core::block::Block::from_dag_cbor(bytes) else {
+            continue;
+        };
+        if matches!(block.delta, defra_core::block::CrdtDelta::Composite(_))
+            && block.heads.as_deref().is_none_or(<[Cid]>::is_empty)
+        {
+            genesis = Some(*cid);
+        }
+        if let Some(encryption) = block.encryption {
+            missing |= !pending.blocks.contains_key(&encryption)
+                && !blockstore
+                    .has(&encryption)
+                    .await
+                    .map_err(|error| KvSnapshotError::Malformed(error.to_string()))?;
+        }
+    }
+    Ok(missing.then(|| match genesis {
+        Some(cid) => crate::block::builder::derive_doc_id(&cid),
+        None => format!("short ID {}", pending.doc_short_id),
+    }))
 }
 
 /// Whether every composite version the heads build on is local, back to a
