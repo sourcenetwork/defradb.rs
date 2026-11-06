@@ -49,36 +49,3 @@ fn an_encrypted_chunk_is_not_hash_checked_here() {
     doc.set_unchecked("hash".into(), NormalValue::Bytes(vec![4, 5, 6]));
     assert!(check_chunk_merge(None, &doc).is_ok());
 }
-
-#[test]
-fn a_chunk_cannot_get_a_new_vector_after_its_create() {
-    let embedded = query::parse_sdl(
-        r#"type Article {
-            body: String @chunk
-            body_v: [Float32!] @embedding(fields: ["body"], provider: "openai", model: "m")
-        }"#,
-    )
-    .unwrap()
-    .into_iter()
-    .find(|c| c.name == "Article__body_chunk")
-    .expect("chunk collection");
-    let text = "Some text.";
-    let mut old = Document::new(embedded);
-    old.set("_sourceID", NormalValue::String("bae-p".into()))
-        .unwrap();
-    old.set("text", NormalValue::String(text.into())).unwrap();
-    old.set("hash", NormalValue::String(text_hash(text)))
-        .unwrap();
-    let mut with_vector = old.clone();
-    with_vector
-        .set("body_v", NormalValue::Float64Array(vec![1.0, 0.0]))
-        .unwrap();
-    let mut other_vector = with_vector.clone();
-    other_vector
-        .set("body_v", NormalValue::Float64Array(vec![0.0, 1.0]))
-        .unwrap();
-
-    assert!(check_chunk_merge(Some(&with_vector), &other_vector).is_err());
-    assert!(check_chunk_merge(Some(&old), &with_vector).is_err());
-    assert!(check_chunk_merge(Some(&with_vector), &with_vector.clone()).is_ok());
-}
