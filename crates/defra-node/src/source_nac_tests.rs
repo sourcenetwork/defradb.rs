@@ -648,3 +648,140 @@ fn host_source_noop_validates_the_edge_and_does_not_borrow_node_authority() {
     })
     .unwrap();
 }
+
+struct NoopProjectionObserver {
+    mode: std::sync::atomic::AtomicU8,
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl db::DocumentMutationProjector for NoopProjectionObserver {
+    async fn reconcile(&self, _: &db::DocumentMutationContext<'_>) -> storage::corekv::Result<()> {
+        Ok(())
+    }
+
+    async fn project(
+        &self,
+        _: &db::DocumentMutationContext<'_>,
+        _: &str,
+        _: &str,
+    ) -> storage::corekv::Result<()> {
+        Ok(())
+    }
+
+    async fn source_changed(
+        &self,
+        context: &db::DocumentMutationContext<'_>,
+    ) -> storage::corekv::Result<()> {
+        use acp::{Subject, ZanzibarStore};
+        use std::sync::atomic::Ordering;
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let mode = self.mode.load(Ordering::SeqCst);
+        if mode == 0 {
+            return Ok(());
+        }
+        let store = acp::zanzibar::store::TransactionZanzibarStore::new(
+            context
+                .view
+                .sibling(storage::namespace::Namespace::Acpstore),
+        );
+        let object = format!("source.{}", hex::encode("plugin:stable"));
+        let members = store
+            .get_relation_subjects(
+                acp::NODE_POLICY_ID,
+                acp::NODE_RESOURCE_NAME,
+                &object,
+                PERMISSION.as_str(),
+            )
+            .await
+            .map_err(|error| storage::corekv::Error::Other(error.to_string()))?;
+        if !members.contains(&Subject::entity(Did::new(OTHER).unwrap())) {
+            context
+                .change_source_permission(PERMISSION, Some("plugin:stable"), "actor", OTHER, false)
+                .await?;
+        }
+        if mode == 2 {
+            return Err(storage::corekv::Error::Other(
+                "dependent projection refused".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn unchanged_host_root_reconciles_descendants_as_the_original_actor() {
+    use std::sync::atomic::Ordering;
+    workers::block_on(async {
+        let observer = std::sync::Arc::new(NoopProjectionObserver {
+            mode: std::sync::atomic::AtomicU8::new(0),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let node = Node::builder()
+            .enable_signing()
+            .with_node_acp_enabled()
+            .with_document_projector(observer.clone())
+            .build()
+            .await
+            .unwrap();
+        let owner = context(node.node_identity_did().unwrap());
+        let user = context(ACTOR);
+        let root = edge(None, "source", "plugin:stable", false);
+        let (handle, tx) = begin(&node, &owner).await;
+        assert!(node
+            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .await
+            .unwrap());
+        node.runner().commit_txn_as(&owner, &handle).await.unwrap();
+        assert!(!allowed(&node, OTHER).await);
+
+        observer.mode.store(1, Ordering::SeqCst);
+        let (handle, tx) = begin(&node, &user).await;
+        let denied = node
+            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                &denied,
+                crate::Error::Transaction(query::TransactionError::Storage(
+                    storage::Error::ProjectionPermissionDenied
+                ))
+            ),
+            "{denied:?}"
+        );
+        node.runner().commit_txn_as(&user, &handle).await.unwrap();
+        assert!(!allowed(&node, OTHER).await);
+
+        observer.mode.store(2, Ordering::SeqCst);
+        let (handle, tx) = begin(&node, &owner).await;
+        assert!(node
+            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .await
+            .is_err());
+        node.runner().commit_txn_as(&owner, &handle).await.unwrap();
+        assert!(
+            !allowed(&node, OTHER).await,
+            "failed projection rolled back its staged child"
+        );
+
+        observer.mode.store(1, Ordering::SeqCst);
+        let (handle, tx) = begin(&node, &owner).await;
+        assert!(!node
+            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .await
+            .unwrap());
+        node.runner().commit_txn_as(&owner, &handle).await.unwrap();
+        assert!(allowed(&node, OTHER).await);
+
+        let (handle, tx) = begin(&node, &user).await;
+        assert!(!node
+            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .await
+            .unwrap());
+        node.runner().commit_txn_as(&user, &handle).await.unwrap();
+        assert_eq!(observer.calls.load(Ordering::SeqCst), 5);
+        node.shutdown().await.unwrap();
+    })
+    .unwrap();
+}
