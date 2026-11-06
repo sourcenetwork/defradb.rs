@@ -23,9 +23,17 @@ section is the **diff**: what is proven vs. the accepted gap.
 ### Modeled families
 | Family | Tool | Crates it covers |
 |---|---|---|
+| Explicit embedded signing | TLA+ / Lean | defra-node, query, db |
+| Verified client graph transaction | TLA+ / Lean | defra-node, query, db |
+| HTTP client-signed create | TLA+ / Lean | http, query, db |
+| HTTP client-signed update | TLA+ / Lean | http, query, db |
+| HTTP client-signed conditional update | Lean | http, query |
+| SSE loss and error delivery | TLA+ / Lean | events, http, query |
 | Storage failure classification | TLA+ / Lean | storage, db, query, http |
 | B3 filtered replication | TLA+ | p2p, db-merge |
 | Explicit transactions in the request context | TLA+ / Lean | client, db, query, http, ffi, wasm, defra-node |
+| Transactional document relationships | TLA+ / Lean | acp, query, http, defra-node |
+| Transactional node source grants | TLA+ / Lean | acp, query, http, defra-node |
 | Schema-evolution operations in the core | TLA+ / Lean | client, db, lens, query, http, cli, ffi, defra-node |
 | DAG convergence (partition / eviction / restart) | TLA+ | p2p, db-merge, blockstore |
 | CRDT merge laws | Lean | crdt, defra-core |
@@ -97,6 +105,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Add collection | TLA+ | db |
 | Collection truncate | TLA+ | db |
 | Add DAC policy | TLA+ | db, acp, vera, http, cli, ffi, defra-node |
+| Node access control operations | TLA+ | db, acp, http, cli, ffi, defra-node |
 | Filter relation paths and scalar leaves | Lean | query (#2427, #2430) |
 | Orphan block sweep | TLA+ & Lean | db, storage |
 | Per-peer stream cap | TLA+ | p2p |

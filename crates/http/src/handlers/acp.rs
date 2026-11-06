@@ -7,6 +7,7 @@
 
 use axum::{
     extract::{Path, State},
+    http::HeaderMap,
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -124,6 +125,93 @@ pub struct DocRelationshipRequest {
 pub struct DocRelationshipResponse {
     #[serde(rename = "ExistedAlready")]
     pub existed_already: bool,
+}
+
+fn relationship_operations(
+    state: &AppState,
+    context: &defra_core::RequestContext,
+) -> Result<std::sync::Arc<dyn crate::router::DocumentAcpOperations>, HttpError> {
+    let operations = state.require_doc_acp()?;
+    if context.txn().is_none() {
+        return Ok(bound(operations, context));
+    }
+    let bound = operations.bind_request(context).ok_or_else(|| {
+        HttpError::NotImplemented("transaction-bound document relationships are unavailable".into())
+    })?;
+    if !bound.supports_transactional_relationships() {
+        return Err(HttpError::NotImplemented(
+            "transaction-bound document relationships are unavailable".into(),
+        ));
+    }
+    Ok(bound)
+}
+
+/// Known documents whose ownership the authenticated caller asks about.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnDocumentsRequest {
+    pub collection: String,
+    pub doc_ids: Vec<String>,
+}
+
+/// A visible document's ownership relative to the authenticated caller.
+#[derive(Debug, Serialize)]
+pub struct OwnDocument {
+    pub doc_id: String,
+    pub visible: bool,
+    pub is_owner: bool,
+    /// Ownership presence is disclosed only for an ordinarily readable document.
+    pub owner_registered: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OwnDocumentsResponse {
+    pub documents: Vec<OwnDocument>,
+}
+
+/// Observe only the caller's ownership, using the same transaction and read
+/// authorization as the selected documents.
+pub async fn own_documents(
+    State(state): State<AppState>,
+    identity: ExtractIdentity,
+    headers: HeaderMap,
+    Json(body): Json<OwnDocumentsRequest>,
+) -> Result<Json<OwnDocumentsResponse>, HttpError> {
+    let actor = identity
+        .did()
+        .ok_or_else(|| HttpError::Unauthorized("authentication required".into()))?;
+    let context = super::txn_header::txn_context(&identity, &headers)?
+        .ok_or_else(|| HttpError::BadRequest("x-defradb-tx is required".into()))?
+        .with_dac_bypass(false);
+    if !context.authorization_valid_now() || context.identity() != Some(actor.as_str()) {
+        return Err(HttpError::Unauthorized(
+            "request authorization expired".into(),
+        ));
+    }
+    let handle =
+        query::TransactionHandle::new(context.txn().expect("transaction is present").to_string());
+    let rows = state
+        .executor
+        .observe_document_owners_in_txn(
+            context,
+            &handle,
+            &body.collection,
+            &body.doc_ids,
+            Some(actor.clone()),
+        )
+        .await
+        .map_err(|error| HttpError::QueryExecution(error.to_string()))?;
+    Ok(Json(OwnDocumentsResponse {
+        documents: rows
+            .into_iter()
+            .map(|row| OwnDocument {
+                doc_id: row.doc_id,
+                visible: row.visible,
+                is_owner: row.visible && row.owner.as_ref() == Some(actor),
+                owner_registered: row.visible && row.owner.is_some(),
+            })
+            .collect(),
+    }))
 }
 
 fn validate_add_doc_relationship(body: &DocRelationshipRequest) -> Result<(), HttpError> {
@@ -249,6 +337,7 @@ pub async fn decide_doc_access(
 pub async fn add_doc_relationship(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
     Json(body): Json<DocRelationshipRequest>,
 ) -> Result<Json<DocRelationshipResponse>, HttpError> {
     require_permission(&state, &identity, NodePermission::DacRelationAdd).await?;
@@ -258,7 +347,8 @@ pub async fn add_doc_relationship(
         .ok_or_else(|| HttpError::BadRequest("identity required for document ACP".into()))?;
 
     validate_add_doc_relationship(&body)?;
-    let doc_acp = bound(state.require_doc_acp()?, &identity.context());
+    let context = super::txn_header::call_context(&identity, &headers)?;
+    let doc_acp = relationship_operations(&state, &context)?;
     Ok(Json(
         apply_add_doc_relationship(doc_acp.as_ref(), requestor, &body).await?,
     ))
@@ -270,10 +360,12 @@ pub async fn add_doc_relationship(
 ///
 /// The request and response arrays have matching order. All entries are validated
 /// before the first write. A backend error stops processing without rolling back
-/// earlier entries.
+/// earlier entries. In a named transaction the caller may discard those entries
+/// with the rest of the transaction.
 pub async fn add_doc_relationships(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
     Json(bodies): Json<Vec<DocRelationshipRequest>>,
 ) -> Result<Json<Vec<DocRelationshipResponse>>, HttpError> {
     require_permission(&state, &identity, NodePermission::DacRelationAdd).await?;
@@ -286,7 +378,8 @@ pub async fn add_doc_relationships(
         validate_add_doc_relationship(body)?;
     }
 
-    let doc_acp = bound(state.require_doc_acp()?, &identity.context());
+    let context = super::txn_header::call_context(&identity, &headers)?;
+    let doc_acp = relationship_operations(&state, &context)?;
     let mut results = Vec::with_capacity(bodies.len());
     for body in &bodies {
         results.push(apply_add_doc_relationship(doc_acp.as_ref(), requestor, body).await?);
@@ -302,6 +395,7 @@ pub async fn add_doc_relationships(
 pub async fn remove_doc_relationship(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
     Json(body): Json<DocRelationshipRequest>,
 ) -> Result<Json<DocRelationshipResponse>, HttpError> {
     require_permission(&state, &identity, NodePermission::DacRelationDelete).await?;
@@ -327,7 +421,8 @@ pub async fn remove_doc_relationship(
         ));
     }
 
-    let doc_acp = bound(state.require_doc_acp()?, &identity.context());
+    let context = super::txn_header::call_context(&identity, &headers)?;
+    let doc_acp = relationship_operations(&state, &context)?;
 
     let was_removed = doc_acp
         .delete_doc_relationship(
@@ -453,6 +548,7 @@ mod tests {
         let result = add_doc_relationships(
             State(state.clone()),
             identity.clone(),
+            HeaderMap::new(),
             Json(vec![
                 doc_relationship("reader", "did:key:first"),
                 doc_relationship("owner", "did:key:second"),
@@ -466,6 +562,7 @@ mod tests {
         let Json(results) = add_doc_relationships(
             State(state),
             identity,
+            HeaderMap::new(),
             Json(vec![
                 doc_relationship("reader", "did:key:first"),
                 doc_relationship("writer", "did:key:second"),
@@ -477,5 +574,29 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert!(results.iter().all(|result| !result.existed_already));
         assert_eq!(doc_acp.add_count(), 2);
+    }
+
+    #[nuclei::test]
+    async fn transaction_header_never_falls_back_to_an_unbound_backend() {
+        let doc_acp = Arc::new(MockDocumentAcpOperations::new());
+        let state = AppStateBuilder::new(
+            Arc::new(MockQueryExecutor::new()) as Arc<dyn QueryExecutor>,
+            edge::testing::edge(),
+        )
+        .with_doc_acp(Arc::clone(&doc_acp) as Arc<dyn DocumentAcpOperations>)
+        .build();
+        let identity =
+            ExtractIdentity::from_did(Some(identity::Did::new("did:key:caller").unwrap()));
+        let mut headers = HeaderMap::new();
+        headers.insert("x-defradb-tx", "1".parse().unwrap());
+        let result = add_doc_relationship(
+            State(state),
+            identity,
+            headers,
+            Json(doc_relationship("reader", "did:key:reader")),
+        )
+        .await;
+        assert!(matches!(result, Err(HttpError::NotImplemented(_))));
+        assert_eq!(doc_acp.add_count(), 0);
     }
 }

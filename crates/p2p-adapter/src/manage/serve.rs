@@ -465,6 +465,13 @@ mod tests {
         async fn is_enabled(&self) -> bool {
             unimplemented!()
         }
+        async fn check_permission_persisted(
+            &self,
+            _identity: &Did,
+            _permission: acp::nac::NodePermission,
+        ) -> db::nac::Result<bool> {
+            unimplemented!()
+        }
         async fn is_admin(&self, _identity: &Did) -> db::nac::Result<bool> {
             unimplemented!()
         }
@@ -477,10 +484,10 @@ mod tests {
         async fn enable(&self, _owner: &Did) -> db::nac::Result<()> {
             unimplemented!()
         }
-        async fn disable(&self, _requestor: &Did) -> db::nac::Result<()> {
+        async fn disable(&self) -> db::nac::Result<()> {
             unimplemented!()
         }
-        async fn re_enable(&self, _requestor: &Did) -> db::nac::Result<()> {
+        async fn re_enable(&self) -> db::nac::Result<()> {
             unimplemented!()
         }
         async fn purge(&self, _requestor: &Did) -> db::nac::Result<()> {

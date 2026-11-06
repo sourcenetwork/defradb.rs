@@ -37,6 +37,14 @@ pub enum Error {
     #[error("unsupported subject for this backend: {0}")]
     UnsupportedSubject(String),
 
+    /// The backend cannot evaluate named document permissions.
+    #[error("named document permission checks are unsupported by this backend")]
+    UnsupportedNamedPermission,
+
+    /// This provider cannot bind native node-administrator relationship writes.
+    #[error("transactional node-administrator relationship management is unsupported")]
+    UnsupportedAdministrativeRelationship,
+
     /// Not the owner of the document (UNAUTHORIZED)
     #[error("UNAUTHORIZED: not document owner, cannot {operation}")]
     NotOwner { operation: String },

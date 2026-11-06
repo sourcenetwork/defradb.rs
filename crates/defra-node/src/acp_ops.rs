@@ -4,12 +4,52 @@
 use crate::{Error, Result};
 use std::sync::Arc;
 
+use defra_core::RequestContext;
 use identity::Did;
+
+pub(crate) mod transactional;
 
 #[async_trait::async_trait]
 pub(crate) trait AcpOps: Send + Sync {
+    async fn change_nac_source_for_in_txn(
+        &self,
+        _transaction_context: &RequestContext,
+        _actor_context: &RequestContext,
+        _edge: &query::txn::SourcePermission,
+    ) -> Result<bool> {
+        Err(query::QueryError::execution(
+            "transaction-bound node source permissions are unavailable",
+        )
+        .into())
+    }
+    /// A trusted embedder selects a document actor while the node owns the
+    /// transaction; the HTTP adapter never exposes this operation.
+    async fn change_dac_relationship_for_in_txn(
+        &self,
+        _transaction_context: &RequestContext,
+        _actor_context: &RequestContext,
+        _relationship: transactional::Relationship<'_>,
+        _delete: bool,
+    ) -> Result<bool> {
+        Err(query::QueryError::execution(
+            "transaction-bound relationship delegation is unavailable",
+        )
+        .into())
+    }
+
+    #[cfg(feature = "http")]
+    async fn check_doc_access(
+        &self,
+        context: &RequestContext,
+        actor: &Did,
+        permission: acp::DocumentPermission,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> Result<bool>;
     async fn add_dac_actor_relationship(
         &self,
+        context: &RequestContext,
         identity: &str,
         collection: &str,
         doc_id: &str,
@@ -18,6 +58,7 @@ pub(crate) trait AcpOps: Send + Sync {
     ) -> Result<bool>;
     async fn delete_dac_actor_relationship(
         &self,
+        context: &RequestContext,
         identity: &str,
         collection: &str,
         doc_id: &str,
@@ -28,8 +69,10 @@ pub(crate) trait AcpOps: Send + Sync {
 
 pub(crate) struct DbAcpOps<S: storage::corekv::Store + 'static> {
     database: Arc<db::DB<S>>,
+    registry: Arc<db::DbTransactionRegistry<S>>,
     document_acp: Arc<dyn acp::DocumentACP>,
     event_bus: Arc<dyn events::Bus>,
+    executor: Arc<dyn query::QueryExecutor>,
 }
 
 /// Everything a relationship call needs from the collection and its policy.
@@ -44,14 +87,34 @@ struct RelationshipTarget {
 impl<S: storage::corekv::Store + 'static> DbAcpOps<S> {
     pub(crate) fn new(
         database: Arc<db::DB<S>>,
+        registry: Arc<db::DbTransactionRegistry<S>>,
         document_acp: Arc<dyn acp::DocumentACP>,
         event_bus: Arc<dyn events::Bus>,
+        executor: Arc<dyn query::QueryExecutor>,
     ) -> Self {
         Self {
             database,
+            registry,
             document_acp,
             event_bus,
+            executor,
         }
+    }
+
+    async fn relationship_autocommit(
+        &self,
+        context: &RequestContext,
+        identity: &str,
+        relationship: transactional::Relationship<'_>,
+        delete: bool,
+    ) -> Result<bool> {
+        let guard = query::TransactionGuard::begin_as(self.executor.as_ref(), context.clone(), false).await?;
+        let id = guard.handle().ok_or_else(|| query::QueryError::execution("transaction is unavailable"))?
+            .as_str().parse().map_err(|_| query::QueryError::execution("transaction ID must be numeric"))?;
+        let txn_context = context.clone().with_txn(Some(id));
+        let changed = self.relationship_in_txn(&txn_context, context, identity, relationship, delete).await?;
+        guard.commit().await?;
+        Ok(changed)
     }
 
     /// Resolve the caller's DID and check the node-level permission it needs.
@@ -151,14 +214,113 @@ impl<S: storage::corekv::Store + 'static> DbAcpOps<S> {
 
 #[async_trait::async_trait]
 impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
+    async fn change_nac_source_for_in_txn(
+        &self,
+        transaction_context: &RequestContext,
+        actor_context: &RequestContext,
+        edge: &query::txn::SourcePermission,
+    ) -> Result<bool> {
+        use query::txn::TransactionRegistry as _;
+        let id = transaction_context
+            .txn()
+            .ok_or_else(|| query::QueryError::execution("an explicit transaction is required"))?;
+        if !transaction_context.authorization_valid_now()
+            || actor_context.txn().is_some_and(|actor_id| actor_id != id)
+        {
+            return Err(query::QueryError::permission_denied(
+                "invalid transaction or actor authorization",
+            )
+            .into());
+        }
+        let job = query::txn::source_permission_job(actor_context.clone(), edge.clone())?;
+        let handle = query::txn::TransactionHandle::new(id.to_string());
+        Ok(self
+            .registry
+            .run_as(transaction_context, &handle, None, job)
+            .await??)
+    }
+    async fn change_dac_relationship_for_in_txn(
+        &self,
+        transaction_context: &RequestContext,
+        actor_context: &RequestContext,
+        relationship: transactional::Relationship<'_>,
+        delete: bool,
+    ) -> Result<bool> {
+        let identity = actor_context.identity().ok_or_else(|| {
+            query::QueryError::permission_denied("an authenticated relationship actor is required")
+        })?;
+        let actor = Did::new(identity).map_err(Error::InvalidIdentityDid)?;
+        if actor.is_wildcard() {
+            return Err(query::QueryError::permission_denied(
+                "an explicit relationship actor is required",
+            )
+            .into());
+        }
+        self.relationship_in_txn(
+            transaction_context,
+            actor_context,
+            identity,
+            relationship,
+            delete,
+        )
+        .await
+    }
+
+    #[cfg(feature = "http")]
+    async fn check_doc_access(
+        &self,
+        context: &RequestContext,
+        actor: &Did,
+        permission: acp::DocumentPermission,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> Result<bool> {
+        self.database
+            .check_node_access_as(context, acp::nac::NodePermission::DacStatus)
+            .await?;
+        acp::bound_to_request(&self.document_acp, context)
+            .check_doc_access(
+                &acp::Identity::Authenticated(actor.clone()),
+                permission,
+                policy_id,
+                resource_name,
+                doc_id,
+            )
+            .await
+            .map_err(Error::Acp)
+    }
+
     async fn add_dac_actor_relationship(
         &self,
+        context: &RequestContext,
         identity: &str,
         collection: &str,
         doc_id: &str,
         relation: &str,
         target: &str,
     ) -> Result<bool> {
+        if context.txn().is_some() {
+            return self
+                .relationship_in_txn(
+                    context,
+                    context,
+                    identity,
+                    transactional::Relationship {
+                        collection,
+                        doc_id,
+                        relation,
+                        target,
+                    },
+                    false,
+                )
+                .await;
+        }
+        if self.document_acp.supports_transactions() {
+            return self.relationship_autocommit(context, identity, transactional::Relationship {
+                collection, doc_id, relation, target,
+            }, false).await;
+        }
         let requestor = self
             .authorize(identity, acp::nac::NodePermission::DacRelationAdd)
             .await?;
@@ -169,8 +331,7 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
             .relationship_target(collection, relation, target)
             .await?;
 
-        let added = self
-            .document_acp
+        let added = acp::bound_to_request(&self.document_acp, context)
             .add_relationship(
                 &requestor,
                 resolved.target,
@@ -196,12 +357,34 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
 
     async fn delete_dac_actor_relationship(
         &self,
+        context: &RequestContext,
         identity: &str,
         collection: &str,
         doc_id: &str,
         relation: &str,
         target: &str,
     ) -> Result<bool> {
+        if context.txn().is_some() {
+            return self
+                .relationship_in_txn(
+                    context,
+                    context,
+                    identity,
+                    transactional::Relationship {
+                        collection,
+                        doc_id,
+                        relation,
+                        target,
+                    },
+                    true,
+                )
+                .await;
+        }
+        if self.document_acp.supports_transactions() {
+            return self.relationship_autocommit(context, identity, transactional::Relationship {
+                collection, doc_id, relation, target,
+            }, true).await;
+        }
         let requestor = self
             .authorize(identity, acp::nac::NodePermission::DacRelationDelete)
             .await?;
@@ -214,7 +397,7 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
 
         // Local ACP relationships are node-local (matches Go): a revoke is not
         // propagated to peers. Cross-node access control is Vera's role.
-        self.document_acp
+        acp::bound_to_request(&self.document_acp, context)
             .delete_relationship(
                 &requestor,
                 resolved.target,

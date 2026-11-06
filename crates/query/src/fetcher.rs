@@ -139,10 +139,59 @@ impl IndexScanResult {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait DocFetcher: MaybeSendSync {
+    /// Apply native node-administrator authority in this exact transaction.
+    #[allow(clippy::too_many_arguments)]
+    async fn change_node_admin_relationship(
+        &self,
+        _provider: std::sync::Arc<dyn acp::DocumentACP>,
+        _actor: &identity::Did,
+        _target: acp::Subject,
+        _policy_id: &str,
+        _resource: &str,
+        _doc_id: &str,
+        _relation: &str,
+        _delete: bool,
+    ) -> acp::Result<bool> {
+        Err(acp::Error::UnsupportedAdministrativeRelationship)
+    }
+
+    /// An active NAC must make its decision in this fetcher's transaction.
+    /// None means that an enforcing provider cannot bind to that transaction.
+    async fn check_verified_node_permission(
+        &self,
+        _identity: &identity::Did,
+        _permission: acp::nac::NodePermission,
+    ) -> Result<Option<bool>> {
+        Ok(None)
+    }
+
     async fn check_node_permission(
         &self,
         _identity: &identity::Did,
         _permission: acp::nac::NodePermission,
+    ) -> Result<Option<bool>> {
+        Ok(None)
+    }
+
+    /// Evaluate node authorization only when bound to this transaction.
+    async fn check_bound_node_permission(
+        &self,
+        _identity: &identity::Did,
+        _permission: acp::nac::NodePermission,
+        _require_active: bool,
+    ) -> Result<Option<bool>> {
+        Ok(None)
+    }
+
+    /// Stage a source-scoped node grant in this transaction, when supported.
+    async fn change_source_node_permission(
+        &self,
+        _requestor: &identity::Did,
+        _permission: acp::nac::NodePermission,
+        _parent_source: Option<&str>,
+        _subject_kind: &str,
+        _subject: &str,
+        _delete: bool,
     ) -> Result<Option<bool>> {
         Ok(None)
     }
@@ -153,6 +202,11 @@ pub trait DocFetcher: MaybeSendSync {
         &self,
         _provider: std::sync::Arc<dyn acp::DocumentACP>,
     ) -> Result<Option<std::sync::Arc<dyn acp::DocumentACP>>> {
+        Ok(None)
+    }
+
+    /// Read a DAC policy through the same transaction as its relationships.
+    async fn transaction_dac_policy(&self, _id: &str) -> Result<Option<acp::Policy>> {
         Ok(None)
     }
 

@@ -490,6 +490,7 @@ where
                     )
                     .await
                     .map_err(index_error)?;
+                datastore.project_document(collection.name(), &record.doc_id).await.map_err(storage)?;
             }
         }
         systemstore.delete(key).await.map_err(storage)?;

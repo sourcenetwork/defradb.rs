@@ -49,6 +49,83 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
             .await
             .map_err(|error| super::error::Error::Other(error.to_string()))
     }
+    async fn check_bound_permission_in_txn(
+        &self,
+        view: datastore::NamespaceView,
+        identity: &Did,
+        permission: NodePermission,
+        require_active: bool,
+    ) -> Result<Option<bool>> {
+        if !self.nac.supports_transactions() {
+            return Ok(None);
+        }
+        let scoped = self.nac.scoped(std::sync::Arc::new(
+            acp::zanzibar::store::TransactionZanzibarStore::new(view),
+        ));
+        scoped
+            .load()
+            .await
+            .map_err(|error| super::error::Error::Other(error.to_string()))?;
+        if require_active && scoped.status().await != NacStatus::Enabled {
+            return Ok(None);
+        }
+        scoped
+            .check_permission(identity, permission)
+            .await
+            .map(Some)
+            .map_err(|error| super::error::Error::Other(error.to_string()))
+    }
+    async fn check_permission_persisted(
+        &self,
+        identity: &Did,
+        permission: NodePermission,
+    ) -> Result<bool> {
+        NacManager::check_permission_persisted(self, identity, permission).await
+    }
+    async fn change_source_permission_in_txn(
+        &self,
+        view: datastore::NamespaceView,
+        requestor: &Did,
+        change: &super::SourcePermissionChange<'_>,
+    ) -> Result<Option<bool>> {
+        if !self.transaction_store_bound || !self.nac.supports_transactions() {
+            return Ok(None);
+        }
+        let scoped = self.nac.scoped(std::sync::Arc::new(
+            acp::zanzibar::store::TransactionZanzibarStore::new(view),
+        ));
+        scoped
+            .load()
+            .await
+            .map_err(|error| super::error::Error::Other(error.to_string()))?;
+        let operation = if change.delete {
+            NodePermission::NacRelationDelete
+        } else {
+            NodePermission::NacRelationAdd
+        };
+        if scoped.status().await != NacStatus::Enabled
+            || !scoped
+                .check_permission(requestor, operation)
+                .await
+                .map_err(|error| super::error::Error::Other(error.to_string()))?
+        {
+            return Err(super::error::Error::Other(
+                "node relationship permission denied".into(),
+            ));
+        }
+        scoped
+            .change_source_permission(
+                requestor,
+                change.permission,
+                change.parent_source,
+                change.subject_kind,
+                change.subject,
+                change.delete,
+            )
+            .await
+            .map(Some)
+            .map_err(|error| super::error::Error::Other(error.to_string()))
+    }
     async fn is_admin(&self, identity: &Did) -> Result<bool> {
         NacManager::is_admin(self, identity).await
     }
@@ -61,11 +138,11 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
     async fn enable(&self, owner: &Did) -> Result<()> {
         NacManager::enable(self, owner).await
     }
-    async fn disable(&self, requestor: &Did) -> Result<()> {
-        NacManager::disable(self, requestor).await
+    async fn disable(&self) -> Result<()> {
+        NacManager::disable(self).await
     }
-    async fn re_enable(&self, requestor: &Did) -> Result<()> {
-        NacManager::re_enable(self, requestor).await
+    async fn re_enable(&self) -> Result<()> {
+        NacManager::re_enable(self).await
     }
     async fn purge(&self, requestor: &Did) -> Result<()> {
         NacManager::purge(self, requestor).await

@@ -4,13 +4,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[cfg(feature = "p2p")]
-use crate::assemble::check_access_hooks;
-use crate::assemble::{assemble, Extras};
-use crate::config::{NodeConfig, NodeSigning, Persistence, SigningKey, TransportConfig};
 use crate::Node;
 #[cfg(feature = "otel")]
 use crate::TelemetryHandle;
+#[cfg(feature = "p2p")]
+use crate::assemble::check_access_hooks;
+use crate::assemble::{Extras, assemble};
+use crate::config::{NodeConfig, NodeSigning, Persistence, SigningKey, TransportConfig};
 #[cfg(feature = "p2p")]
 use crate::{AccessHooks, P2PConfig};
 #[cfg(feature = "vera")]
@@ -66,6 +66,7 @@ pub struct NodeBuilder {
     telemetry_handle: Option<TelemetryHandle>,
     crdts: Vec<crdt::Registration>,
     txn_ownership: db::TxnOwnership,
+    document_projector: Option<Arc<dyn db::DocumentMutationProjector>>,
 }
 
 /// Durability is a separate builder setting, so it is applied over the
@@ -98,6 +99,16 @@ fn with_at_rest_keys(
 }
 
 impl NodeBuilder {
+    /// Install a trusted in-process document projector. It stages its changes
+    /// through the mutation's transaction and cannot be selected over HTTP.
+    pub fn with_document_projector(
+        mut self,
+        projector: Arc<dyn db::DocumentMutationProjector>,
+    ) -> Self {
+        self.document_projector = Some(projector);
+        self
+    }
+
     /// The worker pool the node's data path runs on. Unset, the pool's own
     /// defaults (`workers::Config::default()`).
     pub fn with_workers(mut self, config: workers::Config) -> Self {
@@ -233,6 +244,15 @@ impl NodeBuilder {
     /// own the policy — [`NodeBuilder::build`] fails otherwise.
     pub fn with_node_acp_enabled(mut self) -> Self {
         self.config.node_acp_enabled = true;
+        self
+    }
+
+    /// Enable Node Access Control (NAC) owned by `owner`, the identity
+    /// starting the node, as Go's `start` with NAC enabled does. A node whose
+    /// NAC was set up before keeps its owner.
+    pub fn with_node_acp_owner(mut self, owner: impl Into<String>) -> Self {
+        self.config.node_acp_enabled = true;
+        self.config.node_acp_owner = Some(owner.into());
         self
     }
 
@@ -420,11 +440,17 @@ impl NodeBuilder {
             None => (false, None),
         };
 
+        #[cfg(feature = "http")]
+        if serves_http && self.txn_ownership == db::TxnOwnership::Embedder {
+            return Err(crate::Error::HttpEmbedderTransactionOwnership);
+        }
+
         let extras = Extras {
             embedding_url: self.embedding_url.take(),
             embedding_model: self.embedding_model.take(),
             embedding_api_key: self.embedding_api_key.take(),
             txn_ownership: self.txn_ownership,
+            document_projector: self.document_projector.take(),
             #[cfg(feature = "http")]
             transaction_cleanup,
             #[cfg(feature = "http")]
@@ -464,6 +490,9 @@ impl NodeBuilder {
             .with_event_bus_arc(node.event_bus.clone())
             .with_pool(node.pool.clone())
             .with_dev_mode(http_cfg.dev_mode)
+            .with_doc_acp_arc(Arc::new(crate::http_acp::HttpDocumentAcp::new(
+                node.acp_ops.clone(),
+            )))
             .with_schema_arc(Arc::new(crate::HttpSchemaOps {
                 schema_ops: Arc::clone(&node.schema_ops),
                 context: None,

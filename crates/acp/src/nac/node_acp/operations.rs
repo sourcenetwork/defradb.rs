@@ -59,6 +59,29 @@ impl<S: ZanzibarStore + ?Sized + 'static> NodeACP<S> {
         Ok(has_permission)
     }
 
+    /// Whether `identity` holds `permission` in the stored relationships,
+    /// whatever the current status: the owner holds every permission. Go
+    /// checks re-enabling this way while NAC is disabled.
+    pub async fn check_permission_persisted(
+        &self,
+        identity: &Did,
+        permission: NodePermission,
+    ) -> Result<bool> {
+        if self.is_owner(identity).await {
+            return Ok(true);
+        }
+        let engine = self.engine.snapshot();
+        Ok(engine
+            .check(
+                NODE_POLICY_ID,
+                NODE_RESOURCE_NAME,
+                NODE_OBJECT_ID,
+                permission.as_str(),
+                identity,
+            )
+            .await?)
+    }
+
     /// Check if an identity is the owner.
     pub async fn is_owner(&self, identity: &Did) -> bool {
         match self.owner.load() {

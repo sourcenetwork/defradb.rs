@@ -172,6 +172,20 @@ impl QueryExecutor for PooledExecutor {
             .await
     }
 
+    async fn observe_document_access_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        collection: &str,
+        doc_ids: &[String],
+        actor: identity::Did,
+        mode: crate::owners::DocumentAccessMode,
+    ) -> Result<Vec<crate::owners::DocumentAccessDecision>> {
+        self.inner
+            .observe_document_access_in_txn(context, handle, collection, doc_ids, actor, mode)
+            .await
+    }
+
     async fn begin_txn(
         &self,
         readonly: bool,
@@ -293,6 +307,59 @@ impl QueryExecutor for PooledExecutor {
         context: &RequestContext,
     ) -> std::result::Result<acp::LightClientStatus, TransactionError> {
         self.inner.acp_light_client_status_as(context).await
+    }
+
+    async fn nac_status_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<acp::nac::NacStatus, TransactionError> {
+        self.inner.nac_status_as(context).await
+    }
+
+    async fn disable_nac_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<(), TransactionError> {
+        self.inner.disable_nac_as(context).await
+    }
+
+    async fn re_enable_nac_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<(), TransactionError> {
+        self.inner.re_enable_nac_as(context).await
+    }
+
+    async fn add_nac_actor_relationship_as(
+        &self,
+        context: &RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        self.inner
+            .add_nac_actor_relationship_as(context, relation, target_actor)
+            .await
+    }
+
+    async fn change_nac_source_permission_as(
+        &self,
+        context: &RequestContext,
+        edge: &crate::txn::SourcePermission,
+    ) -> std::result::Result<bool, TransactionError> {
+        self.inner
+            .change_nac_source_permission_as(context, edge)
+            .await
+    }
+
+    async fn delete_nac_actor_relationship_as(
+        &self,
+        context: &RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        self.inner
+            .delete_nac_actor_relationship_as(context, relation, target_actor)
+            .await
     }
 
     async fn set_migration_as(

@@ -1143,3 +1143,63 @@ resources:
     })
     .unwrap()
 }
+
+#[test]
+fn manager_userset_with_unsupported_target_fails_closed() {
+    workers::block_on(async {
+        let yaml = r#"
+name: Invalid manager target
+resources:
+- name: rows
+  relations:
+  - name: reader
+    types: [actor]
+  - name: manager
+    types: [actor]
+    manages: [reader]
+  permissions:
+  - name: read
+    expr: reader
+  - name: update
+  - name: delete
+"#;
+        let parsed = parse_policy_yaml(yaml).unwrap();
+        validate_policy_expressions(&parsed).unwrap();
+        let policy = build_policy(&parsed, 1).unwrap();
+        let policy_id = policy.id.clone();
+        let store = Arc::new(MemoryZanzibarStore::new());
+        store.store_policy(&policy).await.unwrap();
+        let acp = ZanzibarDocumentACP::new(Arc::clone(&store));
+        let owner = test_did();
+        let candidate = test_did2();
+        acp.register_doc_object(&owner, &policy_id, "rows", "row")
+            .await
+            .unwrap();
+        // A corrupt store can contain an edge the policy would have rejected.
+        store
+            .store_relationship(
+                &policy_id,
+                &zanzibar::Relationship::new(
+                    "rows",
+                    "row",
+                    "manager",
+                    zanzibar::Subject::entity_set("unknown", "node", "owner"),
+                ),
+            )
+            .await
+            .unwrap();
+        assert!(acp
+            .add_actor_relationship(
+                &candidate,
+                &candidate,
+                &policy_id,
+                "rows",
+                "row",
+                "reader",
+                &[]
+            )
+            .await
+            .is_err());
+    })
+    .unwrap()
+}

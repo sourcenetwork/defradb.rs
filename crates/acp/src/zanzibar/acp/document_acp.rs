@@ -23,6 +23,21 @@ fn actor_subject(actor: &Did) -> Subject {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: ZanzibarStore + ?Sized + 'static> DocumentACP for ZanzibarDocumentACP<S> {
+    #[allow(clippy::too_many_arguments)]
+    async fn change_node_admin_relationship(
+        &self,
+        view: datastore::NamespaceView,
+        actor: &Did,
+        target: Subject,
+        policy_id: &str,
+        resource: &str,
+        doc_id: &str,
+        relation: &str,
+        delete: bool,
+    ) -> Result<bool> {
+        self.change_administrative_relationship(view, actor, target, policy_id, resource, doc_id, relation, delete).await
+    }
+
     fn supports_transactions(&self) -> bool {
         self.store.supports_transactions()
     }
@@ -235,6 +250,46 @@ impl<S: ZanzibarStore + ?Sized + 'static> DocumentACP for ZanzibarDocumentACP<S>
         }
 
         Ok(granted)
+    }
+
+    async fn check_named_permission(
+        &self,
+        subject: &Did,
+        permission: &str,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> Result<bool> {
+        if subject.is_wildcard() {
+            return Err(Error::PermissionDenied(
+                "an explicit actor DID is required".into(),
+            ));
+        }
+        if let Some(scope) = self.store.begin_scope(true).await? {
+            let scoped = self.scoped(scope.store());
+            let result = scoped
+                .check_named_permission(subject, permission, policy_id, resource_name, doc_id)
+                .await?;
+            drop(scoped);
+            scope.commit().await?;
+            return Ok(result);
+        }
+        if !self
+            .is_doc_registered(policy_id, resource_name, doc_id)
+            .await?
+        {
+            return Ok(false);
+        }
+        let policy = self
+            .store
+            .get_policy(policy_id)
+            .await?
+            .ok_or_else(|| Error::PolicyNotFound(policy_id.to_owned()))?;
+        let mut engine = zanzibar::PermissionEngine::new(self.store.clone());
+        engine.add_policy(&policy);
+        Ok(engine
+            .check(policy_id, resource_name, doc_id, permission, subject)
+            .await?)
     }
 
     async fn add_actor_relationship(

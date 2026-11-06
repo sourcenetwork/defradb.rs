@@ -37,6 +37,9 @@ pub enum Error {
     /// A transaction operation failed.
     #[error(transparent)]
     Transaction(#[from] query::TransactionError),
+    /// A transaction-scoped query operation failed.
+    #[error(transparent)]
+    Query(#[from] query::QueryError),
     /// The transaction does not exist, is finished, or belongs to another
     /// caller. Go's text for all three.
     #[error("transaction not found")]
@@ -44,6 +47,9 @@ pub enum Error {
     /// The commit lost a write conflict. Go's text.
     #[error("transaction conflict. Please retry")]
     TransactionConflict,
+    /// An HTTP server cannot expose transactions keyed only by embedder.
+    #[error("HTTP requires identity-owned transactions; embedder-only ownership is local")]
+    HttpEmbedderTransactionOwnership,
     /// A custom CRDT type could not be registered.
     #[error(transparent)]
     CustomCrdt(#[from] crdt::RegistryError),
@@ -210,8 +216,11 @@ pub enum Error {
     #[error("invalid node identity DID: {0}")]
     InvalidNodeIdentityDid(#[source] identity::Error),
     /// Node ACP needs a node identity.
-    #[error("node ACP requires a node identity; set one with with_node_identity_did()")]
+    #[error("can not start nac without identity")]
     NodeAcpNeedsIdentity,
+    /// A trusted document projector needs the node's actual DID.
+    #[error("document projector requires a node identity DID")]
+    DocumentProjectorNeedsIdentity,
     /// The node identity given for node ACP is invalid.
     #[error("invalid node identity DID for node ACP: {0}")]
     InvalidNodeAcpIdentity(#[source] identity::Error),

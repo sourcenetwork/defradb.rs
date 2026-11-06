@@ -98,7 +98,7 @@ mod unit_tests {
             let other = test_did2();
             manager.initialize(Some(&owner)).await.unwrap();
 
-            manager.disable(&owner).await.unwrap();
+            manager.disable().await.unwrap();
             assert_eq!(manager.status().await, NacStatus::DisabledTemporarily);
 
             assert!(manager
@@ -106,7 +106,7 @@ mod unit_tests {
                 .await
                 .unwrap());
 
-            manager.re_enable(&owner).await.unwrap();
+            manager.re_enable().await.unwrap();
             assert_eq!(manager.status().await, NacStatus::Enabled);
 
             assert!(!manager

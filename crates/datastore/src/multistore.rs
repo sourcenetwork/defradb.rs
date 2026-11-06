@@ -11,6 +11,20 @@ use storage::corekv::{
 };
 use storage::namespace::Namespace;
 
+/// A trusted host projection run inside the document's transaction. An error
+/// rejects the mutation and its staged projection. The host must stage all
+/// effects through this view, validate every read its decision depends on,
+/// and use native authorization for ACP changes. A transaction may call the
+/// projector more than once as it writes or merges documents.
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait DocumentMutationProjector: storage::corekv::MaybeSendSync {
+    /// Reconcile existing documents on startup before network service begins.
+    async fn reconcile(&self, view: &NamespaceView) -> Result<()>;
+
+    async fn project(&self, view: &NamespaceView, collection: &str, doc_id: &str) -> Result<()>;
+}
+
 /// One transaction shared by its namespace views.
 ///
 /// Reads and writes take `&self` and go straight to the transaction, which
@@ -29,6 +43,7 @@ pub struct SharedTxn {
     queued: QueuedCallbacks,
     /// The CRDT types of the node whose store the transaction runs on.
     crdts: storage::Crdts,
+    projector: Option<Arc<dyn DocumentMutationProjector>>,
 }
 
 impl SharedTxn {
@@ -126,7 +141,12 @@ impl SharedTxn {
             queued: QueuedCallbacks::new(txn.is_readonly()),
             txn: Some(txn),
             crdts,
+            projector: None,
         })
+    }
+
+    pub(crate) fn set_document_projector(&mut self, projector: Arc<dyn DocumentMutationProjector>) {
+        self.projector = Some(projector);
     }
 
     /// The CRDT types of the node whose store the transaction runs on.
@@ -263,6 +283,17 @@ pub struct NamespaceView {
 }
 
 impl NamespaceView {
+    pub fn has_document_projector(&self) -> bool {
+        self.txn.projector.is_some()
+    }
+
+    /// Run the trusted document projector inside this view's transaction.
+    pub async fn project_document(&self, collection: &str, doc_id: &str) -> Result<()> {
+        if let Some(projector) = &self.txn.projector {
+            projector.project(self, collection, doc_id).await?;
+        }
+        Ok(())
+    }
     pub async fn merge(&self, key: &[u8], operand: &[u8]) -> Result<()> {
         self.txn.merge(self.namespace, key, operand).await
     }
@@ -542,8 +573,8 @@ impl Iterator for NamespacedIterator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use storage::corekv::Store;
     use storage::RegolithStore;
+    use storage::corekv::Store;
 
     #[test]
     fn test_shared_txn_namespace_isolation() {

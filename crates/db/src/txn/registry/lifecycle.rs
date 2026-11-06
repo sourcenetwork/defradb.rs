@@ -301,6 +301,73 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .map_err(|error| TransactionError::operation(error.to_string()))
     }
 
+    async fn nac_status_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<acp::nac::NacStatus, TransactionError> {
+        self.db
+            .nac_status_as(context)
+            .await
+            .map_err(|error| TransactionError::operation(error.to_string()))
+    }
+
+    async fn disable_nac_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<(), TransactionError> {
+        self.db
+            .disable_nac_as(context)
+            .await
+            .map_err(|error| TransactionError::operation(error.to_string()))
+    }
+
+    async fn re_enable_nac_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<(), TransactionError> {
+        self.db
+            .re_enable_nac_as(context)
+            .await
+            .map_err(|error| TransactionError::operation(error.to_string()))
+    }
+
+    async fn add_nac_actor_relationship_as(
+        &self,
+        context: &RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        self.db
+            .add_nac_actor_relationship_as(context, relation, target_actor)
+            .await
+            .map_err(|error| TransactionError::operation(error.to_string()))
+    }
+
+    async fn change_nac_source_permission_as(
+        &self,
+        context: &RequestContext,
+        edge: &query::txn::SourcePermission,
+    ) -> std::result::Result<bool, TransactionError> {
+        let id = context
+            .txn()
+            .ok_or_else(|| TransactionError::operation("an explicit transaction is required"))?;
+        let handle = TransactionHandle::new(id.to_string());
+        let job = query::txn::source_permission_job(context.clone(), edge.clone())?;
+        self.run_as(context, &handle, None, job).await?
+    }
+
+    async fn delete_nac_actor_relationship_as(
+        &self,
+        context: &RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        self.db
+            .delete_nac_actor_relationship_as(context, relation, target_actor)
+            .await
+            .map_err(|error| TransactionError::operation(error.to_string()))
+    }
+
     async fn set_active_collection_version_as(
         &self,
         context: &RequestContext,

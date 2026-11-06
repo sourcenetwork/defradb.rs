@@ -27,6 +27,7 @@ pub(crate) struct Extras {
     pub embedding_model: Option<String>,
     pub embedding_api_key: Option<String>,
     pub txn_ownership: db::TxnOwnership,
+    pub document_projector: Option<Arc<dyn db::DocumentMutationProjector>>,
     #[cfg(feature = "http")]
     pub transaction_cleanup: Option<TransactionCleanupConfig>,
     #[cfg(feature = "http")]
@@ -80,6 +81,7 @@ where
         max_txn_retries,
         chunk_size,
         node_acp_enabled,
+        node_acp_owner,
         query_timeout,
         introspection_cache,
         replication_filter,
@@ -99,11 +101,14 @@ where
 
     // Everything the config can refuse is checked before anything opens, so a
     // refusal has nothing to close.
-    let nac_owner = nac_owner(
-        node_acp_enabled,
-        &node_identity_did,
-        node_p2p_identity.is_some(),
-    )?;
+    let nac_owner = match node_acp_owner {
+        Some(owner) => Some(identity::Did::new(owner).map_err(Error::InvalidNodeAcpIdentity)?),
+        None => nac_owner(
+            node_acp_enabled,
+            &node_identity_did,
+            node_p2p_identity.is_some(),
+        )?,
+    };
     #[cfg(any(feature = "p2p", feature = "libp2p"))]
     match &transport {
         #[cfg(feature = "libp2p")]
@@ -195,7 +200,22 @@ where
         .await,
     )
     .await?;
-    let document_acp = acp_setup.document_acp.clone();
+    database.set_document_acp(acp_setup.document_acp.clone());
+    let document_acp = database.document_acp().expect("document ACP was just installed").clone();
+    if let Some(projector) = extras.document_projector {
+        let actor = close_on_error(
+            &database,
+            node_query_identity.clone().ok_or(Error::DocumentProjectorNeedsIdentity),
+        ).await?;
+        close_on_error(
+            &database,
+            database.set_document_projector(projector, document_acp.clone(), actor).map_err(Error::DatabaseOpen),
+        ).await?;
+        close_on_error(
+            &database,
+            database.reconcile_document_projector().await.map_err(Error::DatabaseOpen),
+        ).await?;
+    }
     #[cfg(feature = "vera")]
     let remote_acp = acp_setup.vera_acp.is_some();
     #[cfg(not(feature = "vera"))]
@@ -472,8 +492,10 @@ where
     ));
     let acp_ops: Arc<dyn acp_ops::AcpOps> = Arc::new(acp_ops::DbAcpOps::new(
         database.clone(),
+        registry.clone(),
         document_acp.clone(),
         event_bus.clone(),
+        runner.clone(),
     ));
     // Started last: nothing after this point fails, so a failed build
     // never leaves a task holding the store open. The vector sweep rebuilds

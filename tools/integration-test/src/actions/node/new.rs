@@ -86,6 +86,7 @@ impl Op for NewNode {
             network: self.network,
             dir,
             listen: Vec::new(),
+            ..Default::default()
         };
         state.start_node(self.common.node(), spec);
         Ok(json!({}))

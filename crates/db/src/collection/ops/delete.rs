@@ -44,6 +44,11 @@ impl<S: Store> crate::database::DB<S> {
             .await
             .map_err(Error::Storage)?;
 
+        txn.datastore()?
+            .project_document(name, "")
+            .await
+            .map_err(Error::Storage)?;
+
         // 3. Delete the version index entry from /collection/version/{collection_id}/{version_id}
         let version_index_key = CollectionVersionKey::new(&collection_id, &version_id);
         systemstore

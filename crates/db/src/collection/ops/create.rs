@@ -252,6 +252,11 @@ impl<S: Store> crate::database::DB<S> {
             .await
             .map_err(Error::Storage)?;
 
+        txn.datastore()?
+            .project_document(&name, "")
+            .await
+            .map_err(Error::Storage)?;
+
         // Publish the process-wide head only after this transaction commits.
         if let Ok(cid) = cid::Cid::try_from(version_id.as_str()) {
             let schema_heads = std::sync::Arc::clone(&self.schema_heads);

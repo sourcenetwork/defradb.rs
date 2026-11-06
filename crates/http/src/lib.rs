@@ -91,6 +91,16 @@ pub mod auth_error;
 #[cfg(feature = "server")]
 pub mod auth_middleware;
 #[cfg(feature = "server")]
+pub mod client_signed_create;
+pub mod client_signed_delete;
+pub mod client_signed_update;
+#[cfg(feature = "server")]
+mod client_signer;
+#[cfg(all(test, feature = "server"))]
+mod client_signer_tests;
+#[cfg(feature = "server")]
+mod client_signing;
+#[cfg(feature = "server")]
 pub mod error;
 #[cfg(feature = "server")]
 pub mod go_paths;
@@ -129,7 +139,7 @@ pub use router::{
 };
 pub use router::{
     BackupOperations, BlockOperations, DocumentAcpOperations, IndexFieldInfo, IndexInfo,
-    IndexOperations, NacStatus, NacStatusInfo, NodeAcpOperations, NodePermission, ViewOperations,
+    IndexOperations, NacStatus, NodeAcpOperations, NodePermission, ViewOperations,
 };
 #[cfg(feature = "server")]
 pub use server::{RouterTransform, Server, ServerConfig, DEFAULT_MAX_BACKUP_SIZE};

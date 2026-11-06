@@ -67,6 +67,9 @@ pub mod search;
 pub mod txn;
 pub(crate) mod view;
 pub mod write;
+pub mod document_projection;
+pub use document_projection::{DocumentMutationContext, DocumentMutationProjector};
+pub use datastore::NamespaceView as DocumentMutationView;
 
 // Re-export commonly used types
 pub use crate::block::builder::{build_blocks_from_document, BlockResult};
@@ -78,6 +81,7 @@ pub use access::dac::{DacPolicies, DacPolicyError};
 pub use access::kms::{
     DbBlockDocIDResolver, DbDocCollectionLookup, DbEncBlockStore, DbNodeAcpRead,
 };
+pub use access::nac_ops::NodeAcpError;
 pub use access::node::{bound_node_access_checker, node_access_checker, NodeAccessChecker};
 pub use collection::acp::{
     block_unsafe_policy_transition, check_doc_permission, check_policy_transition,
