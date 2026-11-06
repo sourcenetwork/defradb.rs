@@ -198,6 +198,13 @@ How a GraphQL request is validated before it runs.
 
 A request whose fragments spread each other in a cycle fails validation with no `data`, instead of recursing, whether or not a field spreads into the cycle, in a query or a subscription: `query { User { ...A } } fragment A on User { name ...B } fragment B on User { name ...A }` and the same fragments under `query { User { name } }` both return `Cannot spread fragment "A" within itself via B.`; `query { User { ...A } } fragment A on User { name ...A }` returns `Cannot spread fragment "A" within itself.` These are graphql-js's and Go's texts; defradb.rs said `circular fragment reference` before, and only when a field spread into the cycle.
 
+# `defra.request.optional_variables`: An unset optional variable drops the field it fills
+
+- **Parents:** ["defra.request"]
+- **Scenarios:** ["query::optional_variables::an_empty_field_condition_filters_on_nothing"]
+
+A nullable variable with no default that the request leaves out is not an error and is not `null`: the argument or input field it fills is left out, as Go does. `query ($plot: String, $minRating: Float64) { Book(filter: {plot: {_like: $plot}, rating: {_geq: $minRating}}) { title } }` with only `{"minRating": 4.2}` returns the books rated 4.2 or more, whatever their plot. An explicit `null` is kept, and a missing list item becomes `null`. defradb.rs failed with `Variable "$plot" was not provided` before (#2104).
+
 # `defra.index.range_filter`: A two-sided range filter fetches only the range
 
 - **Parents:** ["defra.index"]
