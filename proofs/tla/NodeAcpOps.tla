@@ -28,7 +28,14 @@
 \* a write can change; a commit whose reads no longer match those versions
 \* loses, and the client runs its decision again from the start. A read
 \* counts against the commit only when it was taken inside the write's own
-\* transaction.
+\* transaction. The store's one retry function runs every try; when the tries
+\* run out the client hears a conflict, which this part leaves out: it models
+\* only the decision each try makes.
+\*
+\* Part three, a relationship change racing a disable (RelSpec). One client
+\* adds or removes a relationship while another caller turns NAC off. The
+\* client reads the status in its write; a disable that commits first fails
+\* that commit, and the decision runs again on what committed.
 \*
 \* What must never happen: NAC turned off by a caller without the live
 \* permission; NAC turned back on by a caller without the stored permission;
@@ -39,7 +46,9 @@
 \* disabled NAC back on; a refusal reported with another check's error than
 \* Go's. And when racing: a status change committed by a caller that lost its
 \* permission before the commit; two clients both making the same change; a
-\* client that lost the race told anything but Go's "already".
+\* client that lost the race told anything but Go's "already"; a relationship
+\* changed after a disable committed, or refused with the store's error
+\* instead of Go's "ACP not available".
 \*
 \* Code it models:
 \*   crates/db/src/access/nac_ops/mod.rs
@@ -50,13 +59,17 @@
 \*     DB::delete_nac_actor_relationship_as the same checks but target, then the
 \*                                          revocation, or "not found" for a non-DID
 \*   crates/db/src/nac/toggle.rs
-\*     NacManager::toggle_as                one write scope per attempt; a lost
-\*                                          commit runs the decision again
+\*     NacManager::toggle_as                the status change, through in_write
 \*     NacManager::decide_toggle            the guard and the check in Go's order,
-\*                                          then the write, all in that scope
+\*                                          then the write, all in one try's scope
 \*     NacManager::require                  the live check, or the stored one for re-enable
-\*   crates/acp/src/zanzibar/store/transaction.rs
-\*     OwnedZanzibarScope::commit           a lost commit, reported as a conflict
+\*   crates/db/src/nac/write.rs
+\*     NacManager::in_write                 one write scope per try; a lost
+\*                                          commit runs the decision again
+\*     NacManager::decide_relationship      part three: set up, permission, NAC on,
+\*                                          then the change, all in one try's scope
+\*   crates/acp/src/zanzibar/store/persistent.rs
+\*     PersistentZanzibarStore::transact    the tries, through datastore::transact
 \*   crates/db/src/nac/mod.rs
 \*     NacManager::initialize               the restart
 EXTENDS Naturals, Sequences, FiniteSets   \* indexing, counting and set sizes
@@ -68,7 +81,8 @@ CONSTANTS
   AlreadyFirst,    \* re-enable checks "already on" before the caller
   SplitScope,      \* the permission is read in its own transaction, not the write's
   OutsideGuard,    \* the "already" guard reads the status outside the write
-  NoRetry          \* a lost commit is reported as an error instead of decided again
+  NoRetry,         \* a lost commit is reported as an error instead of decided again
+  RelOutsideGuard  \* a relationship change checks "NAC on" only before its write
 
 \* Only the named checks can be enforced.
 ASSUME Enforced \subseteq {"configured", "already", "nac", "stored", "acp",
@@ -367,13 +381,95 @@ RequestIdle ==
   /\ relationOk = FALSE /\ targetOk = FALSE
   /\ step = "done" /\ reason = "none" /\ after = "none" /\ granted = FALSE
 
+\* ---------------------------------------------------------------------------
+\* Part three: a relationship change racing a disable.
+
+VARIABLES
+  relNac,   \* the committed status the relationship write sees: "on" or "off"
+  relVer,   \* the status's version: one more when the disable commits
+  relPc,    \* what the relationship client does next: "guard", "commit" or "done"
+  relRead,  \* the status version it read in its write, or Unchecked
+  relOut,   \* "none" yet, "ok", "off" (Go's "ACP not available"), or "store"
+            \* (the store's own refusal, which is not Go's error)
+  relHeld,  \* whether NAC was on when the change committed
+  disabled  \* the disable already committed (once at most)
+
+\* Part three's variables, for saying a step leaves them all as they are.
+relVars == <<relNac, relVer, relPc, relRead, relOut, relHeld, disabled>>
+
+\* Every variable of part three holds a value of the shape it should.
+RelTypeOK ==
+  /\ relNac \in {"on", "off"} /\ relVer \in Nat
+  /\ relPc \in {"guard", "commit", "done"} /\ relRead \in Nat
+  /\ relOut \in {"none", "ok", "off", "store"}
+  /\ relHeld \in BOOLEAN /\ disabled \in BOOLEAN
+
+\* NAC is on, the client is about to check it, and nothing has committed.
+RelInit ==
+  /\ relNac = "on" /\ relVer = 0 /\ relPc = "guard" /\ relRead = Unchecked
+  /\ relOut = "none" /\ relHeld = FALSE /\ disabled = FALSE
+
+\* The guard: the client reads the status. NAC off, it stops with Go's error.
+\* Otherwise it notes the version it read, as part of its write, unless the
+\* RED switch reads it only before the write (the pre-check in nac_ops).
+RelGuard ==
+  /\ relPc = "guard"
+  /\ IF relNac = "off"
+       THEN /\ relOut' = "off" /\ relPc' = "done"
+            /\ UNCHANGED relRead
+       \* the version read, or Unchecked when read outside the write
+       ELSE /\ relRead' = IF RelOutsideGuard THEN Unchecked ELSE relVer
+            /\ relPc' = "commit"
+            /\ UNCHANGED relOut
+  /\ UNCHANGED <<relNac, relVer, relHeld, disabled>>
+
+\* The commit. A stale read loses it and the client decides again. A write
+\* that reaches the store while NAC is off is refused by the store with its
+\* own error. Otherwise the change commits, noting whether NAC was on.
+RelCommit ==
+  /\ relPc = "commit"
+  /\ IF relRead # Unchecked /\ relRead # relVer
+       THEN /\ relPc' = "guard" /\ relRead' = Unchecked
+            /\ UNCHANGED <<relOut, relHeld>>
+       ELSE IF relNac = "off"
+              THEN /\ relOut' = "store" /\ relPc' = "done"
+                   /\ UNCHANGED <<relRead, relHeld>>
+              ELSE /\ relOut' = "ok" /\ relPc' = "done"
+                   /\ relHeld' = TRUE
+                   /\ UNCHANGED relRead
+  /\ UNCHANGED <<relNac, relVer, disabled>>
+
+\* Another caller turns NAC off, once, at any moment.
+RelDisable ==
+  /\ ~disabled /\ relNac = "on"
+  /\ relNac' = "off" /\ relVer' = relVer + 1 /\ disabled' = TRUE
+  /\ UNCHANGED <<relPc, relRead, relOut, relHeld>>
+
+\* Each step is the client's guard or commit, or the disable.
+RelNext == RelGuard \/ RelCommit \/ RelDisable
+
+\* Once the client is done, part three stays as it ended.
+RelDone == relPc = "done" /\ UNCHANGED relVars
+
+\* Part three held still while another part runs: every value fixed.
+RelIdle ==
+  /\ relNac = "on" /\ relVer = 0 /\ relPc = "done" /\ relRead = Unchecked
+  /\ relOut = "none" /\ relHeld = FALSE /\ disabled = FALSE
+
 \* Part one: a request starts in Init and then only checks, applies or stays
-\* finished, while part two holds still.
-Spec == Init /\ RaceIdle /\ [][(Next \/ Done) /\ UNCHANGED raceVars]_allVars
+\* finished, while the other parts hold still.
+Spec == Init /\ RaceIdle /\ RelIdle
+        /\ [][(Next \/ Done) /\ UNCHANGED <<raceVars, relVars>>]_<<allVars, relVars>>
 
 \* Part two: the race starts in RaceInit and moves one step at a time, while
-\* part one holds still.
-RaceSpec == RaceInit /\ RequestIdle /\ [][(RaceNext \/ RaceDone) /\ UNCHANGED vars]_allVars
+\* the other parts hold still.
+RaceSpec == RaceInit /\ RequestIdle /\ RelIdle
+            /\ [][(RaceNext \/ RaceDone) /\ UNCHANGED <<vars, relVars>>]_<<allVars, relVars>>
+
+\* Part three: the relationship change and the disable, while the other parts
+\* hold still.
+RelSpec == RelInit /\ RequestIdle /\ RaceIdle
+           /\ [][(RelNext \/ RelDone) /\ UNCHANGED allVars]_<<allVars, relVars>>
 
 \* ---------------------------------------------------------------------------
 \* Part one's promises.
@@ -428,4 +524,14 @@ INV_RaceLoserHearsAlready ==
     /\ startNac = From(rop)
     /\ \A c \in Clients : startGrant[c] )
   => {outcome[c] : c \in Clients} = {"ok", "already"}
+
+\* ---------------------------------------------------------------------------
+\* Part three's promises.
+
+\* A relationship change commits only while NAC is on.
+INV_RelNoChangeWhileOff == relOut = "ok" => relHeld
+
+\* A relationship change that lost to a disable hears Go's "ACP not
+\* available", never the store's own refusal.
+INV_RelOffHearsGo == relOut # "store"
 ====

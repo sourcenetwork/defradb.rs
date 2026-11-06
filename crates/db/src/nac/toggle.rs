@@ -45,43 +45,20 @@ where
         self.toggle_as(caller, Toggle::ReEnable).await
     }
 
-    /// One attempt per write scope, each deciding on the state that scope
-    /// reads; a commit that lost to another runs the decision again, up to
-    /// the configured retries.
+    /// Decides on the state each write's own scope reads, through
+    /// [`in_write`](NacManager::in_write).
     async fn toggle_as(&self, caller: &NacCaller, toggle: Toggle) -> Result<()> {
-        let attempts = self.config.attempts();
-        for _ in 0..attempts {
-            let Some(scope) = self
-                .nac
-                .begin_scope(false)
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?
-            else {
-                return self.decide_toggle(caller, toggle).await;
-            };
-            let scoped = self.scoped(scope.store());
-            scoped
-                .nac
-                .load()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
-            scoped.decide_toggle(caller, toggle).await?;
-            drop(scoped);
-            match scope.commit().await {
-                Ok(()) => {
-                    return self
-                        .nac
-                        .load()
-                        .await
-                        .map_err(|error| Error::Acp(error.to_string()));
-                }
-                Err(error) if error.is_conflict() => continue,
-                Err(error) => return Err(Error::Acp(error.to_string())),
-            }
+        let asked = caller.clone();
+        let written = self
+            .in_write(move |manager| {
+                let caller = asked.clone();
+                async move { manager.decide_toggle(&caller, toggle).await }
+            })
+            .await?;
+        match written {
+            Some(()) => Ok(()),
+            None => self.decide_toggle(caller, toggle).await,
         }
-        Err(Error::Acp(format!(
-            "node acp status change conflicted on each of {attempts} attempts"
-        )))
     }
 
     /// The checks in Go's order, then the write, all on this manager's
@@ -114,7 +91,11 @@ where
     /// passes; anyone else, or the wildcard for an anonymous caller, needs
     /// the permission while NAC is on, and re-enabling needs it in the stored
     /// relationships while NAC is off too.
-    async fn require(&self, caller: &NacCaller, permission: NodePermission) -> Result<()> {
+    pub(super) async fn require(
+        &self,
+        caller: &NacCaller,
+        permission: NodePermission,
+    ) -> Result<()> {
         if caller.identity.is_some() && caller.identity == caller.node {
             return Ok(());
         }

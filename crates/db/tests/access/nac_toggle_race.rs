@@ -19,7 +19,7 @@ use defra_core::RequestContext;
 use identity::Did;
 use storage::RegolithStore;
 use zanzibar::error::Result;
-use zanzibar::store::{ZanzibarScope, ZanzibarStore};
+use zanzibar::store::{ScopeAttempt, ScopeOutcome, ZanzibarScope, ZanzibarStore};
 use zanzibar::types::ObjectRef;
 
 const OWNER: &str = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
@@ -86,6 +86,22 @@ impl ZanzibarStore for RacingStore {
                 armed: self.armed.clone(),
             }) as Box<dyn ZanzibarScope>,
         }))
+    }
+
+    async fn transact(
+        &self,
+        max_attempts: u32,
+        mut attempt: ScopeAttempt,
+    ) -> Result<Option<ScopeOutcome>> {
+        let (race, armed) = (self.race.clone(), self.armed.clone());
+        let racing: ScopeAttempt = Box::new(move |store| {
+            attempt(Arc::new(RacingStore::over(
+                store,
+                race.clone(),
+                armed.clone(),
+            )))
+        });
+        self.inner.transact(max_attempts, racing).await
     }
 
     async fn store_policy(&self, policy: &Policy) -> Result<()> {
@@ -197,7 +213,18 @@ async fn node_over<S>(store: Arc<S>) -> (Arc<DB<RegolithStore>>, Arc<NacManager<
 where
     S: ZanzibarStore + 'static,
 {
-    let nac = Arc::new(NacManager::new(store, NacConfig::new().with_enabled()));
+    node_with(store, NacConfig::new().with_enabled()).await
+}
+
+/// [`node_over`] with `config`.
+async fn node_with<S>(
+    store: Arc<S>,
+    config: NacConfig,
+) -> (Arc<DB<RegolithStore>>, Arc<NacManager<S>>)
+where
+    S: ZanzibarStore + 'static,
+{
+    let nac = Arc::new(NacManager::new(store, config));
     nac.initialize(Some(&did(OWNER))).await.unwrap();
     let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
     db.set_nac_manager(nac.clone());
@@ -220,6 +247,21 @@ where
         + Sync
         + 'static,
 {
+    racing_nodes_with(NacConfig::new().with_enabled(), prepare, race).await
+}
+
+/// [`racing_nodes`] whose first handle runs on `config`.
+async fn racing_nodes_with<F>(
+    config: NacConfig,
+    prepare: impl AsyncFnOnce(&DB<RegolithStore>, &NacManager<PersistentZanzibarStore<RegolithStore>>),
+    race: F,
+) -> (Arc<DB<RegolithStore>>, Shared)
+where
+    F: Fn(Arc<DB<RegolithStore>>) -> Pin<Box<dyn Future<Output = ()> + Send>>
+        + Send
+        + Sync
+        + 'static,
+{
     let shared = Arc::new(PersistentZanzibarStore::from_store(Arc::new(
         RegolithStore::in_memory().unwrap(),
     )));
@@ -227,7 +269,7 @@ where
     prepare(&*other_db, &*other).await;
     let race: Race = Arc::new(move || race(other_db.clone()));
     let racing = RacingStore::over(shared.clone(), race, Arc::new(AtomicBool::new(true)));
-    let (db, _) = node_over(Arc::new(racing)).await;
+    let (db, _) = node_with(Arc::new(racing), config).await;
     (db, shared)
 }
 
@@ -326,6 +368,62 @@ fn of_two_re_enables_one_wins_and_the_other_is_already_enabled() {
         );
         assert_eq!(error.to_string(), "node acp is already enabled");
         assert_eq!(stored_status(shared.clone()).await, NacStatus::Enabled);
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_disable_that_commits_first_refuses_the_relationship_with_gos_error() {
+    workers::block_on(async {
+        let (db, _) = racing_nodes(
+            async |_, _| {},
+            |other_db| {
+                Box::pin(async move {
+                    other_db.disable_nac_as(&acting(OWNER)).await.unwrap();
+                })
+            },
+        )
+        .await;
+
+        let error = db
+            .add_nac_actor_relationship_as(&acting(OWNER), "admin", WRITER)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, NodeAcpError::AcpNotAvailable),
+            "a relationship change after a disable must hear Go's error, got: {error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "operation requires ACP, but ACP not available"
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_write_that_loses_every_try_is_a_conflict() {
+    workers::block_on(async {
+        let (db, shared) = racing_nodes_with(
+            NacConfig::new().with_enabled().with_max_txn_retries(0),
+            async |_, _| {},
+            |other_db| {
+                Box::pin(async move {
+                    other_db.disable_nac_as(&acting(OWNER)).await.unwrap();
+                })
+            },
+        )
+        .await;
+
+        let error = db.disable_nac_as(&acting(OWNER)).await.unwrap_err();
+        assert!(
+            error.is_conflict(),
+            "a write with no retries left must report the conflict, got: {error:?}"
+        );
+        assert_eq!(
+            stored_status(shared.clone()).await,
+            NacStatus::DisabledTemporarily
+        );
     })
     .unwrap()
 }

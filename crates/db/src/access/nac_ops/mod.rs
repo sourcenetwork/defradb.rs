@@ -15,18 +15,12 @@ use storage::corekv::Store;
 use crate::access::nac::acting_did;
 use crate::database::DB;
 use crate::error::Error;
-use crate::nac::{NacCaller, NacManagerApi};
+use crate::nac::{NacCaller, NacChange, NacManagerApi, NacRelation};
 
 pub use error::NodeAcpError;
 
 /// The name Go's node policy gives the relation that manages every other.
 const ADMIN_RELATION: &str = "admin";
-
-/// What a NAC relationship grants: admin, or one node permission.
-enum Grant {
-    Admin,
-    Permission(NodePermission),
-}
 
 impl<S> DB<S>
 where
@@ -69,7 +63,7 @@ where
         relation: &str,
         target_actor: &str,
     ) -> Result<bool, NodeAcpError> {
-        let (nac, requestor, grant, target) = self
+        let (nac, requestor, relation, target) = self
             .nac_relationship(
                 context,
                 NodePermission::NacRelationAdd,
@@ -78,15 +72,15 @@ where
             )
             .await?;
         let target = target.ok_or(NodeAcpError::InvalidActor)?;
-        let added = match grant {
-            Grant::Admin => nac.add_admin(&requestor, &target).await,
-            Grant::Permission(permission) => {
-                nac.add_permission_grant(&requestor, &target, permission)
-                    .await
-            }
-        }
-        .map_err(|error| refused(error, NodePermission::NacRelationAdd))?;
-        Ok(!added)
+        nac.change_relationship_as(
+            &self.nac_caller(context),
+            &requestor,
+            NacChange::Add,
+            relation,
+            &target,
+        )
+        .await
+        .map_err(|error| refused(error, NodePermission::NacRelationAdd))
     }
 
     /// Take `relation` on the node from `target_actor`, the caller asking.
@@ -99,7 +93,7 @@ where
         relation: &str,
         target_actor: &str,
     ) -> Result<bool, NodeAcpError> {
-        let (nac, requestor, grant, target) = self
+        let (nac, requestor, relation, target) = self
             .nac_relationship(
                 context,
                 NodePermission::NacRelationDelete,
@@ -110,13 +104,14 @@ where
         let Some(target) = target else {
             return Ok(false);
         };
-        match grant {
-            Grant::Admin => nac.remove_admin(&requestor, &target).await,
-            Grant::Permission(permission) => {
-                nac.remove_permission_grant(&requestor, &target, permission)
-                    .await
-            }
-        }
+        nac.change_relationship_as(
+            &self.nac_caller(context),
+            &requestor,
+            NacChange::Remove,
+            relation,
+            &target,
+        )
+        .await
         .map_err(|error| refused(error, NodePermission::NacRelationDelete))
     }
 
@@ -140,14 +135,16 @@ where
     /// Everything a relationship operation needs, checked in Go's order:
     /// NAC set up, the caller's `permission`, NAC on, an identity acting,
     /// then the relation; the target, `None` when it is neither a DID nor
-    /// `*`, is the operation's to judge.
+    /// `*`, is the operation's to judge. These checks give the refusal Go
+    /// gives; the write decides again on what it reads, so one that commits
+    /// first cannot slip past them.
     async fn nac_relationship(
         &self,
         context: &RequestContext,
         permission: NodePermission,
         relation: &str,
         target_actor: &str,
-    ) -> Result<(Arc<dyn NacManagerApi>, Did, Grant, Option<Did>), NodeAcpError> {
+    ) -> Result<(Arc<dyn NacManagerApi>, Did, NacRelation, Option<Did>), NodeAcpError> {
         let nac = self.configured_nac().await?;
         self.check_node_access_as(context, permission).await?;
         if nac.status().await != NacStatus::Enabled {
@@ -155,8 +152,8 @@ where
         }
         let requestor = acting_did(context).ok_or(NodeAcpError::RequiresIdentity)?;
         let grant = match relation {
-            ADMIN_RELATION => Grant::Admin,
-            other => Grant::Permission(
+            ADMIN_RELATION => NacRelation::Admin,
+            other => NacRelation::Permission(
                 NodePermission::parse(other).ok_or(NodeAcpError::RelationNotInResource)?,
             ),
         };

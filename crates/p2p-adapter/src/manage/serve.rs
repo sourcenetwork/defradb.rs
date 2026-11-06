@@ -483,6 +483,16 @@ mod tests {
         async fn re_enable_as(&self, _caller: &db::NacCaller) -> db::nac::Result<()> {
             unimplemented!()
         }
+        async fn change_relationship_as(
+            &self,
+            _caller: &db::NacCaller,
+            _requestor: &Did,
+            _change: db::NacChange,
+            _relation: db::NacRelation,
+            _target: &Did,
+        ) -> db::nac::Result<bool> {
+            unimplemented!()
+        }
         async fn purge(&self, _requestor: &Did) -> db::nac::Result<()> {
             unimplemented!()
         }

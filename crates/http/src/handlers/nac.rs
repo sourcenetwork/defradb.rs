@@ -123,30 +123,27 @@ pub async fn go_add_relationships(
     identity: ExtractIdentity,
     Json(bodies): Json<Vec<GoNacRelationshipRequest>>,
 ) -> Result<Json<Vec<AddActorRelationshipResult>>, HttpError> {
-    let targets = bodies
-        .iter()
-        .map(validate_add_relationship)
-        .collect::<Result<Vec<_>, _>>()?;
+    bodies.iter().try_for_each(validate_add_relationship)?;
     let mut results = Vec::with_capacity(bodies.len());
-    for (body, _target) in bodies.iter().zip(&targets) {
+    for body in &bodies {
         results.push(add_relationship(&state, &identity, body).await?);
     }
     Ok(Json(results))
 }
 
-/// Validate one add-relationship entry: the relation must be a NAC relation
-/// other than "owner", and the target must parse as a DID.
-fn validate_add_relationship(body: &GoNacRelationshipRequest) -> Result<identity::Did, HttpError> {
+/// Validate one add-relationship entry as the single route's core does: the
+/// relation must be a NAC relation other than "owner", and the target a DID
+/// or `*`.
+fn validate_add_relationship(body: &GoNacRelationshipRequest) -> Result<(), HttpError> {
     if !acp::is_valid_nac_relation(&body.relation) || body.relation == "owner" {
         return Err(HttpError::BadRequest(
             "relation not in resource".to_string(),
         ));
     }
-    if body.target_actor.is_empty() {
-        return Err(HttpError::BadRequest("actor must be a valid did".into()));
+    if body.target_actor == "*" || identity::Did::new(&body.target_actor).is_ok() {
+        return Ok(());
     }
-    identity::Did::new(&body.target_actor)
-        .map_err(|e| HttpError::BadRequest(format!("invalid TargetActor DID: {}", e)))
+    Err(HttpError::BadRequest("actor must be a valid did".into()))
 }
 
 async fn add_relationship(

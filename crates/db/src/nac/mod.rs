@@ -4,12 +4,14 @@ pub mod error;
 pub mod factory;
 mod toggle;
 mod trait_impl;
+mod write;
 
 pub use error::{Error, Result};
 pub use factory::create_memory_nac_manager;
 #[cfg(not(target_arch = "wasm32"))]
 pub use factory::create_persistent_nac_manager;
 pub use toggle::NacCaller;
+pub use write::{NacChange, NacRelation};
 
 use std::sync::Arc;
 
@@ -100,6 +102,16 @@ pub trait NacManagerApi: defra_core::thread_bounds::MaybeSendSync {
     async fn disable_as(&self, caller: &NacCaller) -> Result<()>;
     /// Turn NAC back on for `caller`, deciding in the write that changes it.
     async fn re_enable_as(&self, caller: &NacCaller) -> Result<()>;
+    /// Add or remove a relationship for `caller`, deciding in the write that
+    /// makes the change; whether the relationship was there before.
+    async fn change_relationship_as(
+        &self,
+        caller: &NacCaller,
+        requestor: &Did,
+        change: NacChange,
+        relation: NacRelation,
+        target: &Did,
+    ) -> Result<bool>;
     async fn purge(&self, requestor: &Did) -> Result<()>;
     async fn add_admin(&self, requestor: &Did, target: &Did) -> Result<bool>;
     async fn remove_admin(&self, requestor: &Did, target: &Did) -> Result<bool>;
@@ -125,7 +137,7 @@ pub trait NacManagerApi: defra_core::thread_bounds::MaybeSendSync {
 /// - Permission checking with config-aware fallbacks
 /// - Admin management with authorization
 pub struct NacManager<S: ZanzibarStore + ?Sized + 'static> {
-    nac: NodeACP<S>,
+    nac: Arc<NodeACP<S>>,
     config: NacConfig,
 }
 
@@ -133,7 +145,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
     /// Create a new NAC manager with the given store and config.
     pub fn new(store: Arc<S>, config: NacConfig) -> Self {
         Self {
-            nac: NodeACP::new(store),
+            nac: Arc::new(NodeACP::new(store)),
             config,
         }
     }
@@ -145,7 +157,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
         T: ZanzibarStore + ?Sized + 'static,
     {
         NacManager {
-            nac: self.nac.scoped(store),
+            nac: Arc::new(self.nac.scoped(store)),
             config: self.config.clone(),
         }
     }
@@ -418,32 +430,21 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
 
     /// Add an admin relationship.
     pub async fn add_admin(&self, requestor: &Did, target: &Did) -> Result<bool> {
-        if let Some(scope) = self
-            .nac
-            .begin_scope(false)
-            .await
-            .map_err(|error| Error::Acp(error.to_string()))?
-        {
-            let scoped = self.scoped(scope.store());
-            scoped
-                .nac
-                .load()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
-            let scoped: Box<dyn NacManagerApi> = Box::new(scoped);
-            let result = scoped.add_admin(requestor, target).await?;
-            drop(scoped);
-            scope
-                .commit()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
-            self.nac
-                .load()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
-            return Ok(result);
+        let asked = (requestor.clone(), target.clone());
+        let written = self
+            .in_write(move |manager| {
+                let (requestor, target) = asked.clone();
+                async move { manager.add_admin_direct(&requestor, &target).await }
+            })
+            .await?;
+        if let Some(added) = written {
+            return Ok(added);
         }
+        self.add_admin_direct(requestor, target).await
+    }
 
+    /// [`add_admin`](Self::add_admin) on this manager's own store.
+    async fn add_admin_direct(&self, requestor: &Did, target: &Did) -> Result<bool> {
         self.nac
             .add_admin(requestor, target)
             .await
@@ -452,32 +453,21 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
 
     /// Remove an admin relationship.
     pub async fn remove_admin(&self, requestor: &Did, target: &Did) -> Result<bool> {
-        if let Some(scope) = self
-            .nac
-            .begin_scope(false)
-            .await
-            .map_err(|error| Error::Acp(error.to_string()))?
-        {
-            let scoped = self.scoped(scope.store());
-            scoped
-                .nac
-                .load()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
-            let scoped: Box<dyn NacManagerApi> = Box::new(scoped);
-            let result = scoped.remove_admin(requestor, target).await?;
-            drop(scoped);
-            scope
-                .commit()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
-            self.nac
-                .load()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
-            return Ok(result);
+        let asked = (requestor.clone(), target.clone());
+        let written = self
+            .in_write(move |manager| {
+                let (requestor, target) = asked.clone();
+                async move { manager.remove_admin_direct(&requestor, &target).await }
+            })
+            .await?;
+        if let Some(removed) = written {
+            return Ok(removed);
         }
+        self.remove_admin_direct(requestor, target).await
+    }
 
+    /// [`remove_admin`](Self::remove_admin) on this manager's own store.
+    async fn remove_admin_direct(&self, requestor: &Did, target: &Did) -> Result<bool> {
         self.nac
             .remove_admin(requestor, target)
             .await
@@ -491,34 +481,32 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
         target: &Did,
         permission: NodePermission,
     ) -> Result<bool> {
-        if let Some(scope) = self
-            .nac
-            .begin_scope(false)
-            .await
-            .map_err(|error| Error::Acp(error.to_string()))?
-        {
-            let scoped = self.scoped(scope.store());
-            scoped
-                .nac
-                .load()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
-            let scoped: Box<dyn NacManagerApi> = Box::new(scoped);
-            let result = scoped
-                .add_permission_grant(requestor, target, permission)
-                .await?;
-            drop(scoped);
-            scope
-                .commit()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
-            self.nac
-                .load()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
-            return Ok(result);
+        let asked = (requestor.clone(), target.clone());
+        let written = self
+            .in_write(move |manager| {
+                let (requestor, target) = asked.clone();
+                async move {
+                    manager
+                        .add_permission_grant_direct(&requestor, &target, permission)
+                        .await
+                }
+            })
+            .await?;
+        if let Some(added) = written {
+            return Ok(added);
         }
+        self.add_permission_grant_direct(requestor, target, permission)
+            .await
+    }
 
+    /// [`add_permission_grant`](Self::add_permission_grant) on this
+    /// manager's own store.
+    async fn add_permission_grant_direct(
+        &self,
+        requestor: &Did,
+        target: &Did,
+        permission: NodePermission,
+    ) -> Result<bool> {
         self.nac
             .add_permission_grant(requestor, target, permission)
             .await
@@ -532,34 +520,32 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
         target: &Did,
         permission: NodePermission,
     ) -> Result<bool> {
-        if let Some(scope) = self
-            .nac
-            .begin_scope(false)
-            .await
-            .map_err(|error| Error::Acp(error.to_string()))?
-        {
-            let scoped = self.scoped(scope.store());
-            scoped
-                .nac
-                .load()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
-            let scoped: Box<dyn NacManagerApi> = Box::new(scoped);
-            let result = scoped
-                .remove_permission_grant(requestor, target, permission)
-                .await?;
-            drop(scoped);
-            scope
-                .commit()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
-            self.nac
-                .load()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
-            return Ok(result);
+        let asked = (requestor.clone(), target.clone());
+        let written = self
+            .in_write(move |manager| {
+                let (requestor, target) = asked.clone();
+                async move {
+                    manager
+                        .remove_permission_grant_direct(&requestor, &target, permission)
+                        .await
+                }
+            })
+            .await?;
+        if let Some(removed) = written {
+            return Ok(removed);
         }
+        self.remove_permission_grant_direct(requestor, target, permission)
+            .await
+    }
 
+    /// [`remove_permission_grant`](Self::remove_permission_grant) on this
+    /// manager's own store.
+    async fn remove_permission_grant_direct(
+        &self,
+        requestor: &Did,
+        target: &Did,
+        permission: NodePermission,
+    ) -> Result<bool> {
         self.nac
             .remove_permission_grant(requestor, target, permission)
             .await

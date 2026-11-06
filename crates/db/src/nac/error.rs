@@ -22,6 +22,14 @@ pub enum Error {
     #[error("node acp is already enabled")]
     AlreadyEnabled,
 
+    /// A relationship change while node access control is off.
+    #[error("operation requires ACP, but ACP not available")]
+    NotEnabled,
+
+    /// Every try of a NAC write lost its commit to another write.
+    #[error("transaction conflict: {0}")]
+    Conflict(String),
+
     /// The caller lacks the node permission the operation needs.
     #[error("not authorized to perform operation. Permission: {}", .0.as_str())]
     NotAuthorized(NodePermission),

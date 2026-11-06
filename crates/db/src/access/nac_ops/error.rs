@@ -40,11 +40,20 @@ impl From<crate::nac::Error> for NodeAcpError {
             crate::nac::Error::NotConfigured => NodeAcpError::NotConfigured,
             crate::nac::Error::AlreadyDisabled => NodeAcpError::AlreadyDisabled,
             crate::nac::Error::AlreadyEnabled => NodeAcpError::AlreadyEnabled,
+            crate::nac::Error::NotEnabled => NodeAcpError::AcpNotAvailable,
             crate::nac::Error::NotAuthorized(permission) => Error::NotAuthorized {
                 permission: permission.as_str().to_owned(),
             }
             .into(),
             other => NodeAcpError::Nac(other),
         }
+    }
+}
+
+impl NodeAcpError {
+    /// Whether every try of the write lost its commit, so running the
+    /// operation again may succeed.
+    pub fn is_conflict(&self) -> bool {
+        matches!(self, NodeAcpError::Nac(crate::nac::Error::Conflict(_)))
     }
 }

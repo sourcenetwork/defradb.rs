@@ -258,6 +258,8 @@ RUNS=(
   "MC_NodeAcpOps_Red_SplitScope.cfg NodeAcpOps.tla RED" # permission read in its own transaction (INV_RaceNoChangeWithoutPermission)
   "MC_NodeAcpOps_Red_OutsideGuard.cfg NodeAcpOps.tla RED" # already guard read outside the write (INV_RaceOneWinner)
   "MC_NodeAcpOps_Red_NoRetry.cfg NodeAcpOps.tla RED" # lost commit reported as an error (INV_RaceLoserHearsAlready)
+  "MC_NodeAcpOps_Rel_Green.cfg NodeAcpOps.tla GREEN" # #2521: a relationship change races a disable; NAC on is read in the write and re-decided after a lost commit
+  "MC_NodeAcpOps_Red_RelOutsideGuard.cfg NodeAcpOps.tla RED" # NAC on checked only before the write (INV_RelOffHearsGo)
   "M1Convergence.cfg            M1Convergence.tla            GREEN"  # B3 control (S1')
   "M1Naive.cfg                  M1Convergence.tla            RED"    # B3 #2721 (S1)
   "MC_S2.cfg                    MC_S2.tla                    GREEN"  # B3 ideal (S2)

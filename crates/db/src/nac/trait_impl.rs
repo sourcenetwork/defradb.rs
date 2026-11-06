@@ -7,7 +7,7 @@ use identity::Did;
 
 use crate::nac::error::Result;
 
-use super::{NacCaller, NacInfo, NacManager, NacManagerApi};
+use super::{NacCaller, NacChange, NacInfo, NacManager, NacManagerApi, NacRelation};
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -66,6 +66,16 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
     }
     async fn re_enable_as(&self, caller: &NacCaller) -> Result<()> {
         NacManager::re_enable_as(self, caller).await
+    }
+    async fn change_relationship_as(
+        &self,
+        caller: &NacCaller,
+        requestor: &Did,
+        change: NacChange,
+        relation: NacRelation,
+        target: &Did,
+    ) -> Result<bool> {
+        NacManager::change_relationship_as(self, caller, requestor, change, relation, target).await
     }
     async fn purge(&self, requestor: &Did) -> Result<()> {
         NacManager::purge(self, requestor).await

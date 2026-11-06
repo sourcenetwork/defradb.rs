@@ -315,20 +315,14 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         &self,
         context: &RequestContext,
     ) -> std::result::Result<(), TransactionError> {
-        self.db
-            .disable_nac_as(context)
-            .await
-            .map_err(|error| TransactionError::operation(error.to_string()))
+        self.db.disable_nac_as(context).await.map_err(nac_error)
     }
 
     async fn re_enable_nac_as(
         &self,
         context: &RequestContext,
     ) -> std::result::Result<(), TransactionError> {
-        self.db
-            .re_enable_nac_as(context)
-            .await
-            .map_err(|error| TransactionError::operation(error.to_string()))
+        self.db.re_enable_nac_as(context).await.map_err(nac_error)
     }
 
     async fn add_nac_actor_relationship_as(
@@ -340,7 +334,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         self.db
             .add_nac_actor_relationship_as(context, relation, target_actor)
             .await
-            .map_err(|error| TransactionError::operation(error.to_string()))
+            .map_err(nac_error)
     }
 
     async fn delete_nac_actor_relationship_as(
@@ -352,7 +346,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         self.db
             .delete_nac_actor_relationship_as(context, relation, target_actor)
             .await
-            .map_err(|error| TransactionError::operation(error.to_string()))
+            .map_err(nac_error)
     }
 
     async fn set_active_collection_version_as(
@@ -540,6 +534,15 @@ fn context_txn(context: &RequestContext) -> std::result::Result<String, Transact
         .txn()
         .map(|id| id.to_string())
         .ok_or_else(|| TransactionError::not_found("the request carries no transaction"))
+}
+
+/// A NAC write that lost every try as a conflict, so the caller may run it
+/// again; any other failure in the words the core gave it.
+fn nac_error(error: crate::NodeAcpError) -> TransactionError {
+    match error.is_conflict() {
+        true => TransactionError::conflict(error.to_string()),
+        false => TransactionError::operation(error.to_string()),
+    }
 }
 
 /// A refused operation inside a transaction, in the words the core gave it;
