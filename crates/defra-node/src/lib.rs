@@ -220,6 +220,9 @@ pub struct Node {
     embedding_config: db::EmbeddingClientConfig,
     node_identity_did: Option<String>,
     node_query_identity: Option<identity::Did>,
+    /// Keeps the key the node made or loaded in the signing store while the
+    /// node lives.
+    _signing_key_hold: Option<defra_core::signing::IdentityHold>,
     /// The node's share of the network runtime; `None` when the node has
     /// no network work and was given no runtime.
     network: Option<NodeEdge>,

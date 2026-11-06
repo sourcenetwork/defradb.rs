@@ -56,6 +56,21 @@ where
     run(pool.as_ref(), Target::LeastLoaded, make)
 }
 
+/// Runs the future `make` builds for a call on `target`: in a transaction on
+/// the caller's thread, since the transaction registry routes the work to
+/// the transaction's own worker; on a node, on the node's worker pool.
+pub(crate) fn on_target<M, Fut, T>(target: &crate::target::Target, make: M) -> Result<T, String>
+where
+    M: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = Result<T, String>> + 'static,
+    T: Send + 'static,
+{
+    match target {
+        crate::target::Target::Txn(_) => wait(make()),
+        crate::target::Target::Node(node) => on_node(*node, make),
+    }
+}
+
 /// Runs the future `make` builds on the worker of `pool` that `target`
 /// names (on the caller's thread without a pool), parking the C caller's
 /// thread until it completes.

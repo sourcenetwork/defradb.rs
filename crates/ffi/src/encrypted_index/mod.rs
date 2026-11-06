@@ -1,5 +1,7 @@
+//! Encrypted indexes: searchable encryption over one field.
+
 mod create;
 mod list;
 
-pub use create::{add_encrypted_index, delete_encrypted_index};
-pub use list::{list_all_encrypted_indexes, list_encrypted_indexes};
+pub use create::{defra_encrypted_index_delete, defra_encrypted_index_new};
+pub use list::defra_encrypted_index_list;

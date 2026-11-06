@@ -1,137 +1,88 @@
-use std::ffi::c_char;
+use std::ffi::c_int;
 
 use crate::ffi_entry;
-use crate::helpers::{get_node_runner, require_c_str};
-use crate::state::NODES;
-use crate::types::{FfiResult, NewTxnResult};
-use crate::{ffi_async_ok, try_ffi, ERR_INVALID_NODE_HANDLE};
+use crate::helpers::get_node_runner;
+use crate::state::{TxnState, TXNS};
+use crate::target::{resolve_node, ERR_INVALID_HANDLE};
+use crate::types::{DefraNewTxnResult, DefraResult};
+use crate::{ffi_async_ok, try_ffi};
 
-/// Begin a new transaction.
+/// Creates a database transaction on node `node_ptr`.
 ///
-/// Returns a transaction ID that can be used with `exec_request_in_txn`,
-/// `commit_txn`, and `rollback_txn`.
-///
-/// # Arguments
-///
-/// * `node_ptr` - Handle to the node
-/// * `readonly` - If non-zero, creates a read-only transaction
-///
-/// # Returns
-///
-/// A `NewTxnResult` containing the transaction ID on success.
+/// The returned handle stands in for the node in any call that takes a node
+/// or a transaction, which then runs in the transaction. It is released by
+/// [`defra_transaction_commit`] or [`defra_transaction_discard`].
 #[no_mangle]
-pub extern "C" fn begin_txn(node_ptr: usize, readonly: i32) -> NewTxnResult {
+pub extern "C" fn defra_transaction_create(
+    node_ptr: usize,
+    is_read_only: c_int,
+) -> DefraNewTxnResult {
     ffi_entry! {
-        // Validate node handle before entering async block
-        let runner = match NODES.get(node_ptr, |state| state.query_runner.clone()) {
-            Some(r) => r,
-            None => return NewTxnResult::error(ERR_INVALID_NODE_HANDLE),
+        let node = match resolve_node(node_ptr) {
+            Ok(node) => node,
+            Err(_) => return DefraNewTxnResult::error(ERR_INVALID_HANDLE),
+        };
+        let runner = match get_node_runner(node) {
+            Ok(runner) => runner,
+            Err(_) => return DefraNewTxnResult::error(ERR_INVALID_HANDLE),
         };
 
         let result = crate::call::wait(async move {
             let handle = runner
-                .begin_txn(readonly != 0)
+                .begin_txn(is_read_only != 0)
                 .await
                 .map_err(|e| format!("failed to begin transaction: {}", e))?;
-
-            Ok::<String, String>(handle.to_string())
+            handle
+                .to_string()
+                .parse::<defra_core::TxnId>()
+                .map_err(|e| format!("invalid transaction ID: {}", e))
         });
 
         match result {
-            Ok(txn_id) => NewTxnResult::success(txn_id),
-            Err(e) => NewTxnResult::error(e),
+            Ok(id) => DefraNewTxnResult::success(TXNS.insert(TxnState { node, id })),
+            Err(e) => DefraNewTxnResult::error(e),
         }
     }
 }
 
-/// Commit a transaction.
-///
-/// After commit, all operations performed within the transaction become permanent.
-/// The transaction ID is no longer valid after this call.
-///
-/// # Arguments
-///
-/// * `node_ptr` - Handle to the node
-/// * `txn_id` - Transaction ID from `begin_txn`
-///
-/// # Safety
-///
-/// `txn_id` must be a valid null-terminated UTF-8 string.
+/// Commits the transaction and releases its handle, whether or not the
+/// commit succeeds.
 #[no_mangle]
-pub unsafe extern "C" fn commit_txn(node_ptr: usize, txn_id: *const c_char) -> FfiResult {
+pub extern "C" fn defra_transaction_commit(txn_ptr: usize) -> DefraResult {
     ffi_entry! {
-        let txn_str = try_ffi!(require_c_str(txn_id, "txn_id"));
-        let runner = try_ffi!(get_node_runner(node_ptr));
+        let txn = try_ffi!(TXNS.remove(txn_ptr).ok_or_else(|| DefraResult::error(ERR_INVALID_HANDLE)));
+        let runner = try_ffi!(get_node_runner(txn.node));
 
         ffi_async_ok!(caller, {
-            let handle: query::txn::TransactionHandle = txn_str
-                .parse()
-                .map_err(|e| format!("invalid transaction ID: {}", e))?;
-
+            let handle = query::txn::TransactionHandle::new(txn.id.to_string());
             runner
                 .commit_txn(&handle)
                 .await
-                .map_err(|e| format!("failed to commit transaction: {}", e))?;
-
-            Ok(())
+                .map_err(|e| format!("failed to commit transaction: {}", e))
         })
     }
 }
 
-/// Rollback (discard) a transaction.
-///
-/// After rollback, all operations performed within the transaction are discarded.
-/// The transaction ID is no longer valid after this call.
-///
-/// # Arguments
-///
-/// * `node_ptr` - Handle to the node
-/// * `txn_id` - Transaction ID from `begin_txn`
-///
-/// # Safety
-///
-/// `txn_id` must be a valid null-terminated UTF-8 string.
+/// Discards the transaction and releases its handle. Discarding a handle
+/// that is already released does nothing.
 #[no_mangle]
-pub unsafe extern "C" fn rollback_txn(node_ptr: usize, txn_id: *const c_char) -> FfiResult {
+pub extern "C" fn defra_transaction_discard(txn_ptr: usize) {
     ffi_entry! {
-        let txn_str = try_ffi!(require_c_str(txn_id, "txn_id"));
-        let runner = try_ffi!(get_node_runner(node_ptr));
-
-        ffi_async_ok!(caller, {
-            let handle: query::txn::TransactionHandle = txn_str
-                .parse()
-                .map_err(|e| format!("invalid transaction ID: {}", e))?;
-
+        let Some(txn) = TXNS.remove(txn_ptr) else {
+            return;
+        };
+        let Ok(runner) = get_node_runner(txn.node) else {
+            return;
+        };
+        let discarded = crate::call::wait(async move {
+            let handle = query::txn::TransactionHandle::new(txn.id.to_string());
             runner
                 .discard_txn(&handle)
                 .await
-                .map_err(|e| format!("failed to discard transaction: {}", e))?;
-
-            Ok(())
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::node::{new_node, node_close};
-    use crate::types::NodeInitOptions;
-
-    #[test]
-    fn test_invalid_txn_id() {
-        assert!(crate::runtime::init_runtime());
-
-        let options = NodeInitOptions::default();
-        let result = new_node(options);
-        assert_eq!(result.status, 0);
-        let node = result.node_ptr;
-
-        // Try to commit invalid transaction
-        let invalid_txn = std::ffi::CString::new("invalid-txn-id-12345").unwrap();
-        let result = unsafe { commit_txn(node, invalid_txn.as_ptr()) };
-        assert_eq!(result.status, 1, "commit with invalid txn should fail");
-
-        node_close(node);
+                .map_err(|e| format!("failed to discard transaction: {}", e))
+        });
+        if let Err(error) = discarded {
+            tracing::warn!(%error, "discarding a transaction failed");
+        }
     }
 }

@@ -89,7 +89,11 @@ where
     let _ = (&peer_keyring, &transport);
 
     let event_bus: Arc<dyn events::Bus> = Arc::new(events::ChannelBus::default());
-    let (raw_identity, node_identity_did) = node_identity::create_node_identity(&signing)?;
+    let node_identity::NodeIdentity {
+        raw: raw_identity,
+        did: node_identity_did,
+        hold: signing_key_hold,
+    } = node_identity::create_node_identity(&signing)?;
     let node_p2p_identity = raw_identity.map(Arc::new);
     let node_query_identity = node_identity_did
         .as_ref()
@@ -521,6 +525,7 @@ where
         embedding_config,
         node_identity_did,
         node_query_identity,
+        _signing_key_hold: signing_key_hold,
         network,
         pool,
         remote_acp,

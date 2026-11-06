@@ -10,14 +10,15 @@ pub(crate) mod identity_ops;
 mod nac;
 
 pub use dac::{
-    add_dac_actor_relationship, add_dac_policy, delete_dac_actor_relationship, get_dac_policy,
-    list_dac_policies,
+    defra_acp_dac_policy_add, defra_acp_dac_relationship_add, defra_acp_dac_relationship_delete,
 };
-pub use identity::{
-    bind_identity_bearer_token, create_identity, get_node_identity, node_set_default_identity,
-    RegisterIdentity,
-};
+pub use identity::{defra_identity_new_from_bearer_token, defra_node_set_identity};
 pub use nac::{
-    add_nac_actor_relationship, delete_nac_actor_relationship, disable_nac, enable_nac,
-    get_nac_status, re_enable_nac,
+    defra_acp_nac_disable, defra_acp_nac_re_enable, defra_acp_nac_relationship_add,
+    defra_acp_nac_relationship_delete, defra_acp_nac_status,
 };
+
+#[cfg(test)]
+mod nac_tests;
+#[cfg(test)]
+mod tests;

@@ -8,18 +8,22 @@ use std::ptr;
 /// Status codes:
 /// - 0: Success
 /// - 1: Error (message in error field)
-/// - 2: Subscription (ID in value field, not yet implemented)
+/// - 2: Subscription: `defra_query_execute` started a GraphQL subscription,
+///   whose ID is in the value field; read its events with
+///   `defra_subscription_poll` and end it with `defra_subscription_close`
+///
+/// The caller owns its strings and frees them with [`defra_result_free`].
 #[repr(C)]
-pub struct FfiResult {
+pub struct DefraResult {
     /// Status code: 0=success, 1=error, 2=subscription
     pub status: c_int,
-    /// Error message (null on success). Caller must free with `defra_free_string`.
+    /// Error message (null on success). Freed with the result.
     pub error: *mut c_char,
-    /// JSON value (null on error). Caller must free with `defra_free_string`.
+    /// JSON value (null on error). Freed with the result.
     pub value: *mut c_char,
 }
 
-impl FfiResult {
+impl DefraResult {
     /// Create a success result with a JSON value.
     ///
     /// If the value contains null bytes, they are replaced with the Unicode
@@ -53,21 +57,6 @@ impl FfiResult {
         }
     }
 
-    /// The text of an error result, freeing the result; `None` when it is not
-    /// an error.
-    pub(crate) fn into_error(self) -> Option<String> {
-        if !self.value.is_null() {
-            // SAFETY: `value` came from `CString::into_raw` and is freed once.
-            drop(unsafe { std::ffi::CString::from_raw(self.value) });
-        }
-        if self.error.is_null() {
-            return None;
-        }
-        // SAFETY: `error` came from `CString::into_raw` and is freed once.
-        let error = unsafe { std::ffi::CString::from_raw(self.error) };
-        Some(error.to_string_lossy().into_owned())
-    }
-
     /// Create a subscription result (status=2) with the subscription ID in value.
     pub fn subscription(id: impl Into<String>) -> Self {
         Self {
@@ -79,7 +68,7 @@ impl FfiResult {
 }
 
 /// A call's JSON value, or its error.
-impl From<Result<String, String>> for FfiResult {
+impl From<Result<String, String>> for DefraResult {
     fn from(result: Result<String, String>) -> Self {
         match result {
             Ok(json) => Self::success(json),
@@ -89,7 +78,7 @@ impl From<Result<String, String>> for FfiResult {
 }
 
 /// A call's success with no value, or its error.
-impl From<Result<(), String>> for FfiResult {
+impl From<Result<(), String>> for DefraResult {
     fn from(result: Result<(), String>) -> Self {
         match result {
             Ok(()) => Self::ok(),
@@ -100,18 +89,19 @@ impl From<Result<(), String>> for FfiResult {
 
 /// FFI result for node creation, containing a node handle.
 ///
-/// Matches Go's NewNodeResult struct.
+/// Matches Go's NewNodeResult struct. The caller frees it with
+/// [`defra_new_node_result_free`].
 #[repr(C)]
-pub struct NewNodeResult {
+pub struct DefraNewNodeResult {
     /// Status code: 0=success, 1=error
     pub status: c_int,
-    /// Error message (null on success). Caller must free with `defra_free_string`.
+    /// Error message (null on success). Freed with the result.
     pub error: *mut c_char,
     /// Handle to the node (0 on error).
     pub node_ptr: usize,
 }
 
-impl NewNodeResult {
+impl DefraNewNodeResult {
     /// Create a success result with a node handle.
     pub fn success(handle: usize) -> Self {
         Self {
@@ -134,24 +124,27 @@ impl NewNodeResult {
     }
 }
 
-/// FFI result for transaction creation, containing a transaction ID.
+/// FFI result for transaction creation, containing a transaction handle.
+///
+/// Matches Go's NewTxnResult struct. The caller frees it with
+/// [`defra_new_txn_result_free`].
 #[repr(C)]
-pub struct NewTxnResult {
+pub struct DefraNewTxnResult {
     /// Status code: 0=success, 1=error
     pub status: c_int,
-    /// Error message (null on success). Caller must free with `defra_free_string`.
+    /// Error message (null on success). Freed with the result.
     pub error: *mut c_char,
-    /// Transaction ID (null on error). Caller must free with `defra_free_string`.
-    pub txn_id: *mut c_char,
+    /// Handle to the transaction (0 on error).
+    pub txn_ptr: usize,
 }
 
-impl NewTxnResult {
-    /// Create a success result with a transaction ID.
-    pub fn success(txn_id: impl Into<String>) -> Self {
+impl DefraNewTxnResult {
+    /// Create a success result with a transaction handle.
+    pub fn success(handle: usize) -> Self {
         Self {
             status: 0,
             error: ptr::null_mut(),
-            txn_id: sanitize_to_cstring(txn_id, "unknown").into_raw(),
+            txn_ptr: handle,
         }
     }
 
@@ -160,47 +153,190 @@ impl NewTxnResult {
         Self {
             status: 1,
             error: sanitize_to_cstring(message, "unknown error").into_raw(),
-            txn_id: ptr::null_mut(),
+            txn_ptr: 0,
+        }
+    }
+}
+
+/// FFI result for identity creation, containing an identity handle.
+///
+/// Matches Go's NewIdentityResult struct. The caller frees it with
+/// [`defra_new_identity_result_free`].
+#[repr(C)]
+pub struct DefraNewIdentityResult {
+    /// Status code: 0=success, 1=error
+    pub status: c_int,
+    /// Error message (null on success). Freed with the result.
+    pub error: *mut c_char,
+    /// Handle to the identity (0 on error).
+    pub identity_ptr: usize,
+}
+
+impl DefraNewIdentityResult {
+    /// Create a success result with an identity handle.
+    pub fn success(handle: usize) -> Self {
+        Self {
+            status: 0,
+            error: ptr::null_mut(),
+            identity_ptr: handle,
+        }
+    }
+
+    /// Create an error result.
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            status: 1,
+            error: sanitize_to_cstring(message, "unknown error").into_raw(),
+            identity_ptr: 0,
+        }
+    }
+}
+
+/// Which collection a call acts on, and how it signs.
+///
+/// Matches Go's CollectionOptions struct. Every string is optional: null or
+/// empty leaves that criterion out.
+#[repr(C)]
+pub struct CollectionOptions {
+    /// Collection version ID.
+    pub version: *const c_char,
+    /// Collection ID.
+    pub collection_id: *const c_char,
+    /// Collection name.
+    pub name: *const c_char,
+    /// Include inactive collection versions (1=true, 0=false).
+    pub get_inactive: c_int,
+    /// Block signing for this call: 0 node default, 1 enabled, -1 disabled.
+    pub enable_signing: c_int,
+}
+
+impl Default for CollectionOptions {
+    fn default() -> Self {
+        Self {
+            version: ptr::null(),
+            collection_id: ptr::null(),
+            name: ptr::null(),
+            get_inactive: 0,
+            enable_signing: 0,
         }
     }
 }
 
 /// Options for node initialization.
 ///
-/// Matches Go's NodeInitOptions struct.
+/// Go's NodeInitOptions struct, field for field: an all-zero struct (null
+/// strings, zero numbers) is the default node, and every opt-out is a
+/// `disable_` flag. The fields after Go's are this implementation's own, so
+/// the struct is larger than Go's: a caller passes this header's struct,
+/// never one laid out by Go's `defra_structs.h`.
+///
+/// Go's Badger options name the store regolith replaced, so they are named
+/// for the store here (`store_file_size`, `store_encryption_key`). A Go
+/// option this implementation does not support yet fails `defra_node_new`
+/// when it is set, rather than being ignored.
 #[repr(C)]
 pub struct NodeInitOptions {
-    /// Path to store directory (null for in-memory).
+    /// Path to the store directory. Null or empty keeps the store in memory.
     pub db_path: *const c_char,
-    /// Use in-memory storage (1=true, 0=false).
+    /// Comma-separated P2P listen multiaddrs. Empty listens on
+    /// `/ip4/0.0.0.0/tcp/9171`, as Go does.
+    pub listening_addresses: *const c_char,
+    /// Comma-separated seconds between replicator retries, the last one
+    /// repeating. Empty keeps the default ladder.
+    pub replicator_retry_intervals: *const c_char,
+    /// Comma-separated multiaddrs of peers to connect to once started.
+    pub peers: *const c_char,
+    /// The node's identity, from `defra_identity_new` (0 for none).
+    pub identity_ptr: usize,
+    /// Keep the store in memory (1=true, 0=false).
     pub in_memory: c_int,
-    /// Storage backend name: "regolith" (default) or "memory".
-    /// Null uses "regolith" for persistent or "memory" for in-memory.
-    pub datastore_backend: *const c_char,
-    /// Enable block signing (1=true, 0=false).
-    /// When enabled, the node uses a signing key for block signatures.
-    /// If signing_private_key is provided, that key is used.
-    /// Otherwise, a random secp256k1 key pair is generated.
+    /// Run without P2P (1=true, 0=false).
+    pub disable_p2p: c_int,
+    /// Run without the HTTP API (1=true, 0=false). An embedded node does not
+    /// serve the HTTP API yet.
+    pub disable_api: c_int,
+    /// Enable node access control at startup, owned by the node identity
+    /// (1=true, 0=false).
+    pub enable_node_acp: c_int,
+    /// Retries of a conflicting transaction. 0 keeps the default.
+    pub max_transaction_retries: c_int,
+
+    /// Store type: "regolith" (default) or "memory". Go's store name,
+    /// "badger", means "regolith".
+    pub store_type: *const c_char,
+    /// The store's compaction output target in bytes (Go's Badger value log
+    /// file size). 0 keeps the default.
+    pub store_file_size: i64,
+    /// 32-byte key encrypting the store at rest, or null.
+    pub store_encryption_key: *const u8,
+    /// Length of `store_encryption_key` in bytes.
+    pub store_encryption_key_len: c_int,
+
+    /// Sign blocks (1=true, 0=false), with the node identity, or with a
+    /// generated secp256k1 key when there is none.
     pub enable_signing: c_int,
-    /// Optional: signing key type string (e.g. "secp256k1", "secp256r1", "ed25519").
-    /// Only used when signing_private_key is provided.
-    pub signing_key_type: *const c_char,
-    /// Optional: raw private key bytes used for the node identity.
-    /// Block signing remains controlled by enable_signing.
-    pub signing_private_key: *const u8,
-    /// Length of signing_private_key in bytes. 0 if null.
-    pub signing_private_key_len: usize,
-    /// Vera gRPC/LCD address (null = use local ACP).
-    pub vera_grpc_address: *const c_char,
+    /// 32-byte searchable encryption key, or null.
+    pub searchable_encryption_key: *const u8,
+    /// Length of `searchable_encryption_key` in bytes.
+    pub searchable_encryption_key_len: c_int,
+    /// Milliseconds a P2P block sync may take. 0 keeps the default.
+    pub p2p_block_sync_timeout_ms: i64,
+    /// Lens runtime pool size. Not supported yet: must be 0.
+    pub lens_pool_size: c_int,
+    /// Bytes per block chunk. 0 keeps the default.
+    pub chunk_size: c_int,
+
+    /// Run GossipSub (1=true, 0=false).
+    pub enable_pub_sub: c_int,
+    /// Run the relay client transport (1=true, 0=false).
+    pub enable_relay: c_int,
+    /// Clear dial backoff before retrying a replicator. Not supported yet:
+    /// must be 0.
+    pub enable_clear_backoff_on_retry: c_int,
+    /// The libp2p Ed25519 private key, or null for the node's stored key.
+    pub p2p_private_key: *const u8,
+    /// Length of `p2p_private_key` in bytes.
+    pub p2p_private_key_len: c_int,
+
+    /// HTTP API address. Not supported yet: must be null or empty.
+    pub http_address: *const c_char,
+    /// Comma-separated allowed CORS origins. Not supported yet.
+    pub http_allowed_origins: *const c_char,
+    /// TLS certificate path. Not supported yet.
+    pub tls_cert_path: *const c_char,
+    /// TLS key path. Not supported yet.
+    pub tls_key_path: *const c_char,
+    /// HTTP read timeout in milliseconds. Not supported yet.
+    pub http_read_timeout_ms: i64,
+    /// HTTP write timeout in milliseconds. Not supported yet.
+    pub http_write_timeout_ms: i64,
+    /// HTTP idle timeout in milliseconds. Not supported yet.
+    pub http_idle_timeout_ms: i64,
+
+    /// Document ACP: "local" (default) or "remote" (Vera, configured by the
+    /// `remote_dac_` and `vera_` fields).
+    pub document_acp_type: *const c_char,
+    /// Separate document ACP store path. Not supported: document ACP lives
+    /// in the node's store.
+    pub document_acp_path: *const c_char,
+    /// SourceHub log ID. Not supported: remote document ACP is Vera.
+    pub remote_dac_log_id: *const c_char,
+    /// Vera gRPC/LCD address.
+    pub remote_dac_grpc_address: *const c_char,
     /// Vera CometBFT RPC address.
-    pub vera_comet_rpc_address: *const c_char,
+    pub remote_dac_comet_rpc_address: *const c_char,
+
+    /// Separate node ACP store path. Not supported: node ACP lives in the
+    /// node's store.
+    pub node_acp_path: *const c_char,
+
     /// Vera chain ID (e.g., "vera-test").
     pub vera_chain_id: *const c_char,
     /// Vera secp256k1 signer key bytes (raw 32-byte private key).
     pub vera_signer_key: *const u8,
-    /// Length of vera_signer_key. 0 if null.
-    pub vera_signer_key_len: usize,
-    /// Optional P2P transport backend for `new_node_with_p2p`: "libp2p" (default) or "iroh".
+    /// Length of `vera_signer_key` in bytes.
+    pub vera_signer_key_len: c_int,
+    /// P2P transport: "libp2p" (default) or "iroh".
     pub p2p_transport: *const c_char,
     /// Optional iroh relay URL.
     pub iroh_relay_url: *const c_char,
@@ -212,8 +348,8 @@ pub struct NodeInitOptions {
     pub iroh_bind_addr: *const c_char,
     /// Optional iroh bind UDP port. 0 means OS-assigned/unspecified.
     pub iroh_bind_port: u16,
-    /// Enable iroh discovery (1=true, 0=false). Default true.
-    pub iroh_discovery: c_int,
+    /// Run iroh without discovery (1=true, 0=false).
+    pub iroh_disable_discovery: c_int,
     /// Optional custom DNS origin domain for iroh discovery.
     pub iroh_discovery_origin_domain: *const c_char,
     /// Optional custom pkarr relay URL for iroh discovery publishing.
@@ -234,17 +370,47 @@ pub struct NodeInitOptions {
 }
 
 impl Default for NodeInitOptions {
+    /// The all-zero struct a C caller gets from `NodeInitOptions opts = {0}`.
     fn default() -> Self {
         Self {
             db_path: ptr::null(),
-            in_memory: 1, // Default to in-memory
-            datastore_backend: ptr::null(),
+            listening_addresses: ptr::null(),
+            replicator_retry_intervals: ptr::null(),
+            peers: ptr::null(),
+            identity_ptr: 0,
+            in_memory: 0,
+            disable_p2p: 0,
+            disable_api: 0,
+            enable_node_acp: 0,
+            max_transaction_retries: 0,
+            store_type: ptr::null(),
+            store_file_size: 0,
+            store_encryption_key: ptr::null(),
+            store_encryption_key_len: 0,
             enable_signing: 0,
-            signing_key_type: ptr::null(),
-            signing_private_key: ptr::null(),
-            signing_private_key_len: 0,
-            vera_grpc_address: ptr::null(),
-            vera_comet_rpc_address: ptr::null(),
+            searchable_encryption_key: ptr::null(),
+            searchable_encryption_key_len: 0,
+            p2p_block_sync_timeout_ms: 0,
+            lens_pool_size: 0,
+            chunk_size: 0,
+            enable_pub_sub: 0,
+            enable_relay: 0,
+            enable_clear_backoff_on_retry: 0,
+            p2p_private_key: ptr::null(),
+            p2p_private_key_len: 0,
+            http_address: ptr::null(),
+            http_allowed_origins: ptr::null(),
+            tls_cert_path: ptr::null(),
+            tls_key_path: ptr::null(),
+            http_read_timeout_ms: 0,
+            http_write_timeout_ms: 0,
+            http_idle_timeout_ms: 0,
+            document_acp_type: ptr::null(),
+            document_acp_path: ptr::null(),
+            remote_dac_log_id: ptr::null(),
+            remote_dac_grpc_address: ptr::null(),
+            remote_dac_comet_rpc_address: ptr::null(),
+            node_acp_path: ptr::null(),
             vera_chain_id: ptr::null(),
             vera_signer_key: ptr::null(),
             vera_signer_key_len: 0,
@@ -254,7 +420,7 @@ impl Default for NodeInitOptions {
             iroh_relay_urls_json: ptr::null(),
             iroh_bind_addr: ptr::null(),
             iroh_bind_port: 0,
-            iroh_discovery: 1,
+            iroh_disable_discovery: 0,
             iroh_discovery_origin_domain: ptr::null(),
             iroh_pkarr_relay_url: ptr::null(),
             iroh_key_path: ptr::null(),
@@ -267,7 +433,7 @@ impl Default for NodeInitOptions {
     }
 }
 
-/// Trait for FFI return types that can represent a panic error.
+// Trait for FFI return types that can represent a panic error.
 ///
 /// Used by the `ffi_entry!` macro to convert caught panics into
 /// error results instead of unwinding across the FFI boundary.
@@ -275,21 +441,33 @@ pub trait FfiPanicResult {
     fn from_panic(msg: String) -> Self;
 }
 
-impl FfiPanicResult for FfiResult {
+impl FfiPanicResult for DefraResult {
     fn from_panic(msg: String) -> Self {
-        FfiResult::error(msg)
+        DefraResult::error(msg)
     }
 }
 
-impl FfiPanicResult for NewNodeResult {
+impl FfiPanicResult for DefraNewNodeResult {
     fn from_panic(msg: String) -> Self {
-        NewNodeResult::error(msg)
+        DefraNewNodeResult::error(msg)
     }
 }
 
-impl FfiPanicResult for NewTxnResult {
+impl FfiPanicResult for DefraNewTxnResult {
     fn from_panic(msg: String) -> Self {
-        NewTxnResult::error(msg)
+        DefraNewTxnResult::error(msg)
+    }
+}
+
+impl FfiPanicResult for DefraNewIdentityResult {
+    fn from_panic(msg: String) -> Self {
+        DefraNewIdentityResult::error(msg)
+    }
+}
+
+impl FfiPanicResult for () {
+    fn from_panic(msg: String) {
+        tracing::warn!(%msg, "a void FFI call panicked");
     }
 }
 
@@ -329,15 +507,71 @@ pub unsafe fn c_str_to_string(ptr: *const c_char) -> Option<String> {
     }
 }
 
-/// Free a string allocated by FFI functions.
+/// Frees a string this crate allocated and nulls the pointer, so a second
+/// free does nothing.
 ///
 /// # Safety
 ///
-/// The pointer must have been allocated by an FFI function in this crate.
-#[no_mangle]
-pub unsafe extern "C" fn defra_free_string(ptr: *mut c_char) {
+/// `ptr` must be null or a string this crate allocated.
+unsafe fn free_c_string(ptr: &mut *mut c_char) {
     if !ptr.is_null() {
-        drop(CString::from_raw(ptr));
+        drop(CString::from_raw(*ptr));
+        *ptr = ptr::null_mut();
+    }
+}
+
+/// Frees the strings of a result and nulls them, so freeing it again does
+/// nothing. A null `result` does nothing.
+///
+/// # Safety
+///
+/// `result` must be null or point to a result a call returned.
+#[no_mangle]
+pub unsafe extern "C" fn defra_result_free(result: *mut DefraResult) {
+    if let Some(result) = result.as_mut() {
+        free_c_string(&mut result.error);
+        free_c_string(&mut result.value);
+    }
+}
+
+/// Frees the error of a node creation result and nulls it, so freeing it
+/// again does nothing. The node stays open. A null `result` does nothing.
+///
+/// # Safety
+///
+/// `result` must be null or point to a result a call returned.
+#[no_mangle]
+pub unsafe extern "C" fn defra_new_node_result_free(result: *mut DefraNewNodeResult) {
+    if let Some(result) = result.as_mut() {
+        free_c_string(&mut result.error);
+    }
+}
+
+/// Frees the error of a transaction creation result and nulls it, so
+/// freeing it again does nothing. The transaction stays open. A null
+/// `result` does nothing.
+///
+/// # Safety
+///
+/// `result` must be null or point to a result a call returned.
+#[no_mangle]
+pub unsafe extern "C" fn defra_new_txn_result_free(result: *mut DefraNewTxnResult) {
+    if let Some(result) = result.as_mut() {
+        free_c_string(&mut result.error);
+    }
+}
+
+/// Frees the error of an identity creation result and nulls it, so freeing
+/// it again does nothing. The identity stays registered. A null `result`
+/// does nothing.
+///
+/// # Safety
+///
+/// `result` must be null or point to a result a call returned.
+#[no_mangle]
+pub unsafe extern "C" fn defra_new_identity_result_free(result: *mut DefraNewIdentityResult) {
+    if let Some(result) = result.as_mut() {
+        free_c_string(&mut result.error);
     }
 }
 
@@ -346,30 +580,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_ffi_result_success() {
-        let result = FfiResult::success(r#"{"data": "test"}"#);
+    fn test_defra_result_success() {
+        let mut result = DefraResult::success(r#"{"data": "test"}"#);
         assert_eq!(result.status, 0);
         assert!(result.error.is_null());
         assert!(!result.value.is_null());
 
-        // Clean up
-        unsafe { defra_free_string(result.value) };
+        unsafe { defra_result_free(&mut result) };
     }
 
     #[test]
-    fn test_ffi_result_error() {
-        let result = FfiResult::error("something went wrong");
+    fn test_defra_result_error() {
+        let mut result = DefraResult::error("something went wrong");
         assert_eq!(result.status, 1);
         assert!(!result.error.is_null());
         assert!(result.value.is_null());
 
-        // Clean up
-        unsafe { defra_free_string(result.error) };
+        unsafe { defra_result_free(&mut result) };
     }
 
     #[test]
     fn test_new_node_result() {
-        let result = NewNodeResult::success(42);
+        let result = DefraNewNodeResult::success(42);
         assert_eq!(result.status, 0);
         assert_eq!(result.node_ptr, 42);
         assert!(result.error.is_null());
@@ -378,10 +610,10 @@ mod tests {
     // Edge case tests for null byte handling (H2)
 
     #[test]
-    fn test_ffi_result_success_with_null_bytes() {
+    fn test_defra_result_success_with_null_bytes() {
         // String with embedded null byte should not panic
         let value_with_null = "hello\0world";
-        let result = FfiResult::success(value_with_null);
+        let mut result = DefraResult::success(value_with_null);
         assert_eq!(result.status, 0);
         assert!(!result.value.is_null());
 
@@ -390,14 +622,14 @@ mod tests {
         assert!(value.contains('\u{FFFD}'), "null byte should be replaced");
         assert!(!value.contains('\0'), "should not contain null byte");
 
-        unsafe { defra_free_string(result.value) };
+        unsafe { defra_result_free(&mut result) };
     }
 
     #[test]
-    fn test_ffi_result_error_with_null_bytes() {
+    fn test_defra_result_error_with_null_bytes() {
         // Error message with embedded null byte should not panic
         let error_with_null = "error\0message";
-        let result = FfiResult::error(error_with_null);
+        let mut result = DefraResult::error(error_with_null);
         assert_eq!(result.status, 1);
         assert!(!result.error.is_null());
 
@@ -406,14 +638,14 @@ mod tests {
         assert!(error.contains('\u{FFFD}'), "null byte should be replaced");
         assert!(!error.contains('\0'), "should not contain null byte");
 
-        unsafe { defra_free_string(result.error) };
+        unsafe { defra_result_free(&mut result) };
     }
 
     #[test]
     fn test_new_node_result_error_with_null_bytes() {
         // Error message with embedded null byte should not panic
         let error_with_null = "node\0error";
-        let result = NewNodeResult::error(error_with_null);
+        let mut result = DefraNewNodeResult::error(error_with_null);
         assert_eq!(result.status, 1);
         assert!(!result.error.is_null());
         assert_eq!(result.node_ptr, 0);
@@ -422,7 +654,7 @@ mod tests {
         let error = unsafe { CStr::from_ptr(result.error).to_string_lossy() };
         assert!(error.contains('\u{FFFD}'), "null byte should be replaced");
 
-        unsafe { defra_free_string(result.error) };
+        unsafe { defra_new_node_result_free(&mut result) };
     }
 
     #[test]
@@ -432,8 +664,42 @@ mod tests {
     }
 
     #[test]
-    fn test_ffi_result_ok() {
-        let result = FfiResult::ok();
+    fn freeing_a_result_nulls_its_strings_so_a_second_free_does_nothing() {
+        let mut result = DefraResult::error("gone");
+        unsafe { defra_result_free(&mut result) };
+        assert!(result.error.is_null());
+        assert!(result.value.is_null());
+        unsafe { defra_result_free(&mut result) };
+
+        let mut node = DefraNewNodeResult::error("gone");
+        unsafe { defra_new_node_result_free(&mut node) };
+        assert!(node.error.is_null());
+        unsafe { defra_new_node_result_free(&mut node) };
+
+        let mut txn = DefraNewTxnResult::error("gone");
+        unsafe { defra_new_txn_result_free(&mut txn) };
+        assert!(txn.error.is_null());
+        unsafe { defra_new_txn_result_free(&mut txn) };
+
+        let mut identity = DefraNewIdentityResult::error("gone");
+        unsafe { defra_new_identity_result_free(&mut identity) };
+        assert!(identity.error.is_null());
+        unsafe { defra_new_identity_result_free(&mut identity) };
+    }
+
+    #[test]
+    fn freeing_a_null_result_does_nothing() {
+        unsafe {
+            defra_result_free(ptr::null_mut());
+            defra_new_node_result_free(ptr::null_mut());
+            defra_new_txn_result_free(ptr::null_mut());
+            defra_new_identity_result_free(ptr::null_mut());
+        }
+    }
+
+    #[test]
+    fn test_defra_result_ok() {
+        let result = DefraResult::ok();
         assert_eq!(result.status, 0);
         assert!(result.error.is_null());
         assert!(result.value.is_null());

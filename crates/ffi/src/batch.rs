@@ -1,37 +1,22 @@
 //! FFI batch signing functions.
 //!
-//! These expose the batch CID collection and signing to Go callers.
-
-use std::ffi::c_char;
+//! A caller starts a batch, makes its writes, then signs every block they
+//! made at once, keyed by the signing identity's public key.
 
 use crate::ffi_entry;
 use crate::helpers::get_rt;
 use crate::state::NODES;
+use crate::target::resolve_identity;
 use crate::try_ffi;
-use crate::types::{c_str_to_string, FfiResult};
+use crate::types::DefraResult;
 
-/// Start (or reset) batch CID collection.
-///
-/// # Arguments
-///
-/// * `node_ptr` - Handle to the node
-/// * `identity_did` - Optional DID string (null to use node identity)
-/// * `session_id` - Optional unique session ID for concurrent batches.
-///   If null, falls back to the node's public key hex (single-session mode).
-///
-/// # Safety
-///
-/// String pointers must be either null or valid null-terminated UTF-8 strings.
+/// Starts (or restarts) collecting the blocks the identity `identity_ptr`
+/// names (0 for the node's) signs.
 #[no_mangle]
-pub unsafe extern "C" fn batch_start(
-    node_ptr: usize,
-    identity_did: *const c_char,
-    session_id: *const c_char,
-) -> FfiResult {
+pub extern "C" fn defra_batch_start(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
         let _rt = try_ffi!(get_rt());
-        let identity_str = c_str_to_string(identity_did);
-        let session_str = c_str_to_string(session_id);
+        let identity_str = try_ffi!(resolve_identity(identity_ptr));
 
         let (node_did, signing_enabled) = NODES
             .get(node_ptr, |state| (state.identity_did(), state.signing_enabled))
@@ -45,11 +30,11 @@ pub unsafe extern "C" fn batch_start(
 
         match signing {
             Some(config) => {
-                let key = session_str.unwrap_or_else(|| config.public_key_hex.clone());
+                let key = config.public_key_hex.clone();
                 defra_core::batch_signing::batch_start(&key);
-                FfiResult::ok()
+                DefraResult::ok()
             }
-            None => FfiResult::error("no signing identity available"),
+            None => DefraResult::error("no signing identity available"),
         }
     }
 }
@@ -58,26 +43,12 @@ pub unsafe extern "C" fn batch_start(
 ///
 /// Returns JSON with fields: sig_type, identity, value (hex), merkle_root (hex), cid_count.
 ///
-/// # Arguments
-///
-/// * `node_ptr` - Handle to the node
-/// * `identity_did` - Optional DID string (null to use node identity)
-/// * `session_id` - Optional unique session ID (must match the one passed to `batch_start`).
-///   If null, falls back to the node's public key hex.
-///
-/// # Safety
-///
-/// String pointers must be either null or valid null-terminated UTF-8 strings.
+/// The identity is the one `defra_batch_start` was given.
 #[no_mangle]
-pub unsafe extern "C" fn batch_sign(
-    node_ptr: usize,
-    identity_did: *const c_char,
-    session_id: *const c_char,
-) -> FfiResult {
+pub extern "C" fn defra_batch_sign(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
         let _rt = try_ffi!(get_rt());
-        let identity_str = c_str_to_string(identity_did);
-        let session_str = c_str_to_string(session_id);
+        let identity_str = try_ffi!(resolve_identity(identity_ptr));
 
         let (node_did, signing_enabled) = NODES
             .get(node_ptr, |state| (state.identity_did(), state.signing_enabled))
@@ -91,25 +62,25 @@ pub unsafe extern "C" fn batch_sign(
 
         let config = match signing {
             Some(c) => c,
-            None => return FfiResult::error("no signing identity available"),
+            None => return DefraResult::error("no signing identity available"),
         };
 
-        let key = session_str.unwrap_or_else(|| config.public_key_hex.clone());
+        let key = config.public_key_hex.clone();
         let cids = match defra_core::batch_signing::batch_take_cids(&key) {
             Some(c) => c,
-            None => return FfiResult::error("no batch session active"),
+            None => return DefraResult::error("no batch session active"),
         };
 
         if cids.is_empty() {
-            return FfiResult::error("batch has no CIDs");
+            return DefraResult::error("batch has no CIDs");
         }
 
         match crypto::batch::sign_batch(&cids, &config) {
             Ok(sig) => match serde_json::to_string(&sig) {
-                Ok(json) => FfiResult::success(json),
-                Err(e) => FfiResult::error(format!("failed to serialize batch signature: {}", e)),
+                Ok(json) => DefraResult::success(json),
+                Err(e) => DefraResult::error(format!("failed to serialize batch signature: {}", e)),
             },
-            Err(e) => FfiResult::error(format!("batch sign failed: {}", e)),
+            Err(e) => DefraResult::error(format!("batch sign failed: {}", e)),
         }
     }
 }

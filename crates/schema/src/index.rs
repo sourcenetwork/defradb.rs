@@ -571,9 +571,18 @@ impl Default for HnswParams {
 /// Configuration of a vector (approximate nearest neighbor) index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct VectorIndexDescription {
-    #[serde(rename = "Algorithm", default)]
+    /// Go writes an unset algorithm or metric as `""`, meaning the default.
+    #[serde(
+        rename = "Algorithm",
+        default,
+        deserialize_with = "crate::vector_index_defaults::empty_is_default"
+    )]
     pub algorithm: VectorAlgorithm,
-    #[serde(rename = "Metric", default)]
+    #[serde(
+        rename = "Metric",
+        default,
+        deserialize_with = "crate::vector_index_defaults::empty_is_default"
+    )]
     pub metric: DistanceMetric,
     /// Length of the vectors indexed. A new index must set it; `0` survives
     /// only in definitions stored before that rule, where the first vector

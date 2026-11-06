@@ -44,7 +44,6 @@ serde_json.workspace = true
 serde_yaml = "0.9"
 serde_ipld_dagcbor.workspace = true
 serde_bytes.workspace = true
-base64.workspace = true
 
 # Memory zeroization for sensitive key material
 zeroize = "1"
@@ -67,11 +66,13 @@ kovan-queue.workspace = true
 # Cryptographic hashing
 sha2.workspace = true
 hex.workspace = true
+base64.workspace = true
 
 # Internal crates
 crypto = { path = "../crypto" }
 db = { path = "../db", default-features = false }
 defra-core = { path = "../defra-core" }
+defra-version = { path = "../defra-version" }
 defra-p2p-adapter = { path = "../p2p-adapter", default-features = false }
 document = { path = "../document" }
 events = { path = "../events" }

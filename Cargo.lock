@@ -4892,6 +4892,7 @@ dependencies = [
  "defra-core",
  "defra-node",
  "defra-p2p-adapter",
+ "defra-version",
  "document",
  "edge",
  "events",

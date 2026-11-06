@@ -309,7 +309,7 @@ impl IndexManager {
                 fields.len()
             )));
         }
-        Ok(IndexKind::Vector(vector))
+        Ok(IndexKind::Vector(vector.normalized()))
     }
 
     /// Creates an index of any kind.

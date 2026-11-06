@@ -1,373 +1,198 @@
+//! GraphQL subscriptions through the C API: starting one, what it yields,
+//! and how it ends.
+
 use std::ffi::CString;
 use std::ptr;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use super::{
-    close_subscription, create_merge_complete_subscription, create_subscription, poll_subscription,
-};
-use crate::node::{new_node, node_close};
-use crate::types::NodeInitOptions;
+use serde_json::Value;
 
-#[test]
-fn test_subscription_lifecycle() {
-    // Initialize runtime
-    assert!(crate::runtime::init_runtime());
+use super::{defra_subscription_close, defra_subscription_poll};
+use crate::query::defra_query_execute;
+use crate::test_support::{add_collection, close, cstr, err, node, ok, query, take};
 
-    // Create node
-    let options = NodeInitOptions::default();
-    let result = new_node(options);
-    assert_eq!(result.status, 0);
-    let node = result.node_ptr;
+/// Starts the subscription `request` on `node` and answers with its ID.
+fn subscribe(node: usize, request: &str) -> CString {
+    let request = cstr(request);
+    let (status, id) =
+        take(unsafe { defra_query_execute(node, request.as_ptr(), 0, ptr::null(), ptr::null()) });
+    assert_eq!(status, 2, "a subscription answers with status 2");
+    cstr(&id.expect("a subscription answers with its ID"))
+}
 
-    // Create subscription
-    let result = unsafe { create_subscription(node, ptr::null()) };
-    assert_eq!(result.status, 0, "create_subscription should succeed");
-    assert!(result.subscription_handle > 0);
-    let sub_handle = result.subscription_handle;
-
-    // Poll (should return no event)
-    let result = poll_subscription(sub_handle);
-    assert_eq!(result.status, 2, "should have no event initially");
-
-    // Close subscription
-    let result = close_subscription(sub_handle);
-    assert_eq!(result.status, 0, "close_subscription should succeed");
-
-    // Poll closed subscription should fail
-    let result = poll_subscription(sub_handle);
-    assert_eq!(result.status, 1, "polling closed sub should error");
-    if !result.error.is_null() {
-        unsafe { crate::types::defra_free_string(result.error) };
+/// One poll: `Some(result)` when one was pending, `None` when none was.
+fn poll(id: &CString) -> Option<Value> {
+    match take(unsafe { defra_subscription_poll(id.as_ptr()) }) {
+        (0, Ok(json)) => Some(serde_json::from_str(&json).expect("a result is JSON")),
+        (2, _) => None,
+        (status, outcome) => panic!("poll failed with status {status}: {outcome:?}"),
     }
-
-    // Close node
-    node_close(node);
 }
 
-#[cfg(feature = "libp2p")]
-#[test]
-fn test_subscription_receives_mutation_event() {
-    use crate::query::exec_request;
-
-    assert!(crate::runtime::init_runtime());
-
-    // Create a P2P node so mutations use the broadcast mutator.
-    let options = NodeInitOptions::default();
-    let listen_addr = CString::new("/ip4/127.0.0.1/tcp/0").unwrap();
-    let result = unsafe { crate::p2p::new_node_with_p2p(options, listen_addr.as_ptr()) };
-    assert_eq!(result.status, 0);
-    let node = result.node_ptr;
-
-    // Add schema
-    let sdl = CString::new("type Book @branchable { title: String }").unwrap();
-    let result = unsafe { crate::schema::add_schema(node, std::ptr::null(), sdl.as_ptr()) };
-    assert_eq!(result.status, 0);
-    if !result.value.is_null() {
-        unsafe { crate::types::defra_free_string(result.value) };
+/// Polls until a result arrives, or fails after 10 seconds.
+fn next(id: &CString) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(result) = poll(id) {
+            return result;
+        }
+        assert!(Instant::now() < deadline, "no result arrived");
+        std::thread::sleep(Duration::from_millis(20));
     }
-
-    // Create subscription BEFORE mutation
-    let result = unsafe { create_subscription(node, ptr::null()) };
-    assert_eq!(result.status, 0);
-    let sub_handle = result.subscription_handle;
-
-    // Perform a mutation
-    let mutation =
-        CString::new(r#"mutation { add_Book(input: {title: "Test"}) { _docID } }"#).unwrap();
-    let result = unsafe {
-        exec_request(
-            node,
-            std::ptr::null(),
-            ptr::null(),
-            mutation.as_ptr(),
-            ptr::null(),
-            ptr::null(),
-            ptr::null(),
-        )
-    };
-    assert_eq!(result.status, 0);
-    if !result.value.is_null() {
-        unsafe { crate::types::defra_free_string(result.value) };
-    }
-
-    // Branchable mutations publish document and collection update blocks.
-    for _ in 0..2 {
-        let result = poll_subscription(sub_handle);
-        assert_eq!(result.status, 0);
-        let value = unsafe { std::ffi::CStr::from_ptr(result.value).to_string_lossy() };
-        let event: serde_json::Value = serde_json::from_str(&value).unwrap();
-        assert_eq!(event["type"], "update");
-        assert!(
-            !event["block"].as_str().unwrap().is_empty(),
-            "event should include block bytes"
-        );
-        unsafe { crate::types::defra_free_string(result.value) };
-    }
-
-    // Cleanup
-    close_subscription(sub_handle);
-    node_close(node);
 }
 
 #[test]
-fn test_subscription_invalid_node() {
-    assert!(crate::runtime::init_runtime());
-
-    // Create subscription with invalid node
-    let result = unsafe { create_subscription(0, ptr::null()) };
-    assert_eq!(result.status, 1, "should fail with invalid node");
-    assert!(!result.error.is_null());
-    unsafe { crate::types::defra_free_string(result.error) };
+fn a_subscription_needs_a_node() {
+    let request = cstr("subscription { User { name } }");
+    let (status, _) =
+        take(unsafe { defra_query_execute(0, request.as_ptr(), 0, ptr::null(), ptr::null()) });
+    assert_eq!(status, 1);
 }
 
 #[test]
-fn test_event_subscription_receives_action_execution() {
-    assert!(crate::runtime::init_runtime());
-
-    let result = new_node(NodeInitOptions::default());
-    assert_eq!(result.status, 0);
-    let node = result.node_ptr;
-
-    let sdl = CString::new("type Book { title: String }").unwrap();
-    let result = unsafe { crate::schema::add_schema(node, ptr::null(), sdl.as_ptr()) };
-    assert_eq!(result.status, 0);
-    unsafe { crate::types::defra_free_string(result.value) };
-
-    let result = create_merge_complete_subscription(node);
-    assert_eq!(result.status, 0);
-    let sub_handle = result.subscription_handle;
-
-    let name = CString::new("Book").unwrap();
-    let result =
-        unsafe { crate::collection::truncate_collection(node, ptr::null(), name.as_ptr()) };
-    assert_eq!(result.status, 0);
-    unsafe { crate::types::defra_free_string(result.value) };
-
-    let result = poll_subscription(sub_handle);
-    assert_eq!(result.status, 0);
-    let value = unsafe { std::ffi::CStr::from_ptr(result.value).to_string_lossy() };
-    let event: serde_json::Value = serde_json::from_str(&value).unwrap();
-    assert_eq!(event["type"], "action_execution");
-    assert_eq!(event["action_execution"]["Action"], 1);
-    assert_eq!(event["action_execution"]["Status"], 1);
-    unsafe { crate::types::defra_free_string(result.value) };
-
-    close_subscription(sub_handle);
-    node_close(node);
+fn closing_an_unknown_subscription_does_nothing_and_polling_one_fails() {
+    let unknown = cstr("999999");
+    ok(unsafe { defra_subscription_close(unknown.as_ptr()) });
+    let error = err(unsafe { defra_subscription_poll(unknown.as_ptr()) });
+    assert!(error.contains("invalid subscription ID"), "{error}");
+    let not_a_number = cstr("not-an-id");
+    err(unsafe { defra_subscription_poll(not_a_number.as_ptr()) });
 }
 
 #[test]
-fn test_close_invalid_subscription() {
-    assert!(crate::runtime::init_runtime());
+fn closing_the_node_ends_its_subscriptions() {
+    let node = node();
+    add_collection(node, "type User { name: String }");
+    let first = subscribe(node, "subscription { User { name } }");
+    let second = subscribe(node, "subscription { User { name } }");
 
-    let result = close_subscription(999999);
-    assert_eq!(result.status, 1);
-    assert!(!result.error.is_null());
-    unsafe { crate::types::defra_free_string(result.error) };
+    close(node);
+    err(unsafe { defra_subscription_poll(first.as_ptr()) });
+    err(unsafe { defra_subscription_poll(second.as_ptr()) });
 }
 
 #[test]
-fn test_node_close_cleans_subscriptions() {
-    assert!(crate::runtime::init_runtime());
+fn a_subscription_yields_only_its_own_collection() {
+    let node = node();
+    add_collection(node, "type Author { name: String }");
+    add_collection(node, "type Article { title: String }");
+    let id = subscribe(node, "subscription { Author { name } }");
 
-    // Create node
-    let options = NodeInitOptions::default();
-    let result = new_node(options);
-    assert_eq!(result.status, 0);
-    let node = result.node_ptr;
-
-    // Create multiple subscriptions
-    let result1 = unsafe { create_subscription(node, ptr::null()) };
-    assert_eq!(result1.status, 0);
-    let sub1 = result1.subscription_handle;
-
-    let result2 = unsafe { create_subscription(node, ptr::null()) };
-    assert_eq!(result2.status, 0);
-    let sub2 = result2.subscription_handle;
-
-    // Close node (should clean up subscriptions)
-    let result = node_close(node);
-    assert_eq!(result.status, 0);
-
-    // Subscriptions should now be invalid
-    let result = poll_subscription(sub1);
-    assert!(
-        result.status == 1 || result.status == 3,
-        "sub should be closed or invalid"
+    query(
+        node,
+        r#"mutation { add_Article(input: {title: "Unrelated"}) { _docID } }"#,
     );
-    if !result.error.is_null() {
-        unsafe { crate::types::defra_free_string(result.error) };
-    }
-
-    let result = poll_subscription(sub2);
-    assert!(
-        result.status == 1 || result.status == 3,
-        "sub should be closed or invalid"
-    );
-    if !result.error.is_null() {
-        unsafe { crate::types::defra_free_string(result.error) };
-    }
-}
-
-#[test]
-fn test_subscription_collection_filter() {
-    use crate::query::exec_request;
-
-    assert!(crate::runtime::init_runtime());
-
-    // Create node
-    let options = NodeInitOptions::default();
-    let result = new_node(options);
-    assert_eq!(result.status, 0);
-    let node = result.node_ptr;
-
-    // Add two schemas
-    let sdl = CString::new("type Author { name: String }").unwrap();
-    let result = unsafe { crate::schema::add_schema(node, std::ptr::null(), sdl.as_ptr()) };
-    assert_eq!(result.status, 0);
-    if !result.value.is_null() {
-        unsafe { crate::types::defra_free_string(result.value) };
-    }
-
-    let sdl = CString::new("type Article { title: String }").unwrap();
-    let result = unsafe { crate::schema::add_schema(node, std::ptr::null(), sdl.as_ptr()) };
-    assert_eq!(result.status, 0);
-    if !result.value.is_null() {
-        unsafe { crate::types::defra_free_string(result.value) };
-    }
-
-    // Create subscription filtered to Author only
-    let filter = CString::new("Author").unwrap();
-    let result = unsafe { create_subscription(node, filter.as_ptr()) };
-    assert_eq!(result.status, 0);
-    let sub_handle = result.subscription_handle;
-
-    // Create an Article (should NOT trigger filtered subscription)
-    let mutation =
-        CString::new(r#"mutation { add_Article(input: {title: "Test"}) { _docID } }"#).unwrap();
-    let result = unsafe {
-        exec_request(
-            node,
-            std::ptr::null(),
-            ptr::null(),
-            mutation.as_ptr(),
-            ptr::null(),
-            ptr::null(),
-            ptr::null(),
-        )
-    };
-    assert_eq!(result.status, 0);
-    if !result.value.is_null() {
-        unsafe { crate::types::defra_free_string(result.value) };
-    }
-
-    // Poll should return no event (Article is filtered out)
-    let result = poll_subscription(sub_handle);
-    assert_eq!(
-        result.status, 2,
-        "should have no event for filtered collection"
+    query(
+        node,
+        r#"mutation { add_Author(input: {name: "Bob"}) { _docID } }"#,
     );
 
-    // Create an Author (should trigger subscription)
-    let mutation =
-        CString::new(r#"mutation { add_Author(input: {name: "Bob"}) { _docID } }"#).unwrap();
-    let result = unsafe {
-        exec_request(
-            node,
-            std::ptr::null(),
-            ptr::null(),
-            mutation.as_ptr(),
-            ptr::null(),
-            ptr::null(),
-            ptr::null(),
-        )
-    };
-    assert_eq!(result.status, 0);
-    if !result.value.is_null() {
-        unsafe { crate::types::defra_free_string(result.value) };
-    }
+    let result = next(&id);
+    assert_eq!(result["data"]["Author"][0]["name"], "Bob", "{result}");
+    assert_eq!(poll(&id), None, "the Article add yields nothing");
 
-    // Poll should return the Author event
-    let result = poll_subscription(sub_handle);
-    // Event may or may not be available depending on timing
-    if result.status == 0 && !result.value.is_null() {
-        let value = unsafe { std::ffi::CStr::from_ptr(result.value).to_string_lossy() };
-        assert!(
-            value.contains("Author"),
-            "event should be for Author collection"
-        );
-        unsafe { crate::types::defra_free_string(result.value) };
-    }
-
-    // Cleanup
-    close_subscription(sub_handle);
-    node_close(node);
+    ok(unsafe { defra_subscription_close(id.as_ptr()) });
+    close(node);
 }
 
-/// Polls of one handle from several threads take no lock: each event goes to
+/// Polls of one ID from several threads take no lock: each result goes to
 /// exactly one poller, and none is lost or repeated.
 #[test]
-fn concurrent_polls_of_one_subscription_deliver_each_event_once() {
-    const EVENTS: usize = 256;
+fn concurrent_polls_of_one_subscription_deliver_each_result_once() {
+    const WRITES: usize = 32;
     const POLLERS: usize = 4;
 
-    assert!(crate::runtime::init_runtime());
-    let result = new_node(NodeInitOptions::default());
-    assert_eq!(result.status, 0);
-    let node = result.node_ptr;
+    let node = node();
+    add_collection(node, "type Counter { value: Int }");
+    let id = Arc::new(subscribe(node, "subscription { Counter { value } }"));
+    for value in 0..WRITES {
+        query(
+            node,
+            &format!("mutation {{ add_Counter(input: {{value: {value}}}) {{ _docID }} }}"),
+        );
+    }
 
-    let result = unsafe { create_subscription(node, ptr::null()) };
-    assert_eq!(result.status, 0);
-    let sub_handle = result.subscription_handle;
-
-    let cid = defra_core::block::generate_cid_from_bytes(b"block").unwrap();
-    crate::state::NODES
-        .get(node, |state| {
-            for index in 0..EVENTS {
-                state
-                    .event_bus
-                    .publish(events::Message::update(events::Update::new(
-                        format!("doc-{index}"),
-                        cid,
-                        "collection".to_string(),
-                        b"block".to_vec(),
-                        false,
-                        false,
-                    )));
-            }
-        })
-        .unwrap();
-
+    let received = Arc::new(AtomicUsize::new(0));
     let pollers: Vec<_> = (0..POLLERS)
         .map(|_| {
+            let id = Arc::clone(&id);
+            let received = Arc::clone(&received);
             std::thread::spawn(move || {
-                let mut doc_ids = Vec::new();
-                loop {
-                    let result = poll_subscription(sub_handle);
-                    match result.status {
-                        0 => {
-                            let value =
-                                unsafe { std::ffi::CStr::from_ptr(result.value).to_string_lossy() };
-                            let event: serde_json::Value = serde_json::from_str(&value).unwrap();
-                            doc_ids.push(event["doc_id"].as_str().unwrap().to_string());
-                            unsafe { crate::types::defra_free_string(result.value) };
+                let deadline = Instant::now() + Duration::from_secs(20);
+                let mut values = Vec::new();
+                while received.load(Ordering::SeqCst) < WRITES && Instant::now() < deadline {
+                    match poll(&id) {
+                        Some(result) => {
+                            received.fetch_add(1, Ordering::SeqCst);
+                            values.push(
+                                result["data"]["Counter"][0]["value"]
+                                    .as_u64()
+                                    .unwrap_or_else(|| panic!("no value in {result}")),
+                            );
                         }
-                        2 => return doc_ids,
-                        other => panic!("unexpected poll status {other}"),
+                        None => std::thread::sleep(Duration::from_millis(5)),
                     }
                 }
+                values
             })
         })
         .collect();
 
-    let mut doc_ids: Vec<String> = pollers
+    let mut values: Vec<u64> = pollers
         .into_iter()
-        .flat_map(|poller| poller.join().unwrap())
+        .flat_map(|poller| poller.join().expect("a poller panicked"))
         .collect();
-    doc_ids.sort();
-    let mut expected: Vec<String> = (0..EVENTS).map(|index| format!("doc-{index}")).collect();
-    expected.sort();
-    assert_eq!(doc_ids, expected);
+    values.sort_unstable();
+    assert_eq!(values, (0..WRITES as u64).collect::<Vec<_>>());
 
-    close_subscription(sub_handle);
-    node_close(node);
+    ok(unsafe { defra_subscription_close(id.as_ptr()) });
+    close(node);
+}
+
+#[test]
+fn subscriptions_opened_and_closed_in_quick_succession_get_their_own_ids() {
+    let node = node();
+    add_collection(node, "type User { name: String }");
+    let mut ids = Vec::new();
+    for _ in 0..50 {
+        let id = subscribe(node, "subscription { User { name } }");
+        assert_eq!(poll(&id), None);
+        ok(unsafe { defra_subscription_close(id.as_ptr()) });
+        err(unsafe { defra_subscription_poll(id.as_ptr()) });
+        ids.push(id);
+    }
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), 50, "every subscription has its own ID");
+    close(node);
+}
+
+#[test]
+fn polling_and_closing_one_subscription_from_several_threads_is_safe() {
+    let node = node();
+    add_collection(node, "type User { name: String }");
+    let id = Arc::new(subscribe(node, "subscription { User { name } }"));
+
+    let threads: Vec<_> = (0..8)
+        .map(|thread| {
+            let id = Arc::clone(&id);
+            std::thread::spawn(move || {
+                for _ in 0..100 {
+                    let (status, _) = take(unsafe { defra_subscription_poll(id.as_ptr()) });
+                    assert!(matches!(status, 1 | 2), "poll status {status}");
+                }
+                if thread == 0 {
+                    ok(unsafe { defra_subscription_close(id.as_ptr()) });
+                }
+            })
+        })
+        .collect();
+    for thread in threads {
+        thread.join().expect("a thread panicked");
+    }
+
+    err(unsafe { defra_subscription_poll(id.as_ptr()) });
+    close(node);
 }

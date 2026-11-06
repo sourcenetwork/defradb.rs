@@ -21,6 +21,8 @@ mod callback;
 mod pending;
 mod register;
 #[cfg(test)]
+mod registration_tests;
+#[cfg(test)]
 mod tests;
 
 use std::ffi::CString;
@@ -33,8 +35,8 @@ use defra_core::thread_bounds::MaybeBoxFuture;
 pub use callback::{DefraRemoteSignAsyncCallback, DefraRemoteSignCallback, DEFRA_SIGN_RETRYABLE};
 pub use pending::defra_remote_sign_complete;
 pub use register::{
-    register_remote_identity, register_remote_identity_async, register_remote_identity_bytes,
-    register_remote_identity_bytes_async,
+    defra_identity_new_remote, defra_identity_new_remote_async, defra_identity_new_remote_bytes,
+    defra_identity_new_remote_bytes_async,
 };
 
 use callback::{failed, signature, MAX_REMOTE_SIGNATURE_LEN};
@@ -190,7 +192,7 @@ impl RemoteSigner for FfiRemoteSigner {
                 .map(|payload| host.sign_now(callback, payload))
                 .collect::<Vec<_>>()
         };
-        // Without the runtime (no `defra_init`) there are no blocking
+        // Without the runtime (it could not start) there are no blocking
         // threads: sign here, as a signer with only a synchronous call must.
         let Some(edge) = crate::runtime::edge() else {
             return Box::pin(std::future::ready(sign()));

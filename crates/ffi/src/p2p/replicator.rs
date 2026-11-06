@@ -1,262 +1,65 @@
 use std::ffi::c_char;
 
-use crate::ffi_entry;
 use acp::nac::NodePermission;
+use defra_p2p_adapter::peer;
 
-use crate::helpers::{get_rt, require_c_str};
-use crate::nac_check::check_nac_for_node;
-use crate::state::NODES;
-use crate::try_ffi;
-use crate::types::{c_str_to_string, FfiResult};
+use super::{json, ok, run};
+use crate::ffi_entry;
+use crate::target::{go_string, non_empty, split_comma_separated};
+use crate::types::DefraResult;
 
-use super::{
-    into_ffi_ok, into_ffi_result, parse_collections_json, parse_filters_json, FfiP2PError,
-};
-
-/// Set (add/update) a replicator for collections.
+/// Replicates the comma-separated `collections` to the peer the
+/// comma-separated multiaddrs `addresses` name.
 ///
 /// # Safety
 ///
-/// All string pointers must be valid null-terminated UTF-8 strings.
+/// `collections` and `addresses` must be null or valid null-terminated
+/// strings.
 #[no_mangle]
-pub unsafe extern "C" fn p2p_add_replicator(
+pub unsafe extern "C" fn defra_p2p_replicator_add(
     node_ptr: usize,
-    identity_did: *const c_char,
-    peer_addr: *const c_char,
-    collections_json: *const c_char,
-) -> FfiResult {
+    collections: *const c_char,
+    addresses: *const c_char,
+    identity_ptr: usize,
+) -> DefraResult {
     ffi_entry! {
-        let rt = try_ffi!(get_rt());
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::P2pReplicatorAdd
-        ));
-
-        // The caller acts in the call's context, so the NAC checks the body
-        // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(c_str_to_string(identity_did).filter(|s| !s.is_empty()));
-
-        let addr_str = try_ffi!(require_c_str(peer_addr, "peer_addr"));
-        let collections_str = try_ffi!(require_c_str(collections_json, "collections_json"));
-        let collections = match parse_collections_json(&collections_str) {
-            Ok(collections) => collections,
-            Err(error) => return FfiResult::error(error.message),
-        };
-
-        let result = NODES
-            .get(node_ptr, |state| {
-                let p2p = match &state.p2p {
-                    Some(p2p) => p2p,
-                    None => return Err(FfiP2PError::no_p2p_system()),
-                };
-                state
-                    .sync_replicator_push_options()
-                    .map_err(FfiP2PError::internal)?;
-
-                let addr = addr_str.clone();
-                let collections = collections.clone();
-                crate::helpers::block_on(rt, async move {
-                    p2p.system
-                        .ops_for(&context)
-                        .add_replicator(collections, Some(&addr), Default::default(), Vec::new(), None)
-                        .await
-                        .map_err(FfiP2PError::from)
-                })
-            })
-            .ok_or_else(FfiP2PError::invalid_node_handle)
-            .and_then(|result| result);
-
-        into_ffi_ok(result)
+        let collections = split_comma_separated(&go_string(collections));
+        let addresses = split_comma_separated(&go_string(addresses));
+        ok(run(node_ptr, identity_ptr, NodePermission::P2pReplicatorAdd, None, |ops| async move {
+            peer::add_replicator(&*ops, &addresses, &collections, Default::default()).await
+        }))
     }
 }
 
-/// Set (add/update) a replicator for collections with per-collection filters.
-///
-/// `filters_json` is a JSON object keyed by collection name, mirroring the HTTP
-/// `"Filters"` field. `null`, `{}`, or an empty string is treated as
-/// unfiltered, matching [`p2p_add_replicator`]. This symbol is additive;
-/// [`p2p_add_replicator`] is unchanged for ABI stability.
+/// Stops replicating the comma-separated `collections` (every collection for
+/// null or empty) to the replicator `id`.
 ///
 /// # Safety
 ///
-/// All string pointers must be valid null-terminated UTF-8 strings.
-/// `filters_json` may be null.
+/// `collections` and `id` must be null or valid null-terminated strings.
 #[no_mangle]
-pub unsafe extern "C" fn p2p_add_replicator_with_filter(
+pub unsafe extern "C" fn defra_p2p_replicator_delete(
     node_ptr: usize,
-    identity_did: *const c_char,
-    peer_addr: *const c_char,
-    collections_json: *const c_char,
-    filters_json: *const c_char,
-) -> FfiResult {
+    collections: *const c_char,
+    id: *const c_char,
+    identity_ptr: usize,
+) -> DefraResult {
     ffi_entry! {
-        let rt = try_ffi!(get_rt());
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::P2pReplicatorAdd
-        ));
-
-        // The caller acts in the call's context, so the NAC checks the body
-        // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(c_str_to_string(identity_did).filter(|s| !s.is_empty()));
-
-        let addr_str = try_ffi!(require_c_str(peer_addr, "peer_addr"));
-        let collections_str = try_ffi!(require_c_str(collections_json, "collections_json"));
-        let collections = match parse_collections_json(&collections_str) {
-            Ok(collections) => collections,
-            Err(error) => return FfiResult::error(error.message),
-        };
-        let filters = if filters_json.is_null() {
-            defra_p2p_adapter::ReplicationFilters::new()
-        } else {
-            let filters_str = try_ffi!(require_c_str(filters_json, "filters_json"));
-            match parse_filters_json(&filters_str) {
-                Ok(filters) => filters,
-                Err(error) => return FfiResult::error(error.message),
-            }
-        };
-
-        let result = NODES
-            .get(node_ptr, |state| {
-                let p2p = match &state.p2p {
-                    Some(p2p) => p2p,
-                    None => return Err(FfiP2PError::no_p2p_system()),
-                };
-                state
-                    .sync_replicator_push_options()
-                    .map_err(FfiP2PError::internal)?;
-
-                let addr = addr_str.clone();
-                let collections = collections.clone();
-                let filters = filters.clone();
-                crate::helpers::block_on(rt, async move {
-                    p2p.system
-                        .ops_for(&context)
-                        .add_replicator(collections, Some(&addr), filters, Vec::new(), None)
-                        .await
-                        .map_err(FfiP2PError::from)
-                })
-            })
-            .ok_or_else(FfiP2PError::invalid_node_handle)
-            .and_then(|result| result);
-
-        into_ffi_ok(result)
+        let collections = split_comma_separated(&go_string(collections));
+        let id = non_empty(id);
+        ok(run(node_ptr, identity_ptr, NodePermission::P2pReplicatorDelete, None, |ops| async move {
+            ops.remove_replicator(collections, id.as_deref()).await
+        }))
     }
 }
 
-/// Delete a replicator.
-///
-/// # Safety
-///
-/// `peer_id_str` must be a valid null-terminated UTF-8 string.
+/// Answers with the node's replicators as a JSON array of Go's
+/// `client.Replicator`.
 #[no_mangle]
-pub unsafe extern "C" fn p2p_delete_replicator(
-    node_ptr: usize,
-    identity_did: *const c_char,
-    peer_id_str: *const c_char,
-    collections_json: *const c_char,
-) -> FfiResult {
+pub extern "C" fn defra_p2p_replicator_list(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
-        let rt = try_ffi!(get_rt());
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::P2pReplicatorDelete
-        ));
-
-        // The caller acts in the call's context, so the NAC checks the body
-        // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(c_str_to_string(identity_did).filter(|s| !s.is_empty()));
-
-        let peer_str = try_ffi!(require_c_str(peer_id_str, "peer_id_str"));
-        let collections = if collections_json.is_null() {
-            Vec::new()
-        } else {
-            match c_str_to_string(collections_json) {
-                Some(s) if !s.is_empty() => match parse_collections_json(&s) {
-                    Ok(collections) => collections,
-                    Err(error) => return FfiResult::error(error.message),
-                },
-                _ => Vec::new(),
-            }
-        };
-
-        let result = NODES
-            .get(node_ptr, |state| {
-                let p2p = match &state.p2p {
-                    Some(p2p) => p2p,
-                    None => return Err(FfiP2PError::no_p2p_system()),
-                };
-
-                let peer = peer_str.clone();
-                let collections = collections.clone();
-                crate::helpers::block_on(rt, async move {
-                    p2p.system
-                        .ops_for(&context)
-                        .remove_replicator(collections, Some(&peer))
-                        .await
-                        .map_err(FfiP2PError::from)
-                })
-            })
-            .ok_or_else(FfiP2PError::invalid_node_handle)
-            .and_then(|result| result);
-
-        into_ffi_ok(result)
-    }
-}
-
-/// Get all replicators.
-///
-/// Returns a JSON array of replicator info objects.
-///
-/// # Safety
-///
-/// The caller must free the returned string with `defra_free_string`.
-#[no_mangle]
-pub unsafe extern "C" fn p2p_list_replicators(
-    node_ptr: usize,
-    identity_did: *const c_char,
-) -> FfiResult {
-    ffi_entry! {
-        let rt = try_ffi!(get_rt());
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::P2pReplicatorList
-        ));
-
-        // The caller acts in the call's context, so the NAC checks the body
-        // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(c_str_to_string(identity_did).filter(|s| !s.is_empty()));
-
-        let result = NODES
-            .get(node_ptr, |state| {
-                let p2p = match &state.p2p {
-                    Some(p2p) => p2p,
-                    None => return Err(FfiP2PError::no_p2p_system()),
-                };
-
-                crate::helpers::block_on(rt, async {
-                    let replicators = p2p
-                        .system
-                        .ops_for(&context)
-                        .get_replicators()
-                        .await
-                        .map_err(FfiP2PError::from)?;
-                    serde_json::to_string(&replicators)
-                        .map_err(|error| {
-                            FfiP2PError::internal(format!(
-                                "failed to serialize replicators: {}",
-                                error
-                            ))
-                        })
-                })
-            })
-            .ok_or_else(FfiP2PError::invalid_node_handle)
-            .and_then(|result| result);
-
-        into_ffi_result(result)
+        json(run(node_ptr, identity_ptr, NodePermission::P2pReplicatorList, None, |ops| async move {
+            peer::list_replicators(&*ops).await
+        }))
     }
 }

@@ -3,563 +3,310 @@
 //! Tests: NULL pointers, invalid handles, non-UTF-8 strings, handle lifecycle
 //! stress, and concurrent registry access.
 
-#[cfg(test)]
-mod tests {
-    use std::ffi::{c_char, CStr, CString};
-    use std::ptr;
-    use std::sync::Arc;
+use std::ffi::c_char;
+use std::ptr;
+use std::sync::Arc;
+use std::thread;
 
-    use regolith::sync::Barrier;
-    use std::thread;
+use regolith::sync::Barrier;
 
-    use crate::node::{new_node, node_close};
-    use crate::query::exec_request;
-    use crate::schema::add_schema;
-    use crate::subscription::{close_subscription, create_subscription, poll_subscription};
-    use crate::txn::{begin_txn, commit_txn, rollback_txn};
-    use crate::types::{defra_free_string, FfiResult, NodeInitOptions};
+use crate::collection::defra_collection_add;
+use crate::identities::{defra_identity_free, defra_identity_new};
+use crate::node::{defra_node_close, defra_node_new};
+use crate::query::defra_query_execute;
+use crate::subscription::{defra_subscription_close, defra_subscription_poll};
+use crate::test_support::{close, cstr, err, node, ok, take};
+use crate::txn::{defra_transaction_commit, defra_transaction_create, defra_transaction_discard};
+use crate::types::{defra_new_txn_result_free, defra_result_free, DefraResult};
 
-    fn init() {
-        assert!(crate::runtime::init_runtime(), "runtime init must succeed");
+// ── NULL pointer handling (07-51) ─────────────────────────────────────────
+
+/// A NULL SDL reads as Go's empty string: an SDL with no collection, not a
+/// crash.
+#[test]
+fn add_collection_null_sdl_is_empty() {
+    let node = node();
+    let (status, _) = take(unsafe { defra_collection_add(node, ptr::null(), 0) });
+    assert!(
+        status == 0 || status == 1,
+        "status must be 0 or 1, got {status}"
+    );
+    close(node);
+}
+
+/// A NULL query reads as Go's empty string and fails as GraphQL, not a crash.
+#[test]
+fn execute_query_null_query_does_not_crash() {
+    let node = node();
+    let (status, _) =
+        take(unsafe { defra_query_execute(node, ptr::null(), 0, ptr::null(), ptr::null()) });
+    assert!(
+        status == 0 || status == 1,
+        "status must be 0 or 1, got {status}"
+    );
+    close(node);
+}
+
+/// defra_result_free on a NULL pointer must not crash.
+#[test]
+fn free_result_null_is_safe() {
+    unsafe { defra_result_free(ptr::null_mut()) };
+}
+
+// ── Invalid handle handling (07-51) ───────────────────────────────────────
+
+/// The zero handle is always invalid.
+#[test]
+fn node_close_zero_handle_returns_error() {
+    let error = err(defra_node_close(0));
+    assert!(
+        error.contains("invalid"),
+        "should say invalid, got: {error}"
+    );
+}
+
+/// A large handle that was never issued is invalid.
+#[test]
+fn node_close_large_handle_returns_error() {
+    err(defra_node_close(usize::MAX));
+}
+
+/// An identity handle is not a node handle.
+#[test]
+fn an_identity_handle_is_not_a_node() {
+    let identity = unsafe { defra_identity_new(ptr::null()) };
+    assert_eq!(identity.status, 0);
+    err(defra_node_close(identity.identity_ptr));
+    defra_identity_free(identity.identity_ptr);
+}
+
+/// A node handle is not an identity handle.
+#[test]
+fn a_node_handle_is_not_an_identity() {
+    let node = node();
+    let request = cstr("{ __typename }");
+    let error =
+        err(unsafe { defra_query_execute(node, request.as_ptr(), node, ptr::null(), ptr::null()) });
+    assert!(error.contains("invalid handle"), "got: {error}");
+    close(node);
+}
+
+/// Stale handle: close a node then attempt operations using the old handle.
+#[test]
+fn stale_handle_operations_return_errors() {
+    let stale = node();
+    close(stale);
+
+    err(defra_node_close(stale));
+
+    let sdl = cstr("type X { v: Int }");
+    err(unsafe { defra_collection_add(stale, sdl.as_ptr(), 0) });
+
+    let request = cstr("{ X { v } }");
+    err(unsafe { defra_query_execute(stale, request.as_ptr(), 0, ptr::null(), ptr::null()) });
+
+    let mut txn = defra_transaction_create(stale, 0);
+    assert_eq!(
+        txn.status, 1,
+        "creating a transaction on a stale handle must fail"
+    );
+    unsafe { defra_new_txn_result_free(&mut txn) };
+}
+
+/// A committed transaction's handle is released.
+#[test]
+fn a_committed_transaction_handle_is_stale() {
+    let node = node();
+    let txn = defra_transaction_create(node, 0);
+    assert_eq!(txn.status, 0);
+    ok(defra_transaction_commit(txn.txn_ptr));
+    err(defra_transaction_commit(txn.txn_ptr));
+    // Discarding a released handle does nothing.
+    defra_transaction_discard(txn.txn_ptr);
+    close(node);
+}
+
+/// Unknown subscription IDs must not crash poll or close.
+#[test]
+fn invalid_subscription_ids_return_errors() {
+    for id in ["0", "not-a-number", ""] {
+        let id = cstr(id);
+        err(unsafe { defra_subscription_poll(id.as_ptr()) });
+        // Closing an unknown ID does nothing, as in Go.
+        ok(unsafe { defra_subscription_close(id.as_ptr()) });
     }
+    err(unsafe { defra_subscription_poll(ptr::null()) });
+}
 
-    fn new_in_memory_node() -> usize {
-        let result = new_node(NodeInitOptions::default());
-        assert_eq!(result.status, 0, "new_node must succeed");
-        assert!(result.node_ptr > 0, "handle must be non-zero");
-        result.node_ptr
+// ── Non-UTF-8 string handling (07-51) ─────────────────────────────────────
+
+/// A C string's invalid UTF-8 reads lossily (U+FFFD for each bad sequence):
+/// the call fails or succeeds on that text, and never crashes.
+#[test]
+fn add_collection_invalid_utf8_sdl_does_not_crash() {
+    let node = node();
+    let invalid_utf8: &[u8] = &[0xFF, 0xFE, 0xFD, 0x00];
+    let sdl = invalid_utf8.as_ptr() as *const c_char;
+    let (status, _) = take(unsafe { defra_collection_add(node, sdl, 0) });
+    assert!(
+        status == 0 || status == 1,
+        "status must be 0 or 1, got {status}"
+    );
+    close(node);
+}
+
+/// A query of invalid UTF-8 must not crash.
+#[test]
+fn execute_query_invalid_utf8_query_does_not_crash() {
+    let node = node();
+    let invalid_utf8: &[u8] = &[0xC0, 0xAF, 0x00];
+    let request = invalid_utf8.as_ptr() as *const c_char;
+    let (status, _) =
+        take(unsafe { defra_query_execute(node, request, 0, ptr::null(), ptr::null()) });
+    assert!(
+        status == 0 || status == 1,
+        "must not crash, status={status}"
+    );
+    close(node);
+}
+
+// ── Handle lifecycle stress (07-52) ───────────────────────────────────────
+
+/// Rapid sequential create-and-destroy produces unique handles and never
+/// panics or leaks.
+#[test]
+fn handle_lifecycle_rapid_sequential_create_destroy() {
+    let handles: Vec<usize> = (0..50).map(|_| node()).collect();
+
+    let unique: rapidhash::RapidHashSet<usize> = handles.iter().copied().collect();
+    assert_eq!(unique.len(), handles.len(), "all handles must be unique");
+
+    for handle in handles.into_iter().rev() {
+        close(handle);
     }
+}
 
-    // ── NULL pointer handling (07-51) ─────────────────────────────────────────
+/// Node, transaction and identity handles come from one counter, so no two
+/// live objects share a handle.
+#[test]
+fn node_transaction_and_identity_handles_never_collide() {
+    let node = node();
+    let txn = defra_transaction_create(node, 1);
+    assert_eq!(txn.status, 0);
+    let identity = unsafe { defra_identity_new(ptr::null()) };
+    assert_eq!(identity.status, 0);
 
-    /// add_schema with a NULL SDL must return an error, not crash.
-    #[test]
-    fn add_schema_null_sdl_returns_error() {
-        init();
-        let node = new_in_memory_node();
+    let handles = [node, txn.txn_ptr, identity.identity_ptr];
+    let unique: rapidhash::RapidHashSet<usize> = handles.iter().copied().collect();
+    assert_eq!(
+        unique.len(),
+        handles.len(),
+        "handles must be unique across kinds"
+    );
 
-        let result = unsafe { add_schema(node, ptr::null(), ptr::null()) };
-        assert_eq!(result.status, 1, "null SDL must be an error");
-        assert!(!result.error.is_null());
-        let msg = unsafe { CStr::from_ptr(result.error).to_string_lossy() };
-        assert!(
-            msg.contains("null") || msg.contains("schema_sdl"),
-            "error should describe the null argument, got: {msg}"
-        );
-        unsafe { defra_free_string(result.error) };
-        node_close(node);
-    }
+    defra_transaction_discard(txn.txn_ptr);
+    defra_identity_free(identity.identity_ptr);
+    close(node);
+}
 
-    #[test]
-    fn add_schema_malformed_identity_did_returns_error() {
-        init();
-        let node = new_in_memory_node();
+/// Concurrent node creation and destruction from multiple threads must not
+/// corrupt the registry or produce duplicate handles.
+#[test]
+fn concurrent_node_create_destroy_is_safe() {
+    const THREADS: usize = 4;
+    const NODES_PER_THREAD: usize = 10;
 
-        let identity = CString::new("not-a-did").unwrap();
-        let sdl = CString::new("type User { name: String }").unwrap();
-        let result = unsafe { add_schema(node, identity.as_ptr(), sdl.as_ptr()) };
-
-        assert_eq!(result.status, 1, "malformed identity DID must be an error");
-        assert!(!result.error.is_null());
-        let msg = unsafe { CStr::from_ptr(result.error).to_string_lossy() };
-        assert!(
-            msg.contains("invalid identity DID"),
-            "error should describe the invalid identity DID, got: {msg}"
-        );
-        unsafe { defra_free_string(result.error) };
-        node_close(node);
-    }
-
-    /// exec_request with a NULL query must return an error, not crash.
-    #[test]
-    fn exec_request_null_query_returns_error() {
-        init();
-        let node = new_in_memory_node();
-
-        let result = unsafe {
-            exec_request(
-                node,
-                std::ptr::null(),
-                ptr::null(),
-                ptr::null(),
-                ptr::null(),
-                ptr::null(),
-                ptr::null(),
-            )
-        };
-        assert_eq!(result.status, 1, "null query must be an error");
-        assert!(!result.error.is_null());
-        unsafe { defra_free_string(result.error) };
-        node_close(node);
-    }
-
-    /// commit_txn with a NULL txn_id must return an error, not crash.
-    #[test]
-    fn commit_txn_null_id_returns_error() {
-        init();
-        let node = new_in_memory_node();
-
-        let result = unsafe { commit_txn(node, ptr::null()) };
-        assert_eq!(result.status, 1, "null txn_id must be an error");
-        assert!(!result.error.is_null());
-        unsafe { defra_free_string(result.error) };
-        node_close(node);
-    }
-
-    /// rollback_txn with a NULL txn_id must return an error, not crash.
-    #[test]
-    fn rollback_txn_null_id_returns_error() {
-        init();
-        let node = new_in_memory_node();
-
-        let result = unsafe { rollback_txn(node, ptr::null()) };
-        assert_eq!(result.status, 1, "null txn_id must be an error");
-        assert!(!result.error.is_null());
-        unsafe { defra_free_string(result.error) };
-        node_close(node);
-    }
-
-    /// defra_free_string on a NULL pointer must not crash.
-    #[test]
-    fn free_string_null_is_safe() {
-        // No init needed — this is a pure memory operation.
-        unsafe { defra_free_string(ptr::null_mut()) };
-    }
-
-    // ── Invalid handle handling (07-51) ───────────────────────────────────────
-
-    /// node_close(0) — the zero handle is always invalid.
-    #[test]
-    fn node_close_zero_handle_returns_error() {
-        init();
-        let result = node_close(0);
-        assert_eq!(result.status, 1, "zero handle must fail");
-        assert!(!result.error.is_null());
-        let msg = unsafe { CStr::from_ptr(result.error).to_string_lossy() };
-        assert!(msg.contains("invalid"), "should say invalid, got: {msg}");
-        unsafe { defra_free_string(result.error) };
-    }
-
-    /// node_close with a large sentinel value that was never issued.
-    #[test]
-    fn node_close_large_handle_returns_error() {
-        init();
-        let result = node_close(usize::MAX);
-        assert_eq!(result.status, 1);
-        assert!(!result.error.is_null());
-        unsafe { defra_free_string(result.error) };
-    }
-
-    /// Stale handle: close a node then attempt operations using the old handle.
-    #[test]
-    fn stale_handle_operations_return_errors() {
-        init();
-        let node = new_in_memory_node();
-        let stale = node;
-
-        // Close the node so the handle becomes stale.
-        let r = node_close(node);
-        assert_eq!(r.status, 0, "node_close must succeed");
-
-        // All subsequent operations with the stale handle must return errors.
-        let r = node_close(stale);
-        assert_eq!(r.status, 1, "double-close must fail");
-        if !r.error.is_null() {
-            unsafe { defra_free_string(r.error) };
-        }
-
-        let sdl = CString::new("type X { v: Int }").unwrap();
-        let r = unsafe { add_schema(stale, ptr::null(), sdl.as_ptr()) };
-        assert_eq!(r.status, 1, "add_schema on stale handle must fail");
-        if !r.error.is_null() {
-            unsafe { defra_free_string(r.error) };
-        }
-
-        let q = CString::new("{ X { v } }").unwrap();
-        let r = unsafe {
-            exec_request(
-                stale,
-                std::ptr::null(),
-                ptr::null(),
-                q.as_ptr(),
-                ptr::null(),
-                ptr::null(),
-                ptr::null(),
-            )
-        };
-        assert_eq!(r.status, 1, "exec_request on stale handle must fail");
-        if !r.error.is_null() {
-            unsafe { defra_free_string(r.error) };
-        }
-
-        let r = begin_txn(stale, 0);
-        assert_eq!(r.status, 1, "begin_txn on stale handle must fail");
-        if !r.error.is_null() {
-            unsafe { defra_free_string(r.error) };
-        }
-
-        let r = unsafe { create_subscription(stale, ptr::null()) };
-        assert_eq!(r.status, 1, "create_subscription on stale handle must fail");
-        if !r.error.is_null() {
-            unsafe { defra_free_string(r.error) };
-        }
-    }
-
-    /// Invalid subscription handles must not crash poll or close.
-    #[test]
-    fn invalid_subscription_handle_returns_errors() {
-        init();
-
-        let r = poll_subscription(0);
-        assert_eq!(r.status, 1, "poll on zero subscription handle must fail");
-        if !r.error.is_null() {
-            unsafe { defra_free_string(r.error) };
-        }
-
-        let r = poll_subscription(usize::MAX);
-        assert_eq!(r.status, 1, "poll on max subscription handle must fail");
-        if !r.error.is_null() {
-            unsafe { defra_free_string(r.error) };
-        }
-
-        let r = close_subscription(0);
-        assert_eq!(r.status, 1, "close on zero subscription handle must fail");
-        if !r.error.is_null() {
-            unsafe { defra_free_string(r.error) };
-        }
-    }
-
-    // ── Non-UTF-8 string handling (07-51) ─────────────────────────────────────
-
-    /// Pass a raw invalid-UTF-8 byte sequence where a C string is expected.
-    ///
-    /// `c_str_to_string` uses `to_string_lossy`, which accepts any byte
-    /// sequence and replaces invalid sequences with U+FFFD. The result is
-    /// treated as a non-null string, so the operation proceeds with a
-    /// replacement-character schema name that fails schema validation —
-    /// an error result, not a crash.
-    #[test]
-    fn add_schema_invalid_utf8_sdl_returns_error() {
-        init();
-        let node = new_in_memory_node();
-
-        // Overlong / invalid UTF-8 sequence followed by a null terminator.
-        let invalid_utf8: &[u8] = &[0xFF, 0xFE, 0xFD, 0x00];
-        let ptr = invalid_utf8.as_ptr() as *const c_char;
-
-        let result = unsafe { add_schema(node, ptr::null(), ptr) };
-        // The function must not crash. It may succeed (unlikely) or return an
-        // error — both are acceptable, but status must be a valid code.
-        assert!(
-            result.status == 0 || result.status == 1,
-            "status must be 0 or 1, got {}",
-            result.status
-        );
-        if result.status == 0 {
-            if !result.value.is_null() {
-                unsafe { defra_free_string(result.value) };
-            }
-        } else if !result.error.is_null() {
-            unsafe { defra_free_string(result.error) };
-        }
-
-        node_close(node);
-    }
-
-    /// exec_request with an invalid-UTF-8 query must not crash.
-    #[test]
-    fn exec_request_invalid_utf8_query_returns_error() {
-        init();
-        let node = new_in_memory_node();
-
-        let invalid_utf8: &[u8] = &[0xC0, 0xAF, 0x00]; // overlong encoding
-        let ptr = invalid_utf8.as_ptr() as *const c_char;
-
-        let result = unsafe {
-            exec_request(
-                node,
-                std::ptr::null(),
-                ptr::null(),
-                ptr,
-                ptr::null(),
-                ptr::null(),
-                ptr::null(),
-            )
-        };
-        assert!(
-            result.status == 0 || result.status == 1,
-            "must not crash, status={}",
-            result.status
-        );
-        if result.status == 0 {
-            if !result.value.is_null() {
-                unsafe { defra_free_string(result.value) };
-            }
-        } else if !result.error.is_null() {
-            unsafe { defra_free_string(result.error) };
-        }
-
-        node_close(node);
-    }
-
-    /// commit_txn with an invalid-UTF-8 txn_id must not crash.
-    #[test]
-    fn commit_txn_invalid_utf8_id_returns_error() {
-        init();
-        let node = new_in_memory_node();
-
-        let invalid_utf8: &[u8] = &[0x80, 0x81, 0x82, 0x00];
-        let ptr = invalid_utf8.as_ptr() as *const c_char;
-
-        let result = unsafe { commit_txn(node, ptr) };
-        // Lossy conversion produces a string; txn parsing will fail.
-        assert_eq!(result.status, 1, "bad UTF-8 txn id must fail");
-        if !result.error.is_null() {
-            unsafe { defra_free_string(result.error) };
-        }
-
-        node_close(node);
-    }
-
-    // ── Handle lifecycle stress (07-52) ───────────────────────────────────────
-
-    /// Rapid sequential create-and-destroy produces unique, monotonically
-    /// increasing handles and never panics or leaks.
-    #[test]
-    fn handle_lifecycle_rapid_sequential_create_destroy() {
-        init();
-
-        let mut handles = Vec::with_capacity(50);
-        for _ in 0..50 {
-            let r = new_node(NodeInitOptions::default());
-            assert_eq!(r.status, 0, "new_node must succeed");
-            assert!(r.node_ptr > 0, "handle must be non-zero");
-            handles.push(r.node_ptr);
-        }
-
-        // All handles must be unique.
-        let unique: rapidhash::RapidHashSet<usize> = handles.iter().copied().collect();
-        assert_eq!(unique.len(), handles.len(), "all handles must be unique");
-
-        // Destroy all nodes in reverse order.
-        for h in handles.into_iter().rev() {
-            let r = node_close(h);
-            assert_eq!(r.status, 0, "node_close must succeed for handle {h}");
-        }
-    }
-
-    /// Subscription handles from rapid create/close cycles are unique and
-    /// subsequent stale polls return errors.
-    #[test]
-    fn subscription_handle_lifecycle_rapid_cycles() {
-        init();
-        let node = new_in_memory_node();
-
-        let mut seen: rapidhash::RapidHashSet<usize> = rapidhash::RapidHashSet::default();
-        for _ in 0..30 {
-            let r = unsafe { create_subscription(node, ptr::null()) };
-            assert_eq!(r.status, 0, "create must succeed");
-            let h = r.subscription_handle;
-            assert!(h > 0, "handle must be non-zero");
-            assert!(seen.insert(h), "handle must be unique");
-
-            let r = close_subscription(h);
-            assert_eq!(r.status, 0, "close must succeed");
-
-            // Stale handle must fail.
-            let r = poll_subscription(h);
-            assert_eq!(r.status, 1, "poll on closed sub must fail");
-            if !r.error.is_null() {
-                unsafe { defra_free_string(r.error) };
-            }
-        }
-
-        node_close(node);
-    }
-
-    /// Concurrent node creation and destruction from multiple threads must not
-    /// corrupt the registry or produce duplicate handles.
-    ///
-    /// This exercises the lock-free registry map and its AtomicUsize handle
-    /// counter under contention.
-    #[test]
-    fn concurrent_node_create_destroy_is_safe() {
-        init();
-
-        const THREADS: usize = 4;
-        const NODES_PER_THREAD: usize = 10;
-
-        let barrier = Arc::new(Barrier::new(THREADS));
-        let mut join_handles = Vec::with_capacity(THREADS);
-
-        for _ in 0..THREADS {
+    let barrier = Arc::new(Barrier::new(THREADS));
+    let workers: Vec<_> = (0..THREADS)
+        .map(|_| {
             let barrier = Arc::clone(&barrier);
-            join_handles.push(thread::spawn(move || {
-                // All threads start simultaneously to maximize contention.
+            thread::spawn(move || {
+                // All threads start together to maximize contention.
                 crate::runtime::edge()
                     .expect("runtime started")
                     .block_on(barrier.wait())
                     .expect("the barrier wait runs on the runtime");
 
-                let mut local_handles = Vec::with_capacity(NODES_PER_THREAD);
-                for _ in 0..NODES_PER_THREAD {
-                    let r = new_node(NodeInitOptions::default());
-                    assert_eq!(r.status, 0, "new_node must succeed under contention");
-                    assert!(r.node_ptr > 0);
-                    local_handles.push(r.node_ptr);
+                let handles: Vec<usize> = (0..NODES_PER_THREAD).map(|_| node()).collect();
+                for handle in handles {
+                    close(handle);
                 }
-
-                // Destroy all nodes created by this thread.
-                for h in local_handles {
-                    let r = node_close(h);
-                    assert_eq!(r.status, 0, "node_close must succeed for handle {h}");
-                }
-            }));
-        }
-
-        for jh in join_handles {
-            jh.join().expect("thread must not panic");
-        }
-    }
-
-    /// Concurrent subscription create/poll/close from multiple threads on the
-    /// same node must not deadlock or corrupt state.
-    #[test]
-    fn concurrent_subscription_access_is_safe() {
-        init();
-        let node = new_in_memory_node();
-        let node = Arc::new(node); // share handle across threads
-
-        const THREADS: usize = 4;
-        const OPS_PER_THREAD: usize = 10;
-
-        let barrier = Arc::new(Barrier::new(THREADS));
-        let mut join_handles = Vec::with_capacity(THREADS);
-
-        for _ in 0..THREADS {
-            let barrier = Arc::clone(&barrier);
-            let node_ptr = *node;
-            join_handles.push(thread::spawn(move || {
-                crate::runtime::edge()
-                    .expect("runtime started")
-                    .block_on(barrier.wait())
-                    .expect("the barrier wait runs on the runtime");
-
-                for _ in 0..OPS_PER_THREAD {
-                    let r = unsafe { create_subscription(node_ptr, ptr::null()) };
-                    if r.status != 0 {
-                        if !r.error.is_null() {
-                            unsafe { defra_free_string(r.error) };
-                        }
-                        continue;
-                    }
-                    let h = r.subscription_handle;
-
-                    // Poll should not crash.
-                    let p = poll_subscription(h);
-                    assert!(
-                        p.status == 0 || p.status == 1 || p.status == 2 || p.status == 3,
-                        "poll status must be valid"
-                    );
-                    if !p.error.is_null() {
-                        unsafe { defra_free_string(p.error) };
-                    }
-                    if !p.value.is_null() {
-                        unsafe { defra_free_string(p.value) };
-                    }
-
-                    let c = close_subscription(h);
-                    assert_eq!(c.status, 0, "close must succeed");
-                }
-            }));
-        }
-
-        for jh in join_handles {
-            jh.join().expect("thread must not panic");
-        }
-
-        node_close(*node);
-    }
-
-    // ── Panic containment at the FFI boundary (#1594) ─────────────────────────
-
-    /// An internal panic must surface as an error result, not kill the process,
-    /// and must leave the process able to serve the next request.
-    #[test]
-    fn ffi_entry_converts_panic_to_error_result() {
-        let result: FfiResult = crate::ffi_entry! {
-            panic!("deliberate test panic")
-        };
-
-        assert_eq!(result.status, 1, "a caught panic must be an error");
-        assert!(!result.error.is_null());
-        let msg = unsafe { CStr::from_ptr(result.error).to_string_lossy() };
-        assert!(
-            msg.contains("internal error (panic)") && msg.contains("deliberate test panic"),
-            "error should carry the panic message, got: {msg}"
-        );
-        unsafe { defra_free_string(result.error) };
-
-        // A live round-trip after the caught panic: the process is still usable.
-        init();
-        let node = new_in_memory_node();
-
-        let sdl = CString::new("type Ping { v: Int }").unwrap();
-        let r = unsafe { add_schema(node, ptr::null(), sdl.as_ptr()) };
-        assert_eq!(r.status, 0, "add_schema must succeed after a caught panic");
-        unsafe { defra_free_string(r.value) };
-
-        let q = CString::new("query { Ping { v } }").unwrap();
-        let r = unsafe {
-            exec_request(
-                node,
-                std::ptr::null(),
-                ptr::null(),
-                q.as_ptr(),
-                ptr::null(),
-                ptr::null(),
-                ptr::null(),
-            )
-        };
-        assert_eq!(
-            r.status, 0,
-            "exec_request must succeed after a caught panic"
-        );
-        unsafe { defra_free_string(r.value) };
-
-        node_close(node);
-    }
-
-    /// The release profile must not set `panic = "abort"`.
-    ///
-    /// Unit tests build with the dev profile, where `panic = "unwind"` is
-    /// already the default — so no runtime test can catch a regression that
-    /// reintroduces `panic = "abort"` and silently turns the `ffi_entry!`
-    /// `catch_unwind` into a no-op in the shipped dylib. Only this config
-    /// assertion can (#1594).
-    #[test]
-    fn release_profile_does_not_abort_on_panic() {
-        let manifest =
-            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.toml"))
-                .expect("workspace Cargo.toml must be readable");
-
-        let after_header = manifest
-            .split_once("[profile.release]\n")
-            .expect("workspace must define [profile.release]")
-            .1;
-        let section = after_header
-            .split_once("\n[")
-            .map_or(after_header, |(section, _)| section);
-
-        let offender = section.lines().map(str::trim).find(|line| {
-            line.split_once('=').is_some_and(|(key, value)| {
-                key.trim() == "panic" && value.trim().trim_matches('"') != "unwind"
             })
-        });
+        })
+        .collect();
 
-        assert_eq!(
-            offender, None,
-            "[profile.release] must leave panics unwinding, got:\n{section}"
-        );
+    for worker in workers {
+        worker.join().expect("thread must not panic");
     }
+}
+
+// ── Panic containment at the FFI boundary (#1594) ─────────────────────────
+
+/// An internal panic must surface as an error result, not kill the process,
+/// and must leave the process able to serve the next request.
+#[test]
+fn ffi_entry_converts_panic_to_error_result() {
+    let result: DefraResult = crate::ffi_entry! {
+        panic!("deliberate test panic")
+    };
+    let error = err(result);
+    assert!(
+        error.contains("internal error (panic)") && error.contains("deliberate test panic"),
+        "error should carry the panic message, got: {error}"
+    );
+
+    // A live round-trip after the caught panic: the process is still usable.
+    let node = node();
+    crate::test_support::add_collection(node, "type Ping { v: Int }");
+    crate::test_support::query(node, "query { Ping { v } }");
+    close(node);
+}
+
+/// The release profile must not set `panic = "abort"`.
+///
+/// Unit tests build with the dev profile, where `panic = "unwind"` is
+/// already the default — so no runtime test can catch a regression that
+/// reintroduces `panic = "abort"` and silently turns the `ffi_entry!`
+/// `catch_unwind` into a no-op in the shipped dylib. Only this config
+/// assertion can (#1594).
+#[test]
+fn release_profile_does_not_abort_on_panic() {
+    let manifest =
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.toml"))
+            .expect("workspace Cargo.toml must be readable")
+            .replace("\r\n", "\n");
+
+    let after_header = manifest
+        .split_once("[profile.release]\n")
+        .expect("workspace must define [profile.release]")
+        .1;
+    let section = after_header
+        .split_once("\n[")
+        .map_or(after_header, |(section, _)| section);
+
+    let offender = section.lines().map(str::trim).find(|line| {
+        line.split_once('=').is_some_and(|(key, value)| {
+            key.trim() == "panic" && value.trim().trim_matches('"') != "unwind"
+        })
+    });
+
+    assert_eq!(
+        offender, None,
+        "[profile.release] must leave panics unwinding, got:\n{section}"
+    );
+}
+
+/// The node options a zero-initialized C struct gives start the node Go's
+/// would: a node a C caller builds with `NodeInitOptions opts = {0}` must
+/// not need any other field set, here with P2P off so the test binds nothing.
+#[test]
+fn a_node_starts_from_the_default_options() {
+    let handle = unsafe {
+        defra_node_new(crate::types::NodeInitOptions {
+            disable_p2p: 1,
+            ..Default::default()
+        })
+    };
+    assert_eq!(handle.status, 0);
+    close(handle.node_ptr);
 }

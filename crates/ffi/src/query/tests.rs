@@ -1,234 +1,174 @@
-use std::ffi::CString;
 use std::ptr;
 
-use crate::node::{new_node, node_close};
-use crate::schema::add_schema;
+use crate::identities::{defra_identity_free, defra_identity_new};
 use crate::state::NODES;
+use crate::test_support::{
+    add_collection, close, cstr, err, local_options, node, node_with, ok_json, query,
+};
+use crate::txn::{defra_transaction_commit, defra_transaction_create, defra_transaction_discard};
 use crate::types::NodeInitOptions;
 
-use super::{check_and_set_dac_bypass, exec_request};
+use super::{dac_bypass, defra_query_execute};
 
 #[test]
 fn node_identity_is_not_promoted_to_nac_dac_bypass() {
-    assert!(crate::runtime::init_runtime());
-
-    let options = NodeInitOptions {
+    let node = node_with(NodeInitOptions {
         enable_signing: 1,
-        ..Default::default()
-    };
-    let result = new_node(options);
-    assert_eq!(result.status, 0);
-    let node = result.node_ptr;
+        ..local_options()
+    });
     let node_did = NODES
         .get(node, |state| state.identity_did())
         .flatten()
-        .unwrap();
-    let node_did = CString::new(node_did).unwrap();
+        .expect("a signing node has an identity");
 
-    check_and_set_dac_bypass(node, node_did.as_ptr());
+    let bypass = crate::call::wait(async { Ok(dac_bypass(node, Some(&node_did)).await) })
+        .expect("the check runs");
 
-    assert!(!defra_core::dac_bypass::get_dac_bypass());
-    node_close(node);
+    assert!(!bypass);
+    close(node);
 }
 
 #[test]
-fn test_exec_request() {
-    // Initialize runtime
-    assert!(crate::runtime::init_runtime());
+fn a_query_answers_with_its_graphql_result() {
+    let node = node();
+    add_collection(node, "type User { name: String }");
 
-    // Create node
-    let options = NodeInitOptions::default();
-    let result = new_node(options);
-    assert_eq!(result.status, 0);
-    let node = result.node_ptr;
-
-    // Add schema
-    let sdl = CString::new("type User { name: String }").unwrap();
-    let result = unsafe { add_schema(node, std::ptr::null(), sdl.as_ptr()) };
-    assert_eq!(result.status, 0);
-
-    // Query (should return empty array)
-    let query_str = CString::new("{ User { name } }").unwrap();
-    let result = unsafe {
-        exec_request(
-            node,
-            std::ptr::null(),
-            ptr::null(),
-            query_str.as_ptr(),
-            ptr::null(),
-            ptr::null(),
-            ptr::null(),
-        )
-    };
-    assert_eq!(result.status, 0, "exec_request should succeed");
-
-    let value = unsafe { std::ffi::CStr::from_ptr(result.value).to_string_lossy() };
-    assert!(value.contains("data"), "response should have data field");
-
-    // Cleanup
-    unsafe { crate::types::defra_free_string(result.value) };
-    node_close(node);
+    let response = query(node, "{ User { name } }");
+    assert_eq!(response["data"]["User"], serde_json::json!([]));
+    close(node);
 }
 
 #[test]
-fn test_exec_mutation() {
-    // Initialize runtime
-    assert!(crate::runtime::init_runtime());
+fn a_mutation_is_visible_to_a_later_query() {
+    let node = node();
+    add_collection(node, "type User { name: String }");
 
-    // Create node
-    let options = NodeInitOptions::default();
-    let result = new_node(options);
-    assert_eq!(result.status, 0);
-    let node = result.node_ptr;
+    let response = query(
+        node,
+        r#"mutation { add_User(input: {name: "Alice"}) { _docID name } }"#,
+    );
+    assert_eq!(response["data"]["add_User"][0]["name"], "Alice");
 
-    // Add schema
-    let sdl = CString::new("type User { name: String }").unwrap();
-    let result = unsafe { add_schema(node, std::ptr::null(), sdl.as_ptr()) };
-    assert_eq!(result.status, 0);
-
-    // Create a user
-    let mutation =
-        CString::new(r#"mutation { add_User(input: {name: "Alice"}) { _docID name } }"#).unwrap();
-    let result = unsafe {
-        exec_request(
-            node,
-            std::ptr::null(),
-            ptr::null(),
-            mutation.as_ptr(),
-            ptr::null(),
-            ptr::null(),
-            ptr::null(),
-        )
-    };
-    assert_eq!(result.status, 0, "mutation should succeed");
-
-    let value = unsafe { std::ffi::CStr::from_ptr(result.value).to_string_lossy() };
-    assert!(value.contains("Alice"), "response should contain Alice");
-
-    // Cleanup
-    unsafe { crate::types::defra_free_string(result.value) };
-
-    // Query to verify
-    let query_str = CString::new("{ User { name } }").unwrap();
-    let result = unsafe {
-        exec_request(
-            node,
-            std::ptr::null(),
-            ptr::null(),
-            query_str.as_ptr(),
-            ptr::null(),
-            ptr::null(),
-            ptr::null(),
-        )
-    };
-    assert_eq!(result.status, 0, "query should succeed");
-
-    let value = unsafe { std::ffi::CStr::from_ptr(result.value).to_string_lossy() };
-    assert!(value.contains("Alice"), "query result should contain Alice");
-
-    // Cleanup
-    unsafe { crate::types::defra_free_string(result.value) };
-    node_close(node);
-}
-
-// Edge case tests (H2)
-
-#[test]
-fn test_exec_request_null_query() {
-    assert!(crate::runtime::init_runtime());
-
-    // Create node
-    let options = NodeInitOptions::default();
-    let result = new_node(options);
-    assert_eq!(result.status, 0);
-    let node = result.node_ptr;
-
-    // Null query should return error
-    let result = unsafe {
-        exec_request(
-            node,
-            std::ptr::null(),
-            ptr::null(),
-            ptr::null(),
-            ptr::null(),
-            ptr::null(),
-            ptr::null(),
-        )
-    };
-    assert_eq!(result.status, 1, "null query should fail");
-    assert!(!result.error.is_null());
-
-    let error = unsafe { std::ffi::CStr::from_ptr(result.error).to_string_lossy() };
-    assert!(error.contains("null"), "should indicate null query");
-
-    unsafe { crate::types::defra_free_string(result.error) };
-    node_close(node);
+    let response = query(node, "{ User { name } }");
+    assert_eq!(response["data"]["User"][0]["name"], "Alice");
+    close(node);
 }
 
 #[test]
-fn test_exec_request_invalid_handle() {
-    assert!(crate::runtime::init_runtime());
-
-    // Query with invalid handle should return error
-    let query_str = CString::new("{ User { name } }").unwrap();
-    let result = unsafe {
-        exec_request(
-            0,
-            std::ptr::null(),
-            ptr::null(),
-            query_str.as_ptr(),
-            ptr::null(),
-            ptr::null(),
-            ptr::null(),
-        )
-    };
-    assert_eq!(result.status, 1, "invalid handle should fail");
-    assert!(!result.error.is_null());
-
-    let error = unsafe { std::ffi::CStr::from_ptr(result.error).to_string_lossy() };
-    assert!(error.contains("invalid"), "should indicate invalid handle");
-
-    unsafe { crate::types::defra_free_string(result.error) };
-}
-
-#[test]
-fn test_exec_request_invalid_variables_json() {
-    assert!(crate::runtime::init_runtime());
-
-    // Create node
-    let options = NodeInitOptions::default();
-    let result = new_node(options);
-    assert_eq!(result.status, 0);
-    let node = result.node_ptr;
-
-    // Add schema
-    let sdl = CString::new("type User { name: String }").unwrap();
-    let result = unsafe { add_schema(node, std::ptr::null(), sdl.as_ptr()) };
-    assert_eq!(result.status, 0);
-
-    // Query with invalid JSON variables should return error
-    let query_str = CString::new("{ User { name } }").unwrap();
-    let invalid_json = CString::new("not valid json").unwrap();
-    let result = unsafe {
-        exec_request(
-            node,
-            std::ptr::null(),
-            ptr::null(),
-            query_str.as_ptr(),
-            ptr::null(),
-            invalid_json.as_ptr(),
-            ptr::null(),
-        )
-    };
-    assert_eq!(result.status, 1, "invalid JSON should fail");
-    assert!(!result.error.is_null());
-
-    let error = unsafe { std::ffi::CStr::from_ptr(result.error).to_string_lossy() };
-    assert!(
-        error.contains("parse") || error.contains("variables"),
-        "should indicate parse error"
+fn a_query_with_variables_and_an_operation_name_runs_that_operation() {
+    let node = node();
+    add_collection(node, "type User { name: String }");
+    query(
+        node,
+        r#"mutation { add_User(input: {name: "Alice"}) { _docID } }"#,
     );
 
-    unsafe { crate::types::defra_free_string(result.error) };
-    node_close(node);
+    let request = cstr(
+        "query Named($name: String) { User(filter: {name: {_eq: $name}}) { name } } \
+         query Other { User { _docID } }",
+    );
+    let operation = cstr("Named");
+    let variables = cstr(r#"{"name": "Alice"}"#);
+    let response = ok_json(unsafe {
+        defra_query_execute(
+            node,
+            request.as_ptr(),
+            0,
+            operation.as_ptr(),
+            variables.as_ptr(),
+        )
+    });
+    assert_eq!(response["data"]["User"][0]["name"], "Alice");
+    close(node);
+}
+
+#[test]
+fn an_invalid_handle_fails() {
+    let request = cstr("{ User { name } }");
+    let error =
+        err(unsafe { defra_query_execute(0, request.as_ptr(), 0, ptr::null(), ptr::null()) });
+    assert!(
+        error.contains("invalid"),
+        "should indicate invalid handle: {error}"
+    );
+}
+
+#[test]
+fn invalid_variables_json_fails() {
+    let node = node();
+    add_collection(node, "type User { name: String }");
+
+    let request = cstr("{ User { name } }");
+    let variables = cstr("not valid json");
+    let error = err(unsafe {
+        defra_query_execute(node, request.as_ptr(), 0, ptr::null(), variables.as_ptr())
+    });
+    assert!(
+        error.contains("variables"),
+        "should indicate the variables: {error}"
+    );
+    close(node);
+}
+
+#[test]
+fn a_transaction_handle_runs_the_query_in_the_transaction() {
+    let node = node();
+    add_collection(node, "type User { name: String }");
+
+    let txn = defra_transaction_create(node, 0);
+    assert_eq!(txn.status, 0);
+    query(
+        txn.txn_ptr,
+        r#"mutation { add_User(input: {name: "Bob"}) { _docID } }"#,
+    );
+
+    // Uncommitted: the transaction sees the document, the node does not.
+    assert_eq!(
+        query(txn.txn_ptr, "{ User { name } }")["data"]["User"][0]["name"],
+        "Bob"
+    );
+    assert_eq!(
+        query(node, "{ User { name } }")["data"]["User"],
+        serde_json::json!([])
+    );
+
+    crate::test_support::ok(defra_transaction_commit(txn.txn_ptr));
+    assert_eq!(
+        query(node, "{ User { name } }")["data"]["User"][0]["name"],
+        "Bob"
+    );
+    close(node);
+}
+
+#[test]
+fn a_discarded_transaction_leaves_nothing() {
+    let node = node();
+    add_collection(node, "type User { name: String }");
+
+    let txn = defra_transaction_create(node, 0);
+    assert_eq!(txn.status, 0);
+    query(
+        txn.txn_ptr,
+        r#"mutation { add_User(input: {name: "Bob"}) { _docID } }"#,
+    );
+    defra_transaction_discard(txn.txn_ptr);
+
+    assert_eq!(
+        query(node, "{ User { name } }")["data"]["User"],
+        serde_json::json!([])
+    );
+    close(node);
+}
+
+#[test]
+fn an_identity_handle_acts_as_that_identity() {
+    let node = node();
+    let identity = unsafe { defra_identity_new(ptr::null()) };
+    assert_eq!(identity.status, 0);
+
+    let response = crate::test_support::query_as(node, "{ __typename }", identity.identity_ptr);
+    assert!(response.get("data").is_some(), "{response}");
+
+    defra_identity_free(identity.identity_ptr);
+    close(node);
 }

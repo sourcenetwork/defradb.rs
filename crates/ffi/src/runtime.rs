@@ -2,8 +2,8 @@
 //!
 //! Network calls (P2P, starting and closing a node, remote ACP) run on it,
 //! blocking their C caller's thread ([`Edge::block_on`]); a node's data-path
-//! calls run on its worker pool instead ([`crate::call`]). `defra_init`
-//! starts it, and it lives as long as the process.
+//! calls run on its worker pool instead ([`crate::call`]). The first call
+//! that needs it starts it, and it lives as long as the process.
 
 use edge::{Edge, EdgeConfig, EdgeRuntime};
 use regolith::sync::OnceCell;
@@ -44,8 +44,10 @@ pub fn runtime_init_error() -> Option<&'static str> {
     RUNTIME_ERROR.get().map(String::as_str)
 }
 
-/// The network runtime's handle, once it started.
+/// The network runtime's handle, starting the runtime on first use; `None`
+/// when it could not start ([`runtime_init_error`] says why).
 pub fn edge() -> Option<&'static Edge> {
+    init_runtime();
     RUNTIME.get().map(EdgeRuntime::edge)
 }
 

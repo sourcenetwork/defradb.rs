@@ -1,28 +1,22 @@
-//! Collection management operations for FFI.
-//!
-//! This module exposes collection lifecycle and management functions
-//! that match Go's collection management behavior.
-//!
-//! The read/write wrappers are the current code-generation prototype for #692:
-//! they keep explicit `extern "C"` items for cbindgen, but share the repeated
-//! node/runtime/NAC/database prelude through `ffi_node_db_async_body!`.
+//! Collections: added from SDL, described, patched, activated, truncated
+//! and deleted.
 
-mod migration;
-mod purge;
-mod read;
-mod view;
-mod write;
+mod add;
+mod delete;
+mod describe;
+mod patch;
+pub(crate) mod select;
+mod set_active;
+mod truncate;
 
-pub use migration::{
-    delete_collection_versions, materialize_collection, set_migration, set_migration_in_txn,
-};
-pub use purge::delete_documents;
-pub use read::{
-    find_collection_by_id, get_collection_by_name, get_collection_by_version_id, has_collection,
-};
-pub use view::{add_view, gc_downsample_histories, refresh_views};
-pub use write::{
-    delete_collection, delete_collections, delete_collections_in_txn, patch_collection,
-    set_active_collection_version, set_collection_active_in_txn, truncate_collection,
-    truncate_collection_with_filter,
-};
+pub use add::defra_collection_add;
+pub use delete::defra_collection_delete;
+pub use describe::defra_collection_describe;
+pub use patch::defra_collection_patch;
+pub use set_active::defra_collection_set_active;
+pub use truncate::{defra_collection_truncate, defra_collection_truncate_with_filter};
+
+#[cfg(test)]
+mod refusal_tests;
+#[cfg(test)]
+mod tests;

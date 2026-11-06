@@ -21,12 +21,12 @@
 tools/apple/build-ffi.sh
 ```
 
-The script defaults to an iroh-capable Redb build by setting
+The script defaults to an iroh-capable build by setting
 `FEATURES=iroh,native` and `NO_DEFAULT_FEATURES=1`.
 It also defaults to `APPLE_DEPLOYMENT_TARGET=15.0` so Rust and native dependencies
 are linked against a modern iOS target instead of Rust's legacy iOS 10 default.
-The default iOS feature set avoids desktop-only FFI defaults such as RocksDB,
-Regolith, and the Wasmtime lens runtime.
+The default iOS feature set avoids desktop-only FFI defaults such as libp2p,
+Vera, and the Wasmtime lens runtime. The store is regolith on every target.
 
 Override the defaults with environment variables when needed:
 
@@ -71,86 +71,64 @@ There are two supported integration paths:
 
 The generated C module is named after `FRAMEWORK_NAME` and defaults to `DefraFFI`.
 
-## Mobile FFI Surface
+## C API Surface
 
-The mobile-oriented entry points are:
+The FFI covers the calls of Go DefraDB's cbindings (`libdefradb.h`), named
+`defra_<noun>_<verb>`. It matches Go's API, not its ABI: names and types are
+prefixed (`DefraResult` for Go's `Result`), and `NodeInitOptions` adds fields
+after Go's, so code built against Go's header needs these names. Every call that works on a store takes a handle naming
+a node, or one of its transactions, and an identity handle naming the caller
+(`0` for none). Results are `DefraResult` structs (`status`, `value`,
+`error`); free each one with `defra_result_free`, and the node, transaction
+and identity results with `defra_new_node_result_free`,
+`defra_new_txn_result_free` and `defra_new_identity_result_free`.
 
-- `defra_mobile_init()`
-- `defra_mobile_open_node(config_json)`
-- `defra_mobile_close_node(node)`
-- `defra_mobile_ensure_schema(node, schema_sdl)`
-- `defra_mobile_execute(node, request_json)`
-- `defra_mobile_peer_info(node)`
-- `defra_mobile_sync_status(node)`
-- `defra_mobile_peer_details(node, peer_id)`
-- `defra_mobile_connect(node, addr)`
-- `defra_mobile_disconnect(node, addr)`
-- `defra_mobile_sync_collection(node, request_json)`
-- `defra_mobile_add_replicator(node, request_json)`
-- `register_remote_identity(...)`
-- `register_remote_identity_bytes(...)`
-- `bind_identity_bearer_token(did, bearer_token)`
-- `node_set_default_identity(node, did)`
+The entry points a mobile app typically needs:
+
+- `defra_node_new(options)` / `defra_node_close(node)`
+- `defra_collection_add(node, sdl, identity)`
+- `defra_query_execute(node_or_txn, query, identity, operation_name, variables)`
+  and `defra_query_execute_async(..., callback, context)`
+- `defra_transaction_create(node, read_only)`, `defra_transaction_commit(txn)`,
+  `defra_transaction_discard(txn)`
+- `defra_p2p_info(node, identity)`
+- `defra_p2p_connect(node, addresses, identity)` /
+  `defra_p2p_disconnect(node, addresses, identity)`
+- `defra_p2p_replicator_add(node, collections, addresses, identity)`
+- `defra_p2p_collection_sync_versions(node, version_ids, timeout, identity)`
+  and `defra_p2p_document_sync(node, collection, doc_ids, timeout, identity)`
+- `defra_identity_new_remote(...)` / `defra_identity_new_remote_bytes(...)`
+- `defra_identity_new_from_bearer_token(did, bearer_token)`
+- `defra_node_set_identity(node, identity)`
+
+List arguments (`addresses`, `collections`, `doc_ids`, `version_ids`) are
+comma-separated strings, and timeouts are Go duration strings such as `"30s"`
+(null or empty for none).
+
+Mobile-only calls, which Go's cbindings have no counterpart for:
+
+- `defra_mobile_sync_status(node, identity)`
+- `defra_mobile_peer_details(node, peer_id, identity)`
+- `defra_mobile_shareable_address(node, identity)`
+- `defra_mobile_notify_network_change(node, identity)`
 
 Rebuild the XCFramework after updating the FFI crate so the generated header
-includes newly added symbols such as `defra_mobile_add_replicator` and
-`defra_mobile_disconnect`.
+includes newly added symbols.
 
-`defra_mobile_open_node` accepts a JSON blob so Swift can avoid hand-building
-`NodeInitOptions`. Example:
-
-```json
-{
-  "dbPath": "/path/to/defra-data",
-  "defaultIdentityDid": "did:key:z...",
-  "p2p": {
-    "transport": "iroh",
-    "iroh": {
-      "relayUrl": "https://relay.iroh.network",
-      "discovery": true
-    }
-  }
-}
-```
-
-`defra_mobile_execute` accepts:
-
-```json
-{
-  "identityDid": "did:key:z...",
-  "query": "mutation { add_Book(input: {name: \"Dune\"}) { _docID } }"
-}
-```
-
-`defra_mobile_add_replicator` accepts a single peer address, collection names,
-and optional per-collection filters.
-
-```json
-{
-  "identityDid": "did:key:z...",
-  "collections": ["Users"],
-  "peerAddr": "/ip4/1.2.3.4/tcp/9000/p2p/12D3Koo...",
-  "filters": {
-    "Users": {"predicate": {"agent_did": {"_eq": "did:key:z..."}}}
-  }
-}
-```
-
-The `filters` field may be omitted or set to `null` for unfiltered replication.
-It also accepts the HTTP `Conditions` form and the legacy scalar form:
-
-```json
-{
-  "Users": {"Conditions": {"agent_did": {"_eq": "did:key:z..."}}},
-  "Posts": {"Field": "agent_did", "Value": "did:key:z..."}
-}
-```
+A node is configured with `NodeInitOptions` fields rather than JSON. For an
+iroh node with a persistent store, set for example `db_path`,
+`p2p_transport = "iroh"`, `iroh_relay_url`, and `identity_ptr` (an identity
+handle the node signs as). Leave `disable_p2p` at `0` to run P2P; a libp2p
+node listens on the comma-separated `listening_addresses`.
 
 For device-bound or delegated identities:
 
-- register the device signing DID with `register_remote_identity` or `register_remote_identity_bytes`
-- optionally bind a delegated bearer token to a logical DID with `bind_identity_bearer_token`
-- set the effective DID as the node default via `node_set_default_identity`
+- register the device signing DID with `defra_identity_new_remote` or
+  `defra_identity_new_remote_bytes`, which answer with an identity handle
+- optionally bind a delegated bearer token to a logical DID with
+  `defra_identity_new_from_bearer_token`, which answers with a handle too
+- set the effective identity as the node default via `defra_node_set_identity`,
+  or pass its handle to each call
 
 ## Device-Bound DID Flow
 
@@ -159,14 +137,15 @@ For Secure Enclave-backed P-256 (`secp256r1`) identities on iOS:
 1. Generate or load the Secure Enclave private key in the host app.
 2. Export or derive the public key bytes, then derive the matching `did:key`.
 3. Call one of:
-   - `register_remote_identity(did, public_key_hex, "secp256r1", signer_handle, callback)`
-   - `register_remote_identity_bytes(did, public_key_ptr, public_key_len, "secp256r1", signer_handle, callback)`
+   - `defra_identity_new_remote(did, public_key_hex, "secp256r1", signer_handle, callback)`
+   - `defra_identity_new_remote_bytes(did, public_key_ptr, public_key_len, "secp256r1", signer_handle, callback)`
 4. If the app uses a logical DID with delegated ACP authorization, call
-   `bind_identity_bearer_token(logical_did, bearer_token)`.
-5. Call `node_set_default_identity(node, did)` with either the device DID or
-   the logical DID that should back GraphQL and block-signing requests.
+   `defra_identity_new_from_bearer_token(logical_did, bearer_token)`.
+5. Call `defra_node_set_identity(node, identity_ptr)` with the handle of either
+   the device identity or the logical one that should back GraphQL and
+   block-signing requests.
 
-`register_remote_identity_bytes` is the most direct Swift path when the app
+`defra_identity_new_remote_bytes` is the most direct Swift path when the app
 already has the public key as `Data`. For `secp256r1`, pass the uncompressed
 X9.63 / SEC1 public key bytes (`0x04 || X || Y`).
 
@@ -184,8 +163,8 @@ X9.63 / SEC1 public key bytes (`0x04 || X || Y`).
 - For Secure Enclave P-256 signing, use
   `SecKeyCreateSignature(..., .ecdsaSignatureMessageX962SHA256, ...)`.
 
-`DefraRemoteSignAsyncCallback`, registered with `register_remote_identity_async`
-or `register_remote_identity_bytes_async`, is the form for a signer that
+`DefraRemoteSignAsyncCallback`, registered with `defra_identity_new_remote_async`
+or `defra_identity_new_remote_bytes_async`, is the form for a signer that
 answers later (its own queue, a network round trip):
 
 - The callback receives the same values plus a `completion` value, and returns
@@ -202,6 +181,6 @@ answers later (its own queue, a network round trip):
 ## Validation
 
 `tools/apple/build-ffi.sh` now runs a Swift import smoke test after packaging.
-It typechecks [swift-import-smoke.swift](/Users/johnzampolin/go/src/github.com/sourcenetwork/defradb.rs/tools/apple/swift-import-smoke.swift)
+It typechecks [swift-import-smoke.swift](swift-import-smoke.swift)
 against the generated `target/apple-ffi/include` module and fails if the
 header regresses to `Option_DefraRemoteSignCallback`.

@@ -1,9 +1,9 @@
 use std::ffi::c_char;
 
 use crate::helpers::require_c_str;
-use crate::nac_check::check_nac_for_node;
+use crate::request::Request;
 use crate::state::NODES;
-use crate::types::{c_str_to_string, FfiResult};
+use crate::types::{c_str_to_string, DefraResult};
 use crate::{ffi_async, ffi_async_ok, ffi_entry, try_ffi, ERR_INVALID_NODE_HANDLE};
 use acp::nac::{is_valid_nac_relation, NodePermission};
 use acp::normalize_auth_error;
@@ -25,18 +25,16 @@ use acp::normalize_auth_error;
 /// # Safety
 ///
 /// Caller must ensure all pointer arguments are valid, non-null, and point to valid C strings.
+/// Answers with the node access-control status as JSON.
 #[no_mangle]
-pub unsafe extern "C" fn get_nac_status(node_ptr: usize, identity_did: *const c_char) -> FfiResult {
+pub extern "C" fn defra_acp_nac_status(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::NacStatus
-        ));
+        let request = try_ffi!(Request::begin(node_ptr, identity_ptr, NodePermission::NacStatus));
+        let node_ptr = request.node();
 
         let nac_manager = match NODES.get(node_ptr, |state| state.nac_manager.clone()) {
             Some(m) => m,
-            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
+            None => return DefraResult::error(ERR_INVALID_NODE_HANDLE),
         };
 
         ffi_async!(node_ptr, {
@@ -56,14 +54,17 @@ pub unsafe extern "C" fn get_nac_status(node_ptr: usize, identity_did: *const c_
 /// # Safety
 ///
 /// `requestor_did` must be a valid null-terminated UTF-8 string.
+/// Disables node access control, as the identity `identity_ptr` names.
 #[no_mangle]
-pub unsafe extern "C" fn disable_nac(node_ptr: usize, requestor_did: *const c_char) -> FfiResult {
+pub extern "C" fn defra_acp_nac_disable(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
-        let requestor_str = try_ffi!(require_c_str(requestor_did, "requestor_did"));
+        let request = try_ffi!(Request::resolve(node_ptr, identity_ptr));
+        let node_ptr = try_ffi!(request.require_node("node access control changes"));
+        let requestor_str = request.identity.clone().unwrap_or_default();
 
         let nac_manager = match NODES.get(node_ptr, |state| state.nac_manager.clone()) {
             Some(m) => m,
-            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
+            None => return DefraResult::error(ERR_INVALID_NODE_HANDLE),
         };
 
         ffi_async_ok!(node_ptr, {
@@ -101,14 +102,17 @@ pub unsafe extern "C" fn disable_nac(node_ptr: usize, requestor_did: *const c_ch
 /// # Safety
 ///
 /// `requestor_did` must be a valid null-terminated UTF-8 string.
+/// Re-enables node access control, as the identity `identity_ptr` names.
 #[no_mangle]
-pub unsafe extern "C" fn re_enable_nac(node_ptr: usize, requestor_did: *const c_char) -> FfiResult {
+pub extern "C" fn defra_acp_nac_re_enable(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
-        let requestor_str = try_ffi!(require_c_str(requestor_did, "requestor_did"));
+        let request = try_ffi!(Request::resolve(node_ptr, identity_ptr));
+        let node_ptr = try_ffi!(request.require_node("node access control changes"));
+        let requestor_str = request.identity.clone().unwrap_or_default();
 
         let nac_manager = match NODES.get(node_ptr, |state| state.nac_manager.clone()) {
             Some(m) => m,
-            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
+            None => return DefraResult::error(ERR_INVALID_NODE_HANDLE),
         };
 
         ffi_async_ok!(node_ptr, {
@@ -153,60 +157,37 @@ pub unsafe extern "C" fn re_enable_nac(node_ptr: usize, requestor_did: *const c_
     }
 }
 
-/// Enable NAC with the given owner identity.
-///
-/// This initializes NAC and sets the owner. Can only be called when NAC
-/// is not already enabled.
-///
-/// # Safety
-///
-/// `owner_did` must be a valid null-terminated UTF-8 string.
-#[no_mangle]
-pub unsafe extern "C" fn enable_nac(node_ptr: usize, owner_did: *const c_char) -> FfiResult {
-    ffi_entry! {
-        let owner_str = try_ffi!(require_c_str(owner_did, "owner_did"));
-
-        let nac_manager = match NODES.get(node_ptr, |state| state.nac_manager.clone()) {
-            Some(m) => m,
-            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
-        };
-
-        ffi_async_ok!(node_ptr, {
-            let owner = identity::Did::new(&owner_str)
-                .map_err(|e| format!("invalid DID '{}': {}", owner_str, e))?;
-
-            nac_manager
-                .enable(&owner)
-                .await
-                .map_err(|e| format!("failed to enable NAC: {}", e))?;
-
-            Ok(())
-        })
-    }
-}
-
 /// Add a NAC actor relationship.
 ///
 /// The requestor must be an admin. The relation can be "admin" or a
 /// specific permission name (e.g., "read-document").
 ///
-/// Returns JSON with success status:
+/// Answers with Go's `AddActorRelationshipResult`:
 /// ```json
-/// { "added": true }  // or false if already exists
+/// { "ExistedAlready": false }  // true when the relationship already existed
 /// ```
 ///
 /// # Safety
 ///
 /// All string parameters must be valid null-terminated UTF-8 strings.
+/// Adds the node access-control relation `relation` ("admin" for null or
+/// empty) of `actor`, as the identity `identity_ptr` names.
+///
+/// # Safety
+///
+/// `relation` and `actor` must be null or valid null-terminated strings.
 #[no_mangle]
-pub unsafe extern "C" fn add_nac_actor_relationship(
+pub unsafe extern "C" fn defra_acp_nac_relationship_add(
     node_ptr: usize,
-    requestor_did: *const c_char,
+    identity_ptr: usize,
     relation: *const c_char,
-    target_did: *const c_char,
-) -> FfiResult {
+    actor: *const c_char,
+) -> DefraResult {
     ffi_entry! {
-        let requestor_str = try_ffi!(require_c_str(requestor_did, "requestor_did"));
+        let request = try_ffi!(Request::resolve(node_ptr, identity_ptr));
+        let node_ptr = try_ffi!(request.require_node("node access control changes"));
+        let requestor_str = request.identity.clone().unwrap_or_default();
+        let target_did = actor;
 
         let relation_str = match c_str_to_string(relation) {
             Some(s) if !s.is_empty() => s,
@@ -217,7 +198,7 @@ pub unsafe extern "C" fn add_nac_actor_relationship(
 
         let nac_manager = match NODES.get(node_ptr, |state| state.nac_manager.clone()) {
             Some(m) => m,
-            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
+            None => return DefraResult::error(ERR_INVALID_NODE_HANDLE),
         };
 
         ffi_async!(node_ptr, {
@@ -292,8 +273,7 @@ pub unsafe extern "C" fn add_nac_actor_relationship(
                 return Err("relation not in resource".to_string());
             };
 
-            let json = serde_json::json!({ "added": added }).to_string();
-            Ok(json)
+            Ok(serde_json::json!({ "ExistedAlready": !added }).to_string())
         })
     }
 }
@@ -302,23 +282,32 @@ pub unsafe extern "C" fn add_nac_actor_relationship(
 ///
 /// The requestor must be an admin. The owner cannot be removed.
 ///
-/// Returns JSON with success status:
+/// Answers with Go's `DeleteActorRelationshipResult`:
 /// ```json
-/// { "deleted": true }  // or false if didn't exist
+/// { "RecordFound": true }  // false when there was no such relationship
 /// ```
 ///
 /// # Safety
 ///
 /// All string parameters must be valid null-terminated UTF-8 strings.
+/// Deletes the node access-control relation `relation` ("admin" for null or
+/// empty) of `actor`, as the identity `identity_ptr` names.
+///
+/// # Safety
+///
+/// `relation` and `actor` must be null or valid null-terminated strings.
 #[no_mangle]
-pub unsafe extern "C" fn delete_nac_actor_relationship(
+pub unsafe extern "C" fn defra_acp_nac_relationship_delete(
     node_ptr: usize,
-    requestor_did: *const c_char,
+    identity_ptr: usize,
     relation: *const c_char,
-    target_did: *const c_char,
-) -> FfiResult {
+    actor: *const c_char,
+) -> DefraResult {
     ffi_entry! {
-        let requestor_str = try_ffi!(require_c_str(requestor_did, "requestor_did"));
+        let request = try_ffi!(Request::resolve(node_ptr, identity_ptr));
+        let node_ptr = try_ffi!(request.require_node("node access control changes"));
+        let requestor_str = request.identity.clone().unwrap_or_default();
+        let target_did = actor;
 
         let relation_str = match c_str_to_string(relation) {
             Some(s) if !s.is_empty() => s,
@@ -329,7 +318,7 @@ pub unsafe extern "C" fn delete_nac_actor_relationship(
 
         let nac_manager = match NODES.get(node_ptr, |state| state.nac_manager.clone()) {
             Some(m) => m,
-            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
+            None => return DefraResult::error(ERR_INVALID_NODE_HANDLE),
         };
 
         ffi_async!(node_ptr, {
@@ -376,10 +365,9 @@ pub unsafe extern "C" fn delete_nac_actor_relationship(
                 return Err("relation not in resource".to_string());
             }
 
-            // Empty target with authorized requestor: Go returns {deleted: false}
+            // Empty target with authorized requestor: Go returns {RecordFound: false}
             if target_str.is_empty() {
-                let json = serde_json::json!({ "deleted": false }).to_string();
-                return Ok(json);
+                return Ok(serde_json::json!({ "RecordFound": false }).to_string());
             }
 
             let target = if target_str == "*" {
@@ -403,249 +391,7 @@ pub unsafe extern "C" fn delete_nac_actor_relationship(
                 return Err("relation not in resource".to_string());
             };
 
-            let json = serde_json::json!({ "deleted": deleted }).to_string();
-            Ok(json)
+            Ok(serde_json::json!({ "RecordFound": deleted }).to_string())
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::node::{new_node, node_close};
-    use crate::types::NodeInitOptions;
-    use std::ffi::{CStr, CString};
-
-    fn test_did() -> &'static str {
-        "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
-    }
-
-    fn test_did2() -> &'static str {
-        "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH"
-    }
-
-    #[test]
-    fn test_get_nac_status() {
-        assert!(crate::runtime::init_runtime());
-
-        let options = NodeInitOptions::default();
-        let result = new_node(options);
-        assert_eq!(result.status, 0);
-        let node = result.node_ptr;
-
-        // Get NAC status
-        let result = unsafe { get_nac_status(node, std::ptr::null()) };
-        assert_eq!(result.status, 0, "get_nac_status should succeed");
-        assert!(!result.value.is_null());
-
-        let value = unsafe { CStr::from_ptr(result.value).to_string_lossy() };
-        assert!(
-            value.contains("not configured"),
-            "NAC should not be configured initially"
-        );
-
-        unsafe { crate::types::defra_free_string(result.value) };
-        node_close(node);
-    }
-
-    #[test]
-    fn test_enable_nac() {
-        assert!(crate::runtime::init_runtime());
-
-        let options = NodeInitOptions::default();
-        let result = new_node(options);
-        assert_eq!(result.status, 0);
-        let node = result.node_ptr;
-
-        // Enable NAC
-        let owner_did = CString::new(test_did()).unwrap();
-        let result = unsafe { enable_nac(node, owner_did.as_ptr()) };
-        assert_eq!(result.status, 0, "enable_nac should succeed");
-
-        // Verify NAC is now enabled (pass owner DID since NAC is active)
-        let result = unsafe { get_nac_status(node, owner_did.as_ptr()) };
-        assert_eq!(result.status, 0);
-        let value = unsafe { CStr::from_ptr(result.value).to_string_lossy() };
-        assert!(value.contains("enabled"), "NAC should be enabled");
-        assert!(value.contains(test_did()), "should show owner DID");
-
-        unsafe { crate::types::defra_free_string(result.value) };
-        node_close(node);
-    }
-
-    #[test]
-    fn test_disable_and_re_enable_nac() {
-        assert!(crate::runtime::init_runtime());
-
-        let options = NodeInitOptions::default();
-        let result = new_node(options);
-        assert_eq!(result.status, 0);
-        let node = result.node_ptr;
-
-        // Enable NAC first
-        let owner_did = CString::new(test_did()).unwrap();
-        let result = unsafe { enable_nac(node, owner_did.as_ptr()) };
-        assert_eq!(result.status, 0);
-
-        // Disable NAC
-        let result = unsafe { disable_nac(node, owner_did.as_ptr()) };
-        assert_eq!(result.status, 0, "disable_nac should succeed");
-
-        // Verify NAC is disabled (null identity OK since NAC is disabled)
-        let result = unsafe { get_nac_status(node, std::ptr::null()) };
-        assert_eq!(
-            result.status, 0,
-            "get_nac_status should succeed when disabled"
-        );
-        let value = unsafe { CStr::from_ptr(result.value).to_string_lossy() };
-        assert!(
-            value.contains("disabled temporarily"),
-            "NAC should be disabled, got: {}",
-            value
-        );
-        unsafe { crate::types::defra_free_string(result.value) };
-
-        // Re-enable NAC
-        let result = unsafe { re_enable_nac(node, owner_did.as_ptr()) };
-        assert_eq!(result.status, 0, "re_enable_nac should succeed");
-
-        // Verify NAC is enabled again (pass owner DID since NAC is active)
-        let result = unsafe { get_nac_status(node, owner_did.as_ptr()) };
-        let value = unsafe { CStr::from_ptr(result.value).to_string_lossy() };
-        assert!(
-            value.contains("\"status\":\"enabled\""),
-            "NAC should be re-enabled"
-        );
-        unsafe { crate::types::defra_free_string(result.value) };
-
-        node_close(node);
-    }
-
-    #[test]
-    fn test_re_enable_nac_checks_authorization_before_enabled_state() {
-        assert!(crate::runtime::init_runtime());
-
-        let result = new_node(NodeInitOptions::default());
-        assert_eq!(result.status, 0);
-        let node = result.node_ptr;
-
-        let owner_did = CString::new(test_did()).unwrap();
-        let result = unsafe { enable_nac(node, owner_did.as_ptr()) };
-        assert_eq!(result.status, 0);
-
-        for requestor in ["", test_did2()] {
-            let requestor = CString::new(requestor).unwrap();
-            let result = unsafe { re_enable_nac(node, requestor.as_ptr()) };
-            assert_eq!(result.status, 1);
-            let error = unsafe { CStr::from_ptr(result.error).to_string_lossy() };
-            assert_eq!(
-                error,
-                "not authorized to perform operation. Permission: re-enable-nac"
-            );
-            unsafe { crate::types::defra_free_string(result.error) };
-        }
-
-        let result = unsafe { re_enable_nac(node, owner_did.as_ptr()) };
-        assert_eq!(result.status, 1);
-        let error = unsafe { CStr::from_ptr(result.error).to_string_lossy() };
-        assert_eq!(error, "node acp is already enabled");
-        unsafe { crate::types::defra_free_string(result.error) };
-
-        node_close(node);
-    }
-
-    #[test]
-    fn test_nac_actor_relationship() {
-        assert!(crate::runtime::init_runtime());
-
-        let options = NodeInitOptions::default();
-        let result = new_node(options);
-        assert_eq!(result.status, 0);
-        let node = result.node_ptr;
-
-        // Enable NAC first
-        let owner_did = CString::new(test_did()).unwrap();
-        let result = unsafe { enable_nac(node, owner_did.as_ptr()) };
-        assert_eq!(result.status, 0);
-
-        // Add admin relationship
-        let target_did = CString::new(test_did2()).unwrap();
-        let relation = CString::new("admin").unwrap();
-        let result = unsafe {
-            add_nac_actor_relationship(
-                node,
-                owner_did.as_ptr(),
-                relation.as_ptr(),
-                target_did.as_ptr(),
-            )
-        };
-        assert_eq!(
-            result.status, 0,
-            "add_nac_actor_relationship should succeed"
-        );
-        let value = unsafe { CStr::from_ptr(result.value).to_string_lossy() };
-        assert!(value.contains("\"added\":true"), "should indicate added");
-        unsafe { crate::types::defra_free_string(result.value) };
-
-        // Delete admin relationship
-        let result = unsafe {
-            delete_nac_actor_relationship(
-                node,
-                owner_did.as_ptr(),
-                relation.as_ptr(),
-                target_did.as_ptr(),
-            )
-        };
-        assert_eq!(
-            result.status, 0,
-            "delete_nac_actor_relationship should succeed"
-        );
-        let value = unsafe { CStr::from_ptr(result.value).to_string_lossy() };
-        assert!(
-            value.contains("\"deleted\":true"),
-            "should indicate deleted"
-        );
-        unsafe { crate::types::defra_free_string(result.value) };
-
-        node_close(node);
-    }
-
-    #[test]
-    fn test_invalid_did_handling() {
-        assert!(crate::runtime::init_runtime());
-
-        let options = NodeInitOptions::default();
-        let result = new_node(options);
-        assert_eq!(result.status, 0);
-        let node = result.node_ptr;
-
-        // Try to enable NAC with invalid DID
-        let invalid_did = CString::new("invalid-did").unwrap();
-        let result = unsafe { enable_nac(node, invalid_did.as_ptr()) };
-        assert_eq!(result.status, 1, "should fail with invalid DID");
-        let error = unsafe { CStr::from_ptr(result.error).to_string_lossy() };
-        assert!(error.contains("invalid DID"), "should indicate invalid DID");
-
-        unsafe { crate::types::defra_free_string(result.error) };
-        node_close(node);
-    }
-
-    #[test]
-    fn test_null_pointer_handling() {
-        assert!(crate::runtime::init_runtime());
-
-        let options = NodeInitOptions::default();
-        let result = new_node(options);
-        assert_eq!(result.status, 0);
-        let node = result.node_ptr;
-
-        // Test null pointer handling
-        let result = unsafe { enable_nac(node, std::ptr::null()) };
-        assert_eq!(result.status, 1, "should fail with null pointer");
-        let error = unsafe { CStr::from_ptr(result.error).to_string_lossy() };
-        assert!(error.contains("null"), "should indicate null pointer");
-
-        unsafe { crate::types::defra_free_string(result.error) };
-        node_close(node);
     }
 }
