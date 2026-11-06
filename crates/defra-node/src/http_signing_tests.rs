@@ -885,3 +885,47 @@ fn http_client_signs_large_document_in_an_explicit_transaction() {
         node.shutdown().await.unwrap();
     }).unwrap();
 }
+
+#[test]
+fn incomplete_fragmented_signing_request_can_be_discarded_without_a_write() {
+    use async_tungstenite::tungstenite::{
+        client::IntoClientRequest,
+        protocol::frame::{
+            coding::{Data, OpCode},
+            Frame,
+        },
+        Message,
+    };
+    use crypto::{Key as _, PrivateKey as _};
+    use futures::SinkExt;
+
+    edge::testing::edge().block_on(async {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let node = Node::builder().enable_signing()
+            .with_http(HttpConfig::with_listener(listener).unwrap()).build().await.unwrap();
+        node.add_collection("type LargeRecord { contents: String }").await.unwrap();
+        let private = crypto::generate_ed25519().unwrap();
+        let public_key_hex = hex::encode(private.public_key().raw());
+        let identity = identity::RawIdentity::from_private_key(private).unwrap();
+        let token = String::from_utf8(identity::new_token(&identity, Duration::from_secs(60), Some(address.to_string()), None).unwrap()).unwrap();
+        let http = net::http::Client::builder(edge::testing::edge()).no_proxy().build().unwrap();
+        let txn: Value = http.post(format!("http://{address}/api/v0/tx")).bearer_auth(&token)
+            .send().await.unwrap().json().await.unwrap();
+        let txn = txn["id"].as_u64().unwrap().to_string();
+        let mut handshake = format!("ws://{address}/api/v0/graphql/client-sign").into_client_request().unwrap();
+        handshake.headers_mut().insert("authorization", format!("Bearer {token}").parse().unwrap());
+        let stream = net::connect(handshake.uri()).await.unwrap();
+        let (mut socket, _) = async_tungstenite::client_async(handshake, stream).await.unwrap();
+        let start = json!({"query":"mutation($input: LargeRecordMutationInputArg!) { create_LargeRecord(input:$input) { _docID } }", "variables":{"input":{"contents":"test"}}, "txn_id":txn, "public_key_hex":public_key_hex}).to_string();
+        socket.send(Message::Frame(Frame::message(start.into_bytes(), OpCode::Data(Data::Text), false))).await.unwrap();
+        socket.close(None).await.unwrap();
+        http.delete(format!("http://{address}/api/v0/tx/{txn}"))
+            .bearer_auth(&token).send().await.unwrap().error_for_status().unwrap();
+        let response: Value = http.post(format!("http://{address}/api/v0/graphql"))
+            .bearer_auth(&token).json(&json!({"query":"{ LargeRecord { contents } }"}))
+            .send().await.unwrap().json().await.unwrap();
+        assert_eq!(response["data"]["LargeRecord"], json!([]));
+        node.shutdown().await.unwrap();
+    }).unwrap();
+}
