@@ -27,6 +27,9 @@ pub struct NodeSpec {
     pub dir: Option<Arc<TempDir>>,
     /// The P2P addresses a restarted node listens on again.
     pub listen: Vec<String>,
+    /// An in-process iroh node serving these stream protocols, in place of
+    /// the libp2p one `network` starts.
+    pub iroh: Option<crate::actions::stream::IrohSpec>,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -42,7 +45,23 @@ pub struct TestNode {
 }
 
 impl TestNode {
+    /// Start the in-process iroh node `spec.iroh` describes.
+    pub fn start_iroh(spec: NodeSpec) -> Result<Self, String> {
+        let iroh = spec.iroh.clone().unwrap_or_default();
+        let node = crate::actions::stream::build(&iroh)?;
+        Ok(Self::new(
+            Some(node.clone()),
+            None,
+            spec,
+            Some(node),
+            Vec::new(),
+        ))
+    }
+
     pub fn start(client_type: ClientType, spec: NodeSpec) -> Self {
+        if spec.iroh.is_some() {
+            return Self::start_iroh(spec).unwrap_or_else(|error| panic!("{error}"));
+        }
         let listen = match spec.listen.first() {
             Some(address) => address.clone(),
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),

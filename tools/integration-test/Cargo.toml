@@ -33,7 +33,10 @@ futures.workspace = true
 paste = "1.0"
 ctor = "0.2"
 chrono = { version = "0.4" }
-defra-node = { path = "../../crates/defra-node", features = ["http", "libp2p"] }
+defra-node = { path = "../../crates/defra-node", features = ["http", "libp2p", "p2p"] }
+# Embedder stream protocols: the testo actions register and open them on iroh nodes.
+p2p = { path = "../../crates/p2p", features = ["iroh-transport"] }
+async-trait = { workspace = true }
 events = { path = "../../crates/events" }
 async-channel = "2"
 cli = { path = "../../crates/cli" }
@@ -71,7 +74,6 @@ alloy-sol-types.workspace = true
 acp = { path = "../../crates/acp" }
 vera = { path = "../../crates/vera" }
 libc = "0.2"
-p2p = { path = "../../crates/p2p", features = ["iroh-transport"] }
 ciborium = { workspace = true }
 serial_test = "3"
 

@@ -76,6 +76,9 @@ lean_lib PeerConnection where
 lean_lib ByteBudget where
 
 @[default_target]
+lean_lib StreamProtocols where
+
+@[default_target]
 lean_lib FetchStats where
 
 @[default_target]

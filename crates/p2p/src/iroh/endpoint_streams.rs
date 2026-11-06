@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use futures::future::Either;
 use iroh::endpoint::Connection;
 use iroh::EndpointId;
 use tracing::{debug, warn};
@@ -14,10 +15,12 @@ use crate::transport::{PeerId, TransportEvent};
 use super::endpoint::{spawn_task, EndpointResources, SpawnedTasks};
 use super::inbound_budget::{InboundBudget, InboundLease, PeerShare};
 use super::peer_map::{endpoint_id_to_peer_id, SharedPeerMap};
+use super::protocol_stream::{ProtocolRecvStream, ProtocolSendStream};
 use super::protocols;
 use super::records::{Input as RecordsInput, RecordsHandle, RecordsMessage};
 use super::services::{self, Service};
 use super::solicited::Solicited;
+use super::stream_protocols::{InboundStream, ProtocolRequest, Registered, StreamProtocols};
 
 /// QUIC application error code closing a connection refused by the inbound
 /// allowlist. Distinct from the disconnect code (0) used elsewhere.
@@ -147,6 +150,7 @@ pub(super) struct ConnectionStreamContext {
     share: Arc<PeerShare>,
     records: RecordsHandle,
     solicited: Arc<Solicited>,
+    stream_protocols: StreamProtocols,
 }
 
 impl ConnectionStreamContext {
@@ -165,6 +169,7 @@ impl ConnectionStreamContext {
             share: resources.inbound_budget.peer_share(remote_id),
             records: resources.records.clone(),
             solicited: Arc::clone(&resources.solicited),
+            stream_protocols: resources.stream_protocols.clone(),
         }
     }
 }
@@ -192,12 +197,18 @@ pub(super) async fn handle_connection_streams(
         let share = Arc::clone(&context.share);
         let records = context.records.clone();
         let solicited = Arc::clone(&context.solicited);
+        let stream_protocols = context.stream_protocols.clone();
+        let connection = connection.clone();
         let _ = spawn_task(&context.spawned_tasks, async move {
+            let admission = Admission {
+                budget: &inbound_budget,
+                share: &share,
+                solicited: &solicited,
+                stream_protocols: &stream_protocols,
+            };
             let Some((service, payload, lease)) = admit_stream(
                 &mut recv,
-                &inbound_budget,
-                &share,
-                &solicited,
+                &admission,
                 replies_on_stream,
                 remote_id,
                 &peer_id,
@@ -208,6 +219,12 @@ pub(super) async fn handle_connection_streams(
             };
             // Replies on this stream go out at the service's priority.
             let _ = send.set_priority(service.priority.send_priority());
+            if let Some(registered) = stream_protocols.get(service.tag) {
+                // The room goes with the request: back when the handler drops it.
+                let request = ProtocolRequest::new(payload, lease);
+                serve_protocol_stream(registered, &connection, peer_id, request, send, recv).await;
+                return;
+            }
             if service.tag == protocols::STREAM_SERVICE_RECORDS {
                 match protocols::decode::<RecordsMessage, _>(payload) {
                     Ok(message) => records.push(RecordsInput::Message {
@@ -256,25 +273,80 @@ pub(super) async fn handle_connection_streams(
     }
 }
 
+/// Serve an admitted stream of an embedder's protocol on this task until its
+/// handler returns, the protocol's deadline passes or the connection closes,
+/// whichever comes first. The last two drop the handler, which resets both
+/// halves and frees the request's room; shutdown aborts the task, with the
+/// same effect.
+async fn serve_protocol_stream(
+    registered: &Registered,
+    connection: &Connection,
+    peer: PeerId,
+    request: ProtocolRequest,
+    send: iroh::endpoint::SendStream,
+    recv: iroh::endpoint::RecvStream,
+) {
+    let deadline = registered.protocol.deadline;
+    let stream = InboundStream {
+        peer: peer.clone(),
+        request,
+        deadline: web_time::Instant::now() + deadline,
+        send: ProtocolSendStream::new(send),
+        recv: ProtocolRecvStream::new(recv),
+    };
+    let closed = std::pin::pin!(connection.closed());
+    let served = std::pin::pin!(crate::rt::time::timeout(
+        deadline,
+        registered.handler.handle(stream)
+    ));
+    let tag = String::from_utf8_lossy(registered.protocol.tag);
+    match futures::future::select(closed, served).await {
+        Either::Left(_) => {
+            debug!(peer_id = %peer, %tag, "Connection closed: protocol stream cancelled");
+        }
+        Either::Right((Err(_), _)) => {
+            debug!(peer_id = %peer, %tag, ?deadline, "Protocol stream reached its deadline");
+        }
+        Either::Right((Ok(()), _)) => {}
+    }
+}
+
+/// What a stream is admitted under, shared by every stream on one connection.
+pub(super) struct Admission<'a> {
+    pub(super) budget: &'a InboundBudget,
+    pub(super) share: &'a Arc<PeerShare>,
+    pub(super) solicited: &'a Solicited,
+    pub(super) stream_protocols: &'a StreamProtocols,
+}
+
 /// Read a stream's tag and length, then wait for room for its body. Resets
-/// the stream instead when the tag is unknown, is a reply stream on a
-/// connection whose replies use their request's stream, is a reply nobody
-/// asked this peer for, the message is too large for its tag, or no room
-/// frees up before the deadline.
-pub(super) async fn admit_stream(
+/// the stream instead when the tag is neither Defra's nor a registered
+/// protocol's, is a reply stream on a connection whose replies use their
+/// request's stream, is a reply nobody asked this peer for, the message is
+/// too large for its tag, or no room frees up before the deadline.
+pub(super) async fn admit_stream<'a>(
     recv: &mut iroh::endpoint::RecvStream,
-    budget: &InboundBudget,
-    share: &Arc<PeerShare>,
-    solicited: &Solicited,
+    admission: &Admission<'a>,
     replies_on_stream: bool,
     remote_id: EndpointId,
     peer_id: &PeerId,
-) -> Option<(&'static Service, Vec<u8>, InboundLease)> {
+) -> Option<(&'a Service, Vec<u8>, InboundLease)> {
+    let &Admission {
+        budget,
+        share,
+        solicited,
+        stream_protocols,
+    } = admission;
     let tag = protocols::read_stream_tag(recv)
         .await
         .inspect_err(|e| debug!(peer_id = %peer_id, error = %e, "Unreadable stream tag"))
         .ok()?;
-    let Some(service) = services::lookup(&tag) else {
+    let service = services::lookup(&tag).or_else(|| {
+        stream_protocols
+            .get(&tag)
+            .map(|registered| &registered.service)
+    });
+    let Some(service) = service else {
         debug!(peer_id = %peer_id, tag = %String::from_utf8_lossy(&tag), "Unknown stream tag");
         let _ = recv.stop(RESET_UNKNOWN_SERVICE.into());
         return None;

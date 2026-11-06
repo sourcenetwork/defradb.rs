@@ -20,6 +20,7 @@ use super::gossip::GossipHandle;
 use super::peer_map::{parse_endpoint_id, SharedPeerMap};
 use super::protocols;
 use super::services;
+use super::stream_protocols::StreamProtocol;
 
 /// Shared authenticated paths per peer. Modern RPC prefers the current mux;
 /// a separate legacy slot preserves 0.1 reuse without racing that selection.
@@ -254,7 +255,7 @@ async fn open_tagged_stream(
 
 /// The peer's shared connection, if one is cached and still open. A closed
 /// entry is dropped rather than handed out, so the caller redials.
-fn cached_connection(
+pub(super) fn cached_connection(
     cache: &ConnectionCache,
     peer_id: &PeerId,
 ) -> crate::error::Result<Option<iroh::endpoint::Connection>> {
@@ -632,6 +633,39 @@ where
         return Err(error);
     }
     Ok((connection, recv))
+}
+
+/// Open a stream for `protocol` on the peer's shared connection and write
+/// `request` as its first message, leaving the send half open.
+pub(super) async fn open_protocol_stream(
+    endpoint: &Endpoint,
+    peer_id: &PeerId,
+    protocol: &StreamProtocol,
+    request: &[u8],
+    direct_addr: Option<std::net::SocketAddr>,
+    cache: &ConnectionCache,
+    admission: &PeerAdmission,
+) -> crate::error::Result<(iroh::endpoint::SendStream, iroh::endpoint::RecvStream)> {
+    let connection = connect_with_cache(endpoint, peer_id, direct_addr, cache, admission).await?;
+    let (mut send, recv) = match open_tagged_stream(&connection, peer_id, protocol.tag).await {
+        Ok(streams) => streams,
+        Err(error) => {
+            evict_if_closed(cache, peer_id, &connection);
+            return Err(error);
+        }
+    };
+    // Only fails on a stream that is already closed, which the write below reports.
+    let _ = send.set_priority(protocol.priority.send_priority());
+    // Written here rather than with `write_payload`, so a peer that refuses the
+    // request (busy, too large) surfaces as `StreamReset` with its code.
+    let len = (request.len() as u32).to_be_bytes();
+    for part in [&len[..], request] {
+        if let Err(error) = send.write_all(part).await {
+            evict_if_closed(cache, peer_id, &connection);
+            return Err(super::protocol_stream::write_error(error));
+        }
+    }
+    Ok((send, recv))
 }
 
 async fn send_one_way_message<T: serde::Serialize>(

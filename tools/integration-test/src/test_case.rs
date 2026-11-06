@@ -24,6 +24,8 @@ pub struct State {
     pub bindings: Bindings,
     /// The transactions the test began, in order; actions name one by index.
     pub txns: Txns,
+    /// Stream-protocol streams the test keeps open across actions.
+    pub streams: crate::actions::stream::KeptStreams,
 }
 
 /// The transactions a test has begun. Shared by every clone of the state, and
@@ -107,6 +109,19 @@ impl State {
             node: Some(node),
         };
         self.nodes.0.insert(name.to_owned(), slot);
+    }
+
+    /// Start the in-process iroh node `name` as `spec` says, failing with the
+    /// builder's error, closing any node of that name first.
+    pub fn start_iroh_node(&mut self, name: &str, spec: NodeSpec) -> Result<(), String> {
+        self.stop_node(name, false);
+        let node = Arc::new(TestNode::start_iroh(spec.clone())?);
+        let slot = Slot {
+            spec,
+            node: Some(node),
+        };
+        self.nodes.0.insert(name.to_owned(), slot);
+        Ok(())
     }
 
     /// Stop node `name`; with `keep` its data and addresses stay for a restart.
