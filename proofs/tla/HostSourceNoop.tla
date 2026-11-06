@@ -16,17 +16,17 @@ Init == /\ edge = FALSE /\ version = 0 /\ active = FALSE
 \* Read the edge from the transaction and stage only a no-op or an authorized change.
 Start(want, canManage) ==
   /\ ~active
-  /\ want = edge \/ canManage \/ Bug = "Authority"
+  /\ (want = edge \/ canManage \/ Bug = "Authority")
   /\ active' = TRUE /\ seen' = edge /\ seenVersion' = version
   /\ desired' = want /\ authorized' = canManage
-  /\ badAuth' = badAuth \/ (~canManage /\ want # edge)
+  /\ badAuth' = (badAuth \/ (~canManage /\ want # edge))
   /\ UNCHANGED <<edge, version, badStale>>
 \* Another transaction may change the observed edge before this one commits.
 OtherChange == /\ active /\ edge' = ~edge /\ version' = 1 - version
                /\ UNCHANGED <<active, seen, seenVersion, desired, authorized, badAuth, badStale>>
 \* A validated observation lets the enclosing transaction commit.
 Commit == /\ active /\ (seenVersion = version \/ Bug = "Validation")
-          /\ badStale' = badStale \/ (~authorized /\ desired = seen /\ desired # edge)
+          /\ badStale' = (badStale \/ (~authorized /\ desired = seen /\ desired # edge))
           /\ edge' = desired /\ version' = version /\ active' = FALSE
           /\ UNCHANGED <<seen, seenVersion, desired, authorized, badAuth>>
 \* A conflicted or discarded transaction leaves the current edge alone.
