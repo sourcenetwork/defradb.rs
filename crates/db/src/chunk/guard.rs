@@ -1,7 +1,7 @@
 //! Checks on chunk writes that arrive from peers.
 
 use document::{Document, NormalValue};
-use schema::{CHUNK_HASH_FIELD, CHUNK_SOURCE_ID_FIELD, CHUNK_TEXT_FIELD};
+use schema::{CHUNK_HASH_FIELD, CHUNK_TEXT_FIELD};
 
 use super::list::text_hash;
 
@@ -15,12 +15,13 @@ pub enum ChunkMergeError {
 }
 
 /// Refuses a chunk whose hash doesn't match its text, and any change to an
-/// existing chunk. Otherwise a peer could plant a fake chunk that the parent's
-/// next write would never replace.
+/// existing chunk, its vectors included. Otherwise a peer could plant a fake
+/// chunk or vector that the parent's next write would never replace.
 pub fn check_chunk_merge(old: Option<&Document>, merged: &Document) -> Result<(), ChunkMergeError> {
     if let Some(old) = old {
-        let changed = [CHUNK_SOURCE_ID_FIELD, CHUNK_TEXT_FIELD, CHUNK_HASH_FIELD]
-            .iter()
+        let changed = old
+            .field_names()
+            .chain(merged.field_names())
             .any(|field| old.get(field) != merged.get(field));
         if changed {
             return Err(ChunkMergeError::Changed);

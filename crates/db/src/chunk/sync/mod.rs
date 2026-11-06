@@ -129,24 +129,43 @@ where
     S: Store + 'static,
 {
     /// Creates the chunk documents in `plans` that don't exist yet. An existing
-    /// chunk is never rewritten, since the same hash means the same content.
+    /// chunk is never rewritten, since the same hash means the same content,
+    /// so it keeps its vector. Every missing chunk's vector comes from the
+    /// memo; when any is not there yet, nothing is written and the attempt
+    /// ends asking for all of them at once.
     pub(crate) async fn create_missing(
         &self,
         parent_doc_id: &str,
         plans: Vec<FieldChunks>,
     ) -> Result<Vec<DerivedWrite>> {
-        let mut written = Vec::new();
+        let mut missing = Vec::new();
+        let mut first_miss = None;
         for plan in plans {
             let target = self.open(&plan.chunk_collection).await?;
             // An update keeps the text encrypted when earlier writes did, even
             // without the flag, so its chunks must be too.
             let encrypt = plan.encrypt || self.parent_encrypts(parent_doc_id, &plan.field).await?;
+            let mut docs = Vec::new();
             for (text, hash) in plan.chunks {
                 if self.exists(&target, parent_doc_id, &hash).await? {
                     continue;
                 }
+                let mut doc = Self::chunk_document(&target, parent_doc_id, text, hash.clone())?;
+                if let Some(miss) = self.embed(&target, &mut doc)? {
+                    first_miss.get_or_insert(miss);
+                }
+                docs.push((doc, hash));
+            }
+            missing.push((target, encrypt, docs));
+        }
+        if let Some(miss) = first_miss {
+            return Err(QueryError::NeedsInput(miss));
+        }
+        let mut written = Vec::new();
+        for (target, encrypt, docs) in missing {
+            for (doc, hash) in docs {
                 written.push(
-                    self.create(&target, parent_doc_id, text, hash, encrypt)
+                    self.create(&target, parent_doc_id, doc, hash, encrypt)
                         .await?,
                 );
             }
