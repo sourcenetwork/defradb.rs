@@ -35,16 +35,14 @@ fi
 
 for area in $areas; do
   echo "== $area"
-  "$gen" generate --scenarios "$scenarios" --tests tools/integration-test/tests \
+  "$gen" generate --scenarios "$scenarios" --tests tools/integration-test/tests/testo \
     --mantra "$reqs/go" --mantra "$reqs/defra" --drift "$work/drift.txt" --area "$area" | grep -v '^  op '
   if [ "${RUN_TESTS:-0}" = 1 ]; then
-    bin=$area
-    case $area in acp | backup | encryption | query) bin=${area}_scenarios ;; esac
-    cargo nextest run --cargo-profile "$profile" -p integration-test --test "$bin" \
+    cargo nextest run --cargo-profile "$profile" -p integration-test --test testo -E "test(/^$area::/)" \
       --no-fail-fast 2>&1 | tee "$work/$area.run" | grep -E '^ +Summary' || true
     cp "$work/$area.run" "$root/../scenario-run-$area.txt"
     DEFRA_EXPORT_SCENARIOS="$work/export-$area" cargo nextest run --cargo-profile "$profile" \
-      -p integration-test --test "$bin" >/dev/null 2>&1 || true
+      -p integration-test --test testo -E "test(/^$area::/)" >/dev/null 2>&1 || true
     "$gen" check --scenarios "$scenarios" --exported "$work/export-$area" \
       --drift "$work/drift.txt" --area "$area" | head -20 || echo "ROUNDTRIP-FAILED $area"
   fi

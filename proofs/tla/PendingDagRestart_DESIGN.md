@@ -64,7 +64,7 @@ what the ack promised.
 ## Conformance fence
 
 The Rust-side fence for the same invariant is the restart integration test
-`tools/integration-test/tests/p2p_admission_restart.rs`
+`tools/integration-test/tests/legacy/p2p_admission_restart.rs`
 (`hub_restart_recovers_success_acked_pending_dags`) — kill and restart the hub after it
 success-acks a missing-links push, then assert the doc still merges — plus the
 `crates/p2p` unit tests around pending-DAG persistence
