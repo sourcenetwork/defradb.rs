@@ -4380,6 +4380,60 @@ async fn doc_sync_reply_starts_independent_dag_roots_concurrently() {
     );
 }
 
+/// A DocSync fetch hears how its transport queries end: blocks that landed
+/// don't wait for its next look at the blockstore, and a provider without them
+/// doesn't use up its whole window.
+#[nuclei::test(threads = 0)]
+async fn doc_sync_reply_fetch_hears_how_its_queries_end() {
+    let transport = NoopTransport::new();
+    let transport_handle = transport.clone();
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let (coordinator, _events) = SyncCoordinator::new(
+        transport,
+        blockstore,
+        crate::network::test_network(),
+        SyncConfig::default(),
+    )
+    .await
+    .unwrap();
+    let root = cid_for(b"root");
+    let peer = random_peer_id();
+    transport_handle.set_connected_peers(vec![peer.clone()]);
+
+    coordinator
+        .handle_transport_event(TransportEvent::DocSyncReply {
+            peer_id: peer.clone(),
+            reply: DocSyncReply::success(
+                "doc-sync-1",
+                vec![DocSyncItem {
+                    doc_id: "doc1".to_string(),
+                    heads: vec![root.to_bytes()],
+                }],
+            ),
+        })
+        .await
+        .unwrap();
+
+    let rooted = coordinator.manager().rooted_car_completion_tracker();
+    timeout(Duration::from_secs(5), async {
+        while !rooted.complete(root, &peer, false) {
+            crate::rt::yield_now().await;
+        }
+    })
+    .await
+    .expect("the fetch hears how its rooted CAR request ends");
+
+    let queries = coordinator.manager().block_sync_completion_tracker();
+    timeout(Duration::from_secs(5), async {
+        while !queries.has_waiter(QueryId(1)) {
+            crate::rt::yield_now().await;
+        }
+    })
+    .await
+    .expect("the fetch hears how its block query ends");
+}
+
 /// Same for BranchableSync: an error reply has empty heads and must not be
 /// mistaken for "peer has no heads for collection".
 #[nuclei::test(threads = 0)]

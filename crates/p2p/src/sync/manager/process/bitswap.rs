@@ -322,6 +322,12 @@ impl BlockSyncCompletionTracker {
     pub(crate) fn take_early(&self, query_id: QueryId) -> Option<FetchCompletion> {
         self.update(|state| state.remove_early(query_id))
     }
+
+    /// Whether a fetch waits to hear how `query_id` ends.
+    #[cfg(test)]
+    pub(crate) fn has_waiter(&self, query_id: QueryId) -> bool {
+        self.state.load_clone().waiters.contains_key(&query_id)
+    }
 }
 
 impl<B: Blockstore + 'static> SyncManager<B> {

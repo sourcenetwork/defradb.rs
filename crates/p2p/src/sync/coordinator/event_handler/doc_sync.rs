@@ -384,6 +384,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             let event_tx = self.manager.event_sender();
             let limiter = self.runtime.dag_fetch_limiter.clone();
             let diagnostics = self.manager.diagnostics();
+            let block_sync_completions = self.manager.block_sync_completion_tracker();
+            let rooted_car_completions = self.manager.rooted_car_completion_tracker();
             let source_peer = peer_id.clone();
             let explicit_replicator_collections =
                 self.access.replicators.get_collections(peer_id.as_str());
@@ -397,6 +399,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     let explicit_replicator_collections = explicit_replicator_collections.clone();
                     let limiter = limiter.clone();
                     let diagnostics = diagnostics.clone();
+                    let block_sync_completions = block_sync_completions.clone();
+                    let rooted_car_completions = rooted_car_completions.clone();
 
                     async move {
                         let Some(_claim) =
@@ -424,7 +428,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                                 .with_alternate_providers(alternate_providers)
                                 .with_explicit_replicator_collections(
                                     explicit_replicator_collections,
-                                ),
+                                )
+                                .with_block_sync_completions(block_sync_completions)
+                                .with_rooted_car_completions(rooted_car_completions),
                             limiter,
                             diagnostics,
                         )
