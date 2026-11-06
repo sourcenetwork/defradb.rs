@@ -16,7 +16,7 @@ Publish(route, authorized) ==
                 THEN source ELSE ~enabled
   /\ direct' = IF Bug = "Direct" THEN FALSE ELSE direct
   /\ other' = IF Bug = "Other" THEN FALSE ELSE other
-  /\ unauthorized' = unauthorized \/ ~authorized
+  /\ unauthorized' = (unauthorized \/ ~authorized)
 
 Next == \E route \in {"managed", "raw", "replicated", "schema"}, authorized \in BOOLEAN :
           Publish(route, authorized)
