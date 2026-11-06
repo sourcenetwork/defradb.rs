@@ -229,7 +229,7 @@ impl<B: Blockstore + 'static> P2PAdapter<B> {
     /// Resolve collection names to CIDs for removal, mirroring `add_replicator`.
     fn resolve_collections_for_remove(&self, collections: Vec<String>) -> Vec<String> {
         let collections =
-            crate::with_chunk_collections(self.doc_pusher.as_ref(), collections, |_| false);
+            crate::with_chunk_collections(self.doc_pusher.as_ref(), collections);
         match self.doc_pusher {
             Some(ref pusher) => crate::resolve_remove_collections(collections, |name| {
                 pusher.get_collection_id(name)
@@ -460,11 +460,8 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
         } else {
             collections
         };
-        let effective_collections = crate::with_chunk_collections(
-            self.doc_pusher.as_ref(),
-            effective_collections,
-            |name| filters.contains_key(name),
-        );
+        let effective_collections =
+            crate::with_chunk_collections(self.doc_pusher.as_ref(), effective_collections);
 
         let mut collection_cids = Vec::new();
         if let Some(ref pusher) = self.doc_pusher {
@@ -515,7 +512,12 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             collection_cids.clone(),
             vec![addr_str.to_string()],
             replication_filters.clone(),
-        );
+        )
+        .with_chunk_sources(crate::chunk_source_ids(
+            self.doc_pusher.as_ref(),
+            &effective_collections,
+            &collection_cids,
+        ));
         let mut replay = if let Some(pusher) = &self.doc_pusher {
             let request = crate::ReplicatorInstallRequest::new(
                 replicator_info.clone(),
@@ -717,7 +719,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
 
         if let Some(ref coordinator) = self.sync_coordinator {
             let topic_ids =
-                crate::with_chunk_collections(self.doc_pusher.as_ref(), collections, |_| false)
+                crate::with_chunk_collections(self.doc_pusher.as_ref(), collections)
                     .into_iter()
                     .map(|collection_name| {
                         if let Some(ref pusher) = self.doc_pusher {
@@ -752,7 +754,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
 
         if let Some(ref coordinator) = self.sync_coordinator {
             let topic_ids =
-                crate::with_chunk_collections(self.doc_pusher.as_ref(), collections, |_| false)
+                crate::with_chunk_collections(self.doc_pusher.as_ref(), collections)
                     .into_iter()
                     .map(|collection_name| {
                         if let Some(ref pusher) = self.doc_pusher {
