@@ -41,7 +41,9 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         node: identity::Did,
         edge: query::txn::SourcePermission,
     ) -> std::result::Result<bool, TransactionError> {
-        let id = owner.txn().ok_or_else(|| TransactionError::operation("an explicit transaction is required"))?;
+        let id = owner
+            .txn()
+            .ok_or_else(|| TransactionError::operation("an explicit transaction is required"))?;
         let handle = TransactionHandle::new(id.to_string());
         let job = query::txn::host_source_permission_job(owner.clone(), node, edge)?;
         self.run_as(owner, &handle, None, job).await?

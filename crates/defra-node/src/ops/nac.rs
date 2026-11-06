@@ -30,13 +30,17 @@ impl Node {
         edge: &query::txn::SourcePermission,
     ) -> Result<bool> {
         let node = self.node_identity_did().ok_or_else(|| {
-            crate::Error::Transaction(query::TransactionError::operation("configured Node identity required"))
+            crate::Error::Transaction(query::TransactionError::operation(
+                "configured Node identity required",
+            ))
         })?;
         let node = identity::Did::new(node).map_err(|error| {
             crate::Error::Transaction(query::TransactionError::operation(error.to_string()))
         })?;
-        self.txn_registry.change_host_nac_source_permission(owner, node, edge.clone())
-            .await.map_err(transaction_error)
+        self.txn_registry
+            .change_host_nac_source_permission(owner, node, edge.clone())
+            .await
+            .map_err(transaction_error)
     }
 
     /// The node's NAC status. Go's `GetNACStatus`.

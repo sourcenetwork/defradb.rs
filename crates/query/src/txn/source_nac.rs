@@ -42,7 +42,9 @@ pub fn host_source_permission_job(
     edge: SourcePermission,
 ) -> Result<TxnJob<Result<bool, TransactionError>>, TransactionError> {
     if !owner_context.authorization_valid_now() || owner_context.identity().is_none() {
-        return Err(TransactionError::operation("fresh authenticated transaction owner required"));
+        return Err(TransactionError::operation(
+            "fresh authenticated transaction owner required",
+        ));
     }
     source_permission_job_for(owner_context, node, edge, true)
 }
@@ -83,7 +85,9 @@ fn source_permission_job_for(
                         )
                     })?;
                 if host && changed {
-                    fetcher.project_host_source_change().await
+                    fetcher
+                        .project_host_source_change()
+                        .await
                         .map_err(|error| TransactionError::operation(error.to_string()))?;
                 }
                 Ok(changed)
