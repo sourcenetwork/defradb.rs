@@ -318,7 +318,12 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
             },
         )
         .await
-        .map_err(|error| query::QueryError::execution(error.to_string()))
+        .map_err(|error| match error {
+            crate::nac::Error::PermissionDenied => {
+                query::QueryError::permission_denied(error.to_string())
+            }
+            other => query::QueryError::execution(other.to_string()),
+        })
     }
 
     async fn project_host_source_change(

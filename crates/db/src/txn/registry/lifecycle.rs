@@ -32,9 +32,9 @@ async fn within<F: std::future::Future>(
 }
 
 impl<S: Store + 'static> DbTransactionRegistry<S> {
-    /// Trusted embedded-host only: the owner still admits the transaction turn;
-    /// native NAC checks the supplied configured Node on the same view. Never
-    /// expose this capability as an HTTP or GraphQL request parameter.
+    /// Trusted embedded-host only: the owner admits the transaction turn and
+    /// native NAC checks that owner on the same view. Never expose this
+    /// capability as an HTTP or GraphQL request parameter.
     pub async fn change_host_nac_source_permission(
         &self,
         owner: &RequestContext,

@@ -21,9 +21,9 @@ impl Node {
             .map_err(transaction_error)
     }
 
-    /// Stage a source-only change as the configured Node in the caller-owned
-    /// transaction. This is a trusted embedded-host capability and is not an
-    /// HTTP or GraphQL operation. Native NAC checks the Node on the bound view.
+    /// Stage a source-only change as the transaction's authenticated actor.
+    /// This is a trusted embedded-host capability and is not an HTTP or
+    /// GraphQL operation. Native NAC checks that actor on the bound view.
     pub async fn change_host_nac_source_permission_in_txn(
         &self,
         owner: &RequestContext,

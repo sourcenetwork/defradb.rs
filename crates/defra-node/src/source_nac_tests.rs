@@ -307,6 +307,34 @@ fn trusted_host_source_change_keeps_user_transaction_owner() {
             .await
             .unwrap();
         let (handle, tx) = begin(&node, &user).await;
+        let denied = node
+            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                &denied,
+                crate::Error::Transaction(query::TransactionError::Storage(
+                    storage::Error::ProjectionPermissionDenied
+                ))
+            ),
+            "Node authority must not substitute for the user: {denied:?}"
+        );
+        node.runner().discard_txn_as(&user, &handle).await.unwrap();
+        let repair = context(&node_did);
+        let (handle, tx) = begin(&node, &repair).await;
+        assert!(node
+            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .await
+            .unwrap());
+        node.runner()
+            .discard_txn_as(&repair, &handle)
+            .await
+            .unwrap();
+        node.add_nac_actor_relationship_as(&owner, "admin", ACTOR)
+            .await
+            .unwrap();
+        let (handle, tx) = begin(&node, &user).await;
         let wrong_owner = context(OTHER).with_txn(Some(handle.as_str().parse().unwrap()));
         assert!(node
             .change_host_nac_source_permission_in_txn(&wrong_owner, &root)
@@ -384,6 +412,10 @@ fn failed_host_source_projection_rolls_back_its_source_statement() {
             .await
             .unwrap();
         let user = context(ACTOR);
+        let node_owner = context(node.node_identity_did().unwrap());
+        node.add_nac_actor_relationship_as(&node_owner, "admin", ACTOR)
+            .await
+            .unwrap();
         let (handle, tx) = begin(&node, &user).await;
         let root = edge(None, "source", "plugin:failed", false);
         assert!(node
@@ -432,16 +464,22 @@ fn host_source_admission_matches_executed_lean_model() {
         let owner = context(ACTOR);
         let admin = context(OWNER);
         let mut observations = Vec::new();
-        for (node_is_granted, readonly, different_owner, expired, omit_transaction) in [
-            (false, false, false, false, false),
-            (true, false, false, false, false),
-            (true, false, true, false, false),
-            (true, true, false, false, false),
-            (true, false, false, true, false),
-            (true, false, false, false, true),
+        for (node_is_granted, actor_is_granted, readonly, different_owner, expired, omit_transaction) in [
+            (false, false, false, false, false, false),
+            (true, false, false, false, false, false),
+            (true, true, false, false, false, false),
+            (true, true, false, true, false, false),
+            (true, true, true, false, false, false),
+            (true, true, false, false, true, false),
+            (true, true, false, false, false, true),
         ] {
             if node_is_granted {
                 node.add_nac_actor_relationship_as(&admin, "admin", node_did.as_str())
+                    .await
+                    .unwrap();
+            }
+            if actor_is_granted {
+                node.add_nac_actor_relationship_as(&admin, "admin", ACTOR)
                     .await
                     .unwrap();
             }
@@ -458,8 +496,8 @@ fn host_source_admission_matches_executed_lean_model() {
                 "fresh": tx.authorization_valid_now(),
                 "writable": !readonly,
                 "configuredNode": node.node_identity_did() == Some(node_did.as_str()),
-                "nodeAdmin": node.nac_manager().is_admin(&node_did).await.unwrap(),
-                "relationAuthorized": node.nac_manager().check_permission(&node_did, acp::NodePermission::NacRelationAdd).await.unwrap(),
+                "actorAdmin": node.nac_manager().is_admin(&Did::new(actual_actor).unwrap()).await.unwrap(),
+                "relationAuthorized": node.nac_manager().check_permission(&Did::new(actual_actor).unwrap(), acp::NodePermission::NacRelationAdd).await.unwrap(),
                 "sameTransaction": tx.txn().is_some_and(|id| id.to_string() == handle.as_str()),
             });
             let accepted = node
@@ -481,7 +519,7 @@ fn host_source_admission_matches_executed_lean_model() {
             "fresh": tx.authorization_valid_now(),
             "writable": true,
             "configuredNode": no_identity.node_identity_did().is_some(),
-            "nodeAdmin": false,
+            "actorAdmin": false,
             "relationAuthorized": false,
             "sameTransaction": tx.txn().is_some_and(|id| id.to_string() == handle.as_str()),
         });

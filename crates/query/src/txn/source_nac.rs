@@ -35,10 +35,10 @@ pub fn source_permission_job(
 }
 
 /// Prepare a source-only host transaction turn. The caller must be the trusted
-/// embedded host; the owner context still controls transaction admission.
+/// embedded host; the transaction owner also supplies the native authority.
 pub fn host_source_permission_job(
     owner_context: RequestContext,
-    node: Did,
+    _node: Did,
     edge: SourcePermission,
 ) -> Result<TxnJob<Result<bool, TransactionError>>, TransactionError> {
     if !owner_context.authorization_valid_now() || owner_context.identity().is_none() {
@@ -46,7 +46,9 @@ pub fn host_source_permission_job(
             "fresh authenticated transaction owner required",
         ));
     }
-    source_permission_job_for(owner_context, node, edge, true)
+    let actor = Did::new(owner_context.identity().expect("identity checked above"))
+        .map_err(|error| TransactionError::operation(error.to_string()))?;
+    source_permission_job_for(owner_context, actor, edge, true)
 }
 
 fn source_permission_job_for(
@@ -78,7 +80,12 @@ fn source_permission_job_for(
                         edge.delete,
                     )
                     .await
-                    .map_err(|error| TransactionError::operation(error.to_string()))?
+                    .map_err(|error| match error {
+                        crate::error::QueryError::PermissionDenied(_) => TransactionError::Storage(
+                            storage::corekv::Error::ProjectionPermissionDenied,
+                        ),
+                        other => TransactionError::operation(other.to_string()),
+                    })?
                     .ok_or_else(|| {
                         TransactionError::not_supported(
                             "transaction-bound node authorization is unavailable",
