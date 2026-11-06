@@ -443,3 +443,84 @@ fn eq_only_matcher_evaluates_filters() {
         &serde_json::json!({"agent_did": "did:y"})
     ));
 }
+
+// ---------------------------------------------------------------------------
+// `@chunk` chunks of a filtered parent
+// ---------------------------------------------------------------------------
+
+const ARTICLES: &str = "articles";
+const CHUNKS: &str = "articles__body_chunk";
+
+// A peer that takes only public articles, with their chunks.
+fn public_articles_peer() -> ReplicatorInfo {
+    ReplicatorInfo::from_raw_with_filters(
+        GO_FIXTURE_PEER_ID.to_string(),
+        vec![ARTICLES.to_string(), CHUNKS.to_string()],
+        vec![],
+        [(
+            ARTICLES.to_string(),
+            ReplicationFilter::eq("kind", serde_json::json!("public")),
+        )]
+        .into(),
+    )
+    .with_chunk_sources([(CHUNKS.to_string(), ARTICLES.to_string())])
+}
+
+#[test]
+fn chunk_sources_round_trip_beside_the_filters() {
+    let info = public_articles_peer();
+
+    let bytes = info.to_bytes().unwrap();
+    assert_eq!(
+        std::str::from_utf8(&bytes).unwrap(),
+        r#"{"ID":"12D3KooWGjMkcMy5PM9iSbgWWgUnH5dQhvzhNu7w3Gk4kHZBsxnJ","Addresses":[],"CollectionIDs":["articles","articles__body_chunk"],"Status":0,"LastStatusChange":"0001-01-01T00:00:00Z","Filters":{"articles":{"predicate":{"kind":{"_eq":"public"}}}},"ChunkSources":{"articles__body_chunk":"articles"}}"#
+    );
+    assert_eq!(ReplicatorInfo::from_bytes(&bytes).unwrap(), info);
+}
+
+#[test]
+fn only_the_chunks_of_a_filtered_parent_get_a_source() {
+    let info = ReplicatorInfo::from_raw(
+        GO_FIXTURE_PEER_ID.to_string(),
+        vec![ARTICLES.to_string(), CHUNKS.to_string()],
+        vec![],
+    )
+    .with_chunk_sources([(CHUNKS.to_string(), ARTICLES.to_string())]);
+
+    assert!(info.chunk_sources.is_empty());
+    assert!(!info.is_filtered_for_collection(CHUNKS));
+}
+
+#[test]
+fn a_chunk_of_a_filtered_parent_counts_as_filtered() {
+    let info = public_articles_peer();
+
+    assert!(info.is_filtered_for_collection(CHUNKS));
+}
+
+#[test]
+fn a_chunk_is_decided_by_its_parents_document() {
+    let info = public_articles_peer();
+
+    assert!(info.matches_chunk_source(
+        &EqOnlyFilterMatcher,
+        CHUNKS,
+        &serde_json::json!({"kind": "public"})
+    ));
+    assert!(!info.matches_chunk_source(
+        &EqOnlyFilterMatcher,
+        CHUNKS,
+        &serde_json::json!({"kind": "secret"})
+    ));
+}
+
+#[test]
+fn a_chunk_never_passes_on_its_own_document() {
+    let info = public_articles_peer();
+
+    assert!(!info.matches_filter(
+        &EqOnlyFilterMatcher,
+        CHUNKS,
+        &serde_json::json!({"kind": "public", "text": "t"})
+    ));
+}

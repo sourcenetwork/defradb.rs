@@ -213,6 +213,14 @@ pub(crate) fn no_replication_filters(filters: &ReplicationFilters) -> bool {
     filters.is_empty()
 }
 
+/// Chunk collection ID to the ID of its parent collection, for each `@chunk`
+/// collection of a filtered parent.
+pub type ChunkSources = BTreeMap<String, String>;
+
+fn no_chunk_sources(sources: &ChunkSources) -> bool {
+    sources.is_empty()
+}
+
 impl From<ReplicatorStatus> for u8 {
     fn from(s: ReplicatorStatus) -> u8 {
         s as u8
@@ -333,6 +341,15 @@ pub struct ReplicatorInfo {
         skip_serializing_if = "no_replication_filters"
     )]
     pub filters: ReplicationFilters,
+
+    /// Rust extension: the chunk collections decided by their parent's filter.
+    /// Omitted when empty, like `Filters`.
+    #[serde(
+        rename = "ChunkSources",
+        default,
+        skip_serializing_if = "no_chunk_sources"
+    )]
+    pub chunk_sources: ChunkSources,
 }
 
 impl Eq for ReplicatorInfo {}
@@ -355,6 +372,7 @@ impl ReplicatorInfo {
             status: ReplicatorStatus::Active,
             last_status_change: go_time_zero(),
             filters: ReplicationFilters::new(),
+            chunk_sources: ChunkSources::new(),
         })
     }
 
@@ -384,6 +402,7 @@ impl ReplicatorInfo {
             status: ReplicatorStatus::Active,
             last_status_change: go_time_zero(),
             filters: ReplicationFilters::new(),
+            chunk_sources: ChunkSources::new(),
         }
     }
 
@@ -401,11 +420,29 @@ impl ReplicatorInfo {
             status: ReplicatorStatus::Active,
             last_status_change: go_time_zero(),
             filters,
+            chunk_sources: ChunkSources::new(),
         }
     }
 
+    /// Records the chunk collections of filtered parents, as `(chunk, parent)` IDs.
+    pub fn with_chunk_sources<I>(mut self, pairs: I) -> Self
+    where
+        I: IntoIterator<Item = (String, String)>,
+    {
+        self.chunk_sources = pairs
+            .into_iter()
+            .filter(|(_, parent)| self.filters.contains_key(parent))
+            .collect();
+        self
+    }
+
     pub fn is_filtered_for_collection(&self, collection_id: &str) -> bool {
-        self.filters.contains_key(collection_id)
+        self.filters.contains_key(collection_id) || self.chunk_sources.contains_key(collection_id)
+    }
+
+    /// Whether `collection_id` is a chunk collection decided by its parent's filter.
+    pub fn is_filtered_chunk(&self, collection_id: &str) -> bool {
+        self.chunk_sources.contains_key(collection_id)
     }
 
     /// The scope this replicator is pushed heads at, and so acknowledges
@@ -418,16 +455,46 @@ impl ReplicatorInfo {
         self.filters.get(collection_id)
     }
 
+    /// The filter that decides `collection_id`: its own, or for a chunk
+    /// collection its parent's.
+    pub fn deciding_filter(&self, collection_id: &str) -> Option<&ReplicationFilter> {
+        match self.chunk_sources.get(collection_id) {
+            Some(parent) => self.filters.get(parent),
+            None => self.filters.get(collection_id),
+        }
+    }
+
+    /// Whether `document` of `collection_id` passes this peer's filter. A
+    /// chunk never passes on its own document: it has none of the parent's
+    /// fields, so a negative filter would let it through.
     pub fn matches_filter(
         &self,
         matcher: &dyn ReplicationFilterMatcher,
         collection_id: &str,
         document: &JsonValue,
     ) -> bool {
+        if self.is_filtered_chunk(collection_id) {
+            return false;
+        }
         match self.filters.get(collection_id) {
             Some(filter) => matcher.matches(collection_id, filter, document),
             None => true,
         }
+    }
+
+    /// Whether a chunk of `collection_id` passes, given its parent's document.
+    pub fn matches_chunk_source(
+        &self,
+        matcher: &dyn ReplicationFilterMatcher,
+        collection_id: &str,
+        source: &JsonValue,
+    ) -> bool {
+        let Some(parent) = self.chunk_sources.get(collection_id) else {
+            return false;
+        };
+        self.filters
+            .get(parent)
+            .is_some_and(|filter| matcher.matches(parent, filter, source))
     }
 
     /// Get the peer ID. Returns `None` if the stored ID is not a valid libp2p PeerId.

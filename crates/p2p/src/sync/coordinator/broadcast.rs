@@ -26,7 +26,49 @@ struct PendingPush {
     collection_id: String,
     creator: String,
     document: Option<JsonValue>,
+    /// The parent's document, for a `@chunk` chunk: its filter decides the chunk.
+    source: Option<JsonValue>,
 }
+
+/// Whether a replicator's filter lets a push through.
+#[derive(Debug, PartialEq, Eq)]
+enum Admission {
+    Admit,
+    /// The peer is filtered and the document its filter needs is not at hand.
+    NoDocument,
+    FilterMiss,
+}
+
+impl PendingPush {
+    /// A chunk is decided by its parent's document, never by its own.
+    fn admission(
+        &self,
+        rep: &crate::replicator::ReplicatorInfo,
+        matcher: &dyn crate::replicator::ReplicationFilterMatcher,
+    ) -> Admission {
+        if !rep.is_filtered_for_collection(&self.collection_id) {
+            return Admission::Admit;
+        }
+        let matched = if rep.is_filtered_chunk(&self.collection_id) {
+            self.source
+                .as_ref()
+                .map(|source| rep.matches_chunk_source(matcher, &self.collection_id, source))
+        } else {
+            self.document
+                .as_ref()
+                .map(|document| rep.matches_filter(matcher, &self.collection_id, document))
+        };
+        match matched {
+            None => Admission::NoDocument,
+            Some(false) => Admission::FilterMiss,
+            Some(true) => Admission::Admit,
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "broadcast_admission_tests.rs"]
+mod admission_tests;
 
 impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     async fn list_replicators_for_push(&self) -> Result<Vec<crate::replicator::ReplicatorInfo>> {
@@ -182,6 +224,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             collection_id: collection_id.to_string(),
             creator: creator.to_string(),
             document: None,
+            source: None,
         })
         .await
     }
@@ -211,6 +254,36 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             collection_id: collection_id.to_string(),
             creator: creator.to_string(),
             document: Some(document.clone()),
+            source: None,
+        })
+        .await
+    }
+
+    /// Push a committed `@chunk` chunk to replicators. A filtered peer gets it
+    /// only when `source`, its parent's document, passes the parent's filter.
+    pub async fn push_chunk_to_replicators_with_creator(
+        &self,
+        cid: &Cid,
+        block: &[u8],
+        doc_id: &str,
+        collection_id: &str,
+        source: Option<&JsonValue>,
+        creator_override: Option<&str>,
+    ) -> Result<()> {
+        let creator = creator_override.unwrap_or(&self.access.local_peer_id);
+        crate::model_trace!(Commit {
+            doc: doc_id,
+            head: cid.to_string(),
+            parents: crate::model_trace::parents_of(block),
+        });
+        self.admit_replicator_push(PendingPush {
+            cid: *cid,
+            block: Bytes::copy_from_slice(block),
+            doc_id: doc_id.to_string(),
+            collection_id: collection_id.to_string(),
+            creator: creator.to_string(),
+            document: None,
+            source: source.cloned(),
         })
         .await
     }
@@ -291,16 +364,13 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 missing_documents += 1;
                 continue;
             }
-            if rep.is_filtered_for_collection(&push.collection_id) {
-                let Some(document) = push.document.as_ref() else {
+            match push.admission(rep, self.runtime.filter_matcher.as_ref()) {
+                Admission::Admit => {}
+                Admission::NoDocument => {
                     missing_documents += 1;
                     continue;
-                };
-                if !rep.matches_filter(
-                    self.runtime.filter_matcher.as_ref(),
-                    &push.collection_id,
-                    document,
-                ) {
+                }
+                Admission::FilterMiss => {
                     filter_misses += 1;
                     continue;
                 }

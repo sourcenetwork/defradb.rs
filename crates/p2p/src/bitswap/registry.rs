@@ -114,6 +114,8 @@ impl ReplicatorRegistry {
                         info.collections.retain(|id| id != collection_id);
                         info.filters
                             .retain(|collection, _| collection != collection_id);
+                        // A chunk whose parent goes stays filtered and so is never pushed.
+                        info.chunk_sources.remove(collection_id);
                     }
                     info.collections.is_empty()
                 }
@@ -448,6 +450,29 @@ mod tests {
         let info = registry.get_replicator_info(&peer).unwrap();
         assert!(info.filters.is_empty());
         assert!(registry.is_replicator("posts", &peer));
+    }
+
+    #[test]
+    fn removing_a_filtered_parent_keeps_its_chunks_filtered() {
+        let registry = ReplicatorRegistry::new();
+        let peer = random_peer_id();
+        let filters = ReplicationFilters::from([(
+            "articles".to_string(),
+            ReplicationFilter::eq("kind", serde_json::json!("public")),
+        )]);
+        registry.set_replicator_info(
+            ReplicatorInfo::from_raw_with_filters(
+                peer.clone(),
+                vec!["articles".to_string(), "chunks".to_string()],
+                vec![],
+                filters,
+            )
+            .with_chunk_sources([("chunks".to_string(), "articles".to_string())]),
+        );
+
+        registry.remove_replicator("articles", &peer);
+
+        assert!(registry.is_filtered_replicator("chunks", &peer));
     }
 
     #[test]
