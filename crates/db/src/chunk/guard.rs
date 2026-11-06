@@ -15,8 +15,9 @@ pub enum ChunkMergeError {
 }
 
 /// Refuses a chunk whose hash doesn't match its text, and any change to an
-/// existing chunk, its vectors included. Otherwise a peer could plant a fake
-/// chunk or vector that the parent's next write would never replace.
+/// existing chunk, its vectors included. A chunk is never written again, so
+/// a change a peer slipped in would stay. A vector is not checked against
+/// its text: no peer can run the model to check it.
 pub fn check_chunk_merge(old: Option<&Document>, merged: &Document) -> Result<(), ChunkMergeError> {
     if let Some(old) = old {
         let changed = old
