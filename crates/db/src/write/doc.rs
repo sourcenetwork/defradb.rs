@@ -29,6 +29,17 @@ fn document_json_value(doc: &Document) -> Option<serde_json::Value> {
     ))
 }
 
+// A copy of the parent's document for its chunks, only when it has some.
+fn chunk_source(
+    plans: &[crate::chunk::sync::FieldChunks],
+    document_json: Option<&serde_json::Value>,
+) -> Option<serde_json::Value> {
+    if plans.is_empty() {
+        return None;
+    }
+    document_json.cloned()
+}
+
 /// Document mutator that uses a database transaction.
 ///
 /// This mutator holds a reference to an active transaction and uses the
@@ -212,7 +223,7 @@ impl<S: Store + 'static> DbDocMutator<S> {
             doc_id,
             doc_cid,
             doc_block,
-            document_json,
+            crate::event::emission::FilterDocument::Own(document_json),
             collection_block,
             creator_did,
         )
@@ -372,13 +383,15 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         let mut doc = created.doc;
         doc.clear_write_preparation();
 
+        let document_json = document_json_value(&doc);
+        let source = chunk_source(&chunk_plans, document_json.as_ref());
         self.register_update_callback(
             collection_name.to_string(),
             collection.collection_id().to_string(),
             created.doc_id.to_string(),
             created.cid,
             created.block,
-            document_json_value(&doc),
+            document_json,
             created.collection_block,
             context.creator().map(str::to_owned),
         )
@@ -386,7 +399,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         let derived = {
             let txn = self.shared_txn()?;
             self.chunk_writes(&txn, context)
-                .create_missing(&created.doc_id.to_string(), chunk_plans)
+                .create_missing(&created.doc_id.to_string(), source.as_ref(), chunk_plans)
                 .await?
         };
 
@@ -534,6 +547,8 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         )
         .await?;
 
+        let document_json = document_json_value(&doc);
+        let source = chunk_source(&chunk_plans, document_json.as_ref());
         if let Some(doc_id) = doc.id().cloned() {
             self.register_update_callback(
                 collection_name.to_string(),
@@ -541,7 +556,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                 doc_id.to_string(),
                 doc_cid,
                 doc_block,
-                document_json_value(&doc),
+                document_json,
                 col_block_data,
                 context.creator().map(str::to_owned),
             )
@@ -551,7 +566,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         {
             let txn = self.shared_txn()?;
             self.chunk_writes(&txn, context)
-                .create_missing(&canonical_doc_id.to_string(), chunk_plans)
+                .create_missing(&canonical_doc_id.to_string(), source.as_ref(), chunk_plans)
                 .await?;
         }
 
@@ -680,6 +695,9 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
             (block_result.cid, block_result.block, col_block_data)
         };
 
+        let source = (!collection.schema().chunked_fields.is_empty())
+            .then(|| pre_delete_document_json.clone())
+            .flatten();
         self.register_update_callback(
             collection_name.to_string(),
             collection.collection_id().to_string(),
@@ -694,7 +712,11 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         {
             let txn = self.shared_txn()?;
             self.chunk_writes(&txn, context)
-                .delete_all(collection.schema(), &canonical_doc_id.to_string())
+                .delete_all(
+                    collection.schema(),
+                    &canonical_doc_id.to_string(),
+                    source.as_ref(),
+                )
                 .await?;
         }
 

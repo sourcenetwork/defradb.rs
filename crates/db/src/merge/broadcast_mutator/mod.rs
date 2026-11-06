@@ -53,6 +53,16 @@ fn capture_marker_error(slot: &mut Option<String>, result: p2p::error::Result<()
     }
 }
 
+// The parent as its replication filter sees it, only when it has chunks to push.
+fn parent_source(
+    derived: &[query::mutator::DerivedWrite],
+    parent: &Document,
+) -> Option<serde_json::Value> {
+    (!derived.is_empty()).then(|| {
+        serde_json::Value::Object(parent.to_map().unwrap_or_default().into_iter().collect())
+    })
+}
+
 fn marker_broadcast_status(error: Option<String>) -> BroadcastStatus {
     error.map_or(BroadcastStatus::Pending, BroadcastStatus::Failed)
 }
@@ -277,11 +287,13 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> SeArtifactRep
 
 impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMutator<S, B, T> {
     /// Publishes a write's derived writes, each like a normal write. Returns the
-    /// first error, which the write's broadcast status reports.
+    /// first error, which the write's broadcast status reports. `source` is the
+    /// parent's document, which a filtered replicator decides them by.
     async fn publish_derived(
         &self,
         context: &RequestContext,
         derived: &[query::mutator::DerivedWrite],
+        source: Option<&serde_json::Value>,
     ) -> Option<String> {
         if derived.is_empty() {
             return None;
@@ -297,40 +309,17 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
                 field_cids: vec![],
                 encryption_cids: vec![],
             };
-            let document_map = match write.document.as_ref().map(|document| document.to_map()) {
-                Some(Ok(map)) => Some(map),
-                Some(Err(error)) => {
-                    tracing::warn!(doc_id = %block.doc_id, %error, "chunk document did not encode; pushed without it");
-                    None
-                }
-                None => None,
-            };
-            let marker = match document_map {
-                Some(map) => {
-                    let document_json = serde_json::Value::Object(map.into_iter().collect());
-                    self.sync
-                        .push_document_to_replicators_with_creator(
-                            &block.cid,
-                            &block.block,
-                            &block.doc_id,
-                            &write.collection_id,
-                            &document_json,
-                            creator_did.as_deref(),
-                        )
-                        .await
-                }
-                None => {
-                    self.sync
-                        .push_to_replicators_with_creator(
-                            &block.cid,
-                            &block.block,
-                            &block.doc_id,
-                            &write.collection_id,
-                            creator_did.as_deref(),
-                        )
-                        .await
-                }
-            };
+            let marker = self
+                .sync
+                .push_chunk_to_replicators_with_creator(
+                    &block.cid,
+                    &block.block,
+                    &block.doc_id,
+                    &write.collection_id,
+                    source,
+                    creator_did.as_deref(),
+                )
+                .await;
             capture_marker_error(&mut marker_error, marker);
             blocks.push((
                 block,
@@ -364,7 +353,10 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
         se_fields: Vec<String>,
         result: UpdateResult,
     ) -> query::error::Result<UpdateResult> {
-        let derived_error = self.publish_derived(context, &result.derived).await;
+        let source = parent_source(&result.derived, &result.document);
+        let derived_error = self
+            .publish_derived(context, &result.derived, source.as_ref())
+            .await;
         let collection = self
             .db
             .get_collection(collection_name)
@@ -691,7 +683,10 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
 
         // Execute the create mutation
         let result = self.inner.create_as(context, collection_name, doc).await?;
-        let derived_error = self.publish_derived(context, &result.derived).await;
+        let source = parent_source(&result.derived, &result.document);
+        let derived_error = self
+            .publish_derived(context, &result.derived, source.as_ref())
+            .await;
 
         // Build the block result for broadcast
         let (cid, block, doc_id_str) =
@@ -877,7 +872,11 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             .create_many_as(context, collection_name, docs)
             .await?;
         for result in &results {
-            if let Some(error) = self.publish_derived(context, &result.derived).await {
+            let source = parent_source(&result.derived, &result.document);
+            if let Some(error) = self
+                .publish_derived(context, &result.derived, source.as_ref())
+                .await
+            {
                 tracing::error!(
                     doc_id = %result.doc_id,
                     error = %error,
@@ -1180,7 +1179,9 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             .inner
             .delete_as(context, collection_name, doc_id)
             .await?;
-        let derived_error = self.publish_derived(context, &result.derived).await;
+        let derived_error = self
+            .publish_derived(context, &result.derived, pre_delete_document_json.as_ref())
+            .await;
 
         // No-op delete (missing doc): the inner mutator wrote nothing, so
         // there's no tombstone block to read or broadcast. Returning here

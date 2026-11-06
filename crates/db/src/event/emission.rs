@@ -14,6 +14,25 @@ use crate::error::Result;
 use crate::merge::governance::LocalCommitRelease;
 use crate::txn::DbTxn;
 
+/// The document a filtered replicator decides a committed write by.
+#[derive(Debug, Clone)]
+pub enum FilterDocument {
+    /// The write's own document, when it encoded.
+    Own(Option<serde_json::Value>),
+    /// A `@chunk` chunk's parent document, never the chunk's own.
+    Parent(Option<serde_json::Value>),
+}
+
+impl FilterDocument {
+    /// The write's own document, `None` for a chunk.
+    pub fn own(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::Own(document) => document.as_ref(),
+            Self::Parent(_) => None,
+        }
+    }
+}
+
 /// Per-mutation broadcast payload, mirroring Go's sendUpdate call.
 #[derive(Debug, Clone)]
 pub struct TxnBroadcastEvent {
@@ -22,7 +41,7 @@ pub struct TxnBroadcastEvent {
     pub doc_id: String,
     pub doc_cid: Cid,
     pub doc_block: Bytes,
-    pub document_json: Option<serde_json::Value>,
+    pub filter_document: FilterDocument,
     pub collection_block: Option<(Cid, Bytes)>,
     pub creator_did: Option<String>,
 }
@@ -75,7 +94,7 @@ pub(crate) fn register_update_event_callback<S>(
     doc_id: String,
     doc_cid: Cid,
     doc_block: Bytes,
-    document_json: Option<serde_json::Value>,
+    filter_document: FilterDocument,
     collection_block: Option<(Cid, Bytes)>,
     creator_did: Option<String>,
 ) -> Result<()>
@@ -98,7 +117,7 @@ where
         doc_id,
         doc_cid,
         doc_block,
-        document_json,
+        filter_document,
         collection_block,
         creator_did,
     };

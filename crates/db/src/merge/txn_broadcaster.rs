@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use crate::block::builder::BlockResult;
-use crate::event::emission::{BroadcastDone, TxnBroadcastEvent, TxnBroadcaster};
+use crate::event::emission::{BroadcastDone, FilterDocument, TxnBroadcastEvent, TxnBroadcaster};
 use blockstore::Blockstore;
 use p2p::sync::SyncCoordinator;
 use p2p::transport::P2PTransport;
@@ -126,13 +126,27 @@ where
         doc_id,
         doc_cid,
         doc_block,
-        document_json,
+        filter_document,
         collection_block,
         creator_did,
     } = event;
 
     let creator_ref = creator_did.as_deref();
-    if let Some(document_json) = document_json.as_ref() {
+    if let FilterDocument::Parent(source) = &filter_document {
+        if let Err(error) = sync
+            .push_chunk_to_replicators_with_creator(
+                &doc_cid,
+                &doc_block,
+                &doc_id,
+                &collection_id,
+                source.as_ref(),
+                creator_ref,
+            )
+            .await
+        {
+            tracing::error!(%error, %doc_id, %collection_id, "Committed transaction has an undurable P2P chunk marker");
+        }
+    } else if let Some(document_json) = filter_document.own() {
         if let Err(error) = sync
             .push_document_to_replicators_with_creator(
                 &doc_cid,

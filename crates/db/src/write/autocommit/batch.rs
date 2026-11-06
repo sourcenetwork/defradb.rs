@@ -197,7 +197,7 @@ impl<S: Store + 'static> BatchMutator<S> {
             doc_id,
             doc_cid,
             doc_block,
-            None,
+            crate::event::emission::FilterDocument::Own(None),
             collection_block,
             None,
         )
@@ -515,7 +515,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         result.derived = {
             let txn = self.shared_txn()?;
             self.chunk_writes(&txn, context)
-                .create_missing(&parent_id, chunk_plans)
+                .create_missing(&parent_id, None, chunk_plans)
                 .await?
         };
         Ok(result)
@@ -678,7 +678,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         let derived = {
             let txn = self.shared_txn()?;
             self.chunk_writes(&txn, context)
-                .create_missing(&canonical_doc_id.to_string(), chunk_plans)
+                .create_missing(&canonical_doc_id.to_string(), None, chunk_plans)
                 .await?
         };
 
@@ -821,7 +821,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         let derived = {
             let txn = self.shared_txn()?;
             self.chunk_writes(&txn, context)
-                .delete_all(collection.schema(), &canonical_doc_id.to_string())
+                .delete_all(collection.schema(), &canonical_doc_id.to_string(), None)
                 .await?
         };
 
