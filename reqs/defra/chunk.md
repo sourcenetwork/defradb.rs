@@ -153,6 +153,13 @@ After an article and its chunks reach the second node, deleting the article on t
 
 A replicator set up for `Article` alone gives the second node the same `_body_chunks` list and exactly the same chunks. The CLI sets the replicator with `--collection Article`.
 
+# `defra.chunk.replicate.filtered`: A filtered replicator ships the chunks of the parents it matches
+
+- **Parents:** ["defra.chunk.replicate"]
+- **Scenarios:** ["chunk::replicate_filtered::a_filtered_replicator_ships_the_chunks_of_matching_parents", "chunk::replicate_filtered::a_filtered_replicator_replays_the_chunks_of_existing_matching_parents", "chunk::replicate_filtered::a_matching_parent_delete_removes_its_chunks_on_the_filtered_peer", "chunk::replicate_filtered::an_explicit_transaction_ships_the_chunks_of_a_matching_parent"]
+
+With `type Article { kind: String @immutable body: String @chunk(maxChars: 64) }` and a replicator for `Article` with the filter `{"kind": {"_eq": "public"}}`, a public article written on the first node reaches the second with the same `_body_chunks` list and exactly its chunks, and a secret article does not reach it. A chunk is sent when its article matches the filter, never on its own document, and is not sent when its article's document is not at hand. This holds for a single write, an update, a delete, a write in an explicit transaction, and articles that existed before the replicator was added. The CLI sets the filter with `--filter`. Go has no filtered replicators, so a Go node reports these scenarios as unsupported.
+
 # `defra.chunk.backup`: Backups and chunks
 
 - **Parents:** ["defra.chunk"]

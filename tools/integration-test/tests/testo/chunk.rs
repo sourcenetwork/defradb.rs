@@ -12,6 +12,7 @@ mod protect_no_mutations;
 mod purge_truncate;
 mod replicate_chunks;
 mod replicate_delete;
+mod replicate_filtered;
 mod replicate_parent_only;
 mod support;
 mod write_concurrent;
