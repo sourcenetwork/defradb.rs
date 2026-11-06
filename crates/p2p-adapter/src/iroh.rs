@@ -220,8 +220,7 @@ impl<B: Blockstore + 'static> IrohP2PAdapter<B> {
 
     /// Resolve collection names to CIDs for removal, mirroring `add_replicator`.
     fn resolve_collections_for_remove(&self, collections: Vec<String>) -> Vec<String> {
-        let collections =
-            crate::with_chunk_collections(self.doc_pusher.as_ref(), collections);
+        let collections = crate::with_chunk_collections(self.doc_pusher.as_ref(), collections);
         match self.doc_pusher {
             Some(ref pusher) => crate::resolve_remove_collections(collections, |name| {
                 pusher.get_collection_id(name)
@@ -899,22 +898,21 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
             .await?;
 
         if let Some(ref coordinator) = self.sync_coordinator {
-            let topic_ids =
-                crate::with_chunk_collections(self.doc_pusher.as_ref(), collections)
-                    .into_iter()
-                    .map(|collection_name| {
-                        if let Some(ref pusher) = self.doc_pusher {
-                            pusher.get_collection_id(&collection_name).ok_or_else(|| {
-                                P2PError::not_found(format!(
-                                    "collection not found. Name: {}",
-                                    collection_name
-                                ))
-                            })
-                        } else {
-                            Ok(collection_name)
-                        }
-                    })
-                    .collect::<P2PResult<Vec<_>>>()?;
+            let topic_ids = crate::with_chunk_collections(self.doc_pusher.as_ref(), collections)
+                .into_iter()
+                .map(|collection_name| {
+                    if let Some(ref pusher) = self.doc_pusher {
+                        pusher.get_collection_id(&collection_name).ok_or_else(|| {
+                            P2PError::not_found(format!(
+                                "collection not found. Name: {}",
+                                collection_name
+                            ))
+                        })
+                    } else {
+                        Ok(collection_name)
+                    }
+                })
+                .collect::<P2PResult<Vec<_>>>()?;
 
             coordinator
                 .subscribe_collections(&topic_ids)
@@ -934,22 +932,21 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
             .await?;
 
         if let Some(ref coordinator) = self.sync_coordinator {
-            let topic_ids =
-                crate::with_chunk_collections(self.doc_pusher.as_ref(), collections)
-                    .into_iter()
-                    .map(|collection_name| {
-                        if let Some(ref pusher) = self.doc_pusher {
-                            pusher.get_collection_id(&collection_name).ok_or_else(|| {
-                                P2PError::not_found(format!(
-                                    "collection not found. Name: {}",
-                                    collection_name
-                                ))
-                            })
-                        } else {
-                            Ok(collection_name)
-                        }
-                    })
-                    .collect::<P2PResult<Vec<_>>>()?;
+            let topic_ids = crate::with_chunk_collections(self.doc_pusher.as_ref(), collections)
+                .into_iter()
+                .map(|collection_name| {
+                    if let Some(ref pusher) = self.doc_pusher {
+                        pusher.get_collection_id(&collection_name).ok_or_else(|| {
+                            P2PError::not_found(format!(
+                                "collection not found. Name: {}",
+                                collection_name
+                            ))
+                        })
+                    } else {
+                        Ok(collection_name)
+                    }
+                })
+                .collect::<P2PResult<Vec<_>>>()?;
 
             coordinator
                 .unsubscribe_collections(&topic_ids)

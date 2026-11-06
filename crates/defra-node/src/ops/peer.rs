@@ -58,13 +58,8 @@ impl Node {
         addresses: &[String],
         collections: &[String],
     ) -> Result<()> {
-        self.add_filtered_replicator_as(
-            context,
-            addresses,
-            collections,
-            ReplicationFilters::new(),
-        )
-        .await
+        self.add_filtered_replicator_as(context, addresses, collections, ReplicationFilters::new())
+            .await
     }
 
     /// [`Self::add_replicator_as`] that pushes only the documents `filters`

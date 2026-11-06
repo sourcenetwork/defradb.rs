@@ -14,12 +14,19 @@ fn public_articles_peer() -> ReplicatorInfo {
         "peer".to_string(),
         vec![ARTICLES.to_string(), CHUNKS.to_string()],
         Vec::new(),
-        [(ARTICLES.to_string(), ReplicationFilter::eq("kind", json!("public")))].into(),
+        [(
+            ARTICLES.to_string(),
+            ReplicationFilter::eq("kind", json!("public")),
+        )]
+        .into(),
     )
     .with_chunk_sources([(CHUNKS.to_string(), ARTICLES.to_string())])
 }
 
-fn chunk_push(document: Option<serde_json::Value>, source: Option<serde_json::Value>) -> PendingPush {
+fn chunk_push(
+    document: Option<serde_json::Value>,
+    source: Option<serde_json::Value>,
+) -> PendingPush {
     PendingPush {
         cid: Cid::default(),
         block: Bytes::new(),

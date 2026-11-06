@@ -69,7 +69,12 @@ async fn node() -> Node {
 }
 
 async fn write(node: &Node, kind: &str) -> Written {
-    let schema = node.db.get_collection("Article").unwrap().unwrap().schema_arc();
+    let schema = node
+        .db
+        .get_collection("Article")
+        .unwrap()
+        .unwrap()
+        .schema_arc();
     let mut doc = Document::new(schema);
     doc.set("kind", NormalValue::String(kind.into())).unwrap();
     doc.set("body", NormalValue::String(format!("The {kind} body.")))

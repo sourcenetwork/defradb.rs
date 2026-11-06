@@ -206,7 +206,8 @@ fn an_explicit_transaction_ships_the_chunks_of_a_matching_parent() {
 fn read_public_list(prefix: &str, n: usize) -> Actions {
     let mut list = read_list(prefix, n, Some("db0"));
     if let Actions::Request(request) = &mut list {
-        request.request = r#"query { Article(filter: {kind: {_eq: "public"}}) { _body_chunks } }"#.into();
+        request.request =
+            r#"query { Article(filter: {kind: {_eq: "public"}}) { _body_chunks } }"#.into();
     }
     list
 }
