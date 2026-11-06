@@ -190,8 +190,8 @@ Rust-native tests that exercise the full node via CLI + HTTP API. Primary valida
 
 ```bash
 cargo nextest run -p integration-test                           # All areas
-cargo nextest run -p integration-test --test basic              # Specific area
-cargo nextest run -p integration-test --test acp -- negative::  # Specific module
+cargo nextest run -p integration-test --test query                # A testo area (tests/testo/)
+cargo nextest run -p integration-test --test legacy -- acp::negative:: # A legacy module (tests/legacy/)
 ```
 
 Areas: `basic`, `query`, `acp`, `nac`, `p2p`, `fts`, `encryption`, `identity`, `backup`, `vera`, `verars`

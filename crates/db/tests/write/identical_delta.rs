@@ -2,7 +2,7 @@
 //!
 //! Setting the same field to the same value in two different documents makes
 //! the two writes look alike, and the integration repro
-//! (`tools/integration-test/tests/issue1194_repro.rs`) says one of the commits
+//! (`tools/integration-test/tests/legacy/issue1194_repro.rs`) says one of the commits
 //! is refused for a conflict. This pins the same thing at the layer that
 //! produces the writes, where the conflicting key is visible.
 

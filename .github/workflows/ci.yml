@@ -632,35 +632,28 @@ jobs:
       - name: Run rust integration tests (basic)
         if: matrix.suite == 'rust' || matrix.suite == 'signed-docs'
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test --test basic
-          -- --skip ::go_
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^basic::/) & not test(/^[a-z0-9_]+::.*::go_/)'
       - name: Run rust integration tests (core suites)
         if: matrix.suite == 'rust' || matrix.suite == 'signed-docs'
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test
-          --test query --test acp --test nac --test encryption --test identity
-          --test backup --test fts --test vector --test acp_replay_outage_repro
-          --test matchers --test export --test issue1211_repro --test issue1294_bytes_json
-          -- --skip ::go_
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E
+          'test(/^(query|acp|nac|encryption|identity|backup|fts|vector|acp_replay_outage_repro|issue1211_repro|issue1294_bytes_json)::/) & not test(/^[a-z0-9_]+::.*::go_/)'
       - name: Run rust integration tests on a one-worker pool (basic, query)
         if: matrix.suite == 'one-worker'
         env:
           # Every node the suites start runs its data path on one worker.
           DEFRA_WORKERS: '1'
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test --test basic --test query
-          -- --skip ::go_
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^(basic|query)::/) & not test(/^[a-z0-9_]+::.*::go_/)'
       - name: Run rust P2P integration tests
         if: matrix.suite == 'rust' || matrix.suite == 'signed-docs'
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p
-          -- --skip ::go_
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p::/) & not test(/^[a-z0-9_]+::.*::go_/)'
       - name: Run go-compat integration tests
         if: matrix.suite == 'go-compat'
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test
-          --test basic --test query --test acp --test nac --test backup --test p2p --test identity
-          --test encryption --test vera
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E
+          'test(/^(basic|query|acp|nac|backup|p2p|identity|encryption|vera)::/)'
           -- go_
           --skip go_acp_link_collection_nonexistent_policy_reject
           --skip go_acp_link_collection_nonexistent_resource_reject
@@ -681,15 +674,15 @@ jobs:
       - name: Run iroh integration tests
         if: matrix.suite == 'iroh'
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_iroh
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_iroh::/)'
           -- connection::
           sync::version::initial_col_version sync::version::patch_version_of_
       - name: Run iroh sync ownership fences
         if: matrix.suite == 'iroh'
         run: |
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_iroh \
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_iroh::/)' \
             peer::create::create_propagates_to_last_node_in_chain
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_iroh \
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_iroh::/)' \
             peer::create::head_hint_fanout_above_car_worker_bound_quiesces
       - name: Upload harness node logs
         if: failure()
@@ -742,17 +735,16 @@ jobs:
       - run: chmod +x target/ci/defra target/ci/defra-iroh
       - name: Run rust P2P integration tests
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p
-          -- --skip ::go_
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p::/) & not test(/^[a-z0-9_]+::.*::go_/)'
       - name: Run P2P ownership durability fences
         run: |
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_admission
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_admission_restart
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_admission_fairness
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_backlog
-          cargo nextest run --cargo-profile super-dev -p integration-test --test issue1154_repro
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_deep_catchup
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_push_storm
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_admission::/)'
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_admission_restart::/)'
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_admission_fairness::/)'
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_backlog::/)'
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^issue1154_repro::/)'
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_deep_catchup::/)'
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_push_storm::/)'
       # Not run: p2p_interop_bench, whose one test is an ignored benchmark that
       # prints latencies. p2p_push_storm's storm test stays ignored too: a
       # profiling harness whose gates are opt-in DEFRA_PUSH_STORM_* variables.
@@ -792,25 +784,21 @@ jobs:
       DEFRA_E2E_KEEP: '1'
       # A failing scenario shows its in-process nodes' P2P trace.
       DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,warn
-      # basic holds legacy tests and one testo module, txn_context.
       TESTO: >-
-        --test acp_scenarios --test backup_scenarios --test chunk --test collection
-        --test collection_version --test encryption_scenarios --test explain
-        --test index --test issues --test mutation --test net --test node
-        --test query_scenarios --test searchable_encryption --test signature
-        --test subscription --test txn --test view --test basic
-      TESTO_FILTER: not binary(=basic) | test(/^txn_context::/)
+        --test testo
+      TESTO_FILTER: all()
       # Not run anywhere: p2p_interop_bench, whose one test is an ignored
       # benchmark that prints latencies, and verars, whose cluster needs the
       # verad validator binary from vera.rs, which CI does not build.
       LEGACY: >-
-        --test cursor --test http_contract --test issue1194_repro
-        --test acp_replay_outage_cross_runtime
+        --test legacy
       # c_rust_to_go_outage_replay (#2089) flips between runs: the Go receiver
       # sometimes misses the protected document written while it was down. A
       # known-failure entry would fail every run it passes, so the test is left
       # out here instead of listed; run it again once #2089 is fixed.
-      LEGACY_FILTER: not test(=c_rust_to_go_outage_replay)
+      LEGACY_FILTER: >-
+        test(/^(cursor|http_contract|issue1194_repro|acp_replay_outage_cross_runtime)::/)
+        & not test(=acp_replay_outage_cross_runtime::c_rust_to_go_outage_replay)
       # Go gives Foo the wrong ID beside FooBar only in some runs (#2528), so a
       # known-failure entry would fail the runs it passes; go-http leaves it out.
       GO_HTTP_FILTER: "& not test(=collection::deterministic_ids::a_collection_beside_a_longer_namesake_gets_one_id)"

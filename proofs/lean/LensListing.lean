@@ -12,7 +12,7 @@ Rust owner: crates/lens/src/wasm.rs `WasmTransformStore::list` and
 crates/lens/src/store.rs `list`, which map each `(id, config)` to
 `(id, config.lenses)`; crates/db/src/txn/registry/lifecycle.rs `list_lenses_as`
 serializes the result. The Rust check is
-tools/integration-test/tests/collection_version (ListLenses scenarios).
+tools/integration-test/tests/testo/collection_version (ListLenses scenarios).
 -/
 
 namespace LensListing
