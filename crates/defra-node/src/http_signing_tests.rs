@@ -896,8 +896,7 @@ fn incomplete_fragmented_signing_request_can_be_discarded_without_a_write() {
         },
         Message,
     };
-    use crypto::{Key as _, PrivateKey as _};
-    use futures::SinkExt;
+    use crypto::PrivateKey as _;
 
     edge::testing::edge().block_on(async {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

@@ -10,6 +10,9 @@ use serde_json::Value;
 use std::io::{self, Write};
 
 pub(crate) const MAX_FRAME: usize = 1024 * 1024;
+/// Bounds each encoded logical message, including hex-encoded signing blocks.
+/// JSON and hex conversion run on the socket task; this limit does not create
+/// a separate executor for that work.
 pub(crate) const MAX_MESSAGE: usize = 16 * 1024 * 1024;
 const CHUNK_SIZE: usize = 256 * 1024;
 
