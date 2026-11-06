@@ -113,7 +113,7 @@ pub async fn tx_commit(
 /// A typed registry conflict is decided before the storage commit record.
 /// Text-classified conflicts do not carry this receipt.
 fn commit_error_response(error: TransactionError) -> Response {
-    if matches!(error, TransactionError::Conflict(_)) {
+    if commit_has_abort_receipt(Some(&error)) {
         #[derive(Serialize)]
         struct ConfirmedConflict {
             error: &'static str,
@@ -129,6 +129,10 @@ fn commit_error_response(error: TransactionError) -> Response {
             .into_response();
     }
     HttpError::from(error).into_response()
+}
+
+fn commit_has_abort_receipt(error: Option<&TransactionError>) -> bool {
+    matches!(error, Some(TransactionError::Conflict(_)))
 }
 
 #[cfg(test)]
@@ -156,6 +160,25 @@ mod commit_receipt_tests {
                 assert_eq!(value["outcome"], "transaction_conflict_aborted");
             }
         }
+    }
+
+    #[test]
+    #[ignore = "Requires Lean; run in the Lean Conformance job"]
+    fn commit_receipt_matches_model() {
+        let output = std::process::Command::new("lake")
+            .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../proofs/lean"))
+            .args(["env", "lean", "--run", "CommitConflictReceipt.lean"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let expected: Vec<bool> = serde_json::from_slice(&output.stdout).unwrap();
+        let typed = TransactionError::conflict("typed");
+        let execution = TransactionError::execution("transaction conflict. Please retry");
+        let actual: Vec<bool> = [Some(&typed), Some(&execution), None]
+            .into_iter()
+            .map(commit_has_abort_receipt)
+            .collect();
+        assert_eq!(actual, expected);
     }
 }
 
