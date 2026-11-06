@@ -9,6 +9,7 @@ mod acp;
 mod backup;
 mod collection;
 mod collection_version;
+mod cursor;
 mod encryption;
 mod explain;
 mod export;

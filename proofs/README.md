@@ -102,6 +102,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Per-peer stream cap | TLA+ | p2p |
 | Receive gate | TLA+ | p2p, db |
 | P2P delivery liveness | TLA+ | p2p, p2p-adapter, db-merge, storage |
+| Cursor tokens | Lean | cursor |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is
@@ -208,6 +209,7 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 | Order-preserving key encoding | Boundary | ordered query may sort in memory; consts `pub(crate)` |
 | DiskANN resident code table | Boundary | in-memory search cache, not observable on the wire; `DiskAnnCodes`; unit tests in `crates/db/tests/vector/diskann_resident.rs` |
 | P2P delivery liveness | Behavioral (trace) + Boundary | `model_trace.rs` replays recorded runs through `Trace_P2PDelivery.tla`; eventual connectivity, the bounded instance and the restart scenarios stay Boundary |
+| Cursor tokens | Boundary | `CursorToken`; tokens pinned by `crates/cursor/tests/go_fixtures.rs` |
 
 ```bash
 proofs/verify-all.sh                 # TLA + Lean + conformance (behavioral if binary present)
