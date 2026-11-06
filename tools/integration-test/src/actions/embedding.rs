@@ -34,6 +34,8 @@ pub fn embedding_of(text: &str) -> Vec<f64> {
 struct Model {
     url: String,
     embedded: Atom<Vec<(String, String)>>,
+    /// The model names that answer every request with a server error.
+    failing: Atom<Vec<String>>,
     runs: AtomicU64,
 }
 
@@ -51,6 +53,7 @@ fn model() -> &'static Model {
         Model {
             url,
             embedded: Atom::new(Vec::new()),
+            failing: Atom::new(Vec::new()),
             runs: AtomicU64::new(0),
         }
     })
@@ -80,6 +83,13 @@ fn answer(mut stream: TcpStream) {
         Value::String(text) => vec![text.clone()],
         other => serde_json::from_value(other.clone()).unwrap_or_default(),
     };
+    if model().failing.load_clone().contains(&name) {
+        let _ = write!(
+            stream,
+            "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+        return;
+    }
     model().embedded.rcu(|embedded| {
         let mut embedded = embedded.clone();
         embedded.extend(texts.iter().map(|text| (name.clone(), text.clone())));
@@ -101,10 +111,13 @@ fn answer(mut stream: TcpStream) {
 /// The test's embedding model. The first run of this action in a test gives
 /// the test a model of its own and captures [`EMBEDDING_CAPTURE`]; every run
 /// returns `{"embedded": [...]}`, the texts the model embedded for the test
-/// since the run before.
+/// since the run before. With `failing` set, the model answers every later
+/// request with a server error, or works again when it is `false`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmbeddingModel {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failing: Option<bool>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -146,6 +159,16 @@ impl Op for EmbeddingModel {
             .as_str()
             .unwrap_or_default()
             .to_owned();
+        if let Some(failing) = self.failing {
+            model.failing.rcu(|names| {
+                let mut names: Vec<String> =
+                    names.iter().filter(|n| **n != name).cloned().collect();
+                if failing {
+                    names.push(name.clone());
+                }
+                names
+            });
+        }
         let seen = state.captures[SEEN_CAPTURE].as_u64().unwrap_or(0) as usize;
         let texts: Vec<String> = model
             .embedded
