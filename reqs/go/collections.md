@@ -44,6 +44,13 @@ A one-to-many relation gets its relation ID field on the one side regardless of 
 
 The GraphQL types, inputs and arguments DefraDB generates from collection definitions, checked through introspection queries.
 
+# `go.collection_version.introspection.full_schema`: The whole introspected schema matches the golden
+
+- **Parents:** ["go.collection_version.introspection"]
+- **Go-Tests:** ["internal/request/graphql/schema/manager_npx_test.go::TestWriteSDL"]
+
+For each of Go's three schema generator fixtures (one collection; a one-to-one relation; a one-to-many relation), the response to the standard client introspection query (`introspection_golden/client_introspection.gql`, the Altair/GraphiQL/Postman query) describes the same schema as its golden in `tools/integration-test/tests/testo/collection_version/introspection_golden/`: the same directives, types, fields, arguments, input fields, enum values, type references, default values and descriptions. Lists may come in any order. The goldens were taken from Go DefraDB at `GO_COMPAT_COMMIT`; Go is the reference, not the definition, so a deliberate difference is made by editing the golden and saying why here. Go checks the same fixtures as generated SDL files.
+
 # `go.collection_version.introspection.similarity`: `_similarity` on vector-capable fields
 
 - **Parents:** ["go.collection_version.introspection"]

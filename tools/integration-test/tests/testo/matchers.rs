@@ -433,3 +433,21 @@ fn ref_and_concat_resolve_against_captures() {
     assert!(resolve(&m::r("missing"), &captures).is_err());
     assert!(resolve(&json!({"$concat": []}), &captures).is_err());
 }
+
+#[test]
+fn same_schema_ignores_list_order_but_not_content() {
+    let golden = json!({ "types": [
+        { "name": "A", "fields": [{ "name": "x" }, { "name": "y" }] },
+        { "name": "B", "fields": [] },
+    ] });
+    let reordered = json!({ "types": [
+        { "name": "B", "fields": [] },
+        { "name": "A", "fields": [{ "name": "y" }, { "name": "x" }] },
+    ] });
+    let missing_field = json!({ "types": [
+        { "name": "A", "fields": [{ "name": "x" }] },
+        { "name": "B", "fields": [] },
+    ] });
+    assert!(matches(m::same_schema(golden.clone()), reordered));
+    assert!(!matches(m::same_schema(golden), missing_field));
+}

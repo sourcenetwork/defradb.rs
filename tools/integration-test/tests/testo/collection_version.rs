@@ -7,6 +7,7 @@ mod aggregates {
 }
 mod branchable_directive;
 mod client;
+mod introspection_golden;
 mod client_introspection {
     mod one_many;
     mod simple;
