@@ -37,16 +37,21 @@ fn nearest_to_rivers(expected: Value, identity: Option<u64>) -> Request {
     }
 }
 
-fn river_chunks(title: &str) -> Vec<Value> {
+/// The chunks of an article about `topic`, with their similarity to "rivers".
+fn ranked_chunks(topic: &str, sim: f64, title: &str) -> Vec<Value> {
     (0..PARAGRAPHS)
         .map(|i| {
             json!({
-                "text": paragraph(i, "rivers", i + 1 == PARAGRAPHS),
-                "sim": 1.0,
+                "text": paragraph(i, topic, i + 1 == PARAGRAPHS),
+                "sim": sim,
                 "source": { "title": title },
             })
         })
         .collect()
+}
+
+fn river_chunks(title: &str) -> Vec<Value> {
+    ranked_chunks("rivers", 1.0, title)
 }
 
 #[test]
@@ -98,9 +103,24 @@ fn passage_search_shows_only_chunks_of_readable_articles() {
             ..Default::default()
         }
         .into(),
+        // Created with no identity, so anyone may read it; its chunks rank below Alice's.
+        AddDoc {
+            collection: "Article".into(),
+            doc_map: Some(json!({ "title": "public", "body": body(PARAGRAPHS, "engines") })),
+            ..Default::default()
+        }
+        .into(),
         nearest_to_rivers(json!({ CHUNKS: river_chunks("secret") }), Some(ALICE)).into(),
-        nearest_to_rivers(json!({ CHUNKS: [] }), Some(BOB)).into(),
-        nearest_to_rivers(json!({ CHUNKS: [] }), None).into(),
+        nearest_to_rivers(
+            json!({ CHUNKS: ranked_chunks("engines", 0.0, "public") }),
+            Some(BOB),
+        )
+        .into(),
+        nearest_to_rivers(
+            json!({ CHUNKS: ranked_chunks("engines", 0.0, "public") }),
+            None,
+        )
+        .into(),
     ])
     .execute();
 }

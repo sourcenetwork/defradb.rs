@@ -253,4 +253,18 @@ With three articles about engines, rivers and music, `Article__body_chunk(order:
 - **Parents:** ["defra.chunk.embed"]
 - **Scenarios:** ["chunk::embed_search::passage_search_shows_only_chunks_of_readable_articles"]
 
-Under a local policy, the same search returns Alice's two chunks to Alice, and nothing to Bob or to a request with no identity.
+Under a local policy, with Alice's article about rivers and a public article about engines created with no identity, the same search returns Alice's two chunks to Alice, and the public article's two chunks, with similarity 0, to Bob and to a request with no identity.
+
+# `defra.chunk.embed.failure`: A failing model fails the write
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_failure::a_failing_model_fails_the_write_and_stores_nothing"]
+
+While the model answers every request with 500, adding an article fails with `embedding error: embedding provider returned 500 Internal Server Error`, and afterwards `Article` and `Article__body_chunk` are both empty.
+
+# `defra.chunk.embed.backup`: Importing a backup embeds the chunks again
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_backup::importing_a_backup_embeds_the_chunks_again", "chunk::embed_backup::importing_a_backup_while_the_model_fails_reports_it"]
+
+A backup holds no vectors. Importing an article's backup into a second node asks that node's model for each chunk once, and every chunk there holds its vector. While the model answers with 500, the import fails with `embedding error: embedding provider returned 500 Internal Server Error`, and the second node has no `Article` and no chunks.
