@@ -21,7 +21,9 @@ pub enum ClientSignedCreateError {
     Request(String),
     #[error("signing connection failed: {0}")]
     Connection(String),
-    #[error("signing message exceeds the 16 MiB limit")]
+    /// A request or response exceeded the signing transport limit. If the
+    /// request was dispatched, its commit outcome may be unknown.
+    #[error("signing message exceeds the 16 MiB limit; a dispatched operation may have completed")]
     MessageTooLarge,
     #[error("invalid signing conversation: {0}")]
     Protocol(String),
