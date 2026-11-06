@@ -26,7 +26,22 @@ struct ChunkSpec {
     config: ChunkDirective,
 }
 
-pub(super) fn parse_chunk_directive(directive: &Directive<'_, String>) -> Result<ChunkDirective> {
+const CHUNK_ARGUMENTS: [&str; 2] = ["maxChars", "overlap"];
+
+/// Reads `@chunk` on the field `owner`, written as `Type.field` for errors.
+pub(super) fn parse_chunk_directive(
+    directive: &Directive<'_, String>,
+    owner: &str,
+) -> Result<ChunkDirective> {
+    if let Some((unknown, _)) = directive
+        .arguments
+        .iter()
+        .find(|(name, _)| !CHUNK_ARGUMENTS.contains(&name.as_str()))
+    {
+        return Err(QueryError::parse(format!(
+            "@chunk has no argument {unknown}. It takes maxChars and overlap. Field: {owner}"
+        )));
+    }
     let read = |name: &str, default: u32| -> Result<u32> {
         get_directive_arg(directive, name)
             .map(|value| {
@@ -84,6 +99,14 @@ impl SdlParser<'_> {
                         parent, f.name
                     )));
                 }
+                if f.name.starts_with('_') {
+                    return Err(QueryError::parse(format!(
+                        "@chunk is not allowed on a field whose name starts with \"_\", because its list field {} would start with \"__\". Field: {}.{}",
+                        chunk_list_field(&f.name),
+                        parent,
+                        f.name
+                    )));
+                }
                 if type_def.is_interface {
                     return Err(QueryError::parse(format!(
                         "@chunk is not allowed on an interface. Field: {}.{}",
@@ -101,8 +124,11 @@ impl SdlParser<'_> {
         for spec in &specs {
             let chunk_type = chunk_collection_name(&spec.parent, &spec.field);
             let list = chunk_list_field(&spec.field);
+            // Re-adding an existing parent fails later as "collection already exists",
+            // the same as for a plain type.
+            let readded = self.known_external_types.contains(&spec.parent);
             if self.type_defs.contains_key(&chunk_type)
-                || self.known_external_types.contains(&chunk_type)
+                || (!readded && self.known_external_types.contains(&chunk_type))
             {
                 return Err(QueryError::parse(format!(
                     "@chunk needs the type name {chunk_type}, which is already taken"

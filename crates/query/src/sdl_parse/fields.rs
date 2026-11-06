@@ -101,7 +101,15 @@ impl<'a> SdlParser<'a> {
                     result.fulltext = Some(super::directives::FullTextConfig { language, k1, b });
                 }
                 "immutable" => result.immutable = true,
-                "chunk" => result.chunk = Some(parse_chunk_directive(directive)?),
+                "chunk" => {
+                    let owner = format!("{type_name}.{field_name}");
+                    if result.chunk.is_some() {
+                        return Err(QueryError::parse(format!(
+                            "@chunk can only be used once on a field. Field: {owner}"
+                        )));
+                    }
+                    result.chunk = Some(parse_chunk_directive(directive, &owner)?);
+                }
                 "embedding" => {
                     let provider = get_directive_string(directive, "provider").unwrap_or_default();
                     let model = get_directive_string(directive, "model").unwrap_or_default();

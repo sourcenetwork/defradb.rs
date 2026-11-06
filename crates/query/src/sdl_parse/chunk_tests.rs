@@ -1,4 +1,5 @@
-use super::super::parser::parse_sdl;
+use super::super::parser::{parse_sdl, parse_sdl_with_known_types};
+use rapidhash::{HashSetExt, RapidHashSet};
 use schema::{FieldKind, CHUNK_SOURCE_ID_FIELD};
 
 const SDL: &str = r#"
@@ -153,4 +154,40 @@ fn chunk_field_order_does_not_change_the_identity() {
     let second =
         parse_sdl("type Note { b: String @chunk(maxChars: 300)  a: String @chunk }").unwrap();
     assert_eq!(first[0].version_id, second[0].version_id);
+}
+
+fn refusal(sdl: &str) -> String {
+    parse_sdl(sdl).unwrap_err().to_string()
+}
+
+#[test]
+fn chunk_refuses_a_field_whose_list_name_would_start_with_two_underscores() {
+    assert_eq!(
+        refusal("type R { _x: String @chunk }"),
+        "parse error: @chunk is not allowed on a field whose name starts with \"_\", because its list field __x_chunks would start with \"__\". Field: R._x"
+    );
+}
+
+#[test]
+fn chunk_refuses_an_unknown_argument() {
+    assert_eq!(
+        refusal("type R { s: String @chunk(size: 100) }"),
+        "parse error: @chunk has no argument size. It takes maxChars and overlap. Field: R.s"
+    );
+}
+
+#[test]
+fn chunk_refuses_a_second_chunk_on_one_field() {
+    assert_eq!(
+        refusal("type R { s: String @chunk(maxChars: 64) @chunk(maxChars: 100) }"),
+        "parse error: @chunk can only be used once on a field. Field: R.s"
+    );
+}
+
+#[test]
+fn a_known_parent_leaves_the_taken_chunk_name_to_the_duplicate_check() {
+    let mut known = RapidHashSet::new();
+    known.insert("Article".to_string());
+    known.insert("Article__body_chunk".to_string());
+    assert!(parse_sdl_with_known_types(SDL, known).is_ok());
 }
