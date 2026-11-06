@@ -167,11 +167,14 @@ impl<S: ZanzibarStore + ?Sized + 'static> ZanzibarDocumentACP<S> {
 
         let managers = policy.get_managers_for_relation(resource_name, target_relation);
         let has_managers = !managers.is_empty();
+        // The policy and relationship reads must come from this same scoped
+        // store, including every nested userset visited during evaluation.
+        let mut engine = self.engine.snapshot();
+        engine.add_policy(&policy);
 
         for manager_relation in managers {
-            let has_manager = self
-                .store
-                .check_permission_direct(
+            let has_manager = engine
+                .check(
                     policy_id,
                     resource_name,
                     doc_id,
