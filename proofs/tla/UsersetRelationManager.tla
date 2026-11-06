@@ -19,7 +19,7 @@ Attempt(owner, declared, direct, wildcard, same, nodeOwner, nodeAdmin) ==
            ((same \/ Bug = "Node") /\
              ((nodeOwner /\ Bug # "NodeOwner") \/
               (nodeAdmin /\ adminLive /\ Bug # "NodeAdmin")))))
-  IN /\ mismatch' = mismatch \/ (actual # expected)
+  IN /\ mismatch' = (mismatch \/ (actual # expected))
      /\ UNCHANGED <<adminLive, version, staged, seen, stale>>
 \* A current administrator stages a relationship change in its transaction.
 Stage == /\ adminLive /\ ~staged /\ staged' = TRUE /\ seen' = version
@@ -29,7 +29,7 @@ Revoke == /\ adminLive /\ adminLive' = FALSE /\ version' = 1
           /\ UNCHANGED <<mismatch, staged, seen, stale>>
 \* A conflicting commit must not publish the staged grant.
 Commit == /\ staged /\ staged' = FALSE
-          /\ stale' = stale \/ (seen # version /\ Bug = "Conflict")
+          /\ stale' = (stale \/ (seen # version /\ Bug = "Conflict"))
           /\ UNCHANGED <<mismatch, adminLive, version, seen>>
 \* Discard abandons the staged grant.
 Discard == /\ staged /\ staged' = FALSE
