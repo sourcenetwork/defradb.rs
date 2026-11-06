@@ -135,7 +135,7 @@ fn commit_error_response(error: TransactionError) -> Response {
 mod commit_receipt_tests {
     use super::*;
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn only_typed_commit_conflict_carries_abort_receipt() {
         for (error, confirmed) in [
             (TransactionError::conflict("typed"), true),
