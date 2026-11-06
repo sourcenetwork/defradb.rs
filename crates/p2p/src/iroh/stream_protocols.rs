@@ -10,7 +10,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use defra_core::thread_bounds::MaybeSendSync;
 
-use super::inbound_budget::peer_share_bytes;
+use super::inbound_budget::{peer_share_bytes, InboundLease};
 use super::protocol_stream::{ProtocolRecvStream, ProtocolSendStream};
 use super::protocols::MAX_STREAM_TAG_LEN;
 use super::services::{self, Priority, Service};
@@ -30,9 +30,10 @@ pub const MAX_STREAM_DEADLINE: Duration = Duration::from_secs(24 * 60 * 60);
 /// The opener writes the tag and one length-prefixed request. The serving
 /// node admits the request as it admits Defra's own messages (the inbound
 /// allowlist, revocations, the priority's budget and the peer's share of it,
-/// the size limit and the body deadlines), releases the request's room in the
-/// budget, and hands the stream to the protocol's [`StreamHandler`]. What
-/// follows on the stream is up to the protocol.
+/// the size limit and the body deadlines), and hands the stream to the
+/// protocol's [`StreamHandler`]. The request's room in the budget goes with it
+/// ([`ProtocolRequest`]) and comes back once the handler drops the request.
+/// What follows on the stream is up to the protocol.
 ///
 /// Put a version in the tag (`/myapp/pull/1`): a peer that does not serve a
 /// tag resets the stream with code 2, so a new version is a new tag served
@@ -104,14 +105,37 @@ impl StreamProtocol {
     }
 }
 
+/// A protocol stream's first message, read and admitted. It holds the
+/// request's room in the peer's inbound budget until it is dropped, so the
+/// budget counts these bytes for exactly as long as the handler keeps them:
+/// parse what you need and drop it before a long wait.
+pub struct ProtocolRequest {
+    bytes: Vec<u8>,
+    _room: InboundLease,
+}
+
+impl ProtocolRequest {
+    pub(super) fn new(bytes: Vec<u8>, room: InboundLease) -> Self {
+        Self { bytes, _room: room }
+    }
+}
+
+impl std::ops::Deref for ProtocolRequest {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
 /// A stream a peer opened for a registered [`StreamProtocol`], its request
 /// already read and admitted.
 #[non_exhaustive]
 pub struct InboundStream {
     /// The peer that opened the stream, authenticated by its connection.
     pub peer: PeerId,
-    /// The stream's first message.
-    pub request: Vec<u8>,
+    /// The stream's first message, holding its room in the budget.
+    pub request: ProtocolRequest,
     /// When the node drops the handler and resets the stream.
     pub deadline: web_time::Instant,
     /// The send half, for the reply.
@@ -122,8 +146,9 @@ pub struct InboundStream {
 
 /// Serves the streams peers open for one [`StreamProtocol`].
 ///
-/// Each stream is served on a task of its own at the network edge, holding no
-/// room in the inbound budget. The node drops that task, resetting both
+/// Each stream is served on a task of its own at the network edge. Only its
+/// [`ProtocolRequest`] holds room in the inbound budget, so a handler that
+/// drops the request before waiting holds none. The node drops that task, resetting both
 /// halves of the stream, at the protocol's deadline, when the peer's
 /// connection closes (a revocation with `deny_peer` closes it), or when the
 /// endpoint shuts down. A peer has at most 64 streams open per connection,

@@ -55,6 +55,7 @@ pub use addr::{
 pub use config::{IrohAllowlistConfig, IrohDiscoveryConfig, IrohRelayModeConfig};
 pub use endpoint::{spawn_endpoint, spawn_endpoint_with_protocols};
 pub use endpoint_config::{AdmissionAuthority, IrohEndpointConfig};
+pub use inbound_budget::peer_share_bytes;
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 pub use iroh::SecretKey;
 pub use protocol_stream::{ProtocolRecvStream, ProtocolSendStream, RESET_CANCELLED};
@@ -66,7 +67,7 @@ pub use secret_key::load_or_generate_secret_key;
 pub use secret_key::{generate_secret_key, secret_key_from_bytes};
 pub use services::Priority;
 pub use stream_protocols::{
-    InboundStream, StreamHandler, StreamProtocol, StreamRegistration, MAX_STREAM_DEADLINE,
-    RESERVED_TAG_PREFIX,
+    InboundStream, ProtocolRequest, StreamHandler, StreamProtocol, StreamRegistration,
+    MAX_STREAM_DEADLINE, RESERVED_TAG_PREFIX,
 };
 pub use transport::IrohTransport;

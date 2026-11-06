@@ -20,7 +20,7 @@ use super::protocols;
 use super::records::{Input as RecordsInput, RecordsHandle, RecordsMessage};
 use super::services::{self, Service};
 use super::solicited::Solicited;
-use super::stream_protocols::{InboundStream, Registered, StreamProtocols};
+use super::stream_protocols::{InboundStream, ProtocolRequest, Registered, StreamProtocols};
 
 /// QUIC application error code closing a connection refused by the inbound
 /// allowlist. Distinct from the disconnect code (0) used elsewhere.
@@ -220,10 +220,9 @@ pub(super) async fn handle_connection_streams(
             // Replies on this stream go out at the service's priority.
             let _ = send.set_priority(service.priority.send_priority());
             if let Some(registered) = stream_protocols.get(service.tag) {
-                // The request is read: its room goes back before the handler
-                // runs, so a handler that never returns holds none.
-                drop(lease);
-                serve_protocol_stream(registered, &connection, peer_id, payload, send, recv).await;
+                // The room goes with the request: back when the handler drops it.
+                let request = ProtocolRequest::new(payload, lease);
+                serve_protocol_stream(registered, &connection, peer_id, request, send, recv).await;
                 return;
             }
             if service.tag == protocols::STREAM_SERVICE_RECORDS {
@@ -277,12 +276,13 @@ pub(super) async fn handle_connection_streams(
 /// Serve an admitted stream of an embedder's protocol on this task until its
 /// handler returns, the protocol's deadline passes or the connection closes,
 /// whichever comes first. The last two drop the handler, which resets both
-/// halves; shutdown aborts the task, with the same effect.
+/// halves and frees the request's room; shutdown aborts the task, with the
+/// same effect.
 async fn serve_protocol_stream(
     registered: &Registered,
     connection: &Connection,
     peer: PeerId,
-    request: Vec<u8>,
+    request: ProtocolRequest,
     send: iroh::endpoint::SendStream,
     recv: iroh::endpoint::RecvStream,
 ) {

@@ -1,3 +1,4 @@
+mod stream_protocols;
 mod info {
     mod connect_peers;
     mod disconnect_peers;
