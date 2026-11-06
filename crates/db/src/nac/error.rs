@@ -3,6 +3,8 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum Error {
+    #[error("node relationship permission denied")]
+    PermissionDenied,
     #[error("acp error: {0}")]
     Acp(String),
 

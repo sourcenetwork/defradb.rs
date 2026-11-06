@@ -86,9 +86,16 @@ fn source_permission_job_for(
                     })?;
                 if host && changed {
                     fetcher
-                        .project_host_source_change()
+                        .project_host_source_change(&actor_context)
                         .await
-                        .map_err(|error| TransactionError::operation(error.to_string()))?;
+                        .map_err(|error| match error {
+                            crate::error::QueryError::PermissionDenied(_) => {
+                                TransactionError::Storage(
+                                    storage::corekv::Error::ProjectionPermissionDenied,
+                                )
+                            }
+                            other => TransactionError::operation(other.to_string()),
+                        })?;
                 }
                 Ok(changed)
             }

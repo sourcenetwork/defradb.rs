@@ -268,6 +268,7 @@ impl Drop for SharedTxn {
 pub struct WeakNamespaceView {
     txn: std::sync::Weak<SharedTxn>,
     namespace: Namespace,
+    projection_actor: Option<Arc<str>>,
 }
 
 impl WeakNamespaceView {
@@ -277,6 +278,7 @@ impl WeakNamespaceView {
         self.txn.upgrade().map(|txn| NamespaceView {
             txn,
             namespace: self.namespace,
+            projection_actor: self.projection_actor.clone(),
         })
     }
 }
@@ -285,9 +287,20 @@ impl WeakNamespaceView {
 pub struct NamespaceView {
     txn: Arc<SharedTxn>,
     namespace: Namespace,
+    projection_actor: Option<Arc<str>>,
 }
 
 impl NamespaceView {
+    /// Bind the actor admitted by the request boundary to this operation's
+    /// view. The actor is never stored on the transaction or shared by turns.
+    pub fn with_projection_actor(mut self, actor: Option<&str>) -> Self {
+        self.projection_actor = actor.map(Arc::from);
+        self
+    }
+
+    pub fn projection_actor(&self) -> Option<&str> {
+        self.projection_actor.as_deref()
+    }
     pub fn has_document_projector(&self) -> bool {
         self.txn.projector.is_some()
     }
@@ -334,7 +347,11 @@ impl NamespaceView {
 
     /// Create a new namespace view.
     pub fn new(txn: Arc<SharedTxn>, namespace: Namespace) -> Self {
-        Self { txn, namespace }
+        Self {
+            txn,
+            namespace,
+            projection_actor: None,
+        }
     }
 
     /// The CRDT types of the node whose store the transaction runs on.
@@ -350,6 +367,7 @@ impl NamespaceView {
         Self {
             txn: self.txn.clone(),
             namespace,
+            projection_actor: self.projection_actor.clone(),
         }
     }
 
@@ -359,6 +377,7 @@ impl NamespaceView {
         WeakNamespaceView {
             txn: Arc::downgrade(&self.txn),
             namespace: self.namespace,
+            projection_actor: self.projection_actor.clone(),
         }
     }
 
@@ -408,6 +427,7 @@ impl Clone for NamespaceView {
         Self {
             txn: self.txn.clone(),
             namespace: self.namespace,
+            projection_actor: self.projection_actor.clone(),
         }
     }
 }

@@ -264,6 +264,12 @@ pub fn commit_query_error(error: Error) -> query::error::QueryError {
 
 fn storage_query_error(error: Error, context: &str) -> query::error::QueryError {
     match error {
+        Error::Storage(storage::Error::ProjectionPermissionDenied)
+        | Error::Datastore(datastore::Error::Storage(storage::Error::ProjectionPermissionDenied)) => {
+            query::error::QueryError::permission_denied(
+                storage::Error::ProjectionPermissionDenied.to_string(),
+            )
+        }
         Error::Storage(storage::Error::Io(cause))
         | Error::Datastore(datastore::Error::Storage(storage::Error::Io(cause))) => {
             query::error::QueryError::Storage(storage::Error::Io(cause.with_context(context)))

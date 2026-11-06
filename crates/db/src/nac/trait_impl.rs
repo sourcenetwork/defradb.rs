@@ -109,9 +109,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
                 .await
                 .map_err(|error| super::error::Error::Other(error.to_string()))?
         {
-            return Err(super::error::Error::Other(
-                "node relationship permission denied".into(),
-            ));
+            return Err(super::error::Error::PermissionDenied);
         }
         scoped
             .change_source_permission(
@@ -124,7 +122,12 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
             )
             .await
             .map(Some)
-            .map_err(|error| super::error::Error::Other(error.to_string()))
+            .map_err(|error| match error {
+                acp::error::Error::NotOwner { .. } | acp::error::Error::PermissionDenied(_) => {
+                    super::error::Error::PermissionDenied
+                }
+                other => super::error::Error::Other(other.to_string()),
+            })
     }
     async fn is_admin(&self, identity: &Did) -> Result<bool> {
         NacManager::is_admin(self, identity).await

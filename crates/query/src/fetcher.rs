@@ -197,7 +197,7 @@ pub trait DocFetcher: MaybeSendSync {
     }
 
     /// Reconcile a trusted host source change on the same transaction view.
-    async fn project_host_source_change(&self) -> Result<()> {
+    async fn project_host_source_change(&self, _actor: &defra_core::RequestContext) -> Result<()> {
         Err(crate::error::QueryError::execution(
             "transaction-bound host projection is unavailable",
         ))
