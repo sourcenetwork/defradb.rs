@@ -4,7 +4,7 @@ use integration_test::actions::{
     Actions, AddCollection, AddCollectionSubscription, AddDoc, AddReplicator, NewNode, Request,
     WaitForPeersEvents,
 };
-use integration_test::scenario::{captures, Common, Eventually};
+use integration_test::scenario::{captures, Common, Eventually, Text};
 use integration_test::test_case::TestCase;
 use serde_json::{json, Value};
 
@@ -136,6 +136,11 @@ pub fn eventually(action: Actions) -> Actions {
 
 /// Two networked nodes, `db0` pushing `collections` to `db1`, both with the Article collection.
 pub fn replicated_pair(collections: &[&str]) -> Vec<Actions> {
+    replicated_pair_with(SCHEMA.into(), collections)
+}
+
+/// [`replicated_pair`] with the Article collection declared by `sdl`.
+pub fn replicated_pair_with(sdl: Text, collections: &[&str]) -> Vec<Actions> {
     let names: Vec<String> = collections.iter().map(|name| (*name).to_owned()).collect();
     let mut actions: Vec<Actions> = Vec::new();
     for node in ["db0", "db1"] {
@@ -151,7 +156,7 @@ pub fn replicated_pair(collections: &[&str]) -> Vec<Actions> {
     for node in ["db0", "db1"] {
         actions.push(
             AddCollection {
-                sdl: SCHEMA.into(),
+                sdl: sdl.clone(),
                 common: on(Some(node)),
                 ..Default::default()
             }

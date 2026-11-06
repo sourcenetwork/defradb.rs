@@ -185,3 +185,65 @@ An article created by Alice under a policy shows its chunks to Alice: `Article__
 - **Scenarios:** ["chunk::access_grant::a_reader_of_the_parent_sees_its_chunks_until_it_is_deleted"]
 
 After Alice adds the `reader` relation on her article for Bob, Bob sees the same chunks as Alice and their `_commits`. After Alice deletes the article, she sees no chunks and `_commits` of a chunk is empty.
+
+# `defra.chunk.embed`: Embedding chunks
+
+- **Parents:** ["defra.chunk"]
+
+An `@embedding` of a `@chunk` field gives every chunk its own vector, made from the chunk's text before the write's transaction.
+
+# `defra.chunk.embed.declare`: The embedding lives on the chunks
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_declare::the_embedding_moves_from_the_parent_to_its_chunks"]
+
+With `body: String @chunk` and `body_v: [Float32!] @embedding(fields: ["body"], ...) @index(vector: {dimensions: 3})` on `Article`, the field `body_v`, its embedding and its vector index belong to `Article__body_chunk`, embedding the chunk's `text`. `Article__body_chunk { body_v }` returns `[]` before any document is added. `Article` has no `body_v`, so `SIMILARITY(body_v: ...)` on `Article` fails with `Unknown argument "body_v" on field "SIMILARITY" of type "Article"`; a similarity search over passages queries `Article__body_chunk`.
+
+# `defra.chunk.embed.declare_only_field`: The embedding embeds the chunked field alone
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_declare::an_embedding_of_a_chunked_field_and_another_is_refused"]
+
+Adding `Article` with `body_v: [Float32!] @embedding(fields: ["title", "body"], ...)` over the chunked `body` fails with `@embedding over a @chunk field must embed only that field. Field: Article.body_v`. An embedding with a `template` over a chunked field fails the same way.
+
+# `defra.chunk.embed.chunks`: Each chunk is embedded on its own text
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_chunks::each_chunk_is_embedded_on_its_own_text"]
+
+Creating an article with four paragraphs asks the model to embed each chunk's text, followed by a newline, once. Every chunk of `Article__body_chunk` then holds the vector the model gave for its text.
+
+# `defra.chunk.embed.edit`: An edit embeds only the chunks it changes
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_chunks::editing_one_paragraph_embeds_only_its_new_chunk"]
+
+After an article with four paragraphs is created, changing its second paragraph asks the model for that one new chunk's text and nothing else. The chunks are then the three unchanged ones with their old vectors and the new one with its own.
+
+# `defra.chunk.embed.transaction`: A create in an explicit transaction embeds its chunks
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_transaction::an_explicit_transaction_embeds_its_chunks"]
+
+Creating an article inside an explicit transaction and committing it asks the model for each chunk once, and every chunk holds its vector.
+
+# `defra.chunk.embed.replicate`: A peer gets the vectors with the chunks
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_replicate::a_peer_gets_the_vectors_without_calling_the_model"]
+
+With `Article` and `Article__body_chunk` replicated from one node to another, an article created on the first gives the second the same chunks with the same vectors. The model is asked only by the first node, once per chunk.
+
+# `defra.chunk.embed.search`: Passage search ranks chunks across articles
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_search::passage_search_ranks_chunks_across_articles"]
+
+With three articles about engines, rivers and music, `Article__body_chunk(order: {_alias: {sim: DESC}}, limit: 2) { text sim: SIMILARITY(body_v: {vector: [1, 0, 0]}) source { title } }` returns the two chunks of the rivers article, each with similarity 1 and `source { title }` `rivers`.
+
+# `defra.chunk.embed.search_access`: Passage search shows only chunks the reader may read
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_search::passage_search_shows_only_chunks_of_readable_articles"]
+
+Under a local policy, the same search returns Alice's two chunks to Alice, and nothing to Bob or to a request with no identity.
