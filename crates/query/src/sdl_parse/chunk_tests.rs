@@ -200,20 +200,31 @@ fn an_embedding_of_a_chunked_field_moves_to_the_chunk_collection() {
 }
 
 #[test]
-fn an_embedding_of_a_chunked_field_and_more_is_refused() {
-    for embedding in [
-        r#"@embedding(fields: ["title", "body"])"#,
-        r#"@embedding(fields: ["body"], template: "{{ .body }}")"#,
-    ] {
-        let sdl = format!(
-            "type Article {{ title: String body: String @chunk body_v: [Float32!] {embedding} }}"
-        );
-        let err = parse_sdl(&sdl).unwrap_err().to_string();
-        assert!(
-            err.contains(
-                "@embedding over a @chunk field must embed only that field. Field: Article.body_v"
-            ),
-            "{embedding}: {err}"
-        );
-    }
+fn an_embedding_of_a_chunked_field_with_a_template_is_refused() {
+    let sdl = r#"type Article {
+        body: String @chunk
+        body_v: [Float32!] @embedding(fields: ["body"], template: "{{ .body }}")
+    }"#;
+    let err = parse_sdl(sdl).unwrap_err().to_string();
+    assert!(
+        err.contains(
+            "@embedding over a @chunk field must embed only that field. Field: Article.body_v"
+        ),
+        "{err}"
+    );
+}
+
+#[test]
+fn an_embedding_field_named_like_a_chunk_field_is_refused() {
+    let sdl = r#"type Article {
+        body: String @chunk
+        text: [Float32!] @embedding(fields: ["body"])
+    }"#;
+    let err = parse_sdl(sdl).unwrap_err().to_string();
+    assert!(
+        err.contains(
+            "@chunk needs the field name Article__body_chunk.text, which is already taken"
+        ),
+        "{err}"
+    );
 }
