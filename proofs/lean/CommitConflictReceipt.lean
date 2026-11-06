@@ -1,3 +1,5 @@
+import Lean
+
 /-!
 The transaction registry maps a storage conflict to `typedConflict` only
 when the commit lost validation before its log record. This storage property
@@ -28,3 +30,8 @@ theorem unknown_after_dispatch_has_no_receipt :
     confirmedAbortReceipt .unknownAfterDispatch = false := rfl
 
 end CommitConflictReceipt
+
+def main : IO Unit := do
+  let results := [CommitConflictReceipt.CommitResult.typedConflict,
+    .executionFailure, .unknownAfterDispatch]
+  IO.println (Lean.toJson (results.map CommitConflictReceipt.confirmedAbortReceipt)).compress
