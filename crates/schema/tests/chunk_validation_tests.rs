@@ -1,7 +1,11 @@
 //! Patches may not change `@chunk` settings or a generated chunk collection.
 
-use schema::definition_validation::validate_collection_changes;
-use schema::{CType, ChunkSource, ChunkedField, CollectionVersion, FieldDescription, FieldKind};
+use schema::definition_validation::{
+    validate_collection_changes, validate_new_collections_with_existing,
+};
+use schema::{
+    CType, ChunkSource, ChunkedField, CollectionVersion, FieldDescription, FieldKind, QuerySource,
+};
 
 fn article() -> CollectionVersion {
     let mut article = CollectionVersion::new(
@@ -105,4 +109,17 @@ fn filling_a_placeholder_with_a_chunk_collection_is_refused() {
         err.contains("chunk settings cannot be added by a patch"),
         "{err}"
     );
+}
+
+#[test]
+fn a_view_with_a_chunked_field_is_refused() {
+    let mut view = article();
+    view.query = Some(QuerySource::new(serde_json::json!({ "Name": "Source" })));
+    let err = validate_new_collections_with_existing(&[view, chunk()], &[]).unwrap_err();
+    assert_eq!(err, "@chunk is not allowed in a view. Field: Article.body");
+}
+
+#[test]
+fn a_chunked_collection_that_is_not_a_view_is_created() {
+    assert!(validate_new_collections_with_existing(&[article(), chunk()], &[]).is_ok());
 }
