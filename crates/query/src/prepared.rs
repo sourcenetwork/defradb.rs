@@ -266,6 +266,34 @@ impl PreparedInputMemo {
     }
 }
 
+/// The first input miss of a pass over several documents. The pass carries on
+/// past a miss, so the documents after it note their misses too and one
+/// wave answers them all.
+#[derive(Debug, Default)]
+pub struct FirstMiss(Option<PreparedInputRequest>);
+
+impl FirstMiss {
+    /// The value of `result`, or `None` when it ended on a miss, which is kept.
+    pub fn keep<T>(&mut self, result: Result<T>) -> Result<Option<T>> {
+        match result {
+            Ok(value) => Ok(Some(value)),
+            Err(QueryError::NeedsInput(request)) => {
+                self.0.get_or_insert(request);
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// `value`, unless the pass met a miss: then the attempt ends asking for it.
+    pub fn finish<T>(self, value: T) -> Result<T> {
+        match self.0 {
+            Some(request) => Err(QueryError::NeedsInput(request)),
+            None => Ok(value),
+        }
+    }
+}
+
 /// Immutable write inputs shared by attempts of one mutation request.
 #[derive(Debug, Clone)]
 pub struct PreparedMutations {

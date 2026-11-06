@@ -391,6 +391,7 @@ impl PlanNode for UpdateNode {
             };
 
             // Update each document
+            let mut misses = crate::prepared::FirstMiss::default();
             for doc_id_str in doc_ids_to_update {
                 if DocID::from_string(&doc_id_str).is_err() {
                     // Invalid DocID format - treat as not found (Go compatibility)
@@ -529,7 +530,7 @@ impl PlanNode for UpdateNode {
                     }
 
                     // Persist update with modified field tracking
-                    let result = if let Some(expected_fields) = projected_fields {
+                    let result = misses.keep(if let Some(expected_fields) = projected_fields {
                         self.mutator
                             .update_if_fields_unchanged_as(
                                 &self.context,
@@ -539,7 +540,7 @@ impl PlanNode for UpdateNode {
                                 doc,
                                 modified_fields,
                             )
-                            .await?
+                            .await
                     } else {
                         self.mutator
                             .update_if_unchanged_as(
@@ -549,7 +550,10 @@ impl PlanNode for UpdateNode {
                                 doc,
                                 modified_fields,
                             )
-                            .await?
+                            .await
+                    })?;
+                    let Some(result) = result else {
+                        continue;
                     };
 
                     // Convert to plan Doc
@@ -570,6 +574,7 @@ impl PlanNode for UpdateNode {
                 }
             }
 
+            misses.finish(())?;
             self.did_update = true;
         }
 

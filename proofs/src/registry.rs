@@ -2237,7 +2237,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Text chunking",
         name: "INV_NoModelCallInTxn / INV_ListedChunkHasVector / INV_VectorIsItsText / INV_UnchangedChunkNoCall / INV_OneWave",
         axis: Tla,
-        anchor: "crates/db/src/chunk/sync/mod.rs ChunkWrites::create_missing; crates/db/src/chunk/sync/write.rs ChunkWrites::embed; crates/db/src/search/embedding.rs set_embedding_from_inputs, prepared_embedding_request; crates/query/src/prepared.rs PreparedInputMemo::get_or_want, PreparedInputMemo::answer_wave; crates/db/src/write/autocommit/one_op.rs AutoCommitMutator::in_batch; crates/query/src/runner/turn.rs QueryRunner::drive",
+        anchor: "crates/db/src/chunk/sync/mod.rs ChunkWrites::create_missing; crates/db/src/chunk/sync/write.rs ChunkWrites::embed; crates/db/src/search/embedding.rs set_embedding_from_inputs, prepared_embedding_request; crates/query/src/prepared.rs PreparedInputMemo::get_or_want, PreparedInputMemo::answer_wave, FirstMiss; crates/query/src/mutator.rs DocMutator::create_many_as; crates/query/src/plan/mutation/update.rs UpdateNode::next; crates/db/src/write/autocommit/one_op.rs CreateWork::run, AutoCommitMutator::in_batch; crates/query/src/runner/turn.rs QueryRunner::drive",
         model_ref: "MC_ChunkEmbedding_Green.cfg / MC_ChunkEmbedding_Red_EmbedAllChunks.cfg / MC_ChunkEmbedding_Red_ResolveInsideAttempt.cfg / MC_ChunkEmbedding_Red_MemoKeyedByPosition.cfg / MC_ChunkEmbedding_Red_FirstMissOnly.cfg",
         tiers: &[Boundary],
         bound_by: "",

@@ -732,10 +732,11 @@ pub trait DocMutator: MaybeSendSync {
         docs: Vec<Document>,
     ) -> Result<Vec<CreateResult>> {
         let mut results = Vec::with_capacity(docs.len());
+        let mut misses = crate::prepared::FirstMiss::default();
         for doc in docs {
-            results.push(self.create(collection_name, doc).await?);
+            results.extend(misses.keep(self.create(collection_name, doc).await)?);
         }
-        Ok(results)
+        misses.finish(results)
     }
 
     /// [`Self::create_many`] for the request `context` serves.
@@ -746,10 +747,11 @@ pub trait DocMutator: MaybeSendSync {
         docs: Vec<Document>,
     ) -> Result<Vec<CreateResult>> {
         let mut results = Vec::with_capacity(docs.len());
+        let mut misses = crate::prepared::FirstMiss::default();
         for doc in docs {
-            results.push(self.create_as(context, collection_name, doc).await?);
+            results.extend(misses.keep(self.create_as(context, collection_name, doc).await)?);
         }
-        Ok(results)
+        misses.finish(results)
     }
 
     /// Update an existing document.

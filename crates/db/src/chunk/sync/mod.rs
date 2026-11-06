@@ -131,8 +131,8 @@ where
     /// Creates the chunk documents in `plans` that don't exist yet. An existing
     /// chunk is never rewritten, since the same hash means the same content,
     /// so it keeps its vector. Every missing chunk's vector comes from the
-    /// memo; when any is not there yet, nothing is written and the attempt
-    /// ends asking for all of them at once.
+    /// memo; when any is not there yet, no chunk is written and every miss
+    /// is noted, so the wave after the attempt answers them all.
     pub(crate) async fn create_missing(
         &self,
         parent_doc_id: &str,

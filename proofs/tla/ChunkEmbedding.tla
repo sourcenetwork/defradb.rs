@@ -32,7 +32,12 @@
 \*   crates/db/src/chunk/sync/write.rs ChunkWrites::embed (the memo lookup)
 \*   crates/db/src/search/embedding.rs set_embedding_from_inputs,
 \*     prepared_embedding_request (the memo key is the exact request)
-\*   crates/query/src/prepared.rs PreparedInputMemo::get_or_want, answer_wave
+\*   crates/query/src/prepared.rs PreparedInputMemo::get_or_want, answer_wave,
+\*     FirstMiss (a write of several documents carries on past a miss, so the
+\*     misses of all its documents go into one wave)
+\*   crates/query/src/mutator.rs DocMutator::create_many_as,
+\*     crates/db/src/write/autocommit/one_op.rs CreateWork::run and
+\*     crates/query/src/plan/mutation/update.rs UpdateNode::next (those loops)
 \*   crates/db/src/write/autocommit/one_op.rs AutoCommitMutator::in_batch and
 \*     crates/query/src/runner/turn.rs QueryRunner::drive (the wave between attempts)
 \* Commit validation is regolith's; the model takes it as given.
