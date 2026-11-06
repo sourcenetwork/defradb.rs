@@ -2529,7 +2529,7 @@ fn accepted_replicated_document_runs_transactional_projector() {
         let policy = node0.add_dac_policy_with_counter_as(&context0, yaml, 1).await.unwrap();
         let policy1 = node1.add_dac_policy_with_counter_as(&context1, yaml, 1).await.unwrap();
         assert_eq!(policy, policy1);
-        let schema = format!("type ProjectedPeerDoc @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}");
+        let schema = format!("type ProjectedPeerDoc @policy(id: \"{policy}\", resource: \"records\") {{ name: String, age: Int }}");
         node0.add_collection_as(&context0, &schema).await.unwrap();
         node1.add_collection_as(&context1, &schema).await.unwrap();
         let addr0 = wait_for_listen_addr(&node0).await;
@@ -2542,10 +2542,18 @@ fn accepted_replicated_document_runs_transactional_projector() {
         node1.add_p2p_collections_as(&context1, &collections).await.unwrap();
         node1.add_replicator_as(&context1, std::slice::from_ref(&addr0), &collections).await.unwrap();
         node0.add_replicator_as(&context0, std::slice::from_ref(&addr1), &collections).await.unwrap();
-        let response = node0.execute("mutation { add_ProjectedPeerDoc(input: {name:\"one\"}) { _docID } }").await;
+        let response = node0.execute("mutation { add_ProjectedPeerDoc(input: {name:\"one\", age:37}) { _docID } }").await;
         assert!(response.errors.is_empty(), "{:?}", response.errors);
         let id = extract_created_doc_id(&response, "add_ProjectedPeerDoc");
         wait_for_collection_len(&node1, "ProjectedPeerDoc", 1).await;
+        let replicated = node1.execute("query { ProjectedPeerDoc { _docID name age } }").await;
+        assert!(replicated.errors.is_empty(), "{:?}", replicated.errors);
+        let data = replicated.data.unwrap();
+        let rows = data["ProjectedPeerDoc"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["_docID"].as_str(), Some(id.as_str()));
+        assert_eq!(rows[0]["name"].as_str(), Some("one"));
+        assert_eq!(rows[0]["age"].as_i64(), Some(37));
         let owner = node1.document_acp().get_doc_owner(&policy, "records", &id).await.unwrap();
         assert_eq!(owner.as_ref().map(identity::Did::as_str), node0.node_identity_did());
         assert!(node1.document_acp().check_named_permission(&identity::Did::new("did:key:reader").unwrap(), "read", &policy, "records", &id).await.unwrap());
