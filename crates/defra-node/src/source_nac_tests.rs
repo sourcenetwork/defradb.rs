@@ -570,6 +570,15 @@ fn host_source_noop_validates_the_edge_and_does_not_borrow_node_authority() {
             .unwrap();
         let owner = context(node.node_identity_did().unwrap());
         let user = context(ACTOR);
+        node.add_collection_as(&owner, "type SourceNoopMarker { value: String }")
+            .await
+            .unwrap();
+        let created = node.execute_request(query::QueryRequest::new(
+            "mutation { create_SourceNoopMarker(input:{value:\"before\"}) { _docID } }",
+        )).await;
+        assert!(!created.has_errors(), "{:?}", created.errors);
+        let marker = created.data.unwrap()["add_SourceNoopMarker"][0]["_docID"]
+            .as_str().unwrap().to_owned();
         let root = edge(None, "source", "plugin:stable", false);
         let (handle, tx) = begin(&node, &owner).await;
         assert!(node
@@ -583,6 +592,17 @@ fn host_source_noop_validates_the_edge_and_does_not_borrow_node_authority() {
             .change_host_nac_source_permission_in_txn(&tx, &root)
             .await
             .unwrap());
+        node.runner().commit_txn_as(&user, &pending).await.unwrap();
+
+        let (pending, tx) = begin(&node, &owner).await;
+        assert!(!node
+            .change_host_nac_source_permission_in_txn(&tx, &root)
+            .await
+            .unwrap());
+        let updated = node.execute_request_in_txn(query::QueryRequest::new(format!(
+            "mutation {{ update_SourceNoopMarker(docID:\"{marker}\",input:{{value:\"after\"}}) {{ _docID }} }}"
+        )), &pending).await;
+        assert!(!updated.has_errors(), "{:?}", updated.errors);
         let (remove, tx_owner) = begin(&node, &owner).await;
         assert!(node
             .change_host_nac_source_permission_in_txn(
@@ -593,9 +613,14 @@ fn host_source_noop_validates_the_edge_and_does_not_borrow_node_authority() {
             .unwrap());
         node.runner().commit_txn_as(&owner, &remove).await.unwrap();
         assert!(
-            node.runner().commit_txn_as(&user, &pending).await.is_err(),
+            node.runner().commit_txn_as(&owner, &pending).await.is_err(),
             "a changed observed edge must conflict"
         );
+        let current = node.execute_request(query::QueryRequest::new(format!(
+            "{{ SourceNoopMarker(docID:\"{marker}\") {{ value }} }}"
+        ))).await;
+        assert!(!current.has_errors(), "{:?}", current.errors);
+        assert_eq!(current.data.unwrap()["SourceNoopMarker"][0]["value"], "before");
 
         let (handle, tx) = begin(&node, &user).await;
         assert!(!node

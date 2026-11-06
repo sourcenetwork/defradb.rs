@@ -1,7 +1,7 @@
 --------------------------- MODULE HostSourceNoop ---------------------------
 \* A trusted host may leave an identical source edge alone without a grant.
 \* A real add or removal requires the actor's native administration rights.
-\* A concurrent edge change invalidates the observation before commit.
+\* A concurrent edge change invalidates a decision that commits another write.
 EXTENDS Naturals
 \* Bug removes one guard for its corresponding red model.
 CONSTANT Bug
@@ -24,17 +24,20 @@ Start(want, canManage) ==
 \* Another transaction may change the observed edge before this one commits.
 OtherChange == /\ active /\ edge' = ~edge /\ version' = 1 - version
                /\ UNCHANGED <<active, seen, seenVersion, desired, authorized, badAuth, badStale>>
-\* A validated observation lets the enclosing transaction commit.
+\* This commit also publishes an enclosing configuration write.
 Commit == /\ active /\ (seenVersion = version \/ Bug = "Validation")
           /\ badStale' = (badStale \/ (~authorized /\ desired = seen /\ desired # edge))
           /\ edge' = desired /\ version' = version /\ active' = FALSE
           /\ UNCHANGED <<seen, seenVersion, desired, authorized, badAuth>>
+\* A write-free no-op may end without validating its snapshot.
+ReadOnlyFinish == /\ active /\ seen = desired /\ active' = FALSE
+                  /\ UNCHANGED <<edge, version, seen, seenVersion, desired, authorized, badAuth, badStale>>
 \* A conflicted or discarded transaction leaves the current edge alone.
 Discard == /\ active /\ active' = FALSE
            /\ UNCHANGED <<edge, version, seen, seenVersion, desired, authorized, badAuth, badStale>>
 \* Explore both edge values and both kinds of actor.
 Next == (\E want, canManage \in BOOLEAN : Start(want, canManage))
-        \/ OtherChange \/ Commit \/ Discard
+        \/ OtherChange \/ Commit \/ ReadOnlyFinish \/ Discard
 \* Real transactions may also pause between steps.
 Spec == Init /\ [][Next]_vars
 \* No unauthorised actor stages a new edge or removes an existing one.
