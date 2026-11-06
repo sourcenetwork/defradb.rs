@@ -205,6 +205,13 @@ A request whose fragments spread each other in a cycle fails validation with no 
 
 A nullable variable with no default that the request leaves out is not an error and is not `null`: the argument or input field it fills is left out, as Go does. `query ($plot: String, $minRating: Float64) { Book(filter: {plot: {_like: $plot}, rating: {_geq: $minRating}}) { title } }` with only `{"minRating": 4.2}` returns the books rated 4.2 or more, whatever their plot. An explicit `null` is kept, and a missing list item becomes `null`. defradb.rs failed with `Variable "$plot" was not provided` before (#2104).
 
+# `defra.request.mutation_relation_filter`: A filtered update or delete follows relations
+
+- **Parents:** ["defra.request"]
+- **Scenarios:** ["mutation::delete_relation_filter::a_delete_filtered_through_a_relation_deletes_what_the_query_finds", "mutation::delete_relation_filter::an_update_filtered_through_a_relation_updates_what_the_query_finds"]
+
+`delete_Person(filter: {authoredBooks: {genre: {_eq: "Dystopia"}}})` deletes and returns exactly the people `Person(filter: {authoredBooks: {genre: {_eq: "Dystopia"}}})` returns, and `update_Person` with the same filter updates them; people the filter does not reach are untouched. defradb.rs matched such filters against the stored document only, where a relation has no value, so it found nothing (#2099).
+
 # `defra.index.range_filter`: A two-sided range filter fetches only the range
 
 - **Parents:** ["defra.index"]
