@@ -51,7 +51,7 @@ winner. Because those siblings are created after the restart, this binds
 `INV_LwwWinner`; it does not schedule a restart after ciphertext acknowledgement
 while the DEK is unavailable. `INV_AckBacked` therefore remains a conformance
 boundary.
-`tools/integration-test/tests/p2p/filtered_replication.rs` asserts matching
+`tools/integration-test/tests/legacy/p2p/filtered_replication.rs` asserts matching
 encrypted documents backfill and decrypt on the filtered peer, proving their
 composite DAGs retain the linked ciphertext and trigger DEK resolution, binding
 `INV_NoFilteredLoss`. The

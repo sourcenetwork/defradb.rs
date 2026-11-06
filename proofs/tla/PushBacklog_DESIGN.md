@@ -134,6 +134,6 @@ caps, coalescing, explicit rejection, parks, `unreachable_peers_share_one_peer_c
 `two_stalled_replicators_do_not_starve_healthy_peer` and
 `transient_transport_failure_keeps_queued_jobs_live` on the default pool and send
 timeout under paused time), and the fan-out integration test
-`tools/integration-test/tests/p2p_backlog.rs`
+`tools/integration-test/tests/legacy/p2p_backlog.rs`
 (`outbound_backlog_bounded_under_fanout_with_dead_peer`), which asserts bounded
 residency and healthy-peer progress while one peer is SIGSTOPped.

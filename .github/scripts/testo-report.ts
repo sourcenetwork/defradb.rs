@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Counts testo scenario outcomes per binary for one client, and checks the
+// Counts testo scenario outcomes per area for one client, and checks the
 // known-failure lists.
 //
 //     bun testo-report.ts shard <junit.xml> <list.json> <client> <shard>/<shards> <known-failures.txt> <out.json>
@@ -128,7 +128,7 @@ const bump = (counts: Counts, name: string, by = 1) => {
 };
 
 function writeTable(binaries: Record<string, Counts>) {
-  write(`| binary | ${COLUMNS.join(" | ")} |\n`);
+  write(`| area | ${COLUMNS.join(" | ")} |\n`);
   write(`|---|${"---:|".repeat(COLUMNS.length)}\n`);
   const total: Counts = {};
   for (const binary of Object.keys(binaries).sort()) {
@@ -172,8 +172,9 @@ function shard(
     } else if (listed && result === "pass") {
       fixed.push(`${id} #${known.get(id)}`);
     }
-    binaries[binary] ??= {};
-    bump(binaries[binary], result);
+    const area = `${binary === "testo" ? "" : `${binary} `}${testCase.name.split("::")[0]}`;
+    binaries[area] ??= {};
+    bump(binaries[area], result);
   }
   const selectedKnown = [...known.keys()].filter((id) => selected.has(id));
   const missing = selectedKnown.filter((id) => !reported.has(id)).map((id) => `${id} #${known.get(id)}`);
