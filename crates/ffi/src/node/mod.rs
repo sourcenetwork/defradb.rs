@@ -69,6 +69,7 @@ pub(crate) async fn build_node_state(
         store_file_size,
         store_encryption_key,
         mut config,
+        identity,
         signing_enabled,
         searchable_encryption_key,
         peer_key,
@@ -129,6 +130,8 @@ pub(crate) async fn build_node_state(
         options_json,
         _node: node,
     };
+    // The node holds the key now; the handle's state may go.
+    drop(identity);
     state.sync_replicator_push_options()?;
     Ok(state)
 }

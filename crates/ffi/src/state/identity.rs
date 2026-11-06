@@ -1,8 +1,9 @@
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
-use defra_core::signing::{SigningConfig, SigningKeyType};
+use defra_core::signing::{IdentityHold, SigningConfig, SigningKeyType};
 use identity::{Identity, RawIdentity};
 use kovan_map::HopscotchMap;
+use kovan_queue::seg_queue::SegQueue;
 use rapidhash::fast::RandomState;
 use regolith::sync::Lazy;
 use zeroize::Zeroizing;
@@ -21,12 +22,16 @@ pub struct IdentityState {
     pub private_key: Option<Zeroizing<Vec<u8>>>,
     /// The hex-encoded public key.
     pub public_key_hex: String,
+    /// The hold on the identity's signing config, given back when the last
+    /// reference to this state goes, so a caller still using the state (one
+    /// handing it to a node) keeps the key even if the handle is freed
+    /// meanwhile. `None` for an identity a bearer token stands for.
+    pub hold: Option<IdentityHold>,
 }
 
 impl IdentityState {
     /// The state of `identity`, which holds its key in the signing store under
     /// its DID, which is how a request names the identity that signs it.
-    /// [`IdentityRegistry::release`] gives the hold back.
     pub fn register(identity: &RawIdentity) -> Result<Self, String> {
         let did = identity
             .did()
@@ -42,7 +47,7 @@ impl IdentityState {
         let public_key_bytes = identity.public_key_bytes();
         let public_key_hex = hex::encode(&public_key_bytes);
 
-        defra_core::signing::hold_identity(
+        let hold = IdentityHold::new(
             &did,
             SigningConfig {
                 key_type,
@@ -59,13 +64,25 @@ impl IdentityState {
             key_type: Some(key_type),
             private_key: Some(private_key),
             public_key_hex,
+            hold: Some(hold),
         })
     }
 }
 
+/// A registered identity: the handle's owning reference plus a borrowing one.
+///
+/// The map retires a removed entry instead of dropping it, so the owning
+/// reference sits in a queue that hands it back by value at `release`.
+/// Freeing a handle then gives back its hold on the key at once, rather than
+/// whenever reclamation catches up.
+struct IdentitySlot {
+    owner: SegQueue<Arc<IdentityState>>,
+    reader: Weak<IdentityState>,
+}
+
 /// Global registry of identities.
 pub struct IdentityRegistry {
-    identities: HopscotchMap<IdentityHandle, Arc<IdentityState>, RandomState>,
+    identities: HopscotchMap<IdentityHandle, Arc<IdentitySlot>, RandomState>,
 }
 
 impl IdentityRegistry {
@@ -78,23 +95,29 @@ impl IdentityRegistry {
     /// Insert an identity and return its handle.
     pub fn insert(&self, state: IdentityState) -> IdentityHandle {
         let handle = super::handle::next_handle();
-        self.identities.insert(handle, Arc::new(state));
+        let state = Arc::new(state);
+        let slot = IdentitySlot {
+            owner: SegQueue::new(),
+            reader: Arc::downgrade(&state),
+        };
+        slot.owner.push(state);
+        self.identities.insert(handle, Arc::new(slot));
         handle
     }
 
-    /// The identity a handle names, if it names one.
+    /// The identity a handle names, if it names one. Holding the returned
+    /// state keeps the identity's key in the signing store after the handle
+    /// is freed.
     pub fn get(&self, handle: IdentityHandle) -> Option<Arc<IdentityState>> {
-        self.identities.get(&handle)
+        self.identities.get(&handle)?.reader.upgrade()
     }
 
-    /// Releases a handle and gives back its hold on the identity's key, which
-    /// leaves the signing store once no other handle or node holds it.
+    /// Releases a handle. Its hold on the identity's key goes with the last
+    /// reference to the identity's state, and the key leaves the signing store
+    /// once no other handle or node holds it.
     pub fn release(&self, handle: IdentityHandle) {
-        let Some(state) = self.identities.remove(&handle) else {
-            return;
-        };
-        if state.key_type.is_some() {
-            defra_core::signing::release_identity(&state.did);
+        if let Some(slot) = self.identities.remove(&handle) {
+            drop(slot.owner.pop());
         }
     }
 }

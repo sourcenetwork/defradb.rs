@@ -18,9 +18,10 @@ fn visible_indexes(collection: &db::Collection) -> Vec<schema::IndexDescription>
         .collect()
 }
 
+/// Go's `client.ListIndexesResult`, field for field.
 #[derive(Serialize)]
 struct IndexResult {
-    #[serde(flatten)]
+    #[serde(rename = "Description")]
     description: schema::IndexDescription,
     #[serde(rename = "CollectionName")]
     collection_name: String,

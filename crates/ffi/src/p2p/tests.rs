@@ -2,10 +2,10 @@ use super::*;
 use crate::test_support::{close, cstr, err, local_options, node_with, ok};
 
 #[test]
-fn a_node_without_p2p_reports_it() {
+fn a_node_without_p2p_has_no_addresses_but_refuses_peer_calls() {
     let node = node_with(local_options());
-    let error = err(defra_p2p_info(node, 0));
-    assert_eq!(error, "no p2p system configured");
+    assert_eq!(ok(defra_p2p_info(node, 0)), "null");
+    assert_eq!(err(defra_p2p_peer_list(node, 0)), ERR_NO_P2P);
     close(node);
 }
 

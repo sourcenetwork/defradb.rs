@@ -162,9 +162,9 @@ pub extern "C" fn defra_acp_nac_re_enable(node_ptr: usize, identity_ptr: usize) 
 /// The requestor must be an admin. The relation can be "admin" or a
 /// specific permission name (e.g., "read-document").
 ///
-/// Returns JSON with success status:
+/// Answers with Go's `AddActorRelationshipResult`:
 /// ```json
-/// { "added": true }  // or false if already exists
+/// { "ExistedAlready": false }  // true when the relationship already existed
 /// ```
 ///
 /// # Safety
@@ -273,8 +273,7 @@ pub unsafe extern "C" fn defra_acp_nac_relationship_add(
                 return Err("relation not in resource".to_string());
             };
 
-            let json = serde_json::json!({ "added": added }).to_string();
-            Ok(json)
+            Ok(serde_json::json!({ "ExistedAlready": !added }).to_string())
         })
     }
 }
@@ -283,9 +282,9 @@ pub unsafe extern "C" fn defra_acp_nac_relationship_add(
 ///
 /// The requestor must be an admin. The owner cannot be removed.
 ///
-/// Returns JSON with success status:
+/// Answers with Go's `DeleteActorRelationshipResult`:
 /// ```json
-/// { "deleted": true }  // or false if didn't exist
+/// { "RecordFound": true }  // false when there was no such relationship
 /// ```
 ///
 /// # Safety
@@ -366,10 +365,9 @@ pub unsafe extern "C" fn defra_acp_nac_relationship_delete(
                 return Err("relation not in resource".to_string());
             }
 
-            // Empty target with authorized requestor: Go returns {deleted: false}
+            // Empty target with authorized requestor: Go returns {RecordFound: false}
             if target_str.is_empty() {
-                let json = serde_json::json!({ "deleted": false }).to_string();
-                return Ok(json);
+                return Ok(serde_json::json!({ "RecordFound": false }).to_string());
             }
 
             let target = if target_str == "*" {
@@ -393,8 +391,7 @@ pub unsafe extern "C" fn defra_acp_nac_relationship_delete(
                 return Err("relation not in resource".to_string());
             };
 
-            let json = serde_json::json!({ "deleted": deleted }).to_string();
-            Ok(json)
+            Ok(serde_json::json!({ "RecordFound": deleted }).to_string())
         })
     }
 }

@@ -222,7 +222,7 @@ fn store(
         callback,
     );
 
-    defra_core::signing::hold_identity(
+    let hold = defra_core::signing::IdentityHold::new(
         &did,
         defra_core::signing::SigningConfig {
             key_type,
@@ -239,5 +239,6 @@ fn store(
         key_type: Some(key_type),
         private_key: None,
         public_key_hex,
+        hold: Some(hold),
     }))
 }

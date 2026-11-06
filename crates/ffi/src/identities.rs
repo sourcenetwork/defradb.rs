@@ -7,14 +7,12 @@
 use std::ffi::c_char;
 
 use identity::RawIdentity;
+use zeroize::Zeroizing;
 
 use crate::state::{IdentityState, IDENTITIES, NODES};
 use crate::target::{go_string, resolve_target};
 use crate::types::{DefraNewIdentityResult, DefraResult};
 use crate::{ffi_entry, try_ffi};
-
-/// Length of a secp256k1 private key in bytes.
-const SECP256K1_PRIVATE_KEY_LEN: usize = 32;
 
 /// What exporting the null identity handle reports.
 const ERR_IDENTITY_IS_NIL: &str = "identity is nil";
@@ -22,8 +20,15 @@ const ERR_IDENTITY_IS_NIL: &str = "identity is nil";
 /// What exporting an identity whose private key the host keeps reports.
 const ERR_NO_PRIVATE_KEY: &str = "identity does not contain a private key";
 
-/// What importing a private key of the wrong length reports.
-const ERR_INVALID_PRIVATE_KEY_LENGTH: &str = "private key must be 32 bytes";
+/// Length in bytes of a `key_type` private key as it is exported: a 32-byte
+/// secp256k1 or secp256r1 scalar, or an ed25519 seed followed by its public
+/// key, 64 bytes, as Go keeps it.
+fn private_key_len(key_type: crypto::KeyType) -> usize {
+    match key_type {
+        crypto::KeyType::Ed25519 => 64,
+        _ => 32,
+    }
+}
 
 /// Creates an identity with a new key of type `key_type`: "secp256k1" (the
 /// default, for null or empty), "secp256r1" or "ed25519".
@@ -34,11 +39,9 @@ const ERR_INVALID_PRIVATE_KEY_LENGTH: &str = "private key must be 32 bytes";
 #[no_mangle]
 pub unsafe extern "C" fn defra_identity_new(key_type: *const c_char) -> DefraNewIdentityResult {
     ffi_entry! {
-        let key_type = match go_string(key_type).as_str() {
-            "" | "secp256k1" => crypto::KeyType::Secp256k1,
-            "secp256r1" => crypto::KeyType::Secp256r1,
-            "ed25519" => crypto::KeyType::Ed25519,
-            other => return DefraNewIdentityResult::error(format!("unsupported key type: {}", other)),
+        let key_type = match parse_key_type(key_type) {
+            Ok(key_type) => key_type,
+            Err(error) => return DefraNewIdentityResult::error(error),
         };
         let identity = crypto::generate_key(key_type)
             .map_err(|error| format!("failed to generate key: {}", error))
@@ -50,7 +53,24 @@ pub unsafe extern "C" fn defra_identity_new(key_type: *const c_char) -> DefraNew
     }
 }
 
-/// Imports an identity from a hex-encoded 32-byte secp256k1 private key.
+/// The key type a C caller names: "secp256k1" (the default, for null or
+/// empty), "secp256r1" or "ed25519".
+///
+/// # Safety
+///
+/// `key_type` must be null or a valid null-terminated string.
+unsafe fn parse_key_type(key_type: *const c_char) -> Result<crypto::KeyType, String> {
+    match go_string(key_type).as_str() {
+        "" | "secp256k1" => Ok(crypto::KeyType::Secp256k1),
+        "secp256r1" => Ok(crypto::KeyType::Secp256r1),
+        "ed25519" => Ok(crypto::KeyType::Ed25519),
+        other => Err(format!("unsupported key type: {}", other)),
+    }
+}
+
+/// Imports an identity from a hex-encoded 32-byte secp256k1 private key as
+/// Go's `NewIdentityFromPrivateKey` does. Other key types import with
+/// [`defra_identity_new_from_typed_private_key`].
 ///
 /// # Safety
 ///
@@ -60,17 +80,49 @@ pub unsafe extern "C" fn defra_identity_new_from_private_key(
     private_key_hex: *const c_char,
 ) -> DefraNewIdentityResult {
     ffi_entry! {
-        let identity = hex::decode(go_string(private_key_hex))
-            .map_err(|error| error.to_string())
-            .and_then(|bytes| {
-                if bytes.len() != SECP256K1_PRIVATE_KEY_LEN {
-                    return Err(ERR_INVALID_PRIVATE_KEY_LENGTH.to_string());
-                }
-                RawIdentity::from_bytes(crypto::KeyType::Secp256k1, &bytes)
-                    .map_err(|error| error.to_string())
-            });
-        insert(identity)
+        insert(import(crypto::KeyType::Secp256k1, private_key_hex))
     }
+}
+
+/// Imports an identity of `key_type` (as [`defra_identity_new`] names it)
+/// from the hex-encoded private key [`defra_identity_export_private_key`]
+/// gave. Not in Go's C API, which imports secp256k1 keys only.
+///
+/// # Safety
+///
+/// `key_type` and `private_key_hex` must be null or valid null-terminated
+/// strings.
+#[no_mangle]
+pub unsafe extern "C" fn defra_identity_new_from_typed_private_key(
+    key_type: *const c_char,
+    private_key_hex: *const c_char,
+) -> DefraNewIdentityResult {
+    ffi_entry! {
+        insert(parse_key_type(key_type).and_then(|key_type| import(key_type, private_key_hex)))
+    }
+}
+
+/// The identity of `key_type` whose private key `private_key_hex` encodes.
+///
+/// # Safety
+///
+/// `private_key_hex` must be null or a valid null-terminated string.
+unsafe fn import(
+    key_type: crypto::KeyType,
+    private_key_hex: *const c_char,
+) -> Result<RawIdentity, String> {
+    let bytes =
+        Zeroizing::new(hex::decode(go_string(private_key_hex)).map_err(|error| error.to_string())?);
+    let expected = private_key_len(key_type);
+    if bytes.len() != expected {
+        return Err(format!(
+            "a {} private key must be {} bytes, got {}",
+            key_type,
+            expected,
+            bytes.len()
+        ));
+    }
+    RawIdentity::from_bytes(key_type, &bytes).map_err(|error| error.to_string())
 }
 
 /// Registers `identity` and answers with its handle.

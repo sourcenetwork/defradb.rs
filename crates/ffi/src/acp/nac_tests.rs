@@ -109,7 +109,10 @@ fn a_relationship_needs_a_valid_actor_and_defaults_its_relation_to_admin() {
     let added = ok_json(unsafe {
         defra_acp_nac_relationship_add(node, owner, ptr::null(), actor.as_ptr())
     });
-    assert_eq!(added["added"], true, "a null relation means admin: {added}");
+    assert_eq!(
+        added["ExistedAlready"], false,
+        "a null relation means admin: {added}"
+    );
 
     close(node);
     defra_identity_free(owner);

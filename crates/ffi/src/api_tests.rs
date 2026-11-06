@@ -73,7 +73,7 @@ fn an_index_is_created_listed_and_deleted() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|i| i["Name"] == "by_age"),
+            .any(|i| i["Description"]["Name"] == "by_age"),
         "{listed}"
     );
     let all =
@@ -90,7 +90,7 @@ fn an_index_is_created_listed_and_deleted() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|i| i["Name"] == "by_age"),
+            .any(|i| i["Description"]["Name"] == "by_age"),
         "{listed}"
     );
 

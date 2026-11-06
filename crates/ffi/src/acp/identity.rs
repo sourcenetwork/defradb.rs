@@ -4,7 +4,7 @@
 use std::ffi::c_char;
 
 use crate::state::{IdentityState, NodeIdentity, IDENTITIES, NODES};
-use crate::target::{non_empty, resolve_identity, resolve_node};
+use crate::target::{non_empty, resolve_identity_state, resolve_node};
 use crate::types::{DefraNewIdentityResult, DefraResult};
 use crate::{ffi_entry, try_ffi};
 
@@ -38,6 +38,7 @@ pub unsafe extern "C" fn defra_identity_new_from_bearer_token(
             key_type: None,
             private_key: None,
             public_key_hex: String::new(),
+            hold: None,
         }))
     }
 }
@@ -48,9 +49,16 @@ pub unsafe extern "C" fn defra_identity_new_from_bearer_token(
 pub extern "C" fn defra_node_set_identity(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
         let node = try_ffi!(resolve_node(node_ptr));
-        let did = try_ffi!(resolve_identity(identity_ptr));
+        // The state, not just its DID: while it lives its key stays in the
+        // signing store, so the node's hold finds it even if the handle is
+        // freed meanwhile.
+        let identity = try_ffi!(resolve_identity_state(identity_ptr));
         let updated = NODES.get(node, |state| {
-            let replaced = state.node_identity.swap(did.clone().map(NodeIdentity::hold));
+            let replaced = state.node_identity.swap(
+                identity
+                    .as_ref()
+                    .map(|identity| NodeIdentity::hold(identity.did.clone())),
+            );
             if let Some(identity) = &*replaced {
                 identity.release();
             }

@@ -42,6 +42,39 @@ fn an_exported_private_key_imports_the_same_identity() {
 }
 
 #[test]
+fn every_key_type_exports_and_imports_back() {
+    for name in ["secp256k1", "secp256r1", "ed25519"] {
+        let key_type = cstr(name);
+        let identity = handle(unsafe { defra_identity_new(key_type.as_ptr()) });
+        let key = cstr(&ok(defra_identity_export_private_key(identity)));
+
+        let imported = handle(unsafe {
+            defra_identity_new_from_typed_private_key(key_type.as_ptr(), key.as_ptr())
+        });
+        assert_eq!(
+            ok(defra_identity_did(identity)),
+            ok(defra_identity_did(imported)),
+            "{name} imports as the identity it was exported from"
+        );
+
+        defra_identity_free(identity);
+        defra_identity_free(imported);
+    }
+}
+
+#[test]
+fn a_typed_import_refuses_an_unknown_key_type() {
+    let identity = handle(unsafe { defra_identity_new(ptr::null()) });
+    let key = cstr(&ok(defra_identity_export_private_key(identity)));
+    let rsa = cstr("rsa");
+    let mut result =
+        unsafe { defra_identity_new_from_typed_private_key(rsa.as_ptr(), key.as_ptr()) };
+    assert_eq!(result.status, 1);
+    unsafe { crate::types::defra_new_identity_result_free(&mut result) };
+    defra_identity_free(identity);
+}
+
+#[test]
 fn a_bad_private_key_fails() {
     for key in ["zz", "", "abcd"] {
         let key = cstr(key);

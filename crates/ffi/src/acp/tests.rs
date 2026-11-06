@@ -65,29 +65,53 @@ fn a_document_policy_hides_documents_until_a_relationship_grants_them() {
     let doc = cstr(&doc_id);
     let relation = cstr("viewer");
     let actor = cstr(&ok(defra_identity_did(reader)));
-    ok(unsafe {
-        defra_acp_dac_relationship_add(
-            node,
-            owner,
-            collection.as_ptr(),
-            doc.as_ptr(),
-            relation.as_ptr(),
-            actor.as_ptr(),
-        )
-    });
+    let add = || {
+        ok_json(unsafe {
+            defra_acp_dac_relationship_add(
+                node,
+                owner,
+                collection.as_ptr(),
+                doc.as_ptr(),
+                relation.as_ptr(),
+                actor.as_ptr(),
+            )
+        })
+    };
+    assert_eq!(add(), json!({"ExistedAlready": false}));
+    assert_eq!(add(), json!({"ExistedAlready": true}));
     assert_eq!(read(reader), json!([{"name": "Alice"}]));
 
-    ok(unsafe {
+    let delete = || {
+        ok_json(unsafe {
+            defra_acp_dac_relationship_delete(
+                node,
+                owner,
+                collection.as_ptr(),
+                doc.as_ptr(),
+                relation.as_ptr(),
+                actor.as_ptr(),
+            )
+        })
+    };
+    assert_eq!(delete(), json!({"RecordFound": true}));
+    assert_eq!(delete(), json!({"RecordFound": false}));
+    assert_eq!(read(reader), json!([]));
+
+    let owner_relation = cstr("owner");
+    let refused = err(unsafe {
         defra_acp_dac_relationship_delete(
             node,
             owner,
             collection.as_ptr(),
             doc.as_ptr(),
-            relation.as_ptr(),
+            owner_relation.as_ptr(),
             actor.as_ptr(),
         )
     });
-    assert_eq!(read(reader), json!([]));
+    assert!(
+        refused.starts_with(super::dac::ERR_DELETE_DOC_ACTOR_RELATIONSHIP),
+        "{refused}"
+    );
 
     // Without an identity, no one creates the policy.
     err(unsafe { defra_acp_dac_policy_add(node, 0, policy.as_ptr()) });

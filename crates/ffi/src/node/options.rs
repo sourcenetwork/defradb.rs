@@ -1,10 +1,11 @@
 //! A C caller's [`NodeInitOptions`], read into what builds the node.
 
 use std::ffi::c_int;
+use std::sync::Arc;
 
 use zeroize::Zeroizing;
 
-use crate::state::IDENTITIES;
+use crate::state::{IdentityState, IDENTITIES};
 use crate::target::{go_string, non_empty};
 use crate::types::NodeInitOptions;
 
@@ -23,6 +24,9 @@ pub(crate) struct NodeSetup {
     pub(crate) store_file_size: Option<u64>,
     pub(crate) store_encryption_key: Option<Zeroizing<[u8; 32]>>,
     pub(crate) config: defra_node::NodeConfig,
+    /// The identity `identity_ptr` names, kept until the node holds its key,
+    /// so freeing the handle while the node starts cannot take the key away.
+    pub(crate) identity: Option<Arc<IdentityState>>,
     pub(crate) signing_enabled: bool,
     pub(crate) searchable_encryption_key: Option<Zeroizing<Vec<u8>>>,
     pub(crate) peer_key: Option<Zeroizing<Vec<u8>>>,
@@ -55,16 +59,20 @@ pub(crate) unsafe fn read(options: &NodeInitOptions) -> Result<NodeSetup, String
         },
     };
 
-    let signing = match options.identity_ptr {
-        0 if options.enable_signing != 0 => defra_node::NodeSigning::Enabled { key: None },
-        0 => defra_node::NodeSigning::Disabled,
-        handle => defra_node::NodeSigning::RegisteredIdentity {
-            did: IDENTITIES
+    let identity = match options.identity_ptr {
+        0 => None,
+        handle => Some(
+            IDENTITIES
                 .get(handle)
-                .ok_or_else(|| "identity_ptr is not an identity handle".to_string())?
-                .did
-                .clone(),
+                .ok_or_else(|| "identity_ptr is not an identity handle".to_string())?,
+        ),
+    };
+    let signing = match &identity {
+        Some(identity) => defra_node::NodeSigning::RegisteredIdentity {
+            did: identity.did.clone(),
         },
+        None if options.enable_signing != 0 => defra_node::NodeSigning::Enabled { key: None },
+        None => defra_node::NodeSigning::Disabled,
     };
 
     let config = defra_node::NodeConfig {
@@ -94,6 +102,7 @@ pub(crate) unsafe fn read(options: &NodeInitOptions) -> Result<NodeSetup, String
         })
         .transpose()?,
         config,
+        identity,
         signing_enabled: options.enable_signing != 0,
         searchable_encryption_key: key_bytes(
             options.searchable_encryption_key,

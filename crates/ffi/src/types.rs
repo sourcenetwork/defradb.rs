@@ -8,7 +8,9 @@ use std::ptr;
 /// Status codes:
 /// - 0: Success
 /// - 1: Error (message in error field)
-/// - 2: Subscription (ID in value field, not yet implemented)
+/// - 2: Subscription: `defra_query_execute` started a GraphQL subscription,
+///   whose ID is in the value field; read its events with
+///   `defra_subscription_poll` and end it with `defra_subscription_close`
 ///
 /// The caller owns its strings and frees them with [`defra_result_free`].
 #[repr(C)]

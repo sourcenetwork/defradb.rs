@@ -8,7 +8,7 @@
 use std::ffi::c_char;
 use std::sync::Arc;
 
-use crate::state::{TxnState, IDENTITIES, NODES, TXNS};
+use crate::state::{IdentityState, TxnState, IDENTITIES, NODES, TXNS};
 use crate::types::{c_str_to_string, CollectionOptions, DefraResult};
 
 /// What a call made with a handle the registries do not hold reports.
@@ -62,12 +62,20 @@ pub(crate) fn resolve_node(handle: usize) -> Result<usize, DefraResult> {
 
 /// The DID of the identity `handle` names; `None` for the null handle.
 pub(crate) fn resolve_identity(handle: usize) -> Result<Option<String>, DefraResult> {
+    resolve_identity_state(handle).map(|identity| identity.map(|identity| identity.did.clone()))
+}
+
+/// The identity `handle` names; `None` for the null handle. Holding it keeps
+/// the identity's key in the signing store, whatever happens to the handle.
+pub(crate) fn resolve_identity_state(
+    handle: usize,
+) -> Result<Option<Arc<IdentityState>>, DefraResult> {
     if handle == 0 {
         return Ok(None);
     }
     IDENTITIES
         .get(handle)
-        .map(|identity| Some(identity.did.clone()))
+        .map(Some)
         .ok_or_else(|| DefraResult::error(ERR_INVALID_HANDLE))
 }
 

@@ -61,10 +61,8 @@ fn two_embedded_iroh_nodes_connect_and_replicate() -> Result<()> {
 
             wait_for_book_title(&node_b, REPLICATED_TITLE).await?;
 
-            p2p_a.shutdown().await;
-            p2p_b.shutdown().await;
-            node_a.database().close().await?;
-            node_b.database().close().await?;
+            node_a.shutdown().await.unwrap();
+            node_b.shutdown().await.unwrap();
 
             Ok(())
         })
@@ -118,10 +116,8 @@ fn an_explicit_allowlist_admits_the_peer_it_is_given() -> Result<()> {
             // that the listener sees the peer, not merely that the dial returned.
             wait_for_connected_peer(&listener_p2p, &dialer_peer).await?;
 
-            listener_p2p.shutdown().await;
-            dialer_p2p.shutdown().await;
-            listener.database().close().await?;
-            dialer.database().close().await?;
+            listener.shutdown().await.unwrap();
+            dialer.shutdown().await.unwrap();
             Ok(())
         })
         .unwrap()

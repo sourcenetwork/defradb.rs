@@ -37,7 +37,13 @@ pub unsafe extern "C" fn defra_document_get(
                     collection
                         .fields
                         .iter()
-                        .filter(|field| field.name != "_docID" && field.kind.is_scalar())
+                        // Go's document holds no secondary relation ID, and
+                        // refuses one when the caller sets it back.
+                        .filter(|field| {
+                            field.name != "_docID"
+                                && field.kind.is_scalar()
+                                && !field.is_secondary_relation()
+                        })
                         .map(|field| field.name.as_str()),
                 )
                 .collect();

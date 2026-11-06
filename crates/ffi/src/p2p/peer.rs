@@ -3,7 +3,7 @@ use std::ffi::c_char;
 use acp::nac::NodePermission;
 use defra_p2p_adapter::peer;
 
-use super::{json, ok, run};
+use super::{admit, drive, json, ok, run};
 use crate::ffi_entry;
 use crate::target::{go_string, split_comma_separated};
 use crate::types::DefraResult;
@@ -47,13 +47,16 @@ pub unsafe extern "C" fn defra_p2p_disconnect(
 }
 
 /// Answers with the addresses other peers reach this node at, as a JSON
-/// array: each multiaddr with this node's peer ID appended.
+/// array: each multiaddr with this node's peer ID appended. A node without
+/// P2P answers `null`, as Go's does, rather than an error.
 #[no_mangle]
 pub extern "C" fn defra_p2p_info(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
-        json(run(node_ptr, identity_ptr, NodePermission::P2pPeerInfo, None, |ops| async move {
-            peer::peer_info(&*ops).await
-        }))
+        match admit(node_ptr, identity_ptr, NodePermission::P2pPeerInfo) {
+            Ok(Some(ops)) => json(drive(ops, None, |ops| async move { peer::peer_info(&*ops).await })),
+            Ok(None) => DefraResult::success("null"),
+            Err(error) => error,
+        }
     }
 }
 

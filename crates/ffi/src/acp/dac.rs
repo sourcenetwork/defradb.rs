@@ -9,6 +9,14 @@ use crate::target::go_string;
 use crate::types::DefraResult;
 use crate::{ffi_async, ffi_entry, try_ffi, ERR_INVALID_NODE_HANDLE};
 
+/// Go's `acp.ErrFailedToAddDocActorRelationship`, which wraps every refusal
+/// from document access control.
+pub(crate) const ERR_ADD_DOC_ACTOR_RELATIONSHIP: &str =
+    "failed to add document actor relationship with acp";
+/// Go's `acp.ErrFailedToDeleteDocActorRelationship`.
+pub(crate) const ERR_DELETE_DOC_ACTOR_RELATIONSHIP: &str =
+    "failed to delete document actor relationship with acp";
+
 async fn publish_latest_document_update(
     database: &crate::state::FfiDatabase,
     event_bus: &dyn events::Bus,
@@ -108,9 +116,9 @@ pub unsafe extern "C" fn defra_acp_dac_policy_add(
 /// - "updater" - read + update access
 /// - "deleter" - read + delete access
 ///
-/// Returns JSON with success status:
+/// Answers with Go's `AddActorRelationshipResult`:
 /// ```json
-/// { "added": true }  // or false if already exists
+/// { "ExistedAlready": false }  // true when the relationship already existed
 /// ```
 ///
 /// # Safety
@@ -197,7 +205,9 @@ pub unsafe extern "C" fn defra_acp_dac_relationship_add(
 
         // Owner relation is immutable - cannot be added or removed
         if relation_str == "owner" {
-            return DefraResult::error("OPERATION_FORBIDDEN: cannot add owner relation");
+            return DefraResult::error(format!(
+                "{ERR_ADD_DOC_ACTOR_RELATIONSHIP}: OPERATION_FORBIDDEN: cannot add owner relation"
+            ));
         }
 
         let result = crate::helpers::block_on(rt, async {
@@ -238,13 +248,13 @@ pub unsafe extern "C" fn defra_acp_dac_relationship_add(
 
             // Local ACP relationships are node-local (matches Go): a grant is not
             // propagated to peers. Cross-node access control is Vera's role.
-            let json = serde_json::json!({ "added": added }).to_string();
+            let json = serde_json::json!({ "ExistedAlready": !added }).to_string();
             Ok::<String, String>(json)
         });
 
         match result {
             Ok(json) => DefraResult::success(json),
-            Err(e) => DefraResult::error(e),
+            Err(e) => DefraResult::error(format!("{ERR_ADD_DOC_ACTOR_RELATIONSHIP}: {e}")),
         }
     }
 }
@@ -253,9 +263,9 @@ pub unsafe extern "C" fn defra_acp_dac_relationship_add(
 ///
 /// The requestor must be the document owner.
 ///
-/// Returns JSON with success status:
+/// Answers with Go's `DeleteActorRelationshipResult`:
 /// ```json
-/// { "deleted": true }  // or false if didn't exist
+/// { "RecordFound": true }  // false when there was no such relationship
 /// ```
 ///
 /// # Safety
@@ -333,7 +343,9 @@ pub unsafe extern "C" fn defra_acp_dac_relationship_delete(
 
         // Owner relation is immutable - cannot be added or removed
         if relation_str == "owner" {
-            return DefraResult::error("OPERATION_FORBIDDEN: cannot delete owner relation");
+            return DefraResult::error(format!(
+                "{ERR_DELETE_DOC_ACTOR_RELATIONSHIP}: OPERATION_FORBIDDEN: cannot delete owner relation"
+            ));
         }
 
         let result = crate::helpers::block_on(rt, async {
@@ -364,13 +376,13 @@ pub unsafe extern "C" fn defra_acp_dac_relationship_delete(
 
             // Local ACP relationships are node-local (matches Go): a revoke is not
             // propagated to peers. Cross-node access control is Vera's role.
-            let json = serde_json::json!({ "deleted": deleted }).to_string();
+            let json = serde_json::json!({ "RecordFound": deleted }).to_string();
             Ok::<String, String>(json)
         });
 
         match result {
             Ok(json) => DefraResult::success(json),
-            Err(e) => DefraResult::error(e),
+            Err(e) => DefraResult::error(format!("{ERR_DELETE_DOC_ACTOR_RELATIONSHIP}: {e}")),
         }
     }
 }

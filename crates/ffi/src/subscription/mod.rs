@@ -1,9 +1,14 @@
-//! GraphQL subscriptions, read by polling.
+//! Subscriptions, read by polling.
 //!
-//! `defra_query_execute` starts a subscription and answers with its ID
+//! `defra_query_execute` starts a GraphQL subscription and
+//! `defra_event_subscribe` an event subscription; each answers with an ID
 //! (status 2). The caller polls that ID for results and closes it when done.
 
 use std::ffi::c_char;
+
+mod events;
+
+pub use events::defra_event_subscribe;
 
 use crate::ffi_entry;
 use crate::state::{GRAPHQL_SUBSCRIPTIONS, NODES};

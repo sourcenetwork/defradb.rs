@@ -95,6 +95,31 @@ fn closing_a_node_removes_the_key_it_generated() {
     assert!(get_identity(&did).is_none(), "nothing holds it any more");
 }
 
+/// `defra_node_set_identity` racing `defra_identity_free`: the handle is freed
+/// after the call resolved it and before the node took its hold. The node
+/// must still find the key.
+#[test]
+fn a_handle_freed_while_a_node_takes_its_identity_leaves_the_key() {
+    let identity = new_identity();
+    let did = did(identity);
+    let resolved = crate::target::resolve_identity_state(identity)
+        .ok()
+        .flatten()
+        .expect("the handle names an identity");
+
+    defra_identity_free(identity);
+    assert!(
+        get_identity(&did).is_some(),
+        "the resolved state still holds the key"
+    );
+    let node_identity = crate::state::NodeIdentity::hold(resolved.did.clone());
+    drop(resolved);
+    assert!(get_identity(&did).is_some(), "the node holds the key");
+
+    node_identity.release();
+    assert!(get_identity(&did).is_none(), "nothing holds it any more");
+}
+
 #[test]
 fn replacing_a_node_identity_gives_back_the_old_hold() {
     let node = node_with(local_options());
