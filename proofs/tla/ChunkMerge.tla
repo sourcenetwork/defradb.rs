@@ -25,7 +25,8 @@
 \*   - once every edit and chunk has reached both peers, they show different
 \*     chunks, or miss a chunk of the text (INV_SettledPeersAgree);
 \*   - a peer stores a chunk whose hash does not match its text (INV_NoForgedChunk);
-\*   - a stored chunk is changed after it was created (INV_ChunksNeverChange).
+\*   - a stored chunk is changed after it was created, in any field, its vector
+\*     too (INV_ChunksNeverChange).
 \*
 \* Code it models:
 \*   crates/query/src/plan/chunk_parent.rs  parent_hashes (the read rule)
