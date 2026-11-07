@@ -882,7 +882,7 @@
     "verdict": "partial",
     "rust_tests": [
       "tools/integration-test/tests/legacy/query/lens_reindex_secondary_index_979.rs::multi_doc_collection_fully_reindexed_after_lens_migration",
-      "tools/integration-test/tests/legacy/cursor/reindex_datetime_visibility.rs::datetime_index_survives_reindex_and_stays_cursor_visible"
+      "tools/integration-test/tests/testo/cursor/reindex.rs::a_datetime_index_stays_cursor_visible_after_a_lens_reindex"
     ],
     "evidence": "tools/integration-test/tests/legacy/query/lens_reindex_secondary_index_979.rs:105-120 asserts registering a migration affecting the active version reindexes all docs",
     "note": "Unverified: switching to a distant old/new version with or without a migration in between (reindex vs no reindex), a migration between newer inactive versions not reindexing, and a migration to unknown versions followed by a patch reindexing. No Rust test combines set-active with an index and a lens."

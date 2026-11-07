@@ -35,7 +35,7 @@ dependencies = [
 [[package]]
 name = "acp-light-client"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=330e38f184215f40a2bc926480b542bb75051b6d#330e38f184215f40a2bc926480b542bb75051b6d"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=0959bd78d13463ac9a4104b3ae0f3c46fb54547b#0959bd78d13463ac9a4104b3ae0f3c46fb54547b"
 dependencies = [
  "alloy-primitives",
  "commonware-codec",
@@ -3973,7 +3973,7 @@ dependencies = [
 [[package]]
 name = "defra-harness"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=330e38f184215f40a2bc926480b542bb75051b6d#330e38f184215f40a2bc926480b542bb75051b6d"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=0959bd78d13463ac9a4104b3ae0f3c46fb54547b#0959bd78d13463ac9a4104b3ae0f3c46fb54547b"
 dependencies = [
  "eyre",
  "futures",
@@ -3987,7 +3987,7 @@ dependencies = [
  "test-infra",
  "tokio",
  "tracing",
- "vera-harness 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=330e38f184215f40a2bc926480b542bb75051b6d)",
+ "vera-harness 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=0959bd78d13463ac9a4104b3ae0f3c46fb54547b)",
 ]
 
 [[package]]
@@ -4006,6 +4006,7 @@ dependencies = [
  "defra-http",
  "defra-p2p-adapter",
  "defra-version",
+ "document",
  "edge",
  "events",
  "futures",
@@ -12630,7 +12631,7 @@ dependencies = [
 [[package]]
 name = "test-infra"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=330e38f184215f40a2bc926480b542bb75051b6d#330e38f184215f40a2bc926480b542bb75051b6d"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=0959bd78d13463ac9a4104b3ae0f3c46fb54547b#0959bd78d13463ac9a4104b3ae0f3c46fb54547b"
 dependencies = [
  "eyre",
  "futures",
@@ -13793,7 +13794,7 @@ dependencies = [
 [[package]]
 name = "vera-harness"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=330e38f184215f40a2bc926480b542bb75051b6d#330e38f184215f40a2bc926480b542bb75051b6d"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=0959bd78d13463ac9a4104b3ae0f3c46fb54547b#0959bd78d13463ac9a4104b3ae0f3c46fb54547b"
 dependencies = [
  "cosmrs",
  "eyre",

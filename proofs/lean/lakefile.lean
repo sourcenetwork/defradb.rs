@@ -170,3 +170,6 @@ lean_lib DocIdText where
 
 @[default_target]
 lean_lib SecondaryRelation where
+
+@[default_target]
+lean_lib CursorToken where
