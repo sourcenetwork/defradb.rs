@@ -1,7 +1,5 @@
 //! Splits a text into paragraphs.
 
-use sha2::{Digest, Sha256};
-
 /// A paragraph, with the blank lines that follow it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Para<'a> {
@@ -12,8 +10,8 @@ pub struct Para<'a> {
     pub chars: usize,
     /// Whether it is a heading (`# Title`, or a line underlined with `===` or `---`).
     pub heading: bool,
-    /// Whether a segment may start here. Its hash picks about one paragraph in four.
-    pub pick: bool,
+    /// Its characters without the surrounding whitespace.
+    pub weight: usize,
 }
 
 struct Open {
@@ -84,7 +82,7 @@ fn push<'a>(paras: &mut Vec<Para<'a>>, text: &'a str, from: usize, to: usize, he
         start,
         chars: part.chars().count(),
         heading,
-        pick: picked(part),
+        weight: part.trim().chars().count(),
     });
 }
 
@@ -104,9 +102,4 @@ fn is_setext_underline(line: &str) -> bool {
     let trimmed = line.trim();
     (trimmed.len() >= 2 && trimmed.bytes().all(|b| b == b'='))
         || (trimmed.len() >= 3 && trimmed.bytes().all(|b| b == b'-'))
-}
-
-// Hash only the words, so adding or removing a blank line doesn't move a boundary.
-fn picked(part: &str) -> bool {
-    Sha256::digest(part.trim().as_bytes())[0] % 4 == 3
 }

@@ -64,3 +64,19 @@ pub(super) fn validate_chunks_not_modified(
     }
     errs
 }
+
+/// A view's documents come from its query, so there is no write to cut chunks on.
+pub(super) fn chunks_in_views(collections: &[CollectionVersion]) -> Vec<String> {
+    collections
+        .iter()
+        .filter(|col| col.query.is_some() || col.downsample_source.is_some())
+        .flat_map(|col| {
+            col.chunked_fields.iter().map(move |chunked| {
+                format!(
+                    "@chunk is not allowed in a view. Field: {}.{}",
+                    col.name, chunked.field_name
+                )
+            })
+        })
+        .collect()
+}

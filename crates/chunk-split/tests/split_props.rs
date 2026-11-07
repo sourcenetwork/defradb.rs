@@ -1,6 +1,8 @@
 //! Property tests mirroring the Lean theorems in `proofs/lean/ChunkSplit`.
 
-use chunk_split::split::{cut_sentences, cut_words, fence_before, paragraphs, split, ChunkConfig};
+use chunk_split::split::{
+    cut_sentences, cut_words, paragraphs, segments, split, units, ChunkConfig, SEGMENT_CHUNKS,
+};
 use proptest::prelude::*;
 
 fn word() -> impl Strategy<Value = String> {
@@ -86,35 +88,57 @@ proptest! {
         }
     }
 
-    // Mirrors `local_edit`: editing one paragraph without moving a boundary leaves
-    // every chunk outside its segment unchanged.
+    // Mirrors `units_edit`: an edit that keeps a paragraph a heading or text keeps
+    // every unit's paragraphs.
+    #[test]
+    fn units_keep_their_shape_when_the_heading_flags_do(text in text(), pick in any::<prop::sample::Index>(), insert in "[a-z]{1,6}") {
+        prop_assume!(!paragraphs(&text).is_empty());
+        let Some(edited) = append_word(&text, pick, &insert) else { return Ok(()) };
+        let shape = |t: &str| {
+            let paras = paragraphs(t);
+            units(&paras).iter().map(|u| u.paras.len()).collect::<Vec<_>>()
+        };
+        prop_assert_eq!(shape(&text), shape(&edited));
+    }
+
+    // Segments follow the text size on text where every paragraph sits under a heading.
+    #[test]
+    fn heading_led_segments_average_a_few_max_chars(
+        bodies in prop::collection::vec(prop::collection::vec(sentence(), 1..6), 500..600),
+        max in 64usize..=200,
+    ) {
+        let text = bodies
+            .iter()
+            .enumerate()
+            .map(|(i, body)| format!("## Section {i}\n\n{}", body.join(" ")))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let paras = paragraphs(&text);
+        let mean = text.chars().count() / segments(&paras, max).len();
+        prop_assert!(mean <= 2 * SEGMENT_CHUNKS as usize * max, "mean {} at max {}", mean, max);
+    }
+
+    // Mirrors `local_edit`: editing one paragraph without moving the fence before
+    // its unit leaves every chunk outside its segment unchanged.
     #[test]
     fn local_edit(text in text(), config in config(), pick in any::<prop::sample::Index>(), insert in "[a-z]{1,6}") {
         let max = config.max_chars;
         let paras = paragraphs(&text);
         prop_assume!(!paras.is_empty());
+        let Some(edited) = append_word(&text, pick, &insert) else { return Ok(()) };
         let at = pick.index(paras.len());
-        let p = &paras[at];
-        let trimmed = p.text.trim_end().len();
-        prop_assume!(trimmed > 0);
-        let before_p: usize = paras[..at].iter().map(|q| q.text.len()).sum();
-        let mut edited = text.clone();
-        edited.insert_str(before_p + trimmed, &format!(" {insert}"));
-
-        let new_paras = paragraphs(&edited);
-        prop_assume!(new_paras.len() == paras.len());
-        let q = &new_paras[at];
-        prop_assume!(q.heading == p.heading);
-        let keeps_fence_before = at == 0 || fence_before(&paras[at - 1], p, max) == fence_before(&new_paras[at - 1], q, max);
-        let keeps_fence_after = at + 1 == paras.len() || fence_before(p, &paras[at + 1], max) == fence_before(q, &new_paras[at + 1], max);
-        prop_assume!(keeps_fence_before && keeps_fence_after);
-
-        let seg_start = (1..=at).rev().find(|&i| fence_before(&paras[i - 1], &paras[i], max)).unwrap_or(0);
-        let seg_end = (at + 1..paras.len()).find(|&i| fence_before(&paras[i - 1], &paras[i], max)).unwrap_or(paras.len());
-        let start_char = paras[seg_start].start;
-        let end_char = paras.get(seg_end).map_or(text.chars().count(), |q| q.start);
+        let starts = |t: &str| {
+            let paras = paragraphs(t);
+            segments(&paras, max).iter().map(|s| s[0].start).collect::<Vec<_>>()
+        };
+        let (old_starts, new_starts) = (starts(&text), starts(&edited));
+        let p_start = paras[at].start;
         let shift = edited.chars().count() - text.chars().count();
+        let moved = |s: usize| if s > p_start { s + shift } else { s };
+        prop_assume!(old_starts.iter().map(|&s| moved(s)).collect::<Vec<_>>() == new_starts);
 
+        let start_char = old_starts.iter().rev().copied().find(|&s| s <= p_start).unwrap_or(0);
+        let end_char = old_starts.iter().copied().find(|&s| s > p_start).unwrap_or(text.chars().count());
         let old = split(&text, &config);
         let new = split(&edited, &config);
         let old_before: Vec<_> = old.iter().filter(|c| c.end <= start_char).collect();
@@ -124,4 +148,26 @@ proptest! {
         let new_after: Vec<_> = new.iter().filter(|c| c.start >= end_char + shift).map(|c| (c.start, &c.hash)).collect();
         prop_assert_eq!(old_after, new_after);
     }
+}
+
+// Appends ` insert` to the paragraph `pick`, or `None` when that changes a heading flag
+// or the paragraph count.
+fn append_word(text: &str, pick: prop::sample::Index, insert: &str) -> Option<String> {
+    let paras = paragraphs(text);
+    let at = pick.index(paras.len());
+    let p = &paras[at];
+    let trimmed = p.text.trim_end().len();
+    if trimmed == 0 {
+        return None;
+    }
+    let before_p: usize = paras[..at].iter().map(|q| q.text.len()).sum();
+    let mut edited = text.to_string();
+    edited.insert_str(before_p + trimmed, &format!(" {insert}"));
+    let new_paras = paragraphs(&edited);
+    let same = new_paras.len() == paras.len()
+        && new_paras
+            .iter()
+            .zip(&paras)
+            .all(|(a, b)| a.heading == b.heading);
+    same.then_some(edited)
 }

@@ -21,15 +21,17 @@ fn list_starts_with_the_text_hash_then_chunks_in_order() {
 
 #[test]
 fn repeated_text_needs_one_chunk_document() {
-    let text = "# Chorus\n\nLa la la.\n\n# Chorus\n\nLa la la.\n\n# Verse\n\nSomething else.\n";
+    // Each section is over half of max_chars, so every heading starts a new chunk.
+    let chorus = format!("# Chorus\n\n{}\n\n", "La ".repeat(14));
+    let text = format!("{chorus}{chorus}# Verse\n\nSomething else.\n");
     let chunks = split(
-        text,
+        &text,
         &ChunkConfig {
             max_chars: 64,
             overlap: 0,
         },
     );
-    let list = chunk_list(text, &chunks);
+    let list = chunk_list(&text, &chunks);
     assert_eq!(list.len(), chunks.len() + 1);
     let needed = distinct(&chunks);
     assert!(needed.len() < chunks.len());
