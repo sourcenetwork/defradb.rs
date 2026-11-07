@@ -224,4 +224,3 @@ fn test_client_context_with_identity() {
     let parts: Vec<&str> = token.split('.').collect();
     assert_eq!(parts.len(), 3, "Auth token should be a valid JWT");
 }
-
