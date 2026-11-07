@@ -22,7 +22,7 @@ pub(crate) enum Searched {
     /// At least `k` parents, each with its exact best listed chunk's score.
     Ranked(Vec<(Document, f64)>),
     /// The search gave up before naming `k` parents.
-    Exhausted(GaveUp),
+    Exhausted,
 }
 
 /// Why a routed search gave up.
@@ -65,11 +65,13 @@ impl ChunkSearch<'_> {
         let mut width = self.k.max(1);
         let mut searches = 0;
         let mut reads = Reads::default();
-        let mut skipped = 0usize;
+        let mut unlisted = 0usize;
+        let mut unvectored = 0usize;
         let mut seen: RapidHashSet<u64> = RapidHashSet::new();
         let mut decided: RapidHashMap<String, Listed> = RapidHashMap::new();
         let mut parents: RapidHashMap<String, Document> = RapidHashMap::new();
         let mut hits: Vec<(String, f64)> = Vec::new();
+        let mut held: RapidHashMap<String, RapidHashMap<String, f64>> = RapidHashMap::new();
         let gave_up = loop {
             if width > MAX_VECTOR_CANDIDATES {
                 break GaveUp::Budget;
@@ -94,33 +96,40 @@ impl ChunkSearch<'_> {
             self.decide_parents(&chunks, check, &mut decided, &mut parents, &mut reads)
                 .await?;
             for chunk in &chunks {
-                let listed = match (chunk_parent_id(chunk), verified_hash(chunk)) {
+                let accepted = match (chunk_parent_id(chunk), verified_hash(chunk)) {
                     (Some(parent), Some(hash)) => decided
                         .get(parent)
                         .and_then(Option::as_ref)
-                        .is_some_and(|listed| listed.contains(hash)),
-                    _ => false,
+                        .is_some_and(|listed| listed.contains(hash))
+                        .then_some((parent, hash)),
+                    _ => None,
                 };
-                let score = match listed {
-                    true => self.target.score(chunk)?,
-                    false => None,
+                let Some((parent, hash)) = accepted else {
+                    unlisted += 1;
+                    continue;
                 };
-                match (score, chunk_parent_id(chunk)) {
-                    (Some(score), Some(parent)) => hits.push((parent.to_string(), score)),
-                    _ => skipped += 1,
-                }
+                let Some(score) = self.target.score(chunk)? else {
+                    unvectored += 1;
+                    continue;
+                };
+                hits.push((parent.to_string(), score));
+                held.entry(parent.to_string())
+                    .or_default()
+                    .insert(hash.to_string(), score);
             }
             let best = best_per_parent(hits.iter().cloned());
             debug!(
                 chunks = %self.target.chunks,
                 width,
                 fresh = fresh.len(),
-                skipped,
+                unlisted,
+                unvectored,
                 parents = best.len(),
                 "chunk vector index candidates"
             );
             if best.len() >= self.k {
                 let mut ranked = Vec::with_capacity(best.len());
+                let none = RapidHashMap::new();
                 for (id, found) in best {
                     let (Some(parent), Some(Some(listed))) =
                         (parents.remove(&id), decided.get(&id))
@@ -128,9 +137,11 @@ impl ChunkSearch<'_> {
                         continue;
                     };
                     // The index may have missed a better chunk of this parent.
-                    let exact = best_score_of(self.fetcher, self.target, &id, listed, &mut reads)
-                        .await?
-                        .unwrap_or(found);
+                    let known = held.get(&id).unwrap_or(&none);
+                    let exact =
+                        best_score_of(self.fetcher, self.target, &id, listed, known, &mut reads)
+                            .await?
+                            .unwrap_or(found);
                     ranked.push((parent, exact));
                 }
                 return Ok(Search {
@@ -144,9 +155,16 @@ impl ChunkSearch<'_> {
             }
             width = width.saturating_mul(2);
         };
-        debug!(chunks = %self.target.chunks, ?gave_up, searches, skipped, "chunk vector search gave up");
+        debug!(
+            chunks = %self.target.chunks,
+            ?gave_up,
+            searches,
+            unlisted,
+            unvectored,
+            "chunk vector index could not fill the page, scoring every parent"
+        );
         Ok(Search {
-            searched: Searched::Exhausted(gave_up),
+            searched: Searched::Exhausted,
             searches,
             reads,
         })

@@ -6,7 +6,6 @@ use async_trait::async_trait;
 use document::Document;
 use schema::CollectionVersion;
 use serde_json::Value as JsonValue;
-use tracing::debug;
 
 use super::listed::best_listed_score;
 use super::search::{ChunkSearch, ParentCheck, Searched};
@@ -124,6 +123,7 @@ impl ChunkSimilarityScanNode {
     fn count(&mut self, reads: Reads) {
         self.exec_info.docs_fetched += reads.docs;
         self.exec_info.fields_fetched += reads.fields;
+        self.exec_info.indexes_fetched += reads.index_lookups;
     }
 }
 
@@ -152,13 +152,7 @@ impl PlanNode for ChunkSimilarityScanNode {
                 self.ranked = rows.into_iter();
                 self.fallback = None;
             }
-            Searched::Exhausted(gave_up) => {
-                debug!(
-                    collection = %self.collection.name,
-                    chunks = %self.target.chunks,
-                    ?gave_up,
-                    "chunk vector index could not fill the page, scoring every parent"
-                );
+            Searched::Exhausted => {
                 self.ranked = Vec::new().into_iter();
                 self.fallback = Some(
                     self.fetcher

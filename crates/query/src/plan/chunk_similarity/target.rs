@@ -2,7 +2,7 @@
 
 use defra_core::vector::Metric;
 use document::Document;
-use schema::{ChunkedField, CollectionVersion, CHUNK_SOURCE_ID_FIELD};
+use schema::{ChunkedField, CollectionVersion, CHUNK_HASH_FIELD, CHUNK_SOURCE_ID_FIELD};
 
 use crate::error::{QueryError, Result};
 use crate::json_convert::normal_value_to_json;
@@ -42,10 +42,8 @@ impl ChunkTarget {
             .indexes
             .iter()
             .find(|index| {
-                index
-                    .fields
-                    .first()
-                    .is_some_and(|field| field.name == CHUNK_SOURCE_ID_FIELD)
+                let names: Vec<&str> = index.fields.iter().map(|f| f.name.as_str()).collect();
+                names == [CHUNK_SOURCE_ID_FIELD, CHUNK_HASH_FIELD]
             })
             .map(|index| index.name.clone());
         let vector_indexes = chunks
@@ -112,6 +110,7 @@ impl ChunkTarget {
 pub(crate) struct Reads {
     pub docs: u64,
     pub fields: u64,
+    pub index_lookups: u64,
 }
 
 impl Reads {

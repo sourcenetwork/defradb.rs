@@ -130,7 +130,13 @@ impl Planner {
             let in_row = mapping
                 .first_index_of_name(&target.chunked.field_name)
                 .zip(mapping.first_index_of_name(&target.chunked.list_field()))
-                .map(|(text, list)| ListedInRow { text, list });
+                .map(|(text, list)| ListedInRow { text, list })
+                .ok_or_else(|| {
+                    QueryError::internal(format!(
+                        "the rows of {} don't hold {}'s text and chunk list",
+                        collection.name, target.chunked.field_name
+                    ))
+                })?;
             plan = Box::new(ChunkSimilarityNode::new(
                 plan,
                 mapping.clone(),

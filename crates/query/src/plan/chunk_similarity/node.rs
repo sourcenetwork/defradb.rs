@@ -5,15 +5,14 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value as JsonValue;
 
-use rapidhash::RapidHashSet;
+use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 
-use super::listed::{best_listed_score, best_score_of};
+use super::listed::best_score_of;
 use super::target::{ChunkTarget, Reads};
 use crate::document::DocumentMapping;
 use crate::error::Result;
 use crate::fetcher::DocFetcher;
-use crate::plan::chunk_gate::get_projected;
-use crate::plan::chunk_parent::{listed_hashes, parent_fields};
+use crate::plan::chunk_parent::listed_hashes;
 use crate::planner::{index_selection::CursorSeek, Doc, ExecInfo, PlanNode};
 
 /// Scores each parent row by its best listed chunk, as `SimilarityNode` scores its own vector.
@@ -23,8 +22,7 @@ pub struct ChunkSimilarityNode {
     similarity_index: usize,
     target: ChunkTarget,
     fetcher: Option<Arc<dyn DocFetcher>>,
-    in_row: Option<ListedInRow>,
-    parent_fields: RapidHashSet<String>,
+    in_row: ListedInRow,
     current: Doc,
     exec_info: ExecInfo,
 }
@@ -36,8 +34,16 @@ pub(crate) struct ListedInRow {
     pub list: usize,
 }
 
-/// The chunk hashes a parent row's text lists, or `None` when it has no text.
-fn listed_in_row(row: &Doc, at: ListedInRow, target: &ChunkTarget) -> Option<RapidHashSet<String>> {
+/// The chunk hashes a live parent row's text lists, or `None` when it has no text.
+pub(crate) fn listed_in_row(
+    row: &Doc,
+    at: ListedInRow,
+    target: &ChunkTarget,
+) -> Option<RapidHashSet<String>> {
+    // A deleted parent shows no chunks, even ones a merge has not removed yet.
+    if row.is_deleted() {
+        return None;
+    }
     let text = row.get(at.text)?.as_str()?;
     let list: Option<Vec<String>> = row.get(at.list).and_then(JsonValue::as_array).map(|list| {
         list.iter()
@@ -54,13 +60,12 @@ impl ChunkSimilarityNode {
         similarity_index: usize,
         target: ChunkTarget,
         fetcher: Option<Arc<dyn DocFetcher>>,
-        in_row: Option<ListedInRow>,
+        in_row: ListedInRow,
     ) -> Self {
         Self {
             source,
             mapping,
             similarity_index,
-            parent_fields: parent_fields(&target.chunked),
             target,
             fetcher,
             in_row,
@@ -70,36 +75,29 @@ impl ChunkSimilarityNode {
     }
 }
 
-/// A parent's best listed chunk's score, from its row when the row holds its list.
-async fn score_parent(
-    node: &ScoreInputs<'_>,
+/// A parent row's best listed chunk's score.
+async fn score_row(
+    fetcher: Option<&dyn DocFetcher>,
+    target: &ChunkTarget,
+    in_row: ListedInRow,
     row: &Doc,
-    parent_id: &str,
     reads: &mut Reads,
 ) -> Result<Option<f64>> {
-    let Some(fetcher) = node.fetcher else {
+    let (Some(fetcher), Some(parent_id)) = (fetcher, row.doc_id()) else {
         return Ok(None);
     };
-    if let Some(at) = node.in_row {
-        let Some(listed) = listed_in_row(row, at, node.target) else {
-            return Ok(None);
-        };
-        return best_score_of(fetcher, node.target, parent_id, &listed, reads).await;
-    }
-    let Some(parent) =
-        get_projected(fetcher, &node.target.parent, parent_id, node.parent_fields).await?
-    else {
+    let Some(listed) = listed_in_row(row, in_row, target) else {
         return Ok(None);
     };
-    best_listed_score(fetcher, node.target, &parent, reads).await
-}
-
-/// The parts of the node scoring reads, borrowed apart from its source.
-struct ScoreInputs<'a> {
-    fetcher: Option<&'a dyn DocFetcher>,
-    target: &'a ChunkTarget,
-    in_row: Option<ListedInRow>,
-    parent_fields: &'a RapidHashSet<String>,
+    best_score_of(
+        fetcher,
+        target,
+        parent_id,
+        &listed,
+        &RapidHashMap::new(),
+        reads,
+    )
+    .await
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -120,19 +118,18 @@ impl PlanNode for ChunkSimilarityNode {
             return Ok(false);
         }
         let mut row = self.source.value().deep_clone();
-        let inputs = ScoreInputs {
-            fetcher: self.fetcher.as_deref(),
-            target: &self.target,
-            in_row: self.in_row,
-            parent_fields: &self.parent_fields,
-        };
         let mut reads = Reads::default();
-        let score = match row.doc_id() {
-            Some(id) => score_parent(&inputs, &row, id, &mut reads).await?,
-            None => None,
-        };
+        let score = score_row(
+            self.fetcher.as_deref(),
+            &self.target,
+            self.in_row,
+            &row,
+            &mut reads,
+        )
+        .await?;
         self.exec_info.docs_fetched += reads.docs;
         self.exec_info.fields_fetched += reads.fields;
+        self.exec_info.indexes_fetched += reads.index_lookups;
         let score = score
             .and_then(serde_json::Number::from_f64)
             .map_or(JsonValue::Null, JsonValue::Number);
@@ -191,6 +188,21 @@ impl PlanNode for ChunkSimilarityNode {
         if let Some(child) = self.source.explain_execute().as_object() {
             obj.extend(child.clone());
         }
+        // The chunk reads are this node's, on top of the parent scan's.
+        let own = [
+            ("docFetches", self.exec_info.docs_fetched),
+            ("fieldFetches", self.exec_info.fields_fetched),
+            ("indexFetches", self.exec_info.indexes_fetched),
+        ];
+        for (key, reads) in own {
+            if let Some(child) = obj.get(key).and_then(JsonValue::as_u64) {
+                obj.insert(key.to_string(), serde_json::json!(child + reads));
+            }
+        }
         JsonValue::Object(obj)
     }
 }
+
+#[cfg(test)]
+#[path = "node_tests.rs"]
+mod tests;
