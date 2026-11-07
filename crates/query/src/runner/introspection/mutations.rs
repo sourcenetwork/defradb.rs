@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use super::descriptions as d;
 
-/// Build the Mutation type.
+/// Build the Mutation type, with Go's fields, arguments and types. `docIDs` on
+/// update and delete is defradb.rs's own spelling of `docID`, kept alongside.
 pub(super) fn build_mutation_type(collections: &[Arc<CollectionVersion>]) -> Object {
     let mut mutation = Object::new("Mutation").description("Root mutation type");
 
@@ -15,82 +16,95 @@ pub(super) fn build_mutation_type(collections: &[Arc<CollectionVersion>]) -> Obj
             continue;
         }
 
-        let coll_name = collection.name.clone();
-        let input_type = format!("{}MutationInputArg", coll_name);
+        let name = collection.name.as_str();
+        let input = format!("{name}MutationInputArg");
+        let filter = format!("{name}FilterArg");
+        let field = |prefix: &str, ty: TypeRef| {
+            Field::new(format!("{prefix}_{name}"), ty, |_| {
+                FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+            })
+        };
 
-        // add_<Collection>
-        mutation = mutation.field(
-            Field::new(
-                format!("add_{}", coll_name),
-                TypeRef::named_nn(&coll_name),
-                |_| FieldFuture::new(async { Ok(Some(GqlValue::Null)) }),
+        mutation = mutation
+            .field(
+                field("add", TypeRef::named_list(name))
+                    .description(d::ADD_DOCUMENTS)
+                    .argument(
+                        InputValue::new("encrypt", TypeRef::named(TypeRef::BOOLEAN))
+                            .description(d::ENCRYPT_ARG),
+                    )
+                    .argument(
+                        InputValue::new(
+                            "encryptFields",
+                            TypeRef::named_nn_list(format!("{name}ExplicitField")),
+                        )
+                        .description(d::ENCRYPT_FIELDS_ARG),
+                    )
+                    .argument(
+                        InputValue::new("input", TypeRef::named_nn_list(&input))
+                            .description(format!("Add {name} documents")),
+                    ),
             )
-            .description(d::ADD_DOCUMENTS)
-            .argument(
-                InputValue::new("input", TypeRef::named_nn(&input_type))
-                    .description(format!("Add {coll_name} documents")),
-            ),
-        );
-
-        // update_<Collection>
-        let update_coll_name = coll_name.clone();
-        let update_input_type = input_type.clone();
-        mutation = mutation.field(
-            Field::new(
-                format!("update_{}", coll_name),
-                TypeRef::named_nn_list_nn(&update_coll_name),
-                |_| FieldFuture::new(async { Ok(Some(GqlValue::Null)) }),
+            .field(
+                field("update", TypeRef::named_list(name))
+                    .description(d::UPDATE_DOCUMENTS)
+                    .argument(
+                        InputValue::new("docID", TypeRef::named_nn_list(TypeRef::ID))
+                            .description(d::UPDATE_IDS_ARG),
+                    )
+                    .argument(
+                        InputValue::new("docIDs", TypeRef::named_list(TypeRef::ID))
+                            .description(d::UPDATE_IDS_ARG),
+                    )
+                    .argument(
+                        InputValue::new("filter", TypeRef::named(&filter))
+                            .description(d::UPDATE_FILTER_ARG),
+                    )
+                    .argument(
+                        InputValue::new("input", TypeRef::named(&input))
+                            .description(d::UPDATE_INPUT_ARG),
+                    ),
             )
-            .description(d::UPDATE_DOCUMENTS)
-            .argument(InputValue::new("docID", TypeRef::named("ID")).description(d::UPDATE_ID_ARG))
-            .argument(
-                InputValue::new("docIDs", TypeRef::named_list("ID")).description(d::UPDATE_IDS_ARG),
+            .field(
+                field("upsert", TypeRef::named_list(name))
+                    .description(d::UPSERT_DOCUMENTS)
+                    .argument(
+                        InputValue::new("add", TypeRef::named_nn(&input))
+                            .description(d::UPSERT_ADD_ARG),
+                    )
+                    .argument(
+                        InputValue::new("filter", TypeRef::named_nn(&filter))
+                            .description(d::UPSERT_FILTER_ARG),
+                    )
+                    .argument(
+                        InputValue::new("update", TypeRef::named_nn(&input))
+                            .description(d::UPDATE_INPUT_ARG),
+                    ),
             )
-            .argument(
-                InputValue::new("input", TypeRef::named_nn(&update_input_type))
-                    .description(d::UPDATE_INPUT_ARG),
-            ),
-        );
-
-        // delete_<Collection>
-        let del_coll_name = coll_name.clone();
-        mutation = mutation.field(
-            Field::new(
-                format!("delete_{}", coll_name),
-                TypeRef::named_nn_list_nn(&del_coll_name),
-                |_| FieldFuture::new(async { Ok(Some(GqlValue::Null)) }),
+            .field(
+                field("delete", TypeRef::named_list(name))
+                    .description(d::DELETE_DOCUMENTS)
+                    .argument(
+                        InputValue::new("docID", TypeRef::named_nn_list(TypeRef::ID))
+                            .description(d::DELETE_IDS_ARG),
+                    )
+                    .argument(
+                        InputValue::new("docIDs", TypeRef::named_list(TypeRef::ID))
+                            .description(d::DELETE_IDS_ARG),
+                    )
+                    .argument(
+                        InputValue::new("filter", TypeRef::named(&filter))
+                            .description(d::DELETE_FILTER_ARG),
+                    ),
             )
-            .description(d::DELETE_DOCUMENTS)
-            .argument(InputValue::new("docID", TypeRef::named("ID")).description(d::DELETE_ID_ARG))
-            .argument(
-                InputValue::new("docIDs", TypeRef::named_list("ID")).description(d::DELETE_IDS_ARG),
-            )
-            .argument(
-                InputValue::new(
-                    "filter",
-                    TypeRef::named(format!("{}FilterArg", del_coll_name)),
-                )
-                .description(d::DELETE_FILTER_ARG),
-            ),
-        );
-
-        // truncate_<Collection>
-        let truncate_coll_name = coll_name.clone();
-        mutation = mutation.field(
-            Field::new(
-                format!("truncate_{}", coll_name),
-                TypeRef::named_nn(TypeRef::BOOLEAN),
-                |_| FieldFuture::new(async { Ok(Some(GqlValue::Null)) }),
-            )
-            .description(d::TRUNCATE_DOCUMENTS)
-            .argument(
-                InputValue::new(
-                    "filter",
-                    TypeRef::named(format!("{}FilterArg", truncate_coll_name)),
-                )
-                .description(d::TRUNCATE_FILTER_ARG),
-            ),
-        );
+            .field(
+                field("truncate", TypeRef::named_nn(TypeRef::BOOLEAN))
+                    .description(d::TRUNCATE_DOCUMENTS)
+                    .argument(
+                        InputValue::new("filter", TypeRef::named(&filter))
+                            .description(d::TRUNCATE_FILTER_ARG),
+                    ),
+            );
     }
 
     mutation

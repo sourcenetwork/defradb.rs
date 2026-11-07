@@ -233,6 +233,13 @@ Introspection describes, in Go DefraDB's words (the only reference so far), ever
 
 A relation field shows in introspection the arguments the executor accepts on it, with Go DefraDB's names, types and descriptions: a one-to-one or many-to-one field such as `Book.author` takes `filter: AuthorFilterArg`, and a one-to-many field such as `Author.published` takes `docID: [ID!]`, `filter: BookFilterArg`, `groupBy: [BookField!]`, `limit: Int`, `offset: Int` and `order: [BookOrderArg]` (#2649).
 
+# `defra.request.mutation_introspection`: Introspection shows the mutations the parser accepts
+
+- **Parents:** ["defra.request"]
+- **Scenarios:** ["query::mutation_introspection::mutations_show_go_arguments_and_types"]
+
+For a collection `Book`, the `Mutation` type shows Go DefraDB's surface with its descriptions: `add_Book(encrypt: Boolean, encryptFields: [BookExplicitField!], input: [BookMutationInputArg!]): [Book]`, `update_Book(docID: [ID!], filter: BookFilterArg, input: BookMutationInputArg): [Book]`, `upsert_Book(add: BookMutationInputArg!, filter: BookFilterArg!, update: BookMutationInputArg!): [Book]` and `delete_Book(docID: [ID!], filter: BookFilterArg): [Book]`, where `BookExplicitField` lists the fields the schema declares. `update` and `delete` also take `docIDs: [ID]`, defradb.rs's own spelling of `docID`. `truncate_Book` takes no `docID`, since the parser does not accept one (#2649).
+
 # `defra.index.range_filter`: A two-sided range filter fetches only the range
 
 - **Parents:** ["defra.index"]
