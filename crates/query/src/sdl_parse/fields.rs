@@ -51,10 +51,10 @@ impl<'a> SdlParser<'a> {
         for directive in directives {
             let name = directive.name.as_str();
 
-            // Check arguments for all known directives upfront. `@index` is
-            // excluded: it validates its own, and refuses an unknown one
-            // outright, so a warning here would only precede the error.
-            if name != "index" && KNOWN_FIELD_DIRECTIVES.contains(&name) {
+            // Check arguments for all known directives upfront. `@index` and
+            // `@chunk` are excluded: they validate their own, and refuse an
+            // unknown one outright, so a warning here would only precede the error.
+            if !matches!(name, "index" | "chunk") && KNOWN_FIELD_DIRECTIVES.contains(&name) {
                 self.check_directive_arguments(directive, &type_name, Some(field_name));
             }
 

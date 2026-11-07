@@ -12,7 +12,9 @@ use schema::{
 
 use crate::error::{QueryError, Result};
 
-use super::directives::{directive_u32, get_directive_arg, ChunkDirective, IndexConfig};
+use super::directives::{
+    directive_u32, get_directive_arg, known_directive_arguments, ChunkDirective, IndexConfig,
+};
 use super::parser::{ParsedField, ParsedType, ParsedTypeDef, ParsedTypeDirectives, SdlParser};
 
 const DEFAULT_CHUNK_MAX_CHARS: u32 = 1600;
@@ -26,33 +28,40 @@ struct ChunkSpec {
     config: ChunkDirective,
 }
 
-const CHUNK_ARGUMENTS: [&str; 2] = ["maxChars", "overlap"];
-
 /// Reads `@chunk` on the field `owner`, written as `Type.field` for errors.
 pub(super) fn parse_chunk_directive(
     directive: &Directive<'_, String>,
     owner: &str,
 ) -> Result<ChunkDirective> {
-    if let Some((unknown, _)) = directive
-        .arguments
-        .iter()
-        .find(|(name, _)| !CHUNK_ARGUMENTS.contains(&name.as_str()))
-    {
-        return Err(QueryError::parse(format!(
-            "@chunk has no argument {unknown}. It takes maxChars and overlap. Field: {owner}"
-        )));
+    let known = known_directive_arguments("chunk");
+    for (i, (name, _)) in directive.arguments.iter().enumerate() {
+        if !known.contains(&name.as_str()) {
+            return Err(QueryError::parse(format!(
+                "@chunk has no argument {name}. It takes {}. Field: {owner}",
+                known.join(" and ")
+            )));
+        }
+        if directive.arguments[..i]
+            .iter()
+            .any(|(seen, _)| seen == name)
+        {
+            return Err(QueryError::parse(format!(
+                "@chunk has {name} twice. Field: {owner}"
+            )));
+        }
     }
     let read = |name: &str, default: u32| -> Result<u32> {
         get_directive_arg(directive, name)
             .map(|value| {
-                directive_u32(name, value).map_err(|e| QueryError::parse(format!("@chunk {e}")))
+                directive_u32(name, value)
+                    .map_err(|e| QueryError::parse(format!("@chunk {e}. Field: {owner}")))
             })
             .unwrap_or(Ok(default))
     };
     let max_chars = read("maxChars", DEFAULT_CHUNK_MAX_CHARS)?;
     if max_chars < MIN_CHUNK_MAX_CHARS {
         return Err(QueryError::parse(format!(
-            "@chunk maxChars must be at least {MIN_CHUNK_MAX_CHARS}, got {max_chars}"
+            "@chunk maxChars must be at least {MIN_CHUNK_MAX_CHARS}, got {max_chars}. Field: {owner}"
         )));
     }
     Ok(ChunkDirective {

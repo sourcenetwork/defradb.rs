@@ -106,7 +106,10 @@ fn chunk_refuses_a_tiny_limit() {
     let err = parse_sdl("type A { body: String @chunk(maxChars: 10) }")
         .unwrap_err()
         .to_string();
-    assert!(err.contains("maxChars must be at least 64"), "{err}");
+    assert!(
+        err.contains("maxChars must be at least 64, got 10. Field: A.body"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -184,10 +187,35 @@ fn chunk_refuses_a_second_chunk_on_one_field() {
     );
 }
 
-#[test]
-fn a_known_parent_leaves_the_taken_chunk_name_to_the_duplicate_check() {
+fn known(names: &[&str]) -> RapidHashSet<String> {
     let mut known = RapidHashSet::new();
-    known.insert("Article".to_string());
-    known.insert("Article__body_chunk".to_string());
-    assert!(parse_sdl_with_known_types(SDL, known).is_ok());
+    known.extend(names.iter().map(|name| name.to_string()));
+    known
+}
+
+#[test]
+fn a_chunk_name_is_not_taken_when_its_parent_is_already_known() {
+    let collections =
+        parse_sdl_with_known_types(SDL, known(&["Article", "Article__body_chunk"])).unwrap();
+    let names: Vec<&str> = collections.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, vec!["Article", "Article__body_chunk"]);
+}
+
+#[test]
+fn a_stored_collection_takes_the_chunk_name_of_a_new_parent() {
+    let err = parse_sdl_with_known_types(SDL, known(&["Article__body_chunk"]))
+        .unwrap_err()
+        .to_string();
+    assert_eq!(
+        err,
+        "parse error: @chunk needs the type name Article__body_chunk, which is already taken"
+    );
+}
+
+#[test]
+fn chunk_refuses_a_repeated_argument() {
+    assert_eq!(
+        refusal("type R { s: String @chunk(maxChars: 64, maxChars: 10) }"),
+        "parse error: @chunk has maxChars twice. Field: R.s"
+    );
 }
