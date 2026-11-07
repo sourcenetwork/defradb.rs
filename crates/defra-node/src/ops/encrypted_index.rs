@@ -31,7 +31,7 @@ impl Node {
         collection: &str,
         field_name: &str,
     ) -> Result<EncryptedIndexListing> {
-        let (database, context) = (Arc::clone(self.database()), context.clone());
+        let (database, context) = (Arc::clone(self.database()), self.caller(context));
         let (collection, field) = (collection.to_owned(), field_name.to_owned());
         self.on_pool(move || async move {
             database
@@ -68,7 +68,7 @@ impl Node {
         context: &RequestContext,
         collection: &str,
     ) -> Result<Vec<EncryptedIndexListing>> {
-        let (database, context) = (Arc::clone(self.database()), context.clone());
+        let (database, context) = (Arc::clone(self.database()), self.caller(context));
         let collection = collection.to_owned();
         self.on_pool(move || async move {
             database
@@ -88,7 +88,7 @@ impl Node {
         &self,
         context: &RequestContext,
     ) -> Result<Vec<(String, Vec<EncryptedIndexListing>)>> {
-        let (database, context) = (Arc::clone(self.database()), context.clone());
+        let (database, context) = (Arc::clone(self.database()), self.caller(context));
         self.on_pool(move || async move {
             database
                 .check_node_access_as(&context, NodePermission::EncryptedIndexListAll)
@@ -112,7 +112,7 @@ impl Node {
         collection: &str,
         field_name: &str,
     ) -> Result<()> {
-        let (database, context) = (Arc::clone(self.database()), context.clone());
+        let (database, context) = (Arc::clone(self.database()), self.caller(context));
         let (collection, field) = (collection.to_owned(), field_name.to_owned());
         self.on_pool(move || async move {
             database

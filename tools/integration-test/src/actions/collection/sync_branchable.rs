@@ -38,9 +38,14 @@ impl Op for SyncBranchableCollection {
         let identity = self.common.client_identity(Self::name())?;
         let node = state.node_on(self.common.node())?;
         let context = state.context_as(None, identity);
-        let collections = state
-            .block_on(node.get_collections_as(&context, &self.selector()?))
-            .map_err(|e| Failure::operation(e.to_string()))?;
+        // Go's harness knows the collection from the test's own setup, so
+        // finding it checks no permission.
+        let name = self.selector()?.names.unwrap_or_default().concat();
+        let collections: Vec<_> = node
+            .get_collection(&name)
+            .map_err(|e| Failure::operation(e.to_string()))?
+            .into_iter()
+            .collect();
         let id = Self::collection_id(&collections)?;
         state
             .block_on(node.sync_branchable_collection_as(&context, &id))

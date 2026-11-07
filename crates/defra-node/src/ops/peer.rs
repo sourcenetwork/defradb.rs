@@ -196,20 +196,6 @@ impl Node {
             .await
     }
 
-    /// Node access control for `permission`, which the sync operations
-    /// check themselves as Go's do.
-    async fn check_access(
-        &self,
-        context: &RequestContext,
-        permission: NodePermission,
-    ) -> Result<()> {
-        let (database, context) = (Arc::clone(self.database()), context.clone());
-        self.on_pool(move || async move {
-            Ok(database.check_node_access_as(&context, permission).await?)
-        })
-        .await
-    }
-
     /// The P2P operations serving `context`, or Go's `ErrNoP2P`.
     fn peer(&self, context: &RequestContext) -> Result<Arc<dyn defra_p2p_adapter::P2POperations>> {
         self.p2p_system()

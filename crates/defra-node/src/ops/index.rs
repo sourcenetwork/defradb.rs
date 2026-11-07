@@ -62,7 +62,7 @@ impl Node {
         collection: &str,
     ) -> Result<Vec<IndexListing>> {
         let database = Arc::clone(self.database());
-        let context = context.clone();
+        let context = self.caller(context);
         let name = collection.to_owned();
         self.on_pool(move || async move {
             database
@@ -102,7 +102,7 @@ impl Node {
     /// The actions running or ended with an error. Go's `ListActions`.
     pub async fn list_actions_as(&self, context: &RequestContext) -> Result<Vec<ActionExecution>> {
         let database = Arc::clone(self.database());
-        let context = context.clone();
+        let context = self.caller(context);
         self.on_pool(move || async move { Ok(database.list_actions_as(&context).await?) })
             .await
     }
@@ -116,7 +116,7 @@ impl Node {
         name: &str,
     ) -> Result<()> {
         let database = Arc::clone(self.database());
-        let context = context.clone();
+        let context = self.caller(context);
         let (collection, name) = (collection.to_owned(), name.to_owned());
         self.on_pool(move || async move {
             database
