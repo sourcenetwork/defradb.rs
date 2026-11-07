@@ -134,6 +134,19 @@ pub(super) fn build_order_input_type(
 
 /// Build Field enum for a collection (e.g., UserField).
 /// Go includes system fields: _deleted, _docID, _group, _version
+/// The fields a schema declares, which `encryptFields` may name
+/// (e.g. `UserExplicitField`).
+pub(super) fn build_explicit_field_enum(collection: &CollectionVersion) -> Enum {
+    collection
+        .fields
+        .iter()
+        .filter(|field| !field.name.starts_with('_'))
+        .fold(
+            Enum::new(format!("{}ExplicitField", collection.name)),
+            |enum_type, field| enum_type.item(EnumItem::new(&field.name)),
+        )
+}
+
 pub(super) fn build_field_enum(collection: &CollectionVersion) -> Enum {
     let type_name = format!("{}Field", collection.name);
     let mut items: Vec<String> = vec![
