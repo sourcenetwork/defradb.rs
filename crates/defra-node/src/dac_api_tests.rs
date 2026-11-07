@@ -245,6 +245,35 @@ fn dac_wildcard_grant_opens_document_to_every_actor() {
 }
 
 #[test]
+fn dac_relationship_requires_a_collection_policy() {
+    workers::block_on(async {
+        let node = Node::builder().build().await.unwrap();
+        node.add_collection("type Plain { name: String }")
+            .await
+            .unwrap();
+
+        let add = node
+            .add_dac_actor_relationship(DID_A, "Plain", "doc-1", "reader", DID_B)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            add.to_string(),
+            "operation requires ACP, but collection has no policy"
+        );
+        let delete = node
+            .delete_dac_actor_relationship(DID_A, "Plain", "doc-1", "reader", DID_B)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            delete.to_string(),
+            "operation requires ACP, but collection has no policy"
+        );
+        node.shutdown().await.unwrap();
+    })
+    .unwrap()
+}
+
+#[test]
 fn document_acp_handle_registers_and_checks_a_document() {
     workers::block_on(async {
         let node = Node::builder().build().await.unwrap();
