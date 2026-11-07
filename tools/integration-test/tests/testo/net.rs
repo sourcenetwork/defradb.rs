@@ -1,3 +1,4 @@
+mod gossip_admission;
 mod info {
     mod connect_peers;
     mod disconnect_peers;

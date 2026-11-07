@@ -8,6 +8,20 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use testo::prelude::*;
 
+/// A Rust receiver's admission limits: its pending-DAG map and its per-peer
+/// rate bucket (tokens, and tokens refilled per second).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdmissionSpec {
+    pub max_pending_dags: usize,
+    pub rate_limit_burst: u32,
+    pub rate_limit_rate: f64,
+    /// The byte budget for one peer's deferred gossip heads; `None` keeps
+    /// the default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deferral_peer_bytes: Option<u64>,
+}
+
 /// Starts a node. Without options it is a plain in-process node; every option below is one of the corpus's ways to start one.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,6 +57,9 @@ pub struct NewNode {
     pub with_identity: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_document_acp_test: bool,
+    /// A Rust node with the given admission limits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission: Option<AdmissionSpec>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -72,6 +89,7 @@ impl Op for NewNode {
         probe.expected_error = None;
         probe.network = false;
         probe.database_dir = None;
+        probe.admission = None;
         if probe != Self::default() {
             let options = serde_json::to_string(&probe).unwrap_or_default();
             return Err(Failure::unsupported(format!("{} {options}", Self::name())));
@@ -86,6 +104,7 @@ impl Op for NewNode {
             network: self.network,
             dir,
             listen: Vec::new(),
+            admission: self.admission.clone(),
             ..Default::default()
         };
         state.start_node(self.common.node(), spec);
