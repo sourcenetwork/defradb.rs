@@ -1999,6 +1999,18 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A node dropped without shutdown aborts every task its shutdown set
+        // holds, the transaction sweep among them, without waiting for any,
+        // so its pool's threads and its store are released.
+        family: "Node shutdown order",
+        name: "LIVE_DroppedNodeReleasesPool / INV_DropNeverWaits / INV_ShutdownStopsEveryTask: a dropped node releases its pool and store, its drop waits for no task, a shutdown stops every task",
+        axis: Tla,
+        anchor: "crates/defra-node/src/assemble.rs assemble; crates/defra-node/src/background_tasks.rs BackgroundTasks; crates/db/src/txn/registry/cleanup.rs start_stale_transaction_cleanup; crates/workers/src/pool/background.rs Background",
+        model_ref: "MC_NodeDrop_{Green,Red_SweepOutsideSet,Red_NoAbortOnDrop,Red_DropAwaits}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/defra-node/tests/node_drop.rs a_dropped_http_node_releases_its_threads_and_descriptors",
+    },
+    Property {
         // A signed query or transformed route keeps a request-scope permit
         // while its started worker writes, so P2P cannot stop first.
         family: "Node shutdown order",
