@@ -770,6 +770,7 @@ jobs:
     name: Build testo archive
     needs: ci-scope
     if: needs.ci-scope.outputs.full == 'true'
+    timeout-minutes: 30
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
     env:
       DEFRADB_GO_REPO: ${{ github.workspace }}/target/go-repo
@@ -922,13 +923,20 @@ jobs:
 
   testo-summary:
     name: Testo summary
-    needs: testo
-    if: always() && needs.testo.result != 'skipped'
+    needs: [ci-scope, testo-archive, testo]
+    # Runs whenever testo should have, so a failed archive build, which skips
+    # every shard, still shows up here as a failed summary.
+    if: always() && needs.ci-scope.outputs.full == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       issues: read
     steps:
+      - name: Require the testo archive
+        if: needs.testo-archive.result != 'success'
+        run: |
+          echo "::error::Build testo archive was ${{ needs.testo-archive.result }}, so no testo shard ran"
+          exit 1
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
