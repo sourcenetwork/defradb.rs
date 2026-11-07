@@ -322,4 +322,4 @@ An article about rivers, edited to be about music, keeps its old rivers chunk st
 - **Parents:** ["defra.chunk.rank"]
 - **Scenarios:** ["chunk::rank_access::a_reader_ranks_only_the_articles_they_may_read"]
 
-Under a local policy, with Alice's article about rivers and a public article about engines created with no identity, `limit: 2` returns both to Alice, hers first with similarity 1, and only the public article, with similarity 0, to Bob and to a request with no identity.
+Under a local policy, with Alice's article about rivers and a public article about engines created with no identity, `limit: 2` returns both to Alice, hers first with similarity 1. `limit: 1` returns the public article, with similarity 0, to Bob and to a request with no identity, though Alice's article is nearer.

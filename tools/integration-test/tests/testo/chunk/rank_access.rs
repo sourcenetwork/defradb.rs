@@ -45,8 +45,9 @@ fn a_reader_ranks_only_the_articles_they_may_read() {
             Some(ALICE),
         )
         .into(),
-        ranked_as(", limit: 2", public.clone(), Some(BOB)).into(),
-        ranked_as(", limit: 2", public, None).into(),
+        // Alice's article is nearer, so a page of one must look past it.
+        ranked_as(", limit: 1", public.clone(), Some(BOB)).into(),
+        ranked_as(", limit: 1", public, None).into(),
     ])
     .execute();
 }
