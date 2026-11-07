@@ -1,6 +1,6 @@
 use super::*;
 
-#[tokio::test]
+#[nuclei::test]
 async fn cancelling_the_producer_wakes_joiners_and_preserves_progress() {
     let store = CountingReads::new(0);
     let (leaf, data) = ipld_block(1);
@@ -16,7 +16,7 @@ async fn cancelling_the_producer_wakes_joiners_and_preserves_progress() {
     assert!(futures::poll!(joined.as_mut()).is_pending());
     drop(producer);
     assert!(matches!(
-        tokio::time::timeout(Duration::from_millis(100), joined)
+        nuclei::time::timeout(Duration::from_millis(100), joined)
             .await
             .unwrap(),
         Err(Error::ResponseTimeout)
@@ -34,7 +34,7 @@ async fn cancelling_the_producer_wakes_joiners_and_preserves_progress() {
     assert_eq!(progress.cid_budget.used(), 0);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_joiners_deadline_does_not_cancel_the_producer() {
     let store = CountingReads::new(0);
     let (root, data) = ipld_block(1);

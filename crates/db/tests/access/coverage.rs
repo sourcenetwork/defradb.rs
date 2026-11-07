@@ -20,7 +20,10 @@ use acp::nac::NodePermission::*;
 ///   `delete_collection_version`/`delete_collection_versions_batch`/
 ///   `set_active_collection_version`/`patch_collection` in `collection_ops/` +
 ///   `patch/mod.rs`); `add_collection_in_txn` also gates on the registry.
-/// - `CollectionTruncate`: `truncate_collection` (`collection_ops/delete.rs`).
+/// - `CollectionTruncate`: `truncate_collection_as` (`collection_ops/truncate/`).
+/// - `DacPolicyAdd`: `add_dac_policy_as` (`access/dac/`).
+/// - `NacStatus`, `NacRelationAdd`, `NacRelationDelete`: the NAC operations in
+///   `access/nac_ops/`.
 /// - `ActionList`: `list_actions` (`action.rs`).
 /// - `MigrationSet`: raw `set_migration` (`migration/set_migration.rs`) +
 ///   `set_migration_in_txn` (registry).
@@ -30,6 +33,10 @@ use acp::nac::NodePermission::*;
 const DB_METHOD_GATED: &[NodePermission] = &[
     CollectionPatch,
     CollectionTruncate,
+    DacPolicyAdd,
+    NacStatus,
+    NacRelationAdd,
+    NacRelationDelete,
     ActionList,
     MigrationSet,
     DocumentUpdate, // Go uses update-document for both create and update
@@ -62,7 +69,6 @@ const ADAPTER_GATED: &[NodePermission] = &[
     EncryptedIndexListAll,
     DacRelationAdd,
     DacRelationDelete,
-    DacPolicyAdd, // ACP adapter gates via db::NodeAccessChecker
     P2pPeerConnect,
     P2pPeerDisconnect,
     P2pPeerActive,
@@ -77,17 +83,12 @@ const ADAPTER_GATED: &[NodePermission] = &[
     P2pDocumentList,
 ];
 
-/// Authorization enforced inside `NacManager` itself: each method takes an
-/// explicit `requestor: &Did` and checks `is_admin`/ownership. A DB-layer
-/// `check_node_access` here would be redundant and could conflict.
-const NAC_MANAGER_ENFORCED: &[NodePermission] = &[
-    NacReEnable,
-    NacDisable,
-    NacPurge,
-    NacStatus,
-    NacRelationAdd,
-    NacRelationDelete,
-];
+/// Authorization enforced inside `NacManager` itself, in the write it guards:
+/// purge checks `is_admin`, and `disable_as`/`re_enable_as` (`nac/toggle.rs`)
+/// check `NacDisable` live and `NacReEnable` in the stored relationships, as
+/// Go does. A DB-layer `check_node_access` here would decide outside that
+/// write, so a revocation committing first would not stop it.
+const NAC_MANAGER_ENFORCED: &[NodePermission] = &[NacPurge, NacDisable, NacReEnable];
 
 /// Enforced only at the HTTP boundary (`auth_middleware` + `route_permissions`,
 /// plus per-handler `require_permission`). DB-layer gating is either unsafe
@@ -99,8 +100,8 @@ const NAC_MANAGER_ENFORCED: &[NodePermission] = &[
 const HTTP_BOUNDARY_ONLY: &[NodePermission] = &[
     CollectionGet, // pervasive internal getter; gating it would break internal lookups
     DocumentRead,  // query fetch is DAC-gated, like Go's ungated fetch
-    DacStatus,
-    DacBypass, // resolved during request setup, not a gated DB op
+    DacStatus,     // also gated by the DB policy reads (`access/dac/`); decide is HTTP-only
+    DacBypass,     // resolved during request setup, not a gated DB op
     DacEnable,
     DacDisable,
     DacPurge,

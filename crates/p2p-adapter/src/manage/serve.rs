@@ -7,8 +7,8 @@
 //!
 //! Replies are returned UNSIGNED; the runtime signs them before sending.
 
-use defra_http::router::P2pDocumentRequest;
-use defra_http::{P2POperations, MANAGE_UNAUTHORIZED};
+use crate::P2pDocumentRequest;
+use crate::{P2POperations, MANAGE_UNAUTHORIZED};
 use p2p::message::{
     ManageDocRef, ManageMutateOp, ManageQueryOp, ManageQueryReply, ManageQueryRequest,
     ManageQueryResult, ManageReply, ManageRequest,
@@ -160,14 +160,14 @@ async fn authorize_and_apply(
 
 fn p2p_filters_to_http(
     filters: &p2p::ReplicationFilters,
-) -> Result<defra_http::router::ReplicationFilters, String> {
-    let mut out = defra_http::router::ReplicationFilters::new();
+) -> Result<crate::ReplicationFilters, String> {
+    let mut out = crate::ReplicationFilters::new();
     for (key, f) in filters {
         match f {
             p2p::ReplicationFilter::Predicate(map) => {
                 out.insert(
                     key.clone(),
-                    defra_http::router::ReplicationFilter::predicate(map.clone()),
+                    crate::ReplicationFilter::predicate(map.clone()),
                 );
             }
             _ => {
@@ -263,7 +263,7 @@ pub async fn build_manage_query_reply(
 /// `last_status_change_go_string()`; we parse it back into the wire type's
 /// `DateTime<Utc>` so the timestamp survives the round-trip. An absent or
 /// unparseable value leaves the Go zero default from `from_raw`.
-fn to_p2p_replicator_info(info: defra_http::router::ReplicatorInfo) -> p2p::ReplicatorInfo {
+fn to_p2p_replicator_info(info: crate::ReplicatorInfo) -> p2p::ReplicatorInfo {
     let mut out = p2p::ReplicatorInfo::from_raw(
         info.id.unwrap_or_default(),
         info.collections,
@@ -297,20 +297,16 @@ fn to_p2p_replicator_info(info: defra_http::router::ReplicatorInfo) -> p2p::Repl
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
-    use defra_http::router::{
+    use crate::P2PResult;
+    use crate::{
         ExplicitReplayCapabilityInput, P2pDocumentInfo, P2pDocumentRequest, ReplicatorInfo,
     };
-    use defra_http::P2PResult;
+    use async_trait::async_trait;
     use identity::Did;
     use kovan_queue::seg_queue::SegQueue;
     use p2p::message::Message;
 
-    type RecordedReplicator = (
-        Vec<String>,
-        Option<String>,
-        defra_http::router::ReplicationFilters,
-    );
+    type RecordedReplicator = (Vec<String>, Option<String>, crate::ReplicationFilters);
 
     /// Pops every recorded call, oldest first.
     fn drain<T: 'static>(queue: &SegQueue<T>) -> Vec<T> {
@@ -390,7 +386,7 @@ mod tests {
             &self,
             collections: Vec<String>,
             addr: Option<&str>,
-            filters: defra_http::router::ReplicationFilters,
+            filters: crate::ReplicationFilters,
             _explicit_replay_capabilities: Vec<ExplicitReplayCapabilityInput>,
             _expected_authorizer_did: Option<&str>,
         ) -> P2PResult<()> {
@@ -481,10 +477,17 @@ mod tests {
         async fn enable(&self, _owner: &Did) -> db::nac::Result<()> {
             unimplemented!()
         }
-        async fn disable(&self, _requestor: &Did) -> db::nac::Result<()> {
+        async fn disable_as(&self, _caller: &db::NacCaller) -> db::nac::Result<()> {
             unimplemented!()
         }
-        async fn re_enable(&self, _requestor: &Did) -> db::nac::Result<()> {
+        async fn re_enable_as(&self, _caller: &db::NacCaller) -> db::nac::Result<()> {
+            unimplemented!()
+        }
+        async fn change_relationship_as(
+            &self,
+            _caller: &db::NacCaller,
+            _request: &db::NacRelationshipRequest,
+        ) -> db::nac::Result<bool> {
             unimplemented!()
         }
         async fn purge(&self, _requestor: &Did) -> db::nac::Result<()> {
@@ -544,10 +547,10 @@ mod tests {
         let conds: serde_json::Map<String, serde_json::Value> =
             serde_json::from_value(serde_json::json!({ "name": { "_in": ["keep", "also"] } }))
                 .unwrap();
-        let mut filters = defra_http::router::ReplicationFilters::new();
+        let mut filters = crate::ReplicationFilters::new();
         filters.insert(
             "User".into(),
-            defra_http::router::ReplicationFilter::predicate(conds.clone()),
+            crate::ReplicationFilter::predicate(conds.clone()),
         );
         let http = ReplicatorInfo {
             id: Some("12D3KooW-PEER".into()),
@@ -564,7 +567,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn unauthorized_rejected_before_side_effects() {
         let ops = MockOps::new("12D3KooW-THIS");
         let token = crate::manage::auth::mint_token_for("12D3KooW-THIS").0;
@@ -582,7 +585,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn invalid_token_rejected_before_side_effects() {
         let ops = MockOps::new("12D3KooW-THIS");
         // Token minted for a different node must not authorize against this one,
@@ -602,7 +605,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn authorized_dispatches_to_controller() {
         let ops = MockOps::new("12D3KooW-THIS");
         let token = crate::manage::auth::mint_token_for("12D3KooW-THIS").0;
@@ -617,7 +620,7 @@ mod tests {
         assert_eq!(ops.added_collections(), vec!["c1".to_string()]);
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn replicator_add_multi_address_rejected_without_side_effects() {
         let ops = MockOps::new("12D3KooW-THIS");
         let token = crate::manage::auth::mint_token_for("12D3KooW-THIS").0;
@@ -645,7 +648,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn replicator_add_single_address_dispatches() {
         let ops = MockOps::new("12D3KooW-THIS");
         let token = crate::manage::auth::mint_token_for("12D3KooW-THIS").0;
@@ -664,12 +667,12 @@ mod tests {
             vec![(
                 vec!["c1".to_string()],
                 Some("/ip4/1.1.1.1/tcp/9000".to_string()),
-                defra_http::router::ReplicationFilters::new()
+                crate::ReplicationFilters::new()
             )]
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn replicator_add_forwards_filters() {
         let ops = MockOps::new("12D3KooW-THIS");
         let token = crate::manage::auth::mint_token_for("12D3KooW-THIS").0;
@@ -703,7 +706,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn document_list_returns_documents() {
         let ops = MockOps::with_documents(
             "12D3KooW-THIS",
@@ -742,7 +745,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn peer_disconnect_dispatches() {
         let ops = MockOps::new("12D3KooW-THIS");
         let token = crate::manage::auth::mint_token_for("12D3KooW-THIS").0;
@@ -760,7 +763,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn peer_disconnect_unauthorized_rejected_before_side_effects() {
         let ops = MockOps::new("12D3KooW-THIS");
         let token = crate::manage::auth::mint_token_for("12D3KooW-THIS").0;

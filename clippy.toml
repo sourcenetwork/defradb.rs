@@ -4,8 +4,7 @@ type-complexity-threshold = 250
 
 # A component reaches the network runtime only through the `edge::Edge` it is
 # given at construction; nothing looks a runtime up on its own (plan 5.7, R20).
-# The edge crate, which holds the runtime, allows the lookup where it must.
 disallowed-methods = [
-    { path = "tokio::runtime::Handle::current", reason = "take an edge::Edge at construction instead of looking up a runtime" },
-    { path = "tokio::runtime::Handle::try_current", reason = "take an edge::Edge at construction instead of looking up a runtime" },
+    { path = "nuclei::runtime::RuntimeHandle::current", reason = "take an edge::Edge at construction instead of looking up a runtime" },
+    { path = "nuclei::runtime::RuntimeHandle::try_current", reason = "take an edge::Edge at construction instead of looking up a runtime" },
 ]

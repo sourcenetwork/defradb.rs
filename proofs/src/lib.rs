@@ -9,9 +9,15 @@
 //!   running release binary via the backbone `defra-harness`.
 //!   See `tests/tla_conformance.rs`.
 //!
-//! [`registry::PROPERTIES`] is the spine; [`matrix`] asserts every modeled
-//! family is bound so a model cannot land without a conformance hook.
+//! [`registry::PROPERTIES`] is the spine and its families are the modeled
+//! families; [`matrix`] asserts the README lists exactly those, so a model
+//! cannot land without a conformance hook. [`anchor`] resolves every registry
+//! anchor against the tree, and [`constants`] holds the P2P constants the
+//! models depend on to the code that sets them.
 
+pub mod anchor;
+pub mod constants;
 pub mod lean_contract;
 pub mod matrix;
+pub mod model_trace;
 pub mod registry;

@@ -116,10 +116,13 @@ pub enum Error {
     InvalidIdentity(String),
 
     #[error("HTTP request failed: {0}")]
-    HttpRequest(#[from] reqwest::Error),
+    HttpRequest(#[from] net::http::Error),
 
     #[error("server returned error: {0}")]
     Server(String),
+
+    #[error(transparent)]
+    Documents(#[from] query::documents::Error),
 
     #[error("failed to read file {path}: {source}")]
     ReadFile {
@@ -132,6 +135,10 @@ pub enum Error {
 
     #[error("missing required input: {0}")]
     MissingInput(String),
+
+    /// A flag's value did not parse. Go's `NewErrParsingArgument`.
+    #[error("failed to parse {name}: {reason}")]
+    ParsingArgument { name: &'static str, reason: String },
 
     #[error("invalid identifier: {0}")]
     InvalidIdentifier(String),

@@ -3,15 +3,16 @@
 
 use defra_harness::{BinarySource, DefraClient, TestCluster};
 use std::collections::BTreeSet;
-use std::path::PathBuf;
-use std::sync::Once;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::{Once, OnceLock};
 use std::time::{Duration, Instant};
 
 const CONFORMANCE_RUST_LOG: &str = "info";
 
 /// The artifact under test.
 ///
-/// Defaults to `target/debug/defra` — the binary that `cargo test --workspace`
+/// Defaults to `target/debug/defra` - the binary that `cargo test --workspace`
 /// rebuilds fresh for the exact revision under test. We deliberately do NOT
 /// prefer `target/release/defra`: a self-hosted CI runner caches `target/`, so a
 /// release binary left over from an earlier run can be stale and silently
@@ -31,6 +32,41 @@ pub fn release_binary() -> BinarySource {
     BinarySource::Path(root.join("target/debug/defra"))
 }
 
+/// The iroh build of the artifact under test, for the families that run over
+/// the iroh transport. `DEFRA_CONFORMANCE_IROH_BINARY` names it; unset, it is
+/// built once per test process with `--features iroh` into its own target
+/// directory, so `target/debug/defra` stays the build without iroh.
+pub fn iroh_binary() -> BinarySource {
+    let root = workspace_root();
+    init_harness_env(&root);
+
+    if let Some(path) = std::env::var_os("DEFRA_CONFORMANCE_IROH_BINARY") {
+        return BinarySource::Path(PathBuf::from(path));
+    }
+    static BUILT: OnceLock<PathBuf> = OnceLock::new();
+    BinarySource::Path(BUILT.get_or_init(|| build_iroh_binary(&root)).clone())
+}
+
+fn build_iroh_binary(root: &Path) -> PathBuf {
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map_or_else(|| root.join("target"), |dir| root.join(dir))
+        .join("conformance-iroh");
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let status = Command::new(cargo)
+        .args(["build", "-p", "cli", "--features", "iroh", "--target-dir"])
+        .arg(&target)
+        .current_dir(root)
+        .status()
+        .expect("run cargo build -p cli --features iroh");
+    assert!(
+        status.success(),
+        "cargo build -p cli --features iroh failed"
+    );
+    target
+        .join("debug")
+        .join(format!("defra{}", std::env::consts::EXE_SUFFIX))
+}
+
 pub fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -45,7 +81,7 @@ pub fn indexed_age(node: &DefraClient) -> i64 {
         .unwrap_or(-1)
 }
 
-/// How many `User` docs `node` returns for `age == value` — an INDEX-filtered
+/// How many `User` docs `node` returns for `age == value` - an INDEX-filtered
 /// count (see the `@explain` honesty checks that this exercises the index, not a
 /// full scan).
 pub fn count_by_index(node: &DefraClient, age: i64) -> usize {
@@ -78,8 +114,8 @@ pub fn commit_cids(node: &DefraClient, doc_id: &str) -> BTreeSet<String> {
         .unwrap_or_default()
 }
 
-/// Both replicas hold the identical (content-addressed) commit DAG for `doc_id`
-/// — proof each has MERGED the other's deltas, not merely materialized its own
+/// Both replicas hold the identical (content-addressed) commit DAG for `doc_id`:
+/// proof each has MERGED the other's deltas, not merely materialized its own
 /// local write. This is what makes a winner-takes-all LWW assertion meaningful on
 /// the node that locally wrote the winner: without it, that node passes from its
 /// own write alone, never exercising the merge. Returns false on timeout.
@@ -98,7 +134,7 @@ pub async fn poll_dags_converged(
         if Instant::now() >= deadline {
             return false;
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        nuclei::time::sleep(Duration::from_millis(200)).await;
     }
 }
 
@@ -124,7 +160,7 @@ async fn storm_poll_all(cluster: &TestCluster, nodes: usize, want: f64, timeout:
         if Instant::now() >= deadline {
             return false;
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        nuclei::time::sleep(Duration::from_millis(200)).await;
     }
 }
 
@@ -222,7 +258,7 @@ pub async fn run_counter_storm(
 }
 
 /// Mutate process env exactly once. `release_binary()` is called from every
-/// `#[tokio::test]`, which run in parallel; `set_var` from multiple threads is
+/// `#[nuclei::test]`, which run in parallel; `set_var` from multiple threads is
 /// unsound, so the env setup is gated behind a `Once`.
 fn init_harness_env(root: &std::path::Path) {
     static INIT: Once = Once::new();

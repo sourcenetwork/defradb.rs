@@ -3,7 +3,7 @@
 \* A caller takes saved state, owns it while reading, then may save it again.
 \* Duplicates join its completion event, not a lock around the blockstore.
 \* Saving is optional: a full cache must never change the reached grants.
-\* Rust: car_authorization.rs walk_with_limits and car_authorization_registry.rs.
+\* Rust: car_authorization.rs and car_authorization_registry.rs walk_with_limits.
 EXTENDS Naturals, FiniteSets, TLC
 \* Each switch removes one guard in a RED configuration.
 CONSTANTS SingleFlight, ResumeCursor, FenceEviction, AtomicReserve,

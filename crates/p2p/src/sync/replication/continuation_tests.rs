@@ -11,10 +11,11 @@ type TestCoordinator = SyncCoordinator<DefraBlockstore<RegolithStore>, NoopTrans
 async fn restart(
     blockstore: Arc<DefraBlockstore<RegolithStore>>,
     pending: Arc<PendingDagStore<RegolithStore>>,
-) -> (TestCoordinator, mpsc::Receiver<SyncEvent>) {
+) -> (TestCoordinator, crate::sync::SyncEventReceiver) {
     let (coordinator, events) = SyncCoordinator::with_access_control(
         NoopTransport::new(),
         blockstore,
+        crate::network::test_network(),
         crate::sync::SyncConfig {
             max_concurrent_dag_fetches: 1,
             ..Default::default()
@@ -95,10 +96,10 @@ fn stores() -> (
 }
 
 fn dispatch(coordinator: &TestCoordinator) -> usize {
-    coordinator.dispatch_due_pending_dag_fetches_for_test(n0_future::time::Instant::now())
+    coordinator.dispatch_due_pending_dag_fetches_for_test(crate::rt::time::Instant::now())
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn pulled_roots_continue_without_a_pushlog_registration() {
     let (blockstore, pending) = stores();
     let root = seed(&blockstore, &pending, "pulled").await;
@@ -125,7 +126,7 @@ async fn pulled_roots_continue_without_a_pushlog_registration() {
     assert_eq!(coordinator.pending_dag_count(), 0);
     for turn in 0..3 {
         if turn > 0 {
-            tokio::time::advance(PENDING_MERGE_CONTINUATION_DELAY).await;
+            nuclei::time::advance(PENDING_MERGE_CONTINUATION_DELAY).await;
             assert_eq!(dispatch(&coordinator), 1);
         }
         let results =
@@ -161,7 +162,7 @@ async fn pulled_roots_continue_without_a_pushlog_registration() {
 // path. DagNeedsFetch here would redo discovery even if no network call occurs.
 async fn assert_local_turn(
     coordinator: &TestCoordinator,
-    events: &mut mpsc::Receiver<SyncEvent>,
+    events: &mut crate::sync::SyncEventReceiver,
     root: Cid,
 ) {
     let event = events.try_recv().expect("scheduled continuation");
@@ -177,7 +178,7 @@ async fn assert_local_turn(
         .unwrap();
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn thousands_of_yielded_turns_remain_pending_without_refetch_or_backoff() {
     const TURNS: usize = 2048;
     let (blockstore, pending) = stores();
@@ -248,14 +249,14 @@ async fn thousands_of_yielded_turns_remain_pending_without_refetch_or_backoff() 
             .load(Ordering::SeqCst),
         0
     );
-    tokio::time::advance(Duration::from_secs(120)).await;
+    nuclei::time::advance(Duration::from_secs(120)).await;
     assert_eq!(dispatch(&coordinator), 0);
     assert!(events.try_recv().is_err());
     assert_eq!(handler.call_count.load(Ordering::SeqCst), TURNS + 2);
     coordinator.shutdown().await;
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn continuation_reservations_bound_queued_work_and_allow_independent_root() {
     let (blockstore, pending) = stores();
     let root = seed(&blockstore, &pending, "long-history").await;
@@ -268,11 +269,11 @@ async fn continuation_reservations_bound_queued_work_and_allow_independent_root(
     coordinator
         .manager()
         .schedule_pending_merge_continuation(&root);
-    tokio::time::advance(Duration::from_millis(1)).await;
+    nuclei::time::advance(Duration::from_millis(1)).await;
     coordinator
         .manager()
         .schedule_pending_merge_continuation(&other);
-    tokio::time::advance(PENDING_MERGE_CONTINUATION_DELAY).await;
+    nuclei::time::advance(PENDING_MERGE_CONTINUATION_DELAY).await;
     assert_eq!(dispatch(&coordinator), 1);
     assert_local_turn(&coordinator, &mut events, root).await;
     assert_eq!(coordinator.pending_dag_work_count(), 1);
@@ -287,7 +288,7 @@ async fn continuation_reservations_bound_queued_work_and_allow_independent_root(
     drop(owner);
     assert_eq!(coordinator.pending_dag_work_count(), 0);
     // Keep the independent root strictly older than the next committed yield.
-    tokio::time::advance(Duration::from_millis(1)).await;
+    nuclei::time::advance(Duration::from_millis(1)).await;
     // Consume the event as the individual (duplicate-CID fallback) path does.
     let handler = RetryThenMergeHandler::yielding(root, 2);
     let event = events.try_recv().unwrap();
@@ -323,7 +324,7 @@ async fn continuation_reservations_bound_queued_work_and_allow_independent_root(
     coordinator.shutdown().await;
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn yielded_root_survives_shutdown_and_revalidates_on_restore() {
     let (blockstore, pending) = stores();
     let root = seed(&blockstore, &pending, "long-history").await;
@@ -337,7 +338,7 @@ async fn yielded_root_survives_shutdown_and_revalidates_on_restore() {
         &ReplicationConfig::default(),
     )
     .await;
-    tokio::time::advance(PENDING_MERGE_CONTINUATION_DELAY).await;
+    nuclei::time::advance(PENDING_MERGE_CONTINUATION_DELAY).await;
     assert_eq!(dispatch(&coordinator), 1);
     coordinator.shutdown().await;
     assert_eq!(dispatch(&coordinator), 0);
@@ -363,7 +364,7 @@ async fn yielded_root_survives_shutdown_and_revalidates_on_restore() {
         &ReplicationConfig::default(),
     )
     .await;
-    tokio::time::advance(PENDING_MERGE_CONTINUATION_DELAY).await;
+    nuclei::time::advance(PENDING_MERGE_CONTINUATION_DELAY).await;
     assert_eq!(dispatch(&coordinator), 1);
     assert_local_turn(&coordinator, &mut events, root).await;
     ReplicationLoop::process_next_batch(
@@ -378,7 +379,7 @@ async fn yielded_root_survives_shutdown_and_revalidates_on_restore() {
     coordinator.shutdown().await;
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn acp_skip_does_not_opt_into_local_continuation() {
     let (blockstore, pending) = stores();
     let root = seed(&blockstore, &pending, "acp").await;
@@ -414,7 +415,7 @@ async fn acp_skip_does_not_opt_into_local_continuation() {
     coordinator.shutdown().await;
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn duplicate_continuation_batch_completes_only_after_final_turn() {
     let (blockstore, pending) = stores();
     let root = seed(&blockstore, &pending, "long-history").await;
@@ -427,7 +428,7 @@ async fn duplicate_continuation_batch_completes_only_after_final_turn() {
     };
     ReplicationLoop::process_next_batch(&coordinator, &mut events, &handler, &config).await;
     assert!(!blockstore.is_merged(&root).await.unwrap());
-    tokio::time::advance(PENDING_MERGE_CONTINUATION_DELAY).await;
+    nuclei::time::advance(PENDING_MERGE_CONTINUATION_DELAY).await;
     assert_eq!(dispatch(&coordinator), 1);
     let event = events.try_recv().unwrap();
     assert!(
@@ -467,7 +468,7 @@ async fn duplicate_continuation_batch_completes_only_after_final_turn() {
     coordinator.shutdown().await;
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn rejected_continuation_releases_slot_and_quarantines_without_marking() {
     let (blockstore, pending) = stores();
     let root = seed(&blockstore, &pending, "long-history").await;
@@ -481,7 +482,7 @@ async fn rejected_continuation_releases_slot_and_quarantines_without_marking() {
         &ReplicationConfig::default(),
     )
     .await;
-    tokio::time::advance(PENDING_MERGE_CONTINUATION_DELAY).await;
+    nuclei::time::advance(PENDING_MERGE_CONTINUATION_DELAY).await;
     assert_eq!(dispatch(&coordinator), 1);
     let results = ReplicationLoop::process_next_batch(
         &coordinator,
@@ -503,7 +504,7 @@ async fn rejected_continuation_releases_slot_and_quarantines_without_marking() {
     coordinator.shutdown().await;
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn already_merged_duplicate_continuation_releases_reservation_without_handler() {
     let (blockstore, pending) = stores();
     let root = seed(&blockstore, &pending, "long-history").await;
@@ -512,7 +513,7 @@ async fn already_merged_duplicate_continuation_releases_reservation_without_hand
     let handler = RetryThenMergeHandler::yielding(root, 2);
     let config = ReplicationConfig::default();
     ReplicationLoop::process_next_batch(&coordinator, &mut events, &handler, &config).await;
-    tokio::time::advance(PENDING_MERGE_CONTINUATION_DELAY).await;
+    nuclei::time::advance(PENDING_MERGE_CONTINUATION_DELAY).await;
     assert_eq!(dispatch(&coordinator), 1);
     blockstore.mark_as_merged(&root).await.unwrap();
     coordinator
@@ -534,7 +535,7 @@ async fn already_merged_duplicate_continuation_releases_reservation_without_hand
     coordinator.shutdown().await;
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn failed_continuation_validation_releases_batch_and_duplicate_reservations() {
     for duplicate in [false, true] {
         let (blockstore, pending) = stores();
@@ -549,7 +550,7 @@ async fn failed_continuation_validation_releases_batch_and_duplicate_reservation
             &config,
         )
         .await;
-        tokio::time::advance(PENDING_MERGE_CONTINUATION_DELAY).await;
+        nuclei::time::advance(PENDING_MERGE_CONTINUATION_DELAY).await;
         assert_eq!(dispatch(&coordinator), 1);
         let mut event = events.try_recv().unwrap();
         let SyncEvent::DagReady {
@@ -597,7 +598,7 @@ async fn failed_continuation_validation_releases_batch_and_duplicate_reservation
                 .merge_continuation
         );
         assert_eq!(coordinator.pending_dag_work_count(), 0);
-        tokio::time::advance(crate::sync::manager::pending::PENDING_RETRY_BASE).await;
+        nuclei::time::advance(crate::sync::manager::pending::PENDING_RETRY_BASE).await;
         assert_eq!(
             dispatch(&coordinator),
             1,
@@ -611,7 +612,7 @@ async fn failed_continuation_validation_releases_batch_and_duplicate_reservation
     }
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn retryable_error_after_yield_returns_to_paced_fetch_retry_without_spinning() {
     use crate::sync::manager::pending::retry_backoff;
 
@@ -627,7 +628,7 @@ async fn retryable_error_after_yield_returns_to_paced_fetch_retry_without_spinni
         &config,
     )
     .await;
-    tokio::time::advance(PENDING_MERGE_CONTINUATION_DELAY).await;
+    nuclei::time::advance(PENDING_MERGE_CONTINUATION_DELAY).await;
     assert_eq!(dispatch(&coordinator), 1);
     assert_local_turn(&coordinator, &mut events, root).await;
     let failing = TestMergeHandler::new(false, false);
@@ -652,7 +653,7 @@ async fn retryable_error_after_yield_returns_to_paced_fetch_retry_without_spinni
             assert_eq!(dispatch(&coordinator), 0, "ordinary errors must not spin");
             assert!(events.try_recv().is_err());
         }
-        tokio::time::advance(delay).await;
+        nuclei::time::advance(delay).await;
         assert_eq!(dispatch(&coordinator), 1);
         let event = events.try_recv().unwrap();
         assert!(matches!(&event, SyncEvent::DagNeedsFetch { root_cid, .. } if *root_cid == root));
@@ -689,7 +690,7 @@ async fn retryable_error_after_yield_returns_to_paced_fetch_retry_without_spinni
     coordinator.shutdown().await;
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn retry_clock_continues_local_history_without_a_timer_tick() {
     let (blockstore, pending) = stores();
     let root = seed(&blockstore, &pending, "ready-now").await;
@@ -699,7 +700,7 @@ async fn retry_clock_continues_local_history_without_a_timer_tick() {
     let (coordinator, mut events) = restart(blockstore.clone(), pending).await;
     let coordinator = Arc::new(coordinator);
     let clock_coordinator = coordinator.clone();
-    let clock = tokio::spawn(async move {
+    let clock = crate::rt::spawn(async move {
         clock_coordinator
             .run_pending_dag_retry_clock(Duration::from_secs(60))
             .await
@@ -719,9 +720,9 @@ async fn retry_clock_continues_local_history_without_a_timer_tick() {
         })
         .await
         .unwrap();
-    let started = tokio::time::Instant::now();
+    let started = crate::rt::time::Instant::now();
     for turn in 0..3 {
-        let results = tokio::time::timeout(
+        let results = crate::rt::time::timeout(
             Duration::from_millis(1),
             ReplicationLoop::process_next_batch(
                 &coordinator,
@@ -747,9 +748,165 @@ async fn retry_clock_continues_local_history_without_a_timer_tick() {
             ));
         }
     }
-    assert_eq!(tokio::time::Instant::now(), started);
+    assert_eq!(crate::rt::time::Instant::now(), started);
     assert!(blockstore.is_merged(&root).await.unwrap());
     assert_eq!(coordinator.pending_dag_count(), 0);
     coordinator.shutdown().await;
-    clock.await.unwrap().unwrap();
+    clock.join().await.unwrap().unwrap();
+}
+
+/// Yields its first turn, then waits for an input that never arrives.
+#[derive(Default)]
+struct YieldThenWait {
+    calls: AtomicUsize,
+}
+
+#[async_trait]
+impl MergeHandler for YieldThenWait {
+    type Error = TestError;
+
+    async fn handle_block(
+        &self,
+        _cid: &Cid,
+        _block_data: &[u8],
+        _metadata: BlockMetadata<'_>,
+    ) -> Result<MergeOutcome, Self::Error> {
+        Ok(if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            MergeOutcome::Yielded
+        } else {
+            MergeOutcome::retryable_skip("predecessor definition is not yet available")
+        })
+    }
+}
+
+/// A pull-sync merge that yields leaves a local continuation: no sender waits
+/// on it and it has no durable record. When its next turn ends in a
+/// non-terminal skip, the entry leaves the map at once, so it neither counts
+/// against `max_pending_dags` nor is re-driven forever; the next pull or push
+/// of the head starts the merge again.
+#[nuclei::test(start_paused = true)]
+async fn a_local_continuation_ends_on_a_non_terminal_skip() {
+    let (blockstore, pending) = stores();
+    let root = seed(&blockstore, &pending, "pulled").await;
+    let view = Arc::new(PersistedView::default());
+    pending.sweep(&view).await.unwrap();
+    assert!(pending.remove(&root, &view).await.unwrap());
+    let (coordinator, mut events) = restart(blockstore.clone(), pending).await;
+    let handler = YieldThenWait::default();
+    let config = ReplicationConfig::default();
+    coordinator
+        .manager()
+        .event_sender()
+        .send(SyncEvent::BlockReceived {
+            cid: root,
+            doc_id: "pulled".into(),
+            collection_id: "col1".into(),
+            creator: "creator".into(),
+            sender_peer: Some("source".into()),
+            is_explicit_replicator: false,
+            explicit_replay_authorization: None,
+        })
+        .await
+        .unwrap();
+    ReplicationLoop::process_next_batch(&coordinator, &mut events, &handler, &config).await;
+    assert_eq!(coordinator.pending_dag_count(), 1, "the yield continues");
+
+    nuclei::time::advance(PENDING_MERGE_CONTINUATION_DELAY).await;
+    assert_eq!(dispatch(&coordinator), 1);
+    let results =
+        ReplicationLoop::process_next_batch(&coordinator, &mut events, &handler, &config).await;
+    assert!(matches!(
+        results.as_slice(),
+        [ReplicationResult::Skipped {
+            terminal: false,
+            ..
+        }]
+    ));
+    assert_eq!(
+        coordinator.pending_dag_count(),
+        0,
+        "a skipped local continuation must not keep a pending slot"
+    );
+    nuclei::time::advance(crate::sync::manager::pending::PENDING_RETRY_CAP).await;
+    assert_eq!(dispatch(&coordinator), 0, "nothing re-drives it");
+    assert!(!blockstore.is_merged(&root).await.unwrap());
+    coordinator.shutdown().await;
+}
+
+/// A push for a root that only has a local continuation must not ride on it:
+/// the continuation has no durable record and ends with its turn. The push
+/// registers the root as its own durable obligation before it is
+/// acknowledged, so a later turn that skips leaves the head owned.
+#[nuclei::test(start_paused = true)]
+async fn a_push_of_a_continued_root_is_registered_before_its_ack() {
+    let (blockstore, pending) = stores();
+    let root = seed(&blockstore, &pending, "pulled").await;
+    let view = Arc::new(PersistedView::default());
+    pending.sweep(&view).await.unwrap();
+    assert!(pending.remove(&root, &view).await.unwrap());
+    let (coordinator, mut events) = restart(blockstore.clone(), pending.clone()).await;
+    let handler = YieldThenWait::default();
+    let config = ReplicationConfig::default();
+    coordinator
+        .manager()
+        .event_sender()
+        .send(SyncEvent::BlockReceived {
+            cid: root,
+            doc_id: "pulled".into(),
+            collection_id: "col1".into(),
+            creator: "creator".into(),
+            sender_peer: Some("source".into()),
+            is_explicit_replicator: false,
+            explicit_replay_authorization: None,
+        })
+        .await
+        .unwrap();
+    ReplicationLoop::process_next_batch(&coordinator, &mut events, &handler, &config).await;
+    assert_eq!(coordinator.pending_dag_count(), 1, "the yield continues");
+
+    let root_data = blockstore.get(&root).await.unwrap().unwrap();
+    coordinator
+        .manager()
+        .process_pushlog(
+            &crate::message::PushLogBroadcast::new(
+                "pulled".to_string(),
+                bytes::Bytes::from(root.to_bytes()),
+                "col1".to_string(),
+                "creator".to_string(),
+                root_data,
+            ),
+            Some("source"),
+            false,
+            None,
+        )
+        .await
+        .expect("the push is acknowledged");
+
+    // The next merge turn of the root skips without a terminal outcome.
+    let mut skipped = false;
+    for _ in 0..8 {
+        nuclei::time::advance(crate::sync::manager::pending::PENDING_RETRY_BASE).await;
+        dispatch(&coordinator);
+        let results =
+            ReplicationLoop::process_next_batch(&coordinator, &mut events, &handler, &config).await;
+        if matches!(
+            results.as_slice(),
+            [ReplicationResult::Skipped {
+                terminal: false,
+                ..
+            }]
+        ) {
+            skipped = true;
+            break;
+        }
+    }
+    assert!(skipped, "the root's next merge turn skips");
+    assert!(!blockstore.is_merged(&root).await.unwrap());
+    assert_eq!(
+        pending.load_all().await.unwrap().len(),
+        1,
+        "the acknowledged head keeps a durable record"
+    );
+    assert_eq!(coordinator.pending_dag_count(), 1, "and its pending entry");
+    coordinator.shutdown().await;
 }

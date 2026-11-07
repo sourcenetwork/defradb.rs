@@ -33,8 +33,9 @@ impl RedrivenMerge {
 /// Where a re-driven merge is reported, so it takes the same post-merge path
 /// as a composite that merged on its first attempt.
 ///
-/// Called once per composite that re-drive merged, whatever triggered the
-/// re-drive: an inbound block, recovery, or a local write releasing a waiter.
+/// Called once per composite that re-drive merged, or found merged but not
+/// marked merged, whatever triggered the re-drive: an inbound block,
+/// recovery, a sweep, or a local write releasing a waiter.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait RedrivenMergeSink: MaybeSendSync {

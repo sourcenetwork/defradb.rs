@@ -1,4 +1,4 @@
-//! CID family — the content-addressed `_docID` the binary computes is
+//! CID family - the content-addressed `_docID` the binary computes is
 //! deterministic across independent instances and distinguishes content.
 //! Model: `proofs/lean/Cid` (`cid_injective_mod_hash`).
 
@@ -27,15 +27,18 @@ async fn doc_id_for(input: &str) -> String {
         .to_string()
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn cid_determinism_same_content_same_docid() {
-    let a = doc_id_for(r#"name: "Alice", age: 30"#).await;
-    let b = doc_id_for(r#"name: "Alice", age: 30"#).await;
-    assert_eq!(
-        a, b,
-        "same content must yield the same content-addressed _docID"
-    );
+    edge::compat(async move {
+        let a = doc_id_for(r#"name: "Alice", age: 30"#).await;
+        let b = doc_id_for(r#"name: "Alice", age: 30"#).await;
+        assert_eq!(
+            a, b,
+            "same content must yield the same content-addressed _docID"
+        );
 
-    let c = doc_id_for(r#"name: "Bob", age: 30"#).await;
-    assert_ne!(a, c, "different content must yield a different _docID");
+        let c = doc_id_for(r#"name: "Bob", age: 30"#).await;
+        assert_ne!(a, c, "different content must yield a different _docID");
+    })
+    .await
 }

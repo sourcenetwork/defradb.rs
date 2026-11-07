@@ -37,7 +37,6 @@ mod series;
 pub use map::{Cached, CollectionMap};
 pub(crate) mod provider;
 pub mod retriever;
-pub mod selector;
 pub mod snapshot;
 pub mod stream;
 mod truncator;

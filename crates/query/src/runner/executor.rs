@@ -12,7 +12,7 @@ use identity::Did;
 
 use crate::error::{Result, TransactionError};
 use crate::executor::{GqlWarning, QueryExecutor, QueryRequest, QueryResponse, QueryResponseError};
-use crate::query_parse::{parse_request_with_limits, validate_parsed_operation, ParsedOperation};
+use crate::query_parse::{validate_parsed_operation, ParsedOperation};
 use crate::txn::{TransactionHandle, TransactionRegistry};
 
 use super::turn::answered;
@@ -215,7 +215,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
                 runner.registry.run_as(&context, handle, deadline, job)
             })
             .await;
-        answered(Some(handle), outcome)
+        answered(outcome)
     }
 
     async fn observe_document_owners_in_txn(
@@ -275,6 +275,186 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         self.registry.discard_as(context, handle).await
     }
 
+    async fn add_collection_as(
+        &self,
+        context: &RequestContext,
+        sdl: &str,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        self.registry.add_collection_as(context, sdl).await
+    }
+
+    async fn get_collections_as(
+        &self,
+        context: &RequestContext,
+        selector: &schema::CollectionSelector,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        self.registry.get_collections_as(context, selector).await
+    }
+
+    async fn patch_collection_as(
+        &self,
+        context: &RequestContext,
+        patch: &str,
+        migration: Option<lens::LensConfig>,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry
+            .patch_collection_as(context, patch, migration)
+            .await
+    }
+
+    async fn set_active_collection_version_as(
+        &self,
+        context: &RequestContext,
+        version_id: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry
+            .set_active_collection_version_as(context, version_id)
+            .await
+    }
+
+    async fn truncate_collection_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        filter: Option<&crate::documents::Filter>,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry
+            .truncate_collection_as(context, name, filter)
+            .await
+    }
+
+    async fn add_dac_policy_as(
+        &self,
+        context: &RequestContext,
+        policy: &str,
+    ) -> std::result::Result<String, TransactionError> {
+        self.registry.add_dac_policy_as(context, policy).await
+    }
+
+    async fn list_dac_policies_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<acp::Policy>, TransactionError> {
+        self.registry.list_dac_policies_as(context).await
+    }
+
+    async fn get_dac_policy_as(
+        &self,
+        context: &RequestContext,
+        policy_id: &str,
+    ) -> std::result::Result<Option<acp::Policy>, TransactionError> {
+        self.registry.get_dac_policy_as(context, policy_id).await
+    }
+
+    async fn acp_light_client_status_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<acp::LightClientStatus, TransactionError> {
+        self.registry.acp_light_client_status_as(context).await
+    }
+
+    async fn nac_status_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<acp::nac::NacStatus, TransactionError> {
+        self.registry.nac_status_as(context).await
+    }
+
+    async fn disable_nac_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry.disable_nac_as(context).await
+    }
+
+    async fn re_enable_nac_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry.re_enable_nac_as(context).await
+    }
+
+    async fn add_nac_actor_relationship_as(
+        &self,
+        context: &RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        self.registry
+            .add_nac_actor_relationship_as(context, relation, target_actor)
+            .await
+    }
+
+    async fn delete_nac_actor_relationship_as(
+        &self,
+        context: &RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        self.registry
+            .delete_nac_actor_relationship_as(context, relation, target_actor)
+            .await
+    }
+
+    async fn set_migration_as(
+        &self,
+        context: &RequestContext,
+        config: &str,
+    ) -> std::result::Result<String, TransactionError> {
+        self.registry.set_migration_as(context, config).await
+    }
+
+    async fn add_lens_as(
+        &self,
+        context: &RequestContext,
+        config: lens::LensConfig,
+    ) -> std::result::Result<String, TransactionError> {
+        self.registry.add_lens_as(context, config).await
+    }
+
+    async fn list_lenses_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<String, TransactionError> {
+        self.registry.list_lenses_as(context).await
+    }
+
+    async fn delete_collections_as(
+        &self,
+        context: &RequestContext,
+        targets: Vec<String>,
+        active_only: bool,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry
+            .delete_collections_as(context, targets, active_only)
+            .await
+    }
+
+    async fn set_collection_active_as(
+        &self,
+        context: &RequestContext,
+        version_id: &str,
+        is_active: bool,
+    ) -> std::result::Result<schema::CollectionVersion, TransactionError> {
+        self.registry
+            .set_collection_active_as(context, version_id, is_active)
+            .await
+    }
+
+    async fn verify_block_signature_as(
+        &self,
+        context: &RequestContext,
+        document_acp: std::sync::Arc<dyn acp::DocumentACP>,
+        cid: &str,
+        public_key: &str,
+        key_type: &str,
+        caller: &acp::Identity,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry
+            .verify_block_signature_as(context, document_acp, cid, public_key, key_type, caller)
+            .await
+    }
+
     fn abandon_txn(&self, handle: &TransactionHandle) {
         self.registry.abandon(handle);
     }
@@ -310,12 +490,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             .and_then(|prepared| prepared.parsed.as_deref())
         {
             Some(parsed) => parsed.clone(),
-            None => match parse_request_with_limits(
-                &request.query,
-                variables.as_ref(),
-                request.operation_name.as_deref(),
-                self.query_limits,
-            ) {
+            None => match request.operation(variables.as_ref(), self.query_limits) {
                 Ok(p) => p,
                 Err(e) => {
                     return QueryResponse {
@@ -347,7 +522,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             {
                 Err(TransactionError::NotSupported(_)) => {}
                 Err(error @ (TransactionError::Execution(_) | TransactionError::Storage(_))) => {
-                    return answered(None, Err(error));
+                    return answered(Err(error));
                 }
                 Err(error) => {
                     return QueryResponse::error(format!(
@@ -355,7 +530,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                         error
                     ));
                 }
-                outcome => return answered(None, outcome),
+                outcome => return answered(outcome),
             }
         }
 

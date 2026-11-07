@@ -1,18 +1,28 @@
 ---- MODULE HeadSet ----
-\* Concurrent document/field and collection-head transitions, abstracting
-\* crates/db/src/block/heads/document.rs and builder/collection.rs over the
-\* regolith-backed store in crates/storage/src/backends/regolith.
+\* Concurrent collection-head transitions in the per-key design that preceded
+\* the head-set operator, over the regolith-backed store in
+\* crates/storage/src/backends/regolith.
+\*
+\* CORRESPONDENCE. The variables are the per-key design's. headKeys,
+\* supersedes, walked and pruned have no counterpart in the tree: a
+\* collection's heads are one value that writers only merge into
+\* (crates/db/src/block/heads.rs publish_collection_block, folded by
+\* crates/storage/src/backends/regolith/merge/head_set.rs), nothing scans a head
+\* prefix and nothing sweeps. What carries over is INV_NoWriteConflict's
+\* conclusion, that two concurrent appends both commit, which the tree reaches
+\* by blind merges instead of disjoint keys;
+\* crates/db/tests/block/heads.rs overlapping_appends_both_commit checks it.
 \*
 \* A document head's publication is recorded by its priority index entry
 \* (h/p, empty value), not by a guard key: a block publishes its head at most
 \* once, even after it is superseded. HeadPublication.tla models that protocol.
 \*
 \* THE MECHANISM. A collection's head set is the set of blocks in its DAG that no
-\* other block names as a parent. `write_collection_block` maintains it by:
-\*   1. scanning the head prefix to read the current heads (collection.rs:27-53),
-\*   2. writing a new block whose parents are exactly those heads (:73),
-\*   3. writing the new head key (:91),
-\*   4. DELETING every old head key it observed (:96-100).
+\* other block names as a parent. `write_collection_block` used to maintain it by:
+\*   1. scanning the head prefix to read the current heads,
+\*   2. writing a new block whose parents are exactly those heads,
+\*   3. writing the new head key,
+\*   4. DELETING every old head key it observed.
 \*
 \* Step 4 is the whole subject of this model. Two transactions that run
 \* concurrently both observe the same old head and both delete it. That is a
@@ -37,7 +47,7 @@
 \* not merely its throughput.
 \*
 \* ONE KNOB:
-\*   Strategy = "EagerDelete" - the tree as it stands: a writer deletes every head
+\*   Strategy = "EagerDelete" - the former tree: a writer deletes every head
 \*                              it observed. Two concurrent writers write the same
 \*                              delete, so one aborts.                      [RED]
 \*            = "Derived"     - a writer only ever writes keys derived from its OWN

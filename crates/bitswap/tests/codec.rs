@@ -24,17 +24,11 @@ fn sample() -> BitswapMessage {
     m
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn framed_roundtrip_v1() {
-    let (a, b) = tokio::io::duplex(64 * 1024);
-    let mut tx = Framed::new(
-        tokio_util::compat::TokioAsyncReadCompatExt::compat(a),
-        codec(ProtocolId::Bitswap120),
-    );
-    let mut rx = Framed::new(
-        tokio_util::compat::TokioAsyncReadCompatExt::compat(b),
-        codec(ProtocolId::Bitswap120),
-    );
+    let (a, b) = nuclei::io::duplex(64 * 1024);
+    let mut tx = Framed::new(a, codec(ProtocolId::Bitswap120));
+    let mut rx = Framed::new(b, codec(ProtocolId::Bitswap120));
     let m = sample();
     tx.send(m.clone()).await.unwrap();
     let (got, proto) = rx.next().await.unwrap().unwrap();
@@ -102,6 +96,74 @@ fn one_over_max_is_rejected_on_decode() {
         c.decode(&mut frame),
         Err(BitswapHandlerError::MaxTransmissionSize)
     ));
+}
+
+fn oversized_frame() -> BytesMut {
+    let mut frame = BytesMut::new();
+    let mut buf = unsigned_varint::encode::usize_buffer();
+    frame.extend_from_slice(unsigned_varint::encode::usize(MAX + 1, &mut buf));
+    frame.extend_from_slice(&vec![0u8; MAX + 1]);
+    frame
+}
+
+/// Decodes every frame `stream` holds when it arrives in pieces of `chunk`
+/// bytes, counting rejected oversized frames.
+fn decode_in_chunks(
+    c: &mut BitswapCodec,
+    stream: &[u8],
+    chunk: usize,
+) -> (Vec<BitswapMessage>, usize) {
+    let (mut messages, mut rejected) = (Vec::new(), 0);
+    let mut src = BytesMut::new();
+    for piece in stream.chunks(chunk) {
+        src.extend_from_slice(piece);
+        loop {
+            match c.decode(&mut src) {
+                Ok(Some((message, _))) => messages.push(message),
+                Ok(None) => break,
+                Err(BitswapHandlerError::MaxTransmissionSize) => rejected += 1,
+                Err(error) => panic!("{error}"),
+            }
+        }
+    }
+    (messages, rejected)
+}
+
+/// #2414: the body of a rejected frame is skipped, not read as frames, so
+/// the valid frame after it is the only message, however the bytes arrive.
+#[test]
+fn the_frame_after_an_oversized_one_decodes_alone() {
+    let mut valid = BytesMut::new();
+    codec(ProtocolId::Bitswap120)
+        .encode(sample(), &mut valid)
+        .unwrap();
+    let mut stream = oversized_frame();
+    stream.extend_from_slice(&valid);
+    for chunk in [stream.len(), 64 * 1024, 4093, 1] {
+        let mut c = codec(ProtocolId::Bitswap120);
+        let (messages, rejected) = decode_in_chunks(&mut c, &stream, chunk);
+        assert_eq!(rejected, 1, "chunk {chunk}");
+        assert_eq!(messages, vec![sample()], "chunk {chunk}");
+    }
+}
+
+/// A frame whose body arrives after its prefix is read whole, even when the
+/// body's first bytes would read as an oversized length prefix.
+#[test]
+fn a_split_body_is_never_read_as_a_prefix() {
+    // 0xff bytes read as a varint far over the maximum.
+    let mut message = BitswapMessage::new(false);
+    message.add_block(bitswap::Block::from_v0_data(Bytes::from(vec![0xffu8; 4096])).unwrap());
+    let mut stream = BytesMut::new();
+    codec(ProtocolId::Bitswap100)
+        .encode(message.clone(), &mut stream)
+        .unwrap();
+    for chunk in [100, 333, 1000] {
+        let mut c = codec(ProtocolId::Bitswap100);
+        let (messages, rejected) = decode_in_chunks(&mut c, &stream, chunk);
+        assert_eq!(rejected, 0, "chunk {chunk}");
+        assert_eq!(messages, vec![message.clone()], "chunk {chunk}");
+    }
 }
 
 #[test]

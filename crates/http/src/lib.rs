@@ -17,7 +17,6 @@
 //!
 //! ## Transactions
 //! - `POST /api/v1/tx` - Begin a transaction
-//! - `POST /api/v1/tx/concurrent` - Begin a concurrent transaction
 //! - `POST /api/v1/tx/{id}` - Commit a transaction
 //! - `DELETE /api/v1/tx/{id}` - Discard a transaction
 //!
@@ -129,11 +128,8 @@ pub use router::{
     create_router, create_router_with_rest, create_router_with_state, AppState, AppStateBuilder,
 };
 pub use router::{
-    AcpLightClientStatus, AcpOperations, BackupOperations, BlockOperations, DocumentAcpOperations,
-    IndexFieldInfo, IndexInfo, IndexOperations, ManageRequester, NacStatus, NacStatusInfo,
-    NodeAcpOperations, NodePermission, P2PError, P2POperations, P2PResult, PolicyInfo,
-    RemoteManageDocRef, RemoteManageOp, RemoteManageQueryOp, RemoteManageQueryResult,
-    ReplicatorInfo, TransactionOperations, TransportPeerId, ViewOperations, MANAGE_UNAUTHORIZED,
+    BackupOperations, BlockOperations, DocumentAcpOperations, IndexFieldInfo, IndexInfo,
+    IndexOperations, NacStatus, NodeAcpOperations, NodePermission, ViewOperations,
 };
 #[cfg(feature = "server")]
 pub use server::{RouterTransform, Server, ServerConfig, DEFAULT_MAX_BACKUP_SIZE};
@@ -142,10 +138,9 @@ pub use tls::TlsConfig;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub use mock::{
-    FailingMockAcpOperations, FailingMockBackupOperations, FailingMockExecutor,
-    FailingMockIndexOperations, FailingMockNodeAcpOperations, FailingMockP2POperations,
-    FailingMockRestOperations, MockAcpOperations, MockBackupOperations, MockBlockOperations,
-    MockCollectionManagementOperations, MockDocumentAcpOperations, MockEncryptedIndexOperations,
-    MockIndexOperations, MockLensOperations, MockNodeAcpOperations, MockP2POperations,
-    MockQueryExecutor, MockRestOperations, MockTransactionOperations,
+    FailingMockBackupOperations, FailingMockExecutor, FailingMockIndexOperations,
+    FailingMockNodeAcpOperations, FailingMockP2POperations, FailingMockRestOperations,
+    MockBackupOperations, MockBlockOperations, MockCollectionManagementOperations,
+    MockDocumentAcpOperations, MockEncryptedIndexOperations, MockIndexOperations,
+    MockNodeAcpOperations, MockP2POperations, MockQueryExecutor, MockRestOperations,
 };

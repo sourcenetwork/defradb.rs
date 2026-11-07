@@ -178,6 +178,11 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport + 'static>
             )
             .await?;
         } else {
+            p2p::model_trace!(Commit {
+                doc: &pending.doc_id,
+                head: pending.cid.to_string(),
+                parents: p2p::model_trace::parents_of(&pending.block),
+            });
             sync.push_to_replicators_with_creator(
                 &pending.cid,
                 &pending.block,
@@ -572,6 +577,14 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
         doc_id: &DocID,
     ) -> query::error::Result<Option<Document>> {
         self.inner.get_for_update(collection_name, doc_id).await
+    }
+
+    async fn is_deleted(
+        &self,
+        collection_name: &str,
+        doc_id: &DocID,
+    ) -> query::error::Result<bool> {
+        self.inner.is_deleted(collection_name, doc_id).await
     }
 }
 

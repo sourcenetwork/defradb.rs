@@ -34,13 +34,15 @@
 \*             add_permission_grant / remove_permission_grant: each REJECTS
 \*             with InvalidPolicy when status == DisabledTemporarily
 \*             ("cannot modify relationships while NAC is disabled").
-\*   crates/db/src/nac/lib.rs
-\*     :235-244 NacManager::disable(): auth via is_admin (LIVE).
-\*     :247-256 NacManager::re_enable(): auth via is_admin_persisted (STORED).
+\*   crates/db/src/nac/toggle.rs
+\*     NacManager::disable_as(): auth via the live NacDisable check, which
+\*             every admin holds (LIVE), in the write that disables.
+\*     NacManager::re_enable_as(): auth via the stored NacReEnable check,
+\*             which every admin holds (STORED), in the write that re-enables.
 \*             ** This asymmetry is the security crux: while disabled, live
 \*                is_admin is true for everyone, so re_enable MUST use the
 \*                persisted check or any actor could re-enable then escalate.
-\*     :259-272 purge(): requires dev_mode && is_admin.
+\*   crates/db/src/nac/mod.rs NacManager::purge(): requires dev_mode && is_admin.
 \*
 \* SOURCE ANCHORS (Go, origin/develop -- the live upstream, not the checkout)
 \*   internal/db/acp/nac.go :44-61  NodeACP kept Start()ed even while disabled,
@@ -185,7 +187,7 @@ Enable ==
 \* (lib.rs:236), which while Enabled equals the persisted check -- sound here.
 Disable(a) ==
   /\ status = "Enabled"
-  /\ IsAdminLive(a)                     \* enforced by NacManager::disable
+  /\ IsAdminLive(a)                     \* enforced by NacManager::disable_as
   /\ status' = "DisabledTemporarily"
   /\ disk_disabled' = (Mode # "BugNoPersist")
   /\ UNCHANGED <<admins_persisted, configured, mutations,

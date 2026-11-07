@@ -9,6 +9,11 @@ use std::time::Duration;
 use defra_core::thread_bounds::{MaybeBoxFuture, MaybeSend, MaybeSendSync};
 use workers::Clock;
 
+#[cfg(target_arch = "wasm32")]
+use n0_future::time::Instant;
+#[cfg(not(target_arch = "wasm32"))]
+use nuclei::time::Instant;
+
 /// Where round trips run: network work spawned apart from the tasks that
 /// wait on it, and timers for deadlines and backoff.
 ///
@@ -72,18 +77,18 @@ impl Network for OnDemand {
     }
 }
 
-/// The runtime's monotonic clock: tokio's natively (so a test that pauses
-/// tokio's time moves it too), the browser's on wasm.
+/// The runtime's monotonic clock: nuclei's natively (so a test that pauses
+/// nuclei's time moves it too), the browser's on wasm.
 #[derive(Debug)]
 pub struct RuntimeClock {
-    origin: n0_future::time::Instant,
+    origin: Instant,
 }
 
 impl RuntimeClock {
     /// A clock whose origin is now.
     pub fn new() -> Self {
         Self {
-            origin: n0_future::time::Instant::now(),
+            origin: Instant::now(),
         }
     }
 }
@@ -103,12 +108,12 @@ impl Clock for RuntimeClock {
 /// Time since it was started, on the network runtime's clock: what a caller
 /// measures its own wait with.
 #[derive(Debug)]
-pub struct Stopwatch(n0_future::time::Instant);
+pub struct Stopwatch(Instant);
 
 impl Stopwatch {
     /// A stopwatch running from now.
     pub fn start() -> Self {
-        Self(n0_future::time::Instant::now())
+        Self(Instant::now())
     }
 
     /// Microseconds since it started.

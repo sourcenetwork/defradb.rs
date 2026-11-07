@@ -74,8 +74,8 @@ fn main() {
     // Single-threaded on purpose: a worker pool allocates on threads this has
     // no way to attribute, and the resulting count would drift with the
     // scheduler rather than with the code.
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
+    let rt = nuclei::Runtime::builder()
+        .worker_threads(0)
         .build()
         .expect("a runtime");
 
@@ -136,12 +136,15 @@ fn main() {
 
     let json = serde_json::to_vec(&doc.to_map().expect("the document to serialize"))
         .expect("a JSON encoding of it");
+    // Built once, as real callers share one definition: the row counts the
+    // parse, not a definition build per document.
+    let collection = Arc::new(collection_version());
     group = group.row(Row::new(
         "document from json",
         per_op(OPS, || {
             for _ in 0..OPS {
                 std::hint::black_box(
-                    Document::from_json(&json, collection_version())
+                    Document::from_json(&json, Arc::clone(&collection))
                         .expect("the document to parse"),
                 );
             }

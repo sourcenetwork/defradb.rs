@@ -233,6 +233,7 @@ fn an_asynchronous_request_completes_through_its_callback() {
         crate::query::exec_request_async(
             node,
             std::ptr::null(),
+            std::ptr::null(),
             mutation.as_ptr(),
             std::ptr::null(),
             std::ptr::null(),
@@ -249,6 +250,7 @@ fn an_asynchronous_request_completes_through_its_callback() {
     unsafe {
         crate::query::exec_request_async(
             node,
+            std::ptr::null(),
             std::ptr::null(),
             std::ptr::null(),
             std::ptr::null(),
@@ -273,6 +275,7 @@ fn a_synchronous_request_made_on_a_worker_is_refused() {
         let result = unsafe {
             crate::query::exec_request(
                 node,
+                std::ptr::null(),
                 std::ptr::null(),
                 query.as_ptr(),
                 std::ptr::null(),
@@ -300,6 +303,7 @@ fn an_asynchronous_request_made_on_a_worker_completes() {
         unsafe {
             crate::query::exec_request_async(
                 node,
+                std::ptr::null(),
                 std::ptr::null(),
                 query.as_ptr(),
                 std::ptr::null(),

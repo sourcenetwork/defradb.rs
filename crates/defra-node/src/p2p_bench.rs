@@ -1,7 +1,7 @@
 //! Two-node peer-to-peer replication benchmarks.
 //!
-//! These measure how long it takes a write on one [`EmbeddedNode`] to become readable on
-//! a second [`EmbeddedNode`] in the same process, connected over Iroh with relays and
+//! These measure how long it takes a write on one [`Node`] to become readable on
+//! a second [`Node`] in the same process, connected over Iroh with relays and
 //! discovery disabled.
 //!
 //! They are written as `#[ignore]`d tests rather than as criterion benchmarks. Criterion
@@ -21,7 +21,7 @@
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::{Duration, Instant};
 
-use super::{EmbeddedNode, P2PConfig, QueryResponse};
+use super::{Node, P2PConfig, PeerKeySource, QueryResponse, SyncTuning};
 
 /// Document-set sizes each benchmark is run against.
 const DOC_COUNTS: &[usize] = &[1, 50, 500];
@@ -60,7 +60,7 @@ const BENCH_SDL: &str = "type User { name: String age: Int }";
 
 fn bench_p2p_config() -> P2PConfig {
     P2PConfig {
-        port: 0,
+        port: Some(0),
         bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
         discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
@@ -68,12 +68,8 @@ fn bench_p2p_config() -> P2PConfig {
         max_concurrent_multipath_paths: None,
         secret_key_path: None,
         load_persisted_collections: false,
-        max_concurrent_dag_fetches: p2p::sync::DEFAULT_MAX_CONCURRENT_DAG_FETCHES,
-        max_concurrent_push_tasks: p2p::sync::DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
-        max_doc_sync_request_doc_ids: p2p::sync::DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
-        rate_limit_burst: p2p::sync::DEFAULT_RATE_LIMIT_BURST,
-        rate_limit_rate: p2p::sync::DEFAULT_RATE_LIMIT_RATE,
-        max_pending_dags: p2p::sync::DEFAULT_MAX_PENDING_DAGS,
+        peer_key: PeerKeySource::File,
+        sync: SyncTuning::default(),
         rebroadcast_on_merge: false,
     }
 }
@@ -106,8 +102,8 @@ struct ReplicationSpans {
 }
 
 /// Builds a node with peer-to-peer enabled and the benchmark schema installed.
-async fn build_bench_node() -> EmbeddedNode {
-    let node = EmbeddedNode::builder()
+async fn build_bench_node() -> Node {
+    let node = Node::builder()
         .with_p2p(bench_p2p_config())
         .build()
         .await
@@ -119,7 +115,7 @@ async fn build_bench_node() -> EmbeddedNode {
     node
 }
 
-async fn listen_addr(node: &EmbeddedNode) -> String {
+async fn listen_addr(node: &Node) -> String {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let addrs = node
@@ -139,7 +135,7 @@ async fn listen_addr(node: &EmbeddedNode) -> String {
     }
 }
 
-async fn await_connected_peer(node: &EmbeddedNode) {
+async fn await_connected_peer(node: &Node) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let peers = node
@@ -163,7 +159,7 @@ async fn await_connected_peer(node: &EmbeddedNode) {
 ///
 /// All of this is done before any timing starts, so that the benchmarks measure the
 /// replication of writes rather than the cost of establishing the relationship.
-async fn connect_and_replicate(sender: &EmbeddedNode, receiver: &EmbeddedNode) {
+async fn connect_and_replicate(sender: &Node, receiver: &Node) {
     let sender_addr = listen_addr(sender).await;
     let receiver_addr = listen_addr(receiver).await;
 
@@ -216,7 +212,7 @@ async fn connect_and_replicate(sender: &EmbeddedNode, receiver: &EmbeddedNode) {
 /// [`measure_catch_up`] relies on - which would deliver the documents before
 /// `sync_documents` is ever called. A bare connection is also all the serving side needs,
 /// since it authorizes DocSync heads for any connected peer.
-async fn connect_only(sender: &EmbeddedNode, receiver: &EmbeddedNode) {
+async fn connect_only(sender: &Node, receiver: &Node) {
     let sender_addr = listen_addr(sender).await;
 
     let sender_p2p = sender.p2p().expect("sender P2P should be enabled");
@@ -241,7 +237,7 @@ async fn connect_only(sender: &EmbeddedNode, receiver: &EmbeddedNode) {
 }
 
 /// Returns the number of `User` documents currently readable on the node.
-async fn user_count(node: &EmbeddedNode) -> usize {
+async fn user_count(node: &Node) -> usize {
     let response = node.execute("query { User { _docID } }").await;
     assert!(
         response.errors.is_empty(),
@@ -259,7 +255,7 @@ async fn user_count(node: &EmbeddedNode) -> usize {
 }
 
 /// Polls the node until it holds `expected` documents, or panics on timeout.
-async fn await_user_count(node: &EmbeddedNode, expected: usize) {
+async fn await_user_count(node: &Node, expected: usize) {
     let deadline = Instant::now() + CONVERGENCE_TIMEOUT;
     loop {
         let count = user_count(node).await;
@@ -276,12 +272,12 @@ async fn await_user_count(node: &EmbeddedNode, expected: usize) {
 
 /// Stops both nodes before the next measurement builds more.
 ///
-/// Neither `EmbeddedNode` nor the `P2PLifecycle` it owns has a `Drop` impl, so the Iroh
+/// Neither `Node` nor the `P2PLifecycle` it owns has a `Drop` impl, so the Iroh
 /// endpoint and its background tasks survive the nodes going out of scope. Without this,
 /// every size in a benchmark would run alongside the leftovers of all the earlier ones.
-async fn shutdown_nodes(sender: &EmbeddedNode, receiver: &EmbeddedNode) {
-    sender.shutdown().await;
-    receiver.shutdown().await;
+async fn shutdown_nodes(sender: &Node, receiver: &Node) {
+    sender.shutdown().await.unwrap();
+    receiver.shutdown().await.unwrap();
 }
 
 /// Returns the `_docID` of the single document a create mutation reported.
@@ -435,7 +431,7 @@ async fn measure_catch_up(update_count: usize) -> Duration {
 }
 
 /// Prints what the node measured about its fetches from each peer.
-async fn print_peer_fetches(node: &EmbeddedNode) {
+async fn print_peer_fetches(node: &Node) {
     let status = node
         .p2p()
         .expect("p2p")
@@ -448,7 +444,7 @@ async fn print_peer_fetches(node: &EmbeddedNode) {
 }
 
 /// Polls the node until its single `User` document reports `expected` as its age.
-async fn await_user_age(node: &EmbeddedNode, expected: i64) {
+async fn await_user_age(node: &Node, expected: i64) {
     let deadline = Instant::now() + CONVERGENCE_TIMEOUT;
     loop {
         let response = node.execute("query { User { age } }").await;
@@ -669,9 +665,9 @@ async fn measure_pull_from_providers(providers: usize) -> ProviderPull {
         .map(|peer| peer["fetches"].as_u64().unwrap_or(0))
         .collect();
 
-    receiver.shutdown().await;
+    receiver.shutdown().await.unwrap();
     for node in &nodes {
-        node.shutdown().await;
+        node.shutdown().await.unwrap();
     }
     ProviderPull {
         elapsed,

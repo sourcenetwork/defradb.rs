@@ -9,12 +9,12 @@ use std::task::Poll;
 use std::time::Duration;
 
 use defra_core::thread_bounds::MaybeSend;
-use n0_future::time::Instant;
-use n0_future::FutureExt;
+use futures_lite::FutureExt;
 
 use crate::contain::contain;
 use crate::error::EdgeError;
 use crate::gate::{Gate, Permit};
+use crate::platform::Instant;
 use crate::shared::Shared;
 use crate::stats::EdgeStats;
 use crate::task::{Service, Task};
@@ -49,7 +49,10 @@ impl Edge {
     }
 
     fn admit(&self) -> Option<Permit> {
-        let permit = self.gate.admit();
+        self.counted(self.gate.admit())
+    }
+
+    fn counted(&self, permit: Option<Permit>) -> Option<Permit> {
         if permit.is_none() {
             self.shared.stats.refused();
             tracing::debug!("network work refused: the network runtime is shutting down");
@@ -64,7 +67,38 @@ impl Edge {
         F: Future + MaybeSend + 'static,
         F::Output: MaybeSend + 'static,
     {
+        self.try_spawn(future).unwrap_or_else(|_| Task::refused())
+    }
+
+    /// [`spawn`](Self::spawn), or `future` back, unstarted, when the
+    /// runtime or scope no longer accepts work, for a caller that must run
+    /// it all the same.
+    pub fn try_spawn<F>(&self, future: F) -> Result<Task<F::Output>, F>
+    where
+        F: Future + MaybeSend + 'static,
+        F::Output: MaybeSend + 'static,
+    {
         let Some(permit) = self.admit() else {
+            return Err(future);
+        };
+        let shared = Arc::clone(&self.shared);
+        let join = self.shared.rt.spawn(async move {
+            let _permit = permit;
+            contain(&shared.stats, AssertUnwindSafe(future).catch_unwind().await)
+        });
+        Ok(Task::running(&self.shared, join))
+    }
+
+    /// Runs `future` as a network task that continues a request already
+    /// admitted, such as a connection driver. It is admitted after the
+    /// runtime or scope stops accepting while admitted work is still in
+    /// flight, and refused once nothing is in flight or the drain finished.
+    pub fn spawn_continuation<F>(&self, future: F) -> Task<F::Output>
+    where
+        F: Future + MaybeSend + 'static,
+        F::Output: MaybeSend + 'static,
+    {
+        let Some(permit) = self.counted(self.gate.admit_continuation()) else {
             return Task::refused();
         };
         let shared = Arc::clone(&self.shared);
@@ -156,11 +190,9 @@ impl Edge {
     /// Runs `future` to its end on the calling thread, which it blocks.
     ///
     /// For a thread outside the runtime: a program's `main`, a C caller, a
-    /// synchronous trait whose work is network I/O. On a thread of a
-    /// multi-threaded runtime the thread's executor work moves elsewhere
-    /// first; on a single-threaded executor the call is refused with
-    /// [`EdgeError::WouldBlock`]. A panic in `future` is returned as
-    /// [`EdgeError::Panicked`].
+    /// synchronous trait whose work is network I/O. Inside a nuclei task the
+    /// wait nests: the thread's shard keeps running its other tasks. A panic
+    /// in `future` is returned as [`EdgeError::Panicked`].
     #[cfg(not(target_arch = "wasm32"))]
     pub fn block_on<F>(&self, future: F) -> Result<F::Output, EdgeError>
     where
@@ -172,7 +204,7 @@ impl Edge {
         let rt = &self.shared.rt;
         contain(
             &self.shared.stats,
-            crate::platform::wait_here(|| rt.drive(future))?,
+            crate::platform::wait_here(|| rt.drive(future)),
         )
     }
 
@@ -194,6 +226,13 @@ impl Edge {
     /// Whether this handle stopped accepting work.
     pub fn is_closed(&self) -> bool {
         self.gate.is_closed()
+    }
+
+    /// The CPUs the runtime's threads run on, held for them alone; empty
+    /// when they run unpinned.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn cpus(&self) -> &workers::topology::CpuSet {
+        &self.shared.rt.cpus
     }
 
     /// The runtime's counters, with this handle's work in flight.
@@ -256,7 +295,7 @@ impl Scope {
 /// What a drain left behind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Drained {
-    /// Admitted work still running when the drain's deadline passed.
+    /// Work still admitted when the deadline passed; a drain that finished reports none.
     pub remaining: usize,
 }
 
@@ -271,14 +310,14 @@ impl Drained {
 pub(crate) async fn drain_gate(gate: &Gate, shared: &Arc<Shared>, within: Duration) -> Drained {
     let mut timer = Timer::after(shared, Instant::now(), within);
     let mut drained = pin!(gate.drained());
-    poll_fn(|cx| {
+    let finished = poll_fn(|cx| {
         if drained.as_mut().poll(cx).is_ready() {
-            return Poll::Ready(());
+            return Poll::Ready(true);
         }
-        timer.poll(cx).map(drop)
+        timer.poll(cx).map(|_| false)
     })
     .await;
     Drained {
-        remaining: gate.in_flight(),
+        remaining: if finished { 0 } else { gate.in_flight() },
     }
 }

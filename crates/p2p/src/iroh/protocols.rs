@@ -198,7 +198,7 @@ pub async fn read_body_until_idle(
     let mut payload = vec![0u8; len];
     let mut filled = 0;
     while filled < len {
-        let Ok(read) = n0_future::time::timeout(idle, recv.read(&mut payload[filled..])).await
+        let Ok(read) = crate::rt::time::timeout(idle, recv.read(&mut payload[filled..])).await
         else {
             return Ok(None);
         };

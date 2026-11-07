@@ -24,7 +24,7 @@ pub use defra_http::route_permissions::{route_permission, RoutePermission};
 #[allow(unused_imports)]
 pub use defra_http::router::NodePermission;
 use defra_http::router::{AppStateBuilder, ViewOperations};
-use defra_http::{MockAcpOperations, MockQueryExecutor};
+use defra_http::MockQueryExecutor;
 
 pub const TEST_HOST: &str = "localhost:9181";
 pub const POLICY: &str = "name: test\nresources:\n  doc:\n    permissions:\n";
@@ -61,7 +61,6 @@ impl ViewOperations for RecordingViewOps {
 
 pub fn router_with(view: Arc<RecordingViewOps>) -> Router {
     let state = AppStateBuilder::new(Arc::new(MockQueryExecutor::new()), edge::testing::edge())
-        .with_acp(Arc::new(MockAcpOperations::new()))
         .with_view(view)
         .build();
     defra_http::create_router_with_state(state)

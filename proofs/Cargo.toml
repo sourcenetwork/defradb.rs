@@ -25,9 +25,11 @@ serde_json = "1.0"
 thiserror.workspace = true
 
 [dev-dependencies]
-defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "60bc10e91827b153ec8ed87361f695814ec486e7" }
-tokio = { workspace = true, features = ["rt", "macros", "sync", "time"] }
-serial_test = "3"
+# The estimator constants `tests/lean_conformance.rs` binds to the Lean contract.
+p2p = { path = "../crates/p2p" }
+defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "330e38f184215f40a2bc926480b542bb75051b6d" }
+edge = { path = "../crates/edge" }
+nuclei.workspace = true
 
 [lints]
 workspace = true

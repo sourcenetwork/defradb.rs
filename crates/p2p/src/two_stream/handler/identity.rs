@@ -1,5 +1,5 @@
+use crate::rt::oneshot;
 use libp2p::PeerId;
-use tokio::sync::oneshot;
 
 use crate::codec::write_message;
 use crate::error::{Error, Result};
@@ -33,7 +33,7 @@ impl TwoStreamHandler {
             Error::CborSerialization(format!("failed to write identity request: {}", e))
         })?;
 
-        match tokio::time::timeout(RESPONSE_TIMEOUT, rx).await {
+        match crate::rt::time::timeout(RESPONSE_TIMEOUT, rx).await {
             Ok(Ok(reply)) => Ok(reply),
             Ok(Err(_)) => {
                 self.cleanup_pending_identity(peer_id, &message_id);

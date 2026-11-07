@@ -60,7 +60,9 @@ pub use event::emission::{BroadcastDone, TxnBroadcastEvent, TxnBroadcaster};
 pub mod merge;
 pub mod nac;
 pub mod read;
+pub mod receive_gate;
 pub(crate) mod remote_inputs;
+pub mod replication_filter;
 pub mod search;
 pub mod txn;
 pub(crate) mod view;
@@ -72,9 +74,11 @@ pub use crate::search::{
     embed_text, hybrid_search_dense, require_query_success, DenseHybridSearchHit,
     DenseHybridSearchRequest, DenseHybridSearchResponse,
 };
+pub use access::dac::{DacPolicies, DacPolicyError};
 pub use access::kms::{
     DbBlockDocIDResolver, DbDocCollectionLookup, DbEncBlockStore, DbNodeAcpRead,
 };
+pub use access::nac_ops::NodeAcpError;
 pub use access::node::{bound_node_access_checker, node_access_checker, NodeAccessChecker};
 pub use collection::acp::{
     block_unsafe_policy_transition, check_doc_permission, check_policy_transition,
@@ -83,9 +87,9 @@ pub use collection::acp::{
 };
 pub use collection::cache::CollectionCache;
 pub use collection::name::CollectionName;
+pub use collection::ops::{AddCollectionError, TruncateError};
 pub use collection::provider::DbCollectionProvider;
 pub use collection::retriever::{resolve_collection_from_doc_id, DocCollectionInfo};
-pub use collection::selector::CollectionSelector;
 pub use collection::snapshot::CollectionSnapshot;
 #[allow(deprecated)]
 pub use collection::{collection_short_id, Collection, DbCollectionTruncator};
@@ -106,9 +110,10 @@ pub use read::doc::DbDocFetcher;
 pub use read::lensed::autocommit::LensedAutoCommitFetcher;
 pub use read::lensed::fetcher::LensedDocFetcher;
 pub use read::versioned::VersionedFetcher;
+pub use schema::CollectionSelector;
 pub use txn::context::DbTransactionContext;
 pub use txn::registry::{
-    CleanupResult, DbTransactionRegistry, DEFAULT_TRANSACTION_CLEANUP_INTERVAL,
+    CleanupResult, DbTransactionRegistry, TxnOwnership, DEFAULT_TRANSACTION_CLEANUP_INTERVAL,
     DEFAULT_TRANSACTION_IDLE_TIMEOUT,
 };
 pub use txn::DbTxn;
@@ -119,7 +124,10 @@ pub use write::doc::DbDocMutator;
 // NAC exports
 #[cfg(not(target_arch = "wasm32"))]
 pub use nac::create_persistent_nac_manager;
-pub use nac::{create_memory_nac_manager, NacConfig, NacInfo, NacManager, NacManagerApi};
+pub use nac::{
+    create_memory_nac_manager, NacCaller, NacChange, NacConfig, NacInfo, NacManager, NacManagerApi,
+    NacRelation, NacRelationshipRequest,
+};
 
 // Re-export related crate types for convenience
 pub use datastore::{BasicTxn, NamespaceView};

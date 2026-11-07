@@ -207,7 +207,7 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
     car_authority: &p2p::sync::HeadHintCarAuthority,
     allowlist: Option<&[(String, String)]>,
 ) -> Result<(), String> {
-    let network = db.network();
+    let network = db.network().map_err(|error| error.to_string())?;
     super::push_docs_network::wait_for_peer(&network, transport, peer_id).await?;
 
     let local_peer_id = transport.local_peer_id().to_string();
@@ -251,7 +251,7 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
     let selected = matches!(&ownership, PushOwnership::Selected(_));
     let mut failures: RapidHashMap<(String, String), String> = RapidHashMap::new();
     let mut push_handles = Vec::new();
-    let replay_gate = Arc::new(ReplayPushGate::new(replay_config).on(network.clone()));
+    let replay_gate = Arc::new(ReplayPushGate::new(replay_config, network.clone()));
     let allowlist_by_collection = allowlist_index(allowlist);
 
     let preparation: Result<(), String> = async {
@@ -842,22 +842,8 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
     matcher: &dyn p2p::replicator::ReplicationFilterMatcher,
     car_authority: &p2p::sync::HeadHintCarAuthority,
 ) -> Result<(), String> {
-    let network = db.network();
+    let network = db.network().map_err(|error| error.to_string())?;
     let local_peer_id = transport.local_peer_id().to_string();
-    let resolved_collection;
-    let collection_id = if collection_id.is_empty() {
-        resolved_collection =
-            crate::merge::push_docs_common::resolve_collection_id_for_doc(db, doc_id)
-                .await?
-                .ok_or_else(|| format!("collection for document '{doc_id}' not found"))?;
-        resolved_collection.as_str()
-    } else {
-        collection_id
-    };
-    let collection = db
-        .find_collection_by_id(collection_id)
-        .map_err(|e| format!("failed to get collection: {}", e))?
-        .ok_or_else(|| format!("collection '{}' not found", collection_id))?;
     let doc_short_id = {
         let txn = db
             .new_txn(true)
@@ -883,6 +869,20 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
             }
         }
     };
+    let resolved_collection;
+    let collection_id = if collection_id.is_empty() {
+        resolved_collection =
+            crate::merge::push_docs_common::resolve_collection_id_for_doc(db, doc_id)
+                .await?
+                .ok_or_else(|| format!("collection for document '{doc_id}' not found"))?;
+        resolved_collection.as_str()
+    } else {
+        collection_id
+    };
+    let collection = db
+        .find_collection_by_id(collection_id)
+        .map_err(|e| format!("failed to get collection: {}", e))?
+        .ok_or_else(|| format!("collection '{}' not found", collection_id))?;
     if let Some(filter) = filters.get(collection_id) {
         let peerstore = db.peerstore();
         let txn = db
@@ -971,6 +971,11 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
                 }
                 Ok(_) => {
                     successful_blocks += 1;
+                    p2p::model_trace!(Ack {
+                        doc: doc_id,
+                        receiver: peer_id.as_str(),
+                        head: head_cid.to_string(),
+                    });
                 }
                 Err(error) => {
                     let prefix = if error.is_connection_like() {
@@ -1009,7 +1014,7 @@ pub async fn retry_collection_commit<S: Store + 'static, T: P2PTransport>(
     marker_generation: u64,
     car_authority: &p2p::sync::HeadHintCarAuthority,
 ) -> Result<(), String> {
-    let network = db.network();
+    let network = db.network().map_err(|error| error.to_string())?;
     let creator = transport.local_peer_id().to_string();
     let txn = db
         .new_txn(true)

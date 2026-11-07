@@ -39,7 +39,7 @@ impl BlockOperations for RecordingBlock {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn signed_block_route_returns_canonical_material() {
     let executor = Arc::new(MockQueryExecutor::new()) as Arc<dyn QueryExecutor>;
     let block = Arc::new(RecordingBlock::default());

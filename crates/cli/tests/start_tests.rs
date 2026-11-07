@@ -58,6 +58,8 @@ fn default_start_args() -> StartArgs {
         p2p_rate_limit_rate: None,
         p2p_max_doc_sync_request_doc_ids: None,
         p2p_max_pending_dags: None,
+        p2p_max_concurrent_dag_fetches: None,
+        p2p_pending_dag_ttl_secs: None,
         p2p_rebroadcast_on_merge: None,
         p2p_push_queue_capacity: None,
         p2p_push_queue_byte_capacity: None,
@@ -69,6 +71,7 @@ fn default_start_args() -> StartArgs {
         query_max_depth: None,
         query_max_width: None,
         query_max_filter_depth: None,
+        query_max_fragment_nesting: None,
         p2p_transport: None,
         #[cfg(feature = "postgres")]
         pg_address: None,
@@ -190,6 +193,8 @@ fn test_apply_to_config_all_flags() {
         p2p_rate_limit_rate: Some(4.5),
         p2p_max_doc_sync_request_doc_ids: Some(64),
         p2p_max_pending_dags: Some(7),
+        p2p_max_concurrent_dag_fetches: Some(2),
+        p2p_pending_dag_ttl_secs: Some(20),
         p2p_rebroadcast_on_merge: Some(true),
         p2p_push_queue_capacity: Some(48),
         p2p_push_queue_byte_capacity: Some(4096),
@@ -201,6 +206,7 @@ fn test_apply_to_config_all_flags() {
         query_max_depth: Some(12),
         query_max_width: Some(64),
         query_max_filter_depth: Some(24),
+        query_max_fragment_nesting: Some(48),
         p2p_transport: Some("libp2p".to_string()),
         #[cfg(feature = "postgres")]
         pg_address: Some("127.0.0.1:5433".to_string()),
@@ -229,6 +235,8 @@ fn test_apply_to_config_all_flags() {
     assert_eq!(config.net.p2p_rate_limit_rate, 4.5);
     assert_eq!(config.net.p2p_max_doc_sync_request_doc_ids, 64);
     assert_eq!(config.net.p2p_max_pending_dags, 7);
+    assert_eq!(config.net.p2p_max_concurrent_dag_fetches, 2);
+    assert_eq!(config.net.p2p_pending_dag_ttl_secs, 20);
     assert!(config.net.p2p_rebroadcast_on_merge);
     assert_eq!(config.net.p2p_push_queue_capacity, 48);
     assert_eq!(config.net.p2p_push_queue_byte_capacity, 4096);
@@ -261,6 +269,7 @@ fn test_apply_to_config_all_flags() {
     assert_eq!(config.api.query_max_depth, 12);
     assert_eq!(config.api.query_max_width, 64);
     assert_eq!(config.api.query_max_filter_depth, 24);
+    assert_eq!(config.api.query_max_fragment_nesting, 48);
     assert_eq!(config.net.transport, TransportType::Libp2p);
     #[cfg(feature = "postgres")]
     assert_eq!(config.api.pg_address, "127.0.0.1:5433");
@@ -380,6 +389,8 @@ const P2P_START_FLAGS: &[&str] = &[
     "p2p-rate-limit-rate",
     "p2p-max-doc-sync-request-doc-ids",
     "p2p-max-pending-dags",
+    "p2p-max-concurrent-dag-fetches",
+    "p2p-pending-dag-ttl-secs",
     "p2p-rebroadcast-on-merge",
     "p2p-push-queue-capacity",
     "p2p-push-queue-byte-capacity",
@@ -411,6 +422,7 @@ const QUERY_START_FLAGS: &[&str] = &[
     "query-max-depth",
     "query-max-width",
     "query-max-filter-depth",
+    "query-max-fragment-nesting",
 ];
 
 // Consumed by start/server_acp.rs provider construction.

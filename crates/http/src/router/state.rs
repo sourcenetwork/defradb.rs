@@ -9,28 +9,17 @@ use query::QueryLimits;
 use serde_json::Map;
 
 use super::{
-    AcpOperations, BackupOperations, BlockOperations, CollectionManagementOperations,
-    CollectionOperations, CollectionVersionOperations, DocumentAcpOperations, DumpOperations,
-    EncryptedIndexOperations, IndexOperations, LensOperations, ManageRequester, NodeAcpOperations,
-    P2POperations, TransactionOperations, ViewOperations,
+    BackupOperations, BlockOperations, CollectionManagementOperations, CollectionOperations,
+    DocumentAcpOperations, DumpOperations, EncryptedIndexOperations, IndexOperations,
+    ManageRequester, NodeAcpOperations, P2POperations, ViewOperations,
 };
-
-struct CollectionVersionsFromManagement(Arc<dyn CollectionManagementOperations>);
-
-#[async_trait::async_trait]
-impl CollectionVersionOperations for CollectionVersionsFromManagement {
-    async fn get_all_collections(&self) -> Result<Vec<schema::CollectionVersion>, String> {
-        self.0.get_all_collections().await
-    }
-
-    async fn get_active_collections(&self) -> Result<Vec<schema::CollectionVersion>, String> {
-        self.0.get_active_collections().await
-    }
-}
 
 /// Application state shared across handlers.
 #[derive(Clone)]
-pub struct AppState {
+pub struct AppState(Arc<AppStateFields>);
+
+/// What [`AppState`] holds; its fields read through `AppState`.
+pub struct AppStateFields {
     pub executor: Arc<dyn QueryExecutor>,
     /// The network runtime request work runs on.
     pub edge: Edge,
@@ -40,20 +29,16 @@ pub struct AppState {
     pub rest: Option<Arc<dyn RestOperations>>,
     pub p2p: Option<Arc<dyn P2POperations>>,
     pub manage: Option<Arc<dyn ManageRequester>>,
-    pub acp: Option<Arc<dyn AcpOperations>>,
     pub index: Option<Arc<dyn IndexOperations>>,
     pub encrypted_index: Option<Arc<dyn EncryptedIndexOperations>>,
     pub backup: Option<Arc<dyn BackupOperations>>,
     pub block: Option<Arc<dyn BlockOperations>>,
     pub schema: Option<Arc<dyn CollectionOperations>>,
-    pub lens: Option<Arc<dyn LensOperations>>,
     pub nac: Option<Arc<dyn NodeAcpOperations>>,
-    pub collection_versions: Option<Arc<dyn CollectionVersionOperations>>,
     pub collection_mgmt: Option<Arc<dyn CollectionManagementOperations>>,
     pub doc_acp: Option<Arc<dyn DocumentAcpOperations>>,
     pub view: Option<Arc<dyn ViewOperations>>,
     pub dump: Option<Arc<dyn DumpOperations>>,
-    pub txn_ops: Option<Arc<dyn TransactionOperations>>,
     pub event_bus: Option<Arc<dyn events::Bus>>,
     pub node_options: Option<Arc<Map<String, serde_json::Value>>>,
     pub node_identity_did: Option<String>,
@@ -62,14 +47,27 @@ pub struct AppState {
     pub query_limits: QueryLimits,
 }
 
+impl std::ops::Deref for AppState {
+    type Target = AppStateFields;
+
+    fn deref(&self) -> &AppStateFields {
+        &self.0
+    }
+}
+
 impl std::fmt::Debug for AppState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::fmt::Debug for AppStateFields {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AppState")
             .field("executor", &"<QueryExecutor>")
             .field("rest", &self.rest.as_ref().map(|_| "<RestOperations>"))
             .field("p2p", &self.p2p.as_ref().map(|_| "<P2POperations>"))
             .field("manage", &self.manage.as_ref().map(|_| "<ManageRequester>"))
-            .field("acp", &self.acp.as_ref().map(|_| "<AcpOperations>"))
             .field("index", &self.index.as_ref().map(|_| "<IndexOperations>"))
             .field(
                 "encrypted_index",
@@ -87,15 +85,7 @@ impl std::fmt::Debug for AppState {
                 "schema",
                 &self.schema.as_ref().map(|_| "<CollectionOperations>"),
             )
-            .field("lens", &self.lens.as_ref().map(|_| "<LensOperations>"))
             .field("nac", &self.nac.as_ref().map(|_| "<NodeAcpOperations>"))
-            .field(
-                "collection_versions",
-                &self
-                    .collection_versions
-                    .as_ref()
-                    .map(|_| "<CollectionVersionOperations>"),
-            )
             .field(
                 "collection_mgmt",
                 &self
@@ -109,10 +99,6 @@ impl std::fmt::Debug for AppState {
             )
             .field("view", &self.view.as_ref().map(|_| "<ViewOperations>"))
             .field("dump", &self.dump.as_ref().map(|_| "<DumpOperations>"))
-            .field(
-                "txn_ops",
-                &self.txn_ops.as_ref().map(|_| "<TransactionOperations>"),
-            )
             .field("event_bus", &self.event_bus.as_ref().map(|_| "<EventBus>"))
             .field(
                 "node_options",
@@ -128,11 +114,9 @@ impl std::fmt::Debug for AppState {
 impl AppState {
     /// Get P2P operations or return ServiceUnavailable error.
     pub fn require_p2p(&self) -> Result<&Arc<dyn P2POperations>, crate::error::HttpError> {
-        self.p2p.as_ref().ok_or_else(|| {
-            crate::error::HttpError::ServiceUnavailable(
-                "P2P networking is not enabled. Start the server with P2P enabled to use this feature.".into()
-            )
-        })
+        self.p2p
+            .as_ref()
+            .ok_or_else(|| crate::error::peer_refused(defra_p2p_adapter::peer::Error::NoP2P))
     }
 
     /// Get the management requester or return ServiceUnavailable error.
@@ -140,15 +124,6 @@ impl AppState {
         self.manage.as_ref().ok_or_else(|| {
             crate::error::HttpError::ServiceUnavailable(
                 "P2P management is not enabled. Start the server with P2P enabled to use this feature.".into()
-            )
-        })
-    }
-
-    /// Get ACP operations or return ServiceUnavailable error.
-    pub fn require_acp(&self) -> Result<&Arc<dyn AcpOperations>, crate::error::HttpError> {
-        self.acp.as_ref().ok_or_else(|| {
-            crate::error::HttpError::ServiceUnavailable(
-                "ACP (Access Control Policy) is not enabled. Start the server with ACP enabled to use this feature.".into()
             )
         })
     }
@@ -200,15 +175,6 @@ impl AppState {
         })
     }
 
-    /// Get lens operations or return ServiceUnavailable error.
-    pub fn require_lens(&self) -> Result<&Arc<dyn LensOperations>, crate::error::HttpError> {
-        self.lens.as_ref().ok_or_else(|| {
-            crate::error::HttpError::ServiceUnavailable(
-                "Lens operations are not enabled. Start the server with lens enabled to use this feature.".into()
-            )
-        })
-    }
-
     /// Get collection management operations or return ServiceUnavailable error.
     pub fn require_collection_mgmt(
         &self,
@@ -216,17 +182,6 @@ impl AppState {
         self.collection_mgmt.as_ref().ok_or_else(|| {
             crate::error::HttpError::ServiceUnavailable(
                 "Collection management operations are not enabled.".into(),
-            )
-        })
-    }
-
-    /// Get read-only collection-version operations or return ServiceUnavailable.
-    pub fn require_collection_versions(
-        &self,
-    ) -> Result<&Arc<dyn CollectionVersionOperations>, crate::error::HttpError> {
-        self.collection_versions.as_ref().ok_or_else(|| {
-            crate::error::HttpError::ServiceUnavailable(
-                "Collection version observation is not enabled.".into(),
             )
         })
     }
@@ -256,17 +211,6 @@ impl AppState {
         })
     }
 
-    /// Get transaction operations or return ServiceUnavailable error.
-    pub fn require_txn_ops(
-        &self,
-    ) -> Result<&Arc<dyn TransactionOperations>, crate::error::HttpError> {
-        self.txn_ops.as_ref().ok_or_else(|| {
-            crate::error::HttpError::ServiceUnavailable(
-                "Transaction operations are not enabled.".into(),
-            )
-        })
-    }
-
     /// Get NAC operations or return ServiceUnavailable error.
     pub fn require_nac(&self) -> Result<&Arc<dyn NodeAcpOperations>, crate::error::HttpError> {
         self.nac.as_ref().ok_or_else(|| {
@@ -285,20 +229,16 @@ pub struct AppStateBuilder {
     rest: Option<Arc<dyn RestOperations>>,
     p2p: Option<Arc<dyn P2POperations>>,
     manage: Option<Arc<dyn ManageRequester>>,
-    acp: Option<Arc<dyn AcpOperations>>,
     index: Option<Arc<dyn IndexOperations>>,
     encrypted_index: Option<Arc<dyn EncryptedIndexOperations>>,
     backup: Option<Arc<dyn BackupOperations>>,
     block: Option<Arc<dyn BlockOperations>>,
     schema: Option<Arc<dyn CollectionOperations>>,
-    lens: Option<Arc<dyn LensOperations>>,
     nac: Option<Arc<dyn NodeAcpOperations>>,
-    collection_versions: Option<Arc<dyn CollectionVersionOperations>>,
     collection_mgmt: Option<Arc<dyn CollectionManagementOperations>>,
     doc_acp: Option<Arc<dyn DocumentAcpOperations>>,
     view: Option<Arc<dyn ViewOperations>>,
     dump: Option<Arc<dyn DumpOperations>>,
-    txn_ops: Option<Arc<dyn TransactionOperations>>,
     event_bus: Option<Arc<dyn events::Bus>>,
     node_options: Option<Arc<Map<String, serde_json::Value>>>,
     node_identity_did: Option<String>,
@@ -318,20 +258,16 @@ impl AppStateBuilder {
             rest: None,
             p2p: None,
             manage: None,
-            acp: None,
             index: None,
             encrypted_index: None,
             backup: None,
             block: None,
             schema: None,
-            lens: None,
             nac: None,
-            collection_versions: None,
             collection_mgmt: None,
             doc_acp: None,
             view: None,
             dump: None,
-            txn_ops: None,
             event_bus: None,
             node_options: None,
             node_identity_did: None,
@@ -362,12 +298,6 @@ impl AppStateBuilder {
     /// Set the remote management requester.
     pub fn with_manage(mut self, manage: Arc<dyn ManageRequester>) -> Self {
         self.manage = Some(manage);
-        self
-    }
-
-    /// Set ACP operations.
-    pub fn with_acp(mut self, acp: Arc<dyn AcpOperations>) -> Self {
-        self.acp = Some(acp);
         self
     }
 
@@ -404,12 +334,6 @@ impl AppStateBuilder {
         self
     }
 
-    /// Set lens operations.
-    pub fn with_lens(mut self, lens: Arc<dyn LensOperations>) -> Self {
-        self.lens = Some(lens);
-        self
-    }
-
     /// Set NAC (Node Access Control) operations.
     pub fn with_nac(mut self, nac: Arc<dyn NodeAcpOperations>) -> Self {
         self.nac = Some(nac);
@@ -421,21 +345,7 @@ impl AppStateBuilder {
         mut self,
         collection_mgmt: Arc<dyn CollectionManagementOperations>,
     ) -> Self {
-        self.collection_versions.get_or_insert_with(|| {
-            Arc::new(CollectionVersionsFromManagement(Arc::clone(
-                &collection_mgmt,
-            )))
-        });
         self.collection_mgmt = Some(collection_mgmt);
-        self
-    }
-
-    /// Set read-only collection-version operations.
-    pub fn with_collection_versions(
-        mut self,
-        collection_versions: Arc<dyn CollectionVersionOperations>,
-    ) -> Self {
-        self.collection_versions = Some(collection_versions);
         self
     }
 
@@ -454,12 +364,6 @@ impl AppStateBuilder {
     /// Set dump operations.
     pub fn with_dump(mut self, dump: Arc<dyn DumpOperations>) -> Self {
         self.dump = Some(dump);
-        self
-    }
-
-    /// Set transaction operations.
-    pub fn with_txn_ops(mut self, txn_ops: Arc<dyn TransactionOperations>) -> Self {
-        self.txn_ops = Some(txn_ops);
         self
     }
 
@@ -501,33 +405,29 @@ impl AppStateBuilder {
 
     /// Build the AppState.
     pub fn build(self) -> AppState {
-        AppState {
+        AppState(Arc::new(AppStateFields {
             executor: self.executor,
             edge: self.edge,
             pool: self.pool,
             rest: self.rest,
             p2p: self.p2p,
             manage: self.manage,
-            acp: self.acp,
             index: self.index,
             encrypted_index: self.encrypted_index,
             backup: self.backup,
             block: self.block,
             schema: self.schema,
-            lens: self.lens,
             nac: self.nac,
-            collection_versions: self.collection_versions,
             collection_mgmt: self.collection_mgmt,
             doc_acp: self.doc_acp,
             view: self.view,
             dump: self.dump,
-            txn_ops: self.txn_ops,
             event_bus: self.event_bus,
             node_options: self.node_options,
             node_identity_did: self.node_identity_did,
             signing_enabled: self.signing_enabled,
             dev_mode: self.dev_mode,
             query_limits: self.query_limits,
-        }
+        }))
     }
 }

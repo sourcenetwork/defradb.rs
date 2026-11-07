@@ -1,16 +1,13 @@
-#[cfg(feature = "vera")]
 use crate::Error;
+use crate::Persistence;
 use crate::Result;
 use std::sync::Arc;
-
-pub(crate) enum Persistence {
-    Persistent,
-    Memory,
-}
 
 pub(crate) struct DocumentAcpSetup {
     pub document_acp: Arc<dyn acp::DocumentACP>,
     pub local_zanzibar_store: Option<Arc<dyn acp::ZanzibarStore>>,
+    /// The node's DAC policies, installed on the database.
+    pub dac_policies: Arc<db::DacPolicies>,
     #[cfg(feature = "vera")]
     pub vera_acp: Option<Arc<vera::VeraDocumentACP>>,
     /// Starts settling the registrations a previous run left owed, on the
@@ -43,14 +40,17 @@ where
                     &vera_config.signer_key,
                     &vera_config.chain_id,
                     &tuning,
+                    &remote_edge(network)?,
                 )
                 .map_err(Error::VeraProvider)?,
             );
             let sh_acp = Arc::new(vera::VeraDocumentACP::tuned(provider, &tuning, network));
+            let dac_policies = vera_policies(&sh_acp, &store);
             let (document_acp, redrive) = gate_external_acp(sh_acp.clone(), store);
             Ok(DocumentAcpSetup {
                 document_acp,
                 local_zanzibar_store: None,
+                dac_policies,
                 vera_acp: Some(sh_acp),
                 redrive: Some(redrive),
             })
@@ -69,14 +69,17 @@ where
                     &vera_config.signer_key,
                     &vera_config.chain_id,
                     &tuning,
+                    &remote_edge(network)?,
                 )
                 .map_err(Error::VeraProvider)?,
             );
             let vera_acp = Arc::new(vera::VeraDocumentACP::tuned(provider, &tuning, network));
+            let dac_policies = vera_policies(&vera_acp, &store);
             let (document_acp, redrive) = gate_external_acp(vera_acp.clone(), store);
             Ok(DocumentAcpSetup {
                 document_acp,
                 local_zanzibar_store: None,
+                dac_policies,
                 vera_acp: Some(vera_acp),
                 redrive: Some(redrive),
             })
@@ -88,6 +91,26 @@ where
             Ok(local_document_acp_setup(document_acp, zanzibar_store))
         }
     }
+}
+
+/// The edge the Vera provider's connections run on: the node's, or for a
+/// node that runs no other network work, the process's on-demand one.
+#[cfg(feature = "vera")]
+fn remote_edge(network: Option<&edge::Edge>) -> Result<edge::Edge> {
+    match network {
+        Some(edge) => Ok(edge.clone()),
+        None => edge::on_demand().cloned().map_err(Error::EdgeRuntime),
+    }
+}
+
+/// The policies Vera owns, each one the node uses copied into `store`.
+#[cfg(feature = "vera")]
+fn vera_policies<S>(vera: &Arc<vera::VeraDocumentACP>, store: &Arc<S>) -> Arc<db::DacPolicies>
+where
+    S: storage::corekv::Store + 'static,
+{
+    let mirror = Arc::new(acp::PersistentZanzibarStore::from_store(Arc::clone(store)));
+    Arc::new(db::DacPolicies::remote(vera.clone(), mirror))
 }
 
 /// Gate a Vera provider with the registrations creates still owe it, and
@@ -124,12 +147,37 @@ where
     (gate, start)
 }
 
+/// The node's NAC manager. With `owner`, NAC is enabled at startup and owned
+/// by it; without, NAC stays off until enabled at runtime. A status change
+/// that loses its commit re-runs up to `max_txn_retries` times, as the
+/// database's transactions do.
+pub(crate) async fn create_nac_manager<S>(
+    store: Arc<S>,
+    owner: Option<&identity::Did>,
+    max_txn_retries: u32,
+) -> Result<Arc<dyn db::NacManagerApi>>
+where
+    S: storage::corekv::Store + 'static,
+{
+    let nac_store = Arc::new(acp::PersistentZanzibarStore::from_store(store));
+    let mut nac_config = db::NacConfig::new()
+        .with_dev_mode()
+        .with_max_txn_retries(max_txn_retries);
+    if owner.is_some() {
+        nac_config = nac_config.with_enabled();
+    }
+    let manager = Arc::new(db::NacManager::new(nac_store, nac_config));
+    manager.initialize(owner).await.map_err(Error::NacInit)?;
+    Ok(manager)
+}
+
 fn local_document_acp_setup(
     document_acp: Arc<dyn acp::DocumentACP>,
     zanzibar_store: Arc<dyn acp::ZanzibarStore>,
 ) -> DocumentAcpSetup {
     DocumentAcpSetup {
         document_acp,
+        dac_policies: Arc::new(db::DacPolicies::local(zanzibar_store.clone())),
         local_zanzibar_store: Some(zanzibar_store),
         #[cfg(feature = "vera")]
         vera_acp: None,

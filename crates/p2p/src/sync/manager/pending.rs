@@ -12,11 +12,28 @@ use kovan::Atom;
 use crate::sync::head_scope::{HeadVersion, Scope, ScopeDecision};
 use crate::ExplicitReplayAuthorization;
 
-/// Time-to-live for a pending DAG entry.
+/// Default time-to-live for a pending DAG entry that was never acknowledged
+/// (`SyncConfig::pending_dag_ttl`).
 ///
-/// Entries older than this are evicted during insertion to prevent
+/// Such entries older than this are evicted during insertion to prevent
 /// indefinitely stale DAGs from accumulating.
 pub const PENDING_DAG_TTL: Duration = Duration::from_secs(300);
+
+/// Who put an entry in the pending map, which decides how it leaves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingOrigin {
+    /// A sender's PushLog registered it. Once acknowledged it is the head's
+    /// one owner, so it leaves only on merge, quarantine or a head of its
+    /// scope that links it.
+    Push,
+    /// The resync sweep re-registered it from its durable record (a push
+    /// acknowledged before a restart). It leaves as a `Push` entry does.
+    Restored,
+    /// A local pull-sync merge yielded its work budget. No sender waits on it
+    /// and it has no durable record, so it lives only while its merge keeps
+    /// yielding: the first turn that ends any other way removes it.
+    LocalContinuation,
+}
 
 /// Metadata for a pending DAG sync waiting for Bitswap to complete.
 #[derive(Debug, Clone)]
@@ -62,14 +79,32 @@ pub struct PendingDag {
     /// Every dispatch site must win `try_claim_pending_dag_dispatch`,
     /// which advances this by `retry_backoff(dispatches)`, the receiver's
     /// re-arm pacing (#1112 inbound half, #1116 stage 2).
-    pub next_retry_at: n0_future::time::Instant,
+    pub next_retry_at: crate::rt::time::Instant,
     /// Fetch dispatches claimed for this root (drives the backoff rung).
     pub dispatches: u32,
+    /// Clock-dispatched fetch attempts that ended with this root's DAG still
+    /// incomplete; every `MAX_FETCH_ATTEMPTS`-th is reported as exhaustion.
+    pub incomplete_attempts: u32,
     /// Committed merge work yielded with a locally ready DAG. Never persisted:
     /// restart/TTL recovery must validate local availability again.
     pub merge_continuation: bool,
     /// Transient local contention; discarded with this bounded pending root.
     pub storage_blocker: Option<Cid>,
+    /// Who put this entry in the map.
+    pub origin: PendingOrigin,
+    /// How this root's attempts have gone; exported, read by nothing else.
+    pub estimates: crate::sync::arbitration::RootEstimates,
+}
+
+impl PendingDag {
+    /// An entry expires only while it is not acknowledged. Once the sender has
+    /// a success reply it has dropped its retry marker, so this entry is the
+    /// head's one owner: it stays until merge, quarantine or a head of its
+    /// scope that links it, bounded by `max_pending_dags`. A local continuation does not
+    /// expire either; it ends when its merge stops yielding (`PendingOrigin`).
+    pub fn is_expired(&self, now: Instant, ttl: Duration) -> bool {
+        !self.is_recovery_registered && now.duration_since(self.inserted_at) >= ttl
+    }
 }
 
 /// Pending roots and the reverse index used to route arriving blocks only to
@@ -99,25 +134,8 @@ impl PendingDagRegistry {
         self.current_by_source_scope.get(scope).copied()
     }
 
-    pub(super) fn scope_head_is_refresh_or_newer(
-        &self,
-        root_cid: Cid,
-        source_peer: Option<&str>,
-        collection_id: &str,
-        doc_id: &str,
-        head_priority: Option<u64>,
-    ) -> bool {
-        Scope::of(root_cid, source_peer, collection_id, doc_id, head_priority).is_some_and(
-            |(scope, version)| {
-                ScopeDecision::refreshes_or_supersedes(version, self.current(&scope))
-            },
-        )
-    }
-
-    /// True when a newer head for the same sender scope is the current
-    /// pending root, so this root is subsumed by an obligation that is
-    /// already registered.
-    pub(super) fn scope_head_is_covered_by_current(
+    /// Whether the scope of this head has a current head among the pending roots.
+    pub(super) fn has_scope_head(
         &self,
         root_cid: Cid,
         source_peer: Option<&str>,
@@ -126,7 +144,23 @@ impl PendingDagRegistry {
         head_priority: Option<u64>,
     ) -> bool {
         Scope::of(root_cid, source_peer, collection_id, doc_id, head_priority)
-            .is_some_and(|(scope, version)| ScopeDecision::covered(version, self.current(&scope)))
+            .is_some_and(|(scope, _)| self.current(&scope).is_some())
+    }
+
+    pub(super) fn scope_head_is_refresh_or_newer(
+        &self,
+        root_cid: Cid,
+        parents: &[Cid],
+        source_peer: Option<&str>,
+        collection_id: &str,
+        doc_id: &str,
+        head_priority: Option<u64>,
+    ) -> bool {
+        Scope::of(root_cid, source_peer, collection_id, doc_id, head_priority).is_some_and(
+            |(scope, version)| {
+                ScopeDecision::refreshes_or_supersedes(version, parents, self.current(&scope))
+            },
+        )
     }
 
     fn scope_of(root_cid: Cid, dag: &PendingDag) -> Option<(Scope, HeadVersion)> {
@@ -139,18 +173,21 @@ impl PendingDagRegistry {
         )
     }
 
-    pub(super) fn scope_head_decision(&self, root_cid: Cid, dag: &PendingDag) -> ScopeDecision {
+    pub(super) fn scope_head_decision(
+        &self,
+        root_cid: Cid,
+        parents: &[Cid],
+        dag: &PendingDag,
+    ) -> ScopeDecision {
         match Self::scope_of(root_cid, dag) {
             None => ScopeDecision::Independent,
-            Some((scope, version)) => ScopeDecision::of(version, self.current(&scope)),
+            Some((scope, version)) => ScopeDecision::of(version, parents, self.current(&scope)),
         }
     }
 
-    /// Whether any entry has outlived `PENDING_DAG_TTL` at `now`.
-    pub(super) fn has_expired(&self, now: Instant) -> bool {
-        self.roots
-            .values()
-            .any(|dag| now.duration_since(dag.inserted_at) >= PENDING_DAG_TTL)
+    /// Whether any entry has expired at `now` under `ttl`.
+    pub(super) fn has_expired(&self, now: Instant, ttl: Duration) -> bool {
+        self.roots.values().any(|dag| dag.is_expired(now, ttl))
     }
 
     pub(super) fn snapshot(&self, root_cid: &Cid) -> Option<PendingDag> {
@@ -176,8 +213,13 @@ impl PendingDagRegistry {
             }
         }
         if let Some((scope, version)) = Self::scope_of(root_cid, &dag) {
-            self.current_by_source_scope
-                .insert(Arc::new(scope), version);
+            if self
+                .current(&scope)
+                .is_none_or(|current| version >= current)
+            {
+                self.current_by_source_scope
+                    .insert(Arc::new(scope), version);
+            }
         }
         self.roots.insert(root_cid, Arc::new(dag));
         previous
@@ -210,6 +252,11 @@ impl PendingDagRegistry {
             }
         }
         Some(Arc::try_unwrap(dag).unwrap_or_else(|shared| PendingDag::clone(&shared)))
+    }
+
+    /// Entries held per source peer.
+    pub(super) fn held_by_source(&self) -> RapidHashMap<Arc<str>, usize> {
+        self.roots_by_source.clone()
     }
 
     pub(super) fn source_count(&self, source_peer: &str) -> usize {
@@ -315,6 +362,12 @@ impl SharedPendingDags {
         }
     }
 }
+
+/// Clock dispatches after which a root with a durable record gives its
+/// in-memory entry to a durable root waiting for one, keeping its record
+/// (`PendingDagLease::finish_attempt`): the attempts a reply-driven fetch
+/// makes before it gives up.
+pub const PENDING_ROTATE_AFTER_DISPATCHES: u32 = 3;
 
 /// Base delay before the first scheduled re-dispatch of a pending root.
 pub const PENDING_RETRY_BASE: Duration = Duration::from_secs(2);

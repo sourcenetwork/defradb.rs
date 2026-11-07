@@ -10,6 +10,7 @@ pub mod document_parts;
 pub mod format;
 mod head_sets;
 pub mod helpers;
+mod lenses;
 mod reindex;
 mod set;
 mod shortid;

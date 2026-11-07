@@ -2,9 +2,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::P2PResult;
 use async_trait::async_trait;
 use cid::Cid;
-use defra_http::P2PResult;
 use p2p::message::DocSyncRequest;
 
 use p2p::transport::PeerId;
@@ -240,7 +240,7 @@ impl DocSyncDispatch for SlowDispatch {
         _peer: &Self::Peer,
         _request: DocSyncRequest,
     ) -> P2PResult<()> {
-        n0_future::time::sleep(self.delay).await;
+        p2p::rt::time::sleep(self.delay).await;
         Ok(())
     }
 }

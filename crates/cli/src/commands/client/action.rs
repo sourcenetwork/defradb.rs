@@ -22,7 +22,7 @@ impl ActionArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
         match self.command {
             ActionCommand::List => {
-                let client = HttpClient::new(&ctx.url)?
+                let client = HttpClient::new(&ctx.url, &ctx.edge)?
                     .with_auth_token(ctx.auth_token.clone())
                     .with_verbose(ctx.verbose);
                 println!(

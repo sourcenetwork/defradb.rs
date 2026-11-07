@@ -52,6 +52,9 @@ pub struct DbOptions {
     /// closes. `None` (a test, a one-shot tool) runs them on the process's
     /// default pool.
     pub pool: Option<workers::Pool>,
+    /// The embedder's check on replicated documents before their commits
+    /// store anything. `None` keeps every document.
+    pub replication_filter: Option<Arc<dyn crate::replication_filter::ReplicationFilter>>,
 }
 
 impl std::fmt::Debug for DbOptions {
@@ -74,6 +77,7 @@ impl std::fmt::Debug for DbOptions {
                 &!self.embedding_api_key.is_empty(),
             )
             .field("pool", &self.pool)
+            .field("replication_filter", &self.replication_filter.is_some())
             .finish()
     }
 }
@@ -105,6 +109,15 @@ impl DbOptions {
     /// Returns the maximum number of transaction retries.
     pub fn max_txn_retries(&self) -> u32 {
         self.max_txn_retries.unwrap_or(DEFAULT_MAX_TXN_RETRIES)
+    }
+
+    /// Asks `filter` whether to keep each replicated document.
+    pub fn with_replication_filter(
+        mut self,
+        filter: Arc<dyn crate::replication_filter::ReplicationFilter>,
+    ) -> Self {
+        self.replication_filter = Some(filter);
+        self
     }
 
     /// The engine retry policy every write of this database runs under.
@@ -216,6 +229,9 @@ pub struct DB<S: Store> {
     /// [`DB::set_nac_manager`]. When unset, all `check_node_access` calls are
     /// no-ops (NAC not configured).
     nac_manager: regolith::sync::OnceCell<std::sync::Arc<dyn NacManagerApi>>,
+    /// The node's DAC policies, where `@policy` directives are checked when a
+    /// collection is added. Unset, the node runs without document ACP.
+    pub(crate) dac_policies: regolith::sync::OnceCell<Arc<crate::access::dac::DacPolicies>>,
     /// Collections an app has claimed and the validator governing their
     /// replicated composites. Set once, before replication starts.
     ///
@@ -278,6 +294,7 @@ impl<S: Store> DB<S> {
             network: regolith::sync::OnceCell::new(),
             kms_blockstore: regolith::sync::OnceCell::new(),
             nac_manager: regolith::sync::OnceCell::new(),
+            dac_policies: regolith::sync::OnceCell::new(),
             merge_governance: regolith::sync::OnceCell::new(),
             local_commit_release: regolith::sync::OnceCell::new(),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
@@ -348,6 +365,7 @@ impl<S: Store> DB<S> {
             network: regolith::sync::OnceCell::new(),
             kms_blockstore: regolith::sync::OnceCell::new(),
             nac_manager: regolith::sync::OnceCell::new(),
+            dac_policies: regolith::sync::OnceCell::new(),
             merge_governance: regolith::sync::OnceCell::new(),
             local_commit_release: regolith::sync::OnceCell::new(),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
@@ -521,23 +539,23 @@ impl<S: Store> DB<S> {
     /// Runs the database's remote inputs (signatures, embeddings) and the
     /// network waits of its P2P work on the node's network runtime. Set once
     /// at startup, before the first write that needs one; without it
-    /// signatures run in the caller's task and embeddings on the process's
-    /// on-demand network runtime.
+    /// signatures run in the caller's task, embeddings on the process's
+    /// on-demand network runtime, and P2P work is refused
+    /// ([`Error::NetworkNotSet`]).
     pub fn set_network(&self, edge: edge::Edge) {
         let p2p = self
             .network
             .set(p2p::network::Network::on(edge.clone()))
             .is_ok();
-        if !self.remote_inputs.set_runtime(inputs::Runtime::edge(edge)) || !p2p {
+        if !self.remote_inputs.set_edge(edge) || !p2p {
             tracing::warn!("the database's network runtime was already set; keeping the first");
         }
     }
 
     /// Where the database's P2P work runs its network waits: the runtime
-    /// [`set_network`](Self::set_network) set, or without one the runtime of
-    /// the task that waits.
-    pub fn network(&self) -> p2p::network::Network {
-        self.network.get().cloned().unwrap_or_default()
+    /// [`set_network`](Self::set_network) set.
+    pub fn network(&self) -> Result<p2p::network::Network> {
+        self.network.get().cloned().ok_or(Error::NetworkNotSet)
     }
 
     pub(crate) fn remote_inputs(&self) -> &crate::remote_inputs::RemoteInputs {

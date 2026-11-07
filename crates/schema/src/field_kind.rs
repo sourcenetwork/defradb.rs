@@ -619,13 +619,14 @@ impl<'de> Deserialize<'de> for FieldKind {
 
             // Object → CollectionKind, SelfKind, or NamedKind
             serde_json::Value::Object(map) => {
-                // Check for CollectionID → Relation
-                if map.contains_key("CollectionID") {
-                    let collection_id = map
-                        .get("CollectionID")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
+                // A non-empty CollectionID → Relation; Go's `parseFieldKind`
+                // reads an empty one as a self kind.
+                let collection_id = map
+                    .get("CollectionID")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if !collection_id.is_empty() {
+                    let collection_id = collection_id.to_string();
                     let is_array = map.get("Array").and_then(|v| v.as_bool()).unwrap_or(false);
                     return Ok(FieldKind::Relation {
                         collection_id,
@@ -634,7 +635,7 @@ impl<'de> Deserialize<'de> for FieldKind {
                 }
 
                 // Check for RelativeID → SelfRef
-                if map.contains_key("RelativeID") {
+                if map.contains_key("RelativeID") || map.contains_key("CollectionID") {
                     let relative_id = map
                         .get("RelativeID")
                         .and_then(|v| v.as_str())

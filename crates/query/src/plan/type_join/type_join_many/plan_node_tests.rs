@@ -466,3 +466,22 @@ fn init_builds_child_cache_from_indexed_fetch() {
     })
     .unwrap()
 }
+
+#[test]
+fn debug_explain_wraps_grouped_child_in_group_and_pipe_nodes() {
+    workers::block_on(async {
+        let join = build_join(false)
+            .await
+            .with_group_by(crate::mapper::GroupBy::new(vec!["title".into()]));
+
+        let explain = join.explain_debug();
+
+        assert_eq!(
+            explain.pointer(
+                "/typeIndexJoin/typeJoinMany/subType/selectTopNode/groupNode/selectNode/pipeNode"
+            ),
+            Some(&json!({ "mockPlan": {} }))
+        );
+    })
+    .unwrap()
+}

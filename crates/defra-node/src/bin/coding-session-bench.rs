@@ -7,7 +7,7 @@ mod runner {
     use defra_node::benchmark_support::{
         benchmark_case, seed_coding_session_fixture, CodingSessionFixtureConfig,
     };
-    use defra_node::{EmbeddedNode, StorageBackend};
+    use defra_node::{Node, StorageBackend};
     use storage::backends::DurabilityMode;
 
     type Result<T> = std::result::Result<T, BenchError>;
@@ -138,7 +138,7 @@ mod runner {
             .or_else(|| options.data_dir.clone())
             .ok_or(BenchError::DataDirUnresolved)?;
 
-        let mut builder = EmbeddedNode::builder()
+        let mut builder = Node::builder()
             .data_path(&data_dir)
             .with_storage_backend(options.backend)
             .with_storage_durability(options.durability);

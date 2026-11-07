@@ -19,10 +19,6 @@ pub enum EdgeError {
     /// The work was stopped before it finished.
     #[error("network work was stopped before it finished")]
     Cancelled,
-    /// A blocking wait was asked for on a thread whose own executor it
-    /// would stall.
-    #[error("cannot wait here: the calling thread runs a single-threaded executor")]
-    WouldBlock,
     /// The runtime could not be started.
     #[error("cannot start the network runtime: {0}")]
     Start(String),

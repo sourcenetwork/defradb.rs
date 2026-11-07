@@ -20,7 +20,7 @@ pub(super) struct P2PSetup {
     pub(super) host_handle: Option<p2p::P2PHostHandle>,
     pub(super) p2p_tasks: Option<P2PTasks>,
     pub(super) mutator: Arc<dyn query::mutator::DocMutator>,
-    pub(super) http_adapter: Option<Arc<dyn defra_http::router::P2POperations>>,
+    pub(super) http_adapter: Option<Arc<dyn defra_p2p_adapter::P2POperations>>,
     pub(super) wire_merge_acp: WireDocumentAcp,
     pub(super) wire_doc_pusher_acp: WireDocumentAcp,
     /// Hook for forwarding committed `/tx` writes to P2P peers. `Some` when the
@@ -48,7 +48,7 @@ pub(super) struct P2PSetup {
     pub(super) manage_hooks: Option<defra_p2p_adapter::manage::hooks::ManageHooksCell>,
     /// The `P2POperations` controller (the `http_adapter`) bound into
     /// `manage_hooks` after the NAC manager exists. `None` on the fallback path.
-    pub(super) manage_controller: Option<Arc<dyn defra_http::router::P2POperations>>,
+    pub(super) manage_controller: Option<Arc<dyn defra_p2p_adapter::P2POperations>>,
     /// Requester-side manage correlators (mutating + query). Event-loop clones
     /// deliver inbound replies; these clones feed the requester API (Task 6.3)
     /// and are bound into `manage_hooks` so both agree on message_id
@@ -60,7 +60,7 @@ pub(super) struct P2PSetup {
     /// transport the SE requester / serve loop use, sharing the requester-side
     /// manage correlators. server.rs threads it into `AppState` via
     /// `with_manage`. `None` on the non-P2P fallback path.
-    pub(super) manage_requester: Option<Arc<dyn defra_http::router::ManageRequester>>,
+    pub(super) manage_requester: Option<Arc<dyn defra_p2p_adapter::ManageRequester>>,
 }
 
 impl Node {
@@ -162,10 +162,28 @@ impl Node {
             rate_limit_rate: config.net.p2p_rate_limit_rate,
             max_doc_sync_request_doc_ids: config.net.p2p_max_doc_sync_request_doc_ids,
             max_pending_dags: config.net.p2p_max_pending_dags,
+            max_concurrent_dag_fetches: config.net.p2p_max_concurrent_dag_fetches,
+            pending_dag_ttl: std::time::Duration::from_secs(config.net.p2p_pending_dag_ttl_secs),
             push_queue_capacity: config.net.p2p_push_queue_capacity,
             push_queue_byte_capacity: config.net.p2p_push_queue_byte_capacity,
             max_active_pushes_per_peer: config.net.p2p_max_active_pushes_per_peer,
             ..Default::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_keeps_the_sync_defaults() {
+        let sync = Node::sync_config(&Config::default());
+        let defaults = p2p::sync::SyncConfig::default();
+        assert_eq!(
+            sync.max_concurrent_dag_fetches,
+            defaults.max_concurrent_dag_fetches
+        );
+        assert_eq!(sync.pending_dag_ttl, defaults.pending_dag_ttl);
     }
 }

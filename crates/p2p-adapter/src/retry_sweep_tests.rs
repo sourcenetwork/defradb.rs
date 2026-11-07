@@ -30,31 +30,47 @@ const OTHER_PEER: &str = "peer-b";
 
 /// A failure the replay path attributed to the document, not the transport:
 /// `push_docs` picks this prefix when the typed error is not connection-like.
-const DOCUMENT_FAILURE: &str =
+pub(super) const DOCUMENT_FAILURE: &str =
     "replay push failed after 0 successful block(s): failed to write request: 9ddf7e88/1451: connection is closed";
 const RATE_LIMITED: &str =
     "peer rejected replay after 0 successful block(s): rate limited: too many requests, retry later";
 
 #[derive(Clone)]
-enum Outcome {
+pub(super) enum Outcome {
     Delivered,
     Failed(&'static str),
     RateLimited(u64),
-    WaitForAck(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>),
+    WaitForAck(Arc<p2p::rt::Notify>, Arc<p2p::rt::Notify>),
     Hangs,
 }
 
 /// Replays documents by script and, like the production pusher, clears the
 /// marker of every delivered document.
-struct ScriptedPusher {
-    peerstore: Peerstore<RegolithStore>,
-    script: RapidHashMap<String, Outcome>,
-    attempted: Atom<Vec<String>>,
+pub(super) struct ScriptedPusher {
+    pub(super) peerstore: Peerstore<RegolithStore>,
+    pub(super) script: RapidHashMap<String, Outcome>,
+    pub(super) attempted: Atom<Vec<String>>,
 }
 
 impl ScriptedPusher {
     fn attempted(&self) -> Vec<String> {
         self.attempted.load_clone()
+    }
+
+    /// Clears `doc_id`'s marker with the head the peer acknowledged, as
+    /// `complete_document_retry_if_current` does after a delivered replay.
+    async fn complete(&self, peer_id: &PeerId, doc_id: &str, generation: u64) {
+        self.peerstore
+            .complete_retry_scope(
+                peer_id.as_str(),
+                doc_id,
+                "",
+                false,
+                generation,
+                &[format!("{doc_id}-head")],
+            )
+            .await
+            .unwrap();
     }
 }
 
@@ -79,10 +95,7 @@ impl TransportDocPusher for ScriptedPusher {
             .unwrap_or(Outcome::Delivered)
         {
             Outcome::Delivered => {
-                self.peerstore
-                    .complete_retry_scope(peer_id.as_str(), doc_id, "", false, generation, &[])
-                    .await
-                    .unwrap();
+                self.complete(peer_id, doc_id, generation).await;
                 Ok(())
             }
             Outcome::Failed(message) => Err(P2PError::internal(message)),
@@ -97,10 +110,7 @@ impl TransportDocPusher for ScriptedPusher {
             Outcome::WaitForAck(started, finish) => {
                 started.notify_one();
                 finish.notified().await;
-                self.peerstore
-                    .complete_retry_scope(peer_id.as_str(), doc_id, "", false, generation, &[])
-                    .await
-                    .unwrap();
+                self.complete(peer_id, doc_id, generation).await;
                 Ok(())
             }
             Outcome::Hangs => std::future::pending().await,
@@ -169,9 +179,9 @@ impl TransportDocPusher for ScriptedPusher {
 
 /// A transport whose only job is to report the sweep's peers as connected.
 #[derive(Clone)]
-struct ConnectedTransport {
-    local: PeerId,
-    connected: Vec<PeerId>,
+pub(super) struct ConnectedTransport {
+    pub(super) local: PeerId,
+    pub(super) connected: Vec<PeerId>,
 }
 
 #[async_trait]
@@ -372,7 +382,7 @@ impl Sweep {
     async fn escalate(&self, rungs: usize) {
         for _ in 0..rungs {
             self.peerstore
-                .reschedule_retry_peer(PEER, None, 1)
+                .reschedule_retry_peer(PEER, None, None)
                 .await
                 .unwrap();
         }
@@ -401,6 +411,36 @@ impl Sweep {
         self.markers_for(PEER).await
     }
 
+    /// Reports one live push of `doc` to the failure recorder, as a push
+    /// worker does, and returns the marker generation it recorded.
+    async fn live_push(&self, doc: &str, generation: Option<u64>, acked: bool) -> Option<u64> {
+        let (durable_tx, recorded) = nuclei::sync::oneshot::channel();
+        super::record_failure(
+            &self.peerstore,
+            p2p::sync::PushFailure {
+                peer_id: PEER.to_string(),
+                doc_id: doc.to_string(),
+                collection_id: "collection-a".to_string(),
+                cid: format!("{doc}-head"),
+                head_priority: 1,
+                create_retry: generation.is_some() && !acked,
+                initial_registration: false,
+                retry_after: None,
+                admission_only: false,
+                acknowledged: acked,
+                marker_generation: generation,
+                durable_tx: Some(durable_tx),
+            },
+        )
+        .await;
+        recorded.await.ok().flatten()
+    }
+
+    /// The marker generation `doc`'s live push carries once its head is registered.
+    async fn register_live(&self, doc: &str) -> u64 {
+        self.live_push(doc, None, false).await.unwrap()
+    }
+
     async fn markers_for(&self, peer: &str) -> Vec<String> {
         let mut docs: Vec<String> = self
             .peerstore
@@ -415,7 +455,7 @@ impl Sweep {
     }
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn document_failures_do_not_abandon_the_remaining_due_markers() {
     let sweep = Sweep::with_markers(
         &["a", "b", "c", "d", "e", "f"],
@@ -443,7 +483,7 @@ async fn document_failures_do_not_abandon_the_remaining_due_markers() {
 /// the set would buy one `REPLAY_TIMEOUT` each for the same answer. The markers
 /// are kept and the durable cursor moves past the silent one, so the next pass
 /// resumes on the tail rather than re-hanging on the head.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_replay_timeout_stops_the_peer_pass_and_resumes_past_the_hung_marker() {
     let sweep = Sweep::with_markers(&["a", "b", "c"], &[("a", Outcome::Hangs)]).await;
 
@@ -468,7 +508,7 @@ async fn a_replay_timeout_stops_the_peer_pass_and_resumes_past_the_hung_marker()
 
 /// One peer's pass is capped, and the durable dispatch cursor makes the next
 /// pass pick up the tail instead of re-walking the head of the set.
-#[tokio::test]
+#[nuclei::test]
 async fn a_peer_pass_is_bounded_and_the_next_pass_resumes_where_it_stopped() {
     let bound = crate::retry::MAX_MARKERS_PER_PEER_PASS;
     let docs: Vec<String> = (0..bound * 2).map(|i| format!("doc-{i:03}")).collect();
@@ -500,7 +540,7 @@ async fn a_peer_pass_is_bounded_and_the_next_pass_resumes_where_it_stopped() {
 /// before the bound a black-holed peer holding the measured 3,488 markers could
 /// hold one pass for `3_488 * 15 s` — about 14.5 hours — and no later peer was
 /// visited at all.
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn one_hung_peer_does_not_delay_a_healthy_peer() {
     let hung: Vec<String> = (0..40).map(|i| format!("a-{i:02}")).collect();
     let healthy: Vec<String> = (0..3).map(|i| format!("b-{i}")).collect();
@@ -514,7 +554,7 @@ async fn one_hung_peer_does_not_delay_a_healthy_peer() {
     )
     .await;
 
-    let started = tokio::time::Instant::now();
+    let started = p2p::rt::time::Instant::now();
     sweep.run().await;
     let elapsed = started.elapsed();
 
@@ -536,7 +576,7 @@ async fn one_hung_peer_does_not_delay_a_healthy_peer() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_rate_limited_reply_is_backpressure_not_a_ladder_failure() {
     let sweep = Sweep::with_markers(&["a"], &[("a", Outcome::Failed(RATE_LIMITED))]).await;
     let rung_before = sweep.retry_info().await.num_retries;
@@ -555,7 +595,7 @@ async fn a_rate_limited_reply_is_backpressure_not_a_ladder_failure() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn retry_after_survives_reconnect_and_forced_sweep() {
     let sweep = Sweep::with_markers(&["a", "b"], &[("a", Outcome::RateLimited(45_000))]).await;
     let rung = sweep.retry_info().await.num_retries;
@@ -575,10 +615,10 @@ async fn retry_after_survives_reconnect_and_forced_sweep() {
     assert_eq!(sweep.markers_for(PEER).await.len(), 2);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn retry_after_arriving_during_ack_blocks_next_marker() {
-    let started = Arc::new(tokio::sync::Notify::new());
-    let finish = Arc::new(tokio::sync::Notify::new());
+    let started = Arc::new(p2p::rt::Notify::new());
+    let finish = Arc::new(p2p::rt::Notify::new());
     let sweep = Arc::new(
         Sweep::with_markers(
             &["a", "b"],
@@ -587,7 +627,7 @@ async fn retry_after_arriving_during_ack_blocks_next_marker() {
         .await,
     );
     let runner = sweep.clone();
-    let task = tokio::spawn(async move { runner.run().await });
+    let task = p2p::rt::spawn(async move { runner.run().await });
     started.notified().await;
     sweep
         .peerstore
@@ -595,13 +635,13 @@ async fn retry_after_arriving_during_ack_blocks_next_marker() {
         .await
         .unwrap();
     finish.notify_one();
-    task.await.unwrap();
+    task.join().await.unwrap();
     assert_eq!(sweep.pusher.attempted(), vec!["a"]);
     assert_eq!(sweep.markers_for(PEER).await.len(), 1);
     assert!(!sweep.retry_info().await.is_backpressure_elapsed());
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn one_pass_advances_the_ladder_by_at_most_one_rung() {
     let sweep = Sweep::with_markers(
         &["a", "b", "c"],
@@ -623,7 +663,7 @@ async fn one_pass_advances_the_ladder_by_at_most_one_rung() {
     );
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn a_pass_that_delivered_documents_returns_the_peer_to_the_first_rung() {
     let sweep = Sweep::with_markers(
         &["a", "b", "c"],
@@ -640,5 +680,120 @@ async fn a_pass_that_delivered_documents_returns_the_peer_to_the_first_rung() {
     assert!(
         due_in <= RETRY_INTERVALS_SECS[0],
         "the receiver took two documents but the peer stays on the escalated rung: due in {due_in} s"
+    );
+}
+
+/// A live acknowledgement is a delivery: the receiver that took it has refuted
+/// the escalation an earlier replay timeout charged, so a push that fails after
+/// it is replayed at the first rung, not behind the rest of the ladder.
+#[nuclei::test(start_paused = true)]
+async fn a_live_ack_returns_an_escalated_peer_to_the_first_rung() {
+    let sweep = Sweep::with_markers(&["slow"], &[("slow", Outcome::Hangs)]).await;
+    sweep.escalate(5).await;
+    sweep.run().await;
+    let escalated = sweep.seconds_until_due().await;
+    assert!(
+        escalated > RETRY_INTERVALS_SECS[0],
+        "the replay timeout did not escalate the peer: due in {escalated} s"
+    );
+
+    let delivered = sweep.register_live("delivered").await;
+    sweep.live_push("delivered", Some(delivered), true).await;
+    let fresh = sweep.register_live("fresh").await;
+    sweep.live_push("fresh", Some(fresh), false).await;
+
+    assert_eq!(sweep.remaining_markers().await, ["fresh", "slow"]);
+    let due_in = sweep.seconds_until_due().await;
+    assert!(
+        due_in <= RETRY_INTERVALS_SECS[0],
+        "the peer acknowledged a live push, yet the push that failed after it waits behind the escalated rung: due in {due_in} s"
+    );
+}
+
+/// A newer write registers the document again before the peer acknowledges the
+/// push it superseded. The newer marker and its acknowledged record stay, and
+/// the acknowledgement still returns the peer to the first rung.
+#[nuclei::test(start_paused = true)]
+async fn a_superseded_live_ack_returns_an_escalated_peer_to_the_first_rung() {
+    let sweep = Sweep::with_markers(&["slow"], &[("slow", Outcome::Hangs)]).await;
+    sweep.escalate(5).await;
+    sweep.run().await;
+    assert!(sweep.seconds_until_due().await > RETRY_INTERVALS_SECS[0]);
+
+    let superseded = sweep.register_live("hot").await;
+    let newer = sweep.register_live("hot").await;
+    assert_eq!(sweep.live_push("hot", Some(superseded), true).await, None);
+    let fresh = sweep.register_live("fresh").await;
+    sweep.live_push("fresh", Some(fresh), false).await;
+
+    assert_eq!(sweep.remaining_markers().await, ["fresh", "hot", "slow"]);
+    assert_eq!(
+        sweep
+            .peerstore
+            .acknowledged_heads(PEER, "hot", false)
+            .await
+            .unwrap(),
+        None
+    );
+    let due_in = sweep.seconds_until_due().await;
+    assert!(
+        due_in <= RETRY_INTERVALS_SECS[0],
+        "the peer acknowledged a superseded push, yet the push that failed after it waits behind the escalated rung: due in {due_in} s"
+    );
+    assert_eq!(sweep.live_push("hot", Some(newer), true).await, Some(newer));
+}
+
+/// Without a delivery a failed live push is no evidence the peer is back: it
+/// waits the rung the peer earned, so a peer that is down is not retried at the
+/// first rung on every local write.
+#[nuclei::test(start_paused = true)]
+async fn a_failed_live_push_alone_keeps_the_escalated_rung() {
+    let sweep = Sweep::with_markers(&["slow"], &[("slow", Outcome::Hangs)]).await;
+    sweep.escalate(5).await;
+    sweep.run().await;
+    let rung = sweep.retry_info().await.num_retries;
+
+    let fresh = sweep.register_live("fresh").await;
+    sweep.live_push("fresh", Some(fresh), false).await;
+
+    assert_eq!(sweep.retry_info().await.num_retries, rung);
+    let due_in = sweep.seconds_until_due().await;
+    assert!(
+        due_in > RETRY_INTERVALS_SECS[0],
+        "a failed live push with no delivery pulled a silent peer back to the first rung: due in {due_in} s"
+    );
+}
+
+/// A pass cut short by the marker cap fails nothing, so it charges no rung and
+/// calls no `Restart`. Its deliveries alone refute the escalation: the first
+/// timeout after it is charged from the first rung, not the old one.
+#[nuclei::test(start_paused = true)]
+async fn a_truncated_pass_that_delivered_returns_the_peer_to_the_first_rung() {
+    let bound = crate::retry::MAX_MARKERS_PER_PEER_PASS;
+    let mut docs: Vec<String> = (0..bound).map(|i| format!("doc-{i:03}")).collect();
+    docs.push("hangs".to_string());
+    let script = [("hangs".to_string(), Outcome::Hangs)]
+        .into_iter()
+        .collect();
+    let sweep = Sweep::with_peers(&[(PEER, docs)], script).await;
+    sweep.escalate(6).await;
+
+    sweep.run().await;
+    assert_eq!(sweep.pusher.attempted().len(), bound);
+    assert_eq!(
+        sweep.remaining_markers().await,
+        ["hangs"],
+        "the first pass was not cut short by the marker cap before the hung marker"
+    );
+
+    sweep.run().await;
+    assert_eq!(
+        sweep.pusher.attempted().last().map(String::as_str),
+        Some("hangs")
+    );
+    let due_in = sweep.seconds_until_due().await;
+    assert!(
+        due_in <= RETRY_INTERVALS_SECS[1],
+        "the peer took {bound} replays, yet the timeout after them was charged from the escalated rung: due in {due_in} s"
     );
 }

@@ -1,5 +1,5 @@
 //! The service against a counting fake with injected latency. Time is
-//! tokio's paused clock, which the test network's timers and the runtime
+//! nuclei's paused clock, which the test network's timers and the runtime
 //! clock both read, so latencies are exact and the tests take no wall time.
 //! The inline tests run with no runtime at all.
 
@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use defra_core::thread_bounds::MaybeBoxFuture;
-use tokio::time::Instant;
+use nuclei::time::Instant;
 
 use crate::{Answers, Config, Error, Runtime, Service, Source, Stats};
 
@@ -65,7 +65,7 @@ impl Source for Fake {
             let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
             self.most_in_flight.fetch_max(now, Ordering::SeqCst);
             if !self.latency.is_zero() {
-                tokio::time::sleep(self.latency).await;
+                nuclei::time::sleep(self.latency).await;
             }
             self.in_flight.fetch_sub(1, Ordering::SeqCst);
             if keys.contains(&666) {
@@ -94,17 +94,17 @@ impl Source for Fake {
     }
 }
 
-/// Round trips as tasks of the test's own tokio runtime, whose time the
+/// Round trips as tasks of the test's own nuclei runtime, whose time the
 /// test pauses: the network a node's edge is, without its threads.
 struct TestNetwork;
 
 impl crate::Network for TestNetwork {
     fn spawn(&self, work: MaybeBoxFuture<'static, ()>) {
-        drop(tokio::spawn(work));
+        nuclei::spawn(work).detach();
     }
 
     fn sleep(&self, duration: Duration) -> MaybeBoxFuture<'static, ()> {
-        Box::pin(tokio::time::sleep(duration))
+        Box::pin(nuclei::time::sleep(duration))
     }
 }
 
@@ -123,46 +123,46 @@ fn cached(config: Config) -> Config {
     }
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn concurrent_identical_requests_make_one_round_trip() {
     let service = service(Fake::with_latency(LATENCY), Config::default());
     let calls: Vec<_> = (0..32)
         .map(|_| {
             let service = service.clone();
-            tokio::spawn(async move { service.get(7).await })
+            nuclei::spawn(async move { service.get(7).await })
         })
         .collect();
     for call in calls {
-        assert_eq!(call.await.unwrap(), Ok(14));
+        assert_eq!(call.join().await.unwrap(), Ok(14));
     }
     assert_eq!(service.source().round_trips(), 1);
     assert_eq!(Stats::get(&service.stats().joined), 31);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn requests_that_arrive_in_flight_ride_the_next_round_trip() {
     let service = service(Fake::with_latency(LATENCY), Config::default());
     let first = {
         let service = service.clone();
-        tokio::spawn(async move { service.get(1).await })
+        nuclei::spawn(async move { service.get(1).await })
     };
-    tokio::time::sleep(LATENCY / 10).await;
+    nuclei::time::sleep(LATENCY / 10).await;
     assert_eq!(service.source().round_trips(), 1, "the first is in flight");
     let later: Vec<_> = (2..50)
         .map(|key| {
             let service = service.clone();
-            tokio::spawn(async move { service.get(key).await })
+            nuclei::spawn(async move { service.get(key).await })
         })
         .collect();
-    assert_eq!(first.await.unwrap(), Ok(2));
+    assert_eq!(first.join().await.unwrap(), Ok(2));
     for (key, call) in (2..50).zip(later) {
-        assert_eq!(call.await.unwrap(), Ok(key * 2));
+        assert_eq!(call.join().await.unwrap(), Ok(key * 2));
     }
     assert_eq!(service.source().round_trips(), 2);
     assert_eq!(service.stats().batch_sizes.max(), 48);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn time_scales_with_waves_not_items() {
     let service = service(Fake::with_latency(LATENCY), Config::default());
     let started = Instant::now();
@@ -193,7 +193,7 @@ async fn time_scales_with_waves_not_items() {
     assert_eq!(started.elapsed(), LATENCY * 4);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_source_without_batches_runs_its_keys_concurrently_under_the_cap() {
     let service = service(
         Fake::with_latency(LATENCY),
@@ -212,7 +212,7 @@ async fn a_source_without_batches_runs_its_keys_concurrently_under_the_cap() {
     assert_eq!(started.elapsed(), LATENCY * 4, "32 keys, 8 at a time");
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn round_trips_in_flight_stay_under_the_cap() {
     let service = service(
         Fake::with_latency(LATENCY),
@@ -230,7 +230,7 @@ async fn round_trips_in_flight_stay_under_the_cap() {
     assert_eq!(service.source().most_in_flight.load(Ordering::SeqCst), 2);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn cached_answers_make_no_round_trip_until_they_expire() {
     let service = service(
         Fake::with_latency(LATENCY),
@@ -244,23 +244,23 @@ async fn cached_answers_make_no_round_trip_until_they_expire() {
     assert_eq!(service.source().round_trips(), 1);
     assert_eq!(Stats::get(&service.stats().cache_hits), 1);
 
-    tokio::time::sleep(Duration::from_secs(61)).await;
+    nuclei::time::sleep(Duration::from_secs(61)).await;
     assert_eq!(service.cached(&3), None, "expired");
     assert_eq!(service.get(3).await, Ok(6));
     assert_eq!(service.source().round_trips(), 2);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn an_invalidation_during_a_flight_keeps_its_answer_out_of_the_cache() {
     let service = service(Fake::with_latency(LATENCY), cached(Config::default()));
     let call = {
         let service = service.clone();
-        tokio::spawn(async move { service.get(5).await })
+        nuclei::spawn(async move { service.get(5).await })
     };
-    tokio::time::sleep(LATENCY / 10).await;
+    nuclei::time::sleep(LATENCY / 10).await;
     service.invalidate(|_| true);
     assert_eq!(
-        call.await.unwrap(),
+        call.join().await.unwrap(),
         Ok(10),
         "the caller still gets its answer"
     );
@@ -274,7 +274,7 @@ async fn an_invalidation_during_a_flight_keeps_its_answer_out_of_the_cache() {
     );
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn the_cache_stays_within_its_byte_budget() {
     let entry = ENTRY + 96;
     let service = service(
@@ -291,7 +291,7 @@ async fn the_cache_stays_within_its_byte_budget() {
     assert_eq!(service.cached(&0), None);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn retryable_failures_are_retried_within_the_attempts() {
     let fake = Fake::with_latency(LATENCY);
     fake.fail_next.store(2, Ordering::SeqCst);
@@ -314,7 +314,7 @@ async fn retryable_failures_are_retried_within_the_attempts() {
     );
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_failure_that_is_not_retryable_is_not_retried() {
     let fake = Fake::with_latency(LATENCY);
     fake.fail_hard.store(true, Ordering::SeqCst);
@@ -326,7 +326,7 @@ async fn a_failure_that_is_not_retryable_is_not_retried() {
     assert_eq!(service.source().round_trips(), 1);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_caller_gives_up_at_its_deadline() {
     let deadline = Duration::from_secs(1);
     let service = service(
@@ -342,14 +342,14 @@ async fn a_caller_gives_up_at_its_deadline() {
     assert_eq!(Stats::get(&service.stats().deadlines), 1);
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_panicking_round_trip_fails_only_its_own_keys() {
     let service = service(Fake::with_latency(LATENCY), Config::default());
     assert_eq!(service.get(666).await, Err(Error::Panicked));
     assert_eq!(service.get(1).await, Ok(2), "the lane goes on");
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_remembered_answer_is_served_without_a_round_trip() {
     let service = service(Fake::with_latency(LATENCY), cached(Config::default()));
     assert!(service.remember(12, 24));
@@ -397,11 +397,11 @@ impl crate::Network for Refusing {
     }
 
     fn sleep(&self, duration: Duration) -> MaybeBoxFuture<'static, ()> {
-        Box::pin(tokio::time::sleep(duration))
+        Box::pin(nuclei::time::sleep(duration))
     }
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_refused_round_trip_settles_its_keys_as_closed_and_frees_its_lane() {
     let runtime = Runtime::new(
         std::sync::Arc::new(Refusing),
@@ -447,7 +447,7 @@ where
     }
 }
 
-#[tokio::test(start_paused = true)]
+#[nuclei::test(start_paused = true)]
 async fn a_caller_is_woken_once_per_round_trip_not_once_per_key() {
     let service = service(Fake::with_latency(LATENCY), Config::default());
     let polls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -477,14 +477,14 @@ fn an_inline_service_runs_in_the_callers_task_with_no_runtime() {
         Fake::with_latency(Duration::ZERO),
         cached(Config::default()),
     );
-    let answers = n0_future::future::block_on(service.get_many(vec![1, 2, 3, 2, 1001]));
+    let answers = futures_lite::future::block_on(service.get_many(vec![1, 2, 3, 2, 1001]));
     assert_eq!(answers, vec![Ok(2), Ok(4), Ok(6), Ok(4), Ok(2002)]);
     assert_eq!(
         service.source().round_trips(),
         2,
         "one round trip per group, a repeated key asked once"
     );
-    assert_eq!(n0_future::future::block_on(service.get(3)), Ok(6));
+    assert_eq!(futures_lite::future::block_on(service.get(3)), Ok(6));
     assert_eq!(service.source().round_trips(), 2, "the cache answers");
 }
 
@@ -493,7 +493,7 @@ fn an_inline_retry_follows_its_failure_at_once() {
     let fake = Fake::with_latency(Duration::ZERO);
     fake.fail_next.store(2, Ordering::SeqCst);
     let service = inline(fake, Config::default());
-    assert_eq!(n0_future::future::block_on(service.get(4)), Ok(8));
+    assert_eq!(futures_lite::future::block_on(service.get(4)), Ok(8));
     assert_eq!(service.source().round_trips(), 3);
 }
 
@@ -505,7 +505,7 @@ fn an_inline_prefetch_leaves_the_fetch_to_the_call() {
     );
     service.prefetch(vec![5]);
     assert_eq!(service.source().round_trips(), 0);
-    assert_eq!(n0_future::future::block_on(service.get(5)), Ok(10));
+    assert_eq!(futures_lite::future::block_on(service.get(5)), Ok(10));
     assert_eq!(service.source().round_trips(), 1);
 }
 

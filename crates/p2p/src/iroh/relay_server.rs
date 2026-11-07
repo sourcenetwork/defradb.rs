@@ -56,10 +56,13 @@ pub struct IrohRelayServer {
 impl IrohRelayServer {
     /// Bind every configured listener and start serving.
     pub async fn spawn(config: IrohRelayServerConfig) -> Result<Self> {
-        let server_config = build_server_config(config).await?;
-        let server = Server::spawn(server_config)
-            .await
-            .map_err(|e| Error::Transport(format!("failed to start iroh relay server: {e}")))?;
+        let server = crate::rt::compat(async {
+            let server_config = build_server_config(config).await?;
+            Server::spawn(server_config)
+                .await
+                .map_err(|e| Error::Transport(format!("failed to start iroh relay server: {e}")))
+        })
+        .await?;
         tracing::info!(
             http = ?server.http_addr(),
             https = ?server.https_addr(),
@@ -87,8 +90,7 @@ impl IrohRelayServer {
 
     /// Stop accepting connections and wait for the server tasks to finish.
     pub async fn shutdown(self) -> Result<()> {
-        self.server
-            .shutdown()
+        crate::rt::compat(self.server.shutdown())
             .await
             .map_err(|e| Error::Transport(format!("iroh relay server shutdown failed: {e}")))
     }
@@ -217,7 +219,7 @@ mod tests {
         assert!(EndpointAllowlist::parse(&["not-an-endpoint".to_string()]).is_err());
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn quic_address_discovery_requires_tls() {
         let mut config = plain_config();
         config.quic_bind_addr = Some("127.0.0.1:0".parse().unwrap());
@@ -225,7 +227,7 @@ mod tests {
         assert!(build_server_config(config).await.is_err());
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn burst_without_rate_is_rejected() {
         let mut config = plain_config();
         config.client_rx_max_burst_bytes = NonZeroU32::new(1024);
@@ -233,7 +235,7 @@ mod tests {
         assert!(build_server_config(config).await.is_err());
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn missing_certificate_fails_at_spawn() {
         let mut config = plain_config();
         config.tls = Some(IrohRelayTlsConfig {

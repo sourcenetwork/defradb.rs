@@ -229,6 +229,10 @@ pub struct StartArgs {
     #[arg(long)]
     pub query_max_filter_depth: Option<usize>,
 
+    /// Max fragments one spread chain nests, from 1 to what a query thread's stack holds (default: 32)
+    #[arg(long, env = "DEFRA_QUERY_MAX_FRAGMENT_NESTING")]
+    pub query_max_fragment_nesting: Option<usize>,
+
     /// Per-peer rate limit burst capacity (max tokens). Default: 500.
     #[arg(long, env = "DEFRA_P2P_RATE_LIMIT_BURST")]
     pub p2p_rate_limit_burst: Option<u32>,
@@ -246,6 +250,15 @@ pub struct StartArgs {
     /// Default: 1000.
     #[arg(long, env = "DEFRA_P2P_MAX_PENDING_DAGS")]
     pub p2p_max_pending_dags: Option<usize>,
+
+    /// Max concurrent DAG fetches across all peers. Default: 4.
+    #[arg(long, env = "DEFRA_P2P_MAX_CONCURRENT_DAG_FETCHES")]
+    pub p2p_max_concurrent_dag_fetches: Option<usize>,
+
+    /// Seconds an unacknowledged pending-DAG entry lives before eviction; an
+    /// acknowledged entry does not expire. Default: 300.
+    #[arg(long, env = "DEFRA_P2P_PENDING_DAG_TTL_SECS")]
+    pub p2p_pending_dag_ttl_secs: Option<u64>,
 
     /// Re-announce blocks merged from peers on their gossip topics, so
     /// subscribers with no transport route to the author still receive them
@@ -572,6 +585,12 @@ impl StartArgs {
         if let Some(max) = self.p2p_max_pending_dags {
             config.net.p2p_max_pending_dags = max;
         }
+        if let Some(max) = self.p2p_max_concurrent_dag_fetches {
+            config.net.p2p_max_concurrent_dag_fetches = max;
+        }
+        if let Some(secs) = self.p2p_pending_dag_ttl_secs {
+            config.net.p2p_pending_dag_ttl_secs = secs;
+        }
         if let Some(rebroadcast) = self.p2p_rebroadcast_on_merge {
             config.net.p2p_rebroadcast_on_merge = rebroadcast;
         }
@@ -658,6 +677,9 @@ impl StartArgs {
         }
         if let Some(depth) = self.query_max_filter_depth {
             config.api.query_max_filter_depth = depth;
+        }
+        if let Some(nesting) = self.query_max_fragment_nesting {
+            config.api.query_max_fragment_nesting = nesting;
         }
         #[cfg(feature = "postgres")]
         if let Some(ref addr) = self.pg_address {

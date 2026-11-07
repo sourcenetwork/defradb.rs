@@ -66,7 +66,7 @@ fn a_float32_counter_replay_reads_as_the_stored_value() {
     let sum = 0.1f32 + 0.1f32 + 0.1f32;
     assert_eq!(
         replayed(&counters(FieldKind::float32()), &blocks),
-        NormalValue::Float64(f64::from(sum))
+        NormalValue::Float32(sum)
     );
 }
 

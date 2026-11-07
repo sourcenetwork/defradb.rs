@@ -28,6 +28,20 @@ env:
   # pull requests evicted main's and every new pull request compiled from
   # scratch. Only main saves, and one job saves each shared key.
   SAVE_CACHE: ${{ github.ref == 'refs/heads/main' }}
+  # Every RunsOn job shares compiled crates through this bucket. sccache refuses
+  # to start when it cannot reach the bucket, so each job sets RUSTC_WRAPPER only
+  # after the server is up, and compiles locally otherwise (#1429). The server
+  # never idles out, since a restart while the bucket is unreachable fails the build.
+  # CI owns the ci/ prefix: the runner role may only read and write there, and
+  # other bucket users can read it but not write it.
+  SCCACHE_BUCKET: defradb.rs.sscache-575155546886-us-east-2-an
+  SCCACHE_REGION: us-east-2
+  SCCACHE_S3_KEY_PREFIX: ci/
+  SCCACHE_IGNORE_SERVER_IO_ERROR: '1'
+  SCCACHE_IDLE_TIMEOUT: '0'
+  # A per-second build time in defra-node changed its compile inputs in every
+  # job, so it and every crate above it missed sccache. CI builds share one.
+  DEFRA_NODE_BUILD_TIME_OVERRIDE: ci
 
 # RunsOn retries a job whose Spot instance is reclaimed, but a failed
 # merge-queue run ejects the pull request before that retry, so merge-queue
@@ -39,6 +53,7 @@ jobs:
     outputs:
       full: ${{ steps.decide.outputs.full }}
       integration_matrix: ${{ steps.decide.outputs.integration_matrix }}
+      io_variants: ${{ steps.decide.outputs.io_variants }}
     steps:
       - id: decide
         uses: actions/github-script@v9
@@ -68,9 +83,19 @@ jobs:
             }
             core.setOutput('integration_matrix', JSON.stringify({ include: suites }));
 
+            // The other nuclei io backends run only after merge, on main (there is
+            // no merge queue): on a pull request they tripled P2P Linux and
+            // Conformance, and what they caught there was mostly one flaky test.
+            const ioVariants = [{ name: '', suffix: '', backend: '', recv: '' }];
+            if (context.eventName !== 'pull_request') {
+              ioVariants.push({ name: ' (epoll)', suffix: '-epoll', backend: 'epoll', recv: '' });
+              ioVariants.push({ name: ' (no receive buffers)', suffix: '-no-recv-buffers', backend: '', recv: '0' });
+            }
+            core.setOutput('io_variants', JSON.stringify(ioVariants));
+
   lint-default:
     name: Lint (default)
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -79,6 +104,8 @@ jobs:
           components: clippy, rustfmt
       - run: cargo fmt --all -- --check
       - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ env.SAVE_CACHE == 'true' }}
@@ -91,10 +118,18 @@ jobs:
           -p storage -p datastore -p blockstore -p crdt -p defra-core -p query -p db
           -p acp -p zanzibar -p lens -p kms -p events
           -- -A clippy::all -D clippy::disallowed_methods
+      - name: Network edge confinement
+        env:
+          CLIPPY_CONF_DIR: .github/clippy/edge
+        run: >-
+          cargo clippy --lib --no-deps --workspace --exclude edge
+          -- -A clippy::all -D clippy::disallowed_methods
 
   feature-checks:
     name: Feature checks (${{ matrix.group }})
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
+    needs: ci-scope
+    if: needs.ci-scope.outputs.full == 'true'
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     strategy:
       fail-fast: false
       matrix:
@@ -110,6 +145,7 @@ jobs:
               cargo clippy -p defra-node --features otel --all-targets -- -D warnings
               cargo clippy -p defra-node --features p2p --all-targets -- -D warnings
               cargo clippy -p db --features p2p --all-targets -- -D warnings
+              cargo clippy -p cli --features iroh,model-trace --all-targets -- -D warnings
           - group: minimal
             commands: |
               cargo clippy -p defra-node --no-default-features --features native --all-targets -- -D warnings
@@ -127,6 +163,8 @@ jobs:
         with:
           components: clippy
       - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: feature
@@ -136,11 +174,13 @@ jobs:
 
   dependency-checks:
     name: Dependency checks
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ env.SAVE_CACHE == 'true' }}
@@ -153,18 +193,21 @@ jobs:
 
   lint:
     name: Lint
-    needs: [lint-default, feature-checks, dependency-checks]
+    needs: [ci-scope, lint-default, feature-checks, dependency-checks]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check lint results
         env:
+          FULL: ${{ needs.ci-scope.outputs.full }}
           DEFAULT: ${{ needs.lint-default.result }}
           FEATURES: ${{ needs.feature-checks.result }}
           DEPENDENCIES: ${{ needs.dependency-checks.result }}
         run: |
           test "$DEFAULT" = success
-          test "$FEATURES" = success
+          # Skipped mid-stack, where the stack's tip checks this code and more.
+          # Only then: a failed scope job also skips them, and leaves FULL empty.
+          test "$FEATURES" = success || { test "$FEATURES" = skipped && test "$FULL" = false; }
           test "$DEPENDENCIES" = success
 
   unit-tests:
@@ -173,18 +216,133 @@ jobs:
     if: needs.ci-scope.outputs.full == 'true'
     uses: ./.github/workflows/unit-tests.yml
     with:
-      os: ubuntu-latest
+      os: linux
+
+  # The go-compat suite and the go-http testo client both run this binary, so a
+  # run builds it at most once.
+  go-defradb:
+    name: Go DefraDB binary
+    needs: ci-scope
+    if: needs.ci-scope.outputs.full == 'true'
+    outputs:
+      pin: ${{ steps.prepare.outputs.pin }}
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
+    steps:
+      - uses: runs-on/action@v2
+      - uses: actions/checkout@v4
+      - name: Restore Go DefraDB
+        id: go-defradb
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/defra-harness
+          key: go-defradb-${{ runner.os }}-${{ hashFiles('crates/defra-version/src/lib.rs') }}
+      - name: Install Go toolchain
+        if: steps.go-defradb.outputs.cache-hit != 'true'
+        uses: actions/setup-go@v5
+        with:
+          # The pinned GO_COMPAT_COMMIT declares `go 1.26.10`, so an older
+          # toolchain cannot build it.
+          go-version: '1.26'
+      - name: Prepare Go DefraDB binary
+        id: prepare
+        run: |
+          GO_REF=$(grep 'pub const GO_COMPAT_COMMIT' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
+          GO_BRANCH=$(grep 'pub const GO_COMPAT_BRANCH' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
+          GO_TAG=$(grep 'pub const GO_COMPAT_TAG' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
+
+          if [ -n "$GO_TAG" ]; then
+            VER_NUM="${GO_TAG#v}"
+            ASSET="defradb_${VER_NUM}_linux_x86_64"
+            CACHE_DIR="$HOME/.cache/defra-harness/${GO_TAG}"
+            mkdir -p "$CACHE_DIR"
+            if [ ! -x "$CACHE_DIR/defradb" ]; then
+              curl -fSL -o "$CACHE_DIR/defradb" \
+                "https://github.com/sourcenetwork/defradb/releases/download/${GO_TAG}/${ASSET}"
+              chmod +x "$CACHE_DIR/defradb"
+            fi
+          else
+            test -n "$GO_REF"
+            test -n "$GO_BRANCH"
+            CACHE_DIR="$HOME/.cache/defra-harness/${GO_REF}"
+            mkdir -p "$CACHE_DIR"
+            if [ ! -x "$CACHE_DIR/defradb" ]; then
+              WORK_DIR="$RUNNER_TEMP/defradb-${GO_REF}"
+              git clone --filter=blob:none --branch "$GO_BRANCH" https://github.com/sourcenetwork/defradb "$WORK_DIR"
+              git -C "$WORK_DIR" checkout "$GO_REF"
+              make -C "$WORK_DIR" build path="$CACHE_DIR/defradb"
+              chmod +x "$CACHE_DIR/defradb"
+            fi
+          fi
+
+          "$CACHE_DIR/defradb" version --format json
+          echo "dir=$CACHE_DIR" >> "$GITHUB_OUTPUT"
+          echo "pin=${GO_TAG:-$GO_REF}" >> "$GITHUB_OUTPUT"
+          echo "branch=$GO_BRANCH" >> "$GITHUB_OUTPUT"
+      - name: Save Go DefraDB
+        if: env.SAVE_CACHE == 'true' && steps.go-defradb.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/defra-harness
+          key: ${{ steps.go-defradb.outputs.cache-primary-key }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: go-defradb
+          path: ${{ steps.prepare.outputs.dir }}/defradb
+          retention-days: 1
+      # Lens scenarios load the WASM modules Go's tests/lenses builds, from
+      # DEFRADB_GO_REPO, at the same pin as the Go binary.
+      - name: Restore Go lens modules
+        id: go-lenses
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/defra-lenses
+          key: go-lenses-${{ runner.os }}-${{ hashFiles('crates/defra-version/src/lib.rs') }}
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.go-lenses.outputs.cache-hit != 'true'
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Build Go lens modules
+        if: steps.go-lenses.outputs.cache-hit != 'true'
+        env:
+          PIN: ${{ steps.prepare.outputs.pin }}
+          BRANCH: ${{ steps.prepare.outputs.branch }}
+        run: |
+          WORK_DIR="$RUNNER_TEMP/defradb-lenses"
+          git clone --filter=blob:none --no-checkout --branch "$BRANCH" https://github.com/sourcenetwork/defradb "$WORK_DIR"
+          git -C "$WORK_DIR" sparse-checkout set tests/lenses
+          git -C "$WORK_DIR" checkout "$PIN"
+          make -C "$WORK_DIR/tests/lenses" build
+          OUT="$HOME/.cache/defra-lenses"
+          cd "$WORK_DIR"
+          for wasm in tests/lenses/*/target/wasm32-unknown-unknown/debug/*.wasm; do
+            mkdir -p "$OUT/$(dirname "$wasm")"
+            cp "$wasm" "$OUT/$wasm"
+          done
+          find "$OUT" -name '*.wasm' | sort
+      - name: Save Go lens modules
+        if: env.SAVE_CACHE == 'true' && steps.go-lenses.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/defra-lenses
+          key: ${{ steps.go-lenses.outputs.cache-primary-key }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: go-lenses
+          path: ~/.cache/defra-lenses
+          retention-days: 1
 
   build-binaries:
     name: Build integration binaries
     needs: ci-scope
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: integration-binaries
@@ -196,6 +354,8 @@ jobs:
           cp target/super-dev/defra artifacts/ci/defra
           cargo build -p cli --profile super-dev --features iroh
           cp target/super-dev/defra artifacts/ci/defra-iroh
+          cargo build -p cli --profile super-dev --features iroh,model-trace
+          cp target/super-dev/defra artifacts/ci/defra-trace
       - uses: actions/upload-artifact@v4
         with:
           name: defra-ci-binaries
@@ -222,7 +382,7 @@ jobs:
     name: Feature tests
     needs: ci-scope
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -231,6 +391,8 @@ jobs:
         with:
           tool: cargo-nextest
       - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: integration-binaries
@@ -243,7 +405,7 @@ jobs:
     name: WASM Build Check
     needs: ci-scope
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -252,6 +414,8 @@ jobs:
           targets: wasm32-unknown-unknown
           components: clippy
       - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: wasm
@@ -292,8 +456,12 @@ jobs:
 
   lean-conformance:
     name: Lean Conformance
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
+    needs: ci-scope
+    if: needs.ci-scope.outputs.full == 'true'
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 20
+    env:
+      DEFRA_REQUIRE_LAKE: '1'
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -307,6 +475,8 @@ jobs:
           java-version: '21'
       - name: Check TLA ownership and convergence models
         run: proofs/tla/run-all.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: lean-conformance
@@ -329,20 +499,29 @@ jobs:
         run: cargo test -p db --test merge selected_document_transfers_match_executed_model -- --ignored
       - name: Check HTTP router composition model binding
         run: cargo test -p defra-http --lib server::router_transform_tests::forwarding_filter_matches_executed_model -- --exact --ignored
+      - name: Check collection head set model binding
+        run: cargo test -p db --test block head_conformance::head_queries_match_executable_lean -- --exact
       - name: Check Lean-to-Rust conformance
         run: cargo nextest run -p conformance --lib --test lean_conformance
 
   conformance:
-    name: Conformance
+    name: Conformance${{ matrix.io.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        io: ${{ fromJson(needs.ci-scope.outputs.io_variants) }}
     needs: [ci-scope, build-binaries]
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 45
     env:
       DEFRA_CONFORMANCE_BINARY: ${{ github.workspace }}/target/ci/defra
+      DEFRA_CONFORMANCE_IROH_BINARY: ${{ github.workspace }}/target/ci/defra-iroh
       DEFRA_WORKSPACE_ROOT: ${{ github.workspace }}
       DEFRA_E2E_KEEP: '1'
       RUST_LOG: info
+      NUCLEI_BACKEND: ${{ matrix.io.backend }}
+      DEFRA_NUCLEI_RECV_BUFFERS: ${{ matrix.io.recv }}
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -351,6 +530,8 @@ jobs:
         with:
           tool: cargo-nextest
       - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: integration
@@ -359,23 +540,35 @@ jobs:
         with:
           name: defra-ci-binaries
           path: target/ci
-      - run: chmod +x target/ci/defra target/ci/defra-iroh
+      - run: chmod +x target/ci/defra target/ci/defra-iroh target/ci/defra-trace
       - name: Run conformance tests
         run: cargo nextest run --cargo-profile super-dev -p conformance --lib --test tla_conformance
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Replay recorded P2P delivery runs through TLC
+        env:
+          DEFRA_TRACE_BINARY: ${{ github.workspace }}/target/ci/defra-trace
+        run: >-
+          cargo nextest run --cargo-profile super-dev -p conformance --test tla_conformance
+          -- --ignored model_trace::
       - name: Upload harness node logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: conformance-e2e-logs
-          path: target/e2e/**/logs/*.log
+          name: conformance-e2e-logs${{ matrix.io.suffix }}
+          path: |
+            target/e2e/**/logs/*.log
+            target/model-trace/**
           retention-days: 7
           if-no-files-found: ignore
 
   integration:
     name: Integration (${{ matrix.suite }})
-    needs: [ci-scope, build-binaries]
+    needs: [ci-scope, build-binaries, go-defradb]
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -396,6 +589,8 @@ jobs:
         with:
           tool: cargo-nextest
       - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: integration
@@ -415,52 +610,23 @@ jobs:
           # The pinned GO_COMPAT_COMMIT declares `go 1.26.10`, so an older
           # toolchain cannot build it.
           go-version: '1.26'
-      - name: Restore Go DefraDB
-        id: go-defradb
-        if: matrix.suite == 'go-compat'
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/.cache/defra-harness
-          key: go-defradb-${{ runner.os }}-${{ hashFiles('crates/defra-version/src/lib.rs') }}
-      - name: Prepare Go DefraDB binary
+      - name: Download Go DefraDB
         if: matrix.needs_go
-        run: |
-          GO_REF=$(grep 'pub const GO_COMPAT_COMMIT' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
-          GO_BRANCH=$(grep 'pub const GO_COMPAT_BRANCH' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
-          GO_TAG=$(grep 'pub const GO_COMPAT_TAG' crates/defra-version/src/lib.rs | sed 's/.*"\(.*\)".*/\1/')
-
-          if [ -n "$GO_TAG" ]; then
-            VER_NUM="${GO_TAG#v}"
-            ASSET="defradb_${VER_NUM}_linux_x86_64"
-            CACHE_DIR="$HOME/.cache/defra-harness/${GO_TAG}"
-            mkdir -p "$CACHE_DIR"
-            if [ ! -x "$CACHE_DIR/defradb" ]; then
-              curl -fSL -o "$CACHE_DIR/defradb" \
-                "https://github.com/sourcenetwork/defradb/releases/download/${GO_TAG}/${ASSET}"
-              chmod +x "$CACHE_DIR/defradb"
-            fi
-          else
-            test -n "$GO_REF"
-            test -n "$GO_BRANCH"
-            CACHE_DIR="$HOME/.cache/defra-harness/${GO_REF}"
-            mkdir -p "$CACHE_DIR"
-            if [ ! -x "$CACHE_DIR/defradb" ]; then
-              WORK_DIR="$RUNNER_TEMP/defradb-${GO_REF}"
-              git clone --filter=blob:none --branch "$GO_BRANCH" https://github.com/sourcenetwork/defradb "$WORK_DIR"
-              git -C "$WORK_DIR" checkout "$GO_REF"
-              make -C "$WORK_DIR" build path="$CACHE_DIR/defradb"
-              chmod +x "$CACHE_DIR/defradb"
-            fi
-          fi
-
-          echo "$CACHE_DIR" >> "$GITHUB_PATH"
-          "$CACHE_DIR/defradb" version --format json
-      - name: Save Go DefraDB
-        if: matrix.suite == 'go-compat' && env.SAVE_CACHE == 'true' && steps.go-defradb.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/download-artifact@v4
         with:
-          path: ~/.cache/defra-harness
-          key: ${{ steps.go-defradb.outputs.cache-primary-key }}
+          name: go-defradb
+          path: target/go
+      # The cross-runtime harness looks for the binary under its pin in the cache.
+      - name: Put Go DefraDB on the PATH
+        if: matrix.needs_go
+        env:
+          PIN: ${{ needs.go-defradb.outputs.pin }}
+        run: |
+          DIR="$HOME/.cache/defra-harness/$PIN"
+          mkdir -p "$DIR"
+          install -m 755 target/go/defradb "$DIR/defradb"
+          echo "$DIR" >> "$GITHUB_PATH"
+          "$DIR/defradb" version --format json
       - name: Verify Go fixtures still match Rust constants
         if: matrix.suite == 'go-compat'
         run: |
@@ -484,34 +650,28 @@ jobs:
       - name: Run rust integration tests (basic)
         if: matrix.suite == 'rust' || matrix.suite == 'signed-docs'
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test --test basic
-          -- --skip ::go_
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^basic::/) & not test(/^[a-z0-9_]+::.*::go_/)'
       - name: Run rust integration tests (core suites)
         if: matrix.suite == 'rust' || matrix.suite == 'signed-docs'
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test
-          --test query --test acp --test nac --test encryption --test identity
-          --test backup --test fts --test vector --test acp_replay_outage_repro
-          -- --skip ::go_
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E
+          'test(/^(query|acp|nac|encryption|identity|backup|fts|vector|acp_replay_outage_repro|issue1211_repro|issue1294_bytes_json)::/) & not test(/^[a-z0-9_]+::.*::go_/)'
       - name: Run rust integration tests on a one-worker pool (basic, query)
         if: matrix.suite == 'one-worker'
         env:
           # Every node the suites start runs its data path on one worker.
           DEFRA_WORKERS: '1'
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test --test basic --test query
-          -- --skip ::go_
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^(basic|query)::/) & not test(/^[a-z0-9_]+::.*::go_/)'
       - name: Run rust P2P integration tests
         if: matrix.suite == 'rust' || matrix.suite == 'signed-docs'
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p
-          -- --skip ::go_
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p::/) & not test(/^[a-z0-9_]+::.*::go_/)'
       - name: Run go-compat integration tests
         if: matrix.suite == 'go-compat'
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test
-          --test basic --test query --test acp --test nac --test backup --test p2p --test identity
-          --test encryption --test vera
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E
+          'test(/^(basic|query|acp|nac|backup|p2p|identity|encryption|vera)::/)'
           -- go_
           --skip go_acp_link_collection_nonexistent_policy_reject
           --skip go_acp_link_collection_nonexistent_resource_reject
@@ -532,15 +692,15 @@ jobs:
       - name: Run iroh integration tests
         if: matrix.suite == 'iroh'
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_iroh
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_iroh::/)'
           -- connection::
           sync::version::initial_col_version sync::version::patch_version_of_
       - name: Run iroh sync ownership fences
         if: matrix.suite == 'iroh'
         run: |
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_iroh \
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_iroh::/)' \
             peer::create::create_propagates_to_last_node_in_chain
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_iroh \
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_iroh::/)' \
             peer::create::head_hint_fanout_above_car_worker_bound_quiesces
       - name: Upload harness node logs
         if: failure()
@@ -552,10 +712,14 @@ jobs:
           if-no-files-found: ignore
 
   p2p-linux:
-    name: P2P Integration (Linux)
+    name: P2P Integration (Linux)${{ matrix.io.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        io: ${{ fromJson(needs.ci-scope.outputs.io_variants) }}
     needs: [ci-scope, build-binaries]
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 90
     env:
       DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defra
@@ -563,6 +727,8 @@ jobs:
       DEFRA_WORKSPACE_ROOT: ${{ github.workspace }}
       DEFRA_E2E_KEEP: '1'
       RUST_LOG: info
+      NUCLEI_BACKEND: ${{ matrix.io.backend }}
+      DEFRA_NUCLEI_RECV_BUFFERS: ${{ matrix.io.recv }}
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -571,6 +737,8 @@ jobs:
         with:
           tool: cargo-nextest
       - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: integration
@@ -582,20 +750,214 @@ jobs:
       - run: chmod +x target/ci/defra target/ci/defra-iroh
       - name: Run rust P2P integration tests
         run: >-
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p
-          -- --skip ::go_
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p::/) & not test(/^[a-z0-9_]+::.*::go_/)'
       - name: Run P2P ownership durability fences
         run: |
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_admission
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_admission_restart
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_admission_fairness
-          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_backlog
-          cargo nextest run --cargo-profile super-dev -p integration-test --test issue1154_repro
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_admission::/)'
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_admission_restart::/)'
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_admission_fairness::/)'
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_backlog::/)'
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^issue1154_repro::/)'
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_deep_catchup::/)'
+          cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p_push_storm::/)'
+      # Not run: p2p_interop_bench, whose one test is an ignored benchmark that
+      # prints latencies. p2p_push_storm's storm test stays ignored too: a
+      # profiling harness whose gates are opt-in DEFRA_PUSH_STORM_* variables.
       - name: Upload harness node logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: p2p-linux-e2e-logs
+          name: p2p-linux-e2e-logs${{ matrix.io.suffix }}
           path: target/e2e/**/logs/*.log
           retention-days: 7
           if-no-files-found: ignore
+
+  # Every testo scenario binary under every client, plus the legacy binaries no
+  # other job runs. A test that stops at an action its client does not
+  # implement counts as unsupported, not failed; testo-report.ts turns the JUnit
+  # report into per-binary counts and fails on a failure missing from
+  # .github/testo/known-failures/<client>.txt, or on a listed test that passes.
+  # The testo and legacy integration binaries, built once for every testo shard.
+  testo-archive:
+    name: Build testo archive
+    needs: ci-scope
+    if: needs.ci-scope.outputs.full == 'true'
+    timeout-minutes: 30
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
+    env:
+      DEFRADB_GO_REPO: ${{ github.workspace }}/target/go-repo
+    steps:
+      - uses: runs-on/action@v2
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: integration
+          save-if: false
+      - name: Archive the test binaries
+        run: >-
+          cargo nextest archive --cargo-profile super-dev -p integration-test
+          --test testo --test legacy --archive-file testo.tar.zst
+      - uses: actions/upload-artifact@v4
+        with:
+          name: testo-archive
+          path: testo.tar.zst
+          retention-days: 1
+          compression-level: 0
+
+  testo:
+    name: ${{ matrix.client == 'legacy' && 'Legacy integration binaries' || format('Testo ({0}, {1}/3)', matrix.client, matrix.shard) }}
+    needs: [ci-scope, build-binaries, go-defradb, testo-archive]
+    if: needs.ci-scope.outputs.full == 'true'
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        client: [in-process, rust-http, go-http, cli]
+        shard: [1, 2, 3]
+        include:
+          - client: legacy
+            shard: 1
+            shards: 1
+    env:
+      DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defra
+      DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defra-iroh
+      DEFRADB_GO_REPO: ${{ github.workspace }}/target/go-repo
+      DEFRA_E2E_KEEP: '1'
+      # A failing scenario shows its in-process nodes' P2P trace.
+      DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,warn
+      TESTO_FILTER: binary(testo)
+      # Not run anywhere: p2p_interop_bench, whose one test is an ignored
+      # benchmark that prints latencies, and verars, whose cluster needs the
+      # verad validator binary from vera.rs, which CI does not build.
+      # c_rust_to_go_outage_replay (#2089) flips between runs: the Go receiver
+      # sometimes misses the protected document written while it was down. A
+      # known-failure entry would fail every run it passes, so the test is left
+      # out here instead of listed; run it again once #2089 is fixed.
+      LEGACY_FILTER: >-
+        binary(legacy) & test(/^(cursor|http_contract|issue1194_repro|acp_replay_outage_cross_runtime)::/)
+        & not test(=acp_replay_outage_cross_runtime::c_rust_to_go_outage_replay)
+      # Go gives Foo the wrong ID beside FooBar only in some runs (#2528), so a
+      # known-failure entry would fail the runs it passes; go-http leaves it out.
+      GO_HTTP_FILTER: "& not test(=collection::deterministic_ids::a_collection_beside_a_longer_namesake_gets_one_id)"
+    steps:
+      - uses: runs-on/action@v2
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - uses: actions/download-artifact@v4
+        with:
+          name: testo-archive
+      - uses: actions/download-artifact@v4
+        with:
+          name: defra-ci-binaries
+          path: target/ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: go-defradb
+          path: target/go
+      - uses: actions/download-artifact@v4
+        with:
+          name: go-lenses
+          path: target/go-repo
+      - name: Pick the tests
+        env:
+          CLIENT: ${{ matrix.client }}
+          PIN: ${{ needs.go-defradb.outputs.pin }}
+        run: |
+          chmod +x target/ci/defra target/ci/defra-iroh
+          DIR="$HOME/.cache/defra-harness/$PIN"
+          mkdir -p "$DIR"
+          install -m 755 target/go/defradb "$DIR/defradb"
+          echo "$DIR" >> "$GITHUB_PATH"
+          echo "DEFRA_GO_BINARY=$DIR/defradb" >> "$GITHUB_ENV"
+          if [ "$CLIENT" = legacy ]; then
+            echo "FILTER=$LEGACY_FILTER" >> "$GITHUB_ENV"
+          else
+            echo "DEFRA_CLIENT=$CLIENT" >> "$GITHUB_ENV"
+            if [ "$CLIENT" = go-http ]; then
+              echo "FILTER=($TESTO_FILTER) $GO_HTTP_FILTER" >> "$GITHUB_ENV"
+            else
+              echo "FILTER=$TESTO_FILTER" >> "$GITHUB_ENV"
+            fi
+          fi
+      - name: Point the tests at the archive
+        run: |
+          mkdir -p "$RUNNER_TEMP/nextest"
+          echo "ARCHIVE=--archive-file testo.tar.zst --workspace-remap . --extract-to $RUNNER_TEMP/nextest --extract-overwrite" >> "$GITHUB_ENV"
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: 1.3.6
+      - name: Run the tests
+        id: run
+        run: |
+          set +e
+          cargo nextest run $ARCHIVE -E "$FILTER" \
+            --partition hash:${{ matrix.shard }}/${{ matrix.shards || 3 }} --no-fail-fast
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+      - name: Report
+        if: always() && steps.run.outcome == 'success'
+        env:
+          CLIENT: ${{ matrix.client }}
+          STATUS: ${{ steps.run.outputs.status }}
+        run: |
+          mkdir -p testo-report
+          JUNIT=$(find "$RUNNER_TEMP/nextest" target -path '*/nextest/ci/junit.xml' 2>/dev/null | head -1)
+          test -n "$JUNIT"
+          cp "$JUNIT" "testo-report/$CLIENT-${{ matrix.shard }}.xml"
+          # JUnit leaves out skipped tests, so the list says what this shard selected.
+          cargo nextest list $ARCHIVE -E "$FILTER" \
+            --partition hash:${{ matrix.shard }}/${{ matrix.shards || 3 }} \
+            --message-format json > target/nextest-list.json
+          bun .github/scripts/testo-report.ts shard "$JUNIT" target/nextest-list.json \
+            "$CLIENT" "${{ matrix.shard }}/${{ matrix.shards || 3 }}" \
+            ".github/testo/known-failures/$CLIENT.txt" "testo-report/$CLIENT-${{ matrix.shard }}.json"
+          if [ "$STATUS" != 0 ] && ! grep -q '<failure' "$JUNIT"; then
+            echo "::error::nextest exited $STATUS without a failing test"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: testo-report-${{ matrix.client }}-${{ matrix.shard }}
+          path: testo-report
+          retention-days: 7
+          if-no-files-found: ignore
+
+  testo-summary:
+    name: Testo summary
+    needs: [ci-scope, testo-archive, testo]
+    # Runs whenever testo should have, so a failed archive build, which skips
+    # every shard, still shows up here as a failed summary.
+    if: always() && needs.ci-scope.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - name: Require the testo archive
+        if: needs.testo-archive.result != 'success'
+        run: |
+          echo "::error::Build testo archive was ${{ needs.testo-archive.result }}, so no testo shard ran"
+          exit 1
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: testo-report-*
+          path: testo-report
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: 1.3.6
+      - name: Check the known-failure lists and merge the reports
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun .github/scripts/testo-report.ts summary testo-report .github/testo/known-failures

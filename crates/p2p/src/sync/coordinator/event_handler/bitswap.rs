@@ -130,14 +130,16 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     pub(crate) async fn handle_bitswap_complete(
         &self,
         query_id: crate::QueryId,
-        success: bool,
+        outcome: std::result::Result<(), crate::transport::FetchFailureCause>,
         error: Option<String>,
     ) -> Result<()> {
-        if self
-            .manager
-            .block_sync_completion_tracker()
-            .complete(query_id, success)
-        {
+        let success = outcome.is_ok();
+        if self.manager.block_sync_completion_tracker().complete_with(
+            query_id,
+            outcome.map_or_else(crate::sync::manager::FetchCompletion::Failure, |()| {
+                crate::sync::manager::FetchCompletion::Success
+            }),
+        ) {
             return Ok(());
         }
         let Some(root_cid) = self.manager.take_query_root(query_id) else {
@@ -208,34 +210,60 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         Ok(())
     }
 
+    /// Release a query every provider shed as busy, without recording a
+    /// provider failure.
+    pub(crate) async fn handle_bitswap_provider_busy(
+        &self,
+        query_id: crate::QueryId,
+    ) -> Result<()> {
+        if !self
+            .manager
+            .block_sync_completion_tracker()
+            .provider_busy(query_id)
+            && self.release_to_pending_clock(query_id, "every provider answered busy")
+        {
+            self.manager
+                .diagnostics
+                .record_pending_dag_fetch_deferred_busy();
+        }
+        Ok(())
+    }
+
     /// Release a query whose useful CAR response coalesced behind an existing
     /// local storage owner. This is neither transport success nor provider
     /// failure: poll-owned queries observe the explicit deferred completion,
     /// while the legacy manager-owned path returns its durable root to the
     /// authoritative pending-DAG clock.
     pub(crate) async fn handle_bitswap_deferred(&self, query_id: crate::QueryId) -> Result<()> {
-        if self.manager.block_sync_completion_tracker().defer(query_id) {
-            return Ok(());
+        if !self.manager.block_sync_completion_tracker().defer(query_id) {
+            self.release_to_pending_clock(query_id, "ingest coalesced behind a storage owner");
         }
+        Ok(())
+    }
+
+    /// Returns whether a manager-owned root went back to the pending-DAG clock.
+    fn release_to_pending_clock(&self, query_id: crate::QueryId, reason: &'static str) -> bool {
         let Some(root_cid) = self.manager.take_query_root(query_id) else {
             tracing::debug!(
                 query_id = query_id.0,
-                "Block-sync ingest deferred before its owner registered; completion latched"
+                reason,
+                "Block-sync query released before its owner registered; completion latched"
             );
-            return Ok(());
+            return false;
         };
         self.manager
             .block_sync_completion_tracker()
             .cancel(query_id);
-        // The dispatch claim already set the retry deadline. A busy local
-        // owner is not new provider availability: keep that backoff rather
-        // than immediately fetching the same DAG again.
+        // The dispatch claim already set the retry deadline. Neither reason is
+        // new provider availability: keep that backoff rather than
+        // immediately fetching the same DAG again.
         tracing::debug!(
             query_id = query_id.0,
             root_cid = %root_cid,
-            "Block-sync ingest coalesced behind a storage owner; deferring to pending-DAG clock"
+            reason,
+            "Deferring block-sync query to pending-DAG clock"
         );
-        Ok(())
+        true
     }
 }
 
@@ -551,15 +579,19 @@ mod tests {
         )
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn bitswap_block_received_retries_only_waiting_dags() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = TestTransport::new();
-        let (coordinator, mut events) =
-            SyncCoordinator::new(transport, blockstore, SyncConfig::default())
-                .await
-                .expect("coordinator");
+        let (coordinator, mut events) = SyncCoordinator::new(
+            transport,
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
 
         let (field_cid, field_block) = create_lww_block("name");
         let (root_cid, root_block) = create_composite_block("doc123", "name", field_cid);
@@ -585,7 +617,7 @@ mod tests {
             .await
             .expect("bitswap block received");
 
-        match n0_future::time::timeout(Duration::from_secs(1), events.recv())
+        match crate::rt::time::timeout(Duration::from_secs(1), events.recv())
             .await
             .expect("event")
             .expect("channel open")
@@ -608,15 +640,19 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[nuclei::test]
     async fn bitswap_block_coalesces_without_blocking_the_transport_drain() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = TestTransport::new();
-        let (coordinator, _events) =
-            SyncCoordinator::new(transport, blockstore.clone(), SyncConfig::default())
-                .await
-                .expect("coordinator");
+        let (coordinator, _events) = SyncCoordinator::new(
+            transport,
+            blockstore.clone(),
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
         let (cid, block) = create_lww_block("name");
         let owner = coordinator
             .manager()
@@ -624,7 +660,7 @@ mod tests {
             .try_acquire_nowait(&cid)
             .expect("test owns CID");
 
-        n0_future::time::timeout(
+        crate::rt::time::timeout(
             Duration::from_millis(100),
             coordinator.handle_bitswap_block_received(QueryId(42), cid, block.clone()),
         )
@@ -649,59 +685,84 @@ mod tests {
         assert!(blockstore.has(&cid).await.unwrap());
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn deferred_ingest_preserves_the_claimed_retry_deadline() {
-        let store = Arc::new(RegolithStore::in_memory().unwrap());
-        let blockstore = Arc::new(DefraBlockstore::new(store, true));
-        let (coordinator, _events) =
-            SyncCoordinator::new(TestTransport::new(), blockstore, SyncConfig::default())
-                .await
-                .unwrap();
-        let (field, _) = create_lww_block("name");
-        let (root, block) = create_composite_block("doc123", "name", field);
-        coordinator
-            .manager()
-            .process_pushlog(
-                &make_broadcast("doc123", root, block, "collection1"),
-                Some("peer-1"),
-                false,
-                None,
+    /// Neither local ingest contention nor a busy provider set may turn the
+    /// eligibility wakeup into a fetch loop or charge a provider failure.
+    #[nuclei::test(start_paused = true)]
+    async fn deferred_and_busy_releases_preserve_the_claimed_retry_deadline() {
+        for busy in [false, true] {
+            let store = Arc::new(RegolithStore::in_memory().unwrap());
+            let blockstore = Arc::new(DefraBlockstore::new(store, true));
+            let (coordinator, _events) = SyncCoordinator::new(
+                TestTransport::new(),
+                blockstore,
+                crate::network::test_network(),
+                SyncConfig::default(),
             )
             .await
             .unwrap();
-        let now = n0_future::time::Instant::now();
-        assert!(coordinator
-            .manager()
-            .try_claim_pending_dag_dispatch(&root, now));
-        let query = QueryId(77);
-        let _ = coordinator.manager().register_query(query, root);
-        coordinator.handle_bitswap_deferred(query).await.unwrap();
-        assert!(coordinator.manager().take_query_root(query).is_none());
-        assert!(
-            !coordinator
+            let (field, _) = create_lww_block("name");
+            let (root, block) = create_composite_block("doc123", "name", field);
+            coordinator
                 .manager()
-                .try_claim_pending_dag_dispatch(&root, now),
-            "local ingest contention must not turn the eligibility wakeup into a fetch loop"
-        );
-        tokio::time::advance(Duration::from_secs(4)).await;
-        assert!(coordinator
-            .manager()
-            .try_claim_pending_dag_dispatch(&root, n0_future::time::Instant::now()));
+                .process_pushlog(
+                    &make_broadcast("doc123", root, block, "collection1"),
+                    Some("peer-1"),
+                    false,
+                    None,
+                )
+                .await
+                .unwrap();
+            let now = crate::rt::time::Instant::now();
+            assert!(coordinator
+                .manager()
+                .try_claim_pending_dag_dispatch(&root, now));
+            let query = QueryId(77);
+            let _ = coordinator.manager().register_query(query, root);
+            if busy {
+                coordinator
+                    .handle_bitswap_provider_busy(query)
+                    .await
+                    .unwrap();
+            } else {
+                coordinator.handle_bitswap_deferred(query).await.unwrap();
+            }
+            assert!(coordinator.manager().take_query_root(query).is_none());
+            let pending = coordinator.manager().pending_dags_from("peer-1");
+            assert_eq!(pending.len(), 1, "busy={busy}: the durable root is kept");
+            assert_eq!(pending[0].1.fetch_failures, 0, "busy={busy}");
+            assert!(pending[0].1.last_fetch_error.is_none());
+            let snapshot = coordinator.manager().diagnostics().snapshot();
+            assert_eq!(snapshot.pending_dag_fetch_deferred_busy, u64::from(busy));
+            assert!(
+                !coordinator
+                    .manager()
+                    .try_claim_pending_dag_dispatch(&root, now),
+                "busy={busy}: the claimed retry deadline is kept"
+            );
+            nuclei::time::advance(Duration::from_secs(4)).await;
+            assert!(coordinator
+                .manager()
+                .try_claim_pending_dag_dispatch(&root, crate::rt::time::Instant::now()));
+        }
     }
 
     /// #1116 stage 2 (#1112): registration and failed completion only update
     /// durable receiver state. The per-root clock is the sole path that may
     /// claim and emit `DagNeedsFetch`, preventing an immediate retry storm.
-    #[tokio::test(start_paused = true)]
+    #[nuclei::test(start_paused = true)]
     async fn bitswap_complete_failure_defers_reissue_to_retry_clock() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = TestTransport::new();
         let transport_handle = transport.clone();
-        let (coordinator, mut events) =
-            SyncCoordinator::new(transport, blockstore, SyncConfig::default())
-                .await
-                .expect("coordinator");
+        let (coordinator, mut events) = SyncCoordinator::new(
+            transport,
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
 
         let (field_cid, _field_block) = create_lww_block("name");
         let (root_cid, root_block) = create_composite_block("doc123", "name", field_cid);
@@ -723,7 +784,7 @@ mod tests {
         );
         let due = coordinator
             .manager()
-            .claim_due_pending_dag_retries(n0_future::time::Instant::now());
+            .claim_due_pending_dag_retries(crate::rt::time::Instant::now());
         assert_eq!(due.len(), 1);
         coordinator.dispatch_pending_dag_fetch_for_test(due[0].0, &due[0].1);
         match events.try_recv().expect("clock-driven DagNeedsFetch event") {
@@ -739,7 +800,7 @@ mod tests {
         coordinator
             .handle_bitswap_complete(
                 query_id,
-                false,
+                Err(crate::transport::FetchFailureCause::Error),
                 Some("selective CAR fetch failed".to_string()),
             )
             .await
@@ -756,10 +817,10 @@ mod tests {
 
         // Advance past the rung reached by the clock's first claim
         // (dispatches=1 -> retry_backoff(1) = 4s) and run another tick.
-        tokio::time::advance(std::time::Duration::from_secs(4)).await;
+        nuclei::time::advance(std::time::Duration::from_secs(4)).await;
         let due = coordinator
             .manager()
-            .claim_due_pending_dag_retries(n0_future::time::Instant::now());
+            .claim_due_pending_dag_retries(crate::rt::time::Instant::now());
         assert_eq!(due.len(), 1);
         for (due_root, dag) in &due {
             coordinator.dispatch_pending_dag_fetch_for_test(*due_root, dag);
@@ -779,16 +840,20 @@ mod tests {
         );
     }
 
-    #[tokio::test(start_paused = true)]
+    #[nuclei::test(start_paused = true)]
     async fn bitswap_complete_retries_only_its_registered_and_due_root() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let transport = TestTransport::new();
         let transport_handle = transport.clone();
-        let (coordinator, mut events) =
-            SyncCoordinator::new(transport, blockstore, SyncConfig::default())
-                .await
-                .expect("coordinator");
+        let (coordinator, mut events) = SyncCoordinator::new(
+            transport,
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
 
         let (field1_cid, _field1_block) = create_lww_block("name");
         let (field2_cid, _field2_block) = create_lww_block("age");
@@ -822,7 +887,7 @@ mod tests {
         );
         let initial_due = coordinator
             .manager()
-            .claim_due_pending_dag_retries(n0_future::time::Instant::now());
+            .claim_due_pending_dag_retries(crate::rt::time::Instant::now());
         assert_eq!(initial_due.len(), 2);
         for (due_root, dag) in &initial_due {
             coordinator.dispatch_pending_dag_fetch_for_test(*due_root, dag);
@@ -836,7 +901,7 @@ mod tests {
         coordinator
             .handle_bitswap_complete(
                 query_id,
-                false,
+                Err(crate::transport::FetchFailureCause::Error),
                 Some("selective CAR fetch failed".to_string()),
             )
             .await
@@ -851,7 +916,7 @@ mod tests {
         assert!(
             coordinator
                 .manager()
-                .claim_due_pending_dag_retries(n0_future::time::Instant::now())
+                .claim_due_pending_dag_retries(crate::rt::time::Instant::now())
                 .is_empty(),
             "neither root is due before the clock rung elapses"
         );
@@ -865,7 +930,7 @@ mod tests {
         coordinator
             .handle_bitswap_complete(
                 QueryId(999),
-                false,
+                Err(crate::transport::FetchFailureCause::Error),
                 Some("remaining child fetch failed".to_string()),
             )
             .await
@@ -878,10 +943,10 @@ mod tests {
 
         // Advance past the clock-owned first rung. Both roots become due; only
         // the clock claim advances their dispatch counters.
-        tokio::time::advance(std::time::Duration::from_secs(4)).await;
+        nuclei::time::advance(std::time::Duration::from_secs(4)).await;
         let due = coordinator
             .manager()
-            .claim_due_pending_dag_retries(n0_future::time::Instant::now());
+            .claim_due_pending_dag_retries(crate::rt::time::Instant::now());
         assert!(
             due.iter().any(|(cid, _)| *cid == root1_cid),
             "root1 should be due after its second rung elapses"
@@ -898,7 +963,11 @@ mod tests {
         }
 
         coordinator
-            .handle_bitswap_complete(QueryId(9999), false, Some("ignored".to_string()))
+            .handle_bitswap_complete(
+                QueryId(9999),
+                Err(crate::transport::FetchFailureCause::Error),
+                Some("ignored".to_string()),
+            )
             .await
             .expect("unknown query is ignored");
         assert!(

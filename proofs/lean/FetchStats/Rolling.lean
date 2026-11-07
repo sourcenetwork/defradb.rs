@@ -2,13 +2,14 @@
 # FetchStats.Rolling: per-peer fetch averages stay in range and never overflow
 
 The story, in plain words. Each time we fetch blocks from a peer, we record how
-it went: did it succeed, time out or come back partial, and how fast the bytes
-arrived. For each peer we keep a rolling average of each of those, where every
-new fetch counts for one eighth and the old average for the rest. We also keep
-plain totals (fetches, bytes) that only ever grow.
+it went: did it succeed, time out, come back partial or get shed as busy, and
+how fast the bytes arrived. For each peer we keep a rolling average of each of
+those, where every new fetch counts for one eighth and the old average for the
+rest. We also keep plain totals (fetches, bytes) that only ever grow.
 
 What must never happen:
-* a success, timeout or partial ratio leaves [0, 1] (`roll_ratio_stays_a_ratio`);
+* a success, timeout, partial or busy ratio leaves [0, 1]
+  (`roll_ratio_stays_a_ratio`);
 * a rolling average grows past the largest sample it was fed, so it can never
   overflow the integer that holds it (`roll_le_bound`, `rolling_over_samples`);
 * a total wraps around to a small number (`bump_never_overflows`, `bump_grows`).

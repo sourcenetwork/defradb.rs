@@ -3,12 +3,12 @@ import Std
 /-!
 # HeadSet_DESIGN: concurrent collection-head transitions (db-block-builder)
 
-Mathlib-free Lean model of the **head-set transition** DefraDB performs when it
-appends a block to a collection's DAG, and of why the transition as written
-cannot be run concurrently on regolith.
+Mathlib-free Lean model of the **head-set transition** DefraDB performed, in
+its per-key design, when it appended a block to a collection's DAG, and of why
+eager deletion cannot be run concurrently on regolith.
 
 The companion TLA+ model (`proofs/tla/HeadSet.tla`) checks the temporal story:
-two concurrent writers, one of which aborts under the current strategy. This
+two concurrent writers, one of which aborts under eager delete. This
 file carries the algebra the temporal model rests on, and in particular the two
 facts a reader should not have to take on trust:
 
@@ -51,25 +51,29 @@ supersedes it.
 
 ## Source anchors
 
-The derived strategy is what the tree implements; the eager one is kept here
-only so the model can show what it costs.
+The state here is the per-key design: one head key per block and one marker
+per (parent, child). The tree keeps neither. A collection's heads are one
+merged value, written only by blind merges, so this model maps to the code
+at what a read returns and nowhere else:
 
-Rust (`crates/db`, this worktree):
-* `src/block/heads.rs` `live_collection_heads` is `derivedHeads`. It walks the
-  head prefix and the marker prefix together rather than testing each head, so
-  the query is one pass over each range and holds neither.
-* `src/block/heads.rs` `record_supersedes` is the `supersedes` half of
-  `applyDerived`, and `src/block/builder/collection.rs:89-92` writes the head
-  key, which is the other half.
-* `src/block/builder/collection.rs:19` reads the heads, and `:46`
-  `Block::new(payload, col_heads, links)` records them as the block's parents.
-  Modeled by `Block.parents`, the relation the derived strategy reads instead
-  of re-deriving by deletion.
-* `src/block/heads.rs` `prune_superseded_heads` is `applyPrune`. It deletes a
-  head key and the markers against it in one transaction, which is what
-  `prune_markersOnly_resurrects` says it must.
+* `derivedHeads` is what `src/block/heads.rs` `live_collection_heads` reads
+  (`crates/db`). `crates/db/tests/block/head_conformance.rs`
+  `head_queries_match_executable_lean` runs `HeadSet/Conformance.lean` and the
+  storage owner on the same transaction actions and compares those reads.
+* `Store.headKeys` and `Store.supersedes` have no code counterpart. A name's
+  state in the merged value (live, ahead or absent, folded by
+  `crates/storage/src/backends/regolith/merge/head_set.rs`) is a function of
+  them, and the code keeps only that: which child superseded a parent is not
+  stored.
+* `derived_writeSets_disjoint` is about the per-key design's keys. Writers in
+  the tree share one key (`src/block/heads.rs` `publish_collection_block`) and
+  do not conflict because they only merge into it; the one key a collection
+  publication puts is its own publication guard. `proofs/tla/HeadPublication.tla`
+  models the merged set.
+* `applyPrune` and `prune_preserves_derivedHeads` are the per-key design's
+  sweep; the tree has none.
 * `src/merge/merge_handler/collection.rs` applies the same transition to a
-  replicated block, so two peers pushing siblings do not collide either.
+  replicated block.
 
 The eager loop the model proves defective is gone from the tree. Its shape is
 preserved in `eagerWriteSet` and in

@@ -23,6 +23,16 @@ use super::solicited::Solicited;
 /// allowlist. Distinct from the disconnect code (0) used elsewhere.
 const REFUSED_CONNECTION_CODE: u32 = 1;
 
+/// Whether the remote already closed `connection` with the refusal code. The
+/// code is matched, never the reason bytes.
+pub(super) fn closed_by_refusal(connection: &iroh::endpoint::Connection) -> bool {
+    matches!(
+        connection.close_reason(),
+        Some(iroh::endpoint::ConnectionError::ApplicationClosed(close))
+            if close.error_code == REFUSED_CONNECTION_CODE.into()
+    )
+}
+
 /// QUIC stream error codes sent when a stream is refused before its body is
 /// read, or reset because the body stopped arriving.
 const RESET_UNKNOWN_SERVICE: u32 = 2;
@@ -229,6 +239,11 @@ pub(super) async fn handle_connection_streams(
     super::endpoint_rpc::evict_connection(&context.connection_cache, remote_id, &connection);
     let fully_disconnected = context.peer_map.decrement_connections(&remote_id);
     debug!(peer_id = %peer_id, fully_disconnected, "Connection closed");
+    if fully_disconnected {
+        crate::model_trace!(Disconnect {
+            peer: peer_id.to_string(),
+        });
+    }
 
     if fully_disconnected
         && context
@@ -290,7 +305,7 @@ pub(super) async fn admit_stream(
     };
     // The idle deadline catches a sender that stops; the total deadline catches
     // one that trickles bytes to keep its lease.
-    let payload = n0_future::time::timeout(
+    let payload = crate::rt::time::timeout(
         deadlines.body(len),
         protocols::read_body_until_idle(recv, len, deadlines.idle),
     )

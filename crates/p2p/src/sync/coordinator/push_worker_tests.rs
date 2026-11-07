@@ -17,7 +17,7 @@ fn test_context(
     send_timeout: Duration,
 ) -> (
     Arc<PushWorkerContext<TestTransport>>,
-    tokio::sync::mpsc::Receiver<PushFailure>,
+    crate::rt::mpsc::Receiver<PushFailure>,
 ) {
     test_context_with_admission(transport, backlog, send_timeout, true)
 }
@@ -29,11 +29,11 @@ fn test_context_with_admission(
     admit: bool,
 ) -> (
     Arc<PushWorkerContext<TestTransport>>,
-    tokio::sync::mpsc::Receiver<PushFailure>,
+    crate::rt::mpsc::Receiver<PushFailure>,
 ) {
-    let (tx, mut events) = tokio::sync::mpsc::channel::<PushFailure>(64);
-    let (forward, rx) = tokio::sync::mpsc::channel(64);
-    tokio::spawn(async move {
+    let (tx, mut events) = crate::rt::mpsc::channel::<PushFailure>(64);
+    let (forward, rx) = crate::rt::mpsc::channel(64);
+    crate::rt::spawn(async move {
         while let Some(mut event) = events.recv().await {
             if event.admission_only {
                 // A marker generation admits the push; `None` represents the
@@ -54,7 +54,8 @@ fn test_context_with_admission(
                 }
             }
         }
-    });
+    })
+    .detach();
     let context = Arc::new(PushWorkerContext {
         transport,
         backlog,
@@ -64,13 +65,14 @@ fn test_context_with_admission(
         failure_tx: Arc::new(AtomOption::some(tx)),
         send_timeout,
         peer_state: Arc::new(crate::sync::peer_state::PeerStateTracker::new()),
+        head_provider: Arc::new(crate::sync::NoOpHeadProvider),
     });
     (context, rx)
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn persisted_backpressure_denies_live_push_before_transport_send() {
-    let backlog = PushBacklog::new(64, usize::MAX, 1, 1);
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
     let transport = TestTransport::new(Vec::new());
     let (context, _failures) = test_context_with_admission(
         transport.clone(),
@@ -125,16 +127,16 @@ fn versioned_job(peer: &str, priority: u64) -> PushJobSpec {
 
 /// #1099 fairness: a nonresponsive peer occupying its per-peer cap must
 /// not stop healthy peers from draining through the remaining workers.
-#[tokio::test]
+#[nuclei::test]
 async fn slow_peer_does_not_starve_healthy_peers() {
-    let backlog = PushBacklog::new(1024, usize::MAX, 1, 2);
+    let backlog = PushBacklog::new(1024, usize::MAX, 1, 2, edge::testing::edge());
     let transport = TestTransport::new(Vec::new()).with_stalled_peer("slow");
     let (context, _failure_rx) = test_context(
         transport.clone(),
         Arc::clone(&backlog),
         Duration::from_secs(60),
     );
-    let shutdown = SyncShutdownHandle::new(4);
+    let shutdown = SyncShutdownHandle::new(4, crate::network::test_network());
     spawn_push_workers(context, &shutdown);
 
     backlog.try_enqueue(job("slow", b"slow-1")).await;
@@ -142,61 +144,207 @@ async fn slow_peer_does_not_starve_healthy_peers() {
         backlog.try_enqueue(job("healthy", &[index])).await;
     }
 
-    let deadline = n0_future::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        let healthy_sent = transport
-            .sent()
-            .iter()
-            .filter(|push| push.peer_id == "healthy")
-            .count();
-        if healthy_sent == 5 {
-            break;
+    // A push is sent before its reply, ack and job_done land, so wait on the
+    // completions themselves.
+    let deadline = crate::rt::time::Instant::now() + Duration::from_secs(5);
+    let mut backoff = Duration::from_millis(1);
+    let snap = loop {
+        let snap = backlog.snapshot().await;
+        if snap.completed_total >= 5 {
+            break snap;
         }
         assert!(
-            n0_future::time::Instant::now() < deadline,
-            "healthy peer starved: only {healthy_sent}/5 sends completed while a slow peer holds a worker"
+            crate::rt::time::Instant::now() < deadline,
+            "healthy peer starved: only {}/5 pushes completed while a slow peer holds a worker",
+            snap.completed_total
         );
-        n0_future::time::sleep(Duration::from_millis(10)).await;
-    }
+        crate::rt::time::sleep(backoff).await;
+        backoff = (backoff * 2).min(Duration::from_millis(50));
+    };
 
-    let snap = backlog.snapshot().await;
     assert!(snap.active_jobs <= 2);
-    assert!(snap.completed_total >= 5);
+    let healthy_sent = transport
+        .sent()
+        .iter()
+        .filter(|push| push.peer_id == "healthy")
+        .count();
+    assert_eq!(healthy_sent, 5);
     backlog.close();
+}
+
+/// Audit F24: with the default pool (8 workers, 4 per peer) two replicators
+/// whose sends never answer hold every worker until their first sends time
+/// out. A timed-out peer is then parked, and the unreachable peers together
+/// stay within one peer's cap, so the healthy peer drains right after that
+/// first timeout instead of a few jobs per timeout.
+#[test]
+fn two_stalled_replicators_do_not_starve_healthy_peer() {
+    edge::testing::paused(|edge| async move {
+        use crate::sync::{
+            DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER, DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
+            DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY,
+            DEFAULT_PUSH_SEND_TIMEOUT,
+        };
+
+        const WRITES: u8 = 50;
+        let backlog = PushBacklog::new(
+            DEFAULT_PUSH_QUEUE_CAPACITY,
+            DEFAULT_PUSH_QUEUE_BYTE_CAPACITY,
+            DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER,
+            DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
+            edge.clone(),
+        );
+        let transport = TestTransport::new(Vec::new())
+            .with_stalled_peer("dead-1")
+            .with_stalled_peer("dead-2");
+        let (context, mut failures) = test_context(
+            transport.clone(),
+            Arc::clone(&backlog),
+            DEFAULT_PUSH_SEND_TIMEOUT,
+        );
+        crate::rt::spawn(async move { while failures.recv().await.is_some() {} }).detach();
+        let shutdown = SyncShutdownHandle::new(4, crate::network::Network::on(edge.clone()));
+        spawn_push_workers(context, &shutdown);
+        crate::rt::yield_now().await;
+
+        let started = crate::rt::time::Instant::now();
+        for write in 0..WRITES {
+            for peer in ["dead-1", "dead-2", "healthy"] {
+                assert_eq!(
+                    backlog.try_enqueue(job(peer, &[write])).await,
+                    EnqueueOutcome::Enqueued
+                );
+            }
+        }
+
+        let limit = DEFAULT_PUSH_SEND_TIMEOUT * 2;
+        loop {
+            let healthy_sent = transport
+                .sent()
+                .iter()
+                .filter(|push| push.peer_id == "healthy")
+                .count();
+            if healthy_sent == usize::from(WRITES) {
+                break;
+            }
+            assert!(
+                started.elapsed() <= limit,
+                "two stalled replicators starved the healthy peer: {healthy_sent}/{WRITES} sent after {:?}",
+                started.elapsed()
+            );
+            crate::rt::time::sleep(Duration::from_millis(100)).await;
+        }
+        backlog.close();
+    })
+}
+
+/// A peer whose first sends time out and that answers right afterwards keeps
+/// its queued jobs live. The timeouts park it, and only a failed probe (a send
+/// started after the park's cooldown ran out) moves its queue to the ledger.
+#[test]
+fn transient_transport_failure_keeps_queued_jobs_live() {
+    edge::testing::paused(|edge| async move {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use crate::sync::{
+            DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER, DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
+            DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY,
+            DEFAULT_PUSH_SEND_TIMEOUT,
+        };
+
+        const JOBS: u8 = 20;
+        let backlog = PushBacklog::new(
+            DEFAULT_PUSH_QUEUE_CAPACITY,
+            DEFAULT_PUSH_QUEUE_BYTE_CAPACITY,
+            DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER,
+            DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
+            edge.clone(),
+        );
+        let transport = TestTransport::new(Vec::new()).with_stalled_peer("flaky");
+        let (context, mut failures) = test_context(
+            transport.clone(),
+            Arc::clone(&backlog),
+            DEFAULT_PUSH_SEND_TIMEOUT,
+        );
+        let ledger = Arc::new(AtomicUsize::new(0));
+        let recorded = Arc::clone(&ledger);
+        crate::rt::spawn(async move {
+            while let Some(event) = failures.recv().await {
+                if event.create_retry {
+                    recorded.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        })
+        .detach();
+        let shutdown = SyncShutdownHandle::new(4, crate::network::Network::on(edge.clone()));
+        spawn_push_workers(context, &shutdown);
+        crate::rt::yield_now().await;
+
+        for seed in 0..JOBS {
+            assert_eq!(
+                backlog.try_enqueue(job("flaky", &[seed])).await,
+                EnqueueOutcome::Enqueued
+            );
+        }
+        crate::rt::time::sleep(Duration::from_secs(1)).await;
+        transport.unstall_peer("flaky");
+
+        let live = usize::from(JOBS) - DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER;
+        let started = crate::rt::time::Instant::now();
+        let limit = DEFAULT_PUSH_SEND_TIMEOUT * 2;
+        loop {
+            let sent = transport.sent().len();
+            if sent == live {
+                break;
+            }
+            assert!(
+                started.elapsed() <= limit,
+                "one transport failure cost a peer that answers its queue: {sent}/{live} sent live, {} handed to the ledger after {:?}",
+                ledger.load(Ordering::Relaxed),
+                started.elapsed()
+            );
+            crate::rt::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert_eq!(
+            ledger.load(Ordering::Relaxed),
+            DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER
+        );
+        backlog.close();
+    })
 }
 
 /// A stalled send fails via the send timeout, frees the worker, and lands
 /// in the persisted retry ladder through the failure channel.
-#[tokio::test]
+#[nuclei::test]
 async fn stalled_send_times_out_and_reports_push_failure() {
-    let backlog = PushBacklog::new(1024, usize::MAX, 1, 1);
+    let backlog = PushBacklog::new(1024, usize::MAX, 1, 1, edge::testing::edge());
     let transport = TestTransport::new(Vec::new()).with_stalled_peer("slow");
     let (context, mut failure_rx) =
         test_context(transport, Arc::clone(&backlog), Duration::from_millis(50));
-    let shutdown = SyncShutdownHandle::new(4);
+    let shutdown = SyncShutdownHandle::new(4, crate::network::test_network());
     spawn_push_workers(context, &shutdown);
 
     backlog.try_enqueue(job("slow", b"slow-1")).await;
 
-    let failure = n0_future::time::timeout(Duration::from_secs(5), failure_rx.recv())
+    let failure = crate::rt::time::timeout(Duration::from_secs(5), failure_rx.recv())
         .await
         .expect("timed-out push must report a failure")
         .expect("failure channel open");
     assert_eq!(failure.peer_id, "slow");
     assert_eq!(failure.doc_id, "doc-slow-736c6f772d31");
 
-    let deadline = n0_future::time::Instant::now() + Duration::from_secs(2);
+    let deadline = crate::rt::time::Instant::now() + Duration::from_secs(2);
     while backlog.snapshot().await.failed_total == 0 {
-        assert!(n0_future::time::Instant::now() < deadline);
-        n0_future::time::sleep(Duration::from_millis(5)).await;
+        assert!(crate::rt::time::Instant::now() < deadline);
+        crate::rt::time::sleep(Duration::from_millis(5)).await;
     }
     assert_eq!(backlog.snapshot().await.active_jobs, 0);
     backlog.close();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn capacity_nack_demotes_queued_peer_work_to_persisted_retry() {
-    let backlog = PushBacklog::new(64, usize::MAX, 1, 1);
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
     let capacity_nack = crate::error::Error::PendingDagCapacity { max: 1 }
         .backpressure_reply_message()
         .expect("capacity error maps to the capacity sentinel");
@@ -225,7 +373,7 @@ async fn capacity_nack_demotes_queued_peer_work_to_persisted_retry() {
     assert_eq!(completion, JobCompletion::Failed);
     let mut failed_docs = Vec::new();
     for _ in 0..expected_docs.len() {
-        let failure = n0_future::time::timeout(Duration::from_secs(1), failure_rx.recv())
+        let failure = crate::rt::time::timeout(Duration::from_secs(1), failure_rx.recv())
             .await
             .expect("capacity failure must reach the retry recorder")
             .expect("failure channel open");
@@ -242,9 +390,9 @@ async fn capacity_nack_demotes_queued_peer_work_to_persisted_retry() {
     backlog.close();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn retry_after_rate_nack_parks_live_peer_and_hands_off_queued_hints() {
-    let backlog = PushBacklog::new(64, usize::MAX, 1, 1);
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
     let mut reply =
         crate::message::PushLogReply::error("limited", crate::error::RATE_LIMITED_MESSAGE);
     reply.retry_after_ms = Some(45_000);
@@ -267,11 +415,11 @@ async fn retry_after_rate_nack_parks_live_peer_and_hands_off_queued_hints() {
     backlog.close();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn head_hint_signing_failure_sends_no_dependency_pushlogs() {
     use defra_core::{Block, CompositeDeltaPayload, CrdtDelta};
 
-    let backlog = PushBacklog::new(1024, usize::MAX, 1, 1);
+    let backlog = PushBacklog::new(1024, usize::MAX, 1, 1, edge::testing::edge());
     let transport = TestTransport::new(Vec::new()).with_sign_failures(1);
     let (context, mut failure_rx) = test_context(
         transport.clone(),
@@ -316,11 +464,11 @@ async fn head_hint_signing_failure_sends_no_dependency_pushlogs() {
 
 /// A root-only push installs its bounded root capability before sending. The
 /// CAR handler validates requested linked CIDs against that root on demand.
-#[tokio::test]
+#[nuclei::test]
 async fn root_only_push_installs_receiver_pull_authority() {
     use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink};
 
-    let backlog = PushBacklog::new(1024, usize::MAX, 1, 1);
+    let backlog = PushBacklog::new(1024, usize::MAX, 1, 1, edge::testing::edge());
     let transport = TestTransport::new(Vec::new());
     let (context, _failure_rx) = test_context(
         transport.clone(),
@@ -379,7 +527,7 @@ struct OwnershipArm {
 async fn run_ownership_arm(expand_dag: bool) -> OwnershipArm {
     use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload};
 
-    let backlog = PushBacklog::new(8, usize::MAX, 1, 1);
+    let backlog = PushBacklog::new(8, usize::MAX, 1, 1, edge::testing::edge());
     let transport = TestTransport::new(Vec::new());
     let (context, _failure_rx) = test_context(
         transport.clone(),
@@ -465,7 +613,7 @@ async fn run_ownership_arm(expand_dag: bool) -> OwnershipArm {
 /// composite head and preserves rooted CAR authority. Receiver convergence is
 /// covered separately by
 /// `ownership_ab_full_dag_amplifies_admission_and_requires_sender_retry`.
-#[tokio::test]
+#[nuclei::test]
 async fn delivery_shape_full_dag_vs_head_hint_only() {
     let full_dag = run_ownership_arm(true).await;
     let head_hint = run_ownership_arm(false).await;
@@ -483,9 +631,9 @@ async fn delivery_shape_full_dag_vs_head_hint_only() {
     assert!(head_hint.child_car_authorized);
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn superseded_active_failure_never_enters_persisted_retry() {
-    let backlog = PushBacklog::new(1024, usize::MAX, 1, 1);
+    let backlog = PushBacklog::new(1024, usize::MAX, 1, 1, edge::testing::edge());
     let transport = TestTransport::new(vec![
         crate::message::PushLogReply::error("old", "rejected"),
         crate::message::PushLogReply::success("new"),
@@ -496,21 +644,21 @@ async fn superseded_active_failure_never_enters_persisted_retry() {
         Arc::clone(&backlog),
         Duration::from_secs(1),
     );
-    let shutdown = SyncShutdownHandle::new(4);
+    let shutdown = SyncShutdownHandle::new(4, crate::network::test_network());
     spawn_push_workers(context, &shutdown);
 
     backlog.try_enqueue(versioned_job("peer", 1)).await;
-    let deadline = n0_future::time::Instant::now() + Duration::from_secs(1);
+    let deadline = crate::rt::time::Instant::now() + Duration::from_secs(1);
     while transport.sent().is_empty() {
-        assert!(n0_future::time::Instant::now() < deadline);
-        n0_future::time::sleep(Duration::from_millis(2)).await;
+        assert!(crate::rt::time::Instant::now() < deadline);
+        crate::rt::time::sleep(Duration::from_millis(2)).await;
     }
     backlog.try_enqueue(versioned_job("peer", 2)).await;
 
-    let deadline = n0_future::time::Instant::now() + Duration::from_secs(2);
+    let deadline = crate::rt::time::Instant::now() + Duration::from_secs(2);
     while backlog.snapshot().await.completed_total < 1 {
-        assert!(n0_future::time::Instant::now() < deadline);
-        n0_future::time::sleep(Duration::from_millis(5)).await;
+        assert!(crate::rt::time::Instant::now() < deadline);
+        crate::rt::time::sleep(Duration::from_millis(5)).await;
     }
     let events: Vec<_> = std::iter::from_fn(|| failure_rx.try_recv().ok()).collect();
     assert!(events.iter().any(|event| !event.create_retry));
@@ -519,11 +667,48 @@ async fn superseded_active_failure_never_enters_persisted_retry() {
     backlog.close();
 }
 
+/// A push the peer acknowledged after a newer head replaced it is retired, and
+/// its acknowledgement still reaches the recorder with the generation that
+/// fences it, so the peer's retry clock sees the delivery.
+#[nuclei::test]
+async fn superseded_acknowledged_push_reports_its_delivery() {
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
+    let transport = TestTransport::new(Vec::new()).with_send_delay(Duration::from_millis(50));
+    let (context, mut failures) =
+        test_context(transport.clone(), backlog.clone(), Duration::from_secs(1));
+    let mut older = versioned_job("peer", 1);
+    older.marker_generation = Some(7);
+    backlog.try_enqueue(older).await;
+    let active = backlog.next_job().await.unwrap();
+    let push = {
+        let (context, active) = (Arc::clone(&context), active.clone());
+        crate::rt::spawn(async move { run_push_job(&context, &active).await })
+    };
+    let deadline = crate::rt::time::Instant::now() + Duration::from_secs(1);
+    while transport.sent().is_empty() {
+        assert!(crate::rt::time::Instant::now() < deadline);
+        crate::rt::time::sleep(Duration::from_millis(2)).await;
+    }
+    let mut newer = versioned_job("peer", 2);
+    newer.marker_generation = Some(8);
+    backlog.try_enqueue(newer).await;
+
+    assert_eq!(push.join().await.unwrap(), JobCompletion::Retired);
+    let reported = crate::rt::time::timeout(Duration::from_secs(1), failures.recv())
+        .await
+        .expect("the superseded acknowledgement never reached the recorder")
+        .unwrap();
+    assert!(reported.acknowledged);
+    assert_eq!(reported.marker_generation, Some(7));
+    backlog.job_done(&active, JobCompletion::Retired).await;
+    backlog.close();
+}
+
 /// The rejection-to-retry handoff must be lossless: a full failure
 /// channel applies backpressure instead of dropping the retry record.
-#[tokio::test]
+#[nuclei::test]
 async fn report_push_failure_backpressures_instead_of_dropping() {
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<PushFailure>(1);
+    let (tx, mut rx) = crate::rt::mpsc::channel::<PushFailure>(1);
     tx.send(PushFailure {
         peer_id: "occupant".to_string(),
         doc_id: "occupant-doc".to_string(),
@@ -545,7 +730,7 @@ async fn report_push_failure_backpressures_instead_of_dropping() {
     let peer = PeerId::new("slow".to_string());
     let reporter = {
         let slot = Arc::clone(&slot);
-        n0_future::task::spawn(async move {
+        crate::rt::spawn(async move {
             report_push_failure(
                 &slot,
                 &peer,
@@ -559,29 +744,29 @@ async fn report_push_failure_backpressures_instead_of_dropping() {
     };
 
     // Channel full: the reporter must wait, not drop.
-    n0_future::time::sleep(Duration::from_millis(50)).await;
+    crate::rt::time::sleep(Duration::from_millis(50)).await;
     assert!(
         !reporter.is_finished(),
         "reporter must block on a full channel"
     );
 
     assert_eq!(rx.recv().await.unwrap().doc_id, "occupant-doc");
-    let mut delivered = n0_future::time::timeout(Duration::from_secs(2), rx.recv())
+    let mut delivered = crate::rt::time::timeout(Duration::from_secs(2), rx.recv())
         .await
         .expect("failure must be delivered once capacity frees")
         .unwrap();
     assert_eq!(delivered.doc_id, "doc-slow");
     delivered.durable_tx.take().unwrap().send(Some(1)).unwrap();
-    reporter.await.unwrap();
+    reporter.join().await.unwrap();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn collection_commit_failure_enters_the_retry_channel_with_its_cid() {
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<PushFailure>(1);
+    let (tx, mut rx) = crate::rt::mpsc::channel::<PushFailure>(1);
     let slot = Arc::new(AtomOption::some(tx));
     let cid = Cid::new_v1(0x55, Code::Sha2_256.digest(b"collection-commit"));
 
-    let reporter = tokio::spawn(async move {
+    let reporter = crate::rt::spawn(async move {
         report_push_failure(
             &slot,
             &PeerId::new("peer".to_string()),
@@ -602,14 +787,14 @@ async fn collection_commit_failure_enters_the_retry_channel_with_its_cid() {
     assert_eq!(failure.cid, cid.to_string());
     assert!(failure.create_retry);
     failure.durable_tx.take().unwrap().send(Some(1)).unwrap();
-    reporter.await.unwrap();
+    reporter.join().await.unwrap();
 }
 
 /// A doc-less failure with no CID has nothing to replay and is still
 /// dropped (the versionless SE-artifact path).
-#[tokio::test]
+#[nuclei::test]
 async fn versionless_collection_failure_is_not_recorded() {
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<PushFailure>(1);
+    let (tx, mut rx) = crate::rt::mpsc::channel::<PushFailure>(1);
     let slot = Arc::new(AtomOption::some(tx));
 
     report_push_failure(
@@ -627,18 +812,18 @@ async fn versionless_collection_failure_is_not_recorded() {
 
 /// Workers exit promptly when the backlog closes; the worker handles are
 /// the only retained push handles.
-#[tokio::test]
+#[nuclei::test]
 async fn workers_exit_on_close() {
-    let backlog = PushBacklog::new(1024, usize::MAX, 4, 3);
+    let backlog = PushBacklog::new(1024, usize::MAX, 4, 3, edge::testing::edge());
     let transport = TestTransport::new(Vec::new());
     let (context, _failure_rx) =
         test_context(transport, Arc::clone(&backlog), Duration::from_secs(1));
-    let shutdown = SyncShutdownHandle::new(4);
+    let shutdown = SyncShutdownHandle::new(4, crate::network::test_network());
     spawn_push_workers(context, &shutdown);
     assert_eq!(shutdown.retained_task_count(), 3);
 
     backlog.close();
-    let started = n0_future::time::Instant::now();
+    let started = crate::rt::time::Instant::now();
     shutdown.shutdown().await;
     assert!(started.elapsed() < Duration::from_secs(1));
 }
@@ -654,9 +839,9 @@ fn heads_pushed(
         .unwrap_or_default()
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn acknowledged_push_records_head_acked() {
-    let backlog = PushBacklog::new(64, usize::MAX, 1, 1);
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
     let (context, _failures) = test_context(
         TestTransport::new(Vec::new()),
         backlog.clone(),
@@ -676,9 +861,9 @@ async fn acknowledged_push_records_head_acked() {
     backlog.close();
 }
 
-#[tokio::test]
+#[nuclei::test]
 async fn rejected_push_records_the_peer_error() {
-    let backlog = PushBacklog::new(64, usize::MAX, 1, 1);
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1, edge::testing::edge());
     let reply = crate::message::PushLogReply::error("rejected", "merge failed");
     let (context, _failures) = test_context(
         TestTransport::new(vec![reply]),

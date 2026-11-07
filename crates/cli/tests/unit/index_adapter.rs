@@ -26,7 +26,7 @@ async fn datastore_keys(db: &db::DB<storage::RegolithStore>) -> BTreeSet<Vec<u8>
 
 /// Dropping an index removes its entries from the datastore, where they are
 /// written, for an ordered and a vector index alike.
-#[tokio::test]
+#[nuclei::test]
 async fn delete_index_removes_its_entries() {
     let db = Arc::new(db::DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap());
     db.create_collections_atomic(

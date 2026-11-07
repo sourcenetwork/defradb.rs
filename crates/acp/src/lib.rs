@@ -35,6 +35,7 @@ pub mod nac;
 pub mod pending;
 mod permission;
 mod policy_cache;
+mod policy_lookup;
 // Both persistent stores require `S: Store + Send + Sync`, which the wasm
 // LevelDB store cannot satisfy, so they are native-only.
 #[cfg(not(target_arch = "wasm32"))]
@@ -57,6 +58,7 @@ pub use pending::{PendingRegistration, PendingRegistrations};
 pub use permission::DocumentPermission;
 #[cfg(not(target_arch = "wasm32"))]
 pub use persistent::PersistentAcpStore;
+pub use policy_lookup::{LightClientStatus, PolicyLookup, RemotePolicies, StorePolicies};
 pub use read_access::{check_doc_read_access, DirectChecker, DocAccess, ObjectAccessChecker};
 pub use relation::{
     RelationTuple, DELETER_RELATION, OWNER_RELATION, READER_RELATION, UPDATER_RELATION,
@@ -69,6 +71,7 @@ pub use validation::{validate_resource_interface, REQUIRED_DOCUMENT_PERMISSIONS}
 pub use zanzibar::PersistentZanzibarStore;
 pub use zanzibar::ZanzibarDocumentACP;
 
+pub use ::zanzibar::store::{ScopeAttempt, ScopeOutcome, ScopeValue};
 pub use ::zanzibar::{
     EvaluationStep, EvaluationTrace, MemoryZanzibarStore, PermissionCheckRequest, PermissionEngine,
     PermissionExplanation, Policy, Relation, RelationExpression, Relationship, Resource,

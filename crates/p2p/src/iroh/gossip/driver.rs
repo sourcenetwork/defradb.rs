@@ -10,16 +10,18 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
+use crate::rt::time::GossipInstant as Instant;
 use bytes::Bytes;
+use futures::FutureExt;
 use iroh::endpoint::{Connection, RecvStream};
 use iroh::EndpointId;
 use iroh_gossip::proto::util::TimerMap;
 use iroh_gossip::proto::{self, Command, Event, InEvent, OutEvent, PeerData, Scope, TopicId};
-use n0_future::time::{Duration, Instant};
 use rand::rngs::StdRng;
 use rand::seq::IteratorRandom;
 use rand::SeedableRng;
 use rapidhash::{HashMapExt, RapidHashMap};
+use std::time::Duration;
 use tracing::debug;
 
 use crate::error::{Error, Result};
@@ -171,15 +173,15 @@ where
         loop {
             handled = (handled + 1) % INPUTS_PER_SLICE;
             if handled == 0 {
-                tokio::task::yield_now().await;
+                crate::rt::yield_now().await;
             }
             let wake_at = self.next_deadline();
-            let input = tokio::select! {
-                input = inbox.next() => match input {
+            let input = futures::select! {
+                input = inbox.next().fuse() => match input {
                     Some(input) => Some(input),
                     None => break,
                 },
-                () = sleep_until(wake_at) => None,
+                () = sleep_until(wake_at).fuse() => None,
             };
             let outcome = match input {
                 Some(input) => self.on_input(input).await,
@@ -606,7 +608,9 @@ fn peer_data(addr: &AddrInfo) -> PeerData {
 
 async fn sleep_until(deadline: Option<Instant>) {
     match deadline {
-        Some(deadline) => n0_future::time::sleep_until(deadline).await,
+        Some(deadline) => {
+            crate::rt::time::sleep(deadline.saturating_duration_since(Instant::now())).await
+        }
         None => std::future::pending().await,
     }
 }

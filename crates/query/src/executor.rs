@@ -73,6 +73,12 @@ pub struct QueryRequest {
     /// The request's context, built by the boundary that received it.
     #[serde(skip)]
     pub context: RequestContext,
+
+    /// The operation as typed structs, for a core caller that builds it
+    /// instead of writing GraphQL text: it is run as parsed, and `query` is
+    /// not read.
+    #[serde(skip)]
+    pub parsed: Option<std::sync::Arc<crate::query_parse::ParsedOperation>>,
 }
 
 impl QueryRequest {
@@ -84,6 +90,34 @@ impl QueryRequest {
             variables: None,
             identity: None,
             context: RequestContext::default(),
+            parsed: None,
+        }
+    }
+
+    /// A request for an operation already built as typed structs. It takes
+    /// the same preparation, checks and write path as one parsed from text.
+    pub fn parsed(operation: crate::query_parse::ParsedOperation) -> Self {
+        Self {
+            parsed: Some(std::sync::Arc::new(operation)),
+            ..Self::new(String::new())
+        }
+    }
+
+    /// The operation this request names: the typed one it carries, or its
+    /// text parsed under `limits`.
+    pub(crate) fn operation(
+        &self,
+        variables: Option<&rapidhash::RapidHashMap<String, JsonValue>>,
+        limits: crate::QueryLimits,
+    ) -> Result<crate::query_parse::ParsedOperation> {
+        match &self.parsed {
+            Some(parsed) => Ok((**parsed).clone()),
+            None => crate::query_parse::parse_request_with_limits(
+                &self.query,
+                variables,
+                self.operation_name.as_deref(),
+                limits,
+            ),
         }
     }
 
@@ -542,6 +576,250 @@ pub trait QueryExecutor: MaybeSendSync {
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
         context.mirror(self.discard_txn(handle)).await
+    }
+
+    /// [`TransactionRegistry::add_collection_as`](crate::txn::TransactionRegistry::add_collection_as).
+    async fn add_collection_as(
+        &self,
+        context: &RequestContext,
+        sdl: &str,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        let _ = (context, sdl);
+        Err(TransactionError::not_supported(
+            "transaction-scoped schema changes are not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::get_collections_as`](crate::txn::TransactionRegistry::get_collections_as).
+    async fn get_collections_as(
+        &self,
+        context: &RequestContext,
+        selector: &schema::CollectionSelector,
+    ) -> std::result::Result<Vec<schema::CollectionVersion>, TransactionError> {
+        let _ = (context, selector);
+        Err(TransactionError::not_supported(
+            "this collection operation is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::patch_collection_as`](crate::txn::TransactionRegistry::patch_collection_as).
+    async fn patch_collection_as(
+        &self,
+        context: &RequestContext,
+        patch: &str,
+        migration: Option<lens::LensConfig>,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, patch, migration);
+        Err(TransactionError::not_supported(
+            "this collection operation is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::set_active_collection_version_as`](crate::txn::TransactionRegistry::set_active_collection_version_as).
+    async fn set_active_collection_version_as(
+        &self,
+        context: &RequestContext,
+        version_id: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, version_id);
+        Err(TransactionError::not_supported(
+            "this collection operation is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::truncate_collection_as`](crate::txn::TransactionRegistry::truncate_collection_as).
+    async fn truncate_collection_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        filter: Option<&crate::documents::Filter>,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, name, filter);
+        Err(TransactionError::not_supported(
+            "this collection operation is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::add_dac_policy_as`](crate::txn::TransactionRegistry::add_dac_policy_as).
+    async fn add_dac_policy_as(
+        &self,
+        context: &RequestContext,
+        policy: &str,
+    ) -> std::result::Result<String, TransactionError> {
+        let _ = (context, policy);
+        Err(TransactionError::not_supported(
+            "DAC policies are not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::list_dac_policies_as`](crate::txn::TransactionRegistry::list_dac_policies_as).
+    async fn list_dac_policies_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<acp::Policy>, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "DAC policies are not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::get_dac_policy_as`](crate::txn::TransactionRegistry::get_dac_policy_as).
+    async fn get_dac_policy_as(
+        &self,
+        context: &RequestContext,
+        policy_id: &str,
+    ) -> std::result::Result<Option<acp::Policy>, TransactionError> {
+        let _ = (context, policy_id);
+        Err(TransactionError::not_supported(
+            "DAC policies are not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::acp_light_client_status_as`](crate::txn::TransactionRegistry::acp_light_client_status_as).
+    async fn acp_light_client_status_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<acp::LightClientStatus, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "DAC policies are not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::nac_status_as`](crate::txn::TransactionRegistry::nac_status_as).
+    async fn nac_status_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<acp::nac::NacStatus, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "node access control is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::disable_nac_as`](crate::txn::TransactionRegistry::disable_nac_as).
+    async fn disable_nac_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "node access control is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::re_enable_nac_as`](crate::txn::TransactionRegistry::re_enable_nac_as).
+    async fn re_enable_nac_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "node access control is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::add_nac_actor_relationship_as`](crate::txn::TransactionRegistry::add_nac_actor_relationship_as).
+    async fn add_nac_actor_relationship_as(
+        &self,
+        context: &RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        let _ = (context, relation, target_actor);
+        Err(TransactionError::not_supported(
+            "node access control is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::delete_nac_actor_relationship_as`](crate::txn::TransactionRegistry::delete_nac_actor_relationship_as).
+    async fn delete_nac_actor_relationship_as(
+        &self,
+        context: &RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        let _ = (context, relation, target_actor);
+        Err(TransactionError::not_supported(
+            "node access control is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::set_migration_as`](crate::txn::TransactionRegistry::set_migration_as).
+    async fn set_migration_as(
+        &self,
+        context: &RequestContext,
+        config: &str,
+    ) -> std::result::Result<String, TransactionError> {
+        let _ = (context, config);
+        Err(TransactionError::not_supported(
+            "transaction-scoped migrations are not supported by this executor",
+        ))
+    }
+
+    /// Register the standalone lens `config` in the transaction `context` carries; the transform ID.
+    async fn add_lens_as(
+        &self,
+        context: &RequestContext,
+        config: lens::LensConfig,
+    ) -> std::result::Result<String, TransactionError> {
+        let _ = (context, config);
+        Err(TransactionError::not_supported(
+            "this transaction operation is not supported by this executor",
+        ))
+    }
+
+    /// The lenses the transaction `context` carries sees, as the JSON map from transform ID to module.
+    async fn list_lenses_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<String, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "this transaction operation is not supported by this executor",
+        ))
+    }
+
+    /// Delete the collections `targets` names in the transaction `context` carries.
+    async fn delete_collections_as(
+        &self,
+        context: &RequestContext,
+        targets: Vec<String>,
+        active_only: bool,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, targets, active_only);
+        Err(TransactionError::not_supported(
+            "this transaction operation is not supported by this executor",
+        ))
+    }
+
+    /// Set whether collection version `version_id` is active, in the transaction `context` carries.
+    async fn set_collection_active_as(
+        &self,
+        context: &RequestContext,
+        version_id: &str,
+        is_active: bool,
+    ) -> std::result::Result<schema::CollectionVersion, TransactionError> {
+        let _ = (context, version_id, is_active);
+        Err(TransactionError::not_supported(
+            "this transaction operation is not supported by this executor",
+        ))
+    }
+
+    /// Verify the signature of block `cid` against `public_key` in the transaction `context` carries. `key_type` is `ed25519`, `secp256k1` or `secp256r1`.
+    async fn verify_block_signature_as(
+        &self,
+        context: &RequestContext,
+        document_acp: std::sync::Arc<dyn acp::DocumentACP>,
+        cid: &str,
+        public_key: &str,
+        key_type: &str,
+        caller: &acp::Identity,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, document_acp, cid, public_key, key_type, caller);
+        Err(TransactionError::not_supported(
+            "this transaction operation is not supported by this executor",
+        ))
     }
 
     /// Remove an abandoned transaction without committing or spawning cleanup.

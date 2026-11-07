@@ -1,12 +1,16 @@
 //! The sender scope of a document head, and which head of a scope is current.
 //!
-//! A peer announces heads of a document (or a collection) one after another,
-//! each with a monotonic priority. Within one sender scope (the announcing
-//! peer, the collection and the document) a newer head carries every older
-//! one forward, so the receiver keeps one obligation per scope: the current
-//! head. A head with no sender or no priority belongs to no scope and is
-//! independent of every other. The in-memory pending registry and the
-//! durable registrations decide with the one rule here.
+//! A peer announces heads of a document (or a collection) one after another.
+//! Within one sender scope (the announcing peer, the collection and the
+//! document) the receiver remembers a current head, the newest by (priority,
+//! CID). A head retires the current head only when it links it as a parent,
+//! so fetching the new head fetches the old one. A version order alone proves
+//! nothing: heads written concurrently on different peers reach a hub as
+//! siblings, and the hub forwards both under its own ID. Neither links the
+//! other, so each keeps its own obligation. A head with no sender or no
+//! priority belongs to no scope and is independent of every other. The
+//! in-memory pending registry and the durable registrations decide with the
+//! one rule here.
 
 use cid::Cid;
 
@@ -30,11 +34,10 @@ pub(crate) struct HeadVersion {
 pub(crate) enum ScopeDecision {
     /// It belongs to no scope.
     Independent,
-    /// It is the current head, or the scope has none.
+    /// It is the current head, the scope has none, or it does not link the
+    /// current head: it keeps its own obligation and retires nothing.
     Current,
-    /// A newer or equal head is current.
-    CoveredByCurrent,
-    /// It is newer than the current head, which it retires.
+    /// It links the current head as a parent, and retires it.
     Supersedes(Cid),
 }
 
@@ -95,28 +98,24 @@ impl HeadVersion {
 }
 
 impl ScopeDecision {
-    /// The decision for a head at `version` when the scope's current head is
-    /// `current`.
-    pub(crate) fn of(version: HeadVersion, current: Option<HeadVersion>) -> Self {
+    /// The decision for a head at `version`, linking `parents`, when the
+    /// scope's current head is `current`.
+    pub(crate) fn of(version: HeadVersion, parents: &[Cid], current: Option<HeadVersion>) -> Self {
         match current {
-            None => Self::Current,
-            Some(current) if current.cid == version.cid => Self::Current,
-            Some(current) if version <= current => Self::CoveredByCurrent,
-            Some(current) => Self::Supersedes(current.cid),
+            Some(current) if current.cid != version.cid && parents.contains(&current.cid) => {
+                Self::Supersedes(current.cid)
+            }
+            _ => Self::Current,
         }
     }
 
-    /// Whether the scope has a current head and `version` is it or newer.
+    /// Whether the scope has a current head and `version` is it or links it.
     pub(crate) fn refreshes_or_supersedes(
         version: HeadVersion,
+        parents: &[Cid],
         current: Option<HeadVersion>,
     ) -> bool {
-        current.is_some_and(|current| current.cid == version.cid || version > current)
-    }
-
-    /// Whether another head of the scope, newer or equal, is current.
-    pub(crate) fn covered(version: HeadVersion, current: Option<HeadVersion>) -> bool {
-        matches!(Self::of(version, current), Self::CoveredByCurrent)
+        current.is_some_and(|current| current.cid == version.cid || parents.contains(&current.cid))
     }
 }
 
@@ -144,25 +143,53 @@ mod tests {
     }
 
     #[test]
-    fn the_newest_head_of_a_scope_is_current() {
+    fn a_head_retires_only_the_current_head_it_links() {
         let old = version(1, b"old");
         let new = version(2, b"new");
-        assert_eq!(ScopeDecision::of(new, None), ScopeDecision::Current);
-        assert_eq!(ScopeDecision::of(new, Some(new)), ScopeDecision::Current);
+        assert_eq!(ScopeDecision::of(new, &[], None), ScopeDecision::Current);
         assert_eq!(
-            ScopeDecision::of(new, Some(old)),
+            ScopeDecision::of(new, &[old.cid], Some(new)),
+            ScopeDecision::Current
+        );
+        assert_eq!(
+            ScopeDecision::of(new, &[old.cid], Some(old)),
             ScopeDecision::Supersedes(old.cid)
         );
         assert_eq!(
-            ScopeDecision::of(old, Some(new)),
-            ScopeDecision::CoveredByCurrent
+            ScopeDecision::of(old, &[], Some(new)),
+            ScopeDecision::Current
         );
-        assert!(ScopeDecision::covered(old, Some(new)));
-        assert!(!ScopeDecision::covered(new, Some(new)));
-        assert!(ScopeDecision::refreshes_or_supersedes(new, Some(new)));
-        assert!(ScopeDecision::refreshes_or_supersedes(new, Some(old)));
-        assert!(!ScopeDecision::refreshes_or_supersedes(old, Some(new)));
-        assert!(!ScopeDecision::refreshes_or_supersedes(new, None));
+        assert!(ScopeDecision::refreshes_or_supersedes(new, &[], Some(new)));
+        assert!(ScopeDecision::refreshes_or_supersedes(
+            new,
+            &[old.cid],
+            Some(old)
+        ));
+        assert!(!ScopeDecision::refreshes_or_supersedes(old, &[], Some(new)));
+        assert!(!ScopeDecision::refreshes_or_supersedes(
+            new,
+            &[old.cid],
+            None
+        ));
+    }
+
+    #[test]
+    fn a_sibling_neither_retires_nor_is_covered_whatever_its_version() {
+        let base = version(1, b"base");
+        let left = version(2, b"left");
+        let right = version(2, b"right");
+        let higher = version(3, b"higher");
+        for (head, current) in [(left, right), (right, left), (higher, left), (left, higher)] {
+            assert_eq!(
+                ScopeDecision::of(head, &[base.cid], Some(current)),
+                ScopeDecision::Current
+            );
+            assert!(!ScopeDecision::refreshes_or_supersedes(
+                head,
+                &[base.cid],
+                Some(current)
+            ));
+        }
     }
 
     #[test]

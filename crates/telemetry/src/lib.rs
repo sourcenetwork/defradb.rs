@@ -20,6 +20,8 @@ mod engine_tickers;
 mod handle;
 mod metrics;
 #[cfg(feature = "otlp")]
+mod transport;
+#[cfg(feature = "otlp")]
 mod util;
 
 pub use config::TelemetryConfig;

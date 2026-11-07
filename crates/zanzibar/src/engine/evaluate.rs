@@ -14,8 +14,8 @@ use crate::types::Subject;
 ///
 /// A result is *tainted* when it depended on a cycle truncation (a node revisited
 /// on the current trail, evaluated as `false`). Such a result is only valid for
-/// the trail that produced it — the same node reached via a different trail can
-/// resolve differently — so a tainted result must NOT be memoized in the
+/// the trail that produced it (the same node reached via a different trail can
+/// resolve differently), so a tainted result must NOT be memoized in the
 /// trail-independent [`CheckCache`].
 type Eval = (bool, bool);
 
