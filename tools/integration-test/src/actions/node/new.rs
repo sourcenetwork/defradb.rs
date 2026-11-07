@@ -72,6 +72,9 @@ impl Op for NewNode {
         probe.expected_error = None;
         probe.network = false;
         probe.database_dir = None;
+        // Without a key type the node generates its own key; the corpus's key
+        // types stay unsupported.
+        probe.enable_signing = false;
         if probe != Self::default() {
             let options = serde_json::to_string(&probe).unwrap_or_default();
             return Err(Failure::unsupported(format!("{} {options}", Self::name())));
@@ -86,6 +89,7 @@ impl Op for NewNode {
             network: self.network,
             dir,
             listen: Vec::new(),
+            signing: self.enable_signing,
         };
         state.start_node(self.common.node(), spec);
         Ok(json!({}))

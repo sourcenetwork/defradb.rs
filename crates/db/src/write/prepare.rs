@@ -519,6 +519,12 @@ impl<S: Store + 'static> crate::AutoCommitMutator<S> {
         mut modified_fields: Option<RapidHashSet<String>>,
     ) -> query::error::Result<Document> {
         let collection = self.get_collection_or_err(collection_name)?;
+        // Refuse before any key is minted or block signed for it.
+        crate::chunk::user_writes::refuse_list_writes(
+            collection.schema(),
+            &doc,
+            modified_fields.as_ref(),
+        )?;
         let generated_embeddings = if let Some(fields) = modified_fields.as_mut() {
             let generated = crate::search::embedding::set_embedding_with(
                 self.db.remote_inputs().embeddings(),
@@ -620,9 +626,22 @@ impl<S: Store + 'static> crate::AutoCommitMutator<S> {
                     .map_err(|e| query::error::QueryError::execution(e.to_string()))?,
             )
         };
+        // Sign a create with the chunk lists its attempt adds.
+        let mut with_lists = (modified_fields.is_none()
+            && !collection.schema().chunked_fields.is_empty())
+        .then(|| doc.clone());
+        if let Some(written) = with_lists.as_mut() {
+            crate::chunk::sync::set_lists(
+                collection.schema(),
+                written,
+                None,
+                context.encryption(),
+            )?;
+        }
+        let written = with_lists.as_mut().unwrap_or(&mut doc);
         prepare_keys_with_stores(
             &self.db,
-            &mut doc,
+            written,
             identity,
             modified_fields.as_ref(),
             context.encryption(),
@@ -631,14 +650,14 @@ impl<S: Store + 'static> crate::AutoCommitMutator<S> {
         )
         .await?;
 
-        let preparation = match doc.write_preparation() {
+        let preparation = match written.write_preparation() {
             Some(preparation) => Arc::clone(preparation),
             None => {
                 let preparation = Arc::new(WritePreparation::new(
                     identity.collection_short_id,
                     identity.doc_short_id,
                 ));
-                doc.set_write_preparation(Arc::clone(&preparation));
+                written.set_write_preparation(Arc::clone(&preparation));
                 preparation
             }
         };
@@ -646,7 +665,7 @@ impl<S: Store + 'static> crate::AutoCommitMutator<S> {
             if let Some(signing_config) = signing_config {
                 let blocks = crate::block::builder::compute_document_blocks(
                     collection.crdts(),
-                    &doc,
+                    written,
                     collection.schema(),
                     identity,
                     context.encryption(),
@@ -662,8 +681,14 @@ impl<S: Store + 'static> crate::AutoCommitMutator<S> {
                     collection_version_id: collection.version_id().to_string(),
                     computed: blocks,
                 }));
-                doc.set_write_preparation(Arc::new(write));
+                written.set_write_preparation(Arc::new(write));
             }
+        }
+        if let Some(preparation) = with_lists
+            .as_ref()
+            .and_then(|written| written.write_preparation())
+        {
+            doc.set_write_preparation(Arc::clone(preparation));
         }
         Ok(doc)
     }

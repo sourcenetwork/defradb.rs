@@ -35,4 +35,5 @@ mod write_document_api;
 mod write_edit_locality;
 mod write_graphql;
 mod write_revert;
+mod write_signed;
 mod write_transaction;

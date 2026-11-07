@@ -6,6 +6,7 @@ mod common;
 mod acp_merge_handler;
 mod acp_protected_update;
 mod broadcast_mutator_broadcast;
+mod chunk_before_parent;
 mod chunk_definition;
 mod chunk_forged;
 mod collection_block_links;

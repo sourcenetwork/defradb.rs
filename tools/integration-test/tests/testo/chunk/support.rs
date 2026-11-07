@@ -61,6 +61,22 @@ pub fn add_article_on(body: &str, capture: &str, node: Option<&str>) -> Actions 
     .into()
 }
 
+/// Updates the body of the article named `capture` through GraphQL.
+pub fn update_article(capture: &str, body: &str) -> Actions {
+    Request {
+        request: Text::concat([
+            Text::from(r#"mutation { update_Article(docID: ""#),
+            Text::reference(capture),
+            Text::from(format!(
+                r#"", input: {{body: "{}"}}) {{ _docID }} }}"#,
+                gql(body)
+            )),
+        ]),
+        ..Default::default()
+    }
+    .into()
+}
+
 /// Reads the parent's chunk list, which holds the text's hash and then `n`
 /// chunk hashes, and names them `<prefix>0` to `<prefix><n>`.
 pub fn read_list(prefix: &str, n: usize, node: Option<&str>) -> Actions {
