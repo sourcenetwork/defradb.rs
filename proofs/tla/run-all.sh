@@ -781,24 +781,24 @@ run_model() {
   fi
 }
 
-fails=0; n=0
-pids=(); indices=()
-finish_batch() {
-  local index
-  for index in "${!pids[@]}"; do
-    if ! wait "${pids[$index]}"; then fails=$((fails+1)); fi
-    cat "$workdir/${indices[$index]}.result"
-  done
-  pids=(); indices=()
+run_indexed() {
+  local index="${1%% *}"
+  run_model "$index" "${1#* }" >"$workdir/$index.result" 2>&1 || touch "$workdir/$index.fail"
 }
+export workdir
+export -f run_model trace_verdict run_indexed
 
-for row in "${RUNS[@]}"; do
-  n=$((n+1))
-  run_model "$n" "$row" >"$workdir/$n.result" 2>&1 &
-  pids+=("$!"); indices+=("$n")
-  if [ "${#pids[@]}" -ge "$parallelism" ]; then finish_batch; fi
+# A rolling pool: a lane takes the next run as soon as its last one ends, so
+# one slow model never holds the other lanes idle the way a fixed batch did.
+n=${#RUNS[@]}
+for index in "${!RUNS[@]}"; do printf '%s %s\n' "$((index+1))" "${RUNS[$index]}"; done |
+  xargs -P "$parallelism" -I{} bash -c 'run_indexed "$1"' _ {}
+
+fails=0
+for ((index=1; index<=n; index++)); do
+  if [ ! -e "$workdir/$index.result" ] || [ -e "$workdir/$index.fail" ]; then fails=$((fails+1)); fi
+  cat "$workdir/$index.result" 2>/dev/null || echo "  FAIL run $index never ran: ${RUNS[$((index-1))]}"
 done
-if [ "${#pids[@]}" -gt 0 ]; then finish_batch; fi
 
 echo "----"
 if [ "$fails" -eq 0 ]; then echo "all $n TLA+ runs matched their expected verdict"; else echo "$fails/$n MISMATCHED"; fi
