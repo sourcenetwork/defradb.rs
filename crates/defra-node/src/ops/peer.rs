@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use acp::nac::NodePermission;
 use defra_core::RequestContext;
 use defra_p2p_adapter::peer::{self, Replicator};
 
@@ -159,6 +160,8 @@ impl Node {
         collection: &str,
         doc_ids: &[String],
     ) -> Result<()> {
+        self.check_access(context, NodePermission::P2pSyncDocuments)
+            .await?;
         let p2p = self.peer(context)?;
         let (collection, doc_ids) = (collection.to_owned(), doc_ids.to_vec());
         self.at_edge(async move { peer::sync_documents(&*p2p, &collection, &doc_ids).await })
@@ -172,6 +175,8 @@ impl Node {
         context: &RequestContext,
         version_ids: &[String],
     ) -> Result<()> {
+        self.check_access(context, NodePermission::P2pSyncCollectionVersions)
+            .await?;
         let (p2p, version_ids) = (self.peer(context)?, version_ids.to_vec());
         self.at_edge(async move { peer::sync_collection_versions(&*p2p, &version_ids).await })
             .await
@@ -184,9 +189,25 @@ impl Node {
         context: &RequestContext,
         collection_id: &str,
     ) -> Result<()> {
+        self.check_access(context, NodePermission::P2pSyncBranchableCollection)
+            .await?;
         let (p2p, collection_id) = (self.peer(context)?, collection_id.to_owned());
         self.at_edge(async move { peer::sync_branchable_collection(&*p2p, &collection_id).await })
             .await
+    }
+
+    /// Node access control for `permission`, which the sync operations
+    /// check themselves as Go's do.
+    async fn check_access(
+        &self,
+        context: &RequestContext,
+        permission: NodePermission,
+    ) -> Result<()> {
+        let (database, context) = (Arc::clone(self.database()), context.clone());
+        self.on_pool(move || async move {
+            Ok(database.check_node_access_as(&context, permission).await?)
+        })
+        .await
     }
 
     /// The P2P operations serving `context`, or Go's `ErrNoP2P`.

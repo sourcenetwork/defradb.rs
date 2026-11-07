@@ -156,7 +156,9 @@ impl SubscriptionRequest {
                 None,
             )
             .map_err(|e| Failure::operation(e.to_string()))?;
-            let response = state.block_on(node.execute_as(&open.context, &scoped));
+            let response = state
+                .block_on(node.execute_request_as(&open.context, query::QueryRequest::new(scoped)))
+                .map_err(|e| Failure::operation(e.to_string()))?;
             if response_has_data(&response) {
                 delivered.push(json!({ "data": response.data }));
             }

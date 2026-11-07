@@ -35,6 +35,13 @@ impl Op for ListIndexes {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
+        if self.txn.is_some() {
+            // The core reads and drops indexes outside any transaction yet.
+            return Err(Failure::unsupported(format!(
+                "{} argument txn",
+                Self::name()
+            )));
+        }
         let indexes = state
             .block_on(
                 state

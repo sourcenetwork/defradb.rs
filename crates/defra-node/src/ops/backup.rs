@@ -18,7 +18,7 @@ impl Node {
         pretty: bool,
     ) -> Result<String> {
         let (database, runner) = (Arc::clone(self.database()), Arc::clone(&self.runner));
-        let context = self.caller(context);
+        let context = context.clone();
         let collections = collections.to_vec();
         self.on_pool(move || async move {
             database
@@ -35,7 +35,7 @@ impl Node {
     /// get new document IDs, as Go's import gives them.
     pub async fn import_backup_as(&self, context: &RequestContext, data: &str) -> Result<()> {
         let (database, runner) = (Arc::clone(self.database()), Arc::clone(&self.runner));
-        let context = self.caller(context);
+        let context = context.clone();
         let data = data.to_owned();
         self.on_pool(move || async move {
             database

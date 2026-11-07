@@ -39,6 +39,9 @@ impl Node {
         let (collection, name) = (collection.to_owned(), name.map(str::to_owned));
         self.on_pool(move || async move {
             database
+                .check_node_access_as(&context, NodePermission::CollectionGet)
+                .await?;
+            database
                 .check_node_access_as(&context, NodePermission::IndexCreate)
                 .await?;
             let kind =
@@ -59,9 +62,12 @@ impl Node {
         collection: &str,
     ) -> Result<Vec<IndexListing>> {
         let database = Arc::clone(self.database());
-        let context = self.caller(context);
+        let context = context.clone();
         let name = collection.to_owned();
         self.on_pool(move || async move {
+            database
+                .check_node_access_as(&context, NodePermission::CollectionGet)
+                .await?;
             database
                 .check_node_access_as(&context, NodePermission::IndexList)
                 .await?;
@@ -96,7 +102,7 @@ impl Node {
     /// The actions running or ended with an error. Go's `ListActions`.
     pub async fn list_actions_as(&self, context: &RequestContext) -> Result<Vec<ActionExecution>> {
         let database = Arc::clone(self.database());
-        let context = self.caller(context);
+        let context = context.clone();
         self.on_pool(move || async move { Ok(database.list_actions_as(&context).await?) })
             .await
     }
@@ -110,13 +116,22 @@ impl Node {
         name: &str,
     ) -> Result<()> {
         let database = Arc::clone(self.database());
-        let context = self.caller(context);
+        let context = context.clone();
         let (collection, name) = (collection.to_owned(), name.to_owned());
         self.on_pool(move || async move {
             database
+                .check_node_access_as(&context, NodePermission::CollectionGet)
+                .await?;
+            database
                 .check_node_access_as(&context, NodePermission::IndexDelete)
                 .await?;
-            Ok(database.drop_index(&collection, &name).await?)
+            database
+                .drop_index(&collection, &name)
+                .await
+                .map_err(|error| match error {
+                    db::Error::IndexNotFound { index, .. } => Error::IndexNameMissing(index),
+                    other => Error::from(other),
+                })
         })
         .await
     }

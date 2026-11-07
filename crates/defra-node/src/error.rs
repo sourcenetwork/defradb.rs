@@ -486,6 +486,9 @@ pub enum Error {
     /// The field already has an encrypted index.
     #[error("encrypted index already exists on this field. Field: {0}")]
     EncryptedIndexExists(String),
+    /// No index has the name (Go: `NewErrIndexWithNameDoesNotExists`).
+    #[error("index with name doesn't exists. Name: {0}")]
+    IndexNameMissing(String),
     /// No encrypted index is on the field (Go: `ErrEncryptedIndexNotFound`).
     #[error("encrypted index does not exist on this field. Field: {0}")]
     EncryptedIndexMissing(String),

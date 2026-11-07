@@ -84,6 +84,18 @@ impl NewIndex {
     /// Fails on the arguments no client supports yet.
     fn check_arguments(&self) -> Result<(), Failure> {
         self.common.client_identity(Self::name_of())?;
+        let ordered_unique = self
+            .index
+            .ordered
+            .as_ref()
+            .and_then(|config| config.get("Unique"))
+            .and_then(serde_json::Value::as_bool);
+        if ordered_unique.is_some_and(|unique| unique != self.index.unique) && self.index.unique {
+            return Err(Failure::operation(
+                "index request sets both the deprecated unique field and an ordered config that disagree"
+                    .to_owned(),
+            ));
+        }
         if self.index.ordered.is_some() && self.index.vector.is_some() {
             return Err(Failure::operation(
                 "index request has more than one kind config".to_owned(),

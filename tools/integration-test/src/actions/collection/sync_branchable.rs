@@ -65,7 +65,7 @@ impl SyncBranchableCollection {
             .and_then(|index| self.collections.get(index))
             .ok_or_else(|| {
                 Failure::operation(format!(
-                    "no collection {} in {:?}",
+                    "index out of range: no collection {} in {:?}",
                     self.collection_index, self.collections
                 ))
             })?;

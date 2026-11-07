@@ -97,10 +97,9 @@ impl Op for NewNode {
         probe.key_type = None;
         probe.with_identity = false;
         probe.client_type = None;
-        // Rust nodes always run pubsub KMS and local document ACP, so these
-        // two only say what Go's harness sets up for them.
+        // Rust nodes always run pubsub KMS, so this only says what Go's
+        // harness sets up for them.
         probe.kms = false;
-        probe.is_document_acp_test = false;
         (probe.ttl_millis, probe.tick_millis, probe.buckets) = (None, None, None);
         if probe != Self::default() {
             let options = serde_json::to_string(&probe).unwrap_or_default();
