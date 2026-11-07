@@ -121,10 +121,8 @@ impl<S> ChunkWrites<'_, S>
 where
     S: Store + 'static,
 {
-    /// Creates the chunk documents in `plans` that don't exist yet. An existing
-    /// chunk is never rewritten, since the same hash means the same content.
-    /// A new parent can have some already: they may arrive by P2P before it.
-    /// A filtered replicator decides the chunks by `source`, the parent's document.
+    /// Creates the chunks in `plans` that don't exist yet; one that came by P2P
+    /// first is kept. A filtered peer decides them by `source`, the parent.
     pub(crate) async fn create_missing(
         &self,
         parent_doc_id: &str,
