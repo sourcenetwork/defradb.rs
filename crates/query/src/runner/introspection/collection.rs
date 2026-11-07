@@ -86,18 +86,17 @@ pub(super) fn build_collection_type(
             ));
         }
         for field in &collection.fields {
-            match &field.kind {
-                FieldKind::ScalarArray(_) | FieldKind::Relation { is_array: true, .. } => {
-                    count_args.push((
-                        field.name.clone(),
-                        InputValue::new(
-                            &field.name,
-                            TypeRef::named(format!("{}__{}__CountSelector", coll_name, field.name)),
-                        ),
-                    ));
+            let selector = match relation_target(&field.kind, id_to_name, coll_name) {
+                Some((target, true)) => format!("{target}__CountSelector"),
+                _ if matches!(field.kind, FieldKind::ScalarArray(_)) => {
+                    format!("{}__{}__CountSelector", coll_name, field.name)
                 }
-                _ => {}
-            }
+                _ => continue,
+            };
+            count_args.push((
+                field.name.clone(),
+                InputValue::new(&field.name, TypeRef::named(selector)),
+            ));
         }
         count_args.sort_by(|a, b| a.0.cmp(&b.0));
         let mut count_field = Field::new("COUNT", TypeRef::named_nn("Int"), |_| {
@@ -126,6 +125,15 @@ pub(super) fn build_collection_type(
             ),
         ));
         for field in &collection.fields {
+            if let Some((target, true)) = relation_target(&field.kind, id_to_name, coll_name) {
+                agg_args.push((
+                    field.name.clone(),
+                    InputValue::new(
+                        &field.name,
+                        TypeRef::named(format!("{target}__NumericSelector")),
+                    ),
+                ));
+            }
             if let FieldKind::ScalarArray(arr) = &field.kind {
                 let is_numeric = matches!(
                     arr,
