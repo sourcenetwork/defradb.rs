@@ -66,7 +66,11 @@ impl NacDacPolicy {
                 PolicyDecision::Allow
             });
         };
-        if required_collection_id.is_some_and(|id| id != info.collection_id) {
+        // A replicator of a collection also carries its chunks, under their own collection.
+        let covered = |id: &str| {
+            id == info.collection_id || info.chunk_collection_ids.iter().any(|c| c == id)
+        };
+        if required_collection_id.is_some_and(|id| !covered(id)) {
             return Ok(PolicyDecision::Deny);
         }
 

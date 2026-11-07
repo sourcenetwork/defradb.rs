@@ -7,6 +7,7 @@
 //! - Managing collection versions and active states
 
 mod add;
+mod chunk_versions;
 mod create;
 mod delete;
 mod lookup;

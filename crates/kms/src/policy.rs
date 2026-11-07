@@ -79,6 +79,8 @@ pub struct DocCollectionInfo {
     pub resource_name: String,
     /// Whether the collection is branchable.
     pub is_branchable: bool,
+    /// Its `@chunk` collections, whose keys follow this collection's documents.
+    pub chunk_collection_ids: Vec<String>,
 }
 
 #[cfg(test)]

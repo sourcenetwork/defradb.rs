@@ -27,6 +27,8 @@ pub struct NodeSpec {
     pub dir: Option<Arc<TempDir>>,
     /// The P2P addresses a restarted node listens on again.
     pub listen: Vec<String>,
+    /// The node signs its blocks with a key it generates.
+    pub signing: bool,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -75,6 +77,7 @@ impl TestNode {
                 let options = GoOptions {
                     p2p: spec.network.then_some(listen),
                     dir: spec.dir.as_ref().map(|dir| dir.path().to_owned()),
+                    signing: spec.signing,
                 };
                 let node =
                     GoNode::start(&binary, &options).unwrap_or_else(|error| panic!("{error}"));
@@ -183,7 +186,9 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Node {
     // match with both, as the FFI's `defra_init` sets them for Go's suite.
     crypto::encryption::nonce::set_deterministic_nonce(true);
     defra_core::encryption::set_deterministic_encryption_key(true);
-    let mut builder = Node::builder();
+    // Go's suite drives each node from one process and sends each request as
+    // its own identity, so a transaction is not bound to the identity that began it.
+    let mut builder = Node::builder().with_txn_ownership(db::TxnOwnership::Embedder);
     if let Some(dir) = &spec.dir {
         builder = builder.data_path(dir.path());
     }
@@ -192,6 +197,9 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Node {
     }
     if let Some(config) = http {
         builder = builder.with_http(config);
+    }
+    if spec.signing {
+        builder = builder.enable_signing();
     }
     workers::block_on(builder.build())
         .expect("run builder")

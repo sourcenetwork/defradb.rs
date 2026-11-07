@@ -28,6 +28,8 @@ pub struct DocCollectionInfo {
     pub resource_name: String,
     /// Whether the collection is branchable.
     pub is_branchable: bool,
+    /// Its `@chunk` collections, whose keys follow this collection's documents.
+    pub chunk_collection_ids: Vec<String>,
 }
 
 /// Resolve the collection metadata for a given document.
@@ -142,6 +144,16 @@ pub async fn resolve_collection_from_doc_id<S: Store>(
             policy_id: policy.id,
             resource_name: policy.resource_name,
             is_branchable: collection.is_branchable,
+            chunk_collection_ids: collection
+                .chunked_fields
+                .iter()
+                .filter_map(|chunked| {
+                    db.get_collection(&chunked.collection(&collection.name))
+                        .ok()
+                        .flatten()
+                })
+                .map(|chunks| chunks.collection_id().to_string())
+                .collect(),
         }),
         Ok(None) => None,
         Err(e) => {

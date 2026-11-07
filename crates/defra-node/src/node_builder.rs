@@ -467,6 +467,15 @@ impl NodeBuilder {
             .with_schema_arc(Arc::new(crate::HttpSchemaOps {
                 schema_ops: Arc::clone(&node.schema_ops),
                 context: None,
+            }))
+            .with_backup_arc(Arc::new(crate::HttpBackupOps {
+                database: Arc::clone(&node.database),
+                runner: Arc::clone(&node.runner),
+                context: None,
+            }))
+            .with_doc_acp_arc(Arc::new(crate::HttpDocAcpOps {
+                acp_ops: Arc::clone(&node.acp_ops),
+                document_acp: Arc::clone(&node.document_acp),
             }));
 
             // A local document ACP is the node's own store: its routes run on

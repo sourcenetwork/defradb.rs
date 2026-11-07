@@ -12,18 +12,47 @@ impl<S: Store> crate::database::DB<S> {
     ///
     /// Note: This does NOT delete documents. Use `truncate_collection` first if needed.
     ///
-    /// Returns the collection's short ID.
+    /// Its `@chunk` collections go with it. Returns each deleted collection's
+    /// name and short ID.
     #[instrument(skip(self, txn), fields(collection = %name), name = "db.delete_collection")]
     pub(crate) async fn delete_collection_with_txn(
         &self,
         txn: &mut DbTxn<S>,
         name: &str,
-    ) -> Result<u32> {
+    ) -> Result<Vec<(String, u32)>> {
+        let chunk_collections: Vec<String> = match txn.get_collection(name).await? {
+            Some(collection) => collection
+                .schema()
+                .chunked_fields
+                .iter()
+                .map(|chunked| chunked.collection(name))
+                .collect(),
+            None => Vec::new(),
+        };
+        let mut deleted = vec![(
+            name.to_string(),
+            self.delete_one_collection(txn, name).await?,
+        )];
+        for chunks in chunk_collections {
+            if txn.get_collection(&chunks).await?.is_some() {
+                let short_id = self.delete_one_collection(txn, &chunks).await?;
+                deleted.push((chunks, short_id));
+            }
+        }
+        Ok(deleted)
+    }
+
+    async fn delete_one_collection(&self, txn: &mut DbTxn<S>, name: &str) -> Result<u32> {
         // Get the collection to find its version_id and collection_id
         let collection = txn
             .get_collection(name)
             .await?
             .ok_or_else(|| Error::CollectionNotFound(name.to_string()))?;
+        if let Some(source) = &collection.schema().chunk_of {
+            if txn.get_collection(&source.collection).await?.is_some() {
+                return Err(Error::DeleteGeneratedCollection(name.to_string()));
+            }
+        }
 
         let version_id = collection.version_id().to_string();
         let collection_id = collection.collection_id().to_string();
@@ -87,17 +116,20 @@ impl<S: Store> crate::database::DB<S> {
         let mut txn = self.new_txn(false).await?;
 
         match self.delete_collection_with_txn(&mut txn, name).await {
-            Ok(short_id) => {
+            Ok(deleted) => {
                 let collections = std::sync::Arc::clone(&self.collections);
                 let codes = std::sync::Arc::clone(&self.vector_codes);
-                let name = name.to_owned();
                 txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
                     collections.rcu(|old| {
                         let mut cache = old.clone();
-                        cache.remove(&name);
+                        for (name, _) in &deleted {
+                            cache.remove(name);
+                        }
                         cache
                     });
-                    codes.evict_collection(short_id);
+                    for (_, short_id) in &deleted {
+                        codes.evict_collection(*short_id);
+                    }
                 })))?;
                 txn.commit().await?;
 
@@ -131,8 +163,8 @@ impl<S: Store> crate::database::DB<S> {
     ///
     /// Names are deduplicated. Name resolution happens up-front: if any name
     /// is unknown, no deletion is performed. Validation (no documents, no
-    /// orphan child versions outside the batch) is delegated to
-    /// `delete_collection_versions_batch`.
+    /// orphan child versions outside the batch, the `@chunk` rules) is
+    /// delegated to `delete_collection_versions_batch`.
     pub async fn delete_collections_as(
         &self,
         context: &defra_core::RequestContext,
@@ -155,7 +187,6 @@ impl<S: Store> crate::database::DB<S> {
             .into_iter()
             .filter(|n| seen_names.insert(n.clone()))
             .collect();
-
         let mut version_ids: Vec<String> = Vec::new();
         let mut seen_versions = rapidhash::RapidHashSet::new();
 

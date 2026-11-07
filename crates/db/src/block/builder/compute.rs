@@ -57,6 +57,8 @@ pub(crate) fn compute_document_blocks_with_inputs(
     signing_config: Option<&SigningConfig>,
     prepared_inputs: Option<&query::prepared::PreparedInputMemo>,
 ) -> Result<ComputedBlocks, BuildError> {
+    let encryption_config = crate::chunk::encryption::with_lists(encryption_config, schema);
+    let encryption_config = encryption_config.as_deref();
     let collection_version_id = schema.version_id.as_str();
     let doc_ref_bytes = identity.encode();
 

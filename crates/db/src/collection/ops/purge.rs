@@ -82,11 +82,46 @@ where
         Ok(purged)
     }
 
-    /// Remove the documents `doc_ids` name from `collection` in `txn`, and
-    /// return how many there were. Each document is counted once, however
-    /// many of its aliases `doc_ids` names; a DocID with no document is
-    /// skipped.
+    /// Remove the documents `doc_ids` name from `collection` in `txn`, with
+    /// their `@chunk` chunks, and return how many there were. Each document
+    /// is counted once, however many of its aliases `doc_ids` names; a DocID
+    /// with no document is skipped.
     pub(crate) async fn purge_documents(
+        &self,
+        txn: &DbTxn<S>,
+        collection: &Collection,
+        doc_ids: &[document::DocID],
+    ) -> Result<usize> {
+        if collection.schema().is_generated() {
+            return Err(Error::TruncateGeneratedCollection(
+                collection.name().to_string(),
+            ));
+        }
+        let chunk_collections = crate::chunk::purge::collections(txn, collection).await?;
+        if !chunk_collections.is_empty() {
+            // Chunks name their parent's canonical DocID, and the purge drops its mapping.
+            let mut parents = Vec::with_capacity(doc_ids.len());
+            {
+                let systemstore = txn.systemstore()?;
+                for doc_id in doc_ids {
+                    if let Some((_, canonical)) = collection
+                        .resolve_doc_identity(&systemstore, doc_id)
+                        .await?
+                    {
+                        parents.push(canonical.to_string());
+                    }
+                }
+            }
+            for chunks_col in &chunk_collections {
+                txn.validate_collection_for_write(chunks_col).await?;
+                let chunk_ids = crate::chunk::purge::doc_ids(txn, chunks_col, &parents).await?;
+                self.purge_rows(txn, chunks_col, &chunk_ids).await?;
+            }
+        }
+        self.purge_rows(txn, collection, doc_ids).await
+    }
+
+    async fn purge_rows(
         &self,
         txn: &DbTxn<S>,
         collection: &Collection,

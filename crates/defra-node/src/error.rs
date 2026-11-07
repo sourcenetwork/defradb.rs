@@ -116,6 +116,15 @@ pub enum Error {
     /// The named collection does not exist.
     #[error("collection '{0}' does not exist")]
     CollectionMissing(String),
+    /// A relationship call named no collection.
+    #[error("collection name can't be empty")]
+    EmptyCollectionName,
+    /// A document actor relationship grant left out its document, relation or target.
+    #[error("missing a required argument needed to add doc actor relationship.")]
+    MissingAddDocActorRelationshipArgument,
+    /// The document ACP refused a relationship grant.
+    #[error("failed to add document actor relationship with acp: {0}")]
+    AddDocActorRelationship(#[source] Box<Error>),
     /// The collection has no policy to manage relationships on.
     #[error("operation requires ACP, but collection has no policy")]
     CollectionWithoutPolicy,

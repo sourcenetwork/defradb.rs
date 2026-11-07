@@ -144,6 +144,7 @@ impl DocCollectionLookup for FakeLookup {
             policy_id: "policy-1".into(),
             resource_name: "doc".into(),
             is_branchable: false,
+            chunk_collection_ids: vec!["col-1-chunks".into()],
         }))
     }
 }
@@ -157,6 +158,7 @@ impl DocCollectionLookup for BranchableLookup {
             policy_id: "policy-1".into(),
             resource_name: "doc".into(),
             is_branchable: true,
+            chunk_collection_ids: Vec::new(),
         }))
     }
 }
@@ -201,6 +203,14 @@ fn delegated_release_is_bound_to_the_document_collection() {
                 .await
                 .unwrap(),
             PolicyDecision::Allow
+        );
+        assert_eq!(
+            policy
+                .check_delegated_release(&actor, &scope, "col-1-chunks")
+                .await
+                .unwrap(),
+            PolicyDecision::Allow,
+            "a chunk's key follows its parent's replicator"
         );
         assert_eq!(
             policy
