@@ -247,6 +247,13 @@ For a collection `Book`, the `Mutation` type shows Go DefraDB's surface with its
 
 Introspection names `Subscription` as the schema's `subscriptionType`, as Go DefraDB does. Like Go's, it has a field per collection (`Book: [Book]`) with the arguments of a query select (`cid`, `docID`, `filter`, `groupBy`, `limit`, `offset`, `order`, `showDeleted`), and `_commits: [Commit]` with the arguments of the `_commits` query. Subscriptions themselves run over Server-Sent Events (#2649).
 
+# `defra.request.aggregate_introspection`: Introspection shows the aggregate arguments the executor accepts
+
+- **Parents:** ["defra.request"]
+- **Scenarios:** ["query::aggregate_introspection::aggregates_show_relation_and_root_arguments"]
+
+As in Go DefraDB, a one-to-many relation field such as `Author.published` is an argument of `COUNT` (typed `Book__CountSelector`) and of `SUM`, `AVG`, `MIN` and `MAX` (typed `Book__NumericSelector`), and the `Query` root has `MIN` and `MAX` of nullable `Float` beside `COUNT`, `SUM` and `AVG`, with one argument per collection. Go's `ScalarAggregateNumericBlock` argument on a plain numeric field is not shown, since the executor does not aggregate a single scalar (#2649).
+
 # `defra.index.range_filter`: A two-sided range filter fetches only the range
 
 - **Parents:** ["defra.index"]

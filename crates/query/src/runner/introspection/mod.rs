@@ -119,7 +119,7 @@ pub fn build_introspection_schema(
         schema_builder = schema_builder.register(mutation_input);
 
         // Add aggregate selector types
-        let agg_types = build_aggregate_types_for_collection(collection, &id_to_name);
+        let agg_types = build_aggregate_types_for_collection(collection);
         for agg_type in agg_types {
             schema_builder = schema_builder.register(agg_type);
         }
@@ -302,8 +302,17 @@ pub fn build_introspection_schema(
         query_type = query_type.field(count_field);
 
         // _sum, _avg: takes one arg per non-embedded collection
-        for (agg_name, description) in &[("SUM", d::SUM), ("AVG", d::AVG)] {
-            let mut agg_field = Field::new(*agg_name, TypeRef::named_nn("Float"), |_| {
+        for (agg_name, description) in &[
+            ("SUM", d::SUM),
+            ("AVG", d::AVG),
+            ("MIN", d::MIN),
+            ("MAX", d::MAX),
+        ] {
+            let output = match *agg_name {
+                "SUM" | "AVG" => TypeRef::named_nn("Float"),
+                _ => TypeRef::named("Float"),
+            };
+            let mut agg_field = Field::new(*agg_name, output, |_| {
                 FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
             })
             .description(*description);

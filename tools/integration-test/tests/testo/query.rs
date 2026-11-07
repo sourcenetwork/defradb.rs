@@ -35,6 +35,7 @@ mod commits {
     mod with_nested_links;
     mod with_null_input;
 }
+mod aggregate_introspection;
 mod cyclic_fragments;
 mod mutation_introspection;
 mod optional_variables;
