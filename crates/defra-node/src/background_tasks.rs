@@ -32,6 +32,11 @@ impl BackgroundTasks {
     }
 }
 
+/// A node dropped without [`shutdown`](BackgroundTasks::shutdown) still
+/// stops its tasks, so they let go of the database and its pool. The abort
+/// only signals: each task ends at its next poll on its own worker, and the
+/// dropping thread, which may be one of those workers, waits for none.
+/// Modeled by proofs/tla/NodeDrop.tla.
 impl Drop for BackgroundTasks {
     fn drop(&mut self) {
         while let Some(task) = self.tasks.pop() {

@@ -196,8 +196,20 @@ pub trait DocFetcher: MaybeSendSync {
         Ok(None)
     }
 
+    /// Check a host source edge on this transaction, including its read fence.
+    async fn source_node_permission_matches(
+        &self,
+        _permission: acp::nac::NodePermission,
+        _parent_source: Option<&str>,
+        _subject_kind: &str,
+        _subject: &str,
+        _delete: bool,
+    ) -> Result<Option<bool>> {
+        Ok(None)
+    }
+
     /// Reconcile a trusted host source change on the same transaction view.
-    async fn project_host_source_change(&self) -> Result<()> {
+    async fn project_host_source_change(&self, _actor: &defra_core::RequestContext) -> Result<()> {
         Err(crate::error::QueryError::execution(
             "transaction-bound host projection is unavailable",
         ))

@@ -209,6 +209,29 @@ impl Node {
         .await
     }
 
+    /// Every relationship on a document, for the authenticated caller when it
+    /// owns the document or holds a relation that manages one on its
+    /// resource. The same gate serves GET /api/v0/acp/document/relationships.
+    pub async fn list_dac_relationships_as(
+        &self,
+        context: &defra_core::RequestContext,
+        collection: &str,
+        doc_id: &str,
+    ) -> crate::Result<Vec<acp::DocumentRelationship>> {
+        let identity = context
+            .identity()
+            .ok_or_else(|| query::QueryError::execution("identity required for document ACP"))?
+            .to_owned();
+        let context = context.clone();
+        let ops = std::sync::Arc::clone(&self.acp_ops);
+        let (collection, doc_id) = (collection.to_owned(), doc_id.to_owned());
+        self.on_acp(move || async move {
+            ops.list_dac_relationships(&context, &identity, &collection, &doc_id)
+                .await
+        })
+        .await
+    }
+
     /// Delete a document relationship as the authenticated caller, in its
     /// transaction when the request context names one.
     pub async fn delete_dac_actor_relationship_as(

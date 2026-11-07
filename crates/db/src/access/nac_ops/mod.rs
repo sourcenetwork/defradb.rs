@@ -125,6 +125,31 @@ where
         .map_err(|error| refused(error, NodePermission::NacRelationDelete))
     }
 
+    /// Every way `subject` (a DID) holds each node permission, for a caller
+    /// who is `subject`, an admin, or holds `NacStatus`. The caller needs an
+    /// identity; a refusal is Go's `not authorized` for `NacStatus`.
+    pub async fn explain_nac_subject_as(
+        &self,
+        context: &RequestContext,
+        subject: &str,
+    ) -> Result<Vec<acp::nac::PermissionProvenance>, NodeAcpError> {
+        let nac = self.configured_nac().await?;
+        let requestor = acting_did(context).ok_or(NodeAcpError::RequiresIdentity)?;
+        let subject = Did::new(subject).map_err(|_| NodeAcpError::InvalidActor)?;
+        if subject.is_wildcard() {
+            return Err(NodeAcpError::InvalidActor);
+        }
+        nac.explain_subject(&requestor, &subject)
+            .await
+            .map_err(|error| match error {
+                crate::nac::Error::PermissionDenied => Error::NotAuthorized {
+                    permission: NodePermission::NacStatus.as_str().to_owned(),
+                }
+                .into(),
+                other => other.into(),
+            })
+    }
+
     /// The node's NAC manager, once NAC was set up.
     async fn configured_nac(&self) -> Result<Arc<dyn NacManagerApi>, NodeAcpError> {
         let nac = self.nac_manager().ok_or(NodeAcpError::NotConfigured)?;

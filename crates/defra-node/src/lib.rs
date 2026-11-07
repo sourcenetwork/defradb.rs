@@ -236,10 +236,9 @@ pub struct Node {
     remote_acp: bool,
     #[cfg(not(target_arch = "wasm32"))]
     transaction_stats: Option<storage::TransactionStatsHandle>,
-    #[cfg(feature = "http")]
-    txn_cleanup_task: kovan_queue::seg_queue::SegQueue<workers::Background>,
-    /// Vector index rebuild, downsample view refresh, parked-block replay and
-    /// the Vera redrive. Each holds the database open until aborted.
+    /// Vector index rebuild, downsample view refresh, parked-block replay,
+    /// the Vera redrive and the HTTP transaction sweep. Each holds the
+    /// database open until aborted; dropping the set aborts them.
     #[cfg(not(target_arch = "wasm32"))]
     background_tasks: Arc<BackgroundTasks>,
     #[cfg(feature = "managed-p2p")]
@@ -261,7 +260,7 @@ struct TransactionCleanupConfig {
     sweep_interval: Duration,
 }
 
-#[cfg(any(feature = "http", feature = "otel"))]
+#[cfg(feature = "otel")]
 fn single_slot<T>(value: Option<T>) -> kovan_queue::seg_queue::SegQueue<T>
 where
     T: 'static,
@@ -1125,12 +1124,6 @@ impl Node {
         }
         tracing::info!("node shutdown: begin");
 
-        #[cfg(feature = "http")]
-        if let Some(task) = self.txn_cleanup_task.pop() {
-            task.abort();
-            let _ = workers::timeout(Duration::from_secs(1), task).await;
-        }
-
         #[cfg(not(target_arch = "wasm32"))]
         self.background_tasks.shutdown().await;
 
@@ -1598,6 +1591,8 @@ mod p2p_tests;
 #[cfg(test)]
 mod owner_observation_tests;
 
+#[cfg(test)]
+mod delegated_nac_tests;
 #[cfg(test)]
 mod source_nac_tests;
 

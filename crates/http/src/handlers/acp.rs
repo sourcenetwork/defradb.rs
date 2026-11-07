@@ -387,6 +387,42 @@ pub async fn add_doc_relationships(
     Ok(Json(results))
 }
 
+/// Query for GET /api/v0/acp/document/relationships.
+#[derive(Debug, serde::Deserialize)]
+pub struct DocRelationshipsQuery {
+    pub collection: String,
+    #[serde(rename = "docID", alias = "doc_id")]
+    pub doc_id: String,
+}
+
+/// List a document's ACP relationships.
+///
+/// GET /api/v0/acp/document/relationships?collection=<name>&docID=<id>
+///
+/// The core allows the document's owner or a holder of a relation that
+/// manages one on its resource, as the embedded
+/// `Node::list_dac_relationships_as`.
+pub async fn list_doc_relationships(
+    State(state): State<AppState>,
+    identity: ExtractIdentity,
+    axum::extract::Query(query): axum::extract::Query<DocRelationshipsQuery>,
+) -> Result<Json<Vec<acp::DocumentRelationship>>, HttpError> {
+    let requestor = identity
+        .did()
+        .ok_or_else(|| HttpError::Unauthorized("identity required for document ACP".into()))?;
+    if query.collection.is_empty() || query.doc_id.is_empty() {
+        return Err(HttpError::BadRequest(
+            "collection and docID are required".into(),
+        ));
+    }
+    let doc_acp = bound(state.require_doc_acp()?, &identity.context());
+    doc_acp
+        .list_doc_relationships(requestor, &query.collection, &query.doc_id)
+        .await
+        .map(Json)
+        .map_err(http_error_from_backend_message)
+}
+
 /// Remove a document ACP relationship.
 ///
 /// DELETE /api/v0/acp/document/relationship

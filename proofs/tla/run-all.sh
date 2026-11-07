@@ -34,6 +34,17 @@ RUNS=(
   "MC_HostMutationProjection_Red_Other.cfg HostMutationProjection.tla RED"
   "MC_HostMutationProjection_Red_Authority.cfg HostMutationProjection.tla RED"
   "MC_HostMutationProjection_Red_Owner.cfg HostMutationProjection.tla RED"
+  "MC_ProjectorMutationOrigin_Green.cfg ProjectorMutationOrigin.tla GREEN"
+  "MC_ProjectorMutationOrigin_Red_Actor.cfg ProjectorMutationOrigin.tla RED"
+  "MC_ProjectorMutationOrigin_Red_Revocation.cfg ProjectorMutationOrigin.tla RED"
+  "MC_ProjectorMutationOrigin_Red_Atomic.cfg ProjectorMutationOrigin.tla RED"
+  "MC_HostSourceNoop_Green.cfg HostSourceNoop.tla GREEN"
+  "MC_HostSourceNoop_Red_Authority.cfg HostSourceNoop.tla RED"
+  "MC_HostSourceNoop_Red_Validation.cfg HostSourceNoop.tla RED"
+  "MC_HostNoopProjection_Green.cfg HostNoopProjection.tla GREEN"
+  "MC_HostNoopProjection_Red_Skipped.cfg HostNoopProjection.tla RED"
+  "MC_HostNoopProjection_Red_Authority.cfg HostNoopProjection.tla RED"
+  "MC_HostNoopProjection_Red_Rollback.cfg HostNoopProjection.tla RED"
   "MC_LocalFetchPermit_Green.cfg LocalFetchPermit.tla GREEN"
   "MC_LocalFetchPermit_Red_Hold.cfg LocalFetchPermit.tla RED"
   "MC_VerifiedClientGraph_Green.cfg VerifiedClientGraph.tla GREEN"
@@ -356,6 +367,7 @@ RUNS=(
   "MC_NodeAcpOps_Red_Identity.cfg NodeAcpOps.tla RED" # identity check left out (INV_NoGrantUnlessAllChecksPass)
   "MC_NodeAcpOps_Red_Relation.cfg NodeAcpOps.tla RED" # relation check left out (INV_NoGrantUnlessAllChecksPass)
   "MC_NodeAcpOps_Red_Target.cfg NodeAcpOps.tla RED" # target check left out (INV_NoGrantUnlessAllChecksPass)
+  "MC_NodeAcpOps_Red_Authority.cfg NodeAcpOps.tla RED" # admin-or-delegate authority check left out (INV_NoGrantUnlessAllChecksPass)
   "MC_NodeAcpOps_Red_StartReEnables.cfg NodeAcpOps.tla RED" # a restart re-enables a disabled NAC, as before (INV_RestartKeepsStatus)
   "MC_NodeAcpOps_Red_Order.cfg NodeAcpOps.tla RED" # re-enable checks already-on before the caller (INV_GoOrder)
   "M1Convergence.cfg            M1Convergence.tla            GREEN"  # B3 control (S1')
@@ -799,6 +811,10 @@ RUNS=(
   "MC_NodeShutdown_Red_RequestsDuringP2P.cfg NodeShutdown.tla RED" # requests still admitted while P2P stops commit without a head marker
   "MC_NodeShutdown_Red_CommitNotAdmitted.cfg NodeShutdown.tla RED" # an in-process commit outside the request scope commits after P2P stopped
   "MC_NodeShutdown_Red_OpenTransaction.cfg NodeShutdown.tla RED" # a transaction left open (a commit refused at shutdown) holds regolith's close for its timeout
+  "MC_NodeDrop_Green.cfg NodeDrop.tla GREEN" # a node dropped without shutdown aborts its tasks and releases its pool; the drop waits for none
+  "MC_NodeDrop_Red_SweepOutsideSet.cfg NodeDrop.tla RED" # the sweep in a slot of its own outlives a dropped node and keeps its pool alive
+  "MC_NodeDrop_Red_NoAbortOnDrop.cfg NodeDrop.tla RED" # a shutdown set that does not abort on drop leaves every task holding the database
+  "MC_NodeDrop_Red_DropAwaits.cfg NodeDrop.tla RED" # the dropping thread waits for an aborted task to end
   "MC_NodeStartup_Green.cfg NodeStartup.tla GREEN" # every config starts as asked or fails holding nothing; startup ends
   "MC_NodeStartup_Red_IrohDefaultLadder.cfg NodeStartup.tla RED" # iroh keeps the default retry ladder (INV_OneSchedule)
   "MC_NodeStartup_Red_ListenLeak.cfg NodeStartup.tla RED" # failed listen leaves the host running (INV_FailedHoldsNothing)

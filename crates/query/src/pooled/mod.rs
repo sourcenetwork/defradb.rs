@@ -316,6 +316,14 @@ impl QueryExecutor for PooledExecutor {
         self.inner.nac_status_as(context).await
     }
 
+    async fn explain_nac_subject_as(
+        &self,
+        context: &RequestContext,
+        subject: &str,
+    ) -> std::result::Result<Vec<acp::nac::PermissionProvenance>, TransactionError> {
+        self.inner.explain_nac_subject_as(context, subject).await
+    }
+
     async fn disable_nac_as(
         &self,
         context: &RequestContext,

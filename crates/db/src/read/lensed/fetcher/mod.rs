@@ -318,17 +318,60 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
             },
         )
         .await
+        .map_err(|error| match error {
+            crate::nac::Error::PermissionDenied => {
+                query::QueryError::permission_denied(error.to_string())
+            }
+            other => query::QueryError::execution(other.to_string()),
+        })
+    }
+
+    async fn source_node_permission_matches(
+        &self,
+        permission: acp::nac::NodePermission,
+        parent_source: Option<&str>,
+        subject_kind: &str,
+        subject: &str,
+        delete: bool,
+    ) -> query::error::Result<Option<bool>> {
+        let Some(nac) = self.db.nac_manager() else {
+            return Ok(None);
+        };
+        let txn = &*self.shared_txn()?;
+        let view = txn
+            .acpstore()
+            .map_err(|error| query::QueryError::execution(error.to_string()))?;
+        nac.source_permission_matches_in_txn(
+            view,
+            &crate::nac::SourcePermissionChange {
+                permission,
+                parent_source,
+                subject_kind,
+                subject,
+                delete,
+            },
+        )
+        .await
         .map_err(|error| query::QueryError::execution(error.to_string()))
     }
 
-    async fn project_host_source_change(&self) -> query::error::Result<()> {
+    async fn project_host_source_change(
+        &self,
+        actor: &defra_core::RequestContext,
+    ) -> query::error::Result<()> {
         let txn = &*self.shared_txn()?;
         let view = txn
             .datastore()
             .map_err(|error| query::QueryError::execution(error.to_string()))?;
-        view.project_host_source_change()
+        view.with_projection_actor(actor.identity())
+            .project_host_source_change()
             .await
-            .map_err(|error| query::QueryError::execution(error.to_string()))
+            .map_err(|error| match error {
+                storage::corekv::Error::ProjectionPermissionDenied => {
+                    query::QueryError::permission_denied(error.to_string())
+                }
+                other => query::QueryError::execution(other.to_string()),
+            })
     }
 
     async fn transaction_acp(

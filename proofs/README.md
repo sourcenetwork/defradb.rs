@@ -34,6 +34,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Explicit transactions in the request context | TLA+ / Lean | client, db, query, http, ffi, wasm, defra-node |
 | Transactional document relationships | TLA+ / Lean | acp, query, http, defra-node |
 | Transactional node source grants | TLA+ / Lean | acp, query, http, defra-node |
+| Held-bounded node permission delegation | Lean | acp, db, defra-node |
 | Schema-evolution operations in the core | TLA+ / Lean | client, db, lens, query, http, cli, ffi, defra-node |
 | DAG convergence (partition / eviction / restart) | TLA+ | p2p, db-merge, blockstore |
 | CRDT merge laws | Lean | crdt, defra-core |

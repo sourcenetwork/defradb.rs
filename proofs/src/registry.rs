@@ -54,6 +54,33 @@ use Tier::{Behavioral, Boundary, Contract};
 
 pub const PROPERTIES: &[Property] = &[
     Property {
+        family: "Transactional node source grants",
+        name: "HostNoopProjection rechecks descendants with the original actor",
+        axis: Tla,
+        anchor: "crates/query/src/txn/source_nac.rs; crates/db/src/document_projection.rs",
+        model_ref: "MC_HostNoopProjection_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Transactional node source grants",
+        name: "HostSourceNoop actual changes require authority and observations validate",
+        axis: Tla,
+        anchor: "crates/query/src/txn/source_nac.rs; crates/db/src/nac/trait_impl.rs",
+        model_ref: "MC_HostSourceNoop_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Transactional node source grants",
+        name: "ProjectorMutationOrigin actual actor and atomic publication",
+        axis: Tla,
+        anchor: "crates/db/src/document_projection.rs; crates/db/src/nac/trait_impl.rs",
+        model_ref: "MC_ProjectorMutationOrigin_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "LocalFetchPermit.released_before_send / release_preserves_queue",
         axis: Lean,
@@ -88,6 +115,15 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "SourceScopedNac (lake build)",
         tiers: &[Boundary, Contract],
         bound_by: "crates/defra-node/src/source_nac_tests.rs source_admission_matches_executed_lean_model",
+    },
+    Property {
+        family: "Held-bounded node permission delegation",
+        name: "delegated_no_escalation / delegated_never_touches_admin / admin_behavior_preserved / admin_acceptances_kept / delegate_admin_refused / delegate_unheld_refused / delegate_admin_class_refused / delegate_wildcard_refused / delegate_privileged_delete_refused / delegation_not_transferable / admits_observe",
+        axis: Lean,
+        anchor: "crates/acp/src/nac/delegation.rs DelegationFacts::admits, ADMIN_CLASS; crates/acp/src/nac/node_acp/operations.rs NodeACP::authorize_change; crates/acp/src/nac/node_acp/source.rs NodeACP::change_source_permission",
+        model_ref: "NodeAcpDelegation (lake build)",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/defra-node/src/delegated_nac_tests.rs delegation_matches_executed_lean_model, delegate_grants_and_revokes_only_held_non_admin_permissions, delegate_source_edges_follow_the_same_rule",
     },
     Property {
         family: "Explicit embedded signing",
@@ -1963,6 +1999,18 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A node dropped without shutdown aborts every task its shutdown set
+        // holds, the transaction sweep among them, without waiting for any,
+        // so its pool's threads and its store are released.
+        family: "Node shutdown order",
+        name: "LIVE_DroppedNodeReleasesPool / INV_DropNeverWaits / INV_ShutdownStopsEveryTask: a dropped node releases its pool and store, its drop waits for no task, a shutdown stops every task",
+        axis: Tla,
+        anchor: "crates/defra-node/src/assemble.rs assemble; crates/defra-node/src/background_tasks.rs BackgroundTasks; crates/db/src/txn/registry/cleanup.rs start_stale_transaction_cleanup; crates/workers/src/pool/background.rs Background",
+        model_ref: "MC_NodeDrop_{Green,Red_SweepOutsideSet,Red_NoAbortOnDrop,Red_DropAwaits}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/defra-node/tests/node_drop.rs a_dropped_http_node_releases_its_threads_and_descriptors",
+    },
+    Property {
         // A signed query or transformed route keeps a request-scope permit
         // while its started worker writes, so P2P cannot stop first.
         family: "Node shutdown order",
@@ -2421,7 +2469,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Node access control operations",
         name: "INV_NoDisableWithoutPermission / INV_NoReEnableWithoutStoredPermission / INV_NoGrantUnlessAllChecksPass / INV_NoChangeUnlessConfigured / INV_RestartKeepsStatus / INV_NoSilentNoOp / INV_GoOrder",
         axis: Tla,
-        anchor: "crates/db/src/access/nac_ops/mod.rs DB::disable_nac_as, DB::re_enable_nac_as, DB::check_stored_node_access, DB::add_nac_actor_relationship_as, DB::nac_relationship; crates/db/src/nac/mod.rs NacManager::initialize, NacManager::check_permission_persisted",
+        anchor: "crates/db/src/access/nac_ops/mod.rs DB::disable_nac_as, DB::re_enable_nac_as, DB::check_stored_node_access, DB::add_nac_actor_relationship_as, DB::nac_relationship; crates/db/src/nac/mod.rs NacManager::initialize, NacManager::check_permission_persisted; crates/acp/src/nac/node_acp/operations.rs NodeACP::authorize_change",
         model_ref: "MC_NodeAcpOps_{Green,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "tools/integration-test/tests/nac/core_operations.rs nac_core_operations_gate_test; crates/db/tests/nac/tests.rs test_nac_manager_disable_reenable, test_nac_manager_permission_check",

@@ -367,6 +367,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
 
         let (collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
+        let datastore = datastore.with_projection_actor(context.identity());
         self.db
             .check_node_access_in_txn(
                 context,
@@ -472,6 +473,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
 
         let (collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
+        let datastore = datastore.with_projection_actor(context.identity());
         self.db
             .check_node_access_in_txn(
                 context,
@@ -618,6 +620,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
 
         let (collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
+        let datastore = datastore.with_projection_actor(context.identity());
         self.db
             .check_node_access_in_txn(
                 context,
@@ -640,7 +643,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         let existed = collection
             .delete_with_indexes(&datastore, &canonical_doc_id, doc_short_id, &index_manager)
             .await
-            .map_err(|e| query::error::QueryError::execution(format!("delete error: {}", e)))?;
+            .map_err(|error| crate::error::index_write_query_error("delete", error))?;
 
         if !existed {
             return Ok(DeleteResult::new(canonical_doc_id, existed));

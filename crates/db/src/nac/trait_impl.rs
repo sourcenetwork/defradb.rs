@@ -98,24 +98,37 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
             .load()
             .await
             .map_err(|error| super::error::Error::Other(error.to_string()))?;
-        let operation = if change.delete {
-            NodePermission::NacRelationDelete
-        } else {
-            NodePermission::NacRelationAdd
-        };
-        if scoped.status().await != NacStatus::Enabled
-            || !scoped
-                .check_permission(requestor, operation)
-                .await
-                .map_err(|error| super::error::Error::Other(error.to_string()))?
-        {
-            return Err(super::error::Error::Other(
-                "node relationship permission denied".into(),
-            ));
-        }
         scoped
             .change_source_permission(
                 requestor,
+                change.permission,
+                change.parent_source,
+                change.subject_kind,
+                change.subject,
+                change.delete,
+            )
+            .await
+            .map(Some)
+            .map_err(|error| match error {
+                acp::error::Error::NotOwner { .. } | acp::error::Error::PermissionDenied(_) => {
+                    super::error::Error::PermissionDenied
+                }
+                other => super::error::Error::Other(other.to_string()),
+            })
+    }
+    async fn source_permission_matches_in_txn(
+        &self,
+        view: datastore::NamespaceView,
+        change: &super::SourcePermissionChange<'_>,
+    ) -> Result<Option<bool>> {
+        if !self.transaction_store_bound || !self.nac.supports_transactions() {
+            return Ok(None);
+        }
+        let scoped = self.nac.scoped(std::sync::Arc::new(
+            acp::zanzibar::store::TransactionZanzibarStore::new(view),
+        ));
+        scoped
+            .source_permission_matches(
                 change.permission,
                 change.parent_source,
                 change.subject_kind,
@@ -171,5 +184,12 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
     }
     async fn info(&self) -> NacInfo {
         NacManager::info(self).await
+    }
+    async fn explain_subject(
+        &self,
+        requestor: &Did,
+        subject: &Did,
+    ) -> Result<Vec<acp::nac::PermissionProvenance>> {
+        NacManager::explain_subject(self, requestor, subject).await
     }
 }

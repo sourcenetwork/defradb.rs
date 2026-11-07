@@ -340,16 +340,6 @@ where
             .with_ownership(extras.txn_ownership),
     );
 
-    #[cfg(feature = "http")]
-    let txn_cleanup_task = extras.transaction_cleanup.map(|cleanup| {
-        tracing::info!(
-            max_idle_age_secs = cleanup.max_idle_age.as_secs(),
-            sweep_interval_secs = cleanup.sweep_interval.as_secs(),
-            "Transaction idle cleanup worker enabled"
-        );
-        registry.start_stale_transaction_cleanup(cleanup.max_idle_age, cleanup.sweep_interval)
-    });
-
     #[cfg(feature = "managed-p2p")]
     {
         // The KMS comes once document ACP and NAC exist: a blockstore-backed key
@@ -514,6 +504,20 @@ where
     if let Some(start_redrive) = redrive {
         background_tasks.push(start_redrive(database.pool()));
     }
+    // The sweep holds the registry, and through it the database and its
+    // pool: held anywhere but the shutdown set, a node dropped without
+    // shutdown would keep its pool's threads and the store alive forever.
+    #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+    if let Some(cleanup) = extras.transaction_cleanup {
+        tracing::info!(
+            max_idle_age_secs = cleanup.max_idle_age.as_secs(),
+            sweep_interval_secs = cleanup.sweep_interval.as_secs(),
+            "Transaction idle cleanup worker enabled"
+        );
+        background_tasks.push(
+            registry.start_stale_transaction_cleanup(cleanup.max_idle_age, cleanup.sweep_interval),
+        );
+    }
     let block_ops: Arc<dyn BlockOps> = Arc::new(db_impls::DbBlockOps::new(
         database.clone(),
         document_acp.clone(),
@@ -548,8 +552,6 @@ where
         remote_acp,
         #[cfg(not(target_arch = "wasm32"))]
         transaction_stats,
-        #[cfg(feature = "http")]
-        txn_cleanup_task: crate::single_slot(txn_cleanup_task),
         #[cfg(not(target_arch = "wasm32"))]
         background_tasks,
         #[cfg(feature = "managed-p2p")]

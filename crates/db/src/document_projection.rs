@@ -14,9 +14,57 @@ pub struct DocumentMutationContext<'a> {
     pub document_acp: &'a dyn acp::DocumentACP,
     pub node_did: &'a Did,
     notifier: &'a dyn AccessChangeNotifier,
+    nac: Option<&'a dyn crate::nac::NacManagerApi>,
 }
 
 impl DocumentMutationContext<'_> {
+    /// Stage a source edge as the actor that caused this projection. Startup,
+    /// replication and any other actorless operation cannot mint or revoke
+    /// a source. Native NAC and the document share the same transaction.
+    pub async fn change_source_permission(
+        &self,
+        permission: acp::NodePermission,
+        parent_source: Option<&str>,
+        subject_kind: &str,
+        subject: &str,
+        delete: bool,
+    ) -> Result<bool> {
+        let actor = self
+            .view
+            .projection_actor()
+            .ok_or(storage::corekv::Error::ProjectionPermissionDenied)?;
+        let actor =
+            Did::new(actor).map_err(|error| storage::corekv::Error::Other(error.to_string()))?;
+        let nac = self.nac.ok_or_else(|| {
+            storage::corekv::Error::Other(
+                "transaction-bound node authorization is unavailable".into(),
+            )
+        })?;
+        nac.change_source_permission_in_txn(
+            self.view.sibling(Namespace::Acpstore),
+            &actor,
+            &crate::nac::SourcePermissionChange {
+                permission,
+                parent_source,
+                subject_kind,
+                subject,
+                delete,
+            },
+        )
+        .await
+        .map_err(|error| match error {
+            crate::nac::Error::PermissionDenied => {
+                storage::corekv::Error::ProjectionPermissionDenied
+            }
+            other => storage::corekv::Error::Other(other.to_string()),
+        })?
+        .ok_or_else(|| {
+            storage::corekv::Error::Other(
+                "transaction-bound node authorization is unavailable".into(),
+            )
+        })
+    }
+
     /// Queue the ordinary document invalidation for a changed ACP relation.
     /// A transaction that aborts discards this callback with the relation.
     pub async fn notify_access_changed(&self, collection: &str, doc_id: &str) -> Result<()> {
@@ -100,6 +148,7 @@ pub(crate) struct BoundProjection {
     pub(crate) document_acp: Arc<dyn acp::DocumentACP>,
     pub(crate) node_did: Did,
     notifier: Box<dyn AccessChangeNotifier>,
+    nac: Option<Arc<dyn crate::nac::NacManagerApi>>,
 }
 
 impl BoundProjection {
@@ -109,11 +158,13 @@ impl BoundProjection {
         node_did: Did,
         database: Weak<crate::database::DB<S>>,
     ) -> Self {
+        let nac = database.upgrade().and_then(|db| db.nac_manager());
         Self {
             projector,
             document_acp,
             node_did,
             notifier: Box::new(DatabaseAccessNotifier { database }),
+            nac,
         }
     }
 }
@@ -128,6 +179,7 @@ impl datastore::DocumentMutationProjector for BoundProjection {
                 document_acp: self.document_acp.as_ref(),
                 node_did: &self.node_did,
                 notifier: self.notifier.as_ref(),
+                nac: self.nac.as_deref(),
             })
             .await
     }
@@ -139,6 +191,7 @@ impl datastore::DocumentMutationProjector for BoundProjection {
                 document_acp: self.document_acp.as_ref(),
                 node_did: &self.node_did,
                 notifier: self.notifier.as_ref(),
+                nac: self.nac.as_deref(),
             })
             .await
     }
@@ -151,6 +204,7 @@ impl datastore::DocumentMutationProjector for BoundProjection {
                     document_acp: self.document_acp.as_ref(),
                     node_did: &self.node_did,
                     notifier: self.notifier.as_ref(),
+                    nac: self.nac.as_deref(),
                 },
                 collection,
                 doc_id,

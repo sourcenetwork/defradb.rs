@@ -12,6 +12,14 @@ use crate::error::{Error, Result};
 use crate::identity::Identity;
 use crate::permission::DocumentPermission;
 
+/// One relationship stored on a document: its relation and its subject, as
+/// a DID, `*`, or `resource:object#relation`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DocumentRelationship {
+    pub relation: String,
+    pub subject: String,
+}
+
 /// Document ACP interface (matches Go acp/dac/dac.go)
 ///
 /// This trait provides document-level access control operations:
@@ -188,6 +196,20 @@ pub trait DocumentACP: MaybeSendSync {
         _doc_id: &str,
     ) -> Result<bool> {
         Err(Error::UnsupportedNamedPermission)
+    }
+
+    /// Every relationship stored on one document, for its owner or for a
+    /// requester holding a relation that manages some relation on that
+    /// resource. Refusal is [`Error::NotManager`]; backends that cannot list
+    /// fail with [`Error::UnsupportedRelationshipListing`].
+    async fn list_relationships(
+        &self,
+        _requestor: &Did,
+        _policy_id: &str,
+        _resource_name: &str,
+        _doc_id: &str,
+    ) -> Result<Vec<DocumentRelationship>> {
+        Err(Error::UnsupportedRelationshipListing)
     }
 
     /// Create a persisted access decision for a caller/object/permission check.

@@ -272,6 +272,19 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
         ))
     }
 
+    /// Every way `subject` holds each node permission, for a caller who is
+    /// `subject`, an admin, or holds `NacStatus`.
+    async fn explain_nac_subject_as(
+        &self,
+        context: &RequestContext,
+        subject: &str,
+    ) -> std::result::Result<Vec<acp::nac::PermissionProvenance>, TransactionError> {
+        let _ = (context, subject);
+        Err(TransactionError::not_supported(
+            "node access control is not supported in this configuration",
+        ))
+    }
+
     /// Turn NAC off for the caller `context` names. Go's `DisableNAC`.
     async fn disable_nac_as(
         &self,

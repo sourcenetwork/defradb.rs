@@ -32,20 +32,19 @@ async fn within<F: std::future::Future>(
 }
 
 impl<S: Store + 'static> DbTransactionRegistry<S> {
-    /// Trusted embedded-host only: the owner still admits the transaction turn;
-    /// native NAC checks the supplied configured Node on the same view. Never
-    /// expose this capability as an HTTP or GraphQL request parameter.
+    /// Trusted embedded-host only: the owner admits the transaction turn and
+    /// native NAC checks that owner on the same view. Never expose this
+    /// capability as an HTTP or GraphQL request parameter.
     pub async fn change_host_nac_source_permission(
         &self,
         owner: &RequestContext,
-        node: identity::Did,
         edge: query::txn::SourcePermission,
     ) -> std::result::Result<bool, TransactionError> {
         let id = owner
             .txn()
             .ok_or_else(|| TransactionError::operation("an explicit transaction is required"))?;
         let handle = TransactionHandle::new(id.to_string());
-        let job = query::txn::host_source_permission_job(owner.clone(), node, edge)?;
+        let job = query::txn::host_source_permission_job(owner.clone(), edge)?;
         self.run_as(owner, &handle, None, job).await?
     }
 }
@@ -326,6 +325,17 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
     ) -> std::result::Result<acp::nac::NacStatus, TransactionError> {
         self.db
             .nac_status_as(context)
+            .await
+            .map_err(|error| TransactionError::operation(error.to_string()))
+    }
+
+    async fn explain_nac_subject_as(
+        &self,
+        context: &RequestContext,
+        subject: &str,
+    ) -> std::result::Result<Vec<acp::nac::PermissionProvenance>, TransactionError> {
+        self.db
+            .explain_nac_subject_as(context, subject)
             .await
             .map_err(|error| TransactionError::operation(error.to_string()))
     }
