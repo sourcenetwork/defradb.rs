@@ -85,10 +85,12 @@ pub fn build_introspection_schema(
     } else {
         Some("Mutation")
     };
-    let mut schema_builder = Schema::build("Query", mutation_name, None);
+    let mut schema_builder = Schema::build("Query", mutation_name, Some("Subscription"));
 
     // Build a Query type with fields for each collection
     let mut query_type = Object::new("Query").description("Root query type");
+    // Subscriptions are served over SSE; this type only describes them.
+    let mut subscription_type = Subscription::new("Subscription");
 
     // Create object types for each collection and add query fields
     for collection in collections {
@@ -134,45 +136,19 @@ pub fn build_introspection_schema(
 
         // Add query field for this collection (e.g., User)
         // Args sorted alphabetically to match Go introspection output
-        let collection_name = collection.name.clone();
-        query_type = query_type.field(
+        query_type = query_type.field(select_args(&collection.name).into_iter().fold(
             Field::new(
                 &collection.name,
                 TypeRef::named_nn_list_nn(&collection.name),
-                move |_ctx| FieldFuture::new(async move { Ok(Some(GqlValue::List(vec![]))) }),
-            )
-            .argument(InputValue::new("cid", TypeRef::named_nn_list("ID")).description(d::CID_ARG))
-            .argument(
-                InputValue::new("docID", TypeRef::named_nn_list("ID")).description(d::DOC_IDS_ARG),
-            )
-            .argument(
-                InputValue::new(
-                    "filter",
-                    TypeRef::named(format!("{}FilterArg", collection_name)),
-                )
-                .description(d::SELECT_FILTER_ARG),
-            )
-            .argument(
-                InputValue::new(
-                    "groupBy",
-                    TypeRef::named_list(format!("{}Field", collection_name)),
-                )
-                .description(d::GROUP_BY_ARG),
-            )
-            .argument(InputValue::new("limit", TypeRef::named("Int")).description(d::LIMIT_ARG))
-            .argument(InputValue::new("offset", TypeRef::named("Int")).description(d::OFFSET_ARG))
-            .argument(
-                InputValue::new(
-                    "order",
-                    TypeRef::named_list(format!("{}OrderArg", collection_name)),
-                )
-                .description(d::ORDER_ARG),
-            )
-            .argument(
-                InputValue::new("showDeleted", TypeRef::named("Boolean"))
-                    .description(d::SHOW_DELETED_ARG),
+                |_ctx| FieldFuture::new(async { Ok(Some(GqlValue::List(vec![]))) }),
             ),
-        );
+            Field::argument,
+        ));
+        subscription_type = subscription_type.field(subscription_field(
+            &collection.name,
+            TypeRef::named_list(&collection.name),
+            select_args(&collection.name),
+        ));
     }
 
     let arrival = Object::new("DocumentArrival")
@@ -253,33 +229,19 @@ pub fn build_introspection_schema(
 
     // Add _commits query field (unconditionally, like Go)
     query_type = query_type.field(
-        Field::new("_commits", TypeRef::named_list("Commit"), |_| {
-            FieldFuture::new(async { Ok(Some(GqlValue::List(vec![]))) })
-        })
-        .description(d::COMMITS_QUERY)
-        .argument(
-            InputValue::new("cid", TypeRef::named_nn_list("ID")).description(d::COMMIT_CID_ARG),
-        )
-        .argument(InputValue::new("depth", TypeRef::named("Int")).description(d::COMMITS_DEPTH_ARG))
-        .argument(
-            InputValue::new("docID", TypeRef::named_nn_list("ID"))
-                .description(d::COMMIT_DOC_ID_ARG),
-        )
-        .argument(
-            InputValue::new("filter", TypeRef::named("CommitsFilterArg"))
-                .description(d::COMMIT_FILTER_ARG),
-        )
-        .argument(
-            InputValue::new("groupBy", TypeRef::named_nn_list("commitFields"))
-                .description(d::GROUP_BY_ARG),
-        )
-        .argument(InputValue::new("limit", TypeRef::named("Int")).description(d::LIMIT_ARG))
-        .argument(InputValue::new("offset", TypeRef::named("Int")).description(d::OFFSET_ARG))
-        .argument(
-            InputValue::new("order", TypeRef::named_list("commitsOrderArg"))
-                .description(d::ORDER_ARG),
+        commits_args().into_iter().fold(
+            Field::new("_commits", TypeRef::named_list("Commit"), |_| {
+                FieldFuture::new(async { Ok(Some(GqlValue::List(vec![]))) })
+            })
+            .description(d::COMMITS_QUERY),
+            Field::argument,
         ),
     );
+    subscription_type = subscription_type.field(
+        subscription_field("_commits", TypeRef::named_list("Commit"), commits_args())
+            .description(d::COMMITS_QUERY),
+    );
+    schema_builder = schema_builder.register(subscription_type);
 
     // Register standard scalars and filter types
     schema_builder = schema_builder
@@ -414,6 +376,57 @@ pub(crate) async fn execute_against(schema: &Schema, query: &str) -> Result<Json
         .map_err(|e| QueryError::introspection(format!("failed to serialize response: {}", e)))?;
 
     Ok(json)
+}
+
+/// The arguments of a collection select, on the query and subscription roots.
+fn select_args(collection: &str) -> Vec<InputValue> {
+    vec![
+        InputValue::new("cid", TypeRef::named_nn_list("ID")).description(d::CID_ARG),
+        InputValue::new("docID", TypeRef::named_nn_list("ID")).description(d::DOC_IDS_ARG),
+        InputValue::new("filter", TypeRef::named(format!("{collection}FilterArg")))
+            .description(d::SELECT_FILTER_ARG),
+        InputValue::new(
+            "groupBy",
+            TypeRef::named_nn_list(format!("{collection}Field")),
+        )
+        .description(d::GROUP_BY_ARG),
+        InputValue::new("limit", TypeRef::named("Int")).description(d::LIMIT_ARG),
+        InputValue::new("offset", TypeRef::named("Int")).description(d::OFFSET_ARG),
+        InputValue::new(
+            "order",
+            TypeRef::named_list(format!("{collection}OrderArg")),
+        )
+        .description(d::ORDER_ARG),
+        InputValue::new("showDeleted", TypeRef::named("Boolean")).description(d::SHOW_DELETED_ARG),
+    ]
+}
+
+/// The arguments of `_commits`, on the query and subscription roots.
+fn commits_args() -> Vec<InputValue> {
+    vec![
+        InputValue::new("cid", TypeRef::named_nn_list("ID")).description(d::COMMIT_CID_ARG),
+        InputValue::new("depth", TypeRef::named("Int")).description(d::COMMITS_DEPTH_ARG),
+        InputValue::new("docID", TypeRef::named_nn_list("ID")).description(d::COMMIT_DOC_ID_ARG),
+        InputValue::new("filter", TypeRef::named("CommitsFilterArg"))
+            .description(d::COMMIT_FILTER_ARG),
+        InputValue::new("groupBy", TypeRef::named_nn_list("commitFields"))
+            .description(d::GROUP_BY_ARG),
+        InputValue::new("limit", TypeRef::named("Int")).description(d::LIMIT_ARG),
+        InputValue::new("offset", TypeRef::named("Int")).description(d::OFFSET_ARG),
+        InputValue::new("order", TypeRef::named_list("commitsOrderArg")).description(d::ORDER_ARG),
+    ]
+}
+
+/// A subscription root field that streams nothing: introspection only reads it.
+fn subscription_field(name: &str, ty: TypeRef, args: Vec<InputValue>) -> SubscriptionField {
+    args.into_iter().fold(
+        SubscriptionField::new(name, ty, |_| {
+            SubscriptionFieldFuture::new(async {
+                Ok(futures::stream::empty::<async_graphql::Result<GqlValue>>())
+            })
+        }),
+        SubscriptionField::argument,
+    )
 }
 
 #[cfg(test)]
