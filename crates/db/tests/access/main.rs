@@ -7,3 +7,4 @@ mod coverage;
 mod dac_policy;
 mod enforcement;
 mod external_registration;
+mod nac_toggle_race;

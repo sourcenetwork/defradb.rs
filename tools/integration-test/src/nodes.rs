@@ -27,6 +27,10 @@ pub struct NodeSpec {
     pub dir: Option<Arc<TempDir>>,
     /// The P2P addresses a restarted node listens on again.
     pub listen: Vec<String>,
+    /// Start with node access control enabled, as Go's `Start { EnableNAC }`.
+    pub enable_nac: bool,
+    /// The identity starting the node, which owns its NAC when it enables it.
+    pub nac_owner: Option<String>,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -43,14 +47,25 @@ pub struct TestNode {
 
 impl TestNode {
     pub fn start(client_type: ClientType, spec: NodeSpec) -> Self {
+        Self::try_start(client_type, spec).unwrap_or_else(|error| panic!("start node: {error}"))
+    }
+
+    /// [`TestNode::start`], failing with the node builder's error.
+    pub fn try_start(client_type: ClientType, spec: NodeSpec) -> Result<Self, String> {
         let listen = match spec.listen.first() {
             Some(address) => address.clone(),
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),
         };
         match client_type {
             ClientType::InProcess => {
-                let node = Arc::new(build(&spec, &listen, None));
-                Self::new(Some(node.clone()), None, spec, Some(node), Vec::new())
+                let node = Arc::new(build(&spec, &listen, None)?);
+                Ok(Self::new(
+                    Some(node.clone()),
+                    None,
+                    spec,
+                    Some(node),
+                    Vec::new(),
+                ))
             }
             ClientType::RustHttp | ClientType::Cli => {
                 if client_type == ClientType::Cli {
@@ -67,8 +82,8 @@ impl TestNode {
                 let config = HttpConfig::with_listener(listener)
                     .expect("http config")
                     .with_dev_mode(true);
-                let node = Arc::new(build(&spec, &listen, Some(config)));
-                Self::new(None, Some(url), spec, Some(node), Vec::new())
+                let node = Arc::new(build(&spec, &listen, Some(config))?);
+                Ok(Self::new(None, Some(url), spec, Some(node), Vec::new()))
             }
             ClientType::GoHttp => {
                 let binary = go_binary().unwrap_or_else(|error| panic!("{error}"));
@@ -79,7 +94,7 @@ impl TestNode {
                 let node =
                     GoNode::start(&binary, &options).unwrap_or_else(|error| panic!("{error}"));
                 let url = node.api_url().to_owned();
-                Self::new(None, Some(url), spec, None, vec![Arc::new(node)])
+                Ok(Self::new(None, Some(url), spec, None, vec![Arc::new(node)]))
             }
         }
     }
@@ -172,7 +187,7 @@ impl TestNode {
     }
 }
 
-fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Node {
+fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node, String> {
     // Every Rust node runs in this process. Go's test binary encrypts with its
     // fixed test nonce and test key, so expected `_commits` ciphertexts only
     // match with both, as the FFI's `defra_init` sets them for Go's suite.
@@ -188,9 +203,15 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Node {
     if let Some(config) = http {
         builder = builder.with_http(config);
     }
+    if spec.enable_nac {
+        builder = match &spec.nac_owner {
+            Some(owner) => builder.with_node_acp_owner(owner.clone()),
+            None => builder.with_node_acp_enabled(),
+        };
+    }
     workers::block_on(builder.build())
         .expect("run builder")
-        .expect("start node")
+        .map_err(|error| error.to_string())
 }
 
 /// What a node's events said, read in order by the waits.
