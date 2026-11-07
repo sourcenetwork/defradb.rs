@@ -1,7 +1,8 @@
-use crate::scenario::{Common, Op};
+use crate::clients::{CliRun, HttpRun};
+use crate::scenario::{Common, Failure, Op};
 use crate::test_case::State;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use testo::prelude::*;
 
 /// The `index.delete` op.
@@ -32,6 +33,18 @@ impl Op for DeleteIndex {
     fn expected_error(&self) -> Option<&str> {
         self.expected_error.as_deref()
     }
+
+    fn run(&self, state: &State) -> Result<Value, Failure> {
+        let identity = self.common.client_identity(Self::name())?;
+        state
+            .block_on(state.node_on(self.common.node())?.delete_index_as(
+                &state.context_as(self.txn, identity),
+                &self.collection,
+                &self.index_name,
+            ))
+            .map(|()| json!({}))
+            .map_err(|e| Failure::operation(e.to_string()))
+    }
 }
 
 impl Action for DeleteIndex {
@@ -39,5 +52,46 @@ impl Action for DeleteIndex {
 
     fn execute(&self, state: &mut State) {
         crate::scenario::execute(self, state);
+    }
+}
+
+impl HttpRun for DeleteIndex {
+    fn execute_http(&self, state: &mut State) {
+        crate::scenario::execute_with(self, state, |action, state| {
+            let identity = action.common.client_identity(Self::name())?;
+            if action.txn.is_some() {
+                return Err(Failure::unsupported(format!(
+                    "{} argument txn",
+                    Self::name()
+                )));
+            }
+            let (collection, name) = (action.collection.clone(), action.index_name.clone());
+            state
+                .http_as(action.common.node(), identity, |client| async move {
+                    client.index_delete(&collection, &name).await
+                })?
+                .map(|()| json!({}))
+                .map_err(|e| Failure::operation(e.to_string()))
+        });
+    }
+}
+
+impl CliRun for DeleteIndex {
+    fn execute_cli(&self, state: &mut State) {
+        crate::scenario::execute_with(self, state, |action, state| {
+            let identity = action.common.client_identity(Self::name())?;
+            let args = [
+                "index",
+                "delete",
+                "--collection",
+                action.collection.as_str(),
+                "--name",
+                action.index_name.as_str(),
+            ];
+            state
+                .defra_client_as(action.common.node(), action.txn, identity, &args)
+                .map(|_| json!({}))
+                .map_err(Failure::operation)
+        });
     }
 }
