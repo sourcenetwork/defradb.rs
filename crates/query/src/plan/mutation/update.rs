@@ -460,6 +460,7 @@ impl PlanNode for UpdateNode {
                     // Collect the modified field names for block creation
                     let mut modified_fields: RapidHashSet<String> = self.input.field_names();
 
+                    let mut missed = false;
                     if let Some(embeddings) = &self.prepared_embeddings {
                         let id = doc.id().map(ToString::to_string).unwrap_or_default();
                         if let Some(prepared) = embeddings.get(&id) {
@@ -489,12 +490,14 @@ impl PlanNode for UpdateNode {
                                 let Some(response) = self
                                     .prepared_inputs
                                     .as_ref()
-                                    .and_then(|memo| memo.get(&request))
+                                    .and_then(|memo| memo.get_or_want(&request))
                                 else {
                                     if !dependencies_match {
                                         crate::prepared::record_dependency_rerun();
                                     }
-                                    return Err(QueryError::NeedsInput(request));
+                                    misses.keep::<()>(Err(QueryError::NeedsInput(request)))?;
+                                    missed = true;
+                                    continue;
                                 };
                                 let vector: Vec<f64> =
                                     serde_json::from_slice(&response).map_err(|error| {
@@ -510,6 +513,10 @@ impl PlanNode for UpdateNode {
                                 modified_fields.insert(embedding.field.clone());
                             }
                         }
+                    }
+
+                    if missed {
+                        continue;
                     }
 
                     if let Some(writes) = &self.prepared_writes {
