@@ -337,6 +337,30 @@ impl Planner {
             &child_scope_path,
         )?;
 
+        // Filter and check access before scoring, so a hidden child is never scored.
+        // At this point, relation sub-joins are in place so the filter can evaluate
+        // conditions on joined relation data (e.g., publisher.yearOpened).
+        let (row_filter, alias_filter) = match &combined_filter {
+            Some(filter) => match filter.split_alias() {
+                // An alias under `_or` can't be split off; the whole filter waits for the scores.
+                (Some(row), _)
+                    if names_alias(&serde_json::Value::Object(row.conditions().clone())) =>
+                {
+                    (None, Some(filter.clone()))
+                }
+                split => split,
+            },
+            None => (None, None),
+        };
+        if let Some(filter) = row_filter {
+            child_plan = Box::new(
+                SelectNode::new(child_plan, child_scan_mapping.clone()).with_filter(filter),
+            );
+        }
+
+        // Insert ACP permission filter for the child collection (if ACP-protected).
+        child_plan = self.maybe_wrap_with_acp_filter(child_plan, &target_collection);
+
         child_plan = self.add_similarity_nodes(
             child_plan,
             nested_select,
@@ -349,18 +373,11 @@ impl Planner {
             &child_scan_mapping,
             &target_collection,
         )?;
-
-        // Now wrap with SelectNode if there's a filter (deferred from earlier).
-        // At this point, relation sub-joins are in place so the filter can evaluate
-        // conditions on joined relation data (e.g., publisher.yearOpened).
-        if let Some(ref filter) = combined_filter {
+        if let Some(filter) = alias_filter {
             child_plan = Box::new(
-                SelectNode::new(child_plan, child_scan_mapping.clone()).with_filter(filter.clone()),
+                SelectNode::new(child_plan, child_scan_mapping.clone()).with_filter(filter),
             );
         }
-
-        // Insert ACP permission filter for the child collection (if ACP-protected).
-        child_plan = self.maybe_wrap_with_acp_filter(child_plan, &target_collection);
 
         // Update parent mapping with the final child mapping (after sub-joins)
         // This ensures the nested relation mappings are included
@@ -370,5 +387,16 @@ impl Planner {
         child.child_scan_mapping = child_scan_mapping;
 
         Ok(child_plan_provides_ordering)
+    }
+}
+
+/// Whether a filter names `_alias` at any depth.
+fn names_alias(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.contains_key("_alias") || map.values().any(names_alias)
+        }
+        serde_json::Value::Array(items) => items.iter().any(names_alias),
+        _ => false,
     }
 }
