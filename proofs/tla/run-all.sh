@@ -134,6 +134,7 @@ RUNS=(
   "MC_ChunkRead_Red_NoMergedCheck.cfg ChunkRead.tla RED" # a chunk that arrived first is served as public (INV_ServedIsReadable)
   "MC_ChunkRead_Red_NoGrantCheck.cfg ChunkRead.tla RED" # revoked reader still sees chunks (INV_ShownIsLiveAndReadable)
   "MC_ChunkRead_Red_NoListCheck.cfg ChunkRead.tla RED" # chunks dropped by an edit still show (INV_ShownIsTheText)
+  "MC_ChunkRead_Red_RouteSkipsList.cfg ChunkRead.tla RED" # #2201: similarity route ranks by a superseded chunk (INV_RankedIsBestListed)
   "MC_TruncateChunks_Green.cfg TruncateChunks.tla GREEN" # truncate empties chunks before parents
   "MC_TruncateChunks_Red_ParentsFirst.cfg TruncateChunks.tla RED" # parents first strands a racing create (INV_LiveParentHasChunks)
   "MC_TruncateChunks_Red_PurgeLeavesChunks.cfg TruncateChunks.tla RED" # purge leaves the chunks of purged articles (INV_PurgedHaveNoChunks)
