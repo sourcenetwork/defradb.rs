@@ -197,7 +197,7 @@ An `@embedding` of a `@chunk` field gives every chunk its own vector, made from 
 - **Parents:** ["defra.chunk.embed"]
 - **Scenarios:** ["chunk::embed_declare::the_embedding_moves_from_the_parent_to_its_chunks"]
 
-With `body: String @chunk` and `body_v: [Float32!] @embedding(fields: ["body"], ...) @index(vector: {dimensions: 3})` on `Article`, the field `body_v`, its embedding and its vector index belong to `Article__body_chunk`, embedding the chunk's `text`. `Article__body_chunk { body_v }` returns `[]` before any document is added. `Article` has no `body_v`, so `SIMILARITY(body_v: ...)` on `Article` fails with `Unknown argument "body_v" on field "SIMILARITY" of type "Article"`; a similarity search over passages queries `Article__body_chunk`.
+With `body: String @chunk` and `body_v: [Float32!] @embedding(fields: ["body"], ...) @index(vector: {dimensions: 3})` on `Article`, the field `body_v`, its embedding and its vector index belong to `Article__body_chunk`, embedding the chunk's `text`. `Article__body_chunk { body_v }` returns `[]` before any document is added. `Article` has no `body_v`, so `Article { body_v }` fails with `Cannot query field "body_v" on type "Article"`; a similarity search over passages queries `Article__body_chunk`, and `SIMILARITY(body_v: ...)` on `Article` ranks articles by their chunks (`defra.chunk.rank`).
 
 # `defra.chunk.embed.declare_only_field`: The embedding embeds the chunked field alone
 
@@ -282,3 +282,44 @@ Adding an article with `body` encrypted asks the model for each chunk once, and 
 - **Scenarios:** ["chunk::embed_writes::an_upsert_embeds_the_chunks_it_creates"]
 
 An `upsert_Article` that finds no article creates one, asks the model for each of its chunks once, and every chunk holds its vector.
+
+# `defra.chunk.rank`: Ranking articles by their best chunk
+
+- **Parents:** ["defra.chunk.embed"]
+
+`SIMILARITY(body_v: ...)` on `Article`, where `body_v` embeds a `@chunk` field, scores each article by its best chunk: the highest similarity among the chunks its current text lists. Each article appears once. A query the vector index can answer, as for a single-vector field, reads the chunk index nearest first, widens until the chunks it read name enough articles, and scores every article from its listed chunks when the index runs out. Any other query scores every article from its listed chunks, with the same `VECTOR_INDEX_UNUSED` warning a single-vector field gives.
+
+# `defra.chunk.rank.best_chunk`: Articles rank by their best chunk, through the chunk index
+
+- **Parents:** ["defra.chunk.rank"]
+- **Scenarios:** ["chunk::rank_best_chunk::articles_rank_by_their_best_chunk_through_the_chunk_index"]
+
+With an article whose second paragraph is about rivers, one about rivers and engines, and one about music, `Article(order: {_alias: {sim: DESC}}, limit: 2) { title sim: SIMILARITY(body_v: {vector: [1, 0, 0]}) }` returns the first with similarity 1 and the second with similarity 0.7071. Under `@explain(type: execute)`, the article scan names the chunk collection's vector index in `vectorIndex` and reads it once.
+
+# `defra.chunk.rank.widen`: A filtered query widens its chunk search
+
+- **Parents:** ["defra.chunk.rank"]
+- **Scenarios:** ["chunk::rank_filtered::a_filtered_query_widens_past_the_chunks_of_filtered_out_articles"]
+
+With three draft articles about rivers and one titled `kept` about rivers and engines, the same query with `limit: 1, filter: {title: {_eq: "kept"}}` returns `kept` with similarity 0.7071. The chunk index is read three times, for one, two and then four chunks.
+
+# `defra.chunk.rank.unrouted`: An unrouted query scores every article from its chunks
+
+- **Parents:** ["defra.chunk.rank"]
+- **Scenarios:** ["chunk::rank_unrouted::a_query_without_a_limit_scores_every_article_from_all_its_chunks"]
+
+Without a limit the same query returns every article, best first, each scored by its best chunk, with the warning `VECTOR_INDEX_UNUSED` whose detail is `{"field": "body_v", "reason": "noLimit"}`.
+
+# `defra.chunk.rank.superseded`: A replaced chunk never ranks its article
+
+- **Parents:** ["defra.chunk.rank"]
+- **Scenarios:** ["chunk::rank_superseded::a_replaced_chunk_does_not_rank_its_article"]
+
+An article about rivers, edited to be about music, keeps its old rivers chunk stored and indexed, but its score is its music chunk's, 0. With another article about rivers and engines, `limit: 1` returns that other article, and `limit: 2`, or no limit at all, returns it and then the edited article with similarity 0.
+
+# `defra.chunk.rank.access`: A reader ranks only the articles they may read
+
+- **Parents:** ["defra.chunk.rank"]
+- **Scenarios:** ["chunk::rank_access::a_reader_ranks_only_the_articles_they_may_read"]
+
+Under a local policy, with Alice's article about rivers and a public article about engines created with no identity, `limit: 2` returns both to Alice, hers first with similarity 1, and only the public article, with similarity 0, to Bob and to a request with no identity.
