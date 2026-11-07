@@ -33,6 +33,7 @@ testo collection_version::updates::remove::collections::col_version_update_remov
 testo collection_version::updates::remove::collections::col_version_update_remove_collection_referenced_by_relation_other_side_returns_error #2376
 testo collection_version::updates::remove::collections::col_version_update_remove_collection_referenced_by_relation_returns_error #2376
 testo collection_version::updates::remove::collections::col_version_update_remove_collections_add_doc_to_removed_collection #2376
+testo cursor::reindex::a_datetime_index_stays_cursor_visible_after_a_lens_reindex #2420
 testo encryption::field::doc_encryption_field_if_attempt_to_encrypt_builtin_field_return_error #2515
 testo encryption::field::doc_encryption_field_if_field_does_not_exist_return_error #2515
 testo index::json_composite::json_array_composite_index_json_array_with_array_field_should_fetch_using_index_non_unique_combination #2411
