@@ -114,7 +114,8 @@ impl ReplicatorRegistry {
                         info.collections.retain(|id| id != collection_id);
                         info.filters
                             .retain(|collection, _| collection != collection_id);
-                        // Kept when only the parent goes, so its chunks stay filtered.
+                        // Only a chunk collection's own removal drops its source; removing the
+                        // parent leaves it, so the chunks stay filtered and are never pushed.
                         info.chunk_sources.remove(collection_id);
                     }
                     info.collections.is_empty()

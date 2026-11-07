@@ -151,7 +151,8 @@ where
         .collect()
 }
 
-/// `pairs` of names as collection IDs; `ids[i]` is the ID of `names[i]`.
+/// The stored replicator names collections by ID, so the name pairs are
+/// mapped through `ids`, where `ids[i]` belongs to `names[i]`.
 pub fn chunk_source_ids(
     pairs: &[(String, String)],
     names: &[String],
