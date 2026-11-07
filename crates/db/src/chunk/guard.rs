@@ -8,24 +8,22 @@ use super::list::text_hash;
 /// Why a merged chunk is refused.
 #[derive(Debug, thiserror::Error)]
 pub enum ChunkMergeError {
-    #[error("a chunk cannot change after it is created")]
-    Changed,
+    #[error("a chunk cannot change after it is created. Field: {0}")]
+    Changed(String),
     #[error("a chunk's hash does not match its text")]
     HashMismatch,
 }
 
-/// Refuses a chunk whose hash doesn't match its text, and any change to an
-/// existing chunk, its vectors included. A chunk is never written again, so
-/// a change a peer slipped in would stay. A vector is not checked against
-/// its text: no peer can run the model to check it.
+/// Refuses a chunk whose hash doesn't match its text, and any change to a
+/// stored chunk. Vectors are not checked against their text.
 pub fn check_chunk_merge(old: Option<&Document>, merged: &Document) -> Result<(), ChunkMergeError> {
     if let Some(old) = old {
-        let changed = old
+        if let Some(field) = old
             .field_names()
             .chain(merged.field_names())
-            .any(|field| old.get(field) != merged.get(field));
-        if changed {
-            return Err(ChunkMergeError::Changed);
+            .find(|field| old.get(field) != merged.get(field))
+        {
+            return Err(ChunkMergeError::Changed(field.to_string()));
         }
     }
     // An encrypted chunk can't be checked here, so the read path checks its hash.
