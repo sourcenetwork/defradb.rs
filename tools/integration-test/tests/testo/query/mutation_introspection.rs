@@ -1,5 +1,7 @@
 //! Introspection shows Go's mutation surface: the arguments and types the
 //! mutation parser accepts (#2649, `defra.request.mutation_introspection`).
+//! Arguments are checked as a subset, since the test also runs against Go,
+//! which has no `docIDs`.
 
 use integration_test::actions::{AddCollection, Request};
 use integration_test::m;
@@ -23,7 +25,7 @@ fn field(name: &str, ty: Value, args: &[(&str, Value)]) -> Value {
         .iter()
         .map(|(name, ty)| json!({ "name": name, "type": ty }))
         .collect();
-    json!({ "name": name, "type": ty, "args": args })
+    json!({ "name": name, "type": ty, "args": m::contains(json!(args)) })
 }
 
 #[test]
