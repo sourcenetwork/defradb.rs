@@ -806,3 +806,47 @@ fn an_explicit_false_commitment_flag_decodes() {
     let decoded = CollectionDefinitionDeltaPayload::try_from(&Ipld::Map(collection)).unwrap();
     assert!(!decoded.is_branchable);
 }
+
+fn chunked_delta() -> CollectionDefinitionDeltaPayload {
+    CollectionDefinitionDeltaPayload::new(1)
+        .with_name("Article")
+        .with_chunked_fields(vec![crate::ChunkedFieldDelta {
+            field: "body".to_string(),
+            max_chars: 64,
+            overlap: 1,
+        }])
+}
+
+/// The `@chunk` settings survive both codecs, and both write the same bytes,
+/// so the CID a peer computes matches the author's.
+#[test]
+fn chunk_settings_round_trip_through_both_codecs() {
+    let generated = CollectionDefinitionDeltaPayload::new(1)
+        .with_name("Article__body_chunk")
+        .with_chunk_of(crate::ChunkOfDelta {
+            collection: "Article".to_string(),
+            field: "body".to_string(),
+        });
+    for delta in [chunked_delta(), generated] {
+        let bytes = serde_ipld_dagcbor::to_vec(&delta).unwrap();
+        let decoded: CollectionDefinitionDeltaPayload =
+            serde_ipld_dagcbor::from_slice(&bytes).unwrap();
+        assert_eq!(decoded, delta);
+
+        let ipld = Ipld::try_from(&delta).unwrap();
+        assert_eq!(serde_ipld_dagcbor::to_vec(&ipld).unwrap(), bytes);
+        let restored = CollectionDefinitionDeltaPayload::try_from(&ipld).unwrap();
+        assert_eq!(restored, delta);
+    }
+}
+
+#[test]
+fn chunk_settings_change_the_delta_bytes() {
+    let encode =
+        |delta: &CollectionDefinitionDeltaPayload| serde_ipld_dagcbor::to_vec(delta).unwrap();
+    let bare = CollectionDefinitionDeltaPayload::new(1).with_name("Article");
+    let mut wider = chunked_delta();
+    wider.chunked_fields[0].max_chars = 1600;
+    assert_ne!(encode(&bare), encode(&chunked_delta()));
+    assert_ne!(encode(&chunked_delta()), encode(&wider));
+}

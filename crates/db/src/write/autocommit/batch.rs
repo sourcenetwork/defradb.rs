@@ -377,6 +377,8 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             .map_err(crate::error::commit_query_error)?;
         self.validate_collection_for_write(&collection).await?;
         ensure_collection_is_active(&self.db, collection_name, &collection)?;
+        crate::chunk::user_writes::ensure_user_writable(collection.schema())?;
+        crate::chunk::user_writes::refuse_list_writes(collection.schema(), &doc, None)?;
 
         // No per-doc write guard for creates: the DocID is derived from the
         // genesis block inside the txn; the mapping duplicate check is the gate.
@@ -482,6 +484,12 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             .map_err(crate::error::commit_query_error)?;
         self.validate_collection_for_write(&collection).await?;
         ensure_collection_is_active(&self.db, collection_name, &collection)?;
+        crate::chunk::user_writes::ensure_user_writable(collection.schema())?;
+        crate::chunk::user_writes::refuse_list_writes(
+            collection.schema(),
+            &doc,
+            Some(&modified_fields),
+        )?;
         let prepared_inputs = self.prepared_inputs.clone().unwrap_or_default();
 
         let doc_id = doc
@@ -628,6 +636,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             .map_err(crate::error::commit_query_error)?;
         self.validate_collection_for_write(&collection).await?;
         ensure_collection_is_active(&self.db, collection_name, &collection)?;
+        crate::chunk::user_writes::ensure_user_writable(collection.schema())?;
 
         let Some((doc_short_id, canonical_doc_id)) = collection
             .resolve_doc_identity(&systemstore, doc_id)

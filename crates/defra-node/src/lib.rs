@@ -60,7 +60,6 @@ mod p2p_runtime;
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
 mod peer_key;
 mod peer_keyring;
-pub mod search_chunks;
 mod signed_query;
 mod transaction;
 pub mod version;

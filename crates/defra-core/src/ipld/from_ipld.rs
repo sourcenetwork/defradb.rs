@@ -5,10 +5,10 @@ use std::collections::BTreeMap;
 use ipld_core::ipld::Ipld;
 
 use crate::block::{
-    Block, CollectionDefinitionDeltaPayload, CollectionDeltaPayload, CompositeDeltaPayload,
-    CounterDeltaPayload, CrdtDelta, CustomDeltaPayload, DAGLink, Encryption,
-    FieldDefinitionDeltaPayload, ImmutableDeltaPayload, JsonDeltaPayload, LwwDeltaPayload,
-    Signature, SignatureHeader, SignatureType, TextDeltaPayload,
+    Block, ChunkOfDelta, ChunkedFieldDelta, CollectionDefinitionDeltaPayload,
+    CollectionDeltaPayload, CompositeDeltaPayload, CounterDeltaPayload, CrdtDelta,
+    CustomDeltaPayload, DAGLink, Encryption, FieldDefinitionDeltaPayload, ImmutableDeltaPayload,
+    JsonDeltaPayload, LwwDeltaPayload, Signature, SignatureHeader, SignatureType, TextDeltaPayload,
 };
 use crate::{Error, Result};
 
@@ -439,8 +439,67 @@ impl TryFrom<&Ipld> for CollectionDefinitionDeltaPayload {
             governance_root: parse_optional_string(map, "governance")?,
             is_branchable: parse_flag(map, "branchable")?,
             policy_cid: parse_optional_cid(map, "policy")?,
+            chunked_fields: match map.get("chunked") {
+                Some(Ipld::List(list)) => list
+                    .iter()
+                    .map(ChunkedFieldDelta::try_from)
+                    .collect::<Result<_>>()?,
+                Some(other) => {
+                    return Err(Error::IpldError(format!(
+                        "Field 'chunked' expected List, got {}",
+                        ipld_type_name(other)
+                    )))
+                }
+                None => Vec::new(),
+            },
+            chunk_of: map
+                .get("chunkOf")
+                .map(ChunkOfDelta::try_from)
+                .transpose()?
+                .map(Box::new),
         })
     }
+}
+
+impl TryFrom<&Ipld> for ChunkedFieldDelta {
+    type Error = Error;
+
+    fn try_from(ipld: &Ipld) -> Result<Self> {
+        let Ipld::Map(map) = ipld else {
+            return Err(Error::IpldError(format!(
+                "Expected IPLD map for ChunkedFieldDelta, got {}",
+                ipld_type_name(ipld)
+            )));
+        };
+        Ok(ChunkedFieldDelta {
+            field: parse_string(map, "field")?,
+            max_chars: parse_u32(map, "maxChars")?,
+            overlap: parse_u32(map, "overlap")?,
+        })
+    }
+}
+
+impl TryFrom<&Ipld> for ChunkOfDelta {
+    type Error = Error;
+
+    fn try_from(ipld: &Ipld) -> Result<Self> {
+        let Ipld::Map(map) = ipld else {
+            return Err(Error::IpldError(format!(
+                "Expected IPLD map for ChunkOfDelta, got {}",
+                ipld_type_name(ipld)
+            )));
+        };
+        Ok(ChunkOfDelta {
+            collection: parse_string(map, "collection")?,
+            field: parse_string(map, "field")?,
+        })
+    }
+}
+
+fn parse_u32(map: &BTreeMap<String, Ipld>, key: &str) -> Result<u32> {
+    let value = parse_u64(map, key)?;
+    u32::try_from(value)
+        .map_err(|_| Error::IpldError(format!("Field '{key}' value {value} exceeds u32")))
 }
 
 impl TryFrom<&Ipld> for Encryption {

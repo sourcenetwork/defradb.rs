@@ -13,6 +13,7 @@ use schema::{CType, CrdtName};
 
 use crate::error::{QueryError, Result};
 
+use super::chunk::parse_chunk_directive;
 use super::directives::{
     default_type_error, get_directive_arg, get_directive_string, get_directive_string_list,
     known_directive_arguments, IndexConfig, IndexDirection, ParsedDirectives,
@@ -50,10 +51,10 @@ impl<'a> SdlParser<'a> {
         for directive in directives {
             let name = directive.name.as_str();
 
-            // Check arguments for all known directives upfront. `@index` is
-            // excluded: it validates its own, and refuses an unknown one
-            // outright, so a warning here would only precede the error.
-            if name != "index" && KNOWN_FIELD_DIRECTIVES.contains(&name) {
+            // Check arguments for all known directives upfront. `@index` and
+            // `@chunk` are excluded: they validate their own, and refuse an
+            // unknown one outright, so a warning here would only precede the error.
+            if !matches!(name, "index" | "chunk") && KNOWN_FIELD_DIRECTIVES.contains(&name) {
                 self.check_directive_arguments(directive, &type_name, Some(field_name));
             }
 
@@ -100,6 +101,15 @@ impl<'a> SdlParser<'a> {
                     result.fulltext = Some(super::directives::FullTextConfig { language, k1, b });
                 }
                 "immutable" => result.immutable = true,
+                "chunk" => {
+                    let owner = format!("{type_name}.{field_name}");
+                    if result.chunk.is_some() {
+                        return Err(QueryError::parse(format!(
+                            "@chunk can only be used once on a field. Field: {owner}"
+                        )));
+                    }
+                    result.chunk = Some(parse_chunk_directive(directive, &owner)?);
+                }
                 "embedding" => {
                     let provider = get_directive_string(directive, "provider").unwrap_or_default();
                     let model = get_directive_string(directive, "model").unwrap_or_default();

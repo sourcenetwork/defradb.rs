@@ -3,10 +3,12 @@
 //! This module mirrors Go DefraDB's `definition_validation.go`, running the same
 //! set of validators after every patch to ensure old vs new state consistency.
 
+mod chunk_validators;
 mod global_validators;
 mod helpers;
 mod update_validators;
 
+use chunk_validators::*;
 use global_validators::*;
 use update_validators::*;
 
@@ -91,6 +93,7 @@ const UPDATE_VALIDATORS: &[Validator] = &[
     validate_sources_not_redefined,
     validate_source_belongs_to_host,
     validate_branchable_not_mutated,
+    validate_chunks_not_modified,
 ];
 
 /// Validators that run on both create and update.
@@ -149,7 +152,16 @@ pub fn validate_new_collections(new_collections: &[CollectionVersion]) -> Result
     }
 }
 
-/// Validates relation integrity for new collections alongside persisted definitions.
+/// Refuses `@chunk` in a view, so a view adder can fail before its other checks.
+pub fn validate_no_chunk_in_view(collections: &[CollectionVersion]) -> Result<(), String> {
+    let errors = chunks_in_views(collections);
+    match errors.is_empty() {
+        true => Ok(()),
+        false => Err(errors.join("\n")),
+    }
+}
+
+/// Validates new collections against persisted definitions, and their views for `@chunk`.
 pub fn validate_new_collections_with_existing(
     new_collections: &[CollectionVersion],
     existing_collections: &[CollectionVersion],
@@ -162,7 +174,7 @@ pub fn validate_new_collections_with_existing(
     let new_state = DefinitionState::new(&collections);
     let old_state = DefinitionState::new(existing_collections);
 
-    let mut errors = Vec::new();
+    let mut errors = chunks_in_views(new_collections);
     for validator in RELATION_VALIDATORS {
         errors.extend(validator(&new_state, &old_state));
     }

@@ -125,6 +125,11 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             .map_err(|error| query::error::QueryError::permission_denied(error.to_string()))?;
 
         let (_collection_guard, collection) = self.guarded_collection(collection_name).await?;
+        crate::chunk::user_writes::refuse_list_writes(
+            collection.schema(),
+            &doc,
+            Some(&modified_fields),
+        )?;
         let input_doc_id = doc
             .id()
             .cloned()

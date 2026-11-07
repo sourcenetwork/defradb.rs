@@ -8,8 +8,9 @@ pub(super) fn build_mutation_type(collections: &[Arc<CollectionVersion>]) -> Obj
     let mut mutation = Object::new("Mutation").description("Root mutation type");
 
     for collection in collections {
-        // Embedded-only types don't have mutation fields
-        if collection.is_embedded_only {
+        // Embedded-only types have no mutations, and `@chunk` collections are
+        // written only through their parent.
+        if collection.is_embedded_only || collection.is_generated() {
             continue;
         }
 

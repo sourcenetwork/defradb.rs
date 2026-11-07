@@ -310,6 +310,8 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
             .map_err(crate::error::commit_query_error)?;
         self.ensure_collection_can_write(collection_name, &collection)
             .await?;
+        crate::chunk::user_writes::ensure_user_writable(collection.schema())?;
+        crate::chunk::user_writes::refuse_list_writes(collection.schema(), &doc, None)?;
 
         let inputs = Some(&self.prepared_inputs);
         pipeline::embed(&self.db, &collection, &mut doc, inputs).await?;
@@ -402,6 +404,12 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
             .map_err(crate::error::commit_query_error)?;
         self.ensure_collection_can_write(collection_name, &collection)
             .await?;
+        crate::chunk::user_writes::ensure_user_writable(collection.schema())?;
+        crate::chunk::user_writes::refuse_list_writes(
+            collection.schema(),
+            &doc,
+            Some(&modified_fields),
+        )?;
 
         let update_doc_id = doc
             .id()
@@ -540,6 +548,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
             .map_err(crate::error::commit_query_error)?;
         self.ensure_collection_can_write(collection_name, &collection)
             .await?;
+        crate::chunk::user_writes::ensure_user_writable(collection.schema())?;
 
         let Some((doc_short_id, canonical_doc_id)) = collection
             .resolve_doc_identity(&systemstore, doc_id)

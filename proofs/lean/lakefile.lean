@@ -133,6 +133,9 @@ lean_lib SelectedCarAuthority where
 lean_lib RetrySchedule where
 
 @[default_target]
+lean_lib ChunkSplit where
+
+@[default_target]
 lean_lib TxnId where
 
 @[default_target]

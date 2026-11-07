@@ -2171,6 +2171,24 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "Text chunking",
+        name: "covers / bounded / deterministic / units_edit / local_edit / heading_keeps_text / unit_break_reads_only_headings / long_unit_fences",
+        axis: Lean,
+        anchor: "crates/chunk-split/src/split/mod.rs split; segments.rs units, fence_before, segments; atoms.rs atoms; pack.rs pack; overlap.rs with_overlap",
+        model_ref: "ChunkSplit (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Text chunking",
+        name: "no_chunks_keeps_its_identity / different_settings_different_identity / field_order_does_not_change_identity / peer_holds_the_same_settings_as_the_author / buggy_identity_ignores_settings",
+        axis: Lean,
+        anchor: "crates/schema/src/cid.rs build_collection_delta; crates/query/src/sdl_parse/chunk.rs synthesize_chunk_types; crates/db/src/merge/merge_handler/definition.rs process_collection_definition_delta",
+        model_ref: "ChunkSplit (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // One task serves a pg-compat connection: one deadline read at the
         // accept bounds the peek, the SSL and GSS refusals and the startup;
         // an extended-protocol error skips to the Sync; a fatal error or a

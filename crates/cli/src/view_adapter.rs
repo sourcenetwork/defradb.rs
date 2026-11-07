@@ -137,6 +137,8 @@ impl<S: Store + 'static> ViewOperations for ViewAdapter<S> {
             })
             .collect();
 
+        schema::definition_validation::validate_no_chunk_in_view(&view_collections)
+            .map_err(|e| format!("failed to create view collection: {}", e))?;
         for collection in &view_collections {
             if collection.downsample_interval.is_some() {
                 self.database

@@ -13,11 +13,13 @@
 //! - `builder`: Collection building
 //! - `builder_cycles`: Circular relation detection
 //! - `builder_field_kinds`: Field kind resolution
+//! - `chunk`: Generated `@chunk` collections and list fields
 //! - `helpers`: Shared parsing utilities
 
 mod builder;
 mod builder_cycles;
 mod builder_field_kinds;
+mod chunk;
 mod directives;
 mod fields;
 mod helpers;

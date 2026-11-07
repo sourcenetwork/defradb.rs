@@ -151,6 +151,14 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             schema.is_branchable = payload.is_branchable;
             schema.governance_root.clone_from(&payload.governance_root);
         }
+        // Every version's block carries the `@chunk` settings, so this peer
+        // cuts text the same way the author does.
+        schema.chunked_fields = payload
+            .chunked_fields
+            .iter()
+            .map(schema::ChunkedField::from)
+            .collect();
+        schema.chunk_of = payload.chunk_of.as_deref().map(schema::ChunkSource::from);
         // The version ID binds the policy by a CID over its reference. The
         // record keeps the binding, and the policy itself only when a version
         // this node holds of the same collection supplies the reference the

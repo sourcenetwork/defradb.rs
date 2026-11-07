@@ -101,6 +101,11 @@ impl TestNode {
         }
     }
 
+    /// The node runs Go's defradb in another process.
+    pub fn is_go(&self) -> bool {
+        self.embedded.is_none()
+    }
+
     /// Stop the node through the core's shutdown; a Go node is stopped when
     /// it is dropped.
     pub async fn stop(&self) {
