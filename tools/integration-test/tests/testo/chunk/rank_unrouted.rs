@@ -7,7 +7,7 @@ use integration_test::test_case::TestCase;
 use serde_json::json;
 
 use super::embed_support::{add_embedded_collection, model_embedded};
-use super::rank_support::{add_article_about, ranked, score};
+use super::rank_support::{add_article_about, ranked, score, CHUNK_FIELDS};
 
 #[test]
 #[mantra_macros::req_test("defra.chunk.rank.unrouted")]
@@ -34,6 +34,27 @@ fn a_query_without_a_limit_scores_every_article_from_all_its_chunks() {
         add_article_about("half", &["rivers and engines"], None),
         add_article_about("music", &["music"], None),
         everything.into(),
+        // The articles come from the scan; scoring reads each one's listed chunks
+        // with one index lookup each, and never the article again.
+        Request {
+            request: r#"query @explain(type: execute) { Article(order: {_alias: {sim: DESC}}) {
+                title sim: SIMILARITY(body_v: {vector: [1, 0, 0]})
+            } }"#
+                .into(),
+            expected_data: m::explain_target(
+                "similarityNode",
+                false,
+                0,
+                json!({
+                    "iterations": 4,
+                    "docFetches": 4,
+                    "fieldFetches": 4 * CHUNK_FIELDS,
+                    "indexFetches": 3,
+                }),
+            ),
+            ..Default::default()
+        }
+        .into(),
     ])
     .execute();
 }

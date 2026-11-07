@@ -501,3 +501,11 @@ On a field with `@index(vector: {dimensions: 3, hnsw: {metric: COSINE}})`, `User
 - **Scenarios:** ["query.simple", "query.simple.empty-document", "query.simple.missing-fields", "query.simple.multiple-rows", "query.simple.with-restart"]
 
 `query { Users { Name Age } }` returns one object per document holding exactly the selected fields (including `_docID` when selected); fields never set on a document come back as `null`. Documents added after a node restart are returned like any others.
+
+# `defra.similarity.access_first`: A similarity query scores only documents the reader may see
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["acp::dac::similarity::a_root_similarity_never_scores_a_hidden_note", "acp::dac::similarity::a_nested_similarity_never_scores_a_hidden_note"]
+
+Under a local policy, with only Alice's note holding a 3-dimension `vec`, `SIMILARITY(vec: {vector: [1, 0]})` in `Note { ... }` returns no notes to Bob, and in `Author { notes { ... } }` returns the author with no notes, with no error. For Alice both fail with `source and vector must be of the same length. Source: 3, Vector: 2`. The scores are computed after the access check, so a hidden document never changes the answer.
+

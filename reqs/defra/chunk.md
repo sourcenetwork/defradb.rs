@@ -371,4 +371,19 @@ With `@index(vector: {dimensions: 3, hnsw: {metric: DOT}})` on `body_v`, an arti
 - **Parents:** ["defra.chunk.rank"]
 - **Scenarios:** ["chunk::rank_nested::a_nested_ranking_scores_only_the_articles_the_reader_may_read"]
 
-With `Author { articles: [Article] }`, `Article` under a local policy, an author `hidden` with only Alice's article about rivers and an author `shared` with another of hers and a public article with no body, `Author { name articles { title sim: SIMILARITY(body_v: ...) } }` gives Alice's two articles similarity 1 and the public one `null` for Alice, and only the public one for Bob. For Bob, the same query on `hidden` with a vector of the wrong length returns `hidden` with no articles, because his query never scores Alice's article.
+With `Author { articles: [Article] }`, `Article` under a local policy, an author `hidden` with only Alice's article about rivers and an author `shared` with another of hers and a public article with no body, `Author { name articles { title sim: SIMILARITY(body_v: ...) } }` gives Alice's two articles similarity 1 and the public one `null` for Alice, and only the public one for Bob. For Bob, the same query on `hidden` with a vector of the wrong length returns `hidden` with no articles, because his query never scores Alice's article. On an author `open` with a public article about engines, that query fails for Bob with `source and vector must be of the same length. Source: 3, Vector: 2, Field: Article__body_chunk.body_v`.
+
+# `defra.chunk.rank.nested_alias`: A nested filter on scores waits for the scores
+
+- **Parents:** ["defra.chunk.rank"]
+- **Scenarios:** ["chunk::rank_nested::a_nested_filter_on_scores_waits_for_the_scores"]
+
+With an author's articles about music (`x`), rivers, and rivers and engines (`half`), `articles(filter: {_or: [{title: {_eq: "x"}}, {_alias: {sim: {_gt: 0.9}}}]})` returns `x` and `rivers`, `articles(filter: {_not: {_alias: {sim: {_gt: 0.5}}}})` returns `x`, and `articles(docID: [<half>], filter: {_alias: {sim: {_gt: 0.5}}})` returns `half`, while the same with `x`'s docID returns nothing.
+
+# `defra.chunk.rank.nested_shape`: A nested ranking takes a filter, an order and a limit
+
+- **Parents:** ["defra.chunk.rank"]
+- **Scenarios:** ["chunk::rank_nested::a_nested_ranking_takes_a_filter_an_order_and_a_limit"]
+
+With the same articles, `articles(filter: {title: {_ne: "rivers"}}, order: {_alias: {sim: DESC}}, limit: 1)` returns `half`, with similarity 0.7071. Under `@explain`, the nested select shows the filter the query wrote.
+

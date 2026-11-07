@@ -7,6 +7,11 @@ use serde_json::{json, Value};
 
 use super::embed_support::paragraph;
 
+/// The stored fields of a chunk: `_sourceID`, `text`, `hash` and `body_v`.
+pub const CHUNK_FIELDS: u64 = 4;
+/// The stored fields of an article with a body: `title`, `body` and `_body_chunks`.
+pub const ARTICLE_FIELDS: u64 = 3;
+
 /// The vector index `body_v` gets on the chunk collection.
 pub const CHUNK_VECTOR_INDEX: &str = "Article__body_chunk_body_v_ASC";
 

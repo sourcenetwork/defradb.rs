@@ -9,7 +9,8 @@ use integration_test::actions::Request;
 use integration_test::scenario::Text;
 
 use super::rank_support::{
-    add_article, add_article_about, body_about, explained, ranked, score, CHUNK_VECTOR_INDEX,
+    add_article, add_article_about, body_about, explained, ranked, score, ARTICLE_FIELDS,
+    CHUNK_FIELDS, CHUNK_VECTOR_INDEX,
 };
 
 const KEPT: &str = r#", limit: 1, filter: {title: {_eq: "kept"}}"#;
@@ -30,14 +31,15 @@ fn a_filtered_query_widens_past_the_chunks_of_filtered_out_articles() {
         .into(),
     );
     // One chunk, then two, then four: the fourth nearest is the kept article's.
-    // Nine reads: four chunks, their four articles, and the kept one's listed chunk.
+    // Four chunks and their four articles; the kept article's one listed chunk
+    // was among them, so nothing is read again.
     actions.push(
         explained(
             KEPT,
             json!({
                 "iterations": 2,
-                "docFetches": 9,
-                "fieldFetches": 32,
+                "docFetches": 8,
+                "fieldFetches": 4 * CHUNK_FIELDS + 4 * ARTICLE_FIELDS,
                 "indexFetches": 3,
                 "vectorIndex": CHUNK_VECTOR_INDEX,
             }),

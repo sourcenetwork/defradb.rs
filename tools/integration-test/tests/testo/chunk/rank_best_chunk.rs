@@ -5,7 +5,9 @@ use integration_test::test_case::TestCase;
 use serde_json::json;
 
 use super::embed_support::{add_embedded_collection, model_embedded};
-use super::rank_support::{add_article_about, explained, ranked, score, CHUNK_VECTOR_INDEX};
+use super::rank_support::{
+    add_article_about, explained, ranked, score, ARTICLE_FIELDS, CHUNK_FIELDS, CHUNK_VECTOR_INDEX,
+};
 
 #[test]
 #[mantra_macros::req_test("defra.chunk.rank.best_chunk")]
@@ -24,15 +26,15 @@ fn articles_rank_by_their_best_chunk_through_the_chunk_index() {
             ]),
         )
         .into(),
-        // Seven reads: the two nearest chunks, their two articles, and the three
-        // listed chunks that score them exactly.
+        // The two nearest chunks and their two articles, then one lookup reads the
+        // late article's music chunk, the one listed chunk the search hadn't seen.
         explained(
             ", limit: 2",
             json!({
                 "iterations": 3,
-                "docFetches": 7,
-                "fieldFetches": 26,
-                "indexFetches": 1,
+                "docFetches": 5,
+                "fieldFetches": 3 * CHUNK_FIELDS + 2 * ARTICLE_FIELDS,
+                "indexFetches": 2,
                 "vectorIndex": CHUNK_VECTOR_INDEX,
             }),
         )
