@@ -902,3 +902,173 @@ fn unchanged_host_root_reconciles_descendants_as_the_original_actor() {
     })
     .unwrap();
 }
+
+const DELEGATE: &str = "did:key:delegate";
+const THIRD: &str = "did:key:third";
+const UNHELD: acp::NodePermission = acp::NodePermission::CollectionTruncate;
+
+/// A host projector that restates every desired membership beneath
+/// `plugin:stable` on each source change, present or not, as a plugin
+/// re-stage does. `phase` selects the desired set.
+struct DescendantReplayObserver {
+    phase: std::sync::atomic::AtomicU8,
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl db::DocumentMutationProjector for DescendantReplayObserver {
+    async fn reconcile(&self, _: &db::DocumentMutationContext<'_>) -> storage::corekv::Result<()> {
+        Ok(())
+    }
+
+    async fn project(
+        &self,
+        _: &db::DocumentMutationContext<'_>,
+        _: &str,
+        _: &str,
+    ) -> storage::corekv::Result<()> {
+        Ok(())
+    }
+
+    async fn source_changed(
+        &self,
+        context: &db::DocumentMutationContext<'_>,
+    ) -> storage::corekv::Result<()> {
+        use std::sync::atomic::Ordering;
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let desired: &[(acp::NodePermission, &str)] = match self.phase.load(Ordering::SeqCst) {
+            0 => &[],
+            1 => &[(PERMISSION, OTHER)],
+            _ => &[(PERMISSION, OTHER), (PERMISSION, THIRD), (UNHELD, THIRD)],
+        };
+        for (permission, member) in desired {
+            context
+                .change_source_permission(
+                    *permission,
+                    Some("plugin:stable"),
+                    "actor",
+                    member,
+                    false,
+                )
+                .await?;
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn embedded_actor_replays_descendants_under_its_own_authority() {
+    use std::sync::atomic::Ordering;
+    workers::block_on(async {
+        let observer = std::sync::Arc::new(DescendantReplayObserver {
+            phase: std::sync::atomic::AtomicU8::new(1),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let node = Node::builder()
+            .enable_signing()
+            .with_node_acp_owner(OWNER)
+            .with_document_projector(observer.clone())
+            .build()
+            .await
+            .unwrap();
+        let owner = context(OWNER);
+        for permission in [
+            acp::NodePermission::NacRelationAdd,
+            acp::NodePermission::NacRelationDelete,
+            PERMISSION,
+        ] {
+            node.add_nac_actor_relationship_as(&owner, permission.as_str(), DELEGATE)
+                .await
+                .unwrap();
+        }
+        assert!(!node
+            .nac_manager()
+            .is_admin(&Did::new(DELEGATE).unwrap())
+            .await
+            .unwrap());
+        let root = edge(None, "source", "plugin:stable", false);
+        let (handle, tx) = begin(&node, &owner).await;
+        assert!(change(&node, &tx, "plugin:stable", false).await);
+        node.runner().commit_txn_as(&owner, &handle).await.unwrap();
+        assert!(!allowed(&node, OTHER).await);
+        assert_eq!(observer.calls.load(Ordering::SeqCst), 0);
+
+        let delegate = context(DELEGATE);
+        let (handle, tx) = begin(&node, &delegate).await;
+        assert!(!node
+            .change_nac_source_permission_as(&tx, &root)
+            .await
+            .unwrap());
+        node.runner()
+            .commit_txn_as(&delegate, &handle)
+            .await
+            .unwrap();
+        assert!(
+            !allowed(&node, OTHER).await,
+            "a request-supplied restatement does not replay"
+        );
+        assert_eq!(observer.calls.load(Ordering::SeqCst), 0);
+
+        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        assert!(!node
+            .change_nac_source_permission_for_in_txn(transaction.handle(), &delegate, &root)
+            .await
+            .unwrap());
+        transaction.commit().await.unwrap();
+        assert!(
+            allowed(&node, OTHER).await,
+            "the unchanged root's missing membership is rebuilt"
+        );
+        assert_eq!(observer.calls.load(Ordering::SeqCst), 1);
+
+        let outsider = context(ACTOR);
+        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        assert!(!node
+            .change_nac_source_permission_for_in_txn(transaction.handle(), &outsider, &root)
+            .await
+            .unwrap());
+        transaction.commit().await.unwrap();
+        assert_eq!(observer.calls.load(Ordering::SeqCst), 2);
+
+        observer.phase.store(2, Ordering::SeqCst);
+        let fresh = edge(None, "source", "plugin:fresh", false);
+        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        let denied = node
+            .change_nac_source_permission_for_in_txn(transaction.handle(), &delegate, &fresh)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                &denied,
+                crate::Error::Transaction(query::TransactionError::Storage(
+                    storage::Error::ProjectionPermissionDenied
+                ))
+            ),
+            "a descendant outside the actor's authority is refused: {denied:?}"
+        );
+        transaction.commit().await.unwrap();
+        assert_eq!(observer.calls.load(Ordering::SeqCst), 3);
+        assert!(allowed(&node, OTHER).await);
+        assert!(
+            !allowed(&node, THIRD).await,
+            "the refused statement rolls back the descendant it staged"
+        );
+
+        observer.phase.store(0, Ordering::SeqCst);
+        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        assert!(
+            !node
+                .change_nac_source_permission_for_in_txn(
+                    transaction.handle(),
+                    &outsider,
+                    &edge(None, "source", "plugin:fresh", true),
+                )
+                .await
+                .unwrap(),
+            "the refused statement rolls back its new root"
+        );
+        transaction.commit().await.unwrap();
+        node.shutdown().await.unwrap();
+    })
+    .unwrap();
+}
