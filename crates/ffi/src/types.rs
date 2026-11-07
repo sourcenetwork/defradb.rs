@@ -231,6 +231,35 @@ pub struct NodeInitOptions {
     pub rate_limit_burst: u32,
     /// Per-peer rate limit refill rate (tokens/sec). 0 means use default (50).
     pub rate_limit_rate: f64,
+    /// Optional replication filter, asked whether to keep each replicated
+    /// document before its commit stores anything; a
+    /// `DefraReplicationFilterCallback`, spelled out so C sees a nullable
+    /// function pointer. Null keeps everything.
+    pub replication_filter: Option<
+        unsafe extern "C" fn(
+            context: usize,
+            collection_id: *const c_char,
+            doc_id: *const c_char,
+            fields_json: *const c_char,
+        ) -> c_int,
+    >,
+    /// Passed back to `replication_filter` on every call.
+    pub replication_filter_context: usize,
+    /// Optional JSON array of libp2p listen multiaddrs; when set it replaces
+    /// `new_node_with_p2p`'s single address.
+    pub p2p_listen_addrs_json: *const c_char,
+    /// Optional JSON array of peers the libp2p host connects to at start.
+    pub p2p_bootstrap_peers_json: *const c_char,
+    /// Non-zero runs libp2p without GossipSub.
+    pub p2p_disable_pubsub: c_int,
+    /// Non-zero runs libp2p without the relay client transport.
+    pub p2p_disable_relay: c_int,
+    /// libp2p resource manager memory budget in MiB; zero keeps the default.
+    pub p2p_resource_memory_mib: u64,
+    /// libp2p resource manager file-descriptor budget; zero keeps the default.
+    pub p2p_resource_file_descriptors: u64,
+    /// Streams one peer may hold open; zero keeps the default.
+    pub p2p_max_streams_per_peer: usize,
 }
 
 impl Default for NodeInitOptions {
@@ -263,6 +292,15 @@ impl Default for NodeInitOptions {
             max_doc_sync_request_doc_ids: 0,
             rate_limit_burst: 0,
             rate_limit_rate: 0.0,
+            replication_filter: None,
+            replication_filter_context: 0,
+            p2p_listen_addrs_json: ptr::null(),
+            p2p_bootstrap_peers_json: ptr::null(),
+            p2p_disable_pubsub: 0,
+            p2p_disable_relay: 0,
+            p2p_resource_memory_mib: 0,
+            p2p_resource_file_descriptors: 0,
+            p2p_max_streams_per_peer: 0,
         }
     }
 }
