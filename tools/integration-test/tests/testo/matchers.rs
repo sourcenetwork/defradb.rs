@@ -435,7 +435,7 @@ fn ref_and_concat_resolve_against_captures() {
 }
 
 #[test]
-fn same_schema_ignores_list_order_but_not_content() {
+fn same_schema_ignores_list_order_and_extras_but_not_content() {
     let golden = json!({ "types": [
         { "name": "A", "fields": [{ "name": "x" }, { "name": "y" }] },
         { "name": "B", "fields": [] },
@@ -448,6 +448,17 @@ fn same_schema_ignores_list_order_but_not_content() {
         { "name": "A", "fields": [{ "name": "x" }] },
         { "name": "B", "fields": [] },
     ] });
+    let extra_type = json!({ "types": [
+        { "name": "A", "fields": [{ "name": "x" }, { "name": "y" }, { "name": "z" }] },
+        { "name": "B", "fields": [] },
+        { "name": "C", "fields": [] },
+    ] });
+    let changed = json!({ "types": [
+        { "name": "A", "fields": [{ "name": "x" }, { "name": "y" }], "kind": "OBJECT" },
+        { "name": "B", "fields": null },
+    ] });
     assert!(matches(m::same_schema(golden.clone()), reordered));
-    assert!(!matches(m::same_schema(golden), missing_field));
+    assert!(matches(m::same_schema(golden.clone()), extra_type));
+    assert!(!matches(m::same_schema(golden.clone()), missing_field));
+    assert!(!matches(m::same_schema(golden), changed));
 }

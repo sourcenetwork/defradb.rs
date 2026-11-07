@@ -1,12 +1,14 @@
-//! `sameSchema`: two GraphQL introspection results describe the same schema.
+//! `sameSchema`: a GraphQL introspection result describes at least the golden
+//! schema. Everything the golden has must be there and match; what only the
+//! result has (a type, field or argument defradb.rs adds) is allowed.
 //!
 //! Introspection lists types, fields, arguments and enum values in whatever
 //! order the server builds them (Go's follows map iteration), so lists compare
-//! as sets keyed by `name`. A mismatch prints the differing paths, a missing or
-//! extra subtree once at its top, since the whole result runs to hundreds of
+//! as sets keyed by `name`. A mismatch prints the differing paths, a missing
+//! subtree once at its top, since the whole result runs to hundreds of
 //! kilobytes.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use serde_json::Value;
 
@@ -21,32 +23,21 @@ pub(super) fn same_schema(want: &Value, got: &Value) -> bool {
     let (mut wanted, mut found) = (Nodes::new(), Nodes::new());
     flatten(want, String::new(), String::new(), &mut wanted);
     flatten(got, String::new(), String::new(), &mut found);
-    if wanted == found {
-        return true;
-    }
-    let only = |path: &str, side: &Nodes, other: &Nodes| {
-        side.contains_key(path) && !other.contains_key(path)
-    };
     let differing: Vec<String> = wanted
-        .keys()
-        .chain(found.keys())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .filter_map(|path| match (wanted.get(path), found.get(path)) {
-            (Some((w, _)), Some((g, _))) if w != g => {
-                Some(format!("  ~ {path}: want {w}, got {g}"))
-            }
-            (Some((w, parent)), None) if !only(parent, &wanted, &found) => {
+        .iter()
+        .filter_map(|(path, (w, parent))| match found.get(path) {
+            Some((g, _)) if g != w => Some(format!("  ~ {path}: want {w}, got {g}")),
+            None if found.contains_key(parent) || parent.is_empty() => {
                 Some(format!("  - {path}: {w}"))
-            }
-            (None, Some((g, parent))) if !only(parent, &found, &wanted) => {
-                Some(format!("  + {path}: {g}"))
             }
             _ => None,
         })
         .collect();
+    if differing.is_empty() {
+        return true;
+    }
     eprintln!(
-        "sameSchema: {} differences (- missing, + extra, ~ changed), first {}:\n{}",
+        "sameSchema: {} differences (- missing, ~ changed), first {}:\n{}",
         differing.len(),
         SHOWN.min(differing.len()),
         differing[..SHOWN.min(differing.len())].join("\n")
