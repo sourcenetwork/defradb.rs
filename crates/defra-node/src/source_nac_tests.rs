@@ -170,23 +170,54 @@ fn source_admission_matches_executed_lean_model() {
     use std::process::{Command, Stdio};
 
     let observations = workers::block_on(async {
-        let node = Node::builder().with_node_acp_owner(OWNER).build().await.unwrap();
+        let node = Node::builder()
+            .enable_signing()
+            .with_node_acp_owner(OWNER)
+            .build()
+            .await
+            .unwrap();
+        let (handle, tx) = begin(&node, &context(OWNER)).await;
+        assert!(change(&node, &tx, "tools:present", false).await);
+        node.runner().commit_txn_as(&context(OWNER), &handle).await.unwrap();
+        let admission = |same_owner: bool, writable: bool, authorized: bool, valid_source: bool, trusted: bool, changed: bool| {
+            json!({"sameOwner":same_owner,"writable":writable,"authorized":authorized,"boundStore":true,"fresh":true,"validSource":valid_source,"trustedEmbedder":trusted,"edgeChanged":changed})
+        };
         let mut observations = Vec::new();
-        for (same_owner, writable, authorized, valid_source) in [
-            (true, true, true, true), (false, true, true, true),
-            (true, false, true, true), (true, true, false, true),
-            (true, true, true, false),
+        for (same_owner, writable, authorized, valid_source, changed) in [
+            (true, true, true, true, true), (false, true, true, true, true),
+            (true, false, true, true, true), (true, true, false, true, true),
+            (true, true, true, false, true), (true, true, false, true, false),
         ] {
             let grantor = if authorized { OWNER } else { OTHER };
             let owner = context(grantor);
             let handle = node.runner().begin_txn_as(&owner, !writable).await.unwrap();
             let acting = if same_owner { grantor } else { OTHER };
             let tx = context(acting).with_txn(Some(handle.as_str().parse().unwrap()));
-            let result = node.change_nac_source_permission_as(
-                &tx, &edge(None, "source", if valid_source { "tools:one" } else { "" }, false),
-            ).await;
-            observations.push((json!({"sameOwner":same_owner,"writable":writable,"authorized":authorized,"boundStore":true,"fresh":true,"validSource":valid_source}), result.is_ok()));
+            let source = match (valid_source, changed) {
+                (false, _) => "",
+                (true, true) => "tools:one",
+                (true, false) => "tools:present",
+            };
+            let result = node.change_nac_source_permission_as(&tx, &edge(None, "source", source, false)).await;
+            observations.push((admission(same_owner, writable, authorized, valid_source, false, changed), result.is_ok()));
             node.runner().discard_txn_as(&owner, &handle).await.unwrap();
+        }
+        for (writable, authorized, valid_source, item, changed) in [
+            (true, false, true, edge(None, "source", "tools:present", false), false),
+            (true, false, true, edge(None, "source", "tools:absent", true), false),
+            (true, false, true, edge(None, "source", "tools:one", false), true),
+            (true, false, true, edge(None, "source", "tools:present", true), true),
+            (true, true, true, edge(None, "source", "tools:one", false), true),
+            (false, true, true, edge(None, "source", "tools:one", false), true),
+            (true, false, false, edge(None, "source", "", false), false),
+        ] {
+            let actor = context(if authorized { OWNER } else { OTHER });
+            let transaction = node.begin_transaction_guard(!writable).await.unwrap();
+            let result = node
+                .change_nac_source_permission_for_in_txn(transaction.handle(), &actor, &item)
+                .await;
+            observations.push((admission(true, writable, authorized, valid_source, true, changed), result.is_ok()));
+            transaction.discard().await.unwrap();
         }
         node.shutdown().await.unwrap();
         observations
@@ -206,9 +237,94 @@ fn source_admission_matches_executed_lean_model() {
     let output = lean.wait_with_output().unwrap();
     assert!(output.status.success());
     let model: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(model.as_array().unwrap().len(), observations.len());
     for (modeled, (_, actual)) in model.as_array().unwrap().iter().zip(observations) {
         assert_eq!(modeled["mayStage"].as_bool().unwrap(), actual, "{modeled}");
     }
+}
+
+#[test]
+fn embedded_actor_restates_unchanged_edges_without_authority() {
+    workers::block_on(async {
+        let node = Node::builder()
+            .enable_signing()
+            .with_node_acp_owner(OWNER)
+            .build()
+            .await
+            .unwrap();
+        let owner = context(OWNER);
+        let root = edge(None, "source", "tools:one", false);
+        let member = edge(Some("tools:one"), "actor", ACTOR, false);
+        let absent = edge(None, "source", "tools:absent", true);
+        let (handle, tx) = begin(&node, &owner).await;
+        for item in [&root, &member] {
+            assert!(node
+                .change_nac_source_permission_as(&tx, item)
+                .await
+                .unwrap());
+        }
+        node.runner().commit_txn_as(&owner, &handle).await.unwrap();
+        assert!(allowed(&node, ACTOR).await);
+
+        let outsider = context(OTHER);
+        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        for item in [&root, &member, &absent] {
+            assert!(!node
+                .change_nac_source_permission_for_in_txn(transaction.handle(), &outsider, item)
+                .await
+                .unwrap());
+        }
+        transaction.commit().await.unwrap();
+        assert!(allowed(&node, ACTOR).await);
+        assert!(!allowed(&node, OTHER).await);
+
+        for item in [
+            edge(None, "source", "tools:one", true),
+            edge(None, "source", "tools:absent", false),
+            edge(Some("tools:one"), "actor", OTHER, false),
+        ] {
+            let transaction = node.begin_transaction_guard(false).await.unwrap();
+            let denied = node
+                .change_nac_source_permission_for_in_txn(transaction.handle(), &outsider, &item)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(
+                    &denied,
+                    crate::Error::Transaction(query::TransactionError::Storage(
+                        storage::Error::ProjectionPermissionDenied
+                    ))
+                ),
+                "a changing edge needs authority: {denied:?}"
+            );
+            transaction.discard().await.unwrap();
+        }
+        assert!(allowed(&node, ACTOR).await);
+        assert!(!allowed(&node, OTHER).await);
+
+        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        assert!(node
+            .change_nac_source_permission_for_in_txn(
+                transaction.handle(),
+                &owner,
+                &edge(None, "source", "tools:absent", false),
+            )
+            .await
+            .unwrap());
+        transaction.discard().await.unwrap();
+
+        let (handle, tx) = begin(&node, &outsider).await;
+        assert!(node
+            .change_nac_source_permission_as(&tx, &root)
+            .await
+            .is_err());
+        node.runner()
+            .discard_txn_as(&outsider, &handle)
+            .await
+            .unwrap();
+        node.shutdown().await.unwrap();
+    })
+    .unwrap();
 }
 
 #[test]

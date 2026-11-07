@@ -62,6 +62,8 @@ pub struct NodeTransaction<'a> {
 impl Node {
     /// Stage a native source grant in a node-owned transaction for the
     /// authenticated embedder-supplied actor. HTTP cannot select this actor.
+    /// An exactly present add or exactly absent delete returns `false`
+    /// without authority; a changing edge needs the actor's authority.
     pub async fn change_nac_source_permission_for_in_txn(
         &self,
         handle: &TransactionHandle,

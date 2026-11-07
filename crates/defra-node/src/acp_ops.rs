@@ -269,7 +269,8 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
             )
             .into());
         }
-        let job = query::txn::source_permission_job(actor_context.clone(), edge.clone())?;
+        let job =
+            query::txn::embedded_source_permission_job(actor_context.clone(), edge.clone())?;
         let handle = query::txn::TransactionHandle::new(id.to_string());
         Ok(self
             .registry

@@ -21,6 +21,23 @@ pub fn source_permission_job(
     actor_context: RequestContext,
     edge: SourcePermission,
 ) -> Result<TxnJob<Result<bool, TransactionError>>, TransactionError> {
+    let requestor = authenticated_actor(&actor_context)?;
+    source_permission_job_for(actor_context, requestor, edge, SourceCaller::Request)
+}
+
+/// Prepare a source-grant turn for an embedder-authenticated actor on a
+/// node-owned transaction. An exactly present add or exactly absent delete
+/// changes nothing and needs no authority; every changing edge is checked as
+/// that actor. Never expose this as an HTTP or GraphQL request parameter.
+pub fn embedded_source_permission_job(
+    actor_context: RequestContext,
+    edge: SourcePermission,
+) -> Result<TxnJob<Result<bool, TransactionError>>, TransactionError> {
+    let requestor = authenticated_actor(&actor_context)?;
+    source_permission_job_for(actor_context, requestor, edge, SourceCaller::Embedder)
+}
+
+fn authenticated_actor(actor_context: &RequestContext) -> Result<Did, TransactionError> {
     if !actor_context.authorization_valid_now() {
         return Err(TransactionError::operation(
             "request authorization has expired",
@@ -29,9 +46,7 @@ pub fn source_permission_job(
     let requestor = actor_context
         .identity()
         .ok_or_else(|| TransactionError::operation("authenticated identity required"))?;
-    let requestor =
-        Did::new(requestor).map_err(|error| TransactionError::operation(error.to_string()))?;
-    source_permission_job_for(actor_context, requestor, edge, false)
+    Did::new(requestor).map_err(|error| TransactionError::operation(error.to_string()))
 }
 
 /// Prepare a source-only host transaction turn. The caller must be the trusted
@@ -47,14 +62,30 @@ pub fn host_source_permission_job(
     }
     let actor = Did::new(owner_context.identity().expect("identity checked above"))
         .map_err(|error| TransactionError::operation(error.to_string()))?;
-    source_permission_job_for(owner_context, actor, edge, true)
+    source_permission_job_for(owner_context, actor, edge, SourceCaller::Host)
+}
+
+/// Who admitted the turn. Only a trusted embedder or host may restate an
+/// unchanged edge without authority; an untrusted caller must not learn
+/// whether an edge it cannot administer exists.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SourceCaller {
+    Request,
+    Embedder,
+    Host,
+}
+
+impl SourceCaller {
+    fn trusted(self) -> bool {
+        !matches!(self, Self::Request)
+    }
 }
 
 fn source_permission_job_for(
     actor_context: RequestContext,
     requestor: Did,
     edge: SourcePermission,
-    host: bool,
+    caller: SourceCaller,
 ) -> Result<TxnJob<Result<bool, TransactionError>>, TransactionError> {
     let permission = acp::NodePermission::parse(&edge.permission)
         .ok_or_else(|| TransactionError::operation("invalid node permission"))?;
@@ -69,7 +100,7 @@ fn source_permission_job_for(
             let result = async {
                 let ctx = turn.context()?;
                 let fetcher = ctx.doc_fetcher();
-                let unchanged = host
+                let unchanged = caller.trusted()
                     && fetcher
                         .source_node_permission_matches(
                             permission,
@@ -112,7 +143,7 @@ fn source_permission_job_for(
                             )
                         })?
                 };
-                if host {
+                if caller == SourceCaller::Host {
                     fetcher
                         .project_host_source_change(&actor_context)
                         .await
