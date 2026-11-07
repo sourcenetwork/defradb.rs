@@ -70,6 +70,18 @@ impl AddView {
             false => Ok(()),
         }
     }
+
+    /// Fails on the Rust-only directives a Go node does not know.
+    fn check_go(&self, state: &State) -> Result<(), Failure> {
+        let go = state.node(self.common.node())?.is_go();
+        match go && self.sdl.as_str().contains("@chunk") {
+            true => Err(Failure::unsupported(format!(
+                "{} directive @chunk on a Go node",
+                Self::name()
+            ))),
+            false => Ok(()),
+        }
+    }
 }
 
 const VIEWS_DISABLED: &str = "View operations are not enabled.";
@@ -86,6 +98,7 @@ impl HttpRun for AddView {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             action.check_arguments()?;
+            action.check_go(state)?;
             let (query, sdl) = (
                 action.query.as_str().to_owned(),
                 action.sdl.as_str().to_owned(),
