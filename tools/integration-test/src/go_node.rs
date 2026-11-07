@@ -79,8 +79,8 @@ impl GoNode {
             .args(["--no-keyring", "--store", store, "--no-telemetry"])
             .args(p2p)
             // Encryption and signing are off, as backbone's TestCluster
-            // started Go nodes, unless the signed-docs multiplier turns
-            // signing on.
+            // started Go nodes. Signing is on for a node that asks for it, or
+            // under the signed-docs multiplier.
             .args(["--no-encryption", "--no-searchable-encryption"]);
         if !options.signing && !signed_docs(std::env::var("DEFRA_MULTIPLIERS").ok().as_deref()) {
             command.arg("--no-signing");
