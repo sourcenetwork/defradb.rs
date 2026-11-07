@@ -1,4 +1,5 @@
-use super::super::parser::parse_sdl;
+use super::super::parser::{parse_sdl, parse_sdl_with_known_types};
+use rapidhash::{HashSetExt, RapidHashSet};
 use schema::{FieldKind, CHUNK_SOURCE_ID_FIELD};
 
 const SDL: &str = r#"
@@ -105,7 +106,10 @@ fn chunk_refuses_a_tiny_limit() {
     let err = parse_sdl("type A { body: String @chunk(maxChars: 10) }")
         .unwrap_err()
         .to_string();
-    assert!(err.contains("maxChars must be at least 64"), "{err}");
+    assert!(
+        err.contains("maxChars must be at least 64, got 10. Field: A.body"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -153,4 +157,65 @@ fn chunk_field_order_does_not_change_the_identity() {
     let second =
         parse_sdl("type Note { b: String @chunk(maxChars: 300)  a: String @chunk }").unwrap();
     assert_eq!(first[0].version_id, second[0].version_id);
+}
+
+fn refusal(sdl: &str) -> String {
+    parse_sdl(sdl).unwrap_err().to_string()
+}
+
+#[test]
+fn chunk_refuses_a_field_whose_list_name_would_start_with_two_underscores() {
+    assert_eq!(
+        refusal("type R { _x: String @chunk }"),
+        "parse error: @chunk is not allowed on a field whose name starts with \"_\", because its list field __x_chunks would start with \"__\". Field: R._x"
+    );
+}
+
+#[test]
+fn chunk_refuses_an_unknown_argument() {
+    assert_eq!(
+        refusal("type R { s: String @chunk(size: 100) }"),
+        "parse error: @chunk has no argument size. It takes maxChars and overlap. Field: R.s"
+    );
+}
+
+#[test]
+fn chunk_refuses_a_second_chunk_on_one_field() {
+    assert_eq!(
+        refusal("type R { s: String @chunk(maxChars: 64) @chunk(maxChars: 100) }"),
+        "parse error: @chunk can only be used once on a field. Field: R.s"
+    );
+}
+
+fn known(names: &[&str]) -> RapidHashSet<String> {
+    let mut known = RapidHashSet::new();
+    known.extend(names.iter().map(|name| name.to_string()));
+    known
+}
+
+#[test]
+fn a_chunk_name_is_not_taken_when_its_parent_is_already_known() {
+    let collections =
+        parse_sdl_with_known_types(SDL, known(&["Article", "Article__body_chunk"])).unwrap();
+    let names: Vec<&str> = collections.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, vec!["Article", "Article__body_chunk"]);
+}
+
+#[test]
+fn a_stored_collection_takes_the_chunk_name_of_a_new_parent() {
+    let err = parse_sdl_with_known_types(SDL, known(&["Article__body_chunk"]))
+        .unwrap_err()
+        .to_string();
+    assert_eq!(
+        err,
+        "parse error: @chunk needs the type name Article__body_chunk, which is already taken"
+    );
+}
+
+#[test]
+fn chunk_refuses_a_repeated_argument() {
+    assert_eq!(
+        refusal("type R { s: String @chunk(maxChars: 64, maxChars: 10) }"),
+        "parse error: @chunk has maxChars twice. Field: R.s"
+    );
 }

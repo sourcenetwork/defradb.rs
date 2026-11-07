@@ -400,21 +400,20 @@ pub extern "C" fn defra_mobile_ensure_schema(
         let context = defra_core::RequestContext::default().with_identity(node_identity_did);
 
         ffi_async!(node_ptr, {
-            let existing_collections: RapidHashSet<String> =
+            let known_types: RapidHashSet<String> =
                 database.list_collections().unwrap_or_default().into_iter().collect();
-            let known_types = existing_collections.clone();
             let collections = query::parse_sdl_with_known_types(&schema_str, known_types)
                 .map_err(|error| format!("failed to parse schema: {}", error))?;
 
-            let mut to_create = Vec::new();
-            let mut skipped = Vec::new();
-            for collection in collections {
-                if existing_collections.contains(&collection.name) {
-                    skipped.push(collection.name.clone());
-                } else {
-                    to_create.push(collection);
-                }
-            }
+            let stored = database
+                .get_all_collection_versions()
+                .await
+                .map_err(|error| error.to_string())?;
+            let crate::mobile_schema::Bootstrap {
+                create: to_create,
+                skipped,
+            } = crate::mobile_schema::plan_bootstrap(collections, &stored)
+                .map_err(|error| format!("failed to add schema: {}", error))?;
 
             schema::definition_validation::validate_new_collections(&to_create)
                 .map_err(|error| format!("failed to validate schema: {}", error))?;
