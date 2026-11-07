@@ -95,7 +95,7 @@ where
                 let options = options(common);
                 match match_expected(expected, value, options, &mut candidate) {
                     Ok(true) => return outcome,
-                    Ok(false) => format!("expected {expected}; got {value}"),
+                    Ok(false) => mismatch(expected, value),
                     Err(e) => return Err(Failure::operation(e.to_string())),
                 }
             }
@@ -127,7 +127,7 @@ fn match_envelope(
     };
     match match_expected(expected, envelope, options(common), &mut state.bindings) {
         Ok(true) => Ok(()),
-        Ok(false) => Err(format!("expected {expected}; got {envelope}")),
+        Ok(false) => Err(mismatch(expected, envelope)),
         Err(e) => Err(e.to_string()),
     }
 }
@@ -181,7 +181,7 @@ where
         let matched = match_expected(expected, &actual, options(common), &mut state.bindings)
             .map_err(|e| e.to_string())?;
         if !matched {
-            return Err(format!("expected {expected}; got {actual}"));
+            return Err(mismatch(expected, &actual));
         }
     }
     for (name, path) in &common.capture {
@@ -229,5 +229,21 @@ where
         let args = serde_json::to_string(action).unwrap_or_default();
         let args: String = args.chars().take(300).collect();
         panic!("{message}\n  action: {} {args}", A::name());
+    }
+}
+
+/// The most of each side a mismatch prints; a whole introspection result runs
+/// to hundreds of kilobytes, and matchers report their own detail.
+const SHOWN_BYTES: usize = 4096;
+
+fn mismatch(expected: &Value, got: &Value) -> String {
+    format!("expected {}; got {}", clipped(expected), clipped(got))
+}
+
+fn clipped(value: &Value) -> String {
+    let text = value.to_string();
+    match text.char_indices().nth(SHOWN_BYTES) {
+        Some((end, _)) => format!("{}… ({} bytes)", &text[..end], text.len()),
+        None => text,
     }
 }

@@ -29,11 +29,13 @@ pub(super) fn build_filter_input_type(
     // Add logical operators and _docID
     fields.push((
         "_alias".to_string(),
-        InputValue::new("_alias", TypeRef::named("JSON")),
+        InputValue::new("_alias", TypeRef::named("JSON"))
+            .description(super::descriptions::ALIAS_OPERATOR),
     ));
     fields.push((
         "_and".to_string(),
-        InputValue::new("_and", TypeRef::named_nn_list(&type_name)),
+        InputValue::new("_and", TypeRef::named_nn_list(&type_name))
+            .description(super::descriptions::AND_OPERATOR),
     ));
     fields.push((
         "_docID".to_string(),
@@ -41,11 +43,13 @@ pub(super) fn build_filter_input_type(
     ));
     fields.push((
         "_not".to_string(),
-        InputValue::new("_not", TypeRef::named(&type_name)),
+        InputValue::new("_not", TypeRef::named(&type_name))
+            .description(super::descriptions::NOT_OPERATOR),
     ));
     fields.push((
         "_or".to_string(),
-        InputValue::new("_or", TypeRef::named_nn_list(&type_name)),
+        InputValue::new("_or", TypeRef::named_nn_list(&type_name))
+            .description(super::descriptions::OR_OPERATOR),
     ));
 
     // Add filter fields for each collection field
