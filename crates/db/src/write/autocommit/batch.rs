@@ -422,6 +422,12 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         collection_name: &str,
         mut doc: Document,
     ) -> query::error::Result<CreateResult> {
+        // Numbered before anything can miss, so a create keeps its number when one before it misses.
+        let ordinal =
+            (self.prepared_inputs.is_some() && prepared_identity(&doc).is_none()).then(|| {
+                self.creates
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            });
         self.check_attempt_node_access(context, acp::nac::NodePermission::DocumentUpdate)
             .await?;
 
@@ -457,9 +463,9 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         let identity = match (&self.prepared_inputs, prepared_identity(&doc)) {
             (_, Some(identity)) => identity,
             (Some(memo), None) => {
-                let ordinal = self
-                    .creates
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let ordinal = ordinal.ok_or_else(|| {
+                    query::error::QueryError::execution("create has no ordinal in its batch")
+                })?;
                 let identity =
                     pipeline::memo_identity(&self.db, &collection, memo, ordinal).await?;
                 pipeline::seed_identity(&self.db, &mut doc, identity);

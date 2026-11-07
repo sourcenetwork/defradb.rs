@@ -131,12 +131,14 @@ impl<S: Store + 'static> DbDocMutator<S> {
             .ok_or_else(|| query::error::QueryError::execution("transaction is no longer active"))
     }
 
-    /// The storage identity of this attempt's next create. The short ID is
-    /// drawn once per create of the statement and kept in the memo, so a run
-    /// after a missing input gives each create the ID the first run gave it,
-    /// and the KMS keys requested for that document are found.
-    async fn next_create_identity(&self, collection: &Collection) -> query::error::Result<DocRef> {
-        let ordinal = self.creates.fetch_add(1, Ordering::Relaxed);
+    /// The storage identity of the create numbered `ordinal` in its statement.
+    /// The short ID is kept in the memo, so a run after a missing input gives
+    /// each create the ID the first run gave it.
+    async fn create_identity(
+        &self,
+        collection: &Collection,
+        ordinal: u64,
+    ) -> query::error::Result<DocRef> {
         pipeline::memo_identity(&self.db, collection, &self.prepared_inputs, ordinal).await
     }
 
@@ -309,6 +311,8 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         collection_name: &str,
         mut doc: Document,
     ) -> query::error::Result<CreateResult> {
+        // Numbered before anything can miss, so a create keeps its number when one before it misses.
+        let ordinal = self.creates.fetch_add(1, Ordering::Relaxed);
         self.db
             .check_node_access_as(context, acp::nac::NodePermission::DocumentUpdate)
             .await
@@ -339,7 +343,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         pipeline::embed(&self.db, &collection, &mut doc, inputs).await?;
         // The short ID comes from the memo, so a statement run again keeps
         // it. Keys are never minted here: the builder asks the memo for them.
-        let identity = self.next_create_identity(&collection).await?;
+        let identity = self.create_identity(&collection, ordinal).await?;
         pipeline::seed_identity(&self.db, &mut doc, identity);
         let computed = pipeline::compute(&collection, &doc, identity, context, inputs)?;
 
