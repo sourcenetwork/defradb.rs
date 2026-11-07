@@ -94,7 +94,7 @@ impl HttpRun for GetCollections {
 impl CliRun for GetCollections {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.common.plain(Self::name())?;
+            let identity = action.common.client_identity(Self::name())?;
             let mut args = vec!["collection", "describe"];
             for (flag, value) in [
                 ("--collection-name", &action.collection_name),
@@ -109,7 +109,7 @@ impl CliRun for GetCollections {
                 args.push("--get-inactive");
             }
             let output = state
-                .defra_client_on(action.common.node(), action.txn, &args)
+                .defra_client_as(action.common.node(), action.txn, identity, &args)
                 .map_err(Failure::operation)?;
             let collections: Vec<schema::CollectionVersion> = serde_json::from_value(output)
                 .map_err(|e| Failure::operation(format!("collection describe output: {e}")))?;

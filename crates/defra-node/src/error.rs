@@ -119,6 +119,22 @@ pub enum Error {
     /// The collection has no policy to manage relationships on.
     #[error("operation requires ACP, but collection has no policy")]
     CollectionWithoutPolicy,
+    /// A relationship change named no collection.
+    #[error("collection name can't be empty")]
+    CollectionNameEmpty,
+    /// A relationship change is missing its identity, document, relation or
+    /// target (Go: `ErrMissingReqArgToAddRelationship` and its delete twin).
+    #[error("missing a required argument needed to {0} doc actor relationship.")]
+    RelationshipArgumentMissing(&'static str),
+    /// The policy side of a relationship change failed.
+    #[error("failed to {verb} document actor relationship with acp: {source}")]
+    RelationshipAcp {
+        /// `add` or `delete`.
+        verb: &'static str,
+        /// What failed.
+        #[source]
+        source: Box<Error>,
+    },
     /// A relationship target did not parse.
     #[error("invalid target: {0}")]
     InvalidTarget(#[source] acp::Error),

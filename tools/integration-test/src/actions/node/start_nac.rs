@@ -36,15 +36,21 @@ impl Op for Start {
     }
 
     fn run_mut(&self, state: &mut State) -> Result<Value, Failure> {
-        if self.enable_signing.is_some() || self.node_identity_seed.is_some() {
-            let options = serde_json::to_string(self).unwrap_or_default();
-            return Err(Failure::unsupported(format!("{} {options}", Self::name())));
-        }
         let owner = self
             .common
             .client_identity(Self::name())?
             .map(crate::scenario::identity::did);
-        state.start_node_with_nac(self.common.node(), self.enable_nac, owner)?;
+        let (node_identity, signing) = (self.node_identity_seed, self.enable_signing);
+        state.start_node_with_nac(self.common.node(), self.enable_nac, owner, |spec| {
+            if let Some(seed) = node_identity {
+                spec.node_identity = Some(seed);
+            }
+            match signing {
+                Some(true) => spec.signing = Some(spec.signing.unwrap_or_default()),
+                Some(false) => spec.signing = None,
+                None => {}
+            }
+        })?;
         Ok(json!({}))
     }
 }

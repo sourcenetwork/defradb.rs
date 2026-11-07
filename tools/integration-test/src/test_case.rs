@@ -68,7 +68,7 @@ impl State {
         self.nodes.0.get(name)
     }
 
-    fn client_type(&self) -> ClientType {
+    pub fn client_type(&self) -> ClientType {
         self.client_type
             .expect("no client type: the Connect action did not run")
     }
@@ -112,12 +112,16 @@ impl State {
     /// Start stopped node `name` again with NAC options, as Go's `Start`:
     /// `enable_nac` turns NAC on, owned by `owner` when it was never set up.
     /// A start the node refuses leaves it stopped, with the refusal.
-    pub fn start_node_with_nac(
+    pub fn start_node_with_nac<C>(
         &mut self,
         name: &str,
         enable_nac: bool,
         owner: Option<String>,
-    ) -> Result<(), Failure> {
+        configure: C,
+    ) -> Result<(), Failure>
+    where
+        C: FnOnce(&mut NodeSpec),
+    {
         if self.client_type() == ClientType::GoHttp {
             return Err(Failure::unsupported("Start on a Go node"));
         }
@@ -127,6 +131,7 @@ impl State {
             .unwrap_or_default();
         spec.enable_nac = enable_nac;
         spec.nac_owner = owner;
+        configure(&mut spec);
         self.stop_node(name, true);
         let node =
             TestNode::try_start(self.client_type(), spec.clone()).map_err(Failure::operation)?;

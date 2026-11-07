@@ -15,6 +15,7 @@ use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 use regolith::sync::Atom;
 use tempfile::TempDir;
 
+use crate::actions::shared::KeyType;
 use crate::client_type::{go_binary, network_edge, ClientType};
 use crate::go_node::{GoNode, GoOptions};
 
@@ -33,6 +34,10 @@ pub struct NodeSpec {
     pub nac_owner: Option<String>,
     /// The node's admission limits, if not the defaults.
     pub admission: Option<crate::actions::AdmissionSpec>,
+    /// The node's own identity, Go's `NodeIdentity(seed)`; the node signs as it.
+    pub node_identity: Option<u64>,
+    /// The key type the node signs with, when it signs.
+    pub signing: Option<crate::actions::shared::KeyType>,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -230,6 +235,9 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     if let Some(config) = http {
         builder = builder.with_http(config);
     }
+    if spec.node_identity.is_some() || spec.signing.is_some() {
+        builder = builder.with_signing_key(signing_key(spec));
+    }
     if spec.enable_nac {
         builder = match &spec.nac_owner {
             Some(owner) => builder.with_node_acp_owner(owner.clone()),
@@ -239,6 +247,21 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     workers::block_on(builder.build())
         .expect("run builder")
         .map_err(|error| error.to_string())
+}
+
+/// The key a node signs with: its node identity's, or, for a node that only
+/// signs, a key of its own that no test identity shares.
+fn signing_key(spec: &NodeSpec) -> defra_node::SigningKey {
+    let seed = spec.node_identity.unwrap_or(u64::MAX);
+    let key = crate::scenario::identity::node_private_key(seed).to_vec();
+    match spec.signing.unwrap_or_default() {
+        KeyType::Secp256k1 => defra_node::SigningKey::Secp256k1(key),
+        // An Ed25519 key is stored as its seed and its public key.
+        KeyType::Ed25519 => defra_node::SigningKey::Ed25519(
+            crypto::keys::ed25519::ed25519_key_from_seed(&key)
+                .expect("any 32 bytes are an Ed25519 seed"),
+        ),
+    }
 }
 
 /// What a node's events said, read in order by the waits.

@@ -1,4 +1,4 @@
-use crate::actions::peer::support::{addresses_of, ambient, failed, REPLICATOR_COMPLETED};
+use crate::actions::peer::support::{addresses_of, failed, REPLICATOR_COMPLETED};
 use crate::clients::{CliRun, HttpRun};
 use crate::scenario::{Common, Failure, Op};
 use crate::test_case::State;
@@ -33,7 +33,7 @@ impl Op for AddReplicator {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        self.common.plain(Self::name())?;
+        let identity = self.common.client_identity(Self::name())?;
         let addresses = addresses_of(state, &[self.target.as_str()])?;
         let (test_node, node) = (
             state.node(self.common.node())?,
@@ -41,7 +41,13 @@ impl Op for AddReplicator {
         );
         test_node
             .replicator_completed(
-                || state.block_on(node.add_replicator_as(&ambient(), &addresses, &[])),
+                || {
+                    state.block_on(node.add_replicator_as(
+                        &state.context_as(None, identity),
+                        &addresses,
+                        &[],
+                    ))
+                },
                 REPLICATOR_COMPLETED,
             )
             .map_err(failed)?;
@@ -60,14 +66,14 @@ impl Action for AddReplicator {
 impl HttpRun for AddReplicator {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.common.plain(Self::name())?;
+            let identity = action.common.client_identity(Self::name())?;
             let addresses = addresses_of(state, &[action.target.as_str()])?;
             let test_node = state.node(action.common.node())?;
             test_node
                 .replicator_completed(
                     || {
                         state
-                            .http_on(action.common.node(), |client| async move {
+                            .http_as(action.common.node(), identity, |client| async move {
                                 client.add_replicator(&addresses, &[]).await
                             })?
                             .map_err(failed)

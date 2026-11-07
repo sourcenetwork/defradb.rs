@@ -141,6 +141,11 @@ trait SchemaOps: Send + Sync {
         source_query: &str,
         target_sdl: &str,
     ) -> Result<()>;
+    async fn refresh_views(
+        &self,
+        context: &RequestContext,
+        selector: db::CollectionSelector,
+    ) -> Result<()>;
     async fn materialize_collection(
         &self,
         context: &RequestContext,
@@ -502,9 +507,33 @@ impl Node {
     /// `target_sdl` is the SDL for the view collection (may include directives
     /// like `@downsample` that are forward-declared for future defradb.rs support).
     pub async fn add_view(&self, source_query: &str, target_sdl: &str) -> Result<()> {
-        let (ops, context) = (Arc::clone(&self.schema_ops), self.node_context());
+        self.add_view_as(&self.node_context(), source_query, target_sdl)
+            .await
+    }
+
+    /// [`Self::add_view`] as `context`'s identity, which node access control
+    /// checks.
+    pub async fn add_view_as(
+        &self,
+        context: &RequestContext,
+        source_query: &str,
+        target_sdl: &str,
+    ) -> Result<()> {
+        let (ops, context) = (Arc::clone(&self.schema_ops), context.clone());
         let (query, sdl) = (source_query.to_owned(), target_sdl.to_owned());
         self.on_pool(move || async move { ops.add_view(&context, &query, &sdl).await })
+            .await
+    }
+
+    /// Refresh the materialized views `selector` names, every one when it
+    /// names none (Go: `client.Store::RefreshViews`).
+    pub async fn refresh_views_as(
+        &self,
+        context: &RequestContext,
+        selector: db::CollectionSelector,
+    ) -> Result<()> {
+        let (ops, context) = (Arc::clone(&self.schema_ops), context.clone());
+        self.on_pool(move || async move { ops.refresh_views(&context, selector).await })
             .await
     }
 

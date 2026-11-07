@@ -1,4 +1,6 @@
-use crate::scenario::{Common, Op, Text};
+use super::relationship::{Change, Relationship};
+use crate::clients::{CliRun, HttpRun};
+use crate::scenario::{Common, Failure, Op, Text};
 use crate::test_case::State;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -38,6 +40,30 @@ impl Op for AddDACActorRelationship {
     fn expected_error(&self) -> Option<&str> {
         self.expected_error.as_deref()
     }
+
+    fn run(&self, state: &State) -> Result<Value, Failure> {
+        self.relationship()?.in_process(state)
+    }
+}
+
+impl AddDACActorRelationship {
+    fn relationship(&self) -> Result<Relationship<'_>, Failure> {
+        let target = crate::actions::nac::target_actor(
+            Self::name(),
+            self.target_actor.as_deref(),
+            self.target_identity_seed,
+            self.target_identity_node.as_deref(),
+        )?;
+        Ok(Relationship {
+            change: Change::Add,
+            op: Self::name(),
+            common: &self.common,
+            collection: &self.collection,
+            doc_id: self.doc_id.as_str(),
+            relation: &self.relation,
+            target,
+        })
+    }
 }
 
 impl Action for AddDACActorRelationship {
@@ -45,5 +71,21 @@ impl Action for AddDACActorRelationship {
 
     fn execute(&self, state: &mut State) {
         crate::scenario::execute(self, state);
+    }
+}
+
+impl HttpRun for AddDACActorRelationship {
+    fn execute_http(&self, state: &mut State) {
+        crate::scenario::execute_with(self, state, |action, state| {
+            action.relationship()?.http(state)
+        });
+    }
+}
+
+impl CliRun for AddDACActorRelationship {
+    fn execute_cli(&self, state: &mut State) {
+        crate::scenario::execute_with(self, state, |action, state| {
+            action.relationship()?.cli(state)
+        });
     }
 }
