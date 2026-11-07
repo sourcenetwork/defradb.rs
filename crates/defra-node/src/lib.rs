@@ -55,7 +55,7 @@ mod node_query_identity_tests;
 #[cfg(test)]
 mod on_pool_tests;
 mod ops;
-pub use ops::IndexListing;
+pub use ops::{EncryptedIndexListing, IndexListing};
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
 mod p2p_runtime;
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
@@ -836,10 +836,9 @@ impl Node {
     /// of `collection`, so the node can write SE artifacts and act as an SE
     /// query owner (#976).
     pub async fn add_encrypted_index(&self, collection: &str, field_name: &str) -> Result<()> {
-        let database = Arc::clone(&self.database);
-        let (collection, field_name) = (collection.to_owned(), field_name.to_owned());
-        self.on_pool(move || add_encrypted_index(database, collection, field_name))
+        self.add_encrypted_index_as(&self.node_context(), collection, field_name)
             .await
+            .map(drop)
     }
 
     /// Authorize a peer to open an inbound P2P connection to this node while
@@ -1044,59 +1043,6 @@ fn refused_transaction(error: edge::EdgeError, step: &str) -> query::Transaction
         }
         error => format!("transaction task failed: {error}"),
     })
-}
-
-/// Adds the encrypted index [`Node::add_encrypted_index`] names, on
-/// the worker it runs on.
-async fn add_encrypted_index(
-    database: Arc<db::DB<storage::RegolithStore>>,
-    collection: String,
-    field_name: String,
-) -> Result<()> {
-    use storage::corekv::Key;
-
-    let (collection, field_name) = (collection.as_str(), field_name.as_str());
-    let col = database
-        .get_collection(collection)
-        .map_err(Error::CollectionLookupFailed)?
-        .ok_or_else(|| Error::CollectionMissing(collection.to_owned()))?;
-    let schema = col.schema();
-
-    if !schema.fields.iter().any(|f| f.name == field_name) {
-        return Err(Error::EncryptedIndexFieldMissing(field_name.to_owned()));
-    }
-    if schema
-        .encrypted_indexes
-        .iter()
-        .any(|idx| idx.field_name == field_name)
-    {
-        return Err(Error::EncryptedIndexExists(field_name.to_owned()));
-    }
-
-    let txn = database.new_txn(false).await.map_err(Error::TxnCreate)?;
-    {
-        let mut updated_schema = schema.clone();
-        updated_schema
-            .encrypted_indexes
-            .push(schema::EncryptedIndexDescription::new(field_name));
-
-        let collection_key =
-            storage::keys::systemstore::CollectionKey::new(&updated_schema.version_id);
-        let schema_data = serde_json::to_vec(&updated_schema).map_err(Error::SchemaSerialize)?;
-        let systemstore = txn.systemstore().map_err(Error::SystemstoreOpen)?;
-        systemstore
-            .set(&collection_key.bytes(), &schema_data)
-            .await
-            .map_err(Error::SchemaSave)?;
-        let name_key = storage::keys::systemstore::CollectionNameKey::new(collection);
-        systemstore
-            .set(&name_key.bytes(), updated_schema.version_id.as_bytes())
-            .await
-            .map_err(Error::NameMappingSave)?;
-    }
-    txn.commit().await.map_err(Error::Commit)?;
-    database.reload_cache().await.map_err(Error::CacheReload)?;
-    Ok(())
 }
 
 async fn execute_autocommit_request(

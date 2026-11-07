@@ -481,11 +481,14 @@ pub enum Error {
     #[error(transparent)]
     SeedLength(#[from] SeedLength),
     /// The encrypted index names a field the collection lacks.
-    #[error("encrypted index on non-existent field: {0}")]
+    #[error("encrypted index on non-existent field. Field: {0}")]
     EncryptedIndexFieldMissing(String),
     /// The field already has an encrypted index.
-    #[error("encrypted index already exists on field: {0}")]
+    #[error("encrypted index already exists on this field. Field: {0}")]
     EncryptedIndexExists(String),
+    /// No encrypted index is on the field (Go: `ErrEncryptedIndexNotFound`).
+    #[error("encrypted index does not exist on this field. Field: {0}")]
+    EncryptedIndexMissing(String),
     /// The collection's schema did not serialize.
     #[error("failed to serialize schema: {0}")]
     SchemaSerialize(#[source] serde_json::Error),
