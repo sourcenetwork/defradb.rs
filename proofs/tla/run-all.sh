@@ -234,6 +234,8 @@ RUNS=(
   "MC_Truncate_Red_Branchable.cfg Truncate.tla RED" # branchable check left out: a filtered truncate splits shared history (INV_FilteredNeverOnBranchable)
   "MC_Truncate_Red_Txn.cfg Truncate.tla RED" # transaction check left out, as before: a filter on the txn view removes an uncommitted match (INV_FilteredRemovesOnlyCommittedMatches)
   "MC_Truncate_Red_Shape.cfg Truncate.tla RED" # filter shape check left out: a non-filter removes everything (INV_BadFilterRemovesNothing)
+  "MC_RelationFilterScan_Green.cfg RelationFilterScan.tla GREEN" # #2099: a relation-filtered delete or update scans validated, so a concurrent change to a related document aborts it
+  "MC_RelationFilterScan_Red_Unvalidated.cfg RelationFilterScan.tla RED" # scans left unvalidated: the delete commits on a stale related match (INV_DecisionHoldsAtCommit)
   "MC_DacPolicyAdd_Green.cfg DacPolicyAdd.tla GREEN" # #2321: add DAC policy checks nac, acp, creator, data, valid in Go's order; a remote ACP's policy is kept locally before its ID goes back
   "MC_DacPolicyAdd_Red_Nac.cfg DacPolicyAdd.tla RED" # permission check left out (INV_NoPolicyWithoutPermission)
   "MC_DacPolicyAdd_Red_Acp.cfg DacPolicyAdd.tla RED" # ACP check left out: no ACP, no error (INV_NoSilentFailure)

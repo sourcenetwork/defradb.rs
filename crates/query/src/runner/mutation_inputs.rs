@@ -91,6 +91,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 Select::new(&mutation.collection_name).with_field(Field::new("_docID"));
             select.filter = Some(filter.clone());
             let mut warnings = Vec::new();
+            // The write decides on every document these scans read, related
+            // ones included, so a concurrent change to any of them aborts it.
+            fetcher.set_scans_validated(true);
             let found = self
                 .execute_nested_select_with_planner(
                     &select,
@@ -98,7 +101,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     identity.clone(),
                     &mut warnings,
                 )
-                .await?;
+                .await;
+            fetcher.set_scans_validated(false);
+            let found = found?;
             let ids = found
                 .as_array()
                 .into_iter()
