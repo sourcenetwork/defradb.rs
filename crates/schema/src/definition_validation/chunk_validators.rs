@@ -66,7 +66,7 @@ pub(super) fn validate_chunks_not_modified(
 }
 
 /// A view's documents come from its query, so there is no write to cut chunks on.
-pub(super) fn validate_no_chunk_in_view(collections: &[CollectionVersion]) -> Vec<String> {
+pub(super) fn chunks_in_views(collections: &[CollectionVersion]) -> Vec<String> {
     collections
         .iter()
         .filter(|col| col.query.is_some() || col.downsample_source.is_some())

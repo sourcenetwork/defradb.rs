@@ -152,7 +152,16 @@ pub fn validate_new_collections(new_collections: &[CollectionVersion]) -> Result
     }
 }
 
-/// Validates new collections alongside persisted definitions: relations, and no `@chunk` in a view.
+/// Refuses `@chunk` in a view, so a view adder can fail before its other checks.
+pub fn validate_no_chunk_in_view(collections: &[CollectionVersion]) -> Result<(), String> {
+    let errors = chunks_in_views(collections);
+    match errors.is_empty() {
+        true => Ok(()),
+        false => Err(errors.join("\n")),
+    }
+}
+
+/// Validates new collections against persisted definitions, and their views for `@chunk`.
 pub fn validate_new_collections_with_existing(
     new_collections: &[CollectionVersion],
     existing_collections: &[CollectionVersion],
@@ -165,7 +174,7 @@ pub fn validate_new_collections_with_existing(
     let new_state = DefinitionState::new(&collections);
     let old_state = DefinitionState::new(existing_collections);
 
-    let mut errors = validate_no_chunk_in_view(new_collections);
+    let mut errors = chunks_in_views(new_collections);
     for validator in RELATION_VALIDATORS {
         errors.extend(validator(&new_state, &old_state));
     }
