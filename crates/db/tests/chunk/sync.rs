@@ -15,13 +15,13 @@ const SDL: &str = r#"
         body: String @chunk(maxChars: 64)
     }
 "#;
-const CHUNKS: &str = "Article__body_chunk";
-const CONFIG: ChunkConfig = ChunkConfig {
+pub(super) const CHUNKS: &str = "Article__body_chunk";
+pub(super) const CONFIG: ChunkConfig = ChunkConfig {
     max_chars: 64,
     overlap: 0,
 };
 
-fn blank(name: &str) -> Document {
+pub(super) fn blank(name: &str) -> Document {
     let collection = query::parse_sdl(SDL)
         .unwrap()
         .into_iter()
@@ -30,21 +30,21 @@ fn blank(name: &str) -> Document {
     Document::new(collection)
 }
 
-fn body(paragraphs: &[&str]) -> String {
+pub(super) fn body(paragraphs: &[&str]) -> String {
     paragraphs.join("\n\n")
 }
 
-fn book() -> Vec<String> {
+pub(super) fn book() -> Vec<String> {
     (0..12)
         .map(|i| format!("Paragraph {i} tells a small story of its own."))
         .collect()
 }
 
-fn text_of(paras: &[String]) -> String {
+pub(super) fn text_of(paras: &[String]) -> String {
     body(&paras.iter().map(String::as_str).collect::<Vec<_>>())
 }
 
-async fn setup() -> (
+pub(super) async fn setup() -> (
     db::AutoCommitMutator<storage::RegolithStore>,
     Arc<db::DB<storage::RegolithStore>>,
     impl Sized,
@@ -56,18 +56,18 @@ async fn setup() -> (
     (db::AutoCommitMutator::new(Arc::clone(&db)), db, bus)
 }
 
-fn article(title: &str, text: &str) -> Document {
+pub(super) fn article(title: &str, text: &str) -> Document {
     let mut doc = blank("Article");
     doc.set("title", NormalValue::String(title.into())).unwrap();
     doc.set("body", NormalValue::String(text.into())).unwrap();
     doc
 }
 
-fn modified(fields: &[&str]) -> RapidHashSet<String> {
+pub(super) fn modified(fields: &[&str]) -> RapidHashSet<String> {
     fields.iter().map(|f| f.to_string()).collect()
 }
 
-async fn list_of(mutator: &impl DocMutator, doc_id: &DocID) -> Option<Vec<String>> {
+pub(super) async fn list_of(mutator: &impl DocMutator, doc_id: &DocID) -> Option<Vec<String>> {
     let doc = mutator
         .get_for_update("Article", doc_id)
         .await
@@ -80,7 +80,7 @@ async fn list_of(mutator: &impl DocMutator, doc_id: &DocID) -> Option<Vec<String
     }
 }
 
-async fn update_body(
+pub(super) async fn update_body(
     mutator: &impl DocMutator,
     doc_id: &DocID,
     text: &str,

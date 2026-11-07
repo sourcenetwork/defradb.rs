@@ -121,35 +121,15 @@ impl<S> ChunkWrites<'_, S>
 where
     S: Store + 'static,
 {
-    /// Creates the chunk documents of a parent this write creates, which has none yet.
-    pub(crate) async fn create_all(
-        &self,
-        parent_doc_id: &str,
-        source: Option<&std::sync::Arc<serde_json::Value>>,
-        plans: Vec<FieldChunks>,
-    ) -> Result<Vec<DerivedWrite>> {
-        self.write_plans(parent_doc_id, source, plans, false).await
-    }
-
     /// Creates the chunk documents in `plans` that don't exist yet. An existing
     /// chunk is never rewritten, since the same hash means the same content.
+    /// A new parent can have some already: they may arrive by P2P before it.
+    /// A filtered replicator decides the chunks by `source`, the parent's document.
     pub(crate) async fn create_missing(
         &self,
         parent_doc_id: &str,
         source: Option<&std::sync::Arc<serde_json::Value>>,
         plans: Vec<FieldChunks>,
-    ) -> Result<Vec<DerivedWrite>> {
-        self.write_plans(parent_doc_id, source, plans, true).await
-    }
-
-    /// `source` is the parent's document, which a filtered replicator decides
-    /// the chunks by.
-    async fn write_plans(
-        &self,
-        parent_doc_id: &str,
-        source: Option<&std::sync::Arc<serde_json::Value>>,
-        plans: Vec<FieldChunks>,
-        may_exist: bool,
     ) -> Result<Vec<DerivedWrite>> {
         let mut written = Vec::new();
         for plan in plans {
@@ -159,10 +139,9 @@ where
             let encrypt = plan.encrypt || self.parent_encrypts(parent_doc_id, &plan.field).await?;
             // One scan per field: a lookup per chunk would cost a pass over the
             // transaction's writes each time.
-            let existing = match may_exist {
-                true => self.hashes_of(&target, parent_doc_id).await?,
-                false => RapidHashSet::default(),
-            };
+            let planned: RapidHashSet<&str> =
+                plan.chunks.iter().map(|(_, hash)| hash.as_str()).collect();
+            let existing = self.existing_of(&target, parent_doc_id, &planned).await?;
             for (text, hash) in plan.chunks {
                 if existing.contains(&hash) {
                     continue;

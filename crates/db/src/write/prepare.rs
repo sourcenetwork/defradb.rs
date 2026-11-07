@@ -519,6 +519,12 @@ impl<S: Store + 'static> crate::AutoCommitMutator<S> {
         mut modified_fields: Option<RapidHashSet<String>>,
     ) -> query::error::Result<Document> {
         let collection = self.get_collection_or_err(collection_name)?;
+        // Refuse before any key is minted or block signed for it.
+        crate::chunk::user_writes::refuse_list_writes(
+            collection.schema(),
+            &doc,
+            modified_fields.as_ref(),
+        )?;
         let generated_embeddings = if let Some(fields) = modified_fields.as_mut() {
             let generated = crate::search::embedding::set_embedding_with(
                 self.db.remote_inputs().embeddings(),
@@ -620,8 +626,7 @@ impl<S: Store + 'static> crate::AutoCommitMutator<S> {
                     .map_err(|e| query::error::QueryError::execution(e.to_string()))?,
             )
         };
-        // The attempt adds a create's chunk lists, so its keys and blocks are
-        // prepared over the document as it will be written.
+        // Sign a create with the chunk lists its attempt adds.
         let mut with_lists = (modified_fields.is_none()
             && !collection.schema().chunked_fields.is_empty())
         .then(|| doc.clone());
