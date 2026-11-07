@@ -2172,9 +2172,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Text chunking",
-        name: "covers / bounded / deterministic / local_edit",
+        name: "covers / bounded / deterministic / units_edit / local_edit / heading_keeps_text / unit_break_reads_only_headings / long_unit_fences",
         axis: Lean,
-        anchor: "crates/chunk-split/src/split/mod.rs split; segments.rs fence_before; atoms.rs atoms; pack.rs pack; overlap.rs with_overlap",
+        anchor: "crates/chunk-split/src/split/mod.rs split; segments.rs units, fence_before, segments; atoms.rs atoms; pack.rs pack; overlap.rs with_overlap",
         model_ref: "ChunkSplit (lake build)",
         tiers: &[Boundary],
         bound_by: "",
