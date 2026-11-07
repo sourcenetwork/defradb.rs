@@ -1,7 +1,7 @@
 //! A filtered delete follows a relation in its filter the same way a query
 //! does (#2099, `defra.request.mutation_relation_filter`).
 
-use integration_test::actions::{Actions, AddCollection, AddDoc, Request};
+use integration_test::actions::{Actions, AddCollection, AddDoc, Request, TxnBegin, TxnCommit};
 use integration_test::m;
 use integration_test::scenario::{captures, Common};
 use integration_test::test_case::TestCase;
@@ -101,6 +101,64 @@ fn an_update_filtered_through_a_relation_updates_what_the_query_finds() {
         .into(),
         Request {
             request: "query { Person(filter: {flagged: {_eq: true}}) { name } }".into(),
+            expected_data: json!({ "Person": [{ "name": "George Orwell" }] }),
+            ..Default::default()
+        }
+        .into(),
+    ])
+    .execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.request.mutation_relation_filter")]
+fn a_concurrent_change_to_a_related_document_aborts_the_delete() {
+    TestCase::from_actions(vec![
+        AddCollection {
+            sdl: r#"
+                type Book { title: String genre: String author: Person }
+                type Person { name: String authoredBooks: [Book] }
+            "#
+            .into(),
+            ..Default::default()
+        }
+        .into(),
+        person("George Orwell", "orwell"),
+        book("1984", "Dystopia", "orwell"),
+        TxnBegin::default().into(),
+        TxnBegin::default().into(),
+        Request {
+            request: r#"mutation {
+                delete_Person(filter: {authoredBooks: {genre: {_eq: "Dystopia"}}}) { name }
+            }"#
+            .into(),
+            expected_data: json!({ "delete_Person": [{ "name": "George Orwell" }] }),
+            txn: Some(0),
+            ..Default::default()
+        }
+        .into(),
+        Request {
+            request: r#"mutation {
+                update_Book(filter: {title: {_eq: "1984"}}, input: {genre: "Satire"}) { title }
+            }"#
+            .into(),
+            expected_data: json!({ "update_Book": [{ "title": "1984" }] }),
+            txn: Some(1),
+            ..Default::default()
+        }
+        .into(),
+        TxnCommit {
+            txn: 1,
+            ..Default::default()
+        }
+        .into(),
+        TxnCommit {
+            txn: 0,
+            expected_error: Some("transaction conflict. Please retry".into()),
+            ..Default::default()
+        }
+        .into(),
+        Request {
+            request: "query { Person { name } }".into(),
             expected_data: json!({ "Person": [{ "name": "George Orwell" }] }),
             ..Default::default()
         }
