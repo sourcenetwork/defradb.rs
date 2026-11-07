@@ -39,6 +39,9 @@ env:
   SCCACHE_S3_KEY_PREFIX: ci/
   SCCACHE_IGNORE_SERVER_IO_ERROR: '1'
   SCCACHE_IDLE_TIMEOUT: '0'
+  # A per-second build time in defra-node changed its compile inputs in every
+  # job, so it and every crate above it missed sccache. CI builds share one.
+  DEFRA_NODE_BUILD_TIME_OVERRIDE: ci
 
 # RunsOn retries a job whose Spot instance is reclaimed, but a failed
 # merge-queue run ejects the pull request before that retry, so merge-queue
@@ -762,9 +765,43 @@ jobs:
   # implement counts as unsupported, not failed; testo-report.ts turns the JUnit
   # report into per-binary counts and fails on a failure missing from
   # .github/testo/known-failures/<client>.txt, or on a listed test that passes.
+  # The testo and legacy integration binaries, built once for every testo shard.
+  testo-archive:
+    name: Build testo archive
+    needs: ci-scope
+    if: needs.ci-scope.outputs.full == 'true'
+    timeout-minutes: 30
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    env:
+      DEFRADB_GO_REPO: ${{ github.workspace }}/target/go-repo
+    steps:
+      - uses: runs-on/action@v2
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: integration
+          save-if: false
+      - name: Archive the test binaries
+        run: >-
+          cargo nextest archive --cargo-profile super-dev -p integration-test
+          --test testo --test legacy --archive-file testo.tar.zst
+      - uses: actions/upload-artifact@v4
+        with:
+          name: testo-archive
+          path: testo.tar.zst
+          retention-days: 1
+          compression-level: 0
+
   testo:
     name: ${{ matrix.client == 'legacy' && 'Legacy integration binaries' || format('Testo ({0}, {1}/3)', matrix.client, matrix.shard) }}
-    needs: [ci-scope, build-binaries, go-defradb]
+    needs: [ci-scope, build-binaries, go-defradb, testo-archive]
     if: needs.ci-scope.outputs.full == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
     timeout-minutes: 90
@@ -784,20 +821,16 @@ jobs:
       DEFRA_E2E_KEEP: '1'
       # A failing scenario shows its in-process nodes' P2P trace.
       DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,warn
-      TESTO: >-
-        --test testo
-      TESTO_FILTER: all()
+      TESTO_FILTER: binary(testo)
       # Not run anywhere: p2p_interop_bench, whose one test is an ignored
       # benchmark that prints latencies, and verars, whose cluster needs the
       # verad validator binary from vera.rs, which CI does not build.
-      LEGACY: >-
-        --test legacy
       # c_rust_to_go_outage_replay (#2089) flips between runs: the Go receiver
       # sometimes misses the protected document written while it was down. A
       # known-failure entry would fail every run it passes, so the test is left
       # out here instead of listed; run it again once #2089 is fixed.
       LEGACY_FILTER: >-
-        test(/^(cursor|http_contract|issue1194_repro|acp_replay_outage_cross_runtime)::/)
+        binary(legacy) & test(/^(cursor|http_contract|issue1194_repro|acp_replay_outage_cross_runtime)::/)
         & not test(=acp_replay_outage_cross_runtime::c_rust_to_go_outage_replay)
       # Go gives Foo the wrong ID beside FooBar only in some runs (#2528), so a
       # known-failure entry would fail the runs it passes; go-http leaves it out.
@@ -809,13 +842,9 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
-      - run: .github/scripts/install-linux-ci-deps.sh
-      - uses: mozilla-actions/sccache-action@v0.0.11
-      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/download-artifact@v4
         with:
-          shared-key: integration
-          save-if: false
+          name: testo-archive
       - uses: actions/download-artifact@v4
         with:
           name: defra-ci-binaries
@@ -840,19 +869,19 @@ jobs:
           echo "$DIR" >> "$GITHUB_PATH"
           echo "DEFRA_GO_BINARY=$DIR/defradb" >> "$GITHUB_ENV"
           if [ "$CLIENT" = legacy ]; then
-            echo "TESTS=$LEGACY" >> "$GITHUB_ENV"
             echo "FILTER=$LEGACY_FILTER" >> "$GITHUB_ENV"
           else
             echo "DEFRA_CLIENT=$CLIENT" >> "$GITHUB_ENV"
-            echo "TESTS=$TESTO" >> "$GITHUB_ENV"
             if [ "$CLIENT" = go-http ]; then
               echo "FILTER=($TESTO_FILTER) $GO_HTTP_FILTER" >> "$GITHUB_ENV"
             else
               echo "FILTER=$TESTO_FILTER" >> "$GITHUB_ENV"
             fi
           fi
-      - name: Build the test binaries
-        run: cargo nextest run --cargo-profile super-dev -p integration-test $TESTS -E "$FILTER" --no-run
+      - name: Point the tests at the archive
+        run: |
+          mkdir -p "$RUNNER_TEMP/nextest"
+          echo "ARCHIVE=--archive-file testo.tar.zst --workspace-remap . --extract-to $RUNNER_TEMP/nextest --extract-overwrite" >> "$GITHUB_ENV"
       - uses: oven-sh/setup-bun@v2.2.0
         with:
           bun-version: 1.3.6
@@ -860,7 +889,7 @@ jobs:
         id: run
         run: |
           set +e
-          cargo nextest run --cargo-profile super-dev -p integration-test $TESTS -E "$FILTER" \
+          cargo nextest run $ARCHIVE -E "$FILTER" \
             --partition hash:${{ matrix.shard }}/${{ matrix.shards || 3 }} --no-fail-fast
           echo "status=$?" >> "$GITHUB_OUTPUT"
       - name: Report
@@ -870,15 +899,17 @@ jobs:
           STATUS: ${{ steps.run.outputs.status }}
         run: |
           mkdir -p testo-report
-          cp target/nextest/ci/junit.xml "testo-report/$CLIENT-${{ matrix.shard }}.xml"
+          JUNIT=$(find "$RUNNER_TEMP/nextest" target -path '*/nextest/ci/junit.xml' 2>/dev/null | head -1)
+          test -n "$JUNIT"
+          cp "$JUNIT" "testo-report/$CLIENT-${{ matrix.shard }}.xml"
           # JUnit leaves out skipped tests, so the list says what this shard selected.
-          cargo nextest list --cargo-profile super-dev -p integration-test $TESTS -E "$FILTER" \
+          cargo nextest list $ARCHIVE -E "$FILTER" \
             --partition hash:${{ matrix.shard }}/${{ matrix.shards || 3 }} \
             --message-format json > target/nextest-list.json
-          bun .github/scripts/testo-report.ts shard target/nextest/ci/junit.xml target/nextest-list.json \
+          bun .github/scripts/testo-report.ts shard "$JUNIT" target/nextest-list.json \
             "$CLIENT" "${{ matrix.shard }}/${{ matrix.shards || 3 }}" \
             ".github/testo/known-failures/$CLIENT.txt" "testo-report/$CLIENT-${{ matrix.shard }}.json"
-          if [ "$STATUS" != 0 ] && ! grep -q '<failure' target/nextest/ci/junit.xml; then
+          if [ "$STATUS" != 0 ] && ! grep -q '<failure' "$JUNIT"; then
             echo "::error::nextest exited $STATUS without a failing test"
             exit 1
           fi
@@ -892,13 +923,20 @@ jobs:
 
   testo-summary:
     name: Testo summary
-    needs: testo
-    if: always() && needs.testo.result != 'skipped'
+    needs: [ci-scope, testo-archive, testo]
+    # Runs whenever testo should have, so a failed archive build, which skips
+    # every shard, still shows up here as a failed summary.
+    if: always() && needs.ci-scope.outputs.full == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       issues: read
     steps:
+      - name: Require the testo archive
+        if: needs.testo-archive.result != 'success'
+        run: |
+          echo "::error::Build testo archive was ${{ needs.testo-archive.result }}, so no testo shard ran"
+          exit 1
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
