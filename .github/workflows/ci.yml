@@ -945,6 +945,7 @@ jobs:
     permissions:
       contents: read
       issues: read
+      pull-requests: write
     steps:
       - name: Require the testo archive
         if: needs.testo-archive.result != 'success'
@@ -962,4 +963,33 @@ jobs:
       - name: Check the known-failure lists and merge the reports
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bun .github/scripts/testo-report.ts summary testo-report .github/testo/known-failures
+        # The report goes to a file first so the comment below can post it too.
+        run: |
+          status=0
+          GITHUB_STEP_SUMMARY=testo-summary.md bun .github/scripts/testo-report.ts summary testo-report .github/testo/known-failures || status=$?
+          cat testo-summary.md >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      # A pull request from a fork runs with a read-only token, so the table
+      # stays in the step summary there.
+      - name: Comment on the pull request
+        if: >-
+          always() && github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.full_name == github.repository
+          && hashFiles('testo-summary.md') != ''
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const table = require('fs').readFileSync('testo-summary.md', 'utf8');
+            const marker = '<!-- defradb-testo-summary -->';
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = `${marker}\n# Testo summary\n\nFrom [this run](${run}) on \`${context.payload.pull_request.head.sha.slice(0, 9)}\`.\n\n${table}`;
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const existing = (await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number }))
+              .find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
