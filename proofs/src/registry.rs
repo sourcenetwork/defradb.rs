@@ -2172,10 +2172,10 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Text chunking",
-        name: "INV_ListMatchesText / INV_ListedChunksExist / INV_NoChunkOfDeletedParent",
+        name: "INV_ListMatchesText / INV_ListedChunksExist / INV_NoChunkOfDeletedParent / INV_ValidWritesSucceed",
         axis: Tla,
         anchor: "crates/db/src/chunk/sync/mod.rs set_lists, ChunkWrites::create_missing, ChunkWrites::delete_all; crates/db/src/chunk/sync/lookup.rs ChunkWrites::existing_of; crates/db/src/write/autocommit/one_op.rs AutoCommitMutator::in_batch; crates/db/src/write/autocommit/batch.rs BatchMutator::update_as, delete_as; crates/db/src/write/doc.rs DbDocMutator; crates/db/src/write/prepare.rs prepare_request_write",
-        model_ref: "MC_ParentChunks_Green.cfg / MC_ParentChunks_Red_SeparateTxn.cfg / MC_ParentChunks_Red_NoCascade.cfg / MC_ParentChunks_Red_NoValidation.cfg / MC_ParentChunks_Red_CreateWithoutList.cfg",
+        model_ref: "MC_ParentChunks_Green.cfg / MC_ParentChunks_Red_SeparateTxn.cfg / MC_ParentChunks_Red_NoCascade.cfg / MC_ParentChunks_Red_NoValidation.cfg / MC_ParentChunks_Red_CreateWithoutList.cfg / MC_ParentChunks_Red_NoLookup.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
