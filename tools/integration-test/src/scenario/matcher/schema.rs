@@ -6,7 +6,7 @@
 //! order the server builds them (Go's follows map iteration), so lists compare
 //! as sets keyed by `name`. A mismatch prints the differing paths, a missing
 //! subtree once at its top, since the whole result runs to hundreds of
-//! kilobytes.
+//! kilobytes. A description of `""` matches one of `null`.
 
 use std::collections::BTreeMap;
 
@@ -26,7 +26,9 @@ pub(super) fn same_schema(want: &Value, got: &Value) -> bool {
     let differing: Vec<String> = wanted
         .iter()
         .filter_map(|(path, (w, parent))| match found.get(path) {
-            Some((g, _)) if g != w => Some(format!("  ~ {path}: want {w}, got {g}")),
+            Some((g, _)) if g != w && !no_description(path, w, g) => {
+                Some(format!("  ~ {path}: want {w}, got {g}"))
+            }
             None if found.contains_key(parent) || parent.is_empty() => {
                 Some(format!("  - {path}: {w}"))
             }
@@ -43,6 +45,13 @@ pub(super) fn same_schema(want: &Value, got: &Value) -> bool {
         differing[..SHOWN.min(differing.len())].join("\n")
     );
     false
+}
+
+/// An empty description and none at all say the same thing: Go's graphql-go
+/// reports `""` where async-graphql reports `null`.
+fn no_description(path: &str, want: &str, got: &str) -> bool {
+    let none = |text: &str| text == "\"\"" || text == "null";
+    path.ends_with(".description") && none(want) && none(got)
 }
 
 /// Records every node of `value` under a path in which list items are named by
