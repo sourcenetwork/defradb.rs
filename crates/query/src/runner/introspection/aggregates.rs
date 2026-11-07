@@ -1,13 +1,9 @@
 use async_graphql::dynamic::*;
-use rapidhash::RapidHashMap;
 use schema::{CollectionVersion, FieldKind, ScalarArrayKind};
 
 /// Build aggregate selector input types and register them for a collection.
 /// Returns the types to register.
-pub(super) fn build_aggregate_types_for_collection(
-    collection: &CollectionVersion,
-    id_to_name: &RapidHashMap<String, String>,
-) -> Vec<Type> {
+pub(super) fn build_aggregate_types_for_collection(collection: &CollectionVersion) -> Vec<Type> {
     let coll_name = &collection.name;
     let mut types = Vec::new();
 
@@ -147,43 +143,6 @@ pub(super) fn build_aggregate_types_for_collection(
                         );
                 types.push(inline_numeric.into());
             }
-        }
-    }
-
-    // Per-relation-field selectors
-    for field in &collection.fields {
-        match &field.kind {
-            FieldKind::Relation {
-                collection_id,
-                is_array,
-            } if *is_array => {
-                let related_name = id_to_name
-                    .get(collection_id)
-                    .cloned()
-                    .unwrap_or_else(|| collection_id.clone());
-                let field_name = &field.name;
-
-                // {Collection}__{field}__CountSelector
-                let rel_count =
-                    InputObject::new(format!("{}__{}__CountSelector", coll_name, field_name))
-                        .field(
-                            InputValue::new(
-                                "filter",
-                                TypeRef::named(format!("{}FilterArg", related_name)),
-                            )
-                            .description(super::descriptions::AGGREGATE_FILTER_ARG),
-                        )
-                        .field(
-                            InputValue::new("limit", TypeRef::named("Int"))
-                                .description(super::descriptions::LIMIT_ARG),
-                        )
-                        .field(
-                            InputValue::new("offset", TypeRef::named("Int"))
-                                .description(super::descriptions::OFFSET_ARG),
-                        );
-                types.push(rel_count.into());
-            }
-            _ => {}
         }
     }
 
