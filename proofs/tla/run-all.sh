@@ -82,6 +82,7 @@ RUNS=(
   "MC_SourceScopedNac_Red_Conflict.cfg SourceScopedNac.tla RED"
   "MC_SourceScopedNac_Red_Sources.cfg SourceScopedNac.tla RED"
   "MC_SourceScopedNac_Red_Membership.cfg SourceScopedNac.tla RED"
+  "MC_SourceScopedNac_Red_Unchanged.cfg SourceScopedNac.tla RED"
   "MC_EmbeddedSigner_Green.cfg EmbeddedSigner.tla GREEN"
   "MC_EmbeddedSigner_Red_Actor.cfg EmbeddedSigner.tla RED"
   "MC_EmbeddedSigner_Red_Match.cfg EmbeddedSigner.tla RED"

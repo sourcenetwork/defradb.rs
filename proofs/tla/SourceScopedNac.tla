@@ -2,6 +2,7 @@
 \* A publisher changes configuration and one source grant in one transaction.
 \* A concurrent revocation must conflict; other sources and direct grants stay.
 \* This models native NAC relationship staging and transaction validation.
+\* Rust: crates/query/src/txn/source_nac.rs source_permission_job_for.
 EXTENDS Naturals
 
 CONSTANT Bug
@@ -16,14 +17,25 @@ Init ==
   /\ bad = FALSE /\ leaked = FALSE /\ revived = FALSE
   /\ direct = TRUE /\ other = TRUE /\ owner = TRUE /\ membership = TRUE
 
-Stage(ownerMatch, authority, writable, bound, fresh, validSource) ==
+\* A trusted embedder that restates an unchanged edge needs no authority.
+\* An untrusted caller, or any changing edge, still needs it.
+NeedsAuthority(trusted, changed) == changed \/ ~trusted
+
+\* The Unchanged bug misreads a changing edge as unchanged.
+SeenChanged(changed) == changed /\ Bug # "Unchanged"
+
+Stage(ownerMatch, authority, writable, bound, fresh, validSource, trusted, changed) ==
   /\ ~staged /\ config
   /\ LET allowed == (ownerMatch \/ Bug = "Owner") /\
-       (authority \/ Bug = "Authority") /\ (writable \/ Bug = "Readonly") /\
+       (~NeedsAuthority(trusted, SeenChanged(changed)) \/ authority \/ Bug = "Authority") /\
+       (writable \/ Bug = "Readonly") /\
        (bound \/ Bug = "Store") /\ (fresh \/ Bug = "Expired") /\
        (validSource \/ Bug = "InvalidSource")
+         \* What the unbroken guards permit, to judge the staged result.
+         permitted == ownerMatch /\ writable /\ bound /\ fresh /\ validSource /\
+           (~NeedsAuthority(trusted, changed) \/ authority)
      IN /\ staged' = allowed
-        /\ bad' = (bad \/ (allowed /\ ~(ownerMatch /\ authority /\ writable /\ bound /\ fresh /\ validSource)))
+        /\ bad' = (bad \/ (allowed /\ ~permitted))
   /\ seen' = version
   /\ IF Bug = "Autocommit" /\ staged' THEN
        /\ grant' = FALSE /\ leaked' = TRUE
@@ -56,12 +68,12 @@ Discard ==
   /\ UNCHANGED <<config, grant, version, seen, bad, leaked, revived, direct, other, owner, membership>>
 
 Next ==
-  (\E ownerMatch, authority, writable, bound, fresh, validSource \in BOOLEAN :
-    Stage(ownerMatch, authority, writable, bound, fresh, validSource))
+  (\E ownerMatch, authority, writable, bound, fresh, validSource, trusted, changed \in BOOLEAN :
+    Stage(ownerMatch, authority, writable, bound, fresh, validSource, trusted, changed))
   \/ OtherRevoke \/ Commit \/ Disable \/ Discard
 Spec == Init /\ [][Next]_vars
 
-\* Denied actors cannot stage native permission changes.
+\* Denied actors cannot stage native permission changes or probe untrusted no-ops.
 INV_Authority == ~bad
 \* An uncommitted transaction is never visible.
 INV_Private == ~leaked

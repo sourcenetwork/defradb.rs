@@ -109,9 +109,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Transactional node source grants",
-        name: "remove_other / remove_self / direct_survives / owner_survives / admin_survives / denied",
+        name: "remove_other / remove_self / direct_survives / owner_survives / admin_survives / denied / untrusted_noop_denied / embedded_unchanged_allowed",
         axis: Lean,
-        anchor: "crates/acp/src/nac/node_acp/source.rs; crates/defra-node/src/source_nac_tests.rs",
+        anchor: "crates/acp/src/nac/node_acp/source.rs; crates/query/src/txn/source_nac.rs; crates/defra-node/src/source_nac_tests.rs",
         model_ref: "SourceScopedNac (lake build)",
         tiers: &[Boundary, Contract],
         bound_by: "crates/defra-node/src/source_nac_tests.rs source_admission_matches_executed_lean_model",

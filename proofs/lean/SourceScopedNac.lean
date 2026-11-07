@@ -6,7 +6,8 @@ sources, direct actor grants, node ownership, and administration remain
 independent. A transaction stages the source relationship only when its actor,
 authority, provider, and writable transaction are valid. Regolith's transaction
 validation and the native Zanzibar relationship store are external premises.
-Rust owners: acp node source relationships and defra-node transactional NAC.
+Rust owners: acp node source relationships, `source_permission_job_for` in
+query `txn/source_nac.rs`, and defra-node transactional NAC.
 -/
 namespace SourceScopedNac
 open Lean
@@ -58,6 +59,9 @@ theorem unlinked_context_denies (sourceEdge membership : Bool) :
     nested sourceEdge false membership = false := by simp [nested]
 
 -- Native authority is checked in the same writable, authenticated transaction.
+-- `trustedEmbedder` marks the embedder-authenticated actor call on a node-owned
+-- transaction; an HTTP or caller-owned call is not trusted. `edgeChanged` says
+-- whether the edge differs from the one the transaction already reads.
 structure Admission where
   sameOwner : Bool
   writable : Bool
@@ -65,15 +69,41 @@ structure Admission where
   boundStore : Bool
   fresh : Bool
   validSource : Bool
+  trustedEmbedder : Bool
+  edgeChanged : Bool
   deriving FromJson, ToJson
+
+/-- An exactly present add or exactly absent delete changes no relationship, so
+the trusted embedder needs no authority to restate it, as
+`HostMutationProjection.unchanged_host_source_allowed` says for the host. The
+read that found the edge unchanged stays in the transaction and is validated at
+commit. An untrusted caller still needs authority, so a no-op cannot probe
+whether an edge it may not administer exists. -/
+def needsAuthority (i : Admission) : Bool :=
+  i.edgeChanged || !i.trustedEmbedder
 
 -- Every admission fact must hold before the relationship can be staged.
 def mayStage (i : Admission) : Bool :=
-  i.sameOwner && i.writable && i.authorized && i.boundStore && i.fresh && i.validSource
+  i.sameOwner && i.writable && i.boundStore && i.fresh && i.validSource &&
+    (!needsAuthority i || i.authorized)
 
 -- Unauthorized actors cannot create or revoke a source grant.
-theorem denied (i : Admission) (h : i.authorized = false) : mayStage i = false := by
-  simp [mayStage, h]
+theorem denied (i : Admission) (h : i.authorized = false) (changed : i.edgeChanged = true) :
+    mayStage i = false := by
+  simp [mayStage, needsAuthority, h, changed]
+
+-- An untrusted caller cannot restate an edge it has no authority for.
+theorem untrusted_noop_denied (i : Admission) (h : i.authorized = false)
+    (untrusted : i.trustedEmbedder = false) : mayStage i = false := by
+  simp [mayStage, needsAuthority, h, untrusted]
+
+-- The trusted embedder restates an unchanged edge without authority.
+theorem embedded_unchanged_allowed (i : Admission)
+    (owner : i.sameOwner = true) (write : i.writable = true) (bound : i.boundStore = true)
+    (fresh : i.fresh = true) (valid : i.validSource = true)
+    (trusted : i.trustedEmbedder = true) (unchanged : i.edgeChanged = false) :
+    mayStage i = true := by
+  simp [mayStage, needsAuthority, owner, write, bound, fresh, valid, trusted, unchanged]
 
 -- A foreign transaction never accepts a source mutation.
 theorem wrongOwner (i : Admission) (h : i.sameOwner = false) : mayStage i = false := by
