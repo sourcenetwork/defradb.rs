@@ -45,7 +45,7 @@ net = { path = "../net" }
 # The browser's clock, and embedding request deadlines.
 n0-future.workspace = true
 # Embedding requests through the browser's fetch.
-reqwest = { version = "0.12", default-features = false, features = ["json", "charset", "http2"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "charset", "http2"] }
 
 [lints]
 workspace = true
