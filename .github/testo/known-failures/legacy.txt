@@ -4,4 +4,3 @@
 # - a listed test that passes fails the job ("fixed: remove from the list"), so the list only shrinks;
 # - an entry a pull request adds is printed as a warning naming that pull request.
 legacy issue1194_repro::issue1194_selected_output_field_still_conflicts #2512
-legacy cursor::reindex_datetime_visibility::datetime_index_survives_reindex_and_stays_cursor_visible #2420
