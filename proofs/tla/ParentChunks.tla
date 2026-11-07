@@ -31,10 +31,9 @@
 \*   - a chunk left behind after its article was deleted (INV_NoChunkOfDeletedParent).
 \*
 \* Code it models (crates/db/src/chunk/sync):
-\*   mod.rs      set_lists (the list in the parent's write), ChunkWrites::create_all
-\*               (a new article's chunks), ChunkWrites::create_missing, ChunkWrites::delete_all
-\*               (missing chunks, and the cascade on delete)
-\*   lookup.rs   ChunkWrites::hashes_of (the chunks an article has, in one scan)
+\*   mod.rs      set_lists (the list in the parent's write), ChunkWrites::create_missing,
+\*               ChunkWrites::delete_all (missing chunks, and the cascade on delete)
+\*   lookup.rs   ChunkWrites::existing_of (which planned chunks exist, in one scan)
 \*   crates/db/src/write/autocommit/one_op.rs AutoCommitMutator::in_batch (a single write runs as one batch)
 \*   crates/db/src/write/autocommit/batch.rs  BatchMutator::update_as, delete_as (call the hook)
 \*   crates/db/src/write/doc.rs               DbDocMutator update and delete (call the hook)

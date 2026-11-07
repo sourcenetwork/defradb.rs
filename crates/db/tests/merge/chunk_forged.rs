@@ -14,7 +14,7 @@ use document::{DocID, Document, NormalValue};
 use query::mutator::DocMutator;
 use storage::RegolithStore;
 
-const SDL: &str = r#"
+pub(super) const SDL: &str = r#"
     type Article {
         title: String
         body: String @chunk(maxChars: 64)
@@ -24,13 +24,13 @@ const CHUNKS: &str = "Article__body_chunk";
 
 type Handler = DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>;
 
-struct Node {
-    db: Arc<DB<RegolithStore>>,
+pub(super) struct Node {
+    pub(super) db: Arc<DB<RegolithStore>>,
     blockstore: Arc<DefraBlockstore<RegolithStore>>,
     handler: Handler,
 }
 
-async fn node() -> Node {
+pub(super) async fn node() -> Node {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let db = Arc::new(DB::from_arc(store.clone()).unwrap());
     db.create_collections_atomic(query::parse_sdl(SDL).unwrap())
@@ -45,7 +45,7 @@ async fn node() -> Node {
     }
 }
 
-fn chunks_of(node: &Node) -> Collection {
+pub(super) fn chunks_of(node: &Node) -> Collection {
     node.db.get_collection(CHUNKS).unwrap().expect("chunks")
 }
 
@@ -78,7 +78,7 @@ async fn copy_links(from: &Node, to: &Node, block: &Block) {
     }
 }
 
-async fn merge(
+pub(super) async fn merge(
     from: &Node,
     to: &Node,
     collection: &Collection,
@@ -117,7 +117,7 @@ async fn stored(node: &Node, collection: &Collection, doc_id: &DocID) -> Option<
     doc
 }
 
-async fn list_of(node: &Node, parent: &DocID) -> Vec<String> {
+pub(super) async fn list_of(node: &Node, parent: &DocID) -> Vec<String> {
     let parents = node.db.get_collection("Article").unwrap().unwrap();
     match stored(node, &parents, parent)
         .await
