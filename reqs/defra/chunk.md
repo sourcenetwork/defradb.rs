@@ -109,9 +109,9 @@ With `@chunk(maxChars: 160)` and a 40-paragraph body, changing one word in parag
 # `defra.chunk.write.signed`: A node that signs its blocks keeps the chunks exact
 
 - **Parents:** ["defra.chunk.write"]
-- **Scenarios:** ["chunk::write_signed::a_signing_node_stores_the_list_of_the_first_update"]
+- **Scenarios:** ["chunk::write_signed::a_signing_node_stores_the_list_of_the_first_update", "chunk::write_signed::a_signing_node_stores_the_lists_of_an_array_create", "chunk::write_signed::a_signing_node_stores_the_list_of_an_upsert_create"]
 
-On a node that signs its blocks, creating an `Article` with a six-paragraph body and then updating the body to four paragraphs gives a `_body_chunks` list of five hashes, and `Article__body_chunk` holds exactly the four after the first.
+On a node that signs its blocks, creating an `Article` with a six-paragraph body gives a signed `_body_chunks` block. Updating the body to four paragraphs then gives a `_body_chunks` list of five hashes: the whole text's, then the four chunks'. `Article__body_chunk` holds exactly those four. The same update gives a list of five hashes for each article of a two-article `add_Article` and for an article an `upsert_Article` created.
 
 # `defra.chunk.write.concurrent`: Concurrent writes leave the chunks of the winning text
 

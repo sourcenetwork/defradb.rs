@@ -4,7 +4,7 @@ use integration_test::actions::{
     Actions, AddCollection, AddCollectionSubscription, AddDoc, AddReplicator, NewNode, Request,
     WaitForPeersEvents,
 };
-use integration_test::scenario::{captures, Common, Eventually};
+use integration_test::scenario::{captures, Common, Eventually, Text};
 use integration_test::test_case::TestCase;
 use serde_json::{json, Value};
 
@@ -56,6 +56,22 @@ pub fn add_article_on(body: &str, capture: &str, node: Option<&str>) -> Actions 
         collection: "Article".into(),
         doc_map: Some(json!({ "title": "t", "body": body })),
         common,
+        ..Default::default()
+    }
+    .into()
+}
+
+/// Updates the body of the article named `capture` through GraphQL.
+pub fn update_article(capture: &str, body: &str) -> Actions {
+    Request {
+        request: Text::concat([
+            Text::from(r#"mutation { update_Article(docID: ""#),
+            Text::reference(capture),
+            Text::from(format!(
+                r#"", input: {{body: "{}"}}) {{ _docID }} }}"#,
+                gql(body)
+            )),
+        ]),
         ..Default::default()
     }
     .into()
