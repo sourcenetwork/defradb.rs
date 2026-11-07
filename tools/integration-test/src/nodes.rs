@@ -31,6 +31,8 @@ pub struct NodeSpec {
     pub enable_nac: bool,
     /// The identity starting the node, which owns its NAC when it enables it.
     pub nac_owner: Option<String>,
+    /// The node's admission limits, if not the defaults.
+    pub admission: Option<crate::actions::AdmissionSpec>,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -55,6 +57,12 @@ impl TestNode {
         let listen = match spec.listen.first() {
             Some(address) => address.clone(),
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),
+        };
+        // Admission limits are a Rust receiver's options: under go-http the
+        // node is a Rust node reached over HTTP, as rust-http does.
+        let client_type = match client_type {
+            ClientType::GoHttp if spec.admission.is_some() => ClientType::RustHttp,
+            other => other,
         };
         match client_type {
             ClientType::InProcess => {
@@ -134,6 +142,7 @@ impl TestNode {
             EventName::Update,
             EventName::MergeComplete,
             EventName::TopicPeerEvent,
+            EventName::P2PGossipHeadDropped,
         ]);
         self.events
             .store(Some(Arc::new(Events::new(subscription.into_receiver()))));
@@ -200,6 +209,24 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     if spec.network {
         builder = builder.with_libp2p(listen);
     }
+    if let (true, Some(limits)) = (spec.network, &spec.admission) {
+        let mut sync = defra_node::SyncTuning {
+            max_pending_dags: limits.max_pending_dags,
+            rate_limit_burst: limits.rate_limit_burst,
+            rate_limit_rate: limits.rate_limit_rate,
+            ..Default::default()
+        };
+        if let Some(bytes) = limits.deferral_peer_bytes {
+            sync.gossip_deferral_peer_bytes = bytes;
+        }
+        builder = builder.with_transport(defra_node::TransportConfig::Libp2p(
+            defra_node::Libp2pConfig {
+                listen_addrs: vec![listen.to_owned()],
+                sync,
+                ..Default::default()
+            },
+        ));
+    }
     if let Some(config) = http {
         builder = builder.with_http(config);
     }
@@ -225,6 +252,8 @@ struct EventLog {
     heads: RapidHashMap<String, String>,
     /// Topic events not yet awaited: (topic, peer, JOINED or LEFT).
     topics: VecDeque<(String, String, String)>,
+    /// Gossip heads the node dropped past a deferral budget, not yet awaited.
+    gossip_dropped: VecDeque<events::P2PGossipHeadDroppedData>,
 }
 
 /// A node's recorded events.
@@ -286,6 +315,9 @@ impl Events {
                         .push_back((event.topic, event.peer_id, event.event_type))
                 });
             }
+            MessageData::P2PGossipHeadDropped(event) => {
+                self.update(|log| log.gossip_dropped.push_back(event))
+            }
             _ => {}
         }
         Ok(())
@@ -329,6 +361,32 @@ impl Events {
                 .await
                 .map_err(|reason| format!("{doc_id} did not merge {head}: {reason}"))?;
         }
+    }
+
+    /// The next `count` gossip heads the node dropped past a deferral budget.
+    pub async fn gossip_dropped(
+        &self,
+        count: usize,
+        deadline: Duration,
+    ) -> Result<Vec<events::P2PGossipHeadDroppedData>, String> {
+        let end = std::time::Instant::now() + deadline;
+        let mut dropped = Vec::with_capacity(count);
+        while dropped.len() < count {
+            let mut log = self.log.load_clone();
+            if let Some(event) = log.gossip_dropped.pop_front() {
+                self.log.store(log);
+                dropped.push(event);
+                continue;
+            }
+            let left = end.saturating_duration_since(std::time::Instant::now());
+            self.receive(left).await.map_err(|reason| {
+                format!(
+                    "{} of {count} dropped gossip heads: {reason}",
+                    dropped.len()
+                )
+            })?;
+        }
+        Ok(dropped)
     }
 
     /// Wait until every (topic, peer) in `wanted` has an event of `kind`,

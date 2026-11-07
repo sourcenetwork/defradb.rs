@@ -244,3 +244,10 @@ Adding `type Foo { name: String } type FooBar { name: String }` to a fresh node 
 - **Scenarios:** ["db::merge::receive_gate::the_filter_sees_the_values_at_hand_and_keeps_a_head_alone", "db::merge::receive_gate::a_node_without_a_filter_has_no_gate", "p2p::sync::coordinator::access_tests::a_push_the_gate_refuses_on_arrival_stores_nothing", "p2p::sync::coordinator::access_tests::a_fetched_car_the_gate_refuses_is_not_imported", "p2p::sync::coordinator::access_tests::a_two_stream_push_the_gate_refuses_stores_nothing"]
 
 A node with a replication filter also asks it in the P2P receive path. On arrival (gossip, pushlog and a replicator's direct push), before the head is stored or a fetch registered, the filter sees the values of the blocks the head links that the node already stores; a composite head alone gives `{}`, so the filter keeps it. A refusal stores nothing and registers no pending DAG. On a fetched CAR, after CID verification and before import, the filter sees the CAR's values; a refusal imports nothing and discharges the root, so it is not fetched again. The merge asks again as the backstop. A node without a filter installs no gate, and its receive path is unchanged.
+
+# `defra.p2p.gossip_admission`: A gossip head refused at admission is kept or reported
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["net::gossip_admission::a_gossip_burst_over_the_admission_limits_loses_no_document", "net::gossip_admission::a_gossip_head_past_the_deferral_budget_is_reported"]
+
+Gossip has no reply and no retry, so a gossip head a node refuses for its per-peer rate limit or its pending-DAG capacity is kept as a durable pending record that takes no slot, and is fetched once a slot frees: a burst over both limits loses no document. These records are bounded by bytes, per source peer (`gossip_deferral_peer_bytes`) and in all (`gossip_deferral_total_bytes`). Past a budget the head is dropped, and the node reports a `p2p-gossip-head-dropped` event naming the peer and the root, so the application can resync it.
