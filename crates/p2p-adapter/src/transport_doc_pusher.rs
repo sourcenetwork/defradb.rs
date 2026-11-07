@@ -370,12 +370,13 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
     ) -> P2PResult<()> {
         let peer_id_str = peer_id.to_string();
         let peerstore = self.db.peerstore();
-        let filters = match peerstore.get_replicator(&peer_id_str).await {
-            Ok(Some(bytes)) => p2p::ReplicatorInfo::from_bytes(&bytes)
-                .map(|info| info.filters)
-                .unwrap_or_default(),
-            _ => p2p::ReplicationFilters::new(),
+        let info = match peerstore.get_replicator(&peer_id_str).await {
+            Ok(Some(bytes)) => p2p::ReplicatorInfo::from_bytes(&bytes).ok(),
+            _ => None,
         };
+        let (collections, filters) = info
+            .map(|info| (info.collections, info.filters))
+            .unwrap_or_default();
         db::merge::retry_doc(
             &self.transport,
             &self.db,
@@ -384,6 +385,7 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
             doc_id,
             collection_id,
             generation,
+            &collections,
             &filters,
             &replication_filter::QueryReplicationFilterMatcher::new(),
             &self.car_authority,

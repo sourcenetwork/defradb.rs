@@ -9,6 +9,7 @@ use blockstore::Blockstore;
 use bytes::Bytes;
 use cid::Cid;
 use serde_json::Value as JsonValue;
+use std::sync::Arc;
 
 use super::push_worker::{report_observed_head, report_push_failure};
 use super::SyncCoordinator;
@@ -26,7 +27,49 @@ struct PendingPush {
     collection_id: String,
     creator: String,
     document: Option<JsonValue>,
+    /// The parent's document, for a `@chunk` chunk: its filter decides the chunk.
+    source: Option<Arc<JsonValue>>,
 }
+
+/// Whether a replicator's filter lets a push through.
+#[derive(Debug, PartialEq, Eq)]
+enum Admission {
+    Admit,
+    /// The peer is filtered and the document its filter needs is not at hand.
+    NoDocument,
+    FilterMiss,
+}
+
+impl PendingPush {
+    /// A chunk is decided by its parent's document, never by its own.
+    fn admission(
+        &self,
+        rep: &crate::replicator::ReplicatorInfo,
+        matcher: &dyn crate::replicator::ReplicationFilterMatcher,
+    ) -> Admission {
+        if !rep.is_filtered_for_collection(&self.collection_id) {
+            return Admission::Admit;
+        }
+        let matched = if rep.is_filtered_chunk(&self.collection_id) {
+            self.source
+                .as_ref()
+                .map(|source| rep.matches_chunk_source(matcher, &self.collection_id, source))
+        } else {
+            self.document
+                .as_ref()
+                .map(|document| rep.matches_filter(matcher, &self.collection_id, document))
+        };
+        match matched {
+            None => Admission::NoDocument,
+            Some(false) => Admission::FilterMiss,
+            Some(true) => Admission::Admit,
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "broadcast_admission_tests.rs"]
+mod admission_tests;
 
 impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     async fn list_replicators_for_push(&self) -> Result<Vec<crate::replicator::ReplicatorInfo>> {
@@ -182,6 +225,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             collection_id: collection_id.to_string(),
             creator: creator.to_string(),
             document: None,
+            source: None,
         })
         .await
     }
@@ -211,6 +255,65 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             collection_id: collection_id.to_string(),
             creator: creator.to_string(),
             document: Some(document.clone()),
+            source: None,
+        })
+        .await
+    }
+
+    /// [`Self::push_document_to_replicators_with_creator`] for a document that
+    /// may not have encoded: without it, filtered peers get nothing.
+    pub async fn push_found_document_to_replicators_with_creator(
+        &self,
+        cid: &Cid,
+        block: &[u8],
+        doc_id: &str,
+        collection_id: &str,
+        document: Option<&JsonValue>,
+        creator_override: Option<&str>,
+    ) -> Result<()> {
+        let creator = creator_override.unwrap_or(&self.access.local_peer_id);
+        crate::model_trace!(Commit {
+            doc: doc_id,
+            head: cid.to_string(),
+            parents: crate::model_trace::parents_of(block),
+        });
+        self.admit_replicator_push(PendingPush {
+            cid: *cid,
+            block: Bytes::copy_from_slice(block),
+            doc_id: doc_id.to_string(),
+            collection_id: collection_id.to_string(),
+            creator: creator.to_string(),
+            document: document.cloned(),
+            source: None,
+        })
+        .await
+    }
+
+    /// Push a committed `@chunk` chunk to replicators. A filtered peer gets it
+    /// only when `source`, its parent's document, passes the parent's filter.
+    pub async fn push_chunk_to_replicators_with_creator(
+        &self,
+        cid: &Cid,
+        block: &[u8],
+        doc_id: &str,
+        collection_id: &str,
+        source: Option<&Arc<JsonValue>>,
+        creator_override: Option<&str>,
+    ) -> Result<()> {
+        let creator = creator_override.unwrap_or(&self.access.local_peer_id);
+        crate::model_trace!(Commit {
+            doc: doc_id,
+            head: cid.to_string(),
+            parents: crate::model_trace::parents_of(block),
+        });
+        self.admit_replicator_push(PendingPush {
+            cid: *cid,
+            block: Bytes::copy_from_slice(block),
+            doc_id: doc_id.to_string(),
+            collection_id: collection_id.to_string(),
+            creator: creator.to_string(),
+            document: None,
+            source: source.cloned(),
         })
         .await
     }
@@ -291,16 +394,25 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 missing_documents += 1;
                 continue;
             }
-            if rep.is_filtered_for_collection(&push.collection_id) {
-                let Some(document) = push.document.as_ref() else {
+            let admission = push.admission(rep, self.runtime.filter_matcher.as_ref());
+            if admission != Admission::Admit && rep.is_filtered_chunk(&push.collection_id) {
+                tracing::debug!(
+                    target: "p2p::sync::delivery_admission",
+                    peer_id = %peer_id,
+                    chunks = %push.collection_id,
+                    parent = ?rep.chunk_sources.get(&push.collection_id),
+                    doc_id = %push.doc_id,
+                    outcome = ?admission,
+                    "Chunk not pushed to a filtered replicator"
+                );
+            }
+            match admission {
+                Admission::Admit => {}
+                Admission::NoDocument => {
                     missing_documents += 1;
                     continue;
-                };
-                if !rep.matches_filter(
-                    self.runtime.filter_matcher.as_ref(),
-                    &push.collection_id,
-                    document,
-                ) {
+                }
+                Admission::FilterMiss => {
                     filter_misses += 1;
                     continue;
                 }
@@ -391,6 +503,30 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     )
                     .await;
                 }
+            }
+        }
+    }
+
+    /// SE artifacts for a document that may not have encoded: without it only
+    /// unfiltered peers get them.
+    pub async fn push_se_artifacts_with_found_document(
+        &self,
+        collection_id: &str,
+        artifacts: Vec<SEArtifact>,
+        document: Option<&JsonValue>,
+    ) {
+        match document {
+            Some(document) => {
+                self.push_se_artifacts_to_replicators_for_document(
+                    collection_id,
+                    artifacts,
+                    document,
+                )
+                .await
+            }
+            None => {
+                self.push_se_artifacts_to_replicators(collection_id, artifacts)
+                    .await
             }
         }
     }

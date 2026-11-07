@@ -2234,6 +2234,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "Text chunking",
+        name: "INV_NothingUnmatched / INV_ChunkOnlyWithItsArticle / LIVE_RetriesEnd / LIVE_ChunkFollowsItsArticle",
+        axis: Tla,
+        anchor: "crates/p2p/src/replicator.rs ReplicatorInfo::is_filtered_for_collection, matches_chunk_source, matches_filter; crates/p2p/src/sync/coordinator/broadcast.rs push_jobs; crates/p2p-adapter/src/lib.rs with_chunk_collections, collections_requiring_replay; crates/db/src/merge/broadcast_mutator/mod.rs BroadcastMutator::publish_derived; crates/db/src/merge/broadcast_mutator/batch.rs BroadcastBatchMutator::capture_derived; crates/db/src/chunk/sync/write.rs ChunkWrites::publish; crates/db/src/merge/txn_broadcaster.rs broadcast; crates/db/src/merge/push_filter.rs FilterCheck::decide; crates/db/src/merge/push_docs.rs push_existing_docs, retry_doc",
+        model_ref: "MC_FilteredChunkPush_Green.cfg / MC_FilteredChunkPush_Red_DropChunks.cfg / MC_FilteredChunkPush_Red_ChunkUnfiltered.cfg / MC_FilteredChunkPush_Red_MatchOwnDoc.cfg / MC_FilteredChunkPush_Red_ForwardWithoutSource.cfg / MC_FilteredChunkPush_Red_TxnNoSource.cfg / MC_FilteredChunkPush_Red_RetryWithoutArticle.cfg / MC_FilteredChunkPush_Red_RetryNeverEnds.cfg / MC_FilteredChunkPush_Red_ChunkReplayAlone.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // One task serves a pg-compat connection: one deadline read at the
         // accept bounds the peek, the SSL and GSS refusals and the startup;
         // an extended-protocol error skips to the Sync; a fatal error or a

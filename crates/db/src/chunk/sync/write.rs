@@ -12,10 +12,10 @@ use storage::keys::doc_id_index::DocRef;
 
 use crate::block::builder::{write_delete_block_with_inputs, write_document_blocks_with_inputs};
 use crate::collection::Collection;
-use crate::event::emission::register_update_event_callback;
+use crate::event::emission::{register_update_event_callback, FilterDocument};
 use crate::write::autocommit::helpers::{register_created_doc, write_local_create};
 
-use super::{json, ChunkCollection, ChunkWrites};
+use super::{ChunkCollection, ChunkWrites};
 
 impl<S> ChunkWrites<'_, S>
 where
@@ -64,6 +64,7 @@ where
         text: String,
         hash: String,
         encrypt: bool,
+        source: Option<&std::sync::Arc<serde_json::Value>>,
     ) -> Result<DerivedWrite> {
         let collection = &target.collection;
         let mut doc = Document::new(collection.schema_arc());
@@ -146,13 +147,7 @@ where
             &target.index_manager,
         )
         .await?;
-        self.publish(
-            collection,
-            &doc_id,
-            block.cid,
-            block.block.clone(),
-            json(&doc),
-        )?;
+        self.publish(collection, &doc_id, block.cid, block.block.clone(), source)?;
         doc.clear_write_preparation();
         Ok(DerivedWrite {
             collection_name: collection.name().to_string(),
@@ -168,6 +163,7 @@ where
         &self,
         target: &ChunkCollection,
         doc_short_id: u64,
+        source: Option<&std::sync::Arc<serde_json::Value>>,
     ) -> Result<Option<DerivedWrite>> {
         let collection = &target.collection;
         let Some(doc_id) = crate::docid::map::get_doc_id(&target.systemstore, doc_short_id)
@@ -179,11 +175,6 @@ where
         };
         let doc_id = DocID::from_string(&doc_id)
             .map_err(|e| QueryError::execution(format!("invalid chunk DocID: {e}")))?;
-        let before = collection
-            .get_with_datastore(&target.datastore, doc_short_id, &doc_id)
-            .await
-            .map_err(|e| QueryError::execution(format!("chunk read failed: {e}")))?
-            .and_then(|doc| json(&doc));
         let existed = collection
             .delete_with_indexes(
                 &target.datastore,
@@ -223,7 +214,7 @@ where
         )
         .await
         .map_err(|e| QueryError::execution(e.to_string()))?;
-        self.publish(collection, &doc_id, block.cid, block.block.clone(), before)?;
+        self.publish(collection, &doc_id, block.cid, block.block.clone(), source)?;
         Ok(Some(DerivedWrite {
             collection_name: collection.name().to_string(),
             collection_id: collection.collection_id().to_string(),
@@ -240,8 +231,10 @@ where
         doc_id: &DocID,
         cid: cid::Cid,
         block: bytes::Bytes,
-        document_json: Option<serde_json::Value>,
+        source: Option<&std::sync::Arc<serde_json::Value>>,
     ) -> Result<()> {
+        // Only an explicit transaction's broadcaster reads the parent here.
+        let source = self.broadcaster.and(source).cloned();
         register_update_event_callback(
             self.txn,
             self.db.event_bus(),
@@ -252,7 +245,7 @@ where
             doc_id.to_string(),
             cid,
             block,
-            document_json,
+            FilterDocument::Parent(source),
             None,
             None,
         )

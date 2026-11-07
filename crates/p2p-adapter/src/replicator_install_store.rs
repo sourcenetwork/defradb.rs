@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use events::Bus;
-use rapidhash::{RapidHashMap, RapidHashSet};
+use rapidhash::RapidHashMap;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use storage::corekv::{
@@ -113,11 +113,6 @@ impl RetryAttemptFn for Prepare {
                 .await?
                 .map(|bytes| p2p::ReplicatorInfo::from_bytes(&bytes).map_err(storage_error))
                 .transpose()?;
-            let existing_ids: RapidHashSet<String> = existing
-                .as_ref()
-                .map(|info| info.collections.iter().cloned().collect())
-                .unwrap_or_default();
-            let existing_filters = existing.map(|info| info.filters).unwrap_or_default();
             let changed = self
                 .request
                 .info
@@ -135,9 +130,8 @@ impl RetryAttemptFn for Prepare {
             let replay = crate::collections_requiring_replay(
                 &self.request.collections,
                 &self.request.info.collections,
-                &existing_ids,
-                &existing_filters,
-                &self.request.info.filters,
+                existing.as_ref(),
+                &self.request.info,
                 &changed,
             );
             let incarnation_key = ReplicatorIncarnationKey::new(peer).bytes();

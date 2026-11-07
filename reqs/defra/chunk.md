@@ -202,6 +202,13 @@ After an article and its chunks reach the second node, deleting the article on t
 
 A replicator set up for `Article` alone gives the second node the same `_body_chunks` list and exactly the same chunks. The CLI sets the replicator with `--collection Article`.
 
+# `defra.chunk.replicate.filtered`: A filtered replicator ships the chunks of the parents it matches
+
+- **Parents:** ["defra.chunk.replicate"]
+- **Scenarios:** ["chunk::replicate_filtered::a_filtered_replicator_ships_the_chunks_of_a_matching_parent", "chunk::replicate_filtered::a_filtered_replicator_ships_the_new_chunks_of_an_edited_matching_parent", "chunk::replicate_filtered::a_filtered_replicator_replays_the_chunks_of_existing_matching_parents", "chunk::replicate_filtered::a_matching_parent_delete_removes_its_chunks_on_the_filtered_peer", "chunk::replicate_filtered::an_unmatched_parent_edit_and_delete_send_nothing", "chunk::replicate_filtered::an_explicit_transaction_ships_the_chunks_of_a_matching_parent", "chunk::replicate_filtered::an_explicit_transaction_edit_and_delete_reach_the_filtered_peer"]
+
+With `type Article { kind: String @immutable body: String @chunk(maxChars: 64) }` and a replicator for `Article` with the filter `{"kind": {"_eq": "public"}}`, a public article written on the first node reaches the second with the same `_body_chunks` list and exactly its chunks, and a secret article never reaches it. After an edit the second node shows the new list and exactly the new chunks, and after a delete it shows no article and no chunks. This holds for single writes, for writes in an explicit transaction, and for articles that existed before the replicator was added. Editing and deleting a secret article sends nothing: once a later public article arrives, the second node shows only the public articles. The CLI sets the filter with `--filter`. Go has no filtered replicators, so a Go node reports these scenarios as unsupported.
+
 # `defra.chunk.backup`: Backups and chunks
 
 - **Parents:** ["defra.chunk"]

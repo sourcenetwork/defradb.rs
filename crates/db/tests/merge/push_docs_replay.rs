@@ -446,6 +446,9 @@ pub(super) struct ConnectedPeerTransport {
     before_reply:
         Option<Arc<dyn Fn(String) -> futures::future::BoxFuture<'static, ()> + Send + Sync>>,
     retry_after_ms: Option<u64>,
+    replicators: Option<Vec<p2p::ReplicatorInfo>>,
+    /// Pushes of this document are recorded, then fail as a closed connection.
+    failing_doc: Option<String>,
 }
 
 impl ConnectedPeerTransport {
@@ -458,7 +461,19 @@ impl ConnectedPeerTransport {
             require_selected_authority: None,
             before_reply: None,
             retry_after_ms: None,
+            replicators: None,
+            failing_doc: None,
         }
+    }
+
+    pub(super) fn failing_pushes_of(mut self, doc_id: &str) -> Self {
+        self.failing_doc = Some(doc_id.to_string());
+        self
+    }
+
+    pub(super) fn listing_replicators(mut self, replicators: Vec<p2p::ReplicatorInfo>) -> Self {
+        self.replicators = Some(replicators);
+        self
     }
 
     pub(super) fn with_replies(
@@ -598,6 +613,9 @@ impl p2p::P2PTransport for ConnectedPeerTransport {
         requests
             .try_send(req)
             .expect("bounded test request capture");
+        if self.failing_doc.as_deref() == Some(doc_id.as_str()) {
+            return Err(p2p::Error::ConnectionClosed);
+        }
         if let Some(hook) = &self.before_reply {
             hook(doc_id).await;
         }
@@ -719,7 +737,7 @@ impl p2p::P2PTransport for ConnectedPeerTransport {
     }
 
     async fn list_replicators(&self) -> p2p::Result<Vec<p2p::ReplicatorInfo>> {
-        Err(unreachable_transport())
+        self.replicators.clone().ok_or_else(unreachable_transport)
     }
 
     async fn get_replicator(&self, _peer_id: &PeerId) -> p2p::Result<Option<p2p::ReplicatorInfo>> {

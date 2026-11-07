@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use defra_core::RequestContext;
 use defra_p2p_adapter::peer::{self, Replicator};
+use defra_p2p_adapter::ReplicationFilters;
 
 use crate::{Error, Node, Result};
 
@@ -57,9 +58,23 @@ impl Node {
         addresses: &[String],
         collections: &[String],
     ) -> Result<()> {
+        self.add_filtered_replicator_as(context, addresses, collections, ReplicationFilters::new())
+            .await
+    }
+
+    /// [`Self::add_replicator_as`] that pushes only the documents `filters`
+    /// match, keyed by collection name.
+    pub async fn add_filtered_replicator_as(
+        &self,
+        context: &RequestContext,
+        addresses: &[String],
+        collections: &[String],
+        filters: ReplicationFilters,
+    ) -> Result<()> {
         let p2p = self.peer(context)?;
         let (addresses, collections) = (addresses.to_vec(), collections.to_vec());
         let extras = peer::ReplicatorExtras {
+            filters,
             expected_authorizer_did: context.identity().map(str::to_owned),
             ..Default::default()
         };
