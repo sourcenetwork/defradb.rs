@@ -181,16 +181,28 @@ pub fn collections_requiring_replay(
     requested: &p2p::ReplicatorInfo,
     collections_with_changed_capabilities: &RapidHashSet<String>,
 ) -> Vec<String> {
-    effective_collections
+    let pairs: Vec<(&String, &String)> =
+        effective_collections.iter().zip(collection_cids).collect();
+    let changed: RapidHashSet<&String> = pairs
         .iter()
-        .zip(collection_cids.iter())
         .filter(|(_, cid)| {
             existing.is_none_or(|existing| {
                 !existing.collections.contains(*cid)
                     || existing.deciding_filter(cid) != requested.deciding_filter(cid)
             }) || collections_with_changed_capabilities.contains(*cid)
         })
-        .map(|(name, _)| name.clone())
+        .map(|(_, cid)| *cid)
+        .collect();
+    // A filtered peer gets a chunk only with its parent, so a replayed chunk
+    // collection replays its parent too.
+    let parents: RapidHashSet<&String> = changed
+        .iter()
+        .filter_map(|cid| requested.chunk_sources.get(*cid))
+        .collect();
+    pairs
+        .iter()
+        .filter(|(_, cid)| changed.contains(cid) || parents.contains(cid))
+        .map(|(name, _)| (*name).clone())
         .collect()
 }
 
@@ -453,6 +465,34 @@ mod resolve_remove_collections_tests {
             &collection_cids,
             Some(&filtered_by("old")),
             &filtered_by("new"),
+            &RapidHashSet::default(),
+        );
+
+        assert_eq!(replay_collections, effective_collections);
+    }
+
+    #[test]
+    fn a_replayed_chunk_collection_replays_its_filtered_parent_too() {
+        let effective_collections = vec!["Article".to_string(), "Article__body_chunk".to_string()];
+        let collection_cids = vec!["cid-article".to_string(), "cid-chunks".to_string()];
+        let info = replicator(
+            &collection_cids,
+            p2p::ReplicationFilters::from([(
+                "cid-article".to_string(),
+                p2p::ReplicationFilter::new("kind".to_string(), serde_json::json!("public")),
+            )]),
+        )
+        .with_chunk_sources([("cid-chunks".to_string(), "cid-article".to_string())]);
+        let only_the_parent = p2p::ReplicatorInfo {
+            collections: vec!["cid-article".to_string()],
+            ..info.clone()
+        };
+
+        let replay_collections = collections_requiring_replay(
+            &effective_collections,
+            &collection_cids,
+            Some(&only_the_parent),
+            &info,
             &RapidHashSet::default(),
         );
 
