@@ -35,6 +35,7 @@ mod commits {
     mod with_null_input;
 }
 mod cyclic_fragments;
+mod optional_variables;
 mod inline_array {
     mod simple;
     mod with_average;
