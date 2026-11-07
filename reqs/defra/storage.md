@@ -240,6 +240,13 @@ A relation field shows in introspection the arguments the executor accepts on it
 
 For a collection `Book`, the `Mutation` type shows Go DefraDB's surface with its descriptions: `add_Book(encrypt: Boolean, encryptFields: [BookExplicitField!], input: [BookMutationInputArg!]): [Book]`, `update_Book(docID: [ID!], filter: BookFilterArg, input: BookMutationInputArg): [Book]`, `upsert_Book(add: BookMutationInputArg!, filter: BookFilterArg!, update: BookMutationInputArg!): [Book]` and `delete_Book(docID: [ID!], filter: BookFilterArg): [Book]`, where `BookExplicitField` lists the fields the schema declares. `update` and `delete` also take `docIDs: [ID]`, defradb.rs's own spelling of `docID`. `truncate_Book` takes no `docID`, since the parser does not accept one (#2649).
 
+# `defra.request.subscription_introspection`: Introspection describes the subscriptions
+
+- **Parents:** ["defra.request"]
+- **Scenarios:** ["query::subscription_introspection::subscriptions_appear_in_introspection"]
+
+Introspection names `Subscription` as the schema's `subscriptionType`, as Go DefraDB does. Like Go's, it has a field per collection (`Book: [Book]`) with the arguments of a query select (`cid`, `docID`, `filter`, `groupBy`, `limit`, `offset`, `order`, `showDeleted`), and `_commits: [Commit]` with the arguments of the `_commits` query. Subscriptions themselves run over Server-Sent Events (#2649).
+
 # `defra.index.range_filter`: A two-sided range filter fetches only the range
 
 - **Parents:** ["defra.index"]

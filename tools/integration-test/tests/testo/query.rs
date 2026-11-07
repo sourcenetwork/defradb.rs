@@ -40,6 +40,7 @@ mod mutation_introspection;
 mod optional_variables;
 mod relation_field_args;
 mod schema_descriptions;
+mod subscription_introspection;
 mod inline_array {
     mod simple;
     mod with_average;
