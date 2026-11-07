@@ -51,28 +51,26 @@ fn mutations_show_go_arguments_and_types() {
             )
             .into(),
             expected_data: json!({
-                "mutation": { "fields": m::contains(json!([
-                    field("add_Book", list(book()), &[
+                "mutation": { "fields": m::all(json!([
+                    m::first_where("name", "add_Book", field("add_Book", list(book()), &[
                         ("encrypt", named("SCALAR", "Boolean")),
                         ("encryptFields", list(non_null(named("ENUM", "BookExplicitField")))),
                         ("input", list(non_null(input()))),
-                    ]),
-                    field("update_Book", list(book()), &[
+                    ])),
+                    m::first_where("name", "update_Book", field("update_Book", list(book()), &[
                         ("docID", ids()),
-                        ("docIDs", list(named("SCALAR", "ID"))),
                         ("filter", filter()),
                         ("input", input()),
-                    ]),
-                    field("upsert_Book", list(book()), &[
+                    ])),
+                    m::first_where("name", "upsert_Book", field("upsert_Book", list(book()), &[
                         ("add", non_null(input())),
                         ("filter", non_null(filter())),
                         ("update", non_null(input())),
-                    ]),
-                    field("delete_Book", list(book()), &[
+                    ])),
+                    m::first_where("name", "delete_Book", field("delete_Book", list(book()), &[
                         ("docID", ids()),
-                        ("docIDs", list(named("SCALAR", "ID"))),
                         ("filter", filter()),
-                    ]),
+                    ])),
                 ])) },
                 "explicit": { "enumValues": m::unordered(json!([{ "name": "name" }, { "name": "rating" }])) },
             }),
