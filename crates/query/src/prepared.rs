@@ -377,6 +377,50 @@ pub(crate) fn prepared_doc_id(write: &WritePreparation) -> document::DocID {
 mod tests {
     use super::*;
 
+    fn miss(name: &str) -> PreparedInputRequest {
+        PreparedInputRequest::new(PreparedInputKind::Embedding, name.as_bytes())
+    }
+
+    fn missed_on(error: QueryError) -> Vec<u8> {
+        match error {
+            QueryError::NeedsInput(request) => request.exact_request().to_vec(),
+            other => panic!("expected a miss, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_pass_with_no_miss_returns_its_values() {
+        let mut misses = FirstMiss::default();
+        let kept = misses.keep(Ok(1)).unwrap();
+        assert_eq!(misses.finish(kept).unwrap(), Some(1));
+    }
+
+    #[test]
+    fn a_pass_with_two_misses_ends_on_the_first() {
+        let mut misses = FirstMiss::default();
+        assert!(misses
+            .keep::<()>(Err(QueryError::NeedsInput(miss("first"))))
+            .unwrap()
+            .is_none());
+        assert!(misses
+            .keep::<()>(Err(QueryError::NeedsInput(miss("second"))))
+            .unwrap()
+            .is_none());
+        assert_eq!(missed_on(misses.finish(()).unwrap_err()), b"first");
+    }
+
+    #[test]
+    fn a_real_error_after_a_miss_ends_the_pass_with_that_error() {
+        let mut misses = FirstMiss::default();
+        misses
+            .keep::<()>(Err(QueryError::NeedsInput(miss("first"))))
+            .unwrap();
+        let error = misses
+            .keep::<()>(Err(QueryError::execution("broken")))
+            .unwrap_err();
+        assert!(error.to_string().contains("broken"), "{error}");
+    }
+
     #[test]
     fn prepared_input_memo_reuses_only_identical_wire_requests() {
         let memo = PreparedInputMemo::default();
