@@ -37,6 +37,7 @@ mod commits {
 }
 mod cyclic_fragments;
 mod optional_variables;
+mod relation_field_args;
 mod schema_descriptions;
 mod inline_array {
     mod simple;
