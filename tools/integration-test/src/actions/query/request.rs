@@ -164,6 +164,15 @@ impl CliRun for Request {
                     identity,
                     &["query", action.request.as_str()],
                 )
+                .map(|mut printed| {
+                    let extensions = printed
+                        .as_object_mut()
+                        .and_then(|printed| printed.remove("extensions"));
+                    if let Some(checked) = action.checked_extensions(extensions) {
+                        printed["extensions"] = checked;
+                    }
+                    printed
+                })
                 .map_err(Failure::operation)
         });
     }
