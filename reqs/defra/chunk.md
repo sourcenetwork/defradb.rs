@@ -106,6 +106,13 @@ An article with a five-paragraph body has five chunk documents. Updating the bod
 
 With `@chunk(maxChars: 160)` and a 40-paragraph body, changing one word in paragraph 20 replaces the one chunk document that holds paragraph 20 with a new one, and every other chunk document keeps its `_docID`.
 
+# `defra.chunk.write.signed`: A node that signs its blocks keeps the chunks exact
+
+- **Parents:** ["defra.chunk.write"]
+- **Scenarios:** ["chunk::write_signed::a_signing_node_stores_the_list_of_the_first_update"]
+
+On a node that signs its blocks, creating an `Article` with a six-paragraph body and then updating the body to four paragraphs gives a `_body_chunks` list of five hashes, and `Article__body_chunk` holds exactly the four after the first.
+
 # `defra.chunk.write.concurrent`: Concurrent writes leave the chunks of the winning text
 
 - **Parents:** ["defra.chunk.write"]

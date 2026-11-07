@@ -18,17 +18,27 @@
 \* Who acts: the writers (each updates the text to one of a few versions, or
 \* deletes the article, a bounded number of times).
 \*
+\* Each field keeps a chain of blocks, and a write's block sits one priority
+\* above the field's newest block. The stored value is the one with the higher
+\* priority; two at the same priority are a tie that either may win. A signed
+\* create builds its blocks before its transaction runs, so those blocks must
+\* already hold the list, or the first update's list lands at priority 1 and
+\* can lose the tie to the create's own list.
+\*
 \* What must never happen:
 \*   - a live article whose list doesn't describe its text (INV_ListMatchesText);
 \*   - a live article whose list names a chunk that doesn't exist (INV_ListedChunksExist);
 \*   - a chunk left behind after its article was deleted (INV_NoChunkOfDeletedParent).
 \*
 \* Code it models (crates/db/src/chunk/sync):
-\*   mod.rs      set_lists (the list in the parent's write), ChunkWrites::create_missing,
-\*               ChunkWrites::delete_all (missing chunks, and the cascade on delete)
+\*   mod.rs      set_lists (the list in the parent's write), ChunkWrites::create_all
+\*               (a new article's chunks), ChunkWrites::create_missing, ChunkWrites::delete_all
+\*               (missing chunks, and the cascade on delete)
+\*   lookup.rs   ChunkWrites::hashes_of (the chunks an article has, in one scan)
 \*   crates/db/src/write/autocommit/one_op.rs AutoCommitMutator::in_batch (a single write runs as one batch)
 \*   crates/db/src/write/autocommit/batch.rs  BatchMutator::update_as, delete_as (call the hook)
 \*   crates/db/src/write/doc.rs               DbDocMutator update and delete (call the hook)
+\*   crates/db/src/write/prepare.rs           prepare_request_write (a signed create's blocks hold its lists)
 \* Commit validation itself is regolith's (the deletion marker and the same
 \* document parts written by two updates conflict); the model takes it as given.
 EXTENDS Naturals, Sequences, FiniteSets
@@ -38,12 +48,15 @@ CONSTANTS
   MaxOps,    \* how many writes each writer finishes, at most
   Validate,  \* TRUE: a commit whose snapshot is stale aborts (regolith's validation)
   SameTxn,   \* TRUE: chunks are created in the parent's transaction; FALSE: in a follow-up one
-  Cascade    \* TRUE: deleting the article deletes its chunks in the same transaction
+  Cascade,   \* TRUE: deleting the article deletes its chunks in the same transaction
+  CreateListBlock \* TRUE: the create's blocks hold the list, so the list has a block at priority 1
 
 \* Each writer finishes at least one write.
 ASSUME MaxOps \in Nat \ {0}
 \* The three switches are yes-or-no.
 ASSUME Validate \in BOOLEAN /\ SameTxn \in BOOLEAN /\ Cascade \in BOOLEAN
+\* So is the fourth.
+ASSUME CreateListBlock \in BOOLEAN
 
 \* The texts a writer may write. Each is cut into chunks named by their hash.
 Texts == {"t1", "t2", "t3"}
@@ -74,9 +87,14 @@ VARIABLES
   snap,      \* snap[w]: the version the writer's snapshot saw
   snapAlive, \* snapAlive[w]: whether the writer's snapshot saw the article alive
   pending,   \* pending[w]: chunks a follow-up transaction still has to create
-  done       \* done[w]: how many writes the writer finished
+  done,      \* done[w]: how many writes the writer finished
+  listHead,  \* the priority of the list's newest block, 0 when it has none
+  listPrio   \* the priority the stored list was written at
 
-vars == <<alive, text, list, chunks, version, pc, op, snap, snapAlive, pending, done>>
+vars == <<alive, text, list, chunks, version, pc, op, snap, snapAlive, pending, done, listHead, listPrio>>
+
+\* The highest priority a write can reach: the create's, then one per write.
+MaxPrio == 1 + MaxOps * Cardinality(Writers)
 
 \* What each variable may hold.
 TypeOK ==
@@ -100,8 +118,11 @@ TypeOK ==
   /\ snapAlive \in [Writers -> BOOLEAN]
   \* pending chunks are hashes;
   /\ pending \in [Writers -> SUBSET Hashes]
-  \* and each writer has finished a bounded number of writes.
+  \* each writer has finished a bounded number of writes;
   /\ done \in [Writers -> 0..MaxOps]
+  \* and the list's priorities stay within what the writes can reach.
+  /\ listHead \in 0..MaxPrio
+  /\ listPrio \in 1..MaxPrio
 
 \* The article was created with text t1, its list, and its chunks, in one transaction.
 Init ==
@@ -126,6 +147,10 @@ Init ==
   /\ pending = [w \in Writers |-> {}]
   \* and nothing finished.
   /\ done = [w \in Writers |-> 0]
+  \* The create stored the list at priority 1, and gave it a block only when
+  \* its blocks hold the list.
+  /\ listPrio = 1
+  /\ listHead = IF CreateListBlock THEN 1 ELSE 0
 
 \* Writer w starts a transaction for write o: it reads a snapshot of the article.
 Begin(w, o) ==
@@ -139,7 +164,7 @@ Begin(w, o) ==
   /\ snap' = [snap EXCEPT ![w] = version]
   /\ snapAlive' = [snapAlive EXCEPT ![w] = alive]
   \* Nothing in storage changes yet.
-  /\ UNCHANGED <<alive, text, list, chunks, version, pending, done>>
+  /\ UNCHANGED <<alive, text, list, chunks, version, pending, done, listHead, listPrio>>
 
 \* Writer w's snapshot is stale and validation is on: the commit aborts, and the
 \* write starts again from a fresh snapshot.
@@ -150,7 +175,7 @@ Abort(w) ==
   /\ snap[w] # version
   \* It goes back to idle, to begin again; nothing it wrote is kept.
   /\ pc' = [pc EXCEPT ![w] = "idle"]
-  /\ UNCHANGED <<alive, text, list, chunks, version, op, snap, snapAlive, pending, done>>
+  /\ UNCHANGED <<alive, text, list, chunks, version, op, snap, snapAlive, pending, done, listHead, listPrio>>
 
 \* Writer w commits an update: the text, its list, and (with SameTxn) its missing chunks.
 CommitUpdate(w) ==
@@ -161,9 +186,16 @@ CommitUpdate(w) ==
   /\ ~Validate \/ snap[w] = version
   \* Its snapshot saw the article alive (an update of a deleted article finds nothing).
   /\ snapAlive[w]
-  \* The text and its list are written in one document write;
+  \* The text and its list are written in one document write. The list's
+  \* block sits one above its newest block. It replaces the stored list when
+  \* its priority is higher; on a tie either list may be kept.
   /\ text' = op[w].text
-  /\ list' = Split[op[w].text]
+  /\ listHead' = listHead + 1
+  /\ \/ /\ listHead + 1 >= listPrio
+        /\ list' = Split[op[w].text]
+        /\ listPrio' = listHead + 1
+     \/ /\ listHead + 1 <= listPrio
+        /\ UNCHANGED <<list, listPrio>>
   \* with SameTxn the missing chunks are created now, in the same commit;
   /\ chunks' = IF SameTxn THEN chunks \cup ChunksOf(op[w].text) ELSE chunks
   \* without it, they are left for a follow-up transaction.
@@ -193,7 +225,7 @@ CommitDelete(w) ==
   /\ done' = [done EXCEPT ![w] = done[w] + 1]
   /\ pc' = [pc EXCEPT ![w] = "idle"]
   \* The text and list are left as they were; a deleted article shows neither.
-  /\ UNCHANGED <<text, list, op, snap, snapAlive, pending>>
+  /\ UNCHANGED <<text, list, op, snap, snapAlive, pending, listHead, listPrio>>
 
 \* Writer w's write finds the article already deleted in its snapshot: nothing to do.
 NotFound(w) ==
@@ -205,7 +237,7 @@ NotFound(w) ==
   \* The write ends with nothing written.
   /\ pc' = [pc EXCEPT ![w] = "idle"]
   /\ done' = [done EXCEPT ![w] = done[w] + 1]
-  /\ UNCHANGED <<alive, text, list, chunks, version, op, snap, snapAlive, pending>>
+  /\ UNCHANGED <<alive, text, list, chunks, version, op, snap, snapAlive, pending, listHead, listPrio>>
 
 \* Without SameTxn: writer w's follow-up transaction creates the chunks it left behind.
 FollowUp(w) ==
@@ -216,7 +248,7 @@ FollowUp(w) ==
   \* and is done with them.
   /\ pending' = [pending EXCEPT ![w] = {}]
   /\ pc' = [pc EXCEPT ![w] = "idle"]
-  /\ UNCHANGED <<alive, text, list, version, op, snap, snapAlive, done>>
+  /\ UNCHANGED <<alive, text, list, version, op, snap, snapAlive, done, listHead, listPrio>>
 
 \* Every step some writer can take.
 Next ==

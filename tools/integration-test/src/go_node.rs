@@ -32,6 +32,7 @@ pub enum GoNodeError {
 pub struct GoOptions {
     pub p2p: Option<String>,
     pub dir: Option<PathBuf>,
+    pub signing: bool,
 }
 
 /// A running Go node, killed when dropped.
@@ -81,7 +82,7 @@ impl GoNode {
             // started Go nodes, unless the signed-docs multiplier turns
             // signing on.
             .args(["--no-encryption", "--no-searchable-encryption"]);
-        if !signed_docs(std::env::var("DEFRA_MULTIPLIERS").ok().as_deref()) {
+        if !options.signing && !signed_docs(std::env::var("DEFRA_MULTIPLIERS").ok().as_deref()) {
             command.arg("--no-signing");
         }
         let mut process = Process(
