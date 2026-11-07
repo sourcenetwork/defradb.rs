@@ -155,3 +155,7 @@ pub(super) fn similarity_slot(mapping: &DocumentMapping, similarity: &Similarity
             ))
         })
 }
+
+#[cfg(test)]
+#[path = "chunk_similarity_tests.rs"]
+mod tests;
