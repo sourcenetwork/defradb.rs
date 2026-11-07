@@ -193,9 +193,16 @@ impl RelationshipChange {
     /// Wraps an error from the policy side of the change in Go's
     /// `failed to <verb> document actor relationship with acp`.
     fn wrap(self) -> impl Fn(Error) -> Error + Copy {
-        move |source| Error::RelationshipAcp {
-            verb: self.verb(),
-            source: Box::new(source),
+        // What the collection lookup finds before ACP is asked is Go's own
+        // error, unwrapped.
+        move |source| match source {
+            Error::CollectionWithoutPolicy
+            | Error::CollectionMissing(_)
+            | Error::CollectionLookup { .. } => source,
+            source => Error::RelationshipAcp {
+                verb: self.verb(),
+                source: Box::new(source),
+            },
         }
     }
 }

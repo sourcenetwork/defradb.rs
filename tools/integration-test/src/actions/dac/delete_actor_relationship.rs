@@ -40,12 +40,12 @@ impl Op for DeleteDACActorRelationship {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        self.relationship()?.in_process(state)
+        self.relationship(state)?.in_process(state)
     }
 }
 
 impl DeleteDACActorRelationship {
-    fn relationship(&self) -> Result<Relationship<'_>, Failure> {
+    fn relationship(&self, _state: &State) -> Result<Relationship<'_>, Failure> {
         let target = crate::actions::nac::target_actor(
             Self::name(),
             self.target_actor.as_deref(),
@@ -75,7 +75,7 @@ impl Action for DeleteDACActorRelationship {
 impl HttpRun for DeleteDACActorRelationship {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.relationship()?.http(state)
+            action.relationship(state)?.http(state)
         });
     }
 }
@@ -83,7 +83,7 @@ impl HttpRun for DeleteDACActorRelationship {
 impl CliRun for DeleteDACActorRelationship {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.relationship()?.cli(state)
+            action.relationship(state)?.cli(state)
         });
     }
 }

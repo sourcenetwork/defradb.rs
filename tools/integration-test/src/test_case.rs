@@ -100,6 +100,11 @@ impl State {
         })
     }
 
+    /// The node identity seed node `name` was started with, if any.
+    pub fn node_identity_of(&self, name: &str) -> Option<u64> {
+        self.slot(name).and_then(|slot| slot.spec.node_identity)
+    }
+
     /// Start node `name` as `spec` says, closing any node of that name first.
     pub fn start_node(&mut self, name: &str, spec: NodeSpec) {
         self.stop_node(name, false);

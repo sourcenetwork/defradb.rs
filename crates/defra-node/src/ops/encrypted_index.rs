@@ -77,7 +77,7 @@ impl Node {
             database
                 .check_node_access_as(&context, NodePermission::EncryptedIndexList)
                 .await?;
-            Ok(indexes_of(&database, &collection)?)
+            indexes_of(&database, &collection)
         })
         .await
     }

@@ -42,18 +42,26 @@ impl Op for AddDACActorRelationship {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        self.relationship()?.in_process(state)
+        self.relationship(state)?.in_process(state)
     }
 }
 
 impl AddDACActorRelationship {
-    fn relationship(&self) -> Result<Relationship<'_>, Failure> {
-        let target = crate::actions::nac::target_actor(
-            Self::name(),
-            self.target_actor.as_deref(),
-            self.target_identity_seed,
-            self.target_identity_node.as_deref(),
-        )?;
+    fn relationship(&self, state: &State) -> Result<Relationship<'_>, Failure> {
+        let target = match &self.target_identity_node {
+            Some(node) => state
+                .node_identity_of(node)
+                .map(crate::scenario::identity::node_did)
+                .ok_or_else(|| {
+                    Failure::operation(format!("node {node} was started with no identity"))
+                })?,
+            None => crate::actions::nac::target_actor(
+                Self::name(),
+                self.target_actor.as_deref(),
+                self.target_identity_seed,
+                None,
+            )?,
+        };
         Ok(Relationship {
             change: Change::Add,
             op: Self::name(),
@@ -77,7 +85,7 @@ impl Action for AddDACActorRelationship {
 impl HttpRun for AddDACActorRelationship {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.relationship()?.http(state)
+            action.relationship(state)?.http(state)
         });
     }
 }
@@ -85,7 +93,7 @@ impl HttpRun for AddDACActorRelationship {
 impl CliRun for AddDACActorRelationship {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.relationship()?.cli(state)
+            action.relationship(state)?.cli(state)
         });
     }
 }
