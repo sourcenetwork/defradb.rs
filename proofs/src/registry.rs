@@ -2189,6 +2189,24 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "Text chunking",
+        name: "INV_ReadsMatchText / INV_SettledPeersAgree",
+        axis: Tla,
+        anchor: "crates/query/src/plan/chunk_parent.rs parent_hashes; crates/chunk-split/src/list.rs describes",
+        model_ref: "MC_ChunkMerge_Green.cfg / MC_ChunkMerge_Red_TrustList.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Text chunking",
+        name: "INV_ShownIsLiveAndReadable / INV_ShownIsTheText / INV_ServedIsReadable",
+        axis: Tla,
+        anchor: "crates/query/src/plan/chunk_parent.rs parent_hashes, verified_hash; crates/query/src/plan/chunk_gate.rs ChunkGate::allows, ChunkGate::decide; crates/db/src/chunk/access.rs history_parents, read_owners; crates/p2p-adapter/src/read_gate.rs DbBlockReadGate::may_read, DbBlockClassifier::classify; crates/db/src/block/verify.rs load_authorized_block_signature",
+        model_ref: "MC_ChunkRead_Green.cfg / MC_ChunkRead_Red_NoDeletedCheck.cfg / MC_ChunkRead_Red_NoHashCheck.cfg / MC_ChunkRead_Red_SharedMemo.cfg / MC_ChunkRead_Red_NoMergedCheck.cfg / MC_ChunkRead_Red_NoGrantCheck.cfg / MC_ChunkRead_Red_NoListCheck.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // One task serves a pg-compat connection: one deadline read at the
         // accept bounds the peek, the SSL and GSS refusals and the startup;
         // an extended-protocol error skips to the Sync; a fatal error or a

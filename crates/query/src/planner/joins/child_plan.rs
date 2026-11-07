@@ -230,7 +230,7 @@ impl Planner {
             && !select.exhaustive
             && !nested_select.exhaustive
             && nested_select.group_by.is_none()
-            && target_collection.policy.is_none()
+            && !target_collection.reads_are_gated()
             && select.group_by.is_none()
             && !select
                 .order_by

@@ -5,7 +5,6 @@
 
 use std::sync::Arc;
 
-use datastore::NamespaceView;
 use defra_core::RequestContext;
 use storage::corekv::Store;
 
@@ -45,18 +44,11 @@ pub async fn verified_block_signer_did_as<S: Store>(
         .new_txn(true)
         .await
         .map_err(|e| format!("failed to create transaction: {}", e))?;
-    let blockstore = txn
-        .blockstore()
-        .map_err(|e| format!("failed to get blockstore: {}", e))?;
-    let systemstore = txn
-        .systemstore()
-        .map_err(|e| format!("failed to get systemstore: {}", e))?;
 
-    verified_block_signer_did_with_blockstore(
+    verified_block_signer_did_with_txn(
         database,
         document_acp,
-        blockstore,
-        systemstore,
+        &txn,
         cid_str,
         caller_identity,
         context.dac_bypass(),
@@ -95,17 +87,10 @@ pub async fn authorized_signed_block_bytes_as<S: Store>(
         .new_txn(true)
         .await
         .map_err(|e| format!("failed to create transaction: {}", e))?;
-    let blockstore = txn
-        .blockstore()
-        .map_err(|e| format!("failed to get blockstore: {}", e))?;
-    let systemstore = txn
-        .systemstore()
-        .map_err(|e| format!("failed to get systemstore: {}", e))?;
     let (_, _, block_bytes, signature_bytes) = load_authorized_block_signature(
         database,
         document_acp,
-        blockstore,
-        systemstore,
+        &txn,
         cid_str,
         caller_identity,
         context.dac_bypass(),
@@ -142,18 +127,10 @@ pub async fn verified_block_signer_did_in_txn_as<S: Store>(
     cid_str: &str,
     caller_identity: &acp::Identity,
 ) -> Result<String, String> {
-    let blockstore = txn
-        .blockstore()
-        .map_err(|e| format!("failed to get blockstore: {}", e))?;
-    let systemstore = txn
-        .systemstore()
-        .map_err(|e| format!("failed to get systemstore: {}", e))?;
-
-    verified_block_signer_did_with_blockstore(
+    verified_block_signer_did_with_txn(
         database,
         document_acp,
-        blockstore,
-        systemstore,
+        txn,
         cid_str,
         caller_identity,
         context.dac_bypass(),
@@ -161,11 +138,10 @@ pub async fn verified_block_signer_did_in_txn_as<S: Store>(
     .await
 }
 
-pub(crate) async fn verified_block_signer_did_with_blockstore<S: Store>(
+pub(crate) async fn verified_block_signer_did_with_txn<S: Store>(
     database: &Arc<DB<S>>,
     document_acp: &dyn acp::DocumentACP,
-    blockstore: NamespaceView,
-    systemstore: NamespaceView,
+    txn: &DbTxn<S>,
     cid_str: &str,
     caller_identity: &acp::Identity,
     dac_bypass: bool,
@@ -173,8 +149,7 @@ pub(crate) async fn verified_block_signer_did_with_blockstore<S: Store>(
     let (block, signature, _, _) = load_authorized_block_signature(
         database,
         document_acp,
-        blockstore,
-        systemstore,
+        txn,
         cid_str,
         caller_identity,
         dac_bypass,
@@ -249,18 +224,11 @@ pub async fn verify_block_signature_as<S: Store>(
         .new_txn(true)
         .await
         .map_err(|e| format!("failed to create transaction: {}", e))?;
-    let blockstore = txn
-        .blockstore()
-        .map_err(|e| format!("failed to get blockstore: {}", e))?;
-    let systemstore = txn
-        .systemstore()
-        .map_err(|e| format!("failed to get systemstore: {}", e))?;
 
-    verify_block_signature_with_blockstore(
+    verify_block_signature_with_txn(
         database,
         document_acp,
-        blockstore,
-        systemstore,
+        &txn,
         cid_str,
         pub_key.as_ref(),
         public_key_hex,
@@ -307,18 +275,10 @@ pub async fn verify_block_signature_in_txn_as<S: Store>(
     let pub_key = crypto::public_key_from_string(key_type, public_key_hex)
         .map_err(|e| format!("invalid public key: {}", e))?;
 
-    let blockstore = txn
-        .blockstore()
-        .map_err(|e| format!("failed to get blockstore: {}", e))?;
-    let systemstore = txn
-        .systemstore()
-        .map_err(|e| format!("failed to get systemstore: {}", e))?;
-
-    verify_block_signature_with_blockstore(
+    verify_block_signature_with_txn(
         database,
         document_acp,
-        blockstore,
-        systemstore,
+        txn,
         cid_str,
         pub_key.as_ref(),
         public_key_hex,
@@ -329,11 +289,10 @@ pub async fn verify_block_signature_in_txn_as<S: Store>(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn verify_block_signature_with_blockstore<S: Store>(
+async fn verify_block_signature_with_txn<S: Store>(
     database: &Arc<DB<S>>,
     document_acp: &dyn acp::DocumentACP,
-    blockstore: NamespaceView,
-    systemstore: NamespaceView,
+    txn: &DbTxn<S>,
     cid_str: &str,
     pub_key: &dyn crypto::PublicKey,
     public_key_hex: &str,
@@ -343,8 +302,7 @@ async fn verify_block_signature_with_blockstore<S: Store>(
     let (block, signature, _, _) = load_authorized_block_signature(
         database,
         document_acp,
-        blockstore,
-        systemstore,
+        txn,
         cid_str,
         caller_identity,
         dac_bypass,
@@ -363,8 +321,7 @@ async fn verify_block_signature_with_blockstore<S: Store>(
 async fn load_authorized_block_signature<S: Store>(
     database: &Arc<DB<S>>,
     document_acp: &dyn acp::DocumentACP,
-    blockstore: NamespaceView,
-    systemstore: NamespaceView,
+    txn: &DbTxn<S>,
     cid_str: &str,
     caller_identity: &acp::Identity,
     dac_bypass: bool,
@@ -377,6 +334,12 @@ async fn load_authorized_block_signature<S: Store>(
     ),
     String,
 > {
+    let blockstore = txn
+        .blockstore()
+        .map_err(|e| format!("failed to get blockstore: {}", e))?;
+    let systemstore = txn
+        .systemstore()
+        .map_err(|e| format!("failed to get systemstore: {}", e))?;
     let parsed_cid: cid::Cid = cid_str.parse().map_err(|e| format!("invalid CID: {}", e))?;
     let block_bytes = blockstore
         .get(&parsed_cid.to_bytes())
@@ -406,16 +369,50 @@ async fn load_authorized_block_signature<S: Store>(
             .get_collection_by_version_id(collection_version_id)
             .map_err(|e| format!("failed to get collection: {}", e))?
         {
-            let collection = collection.schema();
+            let mut collection = collection.schema().clone();
+            // A `@chunk` collection has no policy. Its blocks are part of the parent's
+            // history, so the parent's policy decides, even for a deleted parent.
+            let mut owners_override = None;
+            if let Some(source) = collection.chunk_of.clone() {
+                let owners =
+                    crate::docid::map::resolve_block_doc_ids(&systemstore, &parsed_cid, &block)
+                        .await
+                        .map_err(|e| format!("failed to resolve block owners: {}", e))?
+                        .unwrap_or_default();
+                let parents =
+                    crate::chunk::access::history_parents(database, txn, &collection, &owners)
+                        .await
+                        .map_err(|e| format!("failed to resolve chunk parents: {}", e))?;
+                if parents.is_empty() {
+                    return Err("missing permission: the chunk's parent is not known here".into());
+                }
+                collection = database
+                    .get_collection(&source.collection)
+                    .map_err(|e| format!("failed to get collection: {}", e))?
+                    .ok_or_else(|| {
+                        format!(
+                            "missing permission: parent collection {} not found",
+                            source.collection
+                        )
+                    })?
+                    .schema()
+                    .clone();
+                owners_override = Some(parents);
+            }
+            let collection = &collection;
             if let Some(policy) = &collection.policy {
                 // Field blocks can be shared across documents, so allow if the
                 // caller can read any owner. An ownerless document block is
                 // denied; only non-document blocks use collection-level access.
-                let owning_doc_ids =
-                    crate::docid::map::resolve_block_doc_ids(&systemstore, &parsed_cid, &block)
-                        .await
-                        .map_err(|e| format!("failed to resolve block owners: {}", e))?
-                        .ok_or_else(|| "missing permission".to_string())?;
+                let owning_doc_ids = match owners_override {
+                    Some(parents) => parents,
+                    None => {
+                        crate::docid::map::resolve_block_doc_ids(&systemstore, &parsed_cid, &block)
+                            .await
+                            .map_err(|e| format!("failed to resolve block owners: {}", e))?
+                            .ok_or_else(|| "missing permission".to_string())?
+                    }
+                };
 
                 let checker = acp::read_access::DirectChecker {
                     acp: document_acp,

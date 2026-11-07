@@ -48,11 +48,21 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 doc_ids: select.doc_ids.clone(),
             })
             .await?;
-        let identity = acp::Identity::from(caller);
+        let identity = acp::Identity::from(caller.clone());
         let context = self.context();
         let mut entries = Vec::new();
         for entry in page.entries {
             let allowed = match &collection.policy {
+                None if collection.chunk_of.is_some() => {
+                    self.chunk_readable(
+                        fetcher,
+                        &identity,
+                        caller.as_ref(),
+                        &collection,
+                        &entry.doc_id,
+                    )
+                    .await?
+                }
                 None => true,
                 Some(policy) => {
                     crate::txn::check_doc_read_access_as(

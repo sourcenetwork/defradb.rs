@@ -221,3 +221,45 @@ fn iteration_and_snapshots_see_each_collection_once_under_its_name() {
     assert_eq!(map.values().count(), 2);
     assert_eq!(map.by_name().len(), 2);
 }
+
+fn rooted(name: &str, collection_id: &str, root_id: u32, chunk_of: bool) -> Collection {
+    let mut schema = version(name, collection_id, &format!("{collection_id}-v1"))
+        .schema()
+        .clone();
+    schema.root_id = root_id;
+    if chunk_of {
+        schema.chunk_of = Some(schema::ChunkSource {
+            collection: "Article".into(),
+            field_name: "body".into(),
+        });
+    }
+    Collection::new(schema, crdt::Crdts::default())
+}
+
+#[test]
+fn a_collection_is_found_by_its_root_id_until_removed_or_replaced() {
+    let mut map = CollectionMap::default();
+    map.put(rooted("Agent", "col-agent", 7, false));
+    map.put(rooted("Ledger", "col-ledger", 8, false));
+
+    assert_eq!(map.by_root_id(7).map(|c| c.name()), Some("Agent"));
+    assert_eq!(map.by_root_id(8).map(|c| c.name()), Some("Ledger"));
+    assert!(map.by_root_id(9).is_none());
+
+    map.remove("Agent");
+    assert!(map.by_root_id(7).is_none());
+    assert_eq!(map.by_root_id(8).map(|c| c.name()), Some("Ledger"));
+}
+
+#[test]
+fn the_map_knows_whether_any_collection_is_a_chunk_collection() {
+    let mut map = CollectionMap::default();
+    map.put(rooted("Article", "col-article", 1, false));
+    assert!(!map.has_chunk_collections());
+
+    map.put(rooted("Article__body_chunk", "col-chunks", 2, true));
+    assert!(map.has_chunk_collections());
+
+    map.remove("Article__body_chunk");
+    assert!(!map.has_chunk_collections());
+}

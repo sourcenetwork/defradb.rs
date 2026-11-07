@@ -262,6 +262,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             || filter_has_relations
             || order_has_relations
             || has_similarity
+            || collection.chunk_of.is_some()
         {
             // Use Planner path for index-based queries, relation aggregates,
             // relation filters/ordering, or similarity
