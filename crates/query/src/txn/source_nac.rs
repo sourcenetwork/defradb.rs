@@ -28,7 +28,10 @@ pub fn source_permission_job(
 /// Prepare a source-grant turn for an embedder-authenticated actor on a
 /// node-owned transaction. An exactly present add or exactly absent delete
 /// changes nothing and needs no authority; every changing edge is checked as
-/// that actor. Never expose this as an HTTP or GraphQL request parameter.
+/// that actor. Like the host turn, it then replays the projector's
+/// descendants of the edge as that actor in the same statement, so a refused
+/// descendant rolls the edge back. Never expose this as an HTTP or GraphQL
+/// request parameter.
 pub fn embedded_source_permission_job(
     actor_context: RequestContext,
     edge: SourcePermission,
@@ -66,8 +69,9 @@ pub fn host_source_permission_job(
 }
 
 /// Who admitted the turn. Only a trusted embedder or host may restate an
-/// unchanged edge without authority; an untrusted caller must not learn
-/// whether an edge it cannot administer exists.
+/// unchanged edge without authority, and only they replay the projector's
+/// descendants; an untrusted caller must not learn whether an edge it cannot
+/// administer exists.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SourceCaller {
     Request,
@@ -143,7 +147,7 @@ fn source_permission_job_for(
                             )
                         })?
                 };
-                if caller == SourceCaller::Host {
+                if caller.trusted() {
                     fetcher
                         .project_host_source_change(&actor_context)
                         .await

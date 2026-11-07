@@ -21,6 +21,10 @@ impl DocumentMutationContext<'_> {
     /// Stage a source edge as the actor that caused this projection. Startup,
     /// replication and any other actorless operation cannot mint or revoke
     /// a source. Native NAC and the document share the same transaction.
+    /// An exactly present add or exactly absent delete changes nothing and
+    /// returns false without the actor's authority; the read that found it
+    /// unchanged is validated at commit. A changing edge needs the actor's own
+    /// authority and never the node's.
     pub async fn change_source_permission(
         &self,
         permission: acp::NodePermission,
@@ -35,34 +39,36 @@ impl DocumentMutationContext<'_> {
             .ok_or(storage::corekv::Error::ProjectionPermissionDenied)?;
         let actor =
             Did::new(actor).map_err(|error| storage::corekv::Error::Other(error.to_string()))?;
-        let nac = self.nac.ok_or_else(|| {
+        let unavailable = || {
             storage::corekv::Error::Other(
                 "transaction-bound node authorization is unavailable".into(),
             )
-        })?;
-        nac.change_source_permission_in_txn(
-            self.view.sibling(Namespace::Acpstore),
-            &actor,
-            &crate::nac::SourcePermissionChange {
-                permission,
-                parent_source,
-                subject_kind,
-                subject,
-                delete,
-            },
-        )
-        .await
-        .map_err(|error| match error {
-            crate::nac::Error::PermissionDenied => {
-                storage::corekv::Error::ProjectionPermissionDenied
-            }
-            other => storage::corekv::Error::Other(other.to_string()),
-        })?
-        .ok_or_else(|| {
-            storage::corekv::Error::Other(
-                "transaction-bound node authorization is unavailable".into(),
-            )
-        })
+        };
+        let nac = self.nac.ok_or_else(unavailable)?;
+        let change = crate::nac::SourcePermissionChange {
+            permission,
+            parent_source,
+            subject_kind,
+            subject,
+            delete,
+        };
+        let unchanged = nac
+            .source_permission_matches_in_txn(self.view.sibling(Namespace::Acpstore), &change)
+            .await
+            .map_err(|error| storage::corekv::Error::Other(error.to_string()))?
+            .ok_or_else(unavailable)?;
+        if unchanged {
+            return Ok(false);
+        }
+        nac.change_source_permission_in_txn(self.view.sibling(Namespace::Acpstore), &actor, &change)
+            .await
+            .map_err(|error| match error {
+                crate::nac::Error::PermissionDenied => {
+                    storage::corekv::Error::ProjectionPermissionDenied
+                }
+                other => storage::corekv::Error::Other(other.to_string()),
+            })?
+            .ok_or_else(unavailable)
     }
 
     /// Queue the ordinary document invalidation for a changed ACP relation.
