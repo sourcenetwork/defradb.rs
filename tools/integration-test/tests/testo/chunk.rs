@@ -4,6 +4,7 @@ mod declare_definition;
 mod declare_list_name;
 mod declare_no_view;
 mod declare_once;
+mod declare_repeated_argument;
 mod declare_string_only;
 mod declare_unknown_argument;
 mod protect_api_writes;

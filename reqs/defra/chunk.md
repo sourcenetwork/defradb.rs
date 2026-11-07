@@ -45,6 +45,13 @@ GraphQL names cannot start with `__`, so a field whose name starts with `_` cann
 
 Adding `type Note { body: String @chunk(size: 100) }` fails with `@chunk has no argument size. It takes maxChars and overlap. Field: Note.body`. Nothing is stored: `type Note { body: String }` can be added afterwards.
 
+# `defra.chunk.declare.repeated_argument`: `@chunk` refuses an argument given twice
+
+- **Parents:** ["defra.chunk.declare"]
+- **Scenarios:** ["chunk::declare_repeated_argument::chunk_is_refused_with_an_argument_given_twice"]
+
+Adding `type Note { body: String @chunk(maxChars: 64, maxChars: 10) }` fails with `@chunk has maxChars twice. Field: Note.body`. Nothing is stored: `type Note { body: String }` can be added afterwards.
+
 # `defra.chunk.declare.once`: `@chunk` may appear once on a field
 
 - **Parents:** ["defra.chunk.declare"]
@@ -57,7 +64,7 @@ Adding `type Note { body: String @chunk(maxChars: 64) @chunk(maxChars: 100) }` f
 - **Parents:** ["defra.chunk.declare"]
 - **Scenarios:** ["chunk::declare_no_view::chunk_is_refused_in_a_view_and_nothing_is_stored"]
 
-A view's documents come from its query, so it has no writes to cut chunks on. Adding a view over `Source { title body }` with the SDL `type SourceView { title: String body: String @chunk(maxChars: 64) }` fails with `@chunk is not allowed in a view. Field: SourceView.body`. Nothing is stored: `type SourceView { title: String } type SourceView__body_chunk { text: String }` can be added afterwards. The test node's HTTP server has no view routes, so this is checked only in process.
+A view's documents come from its query, so it has no writes to cut chunks on. Adding a view over `Source { title body }` with the SDL `type SourceView { title: String body: String @chunk(maxChars: 64) }` fails with `@chunk is not allowed in a view. Field: SourceView.body`. Nothing is stored: `type SourceView { title: String } type SourceView__body_chunk { text: String }` can be added afterwards.
 
 # `defra.chunk.declare.already_exists`: Re-adding a chunked type fails like a plain one
 
