@@ -13,10 +13,11 @@
 \* A reader may also ask for articles ranked by similarity to a query vector.
 \* The vector index holds every stored chunk, old and forged ones too. When the
 \* article has no read rules, the route reads the nearest chunks first, a few
-\* at a time, and widens until one is honest, of a live article, and listed;
-\* that chunk's score is the article's. The route checks no grant, so an
-\* article with read rules is never routed: like an index that runs out, it is
-\* scored from its listed chunks, after its access check.
+\* at a time, and widens until one is honest, of a live article, and listed.
+\* That picks the article; its score is then its best listed chunk's, read
+\* again from its list. The route checks no grant, so an article with read
+\* rules is never routed: like an index that runs out, it is scored from its
+\* listed chunks, after its access check.
 \*
 \* A peer may also ask this node for a chunk's block. A chunk can arrive before
 \* its article, and an article this node has never seen counts as public under
@@ -67,11 +68,11 @@ ASSUME CheckGranted \in BOOLEAN /\ CheckListed \in BOOLEAN /\ RouteChecksList \i
 \* And the route's read-rules guard.
 ASSUME RouteOnlyUnruled \in BOOLEAN
 
-\* The texts an edit may write.
-Texts == {"t1", "t2"}
+\* The texts an edit may write; t3 is empty, so it has no chunks.
+Texts == {"t1", "t2", "t3"}
 
 \* The hashes of the chunks the splitter cuts each text into.
-ChunksOf(t) == CASE t = "t1" -> {"a", "b"} [] t = "t2" -> {"c"}
+ChunksOf(t) == CASE t = "t1" -> {"a", "b"} [] t = "t2" -> {"c"} [] t = "t3" -> {}
 
 \* Every chunk hash there is.
 Hashes == UNION {ChunksOf(t) : t \in Texts}
@@ -272,7 +273,10 @@ RankRouted ==
   /\ phase = "reading" /\ kind = "similar"          \* a ranking is running
   /\ Routes                                         \* that may use the route
   /\ Accepted(Prefix(width)) # {}                   \* something to rank by
-  /\ ranked' = Max({Score(c) : c \in Accepted(Prefix(width))})  \* the best read
+  /\ LET found == Max({Score(c) : c \in Accepted(Prefix(width))})  \* the best chunk read
+         exact == Max({Score(c) : c \in {e \in snap.stored :           \* the best listed chunk,
+                        HashOK(e) /\ e.hash \in ChunksOf(snap.text)}})  \* read again
+     IN ranked' = IF exact > 0 THEN exact ELSE found      \* the code keeps what it read if none
   /\ phase' = "done"                                \* the ranking has answered
   /\ UNCHANGED <<rankVars, width>>
 
