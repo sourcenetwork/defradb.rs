@@ -24,7 +24,9 @@
 \*   - a write asks the model for a chunk that already existed when its
 \*     attempt read the store, so an unchanged paragraph is never embedded
 \*     again (INV_UnchangedChunkNoCall);
-\*   - a request needs more than one wave (INV_OneWave).
+\*   - a request needs more than one embedding wave (INV_OneWave). Other
+\*     inputs a write needs (keys, signatures) may take waves of their own;
+\*     the model leaves them out.
 \*
 \* Code it models:
 \*   crates/db/src/chunk/sync/mod.rs ChunkWrites::create_missing (skip existing
@@ -38,8 +40,11 @@
 \*   crates/query/src/mutator.rs DocMutator::create_many_as,
 \*     crates/db/src/write/autocommit/one_op.rs CreateWork::run and
 \*     crates/query/src/plan/mutation/update.rs UpdateNode::next (those loops)
-\*   crates/db/src/write/autocommit/one_op.rs AutoCommitMutator::in_batch and
-\*     crates/query/src/runner/turn.rs QueryRunner::drive (the wave between attempts)
+\*   crates/db/src/write/autocommit/one_op.rs AutoCommitMutator::in_batch,
+\*     crates/query/src/runner/turn.rs QueryRunner::drive,
+\*     crates/query/src/runner/executor.rs QueryRunner::execute and
+\*     crates/query/src/runner/mutation.rs QueryRunner::execute_mutation_with_identity_and_vars
+\*     (the wave between attempts)
 \* Commit validation is regolith's; the model takes it as given.
 EXTENDS Naturals, Sequences, FiniteSets, TLC
 
@@ -47,11 +52,13 @@ CONSTANTS
   KeyByText,        \* TRUE: the memo key is the chunk's text; FALSE: its position in the text
   WantOnlyMissing,  \* TRUE: only chunks that don't exist yet are embedded; FALSE: every chunk
   ResolveOutside,   \* TRUE: a miss ends the attempt; FALSE: the model is asked on the spot
-  WantEveryMiss     \* TRUE: the attempt goes on past a miss and wants them all; FALSE: it stops at the first
+  WantEveryMiss,    \* TRUE: the attempt goes on past a miss and wants them all; FALSE: it stops at the first
+  CommitNeedsVectors \* TRUE: an attempt commits only with every vector; FALSE: it commits with misses
 
 \* Each switch is yes or no.
 ASSUME KeyByText \in BOOLEAN /\ WantOnlyMissing \in BOOLEAN
 ASSUME ResolveOutside \in BOOLEAN /\ WantEveryMiss \in BOOLEAN
+ASSUME CommitNeedsVectors \in BOOLEAN
 
 \* Two requests and two articles.
 Requests == {"r1", "r2"}
@@ -145,8 +152,8 @@ Init ==
 
 \* The memo's answer for chunk n, if it holds one.
 Answered(r, n) == \E m \in memo[r] : m[1] = Key(n)
-\* The text whose vector the memo hands chunk n.
-Answer(r, n) == (CHOOSE m \in memo[r] : m[1] = Key(n))[2]
+\* The text whose vector the memo hands chunk n, or None when it holds none.
+Answer(r, n) == IF Answered(r, n) THEN (CHOOSE m \in memo[r] : m[1] = Key(n))[2] ELSE None
 
 \* The chunks attempt r creates: those it did not see, or every one when the
 \* bug embeds all chunks.
@@ -204,9 +211,9 @@ CallInAttempt(r) ==
 \* Every vector is in the memo and nothing the attempt read has changed: it
 \* commits the texts and creates its chunks, each with its memo's vector.
 Commit(r) ==
-  \* The attempt is open and the memo answers every chunk it creates,
+  \* The attempt is open and the memo answers every chunk it creates, unless the bug lets it commit anyway,
   /\ pc[r] = "txn"
-  /\ Misses(r) = {}
+  /\ CommitNeedsVectors => Misses(r) = {}
   \* and no other commit changed what it read.
   /\ chunks = snap[r] /\ text = snapText[r]
   \* The request's texts are written,
@@ -283,6 +290,6 @@ INV_VectorIsItsText == \A c \in chunks : vecOf[c] = c[2]
 \* No write asks the model for a chunk that existed when its attempt read the store.
 INV_UnchangedChunkNoCall == ~reEmbedded
 
-\* Each request's misses are answered in at most one wave.
+\* Each request's embedding misses are answered in at most one embedding wave.
 INV_OneWave == \A r \in Requests : waves[r] <= 1
 ====
