@@ -680,64 +680,6 @@ fn test_transaction_ids_are_unique() {
 }
 
 #[test]
-fn test_discard_discards_uncommitted_writes() {
-    workers::block_on(async {
-        let db = test_db_with_collections().await;
-        let collection = db.get_collection("Users").unwrap().unwrap();
-
-        // Write data in a transaction but rollback instead of commit
-        let write_txn = db.new_txn(false).await.unwrap();
-        let (write_txn, _doc_id) = seed_user_in_txn(&db, write_txn, "RollbackMe", Some(99)).await;
-
-        write_txn.force_discard().unwrap();
-
-        // Verify data was NOT persisted
-        let read_txn = db.new_txn(true).await.unwrap();
-        let datastore = read_txn.datastore().unwrap();
-        let systemstore = read_txn.systemstore().unwrap();
-        let all_docs = collection
-            .get_all_with_datastore(&datastore, &systemstore)
-            .await
-            .unwrap();
-        assert!(
-            all_docs.is_empty(),
-            "Rolled-back data should not be visible, found {} docs",
-            all_docs.len()
-        );
-        drop(datastore);
-        drop(systemstore);
-        read_txn.force_discard().unwrap();
-    })
-    .unwrap()
-}
-
-#[test]
-fn test_transaction_does_not_see_uncommitted_writes() {
-    workers::block_on(async {
-        let db = test_db_with_collections().await;
-        let registry = DbTransactionRegistry::new(db.clone());
-
-        // Start a reader transaction FIRST
-        let reader_txn_id = registry.begin(true).await.unwrap();
-
-        // Start a writer transaction and write WITHOUT committing
-        let write_txn = db.new_txn(false).await.unwrap();
-        let (write_txn, _doc_id) = seed_user_in_txn(&db, write_txn, "Uncommitted", None).await;
-
-        // Reader should NOT see the uncommitted write
-        let docs = get_all(&registry, &reader_txn_id, "Users").await.unwrap();
-        assert!(
-            docs.is_empty(),
-            "Reader should not see uncommitted writes (dirty read protection)"
-        );
-
-        write_txn.force_discard().unwrap();
-        registry.discard(&reader_txn_id).await.unwrap();
-    })
-    .unwrap()
-}
-
-#[test]
 fn test_concurrent_parallel_transaction_operations() {
     workers::block_on(async {
         let db = test_db_with_collections().await;

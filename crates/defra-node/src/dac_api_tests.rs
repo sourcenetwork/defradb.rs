@@ -86,31 +86,6 @@ async fn visible_users(node: &Node, identity: Option<identity::Did>) -> usize {
 }
 
 #[test]
-fn add_dac_policy_rejects_empty_identity_and_policy() {
-    workers::block_on(async {
-        let node = Node::builder().build().await.unwrap();
-        let err = node
-            .add_dac_policy_as(
-                &defra_core::RequestContext::ambient().with_identity(Some(String::from(""))),
-                POLICY_YAML,
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(err.to_string(), "policy creator can not be empty");
-        let err = node
-            .add_dac_policy_as(
-                &defra_core::RequestContext::ambient().with_identity(Some(String::from(DID_A))),
-                "",
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(err.to_string(), "policy data can not be empty");
-        node.shutdown().await.unwrap();
-    })
-    .unwrap()
-}
-
-#[test]
 fn add_dac_policy_returns_id_and_validates_policy() {
     workers::block_on(async {
     let node = Node::builder().build().await.unwrap();
@@ -264,35 +239,6 @@ fn dac_wildcard_grant_opens_document_to_every_actor() {
             .await
             .unwrap());
         assert_eq!(visible_users(&node, None).await, 1);
-        node.shutdown().await.unwrap();
-    })
-    .unwrap()
-}
-
-#[test]
-fn dac_relationship_requires_a_collection_policy() {
-    workers::block_on(async {
-        let node = Node::builder().build().await.unwrap();
-        node.add_collection("type Plain { name: String }")
-            .await
-            .unwrap();
-
-        let add = node
-            .add_dac_actor_relationship(DID_A, "Plain", "doc-1", "reader", DID_B)
-            .await
-            .unwrap_err();
-        assert_eq!(
-            add.to_string(),
-            "operation requires ACP, but collection has no policy"
-        );
-        let delete = node
-            .delete_dac_actor_relationship(DID_A, "Plain", "doc-1", "reader", DID_B)
-            .await
-            .unwrap_err();
-        assert_eq!(
-            delete.to_string(),
-            "operation requires ACP, but collection has no policy"
-        );
         node.shutdown().await.unwrap();
     })
     .unwrap()

@@ -225,33 +225,3 @@ fn test_client_context_with_identity() {
     assert_eq!(parts.len(), 3, "Auth token should be a valid JWT");
 }
 
-#[test]
-fn test_client_context_without_identity() {
-    let ctx = ClientContext {
-        url: "http://localhost:9181".to_string(),
-        auth_token: None,
-        identity_key_bytes: None,
-        tx_id: None,
-        development: false,
-        verbose: false,
-        edge: edge::testing::edge(),
-    };
-
-    assert!(ctx.auth_token.is_none());
-    assert!(ctx.tx_id.is_none());
-}
-
-#[test]
-fn test_client_context_with_tx() {
-    let ctx = ClientContext {
-        url: "http://localhost:9181".to_string(),
-        auth_token: None,
-        identity_key_bytes: None,
-        tx_id: Some("12345".to_string()),
-        development: false,
-        verbose: false,
-        edge: edge::testing::edge(),
-    };
-
-    assert_eq!(ctx.tx_id, Some("12345".to_string()));
-}

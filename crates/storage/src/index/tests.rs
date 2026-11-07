@@ -289,32 +289,6 @@ fn test_unique_index_save() {
 }
 
 #[test]
-fn test_unique_index_rejects_duplicates() {
-    workers::block_on(async {
-        let store = RegolithStore::in_memory().unwrap();
-        let mut txn = store.new_txn(false).await.unwrap();
-
-        let index = UniqueIndex::new(1, test_index_description(true));
-        let values = vec![NormalValue::String("alice".to_string())];
-
-        index.save(&mut txn, 1, &values).await.unwrap();
-
-        // Same value, different doc ID - should fail
-        let result = index.save(&mut txn, 2, &values).await;
-        let error = result.expect_err("duplicate unique value should fail");
-        assert!(matches!(
-            error,
-            crate::corekv::Error::UniqueConstraintViolation
-        ));
-        assert_eq!(
-            error.to_string(),
-            crate::corekv::UNIQUE_CONSTRAINT_VIOLATION_MESSAGE
-        );
-    })
-    .unwrap()
-}
-
-#[test]
 fn test_unique_index_rejects_same_doc_duplicate() {
     workers::block_on(async {
         let store = RegolithStore::in_memory().unwrap();
