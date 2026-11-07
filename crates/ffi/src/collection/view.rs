@@ -134,6 +134,8 @@ pub unsafe extern "C" fn add_view(
                 })
                 .collect();
 
+            schema::definition_validation::validate_no_chunk_in_view(&view_collections)
+                .map_err(|e| format!("failed to create view collection: {}", e))?;
             for collection in &view_collections {
                 if collection.downsample_interval.is_some() {
                     database
