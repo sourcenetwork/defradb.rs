@@ -351,11 +351,11 @@ jobs:
         run: |
           mkdir -p artifacts/ci
           cargo build -p cli --profile super-dev
-          cp target/super-dev/defra artifacts/ci/defra
+          cp target/super-dev/defradb artifacts/ci/defradb
           cargo build -p cli --profile super-dev --features iroh
-          cp target/super-dev/defra artifacts/ci/defra-iroh
+          cp target/super-dev/defradb artifacts/ci/defradb-iroh
           cargo build -p cli --profile super-dev --features iroh,model-trace
-          cp target/super-dev/defra artifacts/ci/defra-trace
+          cp target/super-dev/defradb artifacts/ci/defradb-trace
       - uses: actions/upload-artifact@v4
         with:
           name: defra-ci-binaries
@@ -515,8 +515,8 @@ jobs:
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 45
     env:
-      DEFRA_CONFORMANCE_BINARY: ${{ github.workspace }}/target/ci/defra
-      DEFRA_CONFORMANCE_IROH_BINARY: ${{ github.workspace }}/target/ci/defra-iroh
+      DEFRA_CONFORMANCE_BINARY: ${{ github.workspace }}/target/ci/defradb
+      DEFRA_CONFORMANCE_IROH_BINARY: ${{ github.workspace }}/target/ci/defradb-iroh
       DEFRA_WORKSPACE_ROOT: ${{ github.workspace }}
       DEFRA_E2E_KEEP: '1'
       RUST_LOG: info
@@ -540,7 +540,7 @@ jobs:
         with:
           name: defra-ci-binaries
           path: target/ci
-      - run: chmod +x target/ci/defra target/ci/defra-iroh target/ci/defra-trace
+      - run: chmod +x target/ci/defradb target/ci/defradb-iroh target/ci/defradb-trace
       - name: Run conformance tests
         run: cargo nextest run --cargo-profile super-dev -p conformance --lib --test tla_conformance
       - uses: actions/setup-java@v5
@@ -549,7 +549,7 @@ jobs:
           java-version: '21'
       - name: Replay recorded P2P delivery runs through TLC
         env:
-          DEFRA_TRACE_BINARY: ${{ github.workspace }}/target/ci/defra-trace
+          DEFRA_TRACE_BINARY: ${{ github.workspace }}/target/ci/defradb-trace
         run: >-
           cargo nextest run --cargo-profile super-dev -p conformance --test tla_conformance
           -- --ignored model_trace::
@@ -574,8 +574,8 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.ci-scope.outputs.integration_matrix) }}
     env:
-      DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defra
-      DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defra-iroh
+      DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defradb
+      DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defradb-iroh
       DEFRA_MULTIPLIERS: ${{ matrix.multipliers || '' }}
       DEFRA_E2E_KEEP: '1'
       RUST_LOG: info
@@ -601,8 +601,8 @@ jobs:
           path: target/ci
       - name: Check binaries
         run: |
-          chmod +x target/ci/defra target/ci/defra-iroh
-          target/ci/defra version --format json
+          chmod +x target/ci/defradb target/ci/defradb-iroh
+          target/ci/defradb version --format json
       - name: Install Go toolchain
         if: matrix.suite == 'go-compat'
         uses: actions/setup-go@v5
@@ -681,7 +681,7 @@ jobs:
       - name: Run go-compat conformance parity
         if: matrix.suite == 'go-compat'
         env:
-          DEFRA_CONFORMANCE_BINARY: ${{ github.workspace }}/target/ci/defra
+          DEFRA_CONFORMANCE_BINARY: ${{ github.workspace }}/target/ci/defradb
         run: >-
           cargo nextest run --cargo-profile super-dev -p conformance --test tla_conformance
           -- --ignored
@@ -722,8 +722,8 @@ jobs:
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 90
     env:
-      DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defra
-      DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defra-iroh
+      DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defradb
+      DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defradb-iroh
       DEFRA_WORKSPACE_ROOT: ${{ github.workspace }}
       DEFRA_E2E_KEEP: '1'
       RUST_LOG: info
@@ -747,7 +747,7 @@ jobs:
         with:
           name: defra-ci-binaries
           path: target/ci
-      - run: chmod +x target/ci/defra target/ci/defra-iroh
+      - run: chmod +x target/ci/defradb target/ci/defradb-iroh
       - name: Run rust P2P integration tests
         run: >-
           cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p::/) & not test(/^[a-z0-9_]+::.*::go_/)'
@@ -827,8 +827,8 @@ jobs:
             shard: 1
             shards: 1
     env:
-      DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defra
-      DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defra-iroh
+      DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defradb
+      DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defradb-iroh
       DEFRADB_GO_REPO: ${{ github.workspace }}/target/go-repo
       DEFRA_E2E_KEEP: '1'
       # A failing scenario shows its in-process nodes' P2P trace.
@@ -874,7 +874,7 @@ jobs:
           CLIENT: ${{ matrix.client }}
           PIN: ${{ needs.go-defradb.outputs.pin }}
         run: |
-          chmod +x target/ci/defra target/ci/defra-iroh
+          chmod +x target/ci/defradb target/ci/defradb-iroh
           DIR="$HOME/.cache/defra-harness/$PIN"
           mkdir -p "$DIR"
           install -m 755 target/go/defradb "$DIR/defradb"

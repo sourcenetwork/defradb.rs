@@ -21,7 +21,7 @@ impl RunningNode {
         let port = portpicker::pick_unused_port().expect("available port");
         let address = format!("127.0.0.1:{port}");
         let log = std::fs::File::create(root.path().join("node.log")).unwrap();
-        let mut command = Command::new(env!("CARGO_BIN_EXE_defra"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_defradb"));
         command
             .args([
                 "start",
