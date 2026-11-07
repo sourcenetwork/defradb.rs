@@ -38,6 +38,8 @@ pub struct NodeSpec {
     pub node_identity: Option<u64>,
     /// The key type the node signs with, when it signs.
     pub signing: Option<crate::actions::shared::KeyType>,
+    /// How long an idle HTTP transaction lives and the sweep interval.
+    pub txn_ttl: Option<(Duration, Duration)>,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -92,9 +94,14 @@ impl TestNode {
                 }
                 let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind port");
                 let url = format!("http://{}", listener.local_addr().expect("local address"));
-                let config = HttpConfig::with_listener(listener)
+                let mut config = HttpConfig::with_listener(listener)
                     .expect("http config")
                     .with_dev_mode(true);
+                if let Some((ttl, tick)) = spec.txn_ttl {
+                    config = config
+                        .with_transaction_idle_timeout(ttl)
+                        .with_transaction_cleanup_interval(tick);
+                }
                 let node = Arc::new(build(&spec, &listen, Some(config))?);
                 Ok(Self::new(None, Some(url), spec, Some(node), Vec::new()))
             }
