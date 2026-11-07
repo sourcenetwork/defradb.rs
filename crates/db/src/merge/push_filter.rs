@@ -1,5 +1,6 @@
-//! What a filtered replicator's replay and retry send: a document by its own
-//! filter, a `@chunk` chunk by its parent's filter on the parent's document.
+//! A filtered peer gets a `@chunk` chunk only together with its parent, so
+//! replay and retry decide a chunk by its parent's filter on the parent's
+//! document, never by the chunk's own document.
 
 use rapidhash::{HashMapExt, RapidHashMap};
 use storage::corekv::{Reader, Store};
@@ -7,13 +8,19 @@ use storage::corekv::{Reader, Store};
 use crate::collection::Collection;
 use crate::database::DB;
 
-/// The outcome of a filter check.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FilterDecision {
     Pass,
     Refuse,
-    /// The chunk's parent is not here yet, so nothing can be decided.
-    ParentMissing,
+    /// A chunk passes only with its parent, which must be sent with it.
+    PassWithParent(ParentRef),
+}
+
+/// The parent a passing chunk is sent with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ParentRef {
+    pub(crate) doc_id: String,
+    pub(crate) doc_short_id: u64,
 }
 
 pub(crate) enum DecidingFilter<'a> {
@@ -25,7 +32,6 @@ pub(crate) enum DecidingFilter<'a> {
     },
 }
 
-/// The filter that decides `collection`'s documents, if the peer has one.
 pub(crate) fn deciding_filter<'a, S>(
     db: &DB<S>,
     collection: &Collection,
@@ -43,7 +49,13 @@ where
     let parent = db
         .get_collection(&source.collection)
         .map_err(|e| format!("failed to get chunk parent collection: {e}"))?
-        .ok_or_else(|| format!("chunk parent collection '{}' not found", source.collection))?;
+        .ok_or_else(|| {
+            format!(
+                "chunk collection '{}' names parent collection '{}', which is not found",
+                collection.name(),
+                source.collection
+            )
+        })?;
     Ok(filters
         .get(parent.collection_id())
         .map(|filter| DecidingFilter::Parent { parent, filter }))
@@ -102,7 +114,10 @@ where
     pub(crate) systemstore: &'a datastore::NamespaceView,
     pub(crate) matcher: &'a dyn p2p::replicator::ReplicationFilterMatcher,
     pub(crate) peer: &'a str,
-    parents: RapidHashMap<String, bool>,
+    /// Each parent's result: its short ID when it passed, `None` when refused.
+    parents: RapidHashMap<String, Option<u64>>,
+    /// Chunks refused because their parent is not on this node.
+    pub(crate) without_parent: usize,
 }
 
 impl<'a, R> FilterCheck<'a, R>
@@ -121,6 +136,7 @@ where
             matcher,
             peer,
             parents: RapidHashMap::new(),
+            without_parent: 0,
         }
     }
 
@@ -162,58 +178,54 @@ where
         filter: &p2p::ReplicationFilter,
     ) -> Result<FilterDecision, String> {
         let peer = self.peer;
-        let refuse = |reason: &str| {
-            tracing::debug!(
-                peer,
-                chunks = %chunks_col.name(),
-                parent = %parent.name(),
-                doc_short_id,
-                reason,
-                "filtered replicator: chunk not sent"
-            );
+        let refuse = |reason: &str, warn: bool| {
+            if warn {
+                tracing::warn!(peer, chunks = %chunks_col.name(), doc_short_id, reason, "filtered replicator: chunk not sent");
+            } else {
+                tracing::debug!(peer, chunks = %chunks_col.name(), parent = %parent.name(), doc_short_id, reason, "filtered replicator: chunk not sent");
+            }
             FilterDecision::Refuse
         };
         let Some(chunk) = stored_document(self.datastore, chunks_col, doc_short_id).await? else {
-            return Ok(refuse("no chunk document"));
+            return Ok(refuse("no chunk document", true));
         };
         let Some(document::NormalValue::String(parent_id)) =
             chunk.get(schema::CHUNK_SOURCE_ID_FIELD)
         else {
-            return Ok(refuse("no _sourceID"));
+            return Ok(refuse("no _sourceID", true));
         };
-        if let Some(&passed) = self.parents.get(parent_id) {
-            return Ok(if passed {
-                FilterDecision::Pass
-            } else {
-                refuse("parent does not match")
-            });
-        }
-        let Some(parent_ref) = crate::docid::map::get_doc_ref(self.systemstore, parent_id)
-            .await
-            .map_err(|e| format!("chunk parent lookup failed: {e}"))?
-        else {
-            tracing::debug!(
-                peer = self.peer,
-                chunks = %chunks_col.name(),
-                parent = %parent.name(),
-                parent_id = %parent_id,
-                "filtered replicator: chunk waits for its parent"
-            );
-            return Ok(FilterDecision::ParentMissing);
+        let passed = match self.parents.get(parent_id) {
+            Some(passed) => *passed,
+            None => {
+                let Some(parent_ref) = crate::docid::map::get_doc_ref(self.systemstore, parent_id)
+                    .await
+                    .map_err(|e| {
+                        format!("chunk {doc_short_id}: parent {parent_id} lookup failed: {e}")
+                    })?
+                else {
+                    // Its parent was never sent, so the chunk is not sent either.
+                    self.without_parent += 1;
+                    return Ok(refuse("parent not on this node", false));
+                };
+                let passed = document_matches_filter(
+                    self.datastore,
+                    parent,
+                    parent_ref.doc_short_id,
+                    filter,
+                    self.matcher,
+                )
+                .await?
+                .then_some(parent_ref.doc_short_id);
+                self.parents.insert(parent_id.clone(), passed);
+                passed
+            }
         };
-        let passed = document_matches_filter(
-            self.datastore,
-            parent,
-            parent_ref.doc_short_id,
-            filter,
-            self.matcher,
-        )
-        .await?;
-        self.parents.insert(parent_id.clone(), passed);
-        Ok(if passed {
-            FilterDecision::Pass
-        } else {
-            refuse("parent does not match")
+        Ok(match passed {
+            Some(doc_short_id) => FilterDecision::PassWithParent(ParentRef {
+                doc_id: parent_id.clone(),
+                doc_short_id,
+            }),
+            None => refuse("parent does not match", false),
         })
     }
 }

@@ -227,8 +227,17 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
     let allowlist_by_collection = allowlist_index(allowlist);
 
     let mut filter_check = FilterCheck::new(&datastore, &systemstore, matcher, peer_id.as_str());
+    // A chunk goes only with its parent, so parents are queued first.
+    let mut queued_filtered = RapidHashSet::new();
+    let mut ordered: Vec<&String> = collections.iter().collect();
+    ordered.sort_by_key(|name| {
+        db.get_collection(name)
+            .ok()
+            .flatten()
+            .is_some_and(|collection| collection.schema().chunk_of.is_some())
+    });
     let preparation: Result<(), String> = async {
-        for col_name in collections {
+        for col_name in ordered {
             if let Some(ref allowed) = allowlist_by_collection {
                 if !allowed.contains_key(col_name.as_str()) {
                     continue;
@@ -303,21 +312,19 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                     match filter_check.decide(&collection, *doc_short_id, deciding).await? {
                         FilterDecision::Pass => {}
                         FilterDecision::Refuse => continue,
-                        // The retry sends it once its parent is here.
-                        FilterDecision::ParentMissing => {
-                            peerstore
-                                .observe_push_head_with_generation(
-                                    peer_id.as_str(),
-                                    doc_id,
-                                    collection.collection_id(),
-                                )
-                                .await
-                                .map_err(|error| {
-                                    format!("failed to register replay marker: {error}")
-                                })?;
-                            continue;
+                        FilterDecision::PassWithParent(parent) => {
+                            if !queued_filtered.contains(&parent.doc_id) {
+                                tracing::debug!(
+                                    peer = %peer_id,
+                                    chunk = %doc_id,
+                                    parent = %parent.doc_id,
+                                    "filtered replicator: chunk not replayed without its parent"
+                                );
+                                continue;
+                            }
                         }
                     }
+                    queued_filtered.insert(doc_id.clone());
                 }
 
                 let creator =
@@ -505,6 +512,13 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
         Ok(())
     }
     .await;
+    if filter_check.without_parent > 0 {
+        tracing::info!(
+            peer = %peer_id,
+            chunks = filter_check.without_parent,
+            "filtered replicator: chunks whose parent is not on this node were not replayed"
+        );
+    }
 
     tracing::debug!(task_count = push_handles.len(), "awaiting push tasks");
     let mut replay_failures = Vec::new();
@@ -868,6 +882,7 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
         .find_collection_by_id(collection_id)
         .map_err(|e| format!("failed to get collection: {}", e))?
         .ok_or_else(|| format!("collection '{}' not found", collection_id))?;
+    let mut parent_heads = None;
     if let Some(deciding) = deciding_filter(db, &collection, filters)? {
         let peerstore = db.peerstore();
         let txn = db
@@ -883,68 +898,145 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
         let decision = FilterCheck::new(&datastore, &systemstore, matcher, peer_id.as_str())
             .decide(&collection, doc_short_id, &deciding)
             .await?;
-        if decision == FilterDecision::ParentMissing {
-            return Err(format!(
-                "chunk {doc_id} waits for its parent before it can be matched"
-            ));
-        }
-        if decision == FilterDecision::Refuse {
-            peerstore
-                .complete_retry_scope(
-                    peer_id.as_str(),
-                    doc_id,
-                    collection_id,
-                    false,
-                    marker_generation,
-                    &[],
-                )
-                .await
-                .map_err(|error| format!("failed to clear filtered retry marker: {error}"))?;
-            return Ok(());
+        match decision {
+            FilterDecision::Pass => {}
+            FilterDecision::PassWithParent(parent) => parent_heads = Some(parent),
+            FilterDecision::Refuse => {
+                peerstore
+                    .complete_retry_scope(
+                        peer_id.as_str(),
+                        doc_id,
+                        collection_id,
+                        false,
+                        marker_generation,
+                        &[],
+                    )
+                    .await
+                    .map_err(|error| format!("failed to clear filtered retry marker: {error}"))?;
+                return Ok(());
+            }
         }
     }
+    let heads = RetryHeads {
+        transport,
+        db,
+        network: &network,
+        peer_id,
+        car_authority,
+    };
+    // A chunk goes to a filtered peer only together with its parent.
+    if let (Some(parent), Some(parent_collection)) =
+        (parent_heads, chunk_parent_collection(db, &collection)?)
+    {
+        let creator = resolve_push_creator(
+            document_acp,
+            &parent_collection,
+            &parent.doc_id,
+            &local_peer_id,
+        )
+        .await;
+        heads
+            .send(
+                &parent.doc_id,
+                parent.doc_short_id,
+                parent_collection.collection_id(),
+                &creator,
+            )
+            .await
+            .map_err(|error| format!("parent {} of chunk {doc_id}: {error}", parent.doc_id))?;
+    }
     let creator = resolve_push_creator(document_acp, &collection, doc_id, &local_peer_id).await;
+    let attempted_heads = heads
+        .send(doc_id, doc_short_id, collection_id, &creator)
+        .await?;
+    crate::merge::push_docs_common::complete_document_retry_if_current(
+        db,
+        peer_id.as_str(),
+        doc_id,
+        collection_id,
+        doc_short_id,
+        &attempted_heads,
+        marker_generation,
+    )
+    .await
+}
 
-    let headstore = storage::stores::Headstore::new(db.store().clone());
-    let head_txn = headstore
-        .new_txn(true)
-        .await
-        .map_err(|e| format!("headstore txn: {}", e))?;
+fn chunk_parent_collection<S>(
+    db: &DB<S>,
+    collection: &crate::collection::Collection,
+) -> Result<Option<crate::collection::Collection>, String>
+where
+    S: Store + 'static,
+{
+    let Some(source) = &collection.schema().chunk_of else {
+        return Ok(None);
+    };
+    db.get_collection(&source.collection)
+        .map_err(|e| format!("failed to get chunk parent collection: {e}"))
+}
 
-    let blockstore_view = storage::stores::Blockstore::new(db.store().clone(), true);
-    let block_txn = blockstore_view
-        .new_txn(true)
-        .await
-        .map_err(|e| format!("blockstore txn: {}", e))?;
-    let mut attempted_heads =
-        load_latest_composite_head_cids(&*head_txn, &*block_txn, doc_short_id).await;
-    attempted_heads.sort_unstable();
-    let mut successful_blocks = 0usize;
-    for head_cid in attempted_heads.iter().copied() {
-        let block_data = match block_txn.get(&head_cid.to_bytes()).await {
-            Ok(Some(data)) => data,
-            _ => continue,
-        };
+/// Sends a document's current heads to one peer, as a retry does.
+struct RetryHeads<'a, S, T>
+where
+    S: Store + 'static,
+    T: P2PTransport,
+{
+    transport: &'a T,
+    db: &'a DB<S>,
+    network: &'a p2p::network::Network,
+    peer_id: &'a PeerId,
+    car_authority: &'a p2p::sync::HeadHintCarAuthority,
+}
 
-        {
-            let block_cid = head_cid;
-            let _car_grant = car_authority
+impl<S, T> RetryHeads<'_, S, T>
+where
+    S: Store + 'static,
+    T: P2PTransport,
+{
+    /// Returns the heads it sent.
+    async fn send(
+        &self,
+        doc_id: &str,
+        doc_short_id: u64,
+        collection_id: &str,
+        creator: &str,
+    ) -> Result<Vec<cid::Cid>, String> {
+        let (transport, db, peer_id) = (self.transport, self.db, self.peer_id);
+        let headstore = storage::stores::Headstore::new(db.store().clone());
+        let head_txn = headstore
+            .new_txn(true)
+            .await
+            .map_err(|e| format!("headstore txn: {}", e))?;
+        let blockstore_view = storage::stores::Blockstore::new(db.store().clone(), true);
+        let block_txn = blockstore_view
+            .new_txn(true)
+            .await
+            .map_err(|e| format!("blockstore txn: {}", e))?;
+        let mut attempted_heads =
+            load_latest_composite_head_cids(&*head_txn, &*block_txn, doc_short_id).await;
+        attempted_heads.sort_unstable();
+        let mut successful_blocks = 0usize;
+        for head_cid in attempted_heads.iter().copied() {
+            let block_data = match block_txn.get(&head_cid.to_bytes()).await {
+                Ok(Some(data)) => data,
+                _ => continue,
+            };
+            let _car_grant = self
+                .car_authority
                 .register(peer_id.clone(), head_cid)
                 .ok_or_else(|| format!("selective CAR authority full for retry head {head_cid}"))?;
             let mut request = PushLogRequest::new(
                 doc_id.to_string(),
-                Bytes::from(block_cid.to_bytes()),
+                Bytes::from(head_cid.to_bytes()),
                 collection_id.to_string(),
-                creator.clone(),
+                creator.to_string(),
                 block_data,
             );
-
             if p2p::signing::sign_with_transport(transport, &mut request).is_err() {
                 return Err(format!(
                     "failed to sign replay block after {successful_blocks} successful block(s)"
                 ));
             }
-
             if super::push_docs_replay::remaining_retry_after(&db.peerstore(), peer_id)
                 .await?
                 .is_some()
@@ -952,7 +1044,7 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
                 return Err(p2p::error::RATE_LIMITED_MESSAGE.to_string());
             }
             let sent =
-                super::push_docs_network::send_pushlog(&network, transport, peer_id, request);
+                super::push_docs_network::send_pushlog(self.network, transport, peer_id, request);
             match sent.await {
                 Ok(reply) if reply.err_message.is_some() => {
                     super::push_docs_replay::persist_retry_after(&db.peerstore(), peer_id, &reply)
@@ -985,19 +1077,8 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
                 }
             }
         }
+        Ok(attempted_heads)
     }
-    drop(block_txn);
-    drop(head_txn);
-    crate::merge::push_docs_common::complete_document_retry_if_current(
-        db,
-        peer_id.as_str(),
-        doc_id,
-        collection_id,
-        doc_short_id,
-        &attempted_heads,
-        marker_generation,
-    )
-    .await
 }
 
 /// Rederive and announce every current collection head for a dirty collection
