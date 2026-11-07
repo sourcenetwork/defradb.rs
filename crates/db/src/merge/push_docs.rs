@@ -15,8 +15,9 @@ use crate::merge::push_docs_replay::{
     persist_replay_failures, ReplayDocumentFailure, ReplayPushConfig, ReplayPushGate,
 };
 use crate::merge::push_filter::{
-    deciding_filter, document_matches_filter, FilterCheck, FilterDecision,
+    deciding_filter, document_matches_filter, DecidingFilter, FilterCheck, FilterDecision,
 };
+use crate::merge::replication_ack::document_heads_acknowledged;
 
 enum PushOwnership {
     Replicator,
@@ -228,7 +229,7 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
 
     let mut filter_check = FilterCheck::new(&datastore, &systemstore, matcher, peer_id.as_str());
     // A chunk goes only with its parent, so parents are queued first.
-    let mut queued_filtered = RapidHashSet::new();
+    let mut queued_parents = RapidHashSet::new();
     let mut ordered: Vec<&String> = collections.iter().collect();
     ordered.sort_by_key(|name| {
         db.get_collection(name)
@@ -313,8 +314,8 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                         FilterDecision::Pass => {}
                         FilterDecision::Refuse => continue,
                         FilterDecision::PassWithParent(parent) => {
-                            if !queued_filtered.contains(&parent.doc_id) {
-                                tracing::debug!(
+                            if !queued_parents.contains(&parent.doc_id) {
+                                tracing::info!(
                                     peer = %peer_id,
                                     chunk = %doc_id,
                                     parent = %parent.doc_id,
@@ -324,7 +325,6 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                             }
                         }
                     }
-                    queued_filtered.insert(doc_id.clone());
                 }
 
                 let creator =
@@ -410,6 +410,10 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                         continue 'documents;
                     }
                     requests.push((grant, request));
+                }
+                // Only now is the parent's push built, so its chunks may follow it.
+                if matches!(deciding, Some(DecidingFilter::Own(_))) && !requests.is_empty() {
+                    queued_parents.insert(doc_id.clone());
                 }
 
                 if !requests.is_empty() {
@@ -837,12 +841,40 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
     doc_id: &str,
     collection_id: &str,
     marker_generation: u64,
+    replicated: &[String],
     filters: &p2p::ReplicationFilters,
     matcher: &dyn p2p::replicator::ReplicationFilterMatcher,
     car_authority: &p2p::sync::HeadHintCarAuthority,
 ) -> Result<(), String> {
     let network = db.network().map_err(|error| error.to_string())?;
     let local_peer_id = transport.local_peer_id().to_string();
+    // A collection removed from the replicator owes it nothing any more.
+    if !collection_id.is_empty()
+        && !replicated.is_empty()
+        && !replicated
+            .iter()
+            .any(|replicated| replicated == collection_id)
+    {
+        tracing::info!(
+            peer = %peer_id,
+            doc_id,
+            collection_id,
+            "retry marker cleared: collection no longer replicated"
+        );
+        return db
+            .peerstore()
+            .complete_retry_scope(
+                peer_id.as_str(),
+                doc_id,
+                collection_id,
+                false,
+                marker_generation,
+                &[],
+            )
+            .await
+            .map(drop)
+            .map_err(|error| format!("failed to clear retry marker of {doc_id}: {error}"));
+    }
     let doc_short_id = {
         let txn = db
             .new_txn(true)
@@ -902,6 +934,13 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
             FilterDecision::Pass => {}
             FilterDecision::PassWithParent(parent) => parent_heads = Some(parent),
             FilterDecision::Refuse => {
+                if matches!(deciding, DecidingFilter::Parent { .. }) {
+                    tracing::info!(
+                        peer = %peer_id,
+                        chunk = doc_id,
+                        "filtered replicator: chunk retry cleared, its parent is not sent"
+                    );
+                }
                 peerstore
                     .complete_retry_scope(
                         peer_id.as_str(),
@@ -928,22 +967,40 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
     if let (Some(parent), Some(parent_collection)) =
         (parent_heads, chunk_parent_collection(db, &collection)?)
     {
-        let creator = resolve_push_creator(
-            document_acp,
-            &parent_collection,
-            &parent.doc_id,
-            &local_peer_id,
-        )
-        .await;
-        heads
-            .send(
+        let parent_ids = std::slice::from_ref(&parent.doc_id);
+        let delivered =
+            document_heads_acknowledged(db, peer_id.as_str(), parent_collection.name(), parent_ids)
+                .await?;
+        if delivered.first() != Some(&true) {
+            let creator = resolve_push_creator(
+                document_acp,
+                &parent_collection,
                 &parent.doc_id,
-                parent.doc_short_id,
-                parent_collection.collection_id(),
-                &creator,
+                &local_peer_id,
             )
-            .await
-            .map_err(|error| format!("parent {} of chunk {doc_id}: {error}", parent.doc_id))?;
+            .await;
+            // The context goes last, so a transport failure keeps its prefix.
+            let sent = heads
+                .send(
+                    &parent.doc_id,
+                    parent.doc_short_id,
+                    parent_collection.collection_id(),
+                    &creator,
+                )
+                .await
+                .map_err(|error| format!("{error} (parent {} of chunk {doc_id})", parent.doc_id))?;
+            let sent: Vec<String> = sent.iter().map(ToString::to_string).collect();
+            db.peerstore()
+                .record_acknowledged_heads(
+                    peer_id.as_str(),
+                    &parent.doc_id,
+                    parent_collection.collection_id(),
+                    false,
+                    &sent,
+                )
+                .await
+                .map_err(|error| format!("failed to record parent {}: {error}", parent.doc_id))?;
+        }
     }
     let creator = resolve_push_creator(document_acp, &collection, doc_id, &local_peer_id).await;
     let attempted_heads = heads
@@ -975,7 +1032,6 @@ where
         .map_err(|e| format!("failed to get chunk parent collection: {e}"))
 }
 
-/// Sends a document's current heads to one peer, as a retry does.
 struct RetryHeads<'a, S, T>
 where
     S: Store + 'static,
@@ -993,7 +1049,6 @@ where
     S: Store + 'static,
     T: P2PTransport,
 {
-    /// Returns the heads it sent.
     async fn send(
         &self,
         doc_id: &str,

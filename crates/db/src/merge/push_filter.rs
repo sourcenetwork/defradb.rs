@@ -1,6 +1,5 @@
-//! A filtered peer gets a `@chunk` chunk only together with its parent, so
-//! replay and retry decide a chunk by its parent's filter on the parent's
-//! document, never by the chunk's own document.
+//! A chunk lacks its parent's fields, so a filtered peer gets it only with
+//! its parent, decided by the parent's filter on the parent's document.
 
 use rapidhash::{HashMapExt, RapidHashMap};
 use storage::corekv::{Reader, Store};
@@ -116,7 +115,6 @@ where
     pub(crate) peer: &'a str,
     /// Each parent's result: its short ID when it passed, `None` when refused.
     parents: RapidHashMap<String, Option<u64>>,
-    /// Chunks refused because their parent is not on this node.
     pub(crate) without_parent: usize,
 }
 
@@ -180,13 +178,29 @@ where
         let peer = self.peer;
         let refuse = |reason: &str, warn: bool| {
             if warn {
-                tracing::warn!(peer, chunks = %chunks_col.name(), doc_short_id, reason, "filtered replicator: chunk not sent");
+                tracing::warn!(
+                    peer,
+                    chunks = %chunks_col.name(),
+                    doc_short_id,
+                    reason,
+                    "filtered replicator: chunk not sent"
+                );
             } else {
-                tracing::debug!(peer, chunks = %chunks_col.name(), parent = %parent.name(), doc_short_id, reason, "filtered replicator: chunk not sent");
+                tracing::debug!(
+                    peer,
+                    chunks = %chunks_col.name(),
+                    parent = %parent.name(),
+                    doc_short_id,
+                    reason,
+                    "filtered replicator: chunk not sent"
+                );
             }
             FilterDecision::Refuse
         };
-        let Some(chunk) = stored_document(self.datastore, chunks_col, doc_short_id).await? else {
+        let chunk = stored_document(self.datastore, chunks_col, doc_short_id)
+            .await
+            .map_err(|e| format!("{e} (chunk {doc_short_id})"))?;
+        let Some(chunk) = chunk else {
             return Ok(refuse("no chunk document", true));
         };
         let Some(document::NormalValue::String(parent_id)) =
@@ -214,7 +228,8 @@ where
                     filter,
                     self.matcher,
                 )
-                .await?
+                .await
+                .map_err(|e| format!("{e} (parent {parent_id} of chunk {doc_short_id})"))?
                 .then_some(parent_ref.doc_short_id);
                 self.parents.insert(parent_id.clone(), passed);
                 passed
