@@ -507,6 +507,30 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         }
     }
 
+    /// SE artifacts for a document that may not have encoded: without it only
+    /// unfiltered peers get them.
+    pub async fn push_se_artifacts_with_found_document(
+        &self,
+        collection_id: &str,
+        artifacts: Vec<SEArtifact>,
+        document: Option<&JsonValue>,
+    ) {
+        match document {
+            Some(document) => {
+                self.push_se_artifacts_to_replicators_for_document(
+                    collection_id,
+                    artifacts,
+                    document,
+                )
+                .await
+            }
+            None => {
+                self.push_se_artifacts_to_replicators(collection_id, artifacts)
+                    .await
+            }
+        }
+    }
+
     /// Push SE artifacts with document-filter evaluation for filtered peers.
     pub async fn push_se_artifacts_to_replicators_for_document(
         &self,
