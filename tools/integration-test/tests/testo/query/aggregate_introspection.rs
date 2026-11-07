@@ -1,5 +1,6 @@
 //! Introspection shows the aggregate arguments the executor accepts, as Go
-//! does (#2649, `defra.request.aggregate_introspection`).
+//! does (#2649, `defra.request.aggregate_introspection`). Arguments are
+//! checked as a subset: the test also runs against Go, which has more.
 
 use integration_test::actions::{AddCollection, Request};
 use integration_test::m;
@@ -46,16 +47,16 @@ fn aggregates_show_relation_and_root_arguments() {
             }"#
             .into(),
             expected_data: json!({
-                "author": { "fields": m::contains(json!([
-                    { "name": "COUNT", "args": [
+                "author": { "fields": m::all(json!([
+                    m::first_where("name", "COUNT", json!({ "name": "COUNT", "args": m::contains(json!([
                         arg("GROUP", "Author__CountSelector"),
                         arg("_version", "Author___version__CountSelector"),
                         arg("published", "Book__CountSelector"),
-                    ] },
-                    { "name": "SUM", "args": numeric() },
-                    { "name": "AVG", "args": numeric() },
-                    { "name": "MIN", "args": numeric() },
-                    { "name": "MAX", "args": numeric() },
+                    ])) })),
+                    m::first_where("name", "SUM", json!({ "name": "SUM", "args": m::contains(numeric()) })),
+                    m::first_where("name", "AVG", json!({ "name": "AVG", "args": m::contains(numeric()) })),
+                    m::first_where("name", "MIN", json!({ "name": "MIN", "args": m::contains(numeric()) })),
+                    m::first_where("name", "MAX", json!({ "name": "MAX", "args": m::contains(numeric()) })),
                 ])) },
                 "root": { "fields": m::all(json!([
                     m::first_where("name", "MIN", root_numeric("MIN")),
