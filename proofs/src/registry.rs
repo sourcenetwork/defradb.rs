@@ -2217,6 +2217,15 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Text chunking",
+        name: "prefix_best_exact / unread_ranks_no_higher / prefix_top_is_top",
+        axis: Lean,
+        anchor: "crates/query/src/plan/chunk_similarity/best.rs best_per_parent; crates/query/src/plan/chunk_similarity/search.rs ChunkSearch::run",
+        model_ref: "ChunkSimilarity (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Text chunking",
         name: "no_orphan_chunks / parent_is_gone / others_stay / delete_alone_leaves_an_orphan",
         axis: Lean,
         anchor: "crates/db/src/collection/ops/delete.rs delete_collection_with_txn; crates/db/src/collection/ops/chunk_versions.rs chunk_versions_to_add",

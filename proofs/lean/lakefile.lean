@@ -136,6 +136,9 @@ lean_lib RetrySchedule where
 lean_lib ChunkSplit where
 
 @[default_target]
+lean_lib ChunkSimilarity where
+
+@[default_target]
 lean_lib TxnId where
 
 @[default_target]
