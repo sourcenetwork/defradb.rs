@@ -433,3 +433,79 @@ fn ref_and_concat_resolve_against_captures() {
     assert!(resolve(&m::r("missing"), &captures).is_err());
     assert!(resolve(&json!({"$concat": []}), &captures).is_err());
 }
+
+#[test]
+fn same_schema_ignores_list_order_and_extras_but_not_content() {
+    let golden = json!({ "types": [
+        { "name": "A", "fields": [{ "name": "x" }, { "name": "y" }] },
+        { "name": "B", "fields": [] },
+    ] });
+    let reordered = json!({ "types": [
+        { "name": "B", "fields": [] },
+        { "name": "A", "fields": [{ "name": "y" }, { "name": "x" }] },
+    ] });
+    let missing_field = json!({ "types": [
+        { "name": "A", "fields": [{ "name": "x" }] },
+        { "name": "B", "fields": [] },
+    ] });
+    let extra_type = json!({ "types": [
+        { "name": "A", "fields": [{ "name": "x" }, { "name": "y" }, { "name": "z" }] },
+        { "name": "B", "fields": [] },
+        { "name": "C", "fields": [] },
+    ] });
+    let changed = json!({ "types": [
+        { "name": "A", "fields": [{ "name": "x" }, { "name": "y" }], "kind": "OBJECT" },
+        { "name": "B", "fields": null },
+    ] });
+    assert!(matches(m::same_schema(golden.clone()), reordered));
+    assert!(matches(m::same_schema(golden.clone()), extra_type));
+    assert!(!matches(m::same_schema(golden.clone()), missing_field));
+    assert!(!matches(m::same_schema(golden), changed));
+    let described = json!({ "types": [{ "name": "A", "description": "" }] });
+    let undescribed = json!({ "types": [{ "name": "A", "description": null }] });
+    let named = json!({ "types": [{ "name": "A", "description": null, "kind": "" }] });
+    assert!(matches(m::same_schema(described.clone()), undescribed));
+    assert!(!matches(
+        m::same_schema(json!({ "types": [{ "name": "A", "kind": null }] })),
+        named
+    ));
+}
+
+#[test]
+fn same_schema_compares_descriptions_by_their_words() {
+    let reflowed = json!({ "types": [{ "name": "A", "description": "one\n\ttwo  three\n" }] });
+    let flat = json!({ "types": [{ "name": "A", "description": "one two three" }] });
+    let other = json!({ "types": [{ "name": "A", "description": "one two four" }] });
+    assert!(matches(m::same_schema(reflowed.clone()), flat));
+    assert!(!matches(m::same_schema(reflowed), other));
+}
+
+#[test]
+fn sdl_describes_what_introspection_reports() {
+    let schema = integration_test::introspection_sdl::introspection(
+        r#"schema { query: Query }
+        "A query."
+        type Query { users(limit: Int = 10, kind: Kind): [User!] old: Int @deprecated(reason: "gone") }
+        type User { name: String }
+        enum Kind { A B }
+        directive @tag(name: String!) on FIELD_DEFINITION"#,
+    );
+    let query = &schema["types"][0];
+    assert_eq!(schema["queryType"], json!({ "name": "Query" }));
+    assert_eq!(schema["mutationType"], Value::Null);
+    assert_eq!(query["kind"], "OBJECT");
+    assert_eq!(query["description"], "A query.");
+    assert_eq!(query["fields"][0]["args"][0]["defaultValue"], "10");
+    assert_eq!(query["fields"][0]["args"][1]["type"]["kind"], "ENUM");
+    assert_eq!(
+        query["fields"][0]["type"],
+        json!({ "kind": "LIST", "name": null, "ofType":
+            { "kind": "NON_NULL", "name": null, "ofType": { "kind": "OBJECT", "name": "User", "ofType": null } } })
+    );
+    assert_eq!(query["fields"][1]["isDeprecated"], true);
+    assert_eq!(query["fields"][1]["deprecationReason"], "gone");
+    assert_eq!(
+        schema["directives"][0]["locations"],
+        json!(["FIELD_DEFINITION"])
+    );
+}

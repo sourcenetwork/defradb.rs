@@ -198,6 +198,62 @@ How a GraphQL request is validated before it runs.
 
 A request whose fragments spread each other in a cycle fails validation with no `data`, instead of recursing, whether or not a field spreads into the cycle, in a query or a subscription: `query { User { ...A } } fragment A on User { name ...B } fragment B on User { name ...A }` and the same fragments under `query { User { name } }` both return `Cannot spread fragment "A" within itself via B.`; `query { User { ...A } } fragment A on User { name ...A }` returns `Cannot spread fragment "A" within itself.` These are graphql-js's and Go's texts; defradb.rs said `circular fragment reference` before, and only when a field spread into the cycle.
 
+# `defra.request.optional_variables`: An unset optional variable drops the field it fills
+
+- **Parents:** ["defra.request"]
+- **Scenarios:** ["query::optional_variables::an_empty_field_condition_filters_on_nothing"]
+
+A nullable variable with no default that the request leaves out is not an error and is not `null`: the argument or input field it fills is left out, as Go does. `query ($plot: String, $minRating: Float64) { Book(filter: {plot: {_like: $plot}, rating: {_geq: $minRating}}) { title } }` with only `{"minRating": 4.2}` returns the books rated 4.2 or more, whatever their plot. An explicit `null` is kept, and a missing list item becomes `null`. defradb.rs failed with `Variable "$plot" was not provided` before (#2104).
+
+# `defra.request.mutation_relation_filter`: A filtered update or delete follows relations
+
+- **Parents:** ["defra.request"]
+- **Scenarios:** ["mutation::delete_relation_filter::a_delete_filtered_through_a_relation_deletes_what_the_query_finds", "mutation::delete_relation_filter::an_update_filtered_through_a_relation_updates_what_the_query_finds"]
+
+`delete_Person(filter: {authoredBooks: {genre: {_eq: "Dystopia"}}})` deletes and returns exactly the people `Person(filter: {authoredBooks: {genre: {_eq: "Dystopia"}}})` returns, and `update_Person` with the same filter updates them; people the filter does not reach are untouched. defradb.rs matched such filters against the stored document only, where a relation has no value, so it found nothing (#2099).
+
+# `defra.commits.link_delta`: Commit links and heads show their block's delta
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["query::commits::with_link_delta::a_composite_link_shows_its_field_delta"]
+
+In `_commits { links { fieldName delta } heads { delta } }`, each link and head shows the base64 `delta` and `collectionVersionId` of the block it points to, as Go does: after an update that sets `genre: "Dystopia"`, the composite commit's `genre` link shows `aER5c3RvcGlh`, and a composite head shows `null`, since composites carry no field delta. An Immutable block shows the delta of the field the link names. defradb.rs showed `null` for every link before (#2625).
+
+# `defra.request.schema_descriptions`: The GraphQL schema describes itself like Go's
+
+- **Parents:** ["defra.request"]
+- **Scenarios:** ["query::schema_descriptions::introspection_shows_go_descriptions"]
+
+Introspection describes, in Go DefraDB's words (the only reference so far), every type, field, argument, input field and enum value both schemas share: collection objects (`_docID`, `_deleted`, `_version`, `GROUP` and the aggregates), filter, selector and operator blocks, `Commit`, `Signature`, the `_commits` query, mutations, `Ordering` and the custom scalars. A GraphQL client such as GraphiQL shows them in its docs pane. Exceptions: the built-in `ID`, `Int`, `Float` and `String` scalars keep async-graphql's texts, `docID` on update and delete is one ID in defradb.rs and is described as one, and `BlobOperatorBlock` says Blob where Go says String (#2106).
+
+# `defra.request.relation_field_args`: Introspection shows the arguments of relation fields
+
+- **Parents:** ["defra.request"]
+- **Scenarios:** ["query::relation_field_args::relation_fields_show_their_arguments"]
+
+A relation field shows in introspection the arguments the executor accepts on it, with Go DefraDB's names, types and descriptions: a one-to-one or many-to-one field such as `Book.author` takes `filter: AuthorFilterArg`, and a one-to-many field such as `Author.published` takes `docID: [ID!]`, `filter: BookFilterArg`, `groupBy: [BookField!]`, `limit: Int`, `offset: Int` and `order: [BookOrderArg]` (#2649).
+
+# `defra.request.mutation_introspection`: Introspection shows the mutations the parser accepts
+
+- **Parents:** ["defra.request"]
+- **Scenarios:** ["query::mutation_introspection::mutations_show_go_arguments_and_types"]
+
+For a collection `Book`, the `Mutation` type shows Go DefraDB's surface with its descriptions: `add_Book(encrypt: Boolean, encryptFields: [BookExplicitField!], input: [BookMutationInputArg!]): [Book]`, `update_Book(docID: [ID!], filter: BookFilterArg, input: BookMutationInputArg): [Book]`, `upsert_Book(add: BookMutationInputArg!, filter: BookFilterArg!, update: BookMutationInputArg!): [Book]` and `delete_Book(docID: [ID!], filter: BookFilterArg): [Book]`, where `BookExplicitField` lists the fields the schema declares. `update` and `delete` also take `docIDs: [ID]`, defradb.rs's own spelling of `docID`. `truncate_Book` takes no `docID`, since the parser does not accept one (#2649).
+
+# `defra.request.subscription_introspection`: Introspection describes the subscriptions
+
+- **Parents:** ["defra.request"]
+- **Scenarios:** ["query::subscription_introspection::subscriptions_appear_in_introspection"]
+
+Introspection names `Subscription` as the schema's `subscriptionType`, as Go DefraDB does. Like Go's, it has a field per collection (`Book: [Book]`) with the arguments of a query select (`cid`, `docID`, `filter`, `groupBy`, `limit`, `offset`, `order`, `showDeleted`), and `_commits: [Commit]` with the arguments of the `_commits` query. Subscriptions themselves run over Server-Sent Events (#2649).
+
+# `defra.request.aggregate_introspection`: Introspection shows the aggregate arguments the executor accepts
+
+- **Parents:** ["defra.request"]
+- **Scenarios:** ["query::aggregate_introspection::aggregates_show_relation_and_root_arguments"]
+
+As in Go DefraDB, a one-to-many relation field such as `Author.published` is an argument of `COUNT` (typed `Book__CountSelector`) and of `SUM`, `AVG`, `MIN` and `MAX` (typed `Book__NumericSelector`), and the `Query` root has `MIN` and `MAX` of nullable `Float` beside `COUNT`, `SUM` and `AVG`, with one argument per collection. Go's `ScalarAggregateNumericBlock` argument on a plain numeric field is not shown, since the executor does not aggregate a single scalar (#2649).
+
 # `defra.index.range_filter`: A two-sided range filter fetches only the range
 
 - **Parents:** ["defra.index"]

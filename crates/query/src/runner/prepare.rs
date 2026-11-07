@@ -247,7 +247,14 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 } else {
                     for doc in &mut docs {
                         if mutation.mutation_type == MutationType::Update {
-                            if let Some(filter) = &mutation.filter {
+                            // A relation filter already chose these IDs
+                            // through the planner; a stored document cannot
+                            // answer it again.
+                            if let Some(filter) = mutation
+                                .filter
+                                .as_ref()
+                                .filter(|filter| !filter.has_relation_filters())
+                            {
                                 if !crate::document::matches_document_filter(
                                     doc, collection, filter,
                                 )? {

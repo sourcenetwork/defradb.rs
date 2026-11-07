@@ -115,7 +115,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         // A condition on a related document needs the join a select runs;
         // the stored document alone cannot satisfy it.
         if filter.has_relation_filters() || filter.has_alias_filter() {
-            return self
+            // The write decides on every document these scans read, related
+            // ones included, so a concurrent change to any of them aborts it.
+            fetcher.set_scans_validated(true);
+            let found = self
                 .selected_doc_ids(
                     &mutation.collection_name,
                     filter.clone(),
@@ -123,8 +126,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     false,
                     fetcher,
                 )
-                .await
-                .map(Some);
+                .await;
+            fetcher.set_scans_validated(false);
+            return found.map(Some);
         }
 
         // Get the collection schema on-demand from provider

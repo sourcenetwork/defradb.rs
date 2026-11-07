@@ -12,9 +12,9 @@ const CONFORMANCE_RUST_LOG: &str = "info";
 
 /// The artifact under test.
 ///
-/// Defaults to `target/debug/defra` - the binary that `cargo test --workspace`
+/// Defaults to `target/debug/defradb` - the binary that `cargo test --workspace`
 /// rebuilds fresh for the exact revision under test. We deliberately do NOT
-/// prefer `target/release/defra`: a self-hosted CI runner caches `target/`, so a
+/// prefer `target/release/defradb`: a self-hosted CI runner caches `target/`, so a
 /// release binary left over from an earlier run can be stale and silently
 /// validate old behavior (which produced confusing red CI here). `cargo test`
 /// never rebuilds the release binary, but always brings the debug one current.
@@ -29,13 +29,13 @@ pub fn release_binary() -> BinarySource {
     if let Some(path) = std::env::var_os("DEFRA_CONFORMANCE_BINARY") {
         return BinarySource::Path(PathBuf::from(path));
     }
-    BinarySource::Path(root.join("target/debug/defra"))
+    BinarySource::Path(root.join("target/debug/defradb"))
 }
 
 /// The iroh build of the artifact under test, for the families that run over
 /// the iroh transport. `DEFRA_CONFORMANCE_IROH_BINARY` names it; unset, it is
 /// built once per test process with `--features iroh` into its own target
-/// directory, so `target/debug/defra` stays the build without iroh.
+/// directory, so `target/debug/defradb` stays the build without iroh.
 pub fn iroh_binary() -> BinarySource {
     let root = workspace_root();
     init_harness_env(&root);

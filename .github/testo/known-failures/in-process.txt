@@ -70,3 +70,6 @@ testo acp::nac::update_document_with_filter::nac_gates_update_document_with_filt
 testo acp::nac::update_document_with_filter::nac_gates_update_document_with_filter_wrong_identity_not_authorized_error #2680
 testo acp::nac::update_document::nac_gates_update_document_no_identity_not_authorized_error #2680
 testo acp::nac::update_document::nac_gates_update_document_wrong_identity_not_authorized_error #2680
+testo collection_version::introspection_golden::introspection_matches_golden_simple #2649
+testo collection_version::introspection_golden::introspection_matches_golden_related_one #2649
+testo collection_version::introspection_golden::introspection_matches_golden_related_many #2649
