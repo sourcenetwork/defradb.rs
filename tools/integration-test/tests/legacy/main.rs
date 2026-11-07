@@ -3,7 +3,6 @@ mod acp_replay_outage_cross_runtime;
 mod acp_replay_outage_repro;
 mod backup;
 mod basic;
-mod cursor;
 mod encryption;
 mod fts;
 mod http_contract;

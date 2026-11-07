@@ -13,7 +13,6 @@ pub(crate) mod doc_acp_adapter;
 pub(crate) mod dump_adapter;
 pub(crate) mod encrypted_index_adapter;
 pub mod error;
-pub(crate) mod index_adapter;
 pub mod logging;
 #[allow(dead_code)]
 pub(crate) mod nac_adapter;

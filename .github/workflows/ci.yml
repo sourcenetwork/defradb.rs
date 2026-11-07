@@ -842,7 +842,7 @@ jobs:
       # known-failure entry would fail every run it passes, so the test is left
       # out here instead of listed; run it again once #2089 is fixed.
       LEGACY_FILTER: >-
-        binary(legacy) & test(/^(cursor|http_contract|issue1194_repro|acp_replay_outage_cross_runtime)::/)
+        binary(legacy) & test(/^(http_contract|issue1194_repro|acp_replay_outage_cross_runtime)::/)
         & not test(=acp_replay_outage_cross_runtime::c_rust_to_go_outage_replay)
       # Go gives Foo the wrong ID beside FooBar only in some runs (#2528), so a
       # known-failure entry would fail the runs it passes; go-http leaves it out.

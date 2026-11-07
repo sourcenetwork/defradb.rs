@@ -4006,6 +4006,7 @@ dependencies = [
  "defra-http",
  "defra-p2p-adapter",
  "defra-version",
+ "document",
  "edge",
  "events",
  "futures",

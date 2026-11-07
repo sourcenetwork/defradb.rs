@@ -1,4 +1,5 @@
-//! Adapter to bridge database index operations to HTTP's IndexOperations trait.
+//! The database's index operations, as the HTTP API's [`IndexOperations`]: the
+//! `defradb start` server and the embedded node's server both serve them.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -6,8 +7,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use defra_core::RequestContext;
 
+use crate::router::{IndexFieldInfo, IndexInfo, IndexOperations};
 use db::IndexManager;
-use defra_http::router::{IndexFieldInfo, IndexInfo, IndexOperations};
 use schema::IndexedFieldDescription;
 use storage::corekv::Store;
 
@@ -173,5 +174,5 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/index_adapter.rs"]
+#[path = "index_adapter_tests.rs"]
 mod tests;
