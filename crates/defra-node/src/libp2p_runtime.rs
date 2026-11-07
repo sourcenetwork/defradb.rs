@@ -240,11 +240,13 @@ where
     // before this process started.
     // It runs on the database's worker pool and ends with the coordinator's
     // shutdown; the network task here only follows it for the node's teardown.
+    #[cfg(feature = "governed-collections")]
     let governance_sweep = db::merge::governance::start_governance_sweep(
         replication.merge_handler_inner.clone(),
         db::merge::governance::SWEEP_INTERVAL,
         coordinator.shutdown_handle(),
     );
+    #[cfg(feature = "governed-collections")]
     let governance_sweep_task = spawn_node_task(edge, async move {
         let _ = governance_sweep.await;
     });
@@ -402,6 +404,7 @@ where
                 replication_task,
                 pending_dag_resync_task,
                 pending_dag_retry_task,
+                #[cfg(feature = "governed-collections")]
                 governance_sweep_task,
             ]
             .into_iter()

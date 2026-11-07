@@ -147,6 +147,8 @@ model-trace = ["p2p/model-trace"]
 # opt-in. When built with this feature, runtime default is on (Go parity); use
 # `--no-telemetry` to disable at runtime.
 otel = ["telemetry/otlp"]
+# App merge validators for claimed collections and the governance sweep.
+governed-collections = ["db/governed-collections", "defra-p2p-adapter/governed-collections"]
 
 [dev-dependencies]
 edge = { path = "../edge", features = ["testing"] }

@@ -169,7 +169,7 @@ where
     if let Some(network) = network.as_ref() {
         database.set_network(network.edge().clone());
     }
-    #[cfg(feature = "p2p")]
+    #[cfg(all(feature = "p2p", feature = "governed-collections"))]
     if let Some(hooks) = &extras.access_hooks {
         hooks.install(&database);
     }

@@ -60,6 +60,10 @@ wasmtime-runtime = [
 # and the underlying `telemetry/otlp` gate. Off by default — embedded users
 # who want OTel must opt in.
 otel = ["telemetry/otlp"]
+# App merge validators for claimed collections (`AccessHooks::new`,
+# `with_merge_validator`) and the governance sweep. Off by default: without it
+# every collection merges under ACP alone.
+governed-collections = ["db/governed-collections", "defra-p2p-adapter?/governed-collections"]
 
 [lib]
 bench = false

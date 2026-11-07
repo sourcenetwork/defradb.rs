@@ -283,13 +283,13 @@ impl<S: Store + 'static> IrohPeer<S> {
         // Natively it runs on the database's worker pool; in a browser the
         // page's one worker is this thread, so the sweep is a task here.
         // Either way it ends with the coordinator's shutdown.
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(all(feature = "governed-collections", not(target_arch = "wasm32")))]
         drop(db::merge::governance::start_governance_sweep(
             Arc::clone(&replication.merge_handler_inner),
             db::merge::governance::SWEEP_INTERVAL,
             coordinator.shutdown_handle(),
         ));
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(all(feature = "governed-collections", target_arch = "wasm32"))]
         {
             let sweep_handler = Arc::clone(&replication.merge_handler_inner);
             let sweep_shutdown = coordinator.shutdown_handle();

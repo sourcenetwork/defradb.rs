@@ -10,6 +10,7 @@ mod collection_block_links;
 mod collection_guard_race;
 mod collection_heads;
 mod collection_predecessor;
+#[cfg(feature = "governed-collections")]
 mod governance;
 mod head_failures;
 mod head_provider;

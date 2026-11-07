@@ -64,7 +64,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
             }
             match self.sweep_candidate(&cid).await {
                 Ok(Some(block)) => {
-                    if self.deferred.enqueue_ready(block) {
+                    if self.governance.deferred.enqueue_ready(block) {
                         enqueued += 1;
                     }
                 }
@@ -85,7 +85,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
     /// collection is not governed, one already merged in this process, or
     /// one a verdict rejected, which no arrival can change.
     async fn sweep_candidate(&self, cid: &Cid) -> Result<Option<MergeBlock>, MergeError> {
-        if self.has_merged_composite(cid) || self.rejected_governed.contains_key(cid) {
+        if self.has_merged_composite(cid) || self.governance.rejected.contains_key(cid) {
             return Ok(None);
         }
         let Some(data) = self

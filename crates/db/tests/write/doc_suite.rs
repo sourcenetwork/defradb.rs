@@ -1281,7 +1281,7 @@ struct CapturingRelease {
     released: Arc<SegQueue<cid::Cid>>,
 }
 
-impl db::merge::governance::LocalCommitRelease for CapturingRelease {
+impl db::event::emission::LocalCommitRelease for CapturingRelease {
     fn committed(&self, cid: cid::Cid, _block_data: bytes::Bytes) {
         self.released.push(cid);
     }

@@ -7,22 +7,8 @@ use defra_core::thread_bounds::MaybeSendSync;
 use storage::corekv::Store;
 
 use crate::database::spawn::spawn_task;
+use crate::event::emission::LocalCommitRelease;
 use crate::merge::merge_handler::DbMergeHandler;
-
-/// Told about each composite a local write commits, so composites deferred
-/// awaiting what the write created are released.
-///
-/// Waiters are otherwise released only from the merge path, which a local
-/// write bypasses: a composite awaiting a document this node then creates
-/// itself would wait for a peer to replay it or for the replication retry
-/// clock.
-pub trait LocalCommitRelease: MaybeSendSync {
-    /// `cid` and `block_data` are the composite the write committed.
-    ///
-    /// Called in commit-receipt order from the ordered event dispatch, which
-    /// must not wait, so the re-drive this triggers runs off the caller's task.
-    fn committed(&self, cid: Cid, block_data: Bytes);
-}
 
 /// [`LocalCommitRelease`] backed by the node's merge handler, which owns the
 /// deferred index. Held weakly: the handler holds the database that holds this.
@@ -39,7 +25,7 @@ where
         let Some(handler) = self.handler.upgrade() else {
             return;
         };
-        if !handler.deferred.has_waiters() {
+        if !handler.governance.deferred.has_waiters() {
             return;
         }
         let pool = handler.db.pool().cloned();

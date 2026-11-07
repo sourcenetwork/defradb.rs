@@ -78,6 +78,8 @@ iroh = ["p2p/iroh-transport"]
 # services that come with it.
 kms = ["dep:kms", "p2p/kms"]
 libp2p = ["dep:libp2p", "p2p/libp2p-transport", "db/p2p"]
+# Run the governance sweep beside the iroh peer's replication.
+governed-collections = ["db/governed-collections"]
 
 [lints]
 workspace = true

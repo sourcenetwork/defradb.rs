@@ -18,6 +18,7 @@ use crate::merge::acp_merge_handler::AcpMergeHandler;
 use crate::merge::broadcast_mutator::BroadcastMutator;
 use crate::merge::head_provider::DbHeadProvider;
 use crate::merge::merge_handler::DbMergeHandler;
+#[cfg(feature = "governed-collections")]
 use crate::merge::redriven_sink::SyncRedrivenSink;
 use crate::merge::txn_broadcaster::SyncTxnBroadcaster;
 
@@ -126,8 +127,11 @@ pub fn create_replication_stack_with_max_merge_depth<
         blockstore,
         max_merge_depth,
     ));
-    merge_handler_inner.set_redriven_merge_sink(Arc::new(SyncRedrivenSink::new(sync.clone())));
-    merge_handler_inner.install_local_commit_release();
+    #[cfg(feature = "governed-collections")]
+    {
+        merge_handler_inner.set_redriven_merge_sink(Arc::new(SyncRedrivenSink::new(sync.clone())));
+        merge_handler_inner.install_local_commit_release();
+    }
     let merge_handler = Arc::new(create_acp_merge_handler(merge_handler_inner.clone()));
     let broadcast_mutator = Arc::new(create_broadcast_mutator(db, sync.clone()));
     let txn_broadcaster: Arc<dyn TxnBroadcaster> = Arc::new(SyncTxnBroadcaster::new(sync));

@@ -2,6 +2,7 @@
 
 pub mod acp_merge_handler;
 pub mod broadcast_mutator;
+#[cfg(feature = "governed-collections")]
 pub mod governance;
 pub mod head_provider;
 pub mod merge_handler;
@@ -14,6 +15,7 @@ pub mod push_docs_common;
 pub mod push_docs_creator;
 mod push_docs_network;
 pub mod push_docs_replay;
+#[cfg(feature = "governed-collections")]
 pub mod redriven_sink;
 pub mod replication;
 pub mod replication_ack;
@@ -41,6 +43,7 @@ pub use push_docs::{
     retry_collection_commit, retry_doc, PushExistingDocsSeOptions,
 };
 pub use push_docs_replay::ReplayPushConfig;
+#[cfg(feature = "governed-collections")]
 pub use redriven_sink::SyncRedrivenSink;
 pub use replication::{
     attach_failure_channel, create_acp_merge_handler, create_broadcast_mutator,
