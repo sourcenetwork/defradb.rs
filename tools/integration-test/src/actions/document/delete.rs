@@ -36,10 +36,10 @@ impl Op for DeleteDoc {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        self.common.plain(Self::name())?;
+        let identity = self.common.client_identity(Self::name())?;
         state
             .block_on(state.node_on(self.common.node())?.delete_doc(
-                &state.context(self.txn),
+                &state.context_as(self.txn, identity),
                 &self.collection,
                 self.doc_id.as_str(),
             ))
@@ -59,12 +59,12 @@ impl Action for DeleteDoc {
 impl HttpRun for DeleteDoc {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.common.plain(Self::name())?;
+            let identity = action.common.client_identity(Self::name())?;
             let txn = state.txn_id(action.txn);
             let (collection, doc_id) =
                 (action.collection.clone(), action.doc_id.as_str().to_owned());
             state
-                .http_on(action.common.node(), |client| async move {
+                .http_as(action.common.node(), identity, |client| async move {
                     client
                         .delete_doc(txn.as_deref(), &collection, &doc_id)
                         .await
@@ -78,7 +78,7 @@ impl HttpRun for DeleteDoc {
 impl CliRun for DeleteDoc {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.common.plain(Self::name())?;
+            let identity = action.common.client_identity(Self::name())?;
             let args = [
                 "document",
                 "--collection-name",
@@ -88,7 +88,7 @@ impl CliRun for DeleteDoc {
                 action.doc_id.as_str(),
             ];
             state
-                .defra_client_on(action.common.node(), action.txn, &args)
+                .defra_client_as(action.common.node(), action.txn, identity, &args)
                 .map(|_| json!({ "deleted": true }))
                 .map_err(Failure::operation)
         });

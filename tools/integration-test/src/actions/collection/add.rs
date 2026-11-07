@@ -39,12 +39,12 @@ impl Op for AddCollection {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        self.check_arguments()?;
+        let identity = self.check_arguments()?;
         state
             .block_on(
                 state
                     .node_on(self.common.node())?
-                    .add_collection_as(&state.context(self.txn), self.sdl.as_str()),
+                    .add_collection_as(&state.context_as(self.txn, identity), self.sdl.as_str()),
             )
             .map(|_| json!({}))
             .map_err(|e| Failure::operation(e.to_string()))
@@ -53,15 +53,15 @@ impl Op for AddCollection {
 
 impl AddCollection {
     /// Fails on the arguments no client supports yet.
-    fn check_arguments(&self) -> Result<(), Failure> {
-        self.common.plain(Self::name())?;
+    fn check_arguments(&self) -> Result<Option<u64>, Failure> {
+        let identity = self.common.client_identity(Self::name())?;
         if !self.expected_results.is_null() {
             return Err(Failure::unsupported(format!(
                 "{} argument expectedResults",
                 Self::name()
             )));
         }
-        Ok(())
+        Ok(identity)
     }
 }
 
@@ -76,11 +76,11 @@ impl Action for AddCollection {
 impl HttpRun for AddCollection {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.check_arguments()?;
+            let identity = action.check_arguments()?;
             let sdl = action.sdl.as_str().to_owned();
             let txn = state.txn_id(action.txn);
             state
-                .http_on(action.common.node(), |client| async move {
+                .http_as(action.common.node(), identity, |client| async move {
                     client.schema_add(&sdl, txn.as_deref()).await
                 })?
                 .map(|_| json!({}))
@@ -92,11 +92,12 @@ impl HttpRun for AddCollection {
 impl CliRun for AddCollection {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.check_arguments()?;
+            let identity = action.check_arguments()?;
             state
-                .defra_client_on(
+                .defra_client_as(
                     action.common.node(),
                     action.txn,
+                    identity,
                     &["collection", "add", action.sdl.as_str()],
                 )
                 .map(|_| json!({}))
