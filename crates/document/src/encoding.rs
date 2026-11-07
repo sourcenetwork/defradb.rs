@@ -30,6 +30,16 @@ pub fn format_time_rfc3339_nano(t: &DateTime<FixedOffset>) -> String {
     }
 }
 
+/// A non-finite float as Go's `strconv.FormatFloat(f, 'g', -1, 64)` writes
+/// it, the text Go's `encoding/json` puts in its unsupported-value error.
+pub fn go_non_finite(f: f64) -> &'static str {
+    match f {
+        f if f.is_nan() => "NaN",
+        f if f > 0.0 => "+Inf",
+        _ => "-Inf",
+    }
+}
+
 /// Trim trailing zeros from the fractional seconds portion of an RFC3339 string.
 /// "2024-01-01T00:00:00.123000000Z" -> "2024-01-01T00:00:00.123Z"
 /// "2024-01-01T00:00:00.100000000Z" -> "2024-01-01T00:00:00.1Z"
@@ -532,7 +542,7 @@ fn from_hex_digit(b: u8) -> Option<u8> {
 /// This matches Go's encoding/json behavior which rejects NaN and Infinity.
 fn float64_to_json(f: f64) -> Result<serde_json::Value> {
     if !f.is_finite() {
-        return Err(Error::NonFiniteFloat(format!("{}", f)));
+        return Err(Error::NonFiniteFloat(go_non_finite(f).to_owned()));
     }
     // Match Go's json.Marshal behavior: float64 values that are whole numbers
     // are serialized without a decimal point (e.g., float64(21.0) → "21").
@@ -543,7 +553,7 @@ fn float64_to_json(f: f64) -> Result<serde_json::Value> {
     }
     serde_json::Number::from_f64(f)
         .map(serde_json::Value::Number)
-        .ok_or_else(|| Error::NonFiniteFloat(format!("{}", f)))
+        .ok_or_else(|| Error::NonFiniteFloat(go_non_finite(f).to_owned()))
 }
 
 /// Encode raw bytes as a lowercase hex JSON string.

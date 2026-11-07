@@ -1,9 +1,10 @@
-//! Generated from the conformance scenarios of tests/integration/mutation/add/txn_discard_test.go at defradb 137dc624052b.
+//! Generated from the conformance scenarios of tests/integration/mutation/add/txn_discard_test.go at defradb 307364d9d828.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{AddCollection, AddDoc, Request, TxnBegin, TxnDiscard};
 use integration_test::scenario::{captures, Common};
 use integration_test::test_case::TestCase;
+use integration_test::ClientType;
 use serde_json::json;
 
 #[test]
@@ -66,6 +67,12 @@ fn mutation_add_add_after_discard() {
             }
             .into(),
         ],
+        client_types: Some(&[
+            ClientType::InProcess,
+            ClientType::RustHttp,
+            ClientType::GoHttp,
+            ClientType::Cli,
+        ]),
         ..Default::default()
     }
     .execute();
