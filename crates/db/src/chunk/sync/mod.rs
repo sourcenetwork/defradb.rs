@@ -128,11 +128,9 @@ impl<S> ChunkWrites<'_, S>
 where
     S: Store + 'static,
 {
-    /// Creates the chunk documents in `plans` that don't exist yet. An existing
-    /// chunk is never rewritten, since the same hash means the same content,
-    /// so it keeps its vector. Every missing chunk's vector comes from the
-    /// memo; when any is not there yet, no chunk is written and every miss
-    /// is noted, so the wave after the attempt answers them all.
+    /// Creates the chunk documents in `plans` that don't exist yet, with
+    /// their vectors from the memo. On any miss nothing is written and every
+    /// miss is noted for one wave.
     pub(crate) async fn create_missing(
         &self,
         parent_doc_id: &str,

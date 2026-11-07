@@ -64,8 +64,7 @@ fn field(name: &str, field_type: ParsedType) -> ParsedField {
     }
 }
 
-/// Takes the parent's `@embedding` fields over `chunked` off the parent, with
-/// their indexes, so each chunk is embedded on its own text instead.
+/// Moves the parent's `@embedding` fields over `chunked`, with their indexes, onto the chunks.
 fn take_embedded_fields(parent: &mut ParsedTypeDef, chunked: &str) -> Result<Vec<ParsedField>> {
     let (embedded, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut parent.fields)
         .into_iter()

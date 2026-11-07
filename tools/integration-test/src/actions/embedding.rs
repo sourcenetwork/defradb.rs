@@ -108,11 +108,8 @@ fn answer(mut stream: TcpStream) {
     );
 }
 
-/// The test's embedding model. The first run of this action in a test gives
-/// the test a model of its own and captures [`EMBEDDING_CAPTURE`]; every run
-/// returns `{"embedded": [...]}`, the texts the model embedded for the test
-/// since the run before. With `failing` set, the model answers every later
-/// request with a server error, or works again when it is `false`.
+/// The test's embedding model. Returns `{"embedded": [...]}`, the texts it
+/// embedded for this run since the last call. `failing` makes it answer 500.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmbeddingModel {
