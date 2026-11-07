@@ -2402,9 +2402,10 @@ pub const PROPERTIES: &[Property] = &[
         family: "Document save",
         name: "INV_NoFork / INV_DeletedStaysDeleted / INV_RefusedOnlyDeleted",
         axis: Tla,
-        anchor: "crates/query/src/documents/mod.rs save; crates/defra-node/src/ops/document.rs Node::save_doc; tools/integration-test/tests/mutation/update/with_delete.rs update_save_deleted_doc_does_nothing",
+        anchor: "crates/query/src/documents/mod.rs save; crates/defra-node/src/ops/document.rs Node::save_doc; tools/integration-test/tests/testo/mutation/update/with_delete.rs update_save_deleted_doc_does_nothing",
         model_ref: "MC_DocumentSave_{Green,Red_NoDeletedCheck,Red_SplitTxn}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Document save",
@@ -2413,6 +2414,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/query/src/documents/mod.rs save; crates/query/src/plan/mutation/upsert.rs UpsertNode::next",
         model_ref: "DocumentSave (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Mutation value checks",
@@ -2421,6 +2423,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/document/src/encoding.rs trim_rfc3339_trailing_zeros, format_time_rfc3339_nano",
         model_ref: "Rfc3339Nano (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Mutation value checks",
@@ -2429,6 +2432,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/defra-core/src/doc_id.rs parse_uuid, ParsedDocId::from_string",
         model_ref: "DocIdText (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Mutation value checks",
@@ -2437,5 +2441,6 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/query/src/runner/mutation_inputs.rs normalize_mutation_input_fields, input_field_name; crates/document/src/document.rs Document::set",
         model_ref: "SecondaryRelation (lake build)",
         tiers: &[Boundary],
+        bound_by: "",
     },
 ];
