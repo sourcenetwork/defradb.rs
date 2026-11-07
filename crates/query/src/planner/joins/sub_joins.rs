@@ -338,18 +338,8 @@ impl Planner {
         )?;
 
         // Filter and check access before scoring, so a hidden child is never scored.
-        // At this point, relation sub-joins are in place so the filter can evaluate
-        // conditions on joined relation data (e.g., publisher.yearOpened).
         let (row_filter, alias_filter) = match &combined_filter {
-            Some(filter) => match filter.split_alias() {
-                // An alias under `_or` can't be split off; the whole filter waits for the scores.
-                (Some(row), _)
-                    if names_alias(&serde_json::Value::Object(row.conditions().clone())) =>
-                {
-                    (None, Some(filter.clone()))
-                }
-                split => split,
-            },
+            Some(filter) => filter.split_for_scores(),
             None => (None, None),
         };
         if let Some(filter) = row_filter {
@@ -387,16 +377,5 @@ impl Planner {
         child.child_scan_mapping = child_scan_mapping;
 
         Ok(child_plan_provides_ordering)
-    }
-}
-
-/// Whether a filter names `_alias` at any depth.
-fn names_alias(value: &serde_json::Value) -> bool {
-    match value {
-        serde_json::Value::Object(map) => {
-            map.contains_key("_alias") || map.values().any(names_alias)
-        }
-        serde_json::Value::Array(items) => items.iter().any(names_alias),
-        _ => false,
     }
 }
