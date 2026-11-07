@@ -9,14 +9,15 @@ are the whole text, and a small edit changes only the chunks near it.
 
 How the cutter works, in four steps:
 1. The text is a list of paragraphs. Each paragraph knows its characters, whether
-   it is a heading, its weight (how many characters it has without the blank
-   space around it) and its roll (a number below 2^64 taken from its hash).
-2. A fence goes before a paragraph when its roll is small enough for its weight:
-   every character has the same small chance, so a segment holds about four
-   chunks of text whatever the paragraph sizes. No fence ever goes right after a
-   heading. Fences cut the paragraphs into segments. A fence decision looks only
-   at a paragraph and whether the one before it is a heading; that is what keeps
-   edits local.
+   it is a heading, and its weight (how many characters it has without the blank
+   space around it).
+2. Paragraphs are grouped into units: a heading followed by text joins that
+   text, and every other paragraph is a unit of its own. A unit has a weight (its
+   paragraphs' weights added up) and a roll (a number below 2^64 taken from the
+   hash of its words). A fence goes before a unit when its roll is small enough
+   for its weight, so every character of text, body or heading, has the same
+   small chance to start a segment. Fences cut the units into segments. A fence
+   decision looks only at its own unit; that is what keeps edits local.
 3. Inside a segment, each paragraph becomes atoms: a short paragraph is one atom,
    a too-long one is cut into sentences, then words, then single characters,
    until every piece fits. Atoms are then packed greedily into chunks that fit. A
@@ -29,14 +30,13 @@ This file holds the definitions. The promises are in `Covers.lean`,
 `Bounded.lean` and `Local.lean`.
 
 What this model trusts. Two things happen in Rust before this model starts: the
-text is read as paragraphs, and each paragraph's heading flag, weight and roll
-are computed. The sentence and word cutters are modeled as any functions that
+text is read as paragraphs with their heading flags and weights, and the hash
+of a unit's words is computed (`rollOf`, any function here). The sentence and word cutters are modeled as any functions that
 cut a string into pieces which join back to it (`LevelsJoin` in `Covers.lean`); Rust unit tests
 check that law for the real cutters.
 
-Rust anchors: `split` in `crates/chunk-split/src/split/mod.rs`; `fence_before` in
-`crates/chunk-split/src/split/segments.rs`; `roll` in
-`crates/chunk-split/src/split/paragraphs.rs`; `atoms` in
+Rust anchors: `split` in `crates/chunk-split/src/split/mod.rs`; `units`,
+`fence_before` and `segments` in `crates/chunk-split/src/split/segments.rs`; `atoms` in
 `crates/chunk-split/src/split/atoms.rs`; `pack` in
 `crates/chunk-split/src/split/pack.rs`; `with_overlap` in
 `crates/chunk-split/src/split/overlap.rs`.
@@ -52,8 +52,6 @@ structure Para where
   heading : Bool
   -- How many characters it has without the blank space around it.
   weight : Nat
-  -- The first 8 bytes of its hash read as a number, so it is below `rollRange`.
-  roll : Nat
 
 -- How long a segment is on average, counted in chunks of `max` characters.
 def segmentChunks : Nat := 4
@@ -69,6 +67,8 @@ structure Config where
   levels : List (List Char → List (List Char))
   -- For the overlap: given the previous chunk, the prefixes it may lend, longest first.
   cands : List Char → List (List Char)
+  -- The roll of a unit: the first 8 bytes of the hash of its words, as a number.
+  rollOf : List Para → Nat
 
 -- One chunk: an optional copied prefix (the overlap) and its own part of the text.
 structure Chunk where
@@ -82,32 +82,50 @@ def Chunk.text (c : Chunk) : List Char :=
   -- The prefix comes first, then the core.
   c.pre ++ c.core
 
--- Should a new segment start before paragraph `cur`, whose predecessor is `prev`?
-def fence (cfg : Config) (prev cur : Para) : Bool :=
-  -- Never right after a heading, so a heading keeps its text;
-  !prev.heading
-  -- otherwise when the roll is below `weight` out of `segmentChunks * max`
-  -- parts of the roll range. Both sides are multiplied out, so no division rounds.
-  && decide (cur.roll * (segmentChunks * cfg.max) < cur.weight * rollRange)
-
--- Walk the paragraphs, growing the current segment `cur` whose last paragraph is
--- `last`, and closing it whenever a fence comes.
-def segsFrom (cfg : Config) (cur : List Para) (last : Para) : List Para → List (List Para)
-  -- No paragraphs left: the current segment is the last one.
+-- Walk a list, growing the current group `cur` whose last element is `last`, and
+-- starting a new group before every element `brk` puts a break in front of.
+def groupFrom {α : Type} (brk : α → α → Bool) (cur : List α) (last : α) : List α → List (List α)
+  -- Nothing left: the current group is the last one.
   | [] => [cur]
-  -- The next paragraph `q`:
+  -- The next element `q`:
   | q :: qs =>
-    -- with a fence before it, close the current segment and start a new one at `q`;
-    if fence cfg last q then cur :: segsFrom cfg [q] q qs
-    -- without one, `q` joins the current segment.
-    else segsFrom cfg (cur ++ [q]) q qs
+    -- with a break before it, close the current group and start a new one at `q`;
+    if brk last q then cur :: groupFrom brk [q] q qs
+    -- without one, `q` joins the current group.
+    else groupFrom brk (cur ++ [q]) q qs
 
--- Cut the paragraphs into segments.
-def segments (cfg : Config) : List Para → List (List Para)
-  -- No paragraphs, no segments.
+-- Cut a list into groups with the break rule `brk`.
+def group {α : Type} (brk : α → α → Bool) : List α → List (List α)
+  -- Nothing, no groups.
   | [] => []
-  -- Otherwise the first paragraph opens the first segment.
-  | p :: ps => segsFrom cfg [p] p ps
+  -- Otherwise the first element opens the first group.
+  | p :: ps => groupFrom brk [p] p ps
+
+-- Does a new unit start before `cur`? Yes, unless `prev` is a heading and `cur` is text.
+def unitBreak (prev cur : Para) : Bool :=
+  -- Only a heading followed by text stays together.
+  !(prev.heading && !cur.heading)
+
+-- Cut the paragraphs into units.
+def units (ps : List Para) : List (List Para) :=
+  -- Group them with the unit rule.
+  group unitBreak ps
+
+-- A unit's weight: its paragraphs' weights added up.
+def unitWeight (u : List Para) : Nat :=
+  -- Add the weights one by one.
+  (u.map Para.weight).sum
+
+-- Should a new segment start before unit `u`?
+def fence (cfg : Config) (u : List Para) : Bool :=
+  -- When the roll is below `weight` out of `segmentChunks * max` parts of the roll
+  -- range. Both sides are multiplied out, so no division rounds.
+  decide (cfg.rollOf u * (segmentChunks * cfg.max) < unitWeight u * rollRange)
+
+-- Cut the paragraphs into segments, each a list of units.
+def segments (cfg : Config) (ps : List Para) : List (List (List Para)) :=
+  -- Group the units, with a fence decided by the unit after it alone.
+  group (fun _ u => fence cfg u) (units ps)
 
 -- Cut a too-long string with the given cutters, keeping only pieces that fit.
 def refine (max : Nat) : List (List Char → List (List Char)) → List Char → List (List Char)
@@ -209,57 +227,55 @@ def segChunks (cfg : Config) (seg : List Para) : List Chunk :=
 
 -- The whole cutter: segments, then each segment's chunks, in order.
 def split (cfg : Config) (ps : List Para) : List Chunk :=
-  -- Every segment is chunked on its own, and the results are put one after another.
-  (segments cfg ps).flatMap (segChunks cfg)
+  -- Every segment's paragraphs are chunked on their own, one segment after another.
+  (segments cfg ps).flatMap (fun seg => segChunks cfg seg.flatten)
 
 -- The text the paragraphs make when put back together.
 def joined (ps : List Para) : List Char :=
   -- Each paragraph's characters, one after another.
   (ps.map Para.text).flatten
 
--- Promise: the hash never cuts a heading off from the paragraph under it.
-theorem heading_keeps_text (cfg : Config) (prev cur : Para)
-    -- The previous paragraph is a heading.
-    (hh : prev.heading = true) :
-    -- Then no fence goes between them.
-    fence cfg prev cur = false := by
-  -- The rule starts with "not after a heading", which is false here.
-  simp [fence, hh]
+-- Promise: a heading and the text right under it are always in one unit, so no
+-- fence can come between them.
+theorem heading_keeps_text (prev cur : Para)
+    -- The previous paragraph is a heading and the next one is text.
+    (hh : prev.heading = true) (hc : cur.heading = false) :
+    -- Then no unit starts between them.
+    unitBreak prev cur = false := by
+  -- The rule keeps exactly this pair together.
+  simp [unitBreak, hh, hc]
 
--- Promise: the fence after a paragraph reads only its heading flag, not its text.
-theorem fence_after_reads_only_the_heading (cfg : Config) (prev prev' cur : Para)
-    -- Two paragraphs that agree on being a heading or not,
-    (h : prev.heading = prev'.heading) :
-    -- decide the fence before `cur` the same way.
-    fence cfg prev cur = fence cfg prev' cur := by
-  -- The rule reads `prev` only through its heading flag.
-  simp [fence, h]
+-- Promise: where units start depends only on which paragraphs are headings.
+theorem unit_break_reads_only_headings (prev prev' cur cur' : Para)
+    -- Two pairs of paragraphs that agree on being headings or not
+    (hp : prev.heading = prev'.heading) (hc : cur.heading = cur'.heading) :
+    -- decide the unit break the same way.
+    unitBreak prev cur = unitBreak prev' cur' := by
+  -- The rule reads only the two heading flags.
+  simp [unitBreak, hp, hc]
 
--- Promise: a paragraph as long as a whole segment always starts one, unless a
--- heading comes right before it.
-theorem long_paragraph_fences (cfg : Config) (prev cur : Para)
+-- Promise: a unit as heavy as a whole segment always starts one.
+theorem long_unit_fences (cfg : Config) (u : List Para)
     -- The limit is at least one character,
     (hmax : 1 ≤ cfg.max)
     -- the roll is a real 8-byte roll,
-    (hroll : cur.roll < rollRange)
-    -- the paragraph weighs at least a whole segment,
-    (hw : segmentChunks * cfg.max ≤ cur.weight)
-    -- and the one before it is not a heading.
-    (hh : prev.heading = false) :
+    (hroll : cfg.rollOf u < rollRange)
+    -- and the unit weighs at least a whole segment.
+    (hw : segmentChunks * cfg.max ≤ unitWeight u) :
     -- Then a fence goes before it.
-    fence cfg prev cur = true := by
+    fence cfg u = true := by
   -- A segment's worth of characters is more than zero.
   have hpos : 0 < segmentChunks * cfg.max := by
     simp only [segmentChunks]; omega
-  -- The roll times that is below the roll range times that,
-  have h1 : cur.roll * (segmentChunks * cfg.max) < rollRange * (segmentChunks * cfg.max) :=
+  -- The roll times the segment size is below the roll range times the segment size,
+  have h1 : cfg.rollOf u * (segmentChunks * cfg.max) < rollRange * (segmentChunks * cfg.max) :=
     Nat.mul_lt_mul_of_pos_right hroll hpos
   -- which is at most the roll range times the weight.
-  have h2 : rollRange * (segmentChunks * cfg.max) ≤ cur.weight * rollRange := by
-    rw [Nat.mul_comm cur.weight]
+  have h2 : rollRange * (segmentChunks * cfg.max) ≤ unitWeight u * rollRange := by
+    rw [Nat.mul_comm (unitWeight u)]
     exact Nat.mul_le_mul_left _ hw
-  -- So the roll is small enough, and nothing else stops the fence.
-  simp only [fence, hh, Bool.not_false, Bool.true_and, decide_eq_true_eq]
+  -- So the roll is small enough.
+  simp only [fence, decide_eq_true_eq]
   omega
 
 end ChunkSplit

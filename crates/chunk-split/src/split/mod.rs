@@ -1,15 +1,16 @@
 //! The `@chunk` splitter.
 //!
-//! It splits the text into paragraphs, groups them into segments of a few
-//! `max_chars` each, and packs each segment into chunks of at most `max_chars`
-//! characters. A heading starts a new chunk once the current one is half full.
-//! A chunk can repeat the last sentences of the chunk before it. Lengths count
-//! characters, not bytes.
+//! It splits the text into paragraphs, groups them into units (a heading and
+//! the paragraph under it), and groups units into segments of about
+//! `SEGMENT_CHUNKS` times `max_chars` on average. Each segment is packed into
+//! chunks of at most `max_chars` characters, and a heading starts a new chunk
+//! once the current one is half full. A chunk can repeat the last sentences of
+//! the chunk before it. Lengths count characters, not bytes.
 //!
 //! The Lean proof `proofs/lean/ChunkSplit` shows that the chunks cover the text
 //! with no gaps, that no chunk is too long, and that an edit which keeps its
-//! paragraph's heading flag and the fence before it only changes the chunks of
-//! its segment.
+//! paragraph's heading flag and the fence before its unit only changes the
+//! chunks of its segment.
 
 mod atoms;
 mod overlap;
@@ -19,7 +20,7 @@ mod segments;
 
 pub use atoms::{cut_sentences, cut_words};
 pub use paragraphs::{paragraphs, Para};
-pub use segments::{fence_before, SEGMENT_CHUNKS};
+pub use segments::{fence_before, segments, units, Unit, SEGMENT_CHUNKS};
 
 use crate::list::text_hash;
 

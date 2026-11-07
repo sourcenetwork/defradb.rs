@@ -37,7 +37,7 @@ fn breaks_before(rest: &[Atom<'_>], cur_chars: usize, max: usize) -> bool {
     rest[0].heading && (2 * cur_chars >= max || cur_chars + unit_chars(rest) > max)
 }
 
-// The heading run at the front of `rest` and the first piece of text after it.
+// A heading stays with the text under it, so both count as one unit.
 fn unit_chars(rest: &[Atom<'_>]) -> usize {
     let text = rest
         .iter()

@@ -192,41 +192,48 @@ theorem overlapFrom_cores (cfg : Config) :
   -- One more core: its chunk keeps it as the core, and the rest follow.
   | cons c cs ih => intro prev; simp [overlapFrom, ih]
 
--- Promise: cutting into segments keeps every paragraph, in order.
-theorem segsFrom_flatten (cfg : Config) :
-    -- For any remaining paragraphs, current segment, and last paragraph,
-    ∀ (ps : List Para) (cur : List Para) (last : Para),
-      -- the segments join to the current segment followed by the remaining paragraphs.
-      (segsFrom cfg cur last ps).flatten = cur ++ ps := by
-  -- Take the paragraphs.
+-- Promise: grouping keeps every element, in order.
+theorem groupFrom_flatten {α : Type} (brk : α → α → Bool) :
+    -- For any remaining elements, current group, and last element,
+    ∀ (ps : List α) (cur : List α) (last : α),
+      -- the groups join to the current group followed by the remaining elements.
+      (groupFrom brk cur last ps).flatten = cur ++ ps := by
+  -- Take the elements.
   intro ps
   -- Go through them one at a time.
   induction ps with
-  -- None left: the current segment is the only one.
-  | nil => intro cur last; simp [segsFrom]
-  -- One more paragraph `q`:
+  -- None left: the current group is the only one.
+  | nil => intro cur last; simp [groupFrom]
+  -- One more element `q`:
   | cons q qs ih =>
-    -- take the current segment and last paragraph,
+    -- take the current group and last element,
     intro cur last
     -- open the definition,
-    simp only [segsFrom]
-    -- and split on whether a fence comes before `q`.
+    simp only [groupFrom]
+    -- and split on whether a break comes before `q`.
     split
-    -- A fence: the current segment closes and `q` opens the next.
+    -- A break: the current group closes and `q` opens the next.
     · simp [ih]
-    -- No fence: `q` joins the current segment.
+    -- No break: `q` joins the current group.
     · simp [ih]
 
--- Promise: the segments of a text, joined, are its paragraphs.
-theorem segments_flatten (cfg : Config) (ps : List Para) :
-    -- Joining the segments gives the paragraphs back.
-    (segments cfg ps).flatten = ps := by
-  -- Look at whether there are any paragraphs.
+-- Promise: the groups of a list, joined, are the list.
+theorem group_flatten {α : Type} (brk : α → α → Bool) (ps : List α) :
+    -- Joining the groups gives the list back.
+    (group brk ps).flatten = ps := by
+  -- Look at whether the list is empty.
   cases ps with
-  -- None: no segments.
-  | nil => simp [segments]
-  -- Some: the walk starts at the first paragraph and keeps all of them.
-  | cons p ps => simp [segments, segsFrom_flatten]
+  -- Empty: no groups.
+  | nil => simp [group]
+  -- Not empty: the walk starts at the first element and keeps all of them.
+  | cons p ps => simp [group, groupFrom_flatten]
+
+-- Promise: the segments' units, joined twice, are the paragraphs.
+theorem segments_flatten (cfg : Config) (ps : List Para) :
+    -- Joining the segments into units, and the units into paragraphs, gives them back.
+    (segments cfg ps).flatten.flatten = ps := by
+  -- Segments join to the units, and units join to the paragraphs.
+  simp only [segments, units, group_flatten]
 
 -- Promise: one segment's chunk cores join to that segment's text.
 theorem segChunks_cores (cfg : Config) (h : LevelsJoin cfg) (seg : List Para) :
@@ -248,8 +255,9 @@ theorem covers (cfg : Config) (h : LevelsJoin cfg) (ps : List Para) :
     -- The cores of all chunks, joined, equal the paragraphs joined.
     ((split cfg ps).map Chunk.core).flatten = joined ps := by
   -- For any list of segments, the chunks' cores join to the segments' text.
-  have step : ∀ segs : List (List Para),
-      ((segs.flatMap (segChunks cfg)).map Chunk.core).flatten = joined segs.flatten := by
+  have step : ∀ segs : List (List (List Para)),
+      ((segs.flatMap (fun seg => segChunks cfg seg.flatten)).map Chunk.core).flatten =
+        joined segs.flatten.flatten := by
     -- Take the segments.
     intro segs
     -- Go through them one at a time.

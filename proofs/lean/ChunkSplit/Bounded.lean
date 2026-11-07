@@ -140,9 +140,11 @@ theorem packFrom_fits (max : Nat) :
     · exact ih a.text a.heading ha.2 hrest c hc
     -- The core was not empty:
     · rename_i hne
+      -- The core is not empty.
       have hne' : cur ≠ [] := by
-        intro h
-        simp [h] at hne
+        intro hnil
+        simp [hnil] at hne
+      -- Next, look at whether `a` fits.
       split at hc
       -- `a` would fit:
       · rename_i hle
@@ -237,7 +239,7 @@ theorem bounded (cfg : Config) (hmax : 1 ≤ cfg.max) (ps : List Para) :
   intro ch hch
   -- It belongs to some segment's chunks.
   simp only [split, List.mem_flatMap] at hch
-  obtain ⟨seg, _, hch⟩ := hch
+  obtain ⟨_, _, hch⟩ := hch
   -- Those are the segment's packed atoms with overlap.
   simp only [segChunks] at hch
   -- With overlap they fit if every packed core fits,
