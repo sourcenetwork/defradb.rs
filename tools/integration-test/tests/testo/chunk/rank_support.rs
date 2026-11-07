@@ -2,7 +2,7 @@
 
 use integration_test::actions::{Actions, AddDoc, Request};
 use integration_test::m;
-use integration_test::scenario::Common;
+use integration_test::scenario::{captures, Common};
 use serde_json::{json, Value};
 
 use super::embed_support::paragraph;
@@ -24,11 +24,23 @@ pub fn body_about(topics: &[&str]) -> String {
 
 /// Adds an article titled `title` with a paragraph per topic, as `identity`.
 pub fn add_article_about(title: &str, topics: &[&str], identity: Option<u64>) -> Actions {
+    add_article(
+        json!({ "title": title, "body": body_about(topics) }),
+        identity,
+        None,
+    )
+}
+
+/// Adds the article `doc` as `identity`, naming its docID `capture` when given.
+pub fn add_article(doc: Value, identity: Option<u64>, capture: Option<&str>) -> Actions {
     AddDoc {
         collection: "Article".into(),
-        doc_map: Some(json!({ "title": title, "body": body_about(topics) })),
+        doc_map: Some(doc),
         common: Common {
             identity_seed: identity,
+            capture: capture
+                .map(|name| captures([(name, "/docID")]))
+                .unwrap_or_default(),
             ..Default::default()
         },
         ..Default::default()

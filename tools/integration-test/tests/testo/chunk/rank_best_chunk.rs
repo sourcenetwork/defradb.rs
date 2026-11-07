@@ -24,15 +24,35 @@ fn articles_rank_by_their_best_chunk_through_the_chunk_index() {
             ]),
         )
         .into(),
+        // Seven reads: the two nearest chunks, their two articles, and the three
+        // listed chunks that score them exactly.
         explained(
             ", limit: 2",
             json!({
                 "iterations": 3,
-                "docFetches": 2,
-                "fieldFetches": 6,
+                "docFetches": 7,
+                "fieldFetches": 26,
                 "indexFetches": 1,
                 "vectorIndex": CHUNK_VECTOR_INDEX,
             }),
+        )
+        .into(),
+    ])
+    .execute();
+}
+
+#[test]
+#[mantra_macros::req_test("defra.chunk.rank.offset")]
+fn an_offset_skips_the_best_articles() {
+    TestCase::from_actions(vec![
+        model_embedded(&[]),
+        add_embedded_collection(None),
+        add_article_about("late", &["music", "rivers"], None),
+        add_article_about("half", &["rivers and engines"], None),
+        add_article_about("music", &["music", "music"], None),
+        ranked(
+            ", limit: 1, offset: 1",
+            json!([{ "title": "half", "sim": score([1.0, 1.0, 0.0]) }]),
         )
         .into(),
     ])

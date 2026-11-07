@@ -1,6 +1,7 @@
 //! A similarity query on articles that the chunk index cannot answer scores
 //! every article from all its chunks, and says why (`defra.chunk.rank.unrouted`).
 
+use integration_test::actions::Request;
 use integration_test::m;
 use integration_test::test_case::TestCase;
 use serde_json::json;
@@ -36,3 +37,26 @@ fn a_query_without_a_limit_scores_every_article_from_all_its_chunks() {
     ])
     .execute();
 }
+
+#[test]
+#[mantra_macros::req_test("defra.chunk.rank.wrong_length")]
+fn a_vector_of_the_wrong_length_names_the_chunk_field() {
+    TestCase::from_actions(vec![
+        model_embedded(&[]),
+        add_embedded_collection(None),
+        add_article_about("rivers", &["rivers"], None),
+        Request {
+            request: r#"query { Article(order: {_alias: {sim: DESC}}, limit: 1) {
+                title
+                sim: SIMILARITY(body_v: {vector: [1, 0]})
+            } }"#
+                .into(),
+            expected_error: Some(WRONG_LENGTH.into()),
+            ..Default::default()
+        }
+        .into(),
+    ])
+    .execute();
+}
+
+const WRONG_LENGTH: &str = "source and vector must be of the same length. Source: 3, Vector: 2, Field: Article__body_chunk.body_v";

@@ -12,6 +12,12 @@ use super::support::{on, CHUNKS};
 /// `Article` with its body chunked and each chunk embedded, under `policy`
 /// when one is given.
 pub fn embedded_schema(policy: Option<&str>) -> Text {
+    article_schema(policy, "dimensions: 3", "", "")
+}
+
+/// [`embedded_schema`] with `index` as the vector index's arguments, `fields`
+/// added to `Article`, and `types` after it.
+pub fn article_schema(policy: Option<&str>, index: &str, fields: &str, types: &str) -> Text {
     let directive = match policy {
         Some(capture) => Text::concat([
             Text::from(r#"@policy(id: ""#),
@@ -23,17 +29,19 @@ pub fn embedded_schema(policy: Option<&str>) -> Text {
     Text::concat([
         Text::from("type Article "),
         directive,
-        Text::from(
-            r#" {
+        Text::from(format!(
+            r#" {{
                 title: String
+                {fields}
                 body: String @chunk(maxChars: 64)
-                body_v: [Float32!] @embedding(fields: ["body"], "#,
-        ),
+                body_v: [Float32!] @embedding(fields: ["body"], "#
+        )),
         Text::reference(EMBEDDING_CAPTURE),
-        Text::from(
-            r#") @index(vector: {dimensions: 3})
-            }"#,
-        ),
+        Text::from(format!(
+            r#") @index(vector: {{{index}}})
+            }}
+            {types}"#
+        )),
     ])
 }
 
