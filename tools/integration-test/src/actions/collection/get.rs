@@ -45,12 +45,12 @@ impl Op for GetCollections {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        self.common.plain(Self::name())?;
+        let identity = self.common.client_identity(Self::name())?;
         let collections = state
             .block_on(
                 state
                     .node_on(self.common.node())?
-                    .get_collections_as(&state.context(self.txn), &self.selector()),
+                    .get_collections_as(&state.context_as(self.txn, identity), &self.selector()),
             )
             .map_err(|e| Failure::operation(e.to_string()))?;
         Ok(json!({ "collections": collections }))
@@ -79,10 +79,10 @@ impl Action for GetCollections {
 impl HttpRun for GetCollections {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.common.plain(Self::name())?;
+            let identity = action.common.client_identity(Self::name())?;
             let (txn, selector) = (state.txn_id(action.txn), action.selector());
             let collections = state
-                .http_on(action.common.node(), |client| async move {
+                .http_as(action.common.node(), identity, |client| async move {
                     client.get_collections(txn.as_deref(), &selector).await
                 })?
                 .map_err(|e| Failure::operation(e.to_string()))?;

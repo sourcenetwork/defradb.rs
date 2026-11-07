@@ -56,3 +56,17 @@ testo index::vector_fallback_warning::vector_index_warning_selective_filter_stil
 testo index::vector_fallback_warning::vector_index_warning_with_filter_reports_warning #2366
 testo query::simple::with_similarity_vector_index::query_simple_with_similarity_on_vector_index_ascending_order_full_scans #2366
 testo query::simple::with_similarity_vector_index::query_simple_with_similarity_on_vector_index_no_order_does_not_use_index #2366
+testo acp::nac::add_document::nac_gates_add_document_no_identity_not_authorized_error #2680
+testo acp::nac::add_document::nac_gates_add_document_wrong_identity_not_authorized_error #2680
+testo acp::nac::dac_access_by_node_owner_nac_on::nac_with_dac_enabled_access_by_node_owner_does_not_own_the_document_allow_access #2681
+testo acp::nac::delete_document::nac_gates_delete_document_no_identity_not_authorized_error #2680
+testo acp::nac::delete_document::nac_gates_delete_document_wrong_identity_not_authorized_error #2680
+testo acp::nac::relation_admin::add_document::nac_admin_relation_can_add_document #2680
+testo acp::nac::relation_admin::delete_document::nac_admin_relation_can_delete_document #2680
+testo acp::nac::relation_admin::update_document::nac_admin_relation_can_update_document #2680
+testo acp::nac::truncate_collection::nac_gates_truncate_collection_no_identity_not_authorized_error #2680
+testo acp::nac::truncate_collection::nac_gates_truncate_collection_wrong_identity_not_authorized_error #2680
+testo acp::nac::update_document_with_filter::nac_gates_update_document_with_filter_no_identity_not_authorized_error #2680
+testo acp::nac::update_document_with_filter::nac_gates_update_document_with_filter_wrong_identity_not_authorized_error #2680
+testo acp::nac::update_document::nac_gates_update_document_no_identity_not_authorized_error #2680
+testo acp::nac::update_document::nac_gates_update_document_wrong_identity_not_authorized_error #2680

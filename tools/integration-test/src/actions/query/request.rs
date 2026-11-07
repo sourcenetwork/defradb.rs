@@ -56,12 +56,13 @@ impl Op for Request {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        self.check_arguments()?;
+        let identity = self.check_arguments()?;
         state
             .block_on(
-                state
-                    .node_on(self.common.node())?
-                    .execute_request_as(&state.context(self.txn), self.query_request()),
+                state.node_on(self.common.node())?.execute_request_as(
+                    &state.context_as(self.txn, identity),
+                    self.query_request(),
+                ),
             )
             .map(|response| {
                 let extensions = response
@@ -118,8 +119,8 @@ impl Request {
     }
 
     /// Fails on the arguments no client supports yet.
-    fn check_arguments(&self) -> Result<(), Failure> {
-        self.common.plain(Self::name())?;
+    fn check_arguments(&self) -> Result<Option<u64>, Failure> {
+        let identity = self.common.client_identity(Self::name())?;
         let unsupported = [
             ("nonFiniteFloats", self.non_finite_floats.is_some()),
             ("operationName", self.operation_name.is_some()),
@@ -129,7 +130,7 @@ impl Request {
                 "{} argument {name}",
                 Self::name()
             ))),
-            None => Ok(()),
+            None => Ok(identity),
         }
     }
 
@@ -177,12 +178,12 @@ impl Action for Request {
 impl HttpRun for Request {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.check_arguments()?;
+            let identity = action.check_arguments()?;
             let request = action.request.as_str().to_owned();
             let variables = action.variables.clone();
             let txn = state.txn_id(action.txn);
             state
-                .http_on(action.common.node(), |client| async move {
+                .http_as(action.common.node(), identity, |client| async move {
                     client.graphql(&request, variables, txn).await
                 })?
                 .map(|response| {
@@ -201,14 +202,14 @@ impl HttpRun for Request {
 impl CliRun for Request {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.check_arguments()?;
+            let identity = action.check_arguments()?;
             let variables = action.variables.as_ref().map(Value::to_string);
             let mut args = vec!["query", action.request.as_str()];
             if let Some(variables) = &variables {
                 args.extend(["--variables", variables.as_str()]);
             }
             state
-                .defra_client_on(action.common.node(), action.txn, &args)
+                .defra_client_as(action.common.node(), action.txn, identity, &args)
                 .map_err(Failure::operation)
                 .and_then(|envelope| action.typed(envelope))
         });
