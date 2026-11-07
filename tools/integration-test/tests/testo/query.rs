@@ -36,6 +36,7 @@ mod commits {
     mod with_null_input;
 }
 mod cyclic_fragments;
+mod mutation_introspection;
 mod optional_variables;
 mod relation_field_args;
 mod schema_descriptions;

@@ -31,7 +31,8 @@ use commits::{
     build_commits_order_arg, build_signature_type,
 };
 use input_types::{
-    build_field_enum, build_filter_input_type, build_mutation_input_type, build_order_input_type,
+    build_explicit_field_enum, build_field_enum, build_filter_input_type,
+    build_mutation_input_type, build_order_input_type,
 };
 use mutations::{build_explain_enum, build_mutation_type, build_ordering_enum};
 use operators::{
@@ -106,6 +107,9 @@ pub fn build_introspection_schema(
         // Create Field enum for this collection (e.g., UserField)
         let field_enum = build_field_enum(collection);
         schema_builder = schema_builder.register(field_enum);
+        if !collection.is_embedded_only {
+            schema_builder = schema_builder.register(build_explicit_field_enum(collection));
+        }
 
         // Add mutation input types (needed even for embedded types since
         // non-embedded types may reference them in their mutation inputs)
