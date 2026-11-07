@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use acp::nac::{NacStatus, NodePermission};
 use acp::ZanzibarStore;
+#[cfg(not(target_arch = "wasm32"))]
 use acp::{ScopeAttempt, ScopeValue};
 use defra_core::thread_bounds::{MaybeSend, MaybeSendSync};
 use identity::Did;
@@ -48,6 +49,7 @@ pub struct NacRelationshipRequest {
 }
 
 /// The winning try's value with the status and owner it committed.
+#[cfg(not(target_arch = "wasm32"))]
 type Committed<T> = (T, NacStatus, Option<Did>);
 
 impl<S> NacManager<S>
@@ -58,6 +60,7 @@ where
     /// the committed status and owner; nothing after the commit can fail it.
     /// `None` when the store has no scopes of its own and the caller writes
     /// through it directly.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) async fn in_write<T, F, Fut>(&self, op: F) -> Result<Option<T>>
     where
         T: MaybeSend + 'static,
@@ -109,6 +112,18 @@ where
                 .downcast::<Error>()
                 .map_err(|_| Error::Acp("a NAC write refused with an unknown error".into()))?),
         }
+    }
+
+    /// No wasm store runs NAC's tries (`ZanzibarStore::transact` keeps its
+    /// default there), so the caller always writes through its own scope.
+    #[cfg(target_arch = "wasm32")]
+    pub(super) async fn in_write<T, F, Fut>(&self, _op: F) -> Result<Option<T>>
+    where
+        T: MaybeSend + 'static,
+        F: Fn(Arc<NacManager<dyn ZanzibarStore>>) -> Fut + MaybeSendSync + 'static,
+        Fut: Future<Output = Result<T>> + MaybeSend + 'static,
+    {
+        Ok(None)
     }
 
     /// Make `request` for `caller`, deciding in the write. Whether the
@@ -176,6 +191,7 @@ where
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn acp_error(error: impl std::fmt::Display) -> Error {
     Error::Acp(error.to_string())
 }

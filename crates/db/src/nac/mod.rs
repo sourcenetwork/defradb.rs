@@ -68,6 +68,7 @@ impl NacConfig {
     }
 
     /// Runs a status change gets in all, the first included.
+    #[cfg(not(target_arch = "wasm32"))]
     fn attempts(&self) -> u32 {
         storage::corekv::engine_retry_options(
             self.max_txn_retries

@@ -2,16 +2,18 @@
 
 use std::sync::Arc;
 
-use storage::corekv::{
-    IterOptions, Reader, RetryAttemptError, RetryAttemptValue, RetryOptions, Store, Writer,
-};
+use storage::corekv::{IterOptions, Reader, Store, Writer};
+#[cfg(not(target_arch = "wasm32"))]
+use storage::corekv::{RetryAttemptError, RetryAttemptValue, RetryOptions};
 use storage::namespace::{Namespace, NamespacedStore};
 #[cfg(not(target_arch = "wasm32"))]
 use storage::RegolithStore;
 
 use identity::Did;
 use zanzibar::error::{Error, Result};
-use zanzibar::store::{ScopeAttempt, ScopeOutcome, ZanzibarStore};
+use zanzibar::store::ZanzibarStore;
+#[cfg(not(target_arch = "wasm32"))]
+use zanzibar::store::{ScopeAttempt, ScopeOutcome};
 use zanzibar::types::{ObjectRef, Policy, Relationship, Subject};
 
 /// Persistent Zanzibar store backed by any Store implementation.
@@ -122,6 +124,9 @@ impl<S: Store> ZanzibarStore for PersistentZanzibarStore<S> {
         true
     }
 
+    // NAC is the only caller, and no wasm client runs NAC, so the browser
+    // keeps the default and builds no shared handle to a single-thread txn.
+    #[cfg(not(target_arch = "wasm32"))]
     async fn transact(
         &self,
         max_attempts: u32,

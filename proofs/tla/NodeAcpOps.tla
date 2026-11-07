@@ -70,6 +70,7 @@
 \*                                          then the change, all in one try's scope
 \*   crates/acp/src/zanzibar/store/persistent.rs
 \*     PersistentZanzibarStore::transact    the tries, through datastore::transact
+\*                                          (native only: no wasm client runs NAC)
 \*   crates/db/src/nac/mod.rs
 \*     NacManager::initialize               the restart
 EXTENDS Naturals, Sequences, FiniteSets   \* indexing, counting and set sizes
