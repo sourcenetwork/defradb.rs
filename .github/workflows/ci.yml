@@ -812,7 +812,7 @@ jobs:
           compression-level: 0
 
   testo:
-    name: ${{ matrix.client == 'legacy' && 'Legacy integration binaries' || format('Testo ({0}, {1}/3)', matrix.client, matrix.shard) }}
+    name: ${{ matrix.client == 'legacy' && 'Legacy integration binaries' || format('Testo ({0})', matrix.client) }}
     needs: [ci-scope, build-binaries, go-defradb, testo-archive]
     if: needs.ci-scope.outputs.full == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
@@ -821,11 +821,13 @@ jobs:
       fail-fast: false
       matrix:
         client: [in-process, rust-http, go-http, cli]
-        shard: [1, 2, 3]
+        # One job per client: with the binaries built once in testo-archive,
+        # each client runs in a couple of minutes, so more shards only add
+        # runner start-up. Raise it if a client's job grows past ~10 minutes.
+        shard: [1]
         include:
           - client: legacy
             shard: 1
-            shards: 1
     env:
       DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defra
       DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defra-iroh
@@ -842,7 +844,7 @@ jobs:
       # known-failure entry would fail every run it passes, so the test is left
       # out here instead of listed; run it again once #2089 is fixed.
       LEGACY_FILTER: >-
-        binary(legacy) & test(/^(cursor|http_contract|issue1194_repro|acp_replay_outage_cross_runtime)::/)
+        binary(legacy) & test(/^(http_contract|issue1194_repro|acp_replay_outage_cross_runtime)::/)
         & not test(=acp_replay_outage_cross_runtime::c_rust_to_go_outage_replay)
       # Go gives Foo the wrong ID beside FooBar only in some runs (#2528), so a
       # known-failure entry would fail the runs it passes; go-http leaves it out.
@@ -902,7 +904,7 @@ jobs:
         run: |
           set +e
           cargo nextest run $ARCHIVE -E "$FILTER" \
-            --partition hash:${{ matrix.shard }}/${{ matrix.shards || 3 }} --no-fail-fast
+            --partition hash:${{ matrix.shard }}/${{ matrix.shards || 1 }} --no-fail-fast
           echo "status=$?" >> "$GITHUB_OUTPUT"
       - name: Report
         if: always() && steps.run.outcome == 'success'
@@ -916,10 +918,10 @@ jobs:
           cp "$JUNIT" "testo-report/$CLIENT-${{ matrix.shard }}.xml"
           # JUnit leaves out skipped tests, so the list says what this shard selected.
           cargo nextest list $ARCHIVE -E "$FILTER" \
-            --partition hash:${{ matrix.shard }}/${{ matrix.shards || 3 }} \
+            --partition hash:${{ matrix.shard }}/${{ matrix.shards || 1 }} \
             --message-format json > target/nextest-list.json
           bun .github/scripts/testo-report.ts shard "$JUNIT" target/nextest-list.json \
-            "$CLIENT" "${{ matrix.shard }}/${{ matrix.shards || 3 }}" \
+            "$CLIENT" "${{ matrix.shard }}/${{ matrix.shards || 1 }}" \
             ".github/testo/known-failures/$CLIENT.txt" "testo-report/$CLIENT-${{ matrix.shard }}.json"
           if [ "$STATUS" != 0 ] && ! grep -q '<failure' "$JUNIT"; then
             echo "::error::nextest exited $STATUS without a failing test"

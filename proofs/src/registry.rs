@@ -943,6 +943,33 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A gossip announcement refused for rate, saturation or capacity is
+        // written as a durable pending record and promoted into a free slot
+        // later; gossip has no retry, so dropping it loses the document.
+        // Past a per-peer or total byte budget it is dropped and reported.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_HeardIsOwned / INV_HeardIsOwnedOrReported / INV_NothingDropped / LIVE_AllMerged / LIVE_AllSettled: a refused gossip head is kept durably, or reported past its budget",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/event_dispatcher.rs run_event_dispatcher, kept_when_refused; crates/p2p/src/sync/coordinator/event_handler/mod.rs handle_transport_event, handle_transport_event_with_admission; crates/p2p/src/sync/coordinator/event_handler/gossip.rs handle_gossip_message, defer_refused_gossip; crates/p2p/src/sync/manager/process/gossip_deferral.rs defer_gossip_head, drop_gossip_head; crates/p2p/src/sync/pending_store/store.rs register; crates/p2p/src/sync/manager/process/pending_dag.rs restored_root_may_fit, resync_persisted_pending_dags; crates/p2p/src/sync/coordinator/mod.rs run_pending_dag_resync",
+        model_ref: "MC_GossipAdmission_{Green,Green_PastCap,Red_SilentShed,Red_Drop,Red_MemoryDefer,Red_NoPromote,Red_LaneDrop}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A committed write's gossip waits for room in a byte-bounded pending
+        // set instead of being shed; only replicators hold a durable marker,
+        // so a shed announcement never reaches a gossip-only peer. Its
+        // coalescing window holds no publish slot. Past a wait deadline it is
+        // dropped and reported.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_CommittedIsOwnedOrReported / INV_PendingBounded / INV_WindowHoldsNoSlot / INV_TasksBounded / LIVE_AllSettled: a committed write's gossip is published, or reported past a wait deadline, on one lane task",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/mod.rs spawn_non_authoritative_broadcast_task, publish_slot, acquire_non_authoritative_broadcast_slot; crates/p2p/src/sync/coordinator/broadcast_room.rs BroadcastRoom::reserve, BroadcastRoom::run, lane; crates/p2p/src/sync/coordinator/broadcast.rs broadcast_local_update_with_creator; crates/db/src/merge/broadcast_mutator/broadcast.rs spawn_gossip_or_report, broadcast_with_retry_with_creator",
+        model_ref: "MC_SenderBroadcast_{Green,Red_Shed,Red_SilentExpiry,Red_SlotAcrossWindow,Red_UnboundedPending,Red_TaskPerWrite}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "acquire_exclusive / join_acks_only_durable / join_processes_only_unowned: the CID guard is exclusive and a join acks only a safe block",
         axis: Lean,
@@ -2395,6 +2422,64 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/p2p/src/sync/coordinator/receive_gate.rs SyncCoordinator::gate_fetched",
         model_ref: "MC_ReceiveGate_Green.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Document save",
+        name: "INV_NoFork / INV_DeletedStaysDeleted / INV_RefusedOnlyDeleted",
+        axis: Tla,
+        anchor: "crates/query/src/documents/mod.rs save; crates/defra-node/src/ops/document.rs Node::save_doc; tools/integration-test/tests/testo/mutation/update/with_delete.rs update_save_deleted_doc_does_nothing",
+        model_ref: "MC_DocumentSave_{Green,Red_NoDeletedCheck,Red_SplitTxn}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Document save",
+        name: "decide_refuses_deleted / refuse_only_deleted / save_never_forks / save_under_given_id",
+        axis: Lean,
+        anchor: "crates/query/src/documents/mod.rs save; crates/query/src/plan/mutation/upsert.rs UpsertNode::next",
+        model_ref: "DocumentSave (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Mutation value checks",
+        name: "Rfc3339Nano.no_trailing_zero / trim_restores / all_zero_trims_to_nothing / nonzero_keeps_a_digit",
+        axis: Lean,
+        anchor: "crates/document/src/encoding.rs trim_rfc3339_trailing_zeros, format_time_rfc3339_nano",
+        model_ref: "Rfc3339Nano (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Mutation value checks",
+        name: "DocIdText.length_refusal_only_for_unaccepted / accepted_length_never_says_length / digits_length / parse_accepts",
+        axis: Lean,
+        anchor: "crates/defra-core/src/doc_id.rs parse_uuid, ParsedDocId::from_string",
+        model_ref: "DocIdText (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Mutation value checks",
+        name: "SecondaryRelation.primary_never_refused / secondary_id_refused / same_answer_for_relation_and_id / checks_agree",
+        axis: Lean,
+        anchor: "crates/query/src/runner/mutation_inputs.rs normalize_mutation_input_fields, input_field_name; crates/document/src/document.rs Document::set",
+        model_ref: "SecondaryRelation (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // Cursor tokens (#2481): a token is {d, k}, and an older token with an
+        // empty `o` still decodes. Tokens are pinned byte for byte by
+        // crates/cursor/tests/go_fixtures.rs; no conformance-binary test
+        // reaches them. Boundary.
+        family: "Cursor tokens",
+        name: "encode_has_no_o / decode_encode / decode_legacy_o: a token is {d, k}",
+        axis: Lean,
+        anchor: "crates/cursor/src/lib.rs Cursor::encode, Cursor::decode",
+        model_ref: "CursorToken (lake build)",
         tiers: &[Boundary],
         bound_by: "",
     },

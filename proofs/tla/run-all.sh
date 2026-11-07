@@ -376,6 +376,19 @@ RUNS=(
   "MC_PushLogAdmission_Red_ViewGuard.cfg MC_PushLogAdmission_Common.tla RED" # the ack guard reads only the lagging view and nacks a head on its committed durable record (INV_NackImpliesUnregistered)
   "MC_PushLogAdmission_Green_PeerShare.cfg MC_PushLogAdmission_Common.tla GREEN" # the store checks the peer's share in the registration's transaction: the peer never holds more than its share
   "MC_PushLogAdmission_Red_ViewShare.cfg MC_PushLogAdmission_Common.tla RED" # the share is checked against the lagging view: two of the peer's pushes pass it together (INV_PeerQuota)
+  "MC_GossipAdmission_Green.cfg MC_GossipAdmission_Common.tla GREEN" # #2489: refused gossip heads kept durably and promoted -> none lost, all merge
+  "MC_GossipAdmission_Green_PastCap.cfg MC_GossipAdmission_Common.tla GREEN" # past a byte budget every refused head is owned or reported as a node event
+  "MC_GossipAdmission_Red_SilentShed.cfg MC_GossipAdmission_Common.tla RED" # past a budget, dropped without the event (INV_HeardIsOwnedOrReported)
+  "MC_GossipAdmission_Red_Drop.cfg MC_GossipAdmission_Common.tla RED" # main: a refused gossip head is dropped and never re-announced (INV_HeardIsOwned)
+  "MC_GossipAdmission_Red_MemoryDefer.cfg MC_GossipAdmission_Common.tla RED" # in-memory side queue: a crash loses it (INV_HeardIsOwned)
+  "MC_GossipAdmission_Red_NoPromote.cfg MC_GossipAdmission_Common.tla RED" # durable records never promoted (LIVE_AllMerged)
+  "MC_GossipAdmission_Red_LaneDrop.cfg MC_GossipAdmission_Common.tla RED" # dispatcher drops a head with every refusal worker busy (INV_HeardIsOwnedOrReported)
+  "MC_SenderBroadcast_Green.cfg MC_SenderBroadcast_Common.tla GREEN" # #2489: a committed write waits for room, its window holds no slot, a passed deadline is reported
+  "MC_SenderBroadcast_Red_Shed.cfg MC_SenderBroadcast_Common.tla RED" # main: a full pool sheds a committed write's gossip (INV_CommittedIsOwnedOrReported)
+  "MC_SenderBroadcast_Red_SilentExpiry.cfg MC_SenderBroadcast_Common.tla RED" # a deadline drops it without the event (INV_CommittedIsOwnedOrReported)
+  "MC_SenderBroadcast_Red_SlotAcrossWindow.cfg MC_SenderBroadcast_Common.tla RED" # a slot held through the coalescing window (INV_WindowHoldsNoSlot)
+  "MC_SenderBroadcast_Red_UnboundedPending.cfg MC_SenderBroadcast_Common.tla RED" # no bound on the pending set (INV_PendingBounded)
+  "MC_SenderBroadcast_Red_TaskPerWrite.cfg MC_SenderBroadcast_Common.tla RED" # #1099: one retained task per pending write (INV_TasksBounded)
   "MC_PushLogJoin_Green.cfg PushLogJoin.tla GREEN" # same-CID PushLog joins the in-flight owner: success implies durable, one processor, every join ends
   "MC_PushLogJoin_Red_NoRecheck.cfg PushLogJoin.tla RED" # waiter acks when the owner lets go without looking again (INV_SuccessImpliesDurable)
   "MC_PushLogJoin_Red_NoGuard.cfg PushLogJoin.tla RED" # waiter processes its copy without the CID guard (INV_OneProcessor)
@@ -710,6 +723,9 @@ RUNS=(
   "MC_CoordinatorShutdown_Red_NoPrunerWait.cfg CoordinatorShutdown.tla RED" # the drain does not wait for pruners: a handle out with a pruner comes back after the drain (INV_NoLeak)
   "MC_CoordinatorShutdown_Red_PrunerIgnoresFlag.cfg CoordinatorShutdown.tla RED" # the code as it stands, the pruner never reads the flag: a pruner that starts after the drain's check puts a live handle back (INV_NoLeak)
   "MC_CoordinatorShutdown_Red_NoRecheck.cfg CoordinatorShutdown.tla RED" # register_task never reads the flag again: a handle pushed after the drain runs on (INV_NoLeak)
+  "MC_DocumentSave_Green.cfg DocumentSave.tla GREEN" # a save refuses a deleted document and never forks
+  "MC_DocumentSave_Red_NoDeletedCheck.cfg DocumentSave.tla RED" # a deleted document is written over and forks (INV_NoFork)
+  "MC_DocumentSave_Red_SplitTxn.cfg DocumentSave.tla RED" # a delete between lookup and write forks the save (INV_NoFork)
 )
 
 parallelism="${TLA_JOBS:-4}"
@@ -765,24 +781,24 @@ run_model() {
   fi
 }
 
-fails=0; n=0
-pids=(); indices=()
-finish_batch() {
-  local index
-  for index in "${!pids[@]}"; do
-    if ! wait "${pids[$index]}"; then fails=$((fails+1)); fi
-    cat "$workdir/${indices[$index]}.result"
-  done
-  pids=(); indices=()
+run_indexed() {
+  local index="${1%% *}"
+  run_model "$index" "${1#* }" >"$workdir/$index.result" 2>&1 || touch "$workdir/$index.fail"
 }
+export workdir
+export -f run_model trace_verdict run_indexed
 
-for row in "${RUNS[@]}"; do
-  n=$((n+1))
-  run_model "$n" "$row" >"$workdir/$n.result" 2>&1 &
-  pids+=("$!"); indices+=("$n")
-  if [ "${#pids[@]}" -ge "$parallelism" ]; then finish_batch; fi
+# A rolling pool: a lane takes the next run as soon as its last one ends, so
+# one slow model never holds the other lanes idle the way a fixed batch did.
+n=${#RUNS[@]}
+for index in "${!RUNS[@]}"; do printf '%s %s\n' "$((index+1))" "${RUNS[$index]}"; done |
+  xargs -P "$parallelism" -I{} bash -c 'run_indexed "$1"' _ {}
+
+fails=0
+for ((index=1; index<=n; index++)); do
+  if [ ! -e "$workdir/$index.result" ] || [ -e "$workdir/$index.fail" ]; then fails=$((fails+1)); fi
+  cat "$workdir/$index.result" 2>/dev/null || echo "  FAIL run $index never ran: ${RUNS[$((index-1))]}"
 done
-if [ "${#pids[@]}" -gt 0 ]; then finish_batch; fi
 
 echo "----"
 if [ "$fails" -eq 0 ]; then echo "all $n TLA+ runs matched their expected verdict"; else echo "$fails/$n MISMATCHED"; fi

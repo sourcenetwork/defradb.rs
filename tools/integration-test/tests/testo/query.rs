@@ -92,6 +92,7 @@ mod many_to_many {
     mod simple;
     mod with_nested_query;
 }
+mod non_finite_float;
 mod one_to_many {
     mod one_sided;
     mod simple;

@@ -4,7 +4,7 @@ use rapidhash::{HashMapExt, RapidHashMap};
 use serde_json::Value as JsonValue;
 
 use crate::document::{document_to_plan_doc, DocumentMapping};
-use crate::error::Result;
+use crate::error::{QueryError, Result};
 use crate::mapper::{Field, Filter, Mutation, Requestable, Select};
 use crate::plan::{AddInput, UpdateInput, UpsertInput};
 use crate::txn::TransactionRegistry;
@@ -20,20 +20,42 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         limit: usize,
         show_deleted: bool,
     ) -> Result<Vec<String>> {
+        self.selected_doc_ids(
+            collection_name,
+            filter,
+            Some(limit),
+            show_deleted,
+            self.fetcher.as_ref(),
+        )
+        .await
+    }
+
+    /// The document IDs a full select with `filter` returns through
+    /// `fetcher`, joins included.
+    async fn selected_doc_ids(
+        &self,
+        collection_name: &str,
+        filter: Filter,
+        limit: Option<usize>,
+        show_deleted: bool,
+        fetcher: &dyn crate::fetcher::DocFetcher,
+    ) -> Result<Vec<String>> {
         let mut mapping = DocumentMapping::new();
         mapping.add(0, "_docID");
         mapping.add_render_key(0, "_docID");
 
         let mut select = Select::new(collection_name)
             .with_field(Field::new("_docID"))
-            .with_filter(filter)
-            .with_limit(limit as u64);
+            .with_filter(filter);
+        if let Some(limit) = limit {
+            select = select.with_limit(limit as u64);
+        }
         select.document_mapping = mapping;
         select.show_deleted = show_deleted;
 
         let mut warnings = Vec::new();
         let result = self
-            .execute_select_internal(&select, self.fetcher.as_ref(), None, &mut warnings)
+            .execute_select_internal(&select, fetcher, None, &mut warnings)
             .await?;
         let items = result.as_array().ok_or_else(|| {
             crate::error::QueryError::internal("filtered document selection returned a non-list")
@@ -58,14 +80,21 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         &self,
         collection: &schema::CollectionVersion,
         input: &RapidHashMap<String, JsonValue>,
-    ) -> RapidHashMap<String, JsonValue> {
+    ) -> Result<RapidHashMap<String, JsonValue>> {
         let mut normalized = RapidHashMap::with_capacity(input.len());
 
         for (field_name, value) in input {
-            normalized.insert(input_field_name(collection, field_name), value.clone());
+            let name = input_field_name(collection, field_name);
+            if collection
+                .field_by_name(&name)
+                .is_some_and(|field| field.relation_name.is_some() && !field.is_primary)
+            {
+                return Err(QueryError::SecondaryRelationInput(field_name.clone()));
+            }
+            normalized.insert(name, value.clone());
         }
 
-        normalized
+        Ok(normalized)
     }
 
     /// Resolve a filter to document IDs by querying the collection.
@@ -82,6 +111,21 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             (Some(filter), None) => filter,
             _ => return Ok(None),
         };
+
+        // A condition on a related document needs the join a select runs;
+        // the stored document alone cannot satisfy it.
+        if filter.has_relation_filters() || filter.has_alias_filter() {
+            return self
+                .selected_doc_ids(
+                    &mutation.collection_name,
+                    filter.clone(),
+                    None,
+                    false,
+                    fetcher,
+                )
+                .await
+                .map(Some);
+        }
 
         // Get the collection schema on-demand from provider
         let collection = self.get_collection(&mutation.collection_name).await?;
@@ -183,7 +227,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
         for doc_input in &mutation.create_input {
             let mut create_input = AddInput::new();
-            let normalized = self.normalize_mutation_input_fields(collection, doc_input);
+            let normalized = self.normalize_mutation_input_fields(collection, doc_input)?;
             for (field_name, value) in normalized {
                 create_input = create_input.with_field(field_name.clone(), value.clone());
             }
@@ -202,7 +246,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         let mut update_input = UpdateInput::new();
 
         let (fields, ops) = mutation.split_update(collection)?;
-        let normalized = self.normalize_mutation_input_fields(collection, &fields);
+        let normalized = self.normalize_mutation_input_fields(collection, &fields)?;
         for (field_name, value) in &normalized {
             update_input = update_input.with_field(field_name.clone(), value.clone());
         }
@@ -225,7 +269,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     ) -> Result<UpsertInput> {
         let mut upsert_input = UpsertInput::new();
 
-        let normalized = self.normalize_mutation_input_fields(collection, input);
+        let normalized = self.normalize_mutation_input_fields(collection, input)?;
         for (field_name, value) in &normalized {
             upsert_input = upsert_input.with_field(field_name.clone(), value.clone());
         }
