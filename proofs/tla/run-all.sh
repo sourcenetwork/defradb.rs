@@ -147,6 +147,7 @@ RUNS=(
   "MC_FilteredChunkPush_Red_TxnNoSource.cfg FilteredChunkPush.tla RED" # explicit transaction drops the article document (LIVE_ChunkFollowsItsArticle)
   "MC_FilteredChunkPush_Red_RetryWithoutArticle.cfg FilteredChunkPush.tla RED" # a chunk retry sends the chunk alone (INV_ChunkOnlyWithItsArticle)
   "MC_FilteredChunkPush_Red_RetryNeverEnds.cfg FilteredChunkPush.tla RED" # a chunk without its article fails its retry forever (LIVE_RetriesEnd)
+  "MC_FilteredChunkPush_Red_ChunkReplayAlone.cfg FilteredChunkPush.tla RED" # a chunk-only replay sends chunks without their article (INV_ChunkOnlyWithItsArticle)
   "MC_PeerConnection_Green.cfg PeerConnection.tla GREEN"
   "MC_PeerConnection_Red_StaleObservation.cfg PeerConnection.tla RED"
   "MC_SharedRpcConnection_Green.cfg SharedRpcConnection.tla GREEN"

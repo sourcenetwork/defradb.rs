@@ -15,7 +15,8 @@
 \*   - an article or a chunk arrives from another node; forwarding it, the
 \*     sender has no article document at hand, so a filtered peer gets nothing;
 \*   - the replicator is added and the replay sends what exists, each chunk
-\*     after its article;
+\*     after its article; a replay can name only the chunk collection, as when
+\*     only its replay capability changed;
 \*   - a push is lost and the retry sends it again; a chunk's retry sends its
 \*     article with it, or ends when the article is not here;
 \*   - a chunk marker may be left from before the filter, for a chunk whose
@@ -44,6 +45,8 @@
 \*   crates/db/src/merge/txn_broadcaster.rs  broadcast (explicit transaction)
 \*   crates/db/src/merge/push_filter.rs  FilterCheck::decide
 \*   crates/db/src/merge/push_docs.rs  push_existing_docs (replay), retry_doc
+\*   crates/p2p-adapter/src/lib.rs  collections_requiring_replay (a chunk
+\*     collection's replay brings its parent)
 \* Finite sets are all this model needs.
 EXTENDS FiniteSets
 
@@ -57,7 +60,9 @@ CONSTANTS
   RequireArticle,     \* TRUE: a chunk with no article document at hand is not sent (the fix)
   TxnCarriesArticle,  \* TRUE: an explicit transaction hands its chunks the article's document (the fix)
   RetrySendsArticle,  \* TRUE: a chunk's retry sends its article with it (the fix)
-  RetryEnds           \* TRUE: a chunk retry whose article is not here ends (the fix)
+  RetryEnds,          \* TRUE: a chunk retry whose article is not here ends (the fix)
+  ReplayAddsParent,   \* TRUE: replaying a chunk collection replays its parent too (the fix)
+  ReplayNeedsArticle  \* TRUE: the replay sends a chunk only after queueing its article (the fix)
 
 \* The matching and stale articles are some of the articles.
 ASSUME Matches \subseteq Articles /\ StaleMarkers \subseteq Articles
@@ -65,6 +70,7 @@ ASSUME Matches \subseteq Articles /\ StaleMarkers \subseteq Articles
 ASSUME ShipChunks \in BOOLEAN /\ MarkChunksFiltered \in BOOLEAN /\ DecideByArticle \in BOOLEAN
 ASSUME RequireArticle \in BOOLEAN /\ TxnCarriesArticle \in BOOLEAN
 ASSUME RetrySendsArticle \in BOOLEAN /\ RetryEnds \in BOOLEAN
+ASSUME ReplayAddsParent \in BOOLEAN /\ ReplayNeedsArticle \in BOOLEAN
 
 \* The states a document can be in: not there, there, or deleted.
 States == {"none", "live", "deleted"}
@@ -79,11 +85,12 @@ VARIABLES
   added,      \* TRUE once the replicator is added
   inflight,   \* pushes on their way to the receiver
   retry,      \* pushes that were lost (or left from before) and wait for the retry
-  replayLeft, \* articles the replay still has to look at
+  replayLeft, \* documents the replay still has to look at
+  queued,     \* articles the replay has queued, which their chunks may follow
   local       \* the articles written on the sender, not forwarded from elsewhere
 
 \* All the variables, for stuttering steps.
-vars == <<sent, recv, added, inflight, retry, replayLeft, local>>
+vars == <<sent, recv, added, inflight, retry, replayLeft, queued, local>>
 
 \* The type of every variable.
 TypeOK ==
@@ -92,7 +99,8 @@ TypeOK ==
   /\ added \in BOOLEAN                        \* the replicator is added or not
   /\ inflight \subseteq Items                 \* pushes on their way
   /\ retry \subseteq Items                    \* at most one marker per document
-  /\ replayLeft \subseteq Articles            \* the replay's work
+  /\ replayLeft \subseteq Items               \* the replay's work
+  /\ queued \subseteq Articles                \* the articles the replay queued
   /\ local \subseteq Articles                 \* local writes are of articles
 
 \* Nothing exists; only the stale chunk markers wait.
@@ -103,6 +111,7 @@ Init ==
   /\ inflight = {}                                      \* nothing on its way
   /\ retry = StaleMarkers \X {"chunk"}                  \* markers left from before the filter
   /\ replayLeft = {}                                    \* no replay running
+  /\ queued = {}                                        \* nothing queued
   /\ local = {}                                         \* nothing written yet
 
 \* The sender holds article a itself, so its document is at hand.
@@ -139,14 +148,14 @@ Create(a, path) ==
   /\ sent' = [sent EXCEPT ![a] = [k \in Kinds |-> "live"]]      \* both are written
   /\ local' = local \cup {a}                                    \* by this node
   /\ inflight' = inflight \cup WritePushes(a, ChunkDoc(path))   \* the live push
-  /\ UNCHANGED <<recv, added, retry, replayLeft>>               \* nothing else moves
+  /\ UNCHANGED <<recv, added, retry, replayLeft, queued>>               \* nothing else moves
 
 \* The sender deletes article a and its chunk in one transaction.
 Delete(a, path) ==
   /\ sent[a]["article"] = "live" /\ sent[a]["chunk"] = "live"  \* a is live here
   /\ sent' = [sent EXCEPT ![a] = [k \in Kinds |-> "deleted"]]   \* both are deleted
   /\ inflight' = inflight \cup WritePushes(a, ChunkDoc(path))   \* the live push
-  /\ UNCHANGED <<recv, added, retry, replayLeft, local>>               \* nothing else moves
+  /\ UNCHANGED <<recv, added, retry, replayLeft, queued, local>>               \* nothing else moves
 
 \* Article a's document k arrives from another node and is forwarded on,
 \* with no article document at hand. A chunk can come before its article.
@@ -156,39 +165,55 @@ Forward(a, k) ==
   /\ inflight' = IF k = "chunk" /\ added /\ AdmitsChunk(a, "none")
                  THEN inflight \cup {<<a, "chunk">>}        \* a chunk forward with no document
                  ELSE inflight                              \* an article forward never goes
-  /\ UNCHANGED <<recv, added, retry, replayLeft, local>>           \* nothing else moves
+  /\ UNCHANGED <<recv, added, retry, replayLeft, queued, local>>           \* nothing else moves
 
-\* The replicator is added; the replay will look at every article with something here.
+\* The collections a replay names: both, or the chunk collection alone. The fix
+\* adds the article collection to a replay of its chunk collection.
+ReplayKinds(kinds) == IF ReplayAddsParent /\ "chunk" \in kinds THEN Kinds ELSE kinds
+
+\* The replicator is added; the replay will look at every document of the
+\* collections it names that is here.
 AddReplicator ==
   /\ ~added                                                 \* not added yet
   /\ added' = TRUE                                          \* now it is
-  /\ replayLeft' = {a \in Articles : \E k \in Kinds : sent[a][k] # "none"}
-  /\ UNCHANGED <<sent, recv, inflight, retry, local>>              \* nothing else moves
+  /\ \E kinds \in {Kinds, {"chunk"}} :                       \* a full replay, or the chunks alone
+       replayLeft' = {i \in Articles \X ReplayKinds(kinds) : sent[i[1]][i[2]] # "none"}
+  /\ UNCHANGED <<sent, recv, inflight, retry, queued, local>> \* nothing else moves
 
-\* The replay queues a's article when it matches, and its chunk only after its queued article.
-Replay(a) ==
-  /\ a \in replayLeft                                       \* a is still to be looked at
-  /\ replayLeft' = replayLeft \ {a}                         \* and now it is
-  /\ LET art == IF AdmitsArticle(a, DocOf(a)) THEN {<<a, "article">>} ELSE {} \* the article
-         chk == IF sent[a]["chunk"] # "none" /\ AdmitsChunk(a, DocOf(a))
-                   /\ (art # {} \/ ~RequireArticle)
-                THEN {<<a, "chunk">>} ELSE {}                \* the chunk, behind its article
-     IN inflight' = inflight \cup art \cup chk
-  /\ UNCHANGED <<sent, recv, added, retry, local>>                 \* nothing else moves
+\* The replay queues a's article when it matches.
+ReplayArticle(a) ==
+  /\ <<a, "article">> \in replayLeft                          \* a's article is still to be looked at
+  /\ replayLeft' = replayLeft \ {<<a, "article">>}            \* and now it is
+  /\ IF AdmitsArticle(a, DocOf(a))                            \* when it matches,
+     THEN /\ inflight' = inflight \cup {<<a, "article">>}      \* it is sent
+          /\ queued' = queued \cup {a}                         \* and its chunks may follow
+     ELSE UNCHANGED <<inflight, queued>>                      \* otherwise nothing
+  /\ UNCHANGED <<sent, recv, added, retry, local>>            \* nothing else moves
+
+\* The replay queues a's chunk after its article's turn, decided by the
+\* article, and with the fix only when the article was queued in this replay.
+ReplayChunk(a) ==
+  /\ <<a, "chunk">> \in replayLeft                            \* a's chunk is still to be looked at
+  /\ <<a, "article">> \notin replayLeft                        \* articles go first
+  /\ replayLeft' = replayLeft \ {<<a, "chunk">>}              \* and now it is
+  /\ inflight' = IF AdmitsChunk(a, DocOf(a)) /\ (~ReplayNeedsArticle \/ a \in queued)
+                 THEN inflight \cup {<<a, "chunk">>}          \* sent behind its article
+                 ELSE inflight                                \* or not at all
+  /\ UNCHANGED <<sent, recv, added, retry, queued, local>>    \* nothing else moves
 
 \* A push arrives: the receiver pulls the document's current head.
 Deliver(i) ==
   /\ i \in inflight                                         \* i is on its way
   /\ recv' = [recv EXCEPT ![i[1]][i[2]] = sent[i[1]][i[2]]]  \* the receiver gets the sender's state
   /\ inflight' = inflight \ {i}                             \* the push is done
-  /\ UNCHANGED <<sent, added, retry, replayLeft, local>>           \* nothing else moves
+  /\ UNCHANGED <<sent, added, retry, replayLeft, queued, local>>           \* nothing else moves
 
 \* A push is lost; its marker stays for the retry.
 Lose(i) ==
   /\ i \in inflight                                         \* i is on its way
   /\ inflight' = inflight \ {i}                             \* and gets lost
   /\ retry' = retry \cup {i}                                \* the retry owes it
-  /\ UNCHANGED <<sent, recv, added, replayLeft, local>>            \* nothing else moves
+  /\ UNCHANGED <<sent, recv, added, replayLeft, queued, local>>            \* nothing else moves
 
 \* The retry of a's article: sent when here and matching, and the marker clears.
 RetryArticle(a) ==
@@ -197,7 +222,7 @@ RetryArticle(a) ==
   /\ recv' = IF AdmitsArticle(a, DocOf(a))                  \* sent if it matches,
              THEN [recv EXCEPT ![a]["article"] = sent[a]["article"]]
              ELSE recv                                      \* otherwise not at all
-  /\ UNCHANGED <<sent, added, inflight, replayLeft, local>>        \* nothing else moves
+  /\ UNCHANGED <<sent, added, inflight, replayLeft, queued, local>>        \* nothing else moves
 
 \* The retry of a's chunk, decided by its article. A passing chunk is sent
 \* together with its article. Without the article here the marker clears;
@@ -211,14 +236,15 @@ RetryChunk(a) ==
      IN recv' = [recv EXCEPT
                    ![a]["chunk"] = IF go THEN sent[a]["chunk"] ELSE @,
                    ![a]["article"] = IF withArticle THEN sent[a]["article"] ELSE @]
-  /\ UNCHANGED <<sent, added, inflight, replayLeft, local>>        \* nothing else moves
+  /\ UNCHANGED <<sent, added, inflight, replayLeft, queued, local>>        \* nothing else moves
 
 \* Every step the system can take.
 Next ==
   \/ \E a \in Articles, p \in Paths : Create(a, p) \/ Delete(a, p) \* writes on either path
   \/ \E a \in Articles, k \in Kinds : Forward(a, k)                \* forwarded documents
   \/ AddReplicator                                                 \* the replicator is set up
-  \/ \E a \in Articles : Replay(a) \/ RetryArticle(a) \/ RetryChunk(a) \* replay and retry
+  \/ \E a \in Articles : ReplayArticle(a) \/ ReplayChunk(a)        \* the replay
+  \/ \E a \in Articles : RetryArticle(a) \/ RetryChunk(a)          \* the retries
   \/ \E i \in Items : Deliver(i) \/ Lose(i)                        \* pushes arrive or get lost
 
 \* A push on its way is eventually delivered or lost, and the replicator, the
@@ -226,7 +252,8 @@ Next ==
 Fairness ==
   /\ WF_vars(AddReplicator)
   /\ \A i \in Items : WF_vars(Deliver(i) \/ Lose(i))
-  /\ \A a \in Articles : WF_vars(Replay(a)) /\ WF_vars(RetryArticle(a)) /\ WF_vars(RetryChunk(a))
+  /\ \A a \in Articles : WF_vars(ReplayArticle(a)) /\ WF_vars(ReplayChunk(a))
+  /\ \A a \in Articles : WF_vars(RetryArticle(a)) /\ WF_vars(RetryChunk(a))
 
 \* Start from Init and take any steps, fairly.
 Spec == Init /\ [][Next]_vars /\ Fairness
