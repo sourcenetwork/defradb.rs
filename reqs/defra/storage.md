@@ -212,6 +212,13 @@ A nullable variable with no default that the request leaves out is not an error 
 
 `delete_Person(filter: {authoredBooks: {genre: {_eq: "Dystopia"}}})` deletes and returns exactly the people `Person(filter: {authoredBooks: {genre: {_eq: "Dystopia"}}})` returns, and `update_Person` with the same filter updates them; people the filter does not reach are untouched. defradb.rs matched such filters against the stored document only, where a relation has no value, so it found nothing (#2099).
 
+# `defra.commits.link_delta`: Commit links and heads show their block's delta
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["query::commits::with_link_delta::a_composite_link_shows_its_field_delta"]
+
+In `_commits { links { fieldName delta } heads { delta } }`, each link and head shows the base64 `delta` and `collectionVersionId` of the block it points to, as Go does: after an update that sets `genre: "Dystopia"`, the composite commit's `genre` link shows `aER5c3RvcGlh`, and a composite head shows `null`, since composites carry no field delta. An Immutable block shows the delta of the field the link names. defradb.rs showed `null` for every link before (#2625).
+
 # `defra.index.range_filter`: A two-sided range filter fetches only the range
 
 - **Parents:** ["defra.index"]
