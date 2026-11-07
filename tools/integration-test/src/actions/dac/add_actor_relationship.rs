@@ -53,7 +53,12 @@ impl AddDACActorRelationship {
                 .node_identity_of(node)
                 .map(crate::scenario::identity::node_did)
                 .ok_or_else(|| {
-                    Failure::operation(format!("node {node} was started with no identity"))
+                    // Go gives every node an identity; a Rust node has one
+                    // only when the test names it.
+                    Failure::unsupported(format!(
+                        "{} argument targetIdentityNode: node {node} was started with no identity",
+                        Self::name()
+                    ))
                 })?,
             None => crate::actions::nac::target_actor(
                 Self::name(),

@@ -95,6 +95,12 @@ impl Op for SubscriptionRequest {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
+        if state.client_type() != crate::client_type::ClientType::InProcess {
+            return Err(Failure::unsupported(format!(
+                "{} over HTTP or the CLI, which stream it as server-sent events",
+                Self::name()
+            )));
+        }
         match &self.request {
             Some(query) => self.open(state, query.as_str(), identity),
             None => self.read(state),
