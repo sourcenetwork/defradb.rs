@@ -811,6 +811,10 @@ RUNS=(
   "MC_NodeShutdown_Red_RequestsDuringP2P.cfg NodeShutdown.tla RED" # requests still admitted while P2P stops commit without a head marker
   "MC_NodeShutdown_Red_CommitNotAdmitted.cfg NodeShutdown.tla RED" # an in-process commit outside the request scope commits after P2P stopped
   "MC_NodeShutdown_Red_OpenTransaction.cfg NodeShutdown.tla RED" # a transaction left open (a commit refused at shutdown) holds regolith's close for its timeout
+  "MC_NodeDrop_Green.cfg NodeDrop.tla GREEN" # a node dropped without shutdown aborts its tasks and releases its pool; the drop waits for none
+  "MC_NodeDrop_Red_SweepOutsideSet.cfg NodeDrop.tla RED" # the sweep in a slot of its own outlives a dropped node and keeps its pool alive
+  "MC_NodeDrop_Red_NoAbortOnDrop.cfg NodeDrop.tla RED" # a shutdown set that does not abort on drop leaves every task holding the database
+  "MC_NodeDrop_Red_DropAwaits.cfg NodeDrop.tla RED" # the dropping thread waits for an aborted task to end
   "MC_NodeStartup_Green.cfg NodeStartup.tla GREEN" # every config starts as asked or fails holding nothing; startup ends
   "MC_NodeStartup_Red_IrohDefaultLadder.cfg NodeStartup.tla RED" # iroh keeps the default retry ladder (INV_OneSchedule)
   "MC_NodeStartup_Red_ListenLeak.cfg NodeStartup.tla RED" # failed listen leaves the host running (INV_FailedHoldsNothing)
