@@ -5,6 +5,7 @@ use document::{DocID, Document, NormalValue};
 use query::error::{QueryError, Result};
 use query::mutator::DerivedWrite;
 use query::prepared::{PreparedInputKind, PreparedInputRequest};
+use rapidhash::RapidHashSet;
 use schema::{CHUNK_HASH_FIELD, CHUNK_SOURCE_ID_FIELD, CHUNK_TEXT_FIELD};
 use storage::corekv::Store;
 
@@ -57,16 +58,14 @@ where
             .map_err(|_| QueryError::execution("invalid prepared chunk short ID"))
     }
 
-    pub(super) async fn create(
-        &self,
+    /// The chunk of `parent` holding `text`, before its vectors.
+    pub(super) fn chunk_document(
         target: &ChunkCollection,
         parent: &str,
         text: String,
         hash: String,
-        encrypt: bool,
-    ) -> Result<DerivedWrite> {
-        let collection = &target.collection;
-        let mut doc = Document::new(collection.schema_arc());
+    ) -> Result<Document> {
+        let mut doc = Document::new(target.collection.schema_arc());
         let invalid = |e: document::Error| QueryError::execution(format!("chunk document: {e}"));
         doc.set(
             CHUNK_SOURCE_ID_FIELD,
@@ -75,9 +74,53 @@ where
         .map_err(invalid)?;
         doc.set(CHUNK_TEXT_FIELD, NormalValue::String(text))
             .map_err(invalid)?;
-        doc.set(CHUNK_HASH_FIELD, NormalValue::String(hash.clone()))
+        doc.set(CHUNK_HASH_FIELD, NormalValue::String(hash))
             .map_err(invalid)?;
+        Ok(doc)
+    }
 
+    /// Sets the chunk's vectors from the memo, or returns the first request
+    /// it lacks. Every miss is noted in the memo, so one wave answers them all.
+    pub(super) fn embed(
+        &self,
+        target: &ChunkCollection,
+        doc: &mut Document,
+    ) -> Result<Option<PreparedInputRequest>> {
+        let embeddings = &target.collection.schema().vector_embeddings;
+        if embeddings.is_empty() {
+            return Ok(None);
+        }
+        // The model is never called inside the transaction, so with no memo
+        // there is nowhere to take the vector from.
+        let inputs = self.prepared_inputs.ok_or_else(|| {
+            QueryError::execution(format!(
+                "{} needs its embeddings prepared before the transaction",
+                target.collection.name()
+            ))
+        })?;
+        match crate::search::embedding::set_embedding_from_inputs(
+            embeddings,
+            doc,
+            true,
+            &RapidHashSet::default(),
+            &self.db.options().embedding_config(),
+            inputs,
+        ) {
+            Ok(_) => Ok(None),
+            Err(QueryError::NeedsInput(request)) => Ok(Some(request)),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub(super) async fn create(
+        &self,
+        target: &ChunkCollection,
+        parent: &str,
+        mut doc: Document,
+        hash: String,
+        encrypt: bool,
+    ) -> Result<DerivedWrite> {
+        let collection = &target.collection;
         let encryption = encrypt.then(|| EncryptionConfig {
             encrypt_doc: true,
             encrypt_fields: Vec::new(),

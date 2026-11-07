@@ -234,3 +234,100 @@ An article created by Alice under a policy shows its chunks to Alice: `Article__
 - **Scenarios:** ["chunk::access_grant::a_reader_of_the_parent_sees_its_chunks_until_it_is_deleted"]
 
 After Alice adds the `reader` relation on her article for Bob, Bob sees the same chunks as Alice and their `_commits`. After Alice deletes the article, she sees no chunks and `_commits` of a chunk is empty.
+
+# `defra.chunk.embed`: Embedding chunks
+
+- **Parents:** ["defra.chunk"]
+
+An `@embedding` of a `@chunk` field gives every chunk its own vector, made from the chunk's text before the write's transaction.
+
+# `defra.chunk.embed.declare`: The embedding lives on the chunks
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_declare::the_embedding_moves_from_the_parent_to_its_chunks"]
+
+With `body: String @chunk` and `body_v: [Float32!] @embedding(fields: ["body"], ...) @index(vector: {dimensions: 3})` on `Article`, the field `body_v`, its embedding and its vector index belong to `Article__body_chunk`, embedding the chunk's `text`. `Article__body_chunk { body_v }` returns `[]` before any document is added. `Article` has no `body_v`, so `SIMILARITY(body_v: ...)` on `Article` fails with `Unknown argument "body_v" on field "SIMILARITY" of type "Article"`; a similarity search over passages queries `Article__body_chunk`.
+
+# `defra.chunk.embed.declare_only_field`: The embedding embeds the chunked field alone
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_declare::an_embedding_of_a_chunked_field_and_another_is_refused"]
+
+Adding `Article` with `body_v: [Float32!] @embedding(fields: ["title", "body"], ...)` over the chunked `body` fails with `@embedding over a @chunk field must embed only that field. Field: Article.body_v`. An embedding with a `template` over a chunked field fails the same way.
+
+# `defra.chunk.embed.patch`: A patch cannot move or change a chunk embedding
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_patch::a_patch_cannot_move_or_change_a_chunk_embedding"]
+
+Replacing the model of `/Article__body_chunk/VectorEmbeddings/0`, or removing it, fails with `a generated chunk collection's embeddings cannot be mutated. Collection: Article__body_chunk`. Adding to `/Article/VectorEmbeddings` an embedding whose `Fields` name `body` fails with `an embedding over a chunked field belongs to its chunk collection. Field: Article.title`.
+
+# `defra.chunk.embed.chunks`: Each chunk is embedded on its own text
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_chunks::each_chunk_is_embedded_on_its_own_text"]
+
+Creating an article with four paragraphs asks the model to embed each chunk's text, followed by a newline, once. Every chunk of `Article__body_chunk` then holds the vector the model gave for its text. A chunk's `_docID` is derived from its content, its vector included, so the same text embedded by another model gets another `_docID`.
+
+# `defra.chunk.embed.edit`: An edit embeds only the chunks it changes
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_chunks::editing_one_paragraph_embeds_only_its_new_chunk"]
+
+After an article with four paragraphs is created, changing its second paragraph sends the model that one new chunk's text. The chunks are then the three unchanged ones with their old vectors and the new one with its own.
+
+# `defra.chunk.embed.transaction`: A create in an explicit transaction embeds its chunks
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_transaction::an_explicit_transaction_embeds_its_chunks"]
+
+Creating an article inside an explicit transaction and committing it asks the model for each chunk once, and every chunk holds its vector.
+
+# `defra.chunk.embed.replicate`: A peer gets the vectors with the chunks
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_replicate::a_peer_gets_the_vectors_without_calling_the_model"]
+
+With `Article` and `Article__body_chunk` replicated from one node to another, an article created on the first gives the second the same chunks with the same vectors. The model is asked only by the first node, once per chunk.
+
+# `defra.chunk.embed.search`: Passage search ranks chunks across articles
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_search::passage_search_ranks_chunks_across_articles"]
+
+With three articles about engines, rivers and music, `Article__body_chunk(order: {_alias: {sim: DESC}}, limit: 2) { text sim: SIMILARITY(body_v: {vector: [1, 0, 0]}) source { title } }` returns the two chunks of the rivers article, each with similarity 1 and `source { title }` `rivers`.
+
+# `defra.chunk.embed.search_access`: Passage search shows only chunks the reader may read
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_search::passage_search_shows_only_chunks_of_readable_articles"]
+
+Under a local policy, with Alice's article about rivers and a public article about engines created with no identity, the same search returns Alice's two chunks to Alice, and the public article's two chunks, with similarity 0, to Bob and to a request with no identity.
+
+# `defra.chunk.embed.failure`: A failing model fails the write
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_failure::a_failing_model_fails_the_write_and_stores_nothing"]
+
+While the model answers every request with 500, adding an article fails with `embedding error: embedding provider returned 500 Internal Server Error`, and afterwards `Article` and `Article__body_chunk` are both empty.
+
+# `defra.chunk.embed.backup`: Importing a backup embeds the chunks again
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_backup::importing_a_backup_embeds_the_chunks_again", "chunk::embed_backup::importing_a_backup_while_the_model_fails_reports_it"]
+
+A backup holds no vectors. Importing an article's backup into a second node asks that node's model for each chunk once, and every chunk there holds its vector. While the model answers with 500, the import fails with `embedding error: embedding provider returned 500 Internal Server Error`, and the second node has no `Article` and no chunks.
+
+# `defra.chunk.embed.encrypted`: An encrypted article's chunks get their vectors
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_writes::an_encrypted_article_gets_its_chunk_vectors"]
+
+Adding an article with `body` encrypted asks the model for each chunk once, and every chunk holds its vector.
+
+# `defra.chunk.embed.upsert`: An upsert embeds the chunks it creates
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_writes::an_upsert_embeds_the_chunks_it_creates"]
+
+An `upsert_Article` that finds no article creates one, asks the model for each of its chunks once, and every chunk holds its vector.

@@ -92,10 +92,11 @@ impl AttemptWork for CreateWork {
         );
         Box::pin(async move {
             let mut results = Vec::with_capacity(docs.len());
+            let mut misses = query::prepared::FirstMiss::default();
             for doc in docs {
-                results.push(mutator.create_as(&context, &name, doc).await?);
+                results.extend(misses.keep(mutator.create_as(&context, &name, doc).await)?);
             }
-            Ok(boxed(results))
+            misses.finish(results).map(boxed)
         })
     }
 }

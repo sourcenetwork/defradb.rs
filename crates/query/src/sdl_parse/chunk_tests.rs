@@ -219,3 +219,77 @@ fn chunk_refuses_a_repeated_argument() {
         "parse error: @chunk has maxChars twice. Field: R.s"
     );
 }
+
+const EMBEDDED_SDL: &str = r#"
+    type Article {
+        title: String
+        body: String @chunk
+        body_v: [Float32!] @embedding(fields: ["body"], provider: "openai", model: "m", url: "http://e") @index(vector: {dimensions: 3})
+        title_v: [Float32!] @embedding(fields: ["title"], provider: "openai", model: "m", url: "http://e")
+    }
+"#;
+
+#[test]
+fn an_embedding_of_a_chunked_field_moves_to_the_chunk_collection() {
+    let collections = parse_sdl(EMBEDDED_SDL).unwrap();
+    let (article, chunk) = (&collections[0], &collections[1]);
+    assert!(article.field_by_name("body_v").is_none());
+    assert!(article.indexes.iter().all(|index| !index.is_vector()));
+    let embeddings: Vec<_> = article
+        .vector_embeddings
+        .iter()
+        .map(|e| e.field_name.as_str())
+        .collect();
+    assert_eq!(embeddings, vec!["title_v"]);
+
+    let [embedding] = chunk.vector_embeddings.as_slice() else {
+        panic!("one embedding on the chunks: {:?}", chunk.vector_embeddings);
+    };
+    assert_eq!(embedding.field_name, "body_v");
+    assert_eq!(embedding.fields, vec!["text".to_string()]);
+    assert_eq!(
+        (
+            embedding.provider.as_str(),
+            embedding.model.as_str(),
+            embedding.url.as_str()
+        ),
+        ("openai", "m", "http://e")
+    );
+    let vector = chunk
+        .indexes
+        .iter()
+        .find(|index| index.is_vector())
+        .unwrap();
+    assert_eq!(vector.fields[0].name, "body_v");
+    assert_eq!(vector.vector().unwrap().dimensions, 3);
+}
+
+#[test]
+fn an_embedding_of_a_chunked_field_with_a_template_is_refused() {
+    let sdl = r#"type Article {
+        body: String @chunk
+        body_v: [Float32!] @embedding(fields: ["body"], template: "{{ .body }}")
+    }"#;
+    let err = parse_sdl(sdl).unwrap_err().to_string();
+    assert!(
+        err.contains(
+            "@embedding over a @chunk field must embed only that field. Field: Article.body_v"
+        ),
+        "{err}"
+    );
+}
+
+#[test]
+fn an_embedding_field_named_like_a_chunk_field_is_refused() {
+    let sdl = r#"type Article {
+        body: String @chunk
+        text: [Float32!] @embedding(fields: ["body"])
+    }"#;
+    let err = parse_sdl(sdl).unwrap_err().to_string();
+    assert!(
+        err.contains(
+            "@chunk needs the field name Article__body_chunk.text, which is already taken"
+        ),
+        "{err}"
+    );
+}

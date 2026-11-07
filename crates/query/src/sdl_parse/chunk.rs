@@ -2,12 +2,13 @@
 //!
 //! For `body: String @chunk` on `Article`, it adds a type `Article__body_chunk`
 //! with `source`, `text` and `hash`, and a field `_body_chunks` on `Article`.
+//! An `@embedding` of `body` moves to the chunk type, embedding each chunk's text.
 //! This runs before relations are resolved, so both are built like any other type.
 
 use graphql_parser::schema::Directive;
 use schema::{
     chunk_collection_name, chunk_list_field, CType, ChunkSource, ChunkedField, CHUNK_HASH_FIELD,
-    CHUNK_SOURCE_FIELD, CHUNK_TEXT_FIELD,
+    CHUNK_SOURCE_FIELD, CHUNK_SOURCE_ID_FIELD, CHUNK_TEXT_FIELD,
 };
 
 use crate::error::{QueryError, Result};
@@ -87,6 +88,37 @@ fn field(name: &str, field_type: ParsedType) -> ParsedField {
     }
 }
 
+/// Moves the parent's `@embedding` fields over `chunked`, with their indexes, onto the chunks.
+fn take_embedded_fields(parent: &mut ParsedTypeDef, chunked: &str) -> Result<Vec<ParsedField>> {
+    let (embedded, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut parent.fields)
+        .into_iter()
+        .partition(|f| {
+            f.directives
+                .embedding
+                .as_ref()
+                .is_some_and(|embedding| embedding.fields.iter().any(|source| source == chunked))
+        });
+    parent.fields = kept;
+    embedded
+        .into_iter()
+        .map(|mut moved| {
+            let embedding = moved
+                .directives
+                .embedding
+                .as_mut()
+                .expect("partitioned on it");
+            if embedding.fields.len() != 1 || !embedding.template.is_empty() {
+                return Err(QueryError::parse(format!(
+                    "@embedding over a @chunk field must embed only that field. Field: {}.{}",
+                    parent.name, moved.name
+                )));
+            }
+            embedding.fields = vec![CHUNK_TEXT_FIELD.to_string()];
+            Ok(moved)
+        })
+        .collect()
+}
+
 impl SdlParser<'_> {
     /// Adds the generated chunk types and list fields for every `@chunk` field,
     /// with the settings both sides record. They are set before IDs are
@@ -152,6 +184,7 @@ impl SdlParser<'_> {
                     spec.parent
                 )));
             }
+            let embedded = take_embedded_fields(parent, &spec.field)?;
             let mut hashes = scalar("String", true);
             hashes.element_non_null = true;
             parent.fields.push(field(&list, hashes));
@@ -175,15 +208,32 @@ impl SdlParser<'_> {
                 .position(|name| *name == spec.parent)
                 .map_or(self.definition_order.len(), |i| i + 1);
             self.definition_order.insert(position, chunk_type.clone());
+            let mut fields = vec![
+                source,
+                field(CHUNK_TEXT_FIELD, scalar("String", false)),
+                field(CHUNK_HASH_FIELD, scalar("String", false)),
+            ];
+            for moved in embedded {
+                if [
+                    CHUNK_SOURCE_ID_FIELD,
+                    CHUNK_SOURCE_FIELD,
+                    CHUNK_TEXT_FIELD,
+                    CHUNK_HASH_FIELD,
+                ]
+                .contains(&moved.name.as_str())
+                {
+                    return Err(QueryError::parse(format!(
+                        "@chunk needs the field name {chunk_type}.{}, which is already taken",
+                        moved.name
+                    )));
+                }
+                fields.push(moved);
+            }
             self.type_defs.insert(
                 chunk_type.clone(),
                 ParsedTypeDef {
                     name: chunk_type,
-                    fields: vec![
-                        source,
-                        field(CHUNK_TEXT_FIELD, scalar("String", false)),
-                        field(CHUNK_HASH_FIELD, scalar("String", false)),
-                    ],
+                    fields,
                     directives: ParsedTypeDirectives {
                         chunk_of: Some(ChunkSource {
                             collection: spec.parent.clone(),

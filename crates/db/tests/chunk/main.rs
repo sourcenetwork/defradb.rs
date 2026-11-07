@@ -3,6 +3,7 @@
 mod common;
 
 mod delete;
+mod embedding;
 mod guard;
 mod key_owners;
 mod kms_release;
