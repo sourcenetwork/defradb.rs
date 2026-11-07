@@ -53,8 +53,14 @@ fn capture_marker_error(slot: &mut Option<String>, result: p2p::error::Result<()
     }
 }
 
-// One shared copy of the parent for all its chunks. A parent that does not
-// encode gives none, so its chunks fail closed instead of matching `{}`.
+// A document that does not encode gets no JSON, so filtered peers get nothing
+// rather than matching `{}`.
+fn document_json_of(document: &Document) -> Option<serde_json::Value> {
+    let map = document.to_map().ok()?;
+    Some(serde_json::Value::Object(map.into_iter().collect()))
+}
+
+// One shared copy of the parent for all its chunks.
 fn parent_source(
     derived: &[query::mutator::DerivedWrite],
     parent: &Document,
@@ -62,10 +68,7 @@ fn parent_source(
     if derived.is_empty() {
         return None;
     }
-    let map = parent.to_map().ok()?;
-    Some(Arc::new(serde_json::Value::Object(
-        map.into_iter().collect(),
-    )))
+    document_json_of(parent).map(Arc::new)
 }
 
 fn marker_broadcast_status(error: Option<String>) -> BroadcastStatus {
@@ -268,8 +271,9 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> SeArtifactRep
         if artifacts.is_empty() {
             return;
         }
-        let document_json =
-            serde_json::Value::Object(document.to_map().unwrap_or_default().into_iter().collect());
+        let Some(document_json) = document_json_of(&document) else {
+            return;
+        };
         // The merge path calls this while holding the document's merge guard,
         // and the retry sweep while walking a peer's markers. The fan-out is
         // per-replicator network I/O, so it runs detached, as the live
@@ -423,14 +427,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
             &result.document,
             &se_fields,
         );
-        let document_json = serde_json::Value::Object(
-            result
-                .document
-                .to_map()
-                .unwrap_or_default()
-                .into_iter()
-                .collect(),
-        );
+        let document_json = document_json_of(&result.document);
         let sync = self.sync.clone();
         let collection_name_owned = collection_name.to_string();
 
@@ -442,12 +439,12 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
         capture_marker_error(
             &mut marker_error,
             self.sync
-                .push_document_to_replicators_with_creator(
+                .push_found_document_to_replicators_with_creator(
                     &block_result.cid,
                     &block_result.block,
                     &block_result.doc_id,
                     &collection_id,
-                    &document_json,
+                    document_json.as_ref(),
                     creator_ref,
                 )
                 .await,
@@ -470,12 +467,14 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
         self.sync
             .spawn_non_authoritative_broadcast_task("broadcast_document_update", async move {
                 let creator_ref = creator_did.as_deref();
-                sync.push_se_artifacts_to_replicators_for_document(
-                    &collection_id,
-                    se_artifacts,
-                    &document_json,
-                )
-                .await;
+                if let Some(document_json) = &document_json {
+                    sync.push_se_artifacts_to_replicators_for_document(
+                        &collection_id,
+                        se_artifacts,
+                        document_json,
+                    )
+                    .await;
+                }
                 log_broadcast_failure(
                     &broadcast_with_retry_with_creator(
                         &sync,
@@ -754,14 +753,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             &result.document,
             &[],
         );
-        let document_json = serde_json::Value::Object(
-            result
-                .document
-                .to_map()
-                .unwrap_or_default()
-                .into_iter()
-                .collect(),
-        );
+        let document_json = document_json_of(&result.document);
 
         // Capture everything for the spawned task by value.
         let sync = self.sync.clone();
@@ -776,12 +768,12 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
         capture_marker_error(
             &mut marker_error,
             self.sync
-                .push_document_to_replicators_with_creator(
+                .push_found_document_to_replicators_with_creator(
                     &block_result.cid,
                     &block_result.block,
                     &block_result.doc_id,
                     &collection_id,
-                    &document_json,
+                    document_json.as_ref(),
                     creator_ref,
                 )
                 .await,
@@ -806,12 +798,14 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
         self.sync
             .spawn_non_authoritative_broadcast_task("broadcast_document_create", async move {
                 let creator_ref = creator_did.as_deref();
-                sync.push_se_artifacts_to_replicators_for_document(
-                    &collection_id,
-                    se_artifacts,
-                    &document_json,
-                )
-                .await;
+                if let Some(document_json) = &document_json {
+                    sync.push_se_artifacts_to_replicators_for_document(
+                        &collection_id,
+                        se_artifacts,
+                        document_json,
+                    )
+                    .await;
+                }
 
                 // Broadcast composite via GossipSub with retry for InsufficientPeers
                 log_broadcast_failure(
@@ -900,7 +894,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             BlockResult,
             Option<BlockResult>,
             Vec<SEArtifact>,
-            serde_json::Value,
+            Option<serde_json::Value>,
         )> = Vec::with_capacity(results.len());
 
         for result in results {
@@ -963,14 +957,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                 &result.document,
                 &[],
             );
-            let document_json = serde_json::Value::Object(
-                result
-                    .document
-                    .to_map()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .collect(),
-            );
+            let document_json = document_json_of(&result.document);
 
             broadcast_results.push(CreateResult::with_commit_and_broadcast(
                 result.doc_id,
@@ -1003,12 +990,12 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                 capture_marker_error(
                     &mut marker_error,
                     self.sync
-                        .push_document_to_replicators_with_creator(
+                        .push_found_document_to_replicators_with_creator(
                             &block_result.cid,
                             &block_result.block,
                             &block_result.doc_id,
                             &collection_id,
-                            document_json,
+                            document_json.as_ref(),
                             creator_ref,
                         )
                         .await,
@@ -1041,12 +1028,14 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                     for (_, block_result, branchable_data, se_artifacts, document_json) in
                         &broadcast_work
                     {
-                        sync.push_se_artifacts_to_replicators_for_document(
-                            &collection_id,
-                            se_artifacts.clone(),
-                            document_json,
-                        )
-                        .await;
+                        if let Some(document_json) = document_json {
+                            sync.push_se_artifacts_to_replicators_for_document(
+                                &collection_id,
+                                se_artifacts.clone(),
+                                document_json,
+                            )
+                            .await;
+                        }
 
                         log_broadcast_failure(
                             &broadcast_with_retry_with_creator(

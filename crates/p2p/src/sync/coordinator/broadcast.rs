@@ -260,6 +260,35 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         .await
     }
 
+    /// [`Self::push_document_to_replicators_with_creator`] for a document that
+    /// may not have encoded: without it, filtered peers get nothing.
+    pub async fn push_found_document_to_replicators_with_creator(
+        &self,
+        cid: &Cid,
+        block: &[u8],
+        doc_id: &str,
+        collection_id: &str,
+        document: Option<&JsonValue>,
+        creator_override: Option<&str>,
+    ) -> Result<()> {
+        let creator = creator_override.unwrap_or(&self.access.local_peer_id);
+        crate::model_trace!(Commit {
+            doc: doc_id,
+            head: cid.to_string(),
+            parents: crate::model_trace::parents_of(block),
+        });
+        self.admit_replicator_push(PendingPush {
+            cid: *cid,
+            block: Bytes::copy_from_slice(block),
+            doc_id: doc_id.to_string(),
+            collection_id: collection_id.to_string(),
+            creator: creator.to_string(),
+            document: document.cloned(),
+            source: None,
+        })
+        .await
+    }
+
     /// Push a committed `@chunk` chunk to replicators. A filtered peer gets it
     /// only when `source`, its parent's document, passes the parent's filter.
     pub async fn push_chunk_to_replicators_with_creator(
