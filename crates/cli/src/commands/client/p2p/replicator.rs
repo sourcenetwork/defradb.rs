@@ -37,8 +37,9 @@ pub struct P2pReplicatorListArgs {}
 /// Arguments for replicator add command
 #[derive(Args, Debug)]
 pub struct P2pReplicatorAddArgs {
-    /// Collection(s) to replicate (comma-separated or multiple --collection)
-    #[arg(long, short = 'c', required = true, value_delimiter = ',')]
+    /// Collection(s) to replicate (comma-separated or multiple --collection);
+    /// every collection when none is given, as Go's `replicator set`.
+    #[arg(long, short = 'c', value_delimiter = ',')]
     pub collection: Vec<String>,
 
     /// Peer address(es) to replicate with
@@ -62,8 +63,9 @@ pub struct P2pReplicatorAddArgs {
 /// Arguments for replicator delete command
 #[derive(Args, Debug)]
 pub struct P2pReplicatorDeleteArgs {
-    /// Collection(s) to stop replicating (comma-separated or multiple --collection)
-    #[arg(long, short = 'c', required = true, value_delimiter = ',')]
+    /// Collection(s) to stop replicating (comma-separated or multiple --collection);
+    /// every collection when none is given, as Go's `replicator delete`.
+    #[arg(long, short = 'c', value_delimiter = ',')]
     pub collection: Vec<String>,
 
     /// Peer ID to stop replicating with

@@ -93,6 +93,14 @@ impl Node {
         .await
     }
 
+    /// The actions running or ended with an error. Go's `ListActions`.
+    pub async fn list_actions_as(&self, context: &RequestContext) -> Result<Vec<ActionExecution>> {
+        let database = Arc::clone(self.database());
+        let context = self.caller(context);
+        self.on_pool(move || async move { Ok(database.list_actions_as(&context).await?) })
+            .await
+    }
+
     /// Delete index `name` of collection `collection`. Go's
     /// `Collection.DropIndex`.
     pub async fn delete_index_as(

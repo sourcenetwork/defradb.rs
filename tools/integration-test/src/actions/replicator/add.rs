@@ -87,11 +87,22 @@ impl HttpRun for AddReplicator {
 
 impl CliRun for AddReplicator {
     fn execute_cli(&self, state: &mut State) {
-        crate::scenario::execute_with(self, state, |_, _| {
-            Err(Failure::unsupported(format!(
-                "{}: the CLI's replicator add needs a collection",
-                Self::name()
-            )))
+        crate::scenario::execute_with(self, state, |action, state| {
+            let identity = action.common.client_identity(Self::name())?;
+            let addresses = addresses_of(state, &[action.target.as_str()])?;
+            let mut args = vec!["p2p", "replicator", "add"];
+            args.extend(addresses.iter().map(String::as_str));
+            state
+                .node(action.common.node())?
+                .replicator_completed(
+                    || {
+                        state
+                            .defra_client_as(action.common.node(), None, identity, &args)
+                            .map_err(Failure::operation)
+                    },
+                    REPLICATOR_COMPLETED,
+                )
+                .map(|_| json!({}))
         });
     }
 }

@@ -80,11 +80,18 @@ impl HttpRun for DeleteReplicator {
 
 impl CliRun for DeleteReplicator {
     fn execute_cli(&self, state: &mut State) {
-        crate::scenario::execute_with(self, state, |_, _| {
-            Err(Failure::unsupported(format!(
-                "{}: the CLI's replicator delete needs a collection",
-                Self::name()
-            )))
+        crate::scenario::execute_with(self, state, |action, state| {
+            let identity = action.common.client_identity(Self::name())?;
+            let id = action.peer_id(state)?;
+            state
+                .defra_client_as(
+                    action.common.node(),
+                    None,
+                    identity,
+                    &["p2p", "replicator", "delete", id.as_str()],
+                )
+                .map_err(Failure::operation)?;
+            Ok(json!({}))
         });
     }
 }
