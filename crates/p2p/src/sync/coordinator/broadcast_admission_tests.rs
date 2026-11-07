@@ -3,7 +3,7 @@ use cid::Cid;
 use serde_json::json;
 
 use super::{Admission, PendingPush};
-use crate::replicator::chunk_tests::{public_articles_peer, CHUNKS};
+use crate::replicator::chunk_tests::{public_articles_peer, ARTICLES, CHUNKS};
 use crate::replicator::EqOnlyFilterMatcher;
 
 fn chunk_push(
@@ -45,6 +45,19 @@ fn a_chunk_of_an_unmatched_parent_gets_no_push_job() {
 #[test]
 fn a_chunk_without_its_parents_document_is_not_pushed_even_if_its_own_would_match() {
     let push = chunk_push(Some(json!({"kind": "public", "text": "t"})), None);
+
+    assert_eq!(
+        push.admission(&public_articles_peer(), &EqOnlyFilterMatcher),
+        Admission::NoDocument
+    );
+}
+
+#[test]
+fn a_filtered_document_whose_document_is_not_at_hand_is_not_pushed() {
+    let push = PendingPush {
+        collection_id: ARTICLES.to_string(),
+        ..chunk_push(None, None)
+    };
 
     assert_eq!(
         push.admission(&public_articles_peer(), &EqOnlyFilterMatcher),

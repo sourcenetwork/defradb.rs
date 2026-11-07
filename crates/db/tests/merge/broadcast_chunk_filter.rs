@@ -28,8 +28,8 @@ type Mutator =
 struct Node {
     db: Arc<DB<RegolithStore>>,
     mutator: Mutator,
-    /// The DocIDs a push job was registered for, so the peer is owed them.
-    owed: Atom<Vec<String>>,
+    /// The DocIDs a push job was registered for.
+    pushed: Atom<Vec<String>>,
     failures: p2p::sync::PushFailureReceiver,
 }
 
@@ -56,7 +56,7 @@ async fn node() -> Node {
     Node {
         mutator: BroadcastMutator::new(db.clone(), Arc::new(sync)),
         db,
-        owed: Atom::new(Vec::new()),
+        pushed: Atom::new(Vec::new()),
         failures,
     }
 }
@@ -65,7 +65,7 @@ async fn node() -> Node {
 /// records each DocID it registers a push for.
 async fn recording<F, T>(
     failures: &mut p2p::sync::PushFailureReceiver,
-    owed: &Atom<Vec<String>>,
+    pushed: &Atom<Vec<String>>,
     write: F,
 ) -> T
 where
@@ -78,7 +78,7 @@ where
             };
             let registration = !event.admission_only && !event.acknowledged && !event.create_retry;
             if registration {
-                owed.rcu(|docs| {
+                pushed.rcu(|docs| {
                     let mut next = docs.clone();
                     next.push(event.doc_id.clone());
                     next
@@ -96,8 +96,8 @@ where
 }
 
 impl Node {
-    fn take_owed(&self) -> RapidHashSet<String> {
-        self.owed.swap(Vec::new()).iter().cloned().collect()
+    fn take_pushed(&self) -> RapidHashSet<String> {
+        self.pushed.swap(Vec::new()).iter().cloned().collect()
     }
 
     fn article(&self, kind: &str, body: &str) -> Document {
@@ -154,7 +154,7 @@ fn a_create_pushes_only_the_chunks_of_a_matching_parent() {
 
         let public = recording(
             &mut node.failures,
-            &node.owed,
+            &node.pushed,
             node.mutator.create("Article", public),
         )
         .await
@@ -162,14 +162,14 @@ fn a_create_pushes_only_the_chunks_of_a_matching_parent() {
         .doc_id;
         recording(
             &mut node.failures,
-            &node.owed,
+            &node.pushed,
             node.mutator.create("Article", secret),
         )
         .await
         .unwrap();
 
         let expected = with_parent(&public, node.chunks_of(&public).await);
-        assert_eq!(node.take_owed(), expected);
+        assert_eq!(node.take_pushed(), expected);
     })
     .unwrap()
 }
@@ -181,14 +181,14 @@ fn an_update_pushes_the_new_chunks_of_a_matching_parent() {
         let created = node.article(PUBLIC, "Open text.");
         let public = recording(
             &mut node.failures,
-            &node.owed,
+            &node.pushed,
             node.mutator.create("Article", created),
         )
         .await
         .unwrap()
         .doc_id;
         let before = node.chunks_of(&public).await;
-        node.take_owed();
+        node.take_pushed();
         let mut doc = node
             .mutator
             .get_for_update("Article", &public)
@@ -201,7 +201,7 @@ fn an_update_pushes_the_new_chunks_of_a_matching_parent() {
         let body = RapidHashSet::from_iter(["body".to_string()]);
         recording(
             &mut node.failures,
-            &node.owed,
+            &node.pushed,
             node.mutator.update("Article", doc, body),
         )
         .await
@@ -213,7 +213,7 @@ fn an_update_pushes_the_new_chunks_of_a_matching_parent() {
             .difference(&before)
             .cloned()
             .collect();
-        assert_eq!(node.take_owed(), with_parent(&public, added));
+        assert_eq!(node.take_pushed(), with_parent(&public, added));
     })
     .unwrap()
 }
@@ -228,7 +228,7 @@ fn a_delete_pushes_the_chunk_deletes_of_a_matching_parent_only() {
         );
         let public = recording(
             &mut node.failures,
-            &node.owed,
+            &node.pushed,
             node.mutator.create("Article", public),
         )
         .await
@@ -236,31 +236,31 @@ fn a_delete_pushes_the_chunk_deletes_of_a_matching_parent_only() {
         .doc_id;
         let secret = recording(
             &mut node.failures,
-            &node.owed,
+            &node.pushed,
             node.mutator.create("Article", secret),
         )
         .await
         .unwrap()
         .doc_id;
-        node.take_owed();
+        node.take_pushed();
 
         recording(
             &mut node.failures,
-            &node.owed,
+            &node.pushed,
             node.mutator.delete("Article", &public),
         )
         .await
         .unwrap();
         recording(
             &mut node.failures,
-            &node.owed,
+            &node.pushed,
             node.mutator.delete("Article", &secret),
         )
         .await
         .unwrap();
 
         let expected = with_parent(&public, node.chunks_of(&public).await);
-        assert_eq!(node.take_owed(), expected);
+        assert_eq!(node.take_pushed(), expected);
     })
     .unwrap()
 }
@@ -283,13 +283,13 @@ fn a_batch_create_pushes_only_the_chunks_of_a_matching_parent() {
             })
         });
 
-        let public = recording(&mut node.failures, &node.owed, batch.run(operation))
+        let public = recording(&mut node.failures, &node.pushed, batch.run(operation))
             .await
             .unwrap();
 
         let public = DocID::from_string(public.as_str().unwrap()).unwrap();
         let expected = with_parent(&public, node.chunks_of(&public).await);
-        assert_eq!(node.take_owed(), expected);
+        assert_eq!(node.take_pushed(), expected);
     })
     .unwrap()
 }

@@ -222,13 +222,22 @@ fn sent(received: &regolith::sync::BoundedReceiver<p2p::PushLogRequest>) -> Rapi
 }
 
 async fn replay_with(node: &Node, matcher: &dyn ReplicationFilterMatcher) -> RapidHashSet<String> {
+    replay_of(node, &["Article", CHUNKS], matcher).await
+}
+
+async fn replay_of(
+    node: &Node,
+    collections: &[&str],
+    matcher: &dyn ReplicationFilterMatcher,
+) -> RapidHashSet<String> {
+    let collections: Vec<String> = collections.iter().map(|name| name.to_string()).collect();
     let (transport, received) = transport(node);
     push_existing_docs(
         &transport,
         &node.db,
         None,
         &node.peer,
-        &["Article".into(), CHUNKS.into()],
+        &collections,
         &node.filters,
         PushExistingDocsSeOptions::default(),
         matcher,
@@ -245,6 +254,23 @@ async fn replay(node: &Node) -> RapidHashSet<String> {
 
 /// Retries `chunk`'s marker and returns the DocIDs it sent.
 async fn retry(node: &Node, chunk: &str) -> RapidHashSet<String> {
+    let (result, requests) = retry_through(node, chunk, transport(node), &[]).await;
+    result.unwrap();
+    requests.into_iter().map(|request| request.doc_id).collect()
+}
+
+/// Retries `chunk`'s marker through `transport`, for a replicator of
+/// `replicated` collections (every one when empty), and returns its result and
+/// the requests it sent, in order.
+async fn retry_through(
+    node: &Node,
+    chunk: &str,
+    (transport, received): (
+        ConnectedPeerTransport,
+        regolith::sync::BoundedReceiver<p2p::PushLogRequest>,
+    ),
+    replicated: &[String],
+) -> (Result<(), String>, Vec<p2p::PushLogRequest>) {
     let generation = node
         .db
         .peerstore()
@@ -252,8 +278,7 @@ async fn retry(node: &Node, chunk: &str) -> RapidHashSet<String> {
         .await
         .unwrap()
         .expect("the replicator owns the chunk's marker");
-    let (transport, received) = transport(node);
-    retry_doc(
+    let result = retry_doc(
         &transport,
         &node.db,
         None,
@@ -261,13 +286,26 @@ async fn retry(node: &Node, chunk: &str) -> RapidHashSet<String> {
         chunk,
         &node.chunks_id,
         generation,
+        replicated,
         &node.filters,
         &p2p::EqOnlyFilterMatcher,
         &p2p::sync::HeadHintCarAuthority::default(),
     )
-    .await
-    .unwrap();
-    sent(&received)
+    .await;
+    let mut requests = Vec::new();
+    while let Some(request) = received.try_recv() {
+        requests.push(request);
+    }
+    (result, requests)
+}
+
+fn collection_id(node: &Node, name: &str) -> String {
+    node.db
+        .get_collection(name)
+        .unwrap()
+        .unwrap()
+        .collection_id()
+        .to_string()
 }
 
 async fn markers(node: &Node) -> Vec<String> {
@@ -439,6 +477,114 @@ fn a_chunk_whose_parent_document_is_gone_is_not_sent() {
 
         assert!(retry(&node, &public.chunks[0]).await.is_empty());
         assert!(markers(&node).await.is_empty());
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_chunk_retry_sends_its_parent_first_under_the_parents_collection() {
+    workers::block_on(async {
+        let node = node().await;
+        let public = write(&node, PUBLIC).await;
+
+        let (result, requests) =
+            retry_through(&node, &public.chunks[0], transport(&node), &[]).await;
+
+        result.unwrap();
+        let sent: Vec<(String, String)> = requests
+            .iter()
+            .map(|request| (request.doc_id.clone(), request.collection_id.clone()))
+            .collect();
+        assert_eq!(
+            sent,
+            vec![
+                (public.id.clone(), collection_id(&node, "Article")),
+                (public.chunks[0].clone(), node.chunks_id.clone()),
+            ]
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_chunk_is_not_sent_and_keeps_its_marker_when_its_parent_fails_to_send() {
+    workers::block_on(async {
+        let node = node().await;
+        let public = write(&node, PUBLIC).await;
+        let (requests, received) = regolith::sync::bounded(REQUEST_CAPACITY);
+        let failing = ConnectedPeerTransport::new("sender", node.peer.as_str())
+            .with_replies(true, requests)
+            .failing_pushes_of(&public.id);
+
+        let (result, sent) =
+            retry_through(&node, &public.chunks[0], (failing, received), &[]).await;
+
+        let error = result.unwrap_err();
+        assert!(
+            error.starts_with(p2p::error::TRANSPORT_UNAVAILABLE_PREFIX),
+            "a dead peer stays recognisable: {error}"
+        );
+        let sent: Vec<String> = sent.into_iter().map(|request| request.doc_id).collect();
+        assert_eq!(sent, vec![public.id]);
+        assert_eq!(markers(&node).await, vec![public.chunks[0].clone()]);
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_parent_already_sent_by_a_chunk_retry_is_not_sent_again() {
+    workers::block_on(async {
+        let node = node().await;
+        let public = write(&node, PUBLIC).await;
+        retry(&node, &public.chunks[0]).await;
+
+        assert_eq!(
+            retry(&node, &public.chunks[1]).await,
+            RapidHashSet::from_iter([public.chunks[1].clone()])
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_retry_for_a_collection_no_longer_replicated_clears_its_marker_unsent() {
+    workers::block_on(async {
+        let node = node().await;
+        let public = write(&node, PUBLIC).await;
+        let only_articles = vec![collection_id(&node, "Article")];
+
+        let (result, sent) =
+            retry_through(&node, &public.chunks[0], transport(&node), &only_articles).await;
+
+        result.unwrap();
+        assert!(sent.is_empty());
+        assert!(markers(&node).await.is_empty());
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_replay_listing_chunks_before_their_parents_still_sends_both() {
+    workers::block_on(async {
+        let node = node().await;
+        let public = write(&node, PUBLIC).await;
+
+        let sent = replay_of(&node, &[CHUNKS, "Article"], &p2p::EqOnlyFilterMatcher).await;
+
+        assert_eq!(sent, public.with_chunks());
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_replay_of_the_chunk_collection_alone_sends_no_chunk_without_its_parent() {
+    workers::block_on(async {
+        let node = node().await;
+        write(&node, PUBLIC).await;
+
+        let sent = replay_of(&node, &[CHUNKS], &p2p::EqOnlyFilterMatcher).await;
+
+        assert!(sent.is_empty());
     })
     .unwrap()
 }
