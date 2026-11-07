@@ -226,6 +226,13 @@ In `_commits { links { fieldName delta } heads { delta } }`, each link and head 
 
 Introspection describes, in Go DefraDB's words (the only reference so far), every type, field, argument, input field and enum value both schemas share: collection objects (`_docID`, `_deleted`, `_version`, `GROUP` and the aggregates), filter, selector and operator blocks, `Commit`, `Signature`, the `_commits` query, mutations, `Ordering` and the custom scalars. A GraphQL client such as GraphiQL shows them in its docs pane. Exceptions: the built-in `ID`, `Int`, `Float` and `String` scalars keep async-graphql's texts, `docID` on update and delete is one ID in defradb.rs and is described as one, and `BlobOperatorBlock` says Blob where Go says String (#2106).
 
+# `defra.request.relation_field_args`: Introspection shows the arguments of relation fields
+
+- **Parents:** ["defra.request"]
+- **Scenarios:** ["query::relation_field_args::relation_fields_show_their_arguments"]
+
+A relation field shows in introspection the arguments the executor accepts on it, with Go DefraDB's names, types and descriptions: a one-to-one or many-to-one field such as `Book.author` takes `filter: AuthorFilterArg`, and a one-to-many field such as `Author.published` takes `docID: [ID!]`, `filter: BookFilterArg`, `groupBy: [BookField!]`, `limit: Int`, `offset: Int` and `order: [BookOrderArg]` (#2649).
+
 # `defra.index.range_filter`: A two-sided range filter fetches only the range
 
 - **Parents:** ["defra.index"]

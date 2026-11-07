@@ -41,31 +41,14 @@ pub(super) fn build_collection_type(
         ));
     }
 
-    // _group field with args sorted alphabetically
-    let group_filter = format!("{}FilterArg", coll_name);
-    let group_order = format!("{}OrderArg", coll_name);
-    let group_field_enum = format!("{}Field", coll_name);
     named_fields.push((
         "GROUP".to_string(),
-        Field::new("GROUP", TypeRef::named_list(coll_name), |_| {
-            FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
-        })
-        .description(d::GROUP_FIELD)
-        .argument(
-            InputValue::new("docID", TypeRef::named_nn_list("ID")).description(d::DOC_IDS_ARG),
-        )
-        .argument(
-            InputValue::new("filter", TypeRef::named(&group_filter))
-                .description(d::LIST_FIELD_FILTER_ARG),
-        )
-        .argument(
-            InputValue::new("groupBy", TypeRef::named_nn_list(&group_field_enum))
-                .description(d::GROUP_BY_ARG),
-        )
-        .argument(InputValue::new("limit", TypeRef::named("Int")).description(d::LIMIT_ARG))
-        .argument(InputValue::new("offset", TypeRef::named("Int")).description(d::OFFSET_ARG))
-        .argument(
-            InputValue::new("order", TypeRef::named_list(&group_order)).description(d::ORDER_ARG),
+        list_join_args(
+            Field::new("GROUP", TypeRef::named_list(coll_name), |_| {
+                FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+            })
+            .description(d::GROUP_FIELD),
+            coll_name,
         ),
     ));
 
@@ -231,12 +214,20 @@ pub(super) fn build_collection_type(
             continue;
         }
         let type_ref = field_kind_to_type_ref(&field.kind, id_to_name, &collection.name);
-        named_fields.push((
-            field.name.clone(),
-            Field::new(&field.name, type_ref, |_| {
-                FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
-            }),
-        ));
+        let mut gql_field = Field::new(&field.name, type_ref, |_| {
+            FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+        });
+        if let Some((target, is_array)) = relation_target(&field.kind, id_to_name, coll_name) {
+            gql_field = if is_array {
+                list_join_args(gql_field, &target)
+            } else {
+                gql_field.argument(
+                    InputValue::new("filter", TypeRef::named(format!("{target}FilterArg")))
+                        .description(d::SINGLE_FIELD_FILTER_ARG),
+                )
+            };
+        }
+        named_fields.push((field.name.clone(), gql_field));
     }
 
     // Sort alphabetically to match Go introspection output
@@ -248,6 +239,64 @@ pub(super) fn build_collection_type(
     }
 
     obj
+}
+
+/// The arguments Go gives a field that joins a list of `target` documents
+/// (a one-to-many relation, or the `GROUP` selector), sorted by name.
+fn list_join_args(field: Field, target: &str) -> Field {
+    field
+        .argument(
+            InputValue::new("docID", TypeRef::named_nn_list("ID")).description(d::DOC_IDS_ARG),
+        )
+        .argument(
+            InputValue::new("filter", TypeRef::named(format!("{target}FilterArg")))
+                .description(d::LIST_FIELD_FILTER_ARG),
+        )
+        .argument(
+            InputValue::new("groupBy", TypeRef::named_nn_list(format!("{target}Field")))
+                .description(d::GROUP_BY_ARG),
+        )
+        .argument(InputValue::new("limit", TypeRef::named("Int")).description(d::LIMIT_ARG))
+        .argument(InputValue::new("offset", TypeRef::named("Int")).description(d::OFFSET_ARG))
+        .argument(
+            InputValue::new("order", TypeRef::named_list(format!("{target}OrderArg")))
+                .description(d::ORDER_ARG),
+        )
+}
+
+/// The collection a relation field joins, and whether it joins a list.
+fn relation_target(
+    kind: &FieldKind,
+    id_to_name: &RapidHashMap<String, String>,
+    current_name: &str,
+) -> Option<(String, bool)> {
+    match kind {
+        FieldKind::Relation {
+            collection_id,
+            is_array,
+        } => Some((
+            id_to_name
+                .get(collection_id)
+                .cloned()
+                .unwrap_or_else(|| collection_id.clone()),
+            *is_array,
+        )),
+        FieldKind::SelfRef {
+            relative_id,
+            is_array,
+        } if relative_id.is_empty() => Some((current_name.to_string(), *is_array)),
+        FieldKind::SelfRef {
+            relative_id,
+            is_array,
+        } => Some((
+            id_to_name
+                .get(relative_id)
+                .cloned()
+                .unwrap_or_else(|| relative_id.clone()),
+            *is_array,
+        )),
+        _ => None,
+    }
 }
 
 /// Build the Commit object type (used by _version and _commits fields).
