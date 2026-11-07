@@ -461,4 +461,12 @@ fn same_schema_ignores_list_order_and_extras_but_not_content() {
     assert!(matches(m::same_schema(golden.clone()), extra_type));
     assert!(!matches(m::same_schema(golden.clone()), missing_field));
     assert!(!matches(m::same_schema(golden), changed));
+    let described = json!({ "types": [{ "name": "A", "description": "" }] });
+    let undescribed = json!({ "types": [{ "name": "A", "description": null }] });
+    let named = json!({ "types": [{ "name": "A", "description": null, "kind": "" }] });
+    assert!(matches(m::same_schema(described.clone()), undescribed));
+    assert!(!matches(
+        m::same_schema(json!({ "types": [{ "name": "A", "kind": null }] })),
+        named
+    ));
 }
