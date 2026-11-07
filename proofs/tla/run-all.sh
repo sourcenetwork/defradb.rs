@@ -710,6 +710,9 @@ RUNS=(
   "MC_CoordinatorShutdown_Red_NoPrunerWait.cfg CoordinatorShutdown.tla RED" # the drain does not wait for pruners: a handle out with a pruner comes back after the drain (INV_NoLeak)
   "MC_CoordinatorShutdown_Red_PrunerIgnoresFlag.cfg CoordinatorShutdown.tla RED" # the code as it stands, the pruner never reads the flag: a pruner that starts after the drain's check puts a live handle back (INV_NoLeak)
   "MC_CoordinatorShutdown_Red_NoRecheck.cfg CoordinatorShutdown.tla RED" # register_task never reads the flag again: a handle pushed after the drain runs on (INV_NoLeak)
+  "MC_DocumentSave_Green.cfg DocumentSave.tla GREEN" # a save refuses a deleted document and never forks
+  "MC_DocumentSave_Red_NoDeletedCheck.cfg DocumentSave.tla RED" # a deleted document is written over and forks (INV_NoFork)
+  "MC_DocumentSave_Red_SplitTxn.cfg DocumentSave.tla RED" # a delete between lookup and write forks the save (INV_NoFork)
 )
 
 parallelism="${TLA_JOBS:-4}"

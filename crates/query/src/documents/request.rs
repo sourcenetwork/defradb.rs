@@ -99,6 +99,15 @@ pub(super) fn save(
     ))
 }
 
+/// Whether document `doc_id` is deleted, deleted documents included.
+pub(super) fn lookup(collection: &str, doc_id: &str) -> Result<String> {
+    Ok(format!(
+        "query {{ {}(docID: {}, showDeleted: true) {{ _deleted }} }}",
+        name(collection)?,
+        string(doc_id)
+    ))
+}
+
 pub(super) fn delete(collection: &str, doc_id: &str) -> Result<String> {
     Ok(format!(
         "mutation {{ delete_{}(docIDs: [{}]) {SELECTION} }}",
@@ -137,14 +146,19 @@ pub(super) fn update_with_filter(
         };
         Error::Request(format!("cannot parse JSON: {what}{e}"))
     })?;
-    if !updater.is_object() {
-        return Err(Error::Request(
-            "the updater of a document is of invalid type".to_owned(),
-        ));
-    }
+    // Go takes an array as a JSON patch, which it has not implemented: the
+    // matched documents are updated with nothing and reported.
+    let input = match updater {
+        Value::Object(_) => input(&updater)?,
+        Value::Array(_) => "{}".to_owned(),
+        _ => {
+            return Err(Error::Request(
+                "the updater of a document is of invalid type".to_owned(),
+            ))
+        }
+    };
     Ok(format!(
-        "mutation {{ update_{collection}(filter: {filter}, input: {}) {SELECTION} }}",
-        input(&updater)?
+        "mutation {{ update_{collection}(filter: {filter}, input: {input}) {SELECTION} }}"
     ))
 }
 

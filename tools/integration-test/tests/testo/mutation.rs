@@ -117,6 +117,7 @@ mod update {
         }
         mod string;
     }
+    mod txn;
     mod underscored_collection;
     mod with_default_values;
     mod with_delete;
