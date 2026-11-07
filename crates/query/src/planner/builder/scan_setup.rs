@@ -292,6 +292,19 @@ impl Planner {
                     let idx = scan_mapping.next_index();
                     scan_mapping.add(idx, &sim.target_field);
                 }
+
+                // A chunked target scores from the row's text and chunk list.
+                if let Some(target) = self.chunk_target(collection, sim) {
+                    for name in [
+                        target.chunked.field_name.clone(),
+                        target.chunked.list_field(),
+                    ] {
+                        if scan_mapping.first_index_of_name(&name).is_none() {
+                            let idx = scan_mapping.next_index();
+                            scan_mapping.add(idx, &name);
+                        }
+                    }
+                }
             }
         }
 

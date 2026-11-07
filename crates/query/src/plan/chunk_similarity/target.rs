@@ -4,7 +4,7 @@ use defra_core::vector::Metric;
 use document::Document;
 use schema::{ChunkedField, CollectionVersion, CHUNK_SOURCE_ID_FIELD};
 
-use crate::error::Result;
+use crate::error::{QueryError, Result};
 use crate::json_convert::normal_value_to_json;
 use crate::mapper::Similarity;
 use crate::plan::similarity::{score_vectors, SimilarityNode};
@@ -18,8 +18,10 @@ pub(crate) struct ChunkTarget {
     pub chunked: ChunkedField,
     /// The chunk collection.
     pub chunks: String,
-    /// The chunk collection's `_sourceID` index, which finds one parent's chunks.
+    /// The chunk collection's `[_sourceID, hash]` index, which finds one listed chunk.
     pub source_index: Option<String>,
+    /// The chunk collection's vector indexes on `field`, by ID and name.
+    pub vector_indexes: Vec<(u32, String)>,
     /// The embedding field on the chunks.
     pub field: String,
     /// The query vector.
@@ -46,11 +48,24 @@ impl ChunkTarget {
                     .is_some_and(|field| field.name == CHUNK_SOURCE_ID_FIELD)
             })
             .map(|index| index.name.clone());
+        let vector_indexes = chunks
+            .indexes
+            .iter()
+            .filter(|index| {
+                index.vector().is_some()
+                    && index
+                        .fields
+                        .first()
+                        .is_some_and(|field| field.name == similarity.target_field)
+            })
+            .map(|index| (index.id, index.name.clone()))
+            .collect();
         Some(Self {
             parent: parent.name.clone(),
             chunked: chunked.clone(),
             chunks: chunks.name.clone(),
             source_index,
+            vector_indexes,
             field: similarity.target_field.clone(),
             vector: similarity.vector.clone(),
             metric: crate::planner::vector_routing::scoring_metric(
@@ -71,6 +86,37 @@ impl ChunkTarget {
         let Some(vector) = SimilarityNode::extract_vector(&normal_value_to_json(value)?) else {
             return Ok(None);
         };
+        if vector.len() != self.vector.len() {
+            return Err(QueryError::execution(format!(
+                "source and vector must be of the same length. Source: {}, Vector: {}, Field: {}.{}",
+                vector.len(),
+                self.vector.len(),
+                self.chunks,
+                self.field
+            )));
+        }
         score_vectors(self.metric, &vector, &self.vector).map(Some)
+    }
+
+    /// The name of the chunk vector index with ID `id`.
+    pub(crate) fn vector_index_name(&self, id: u32) -> Option<&str> {
+        self.vector_indexes
+            .iter()
+            .find(|(index_id, _)| *index_id == id)
+            .map(|(_, name)| name.as_str())
+    }
+}
+
+/// The documents a chunked similarity read, which explain reports.
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct Reads {
+    pub docs: u64,
+    pub fields: u64,
+}
+
+impl Reads {
+    pub(crate) fn count(&mut self, doc: &Document) {
+        self.docs += 1;
+        self.fields += doc.len() as u64;
     }
 }

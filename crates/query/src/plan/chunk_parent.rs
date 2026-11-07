@@ -40,13 +40,22 @@ pub(crate) fn parent_hashes(
         .get(&chunked.field_name)
         .and_then(NormalValue::as_str)?;
     let list = match parent.get(&chunked.list_field()) {
-        Some(NormalValue::StringArray(list)) => Some(list),
-        Some(NormalValue::NillableStringArray(Some(list))) => Some(list),
+        Some(NormalValue::StringArray(list)) => Some(list.as_slice()),
+        Some(NormalValue::NillableStringArray(Some(list))) => Some(list.as_slice()),
         _ => None,
     };
-    Some(match list {
+    Some(listed_hashes(parent_text, list, chunked))
+}
+
+/// The chunk hashes a parent's `text` uses, given its stored `list`.
+pub(crate) fn listed_hashes(
+    text: &str,
+    list: Option<&[String]>,
+    chunked: &ChunkedField,
+) -> RapidHashSet<String> {
+    match list {
         // The first entry is the whole text's hash, not a chunk.
-        Some(list) if describes(list, parent_text) => list.iter().skip(1).cloned().collect(),
+        Some(list) if describes(list, text) => list.iter().skip(1).cloned().collect(),
         // Text and list merge as separate fields, so concurrent writes can leave one
         // peer's text with the other's list. Split the text again to be sure.
         _ => {
@@ -54,12 +63,12 @@ pub(crate) fn parent_hashes(
                 max_chars: chunked.max_chars as usize,
                 overlap: chunked.overlap as usize,
             };
-            split(parent_text, &config)
+            split(text, &config)
                 .into_iter()
                 .map(|chunk| chunk.hash)
                 .collect()
         }
-    })
+    }
 }
 
 /// The fields of a chunk the read check uses.

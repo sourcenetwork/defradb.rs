@@ -28,10 +28,7 @@ use crate::executor::GqlWarning;
 use crate::fetcher::DocFetcher;
 use crate::limits::QueryLimits;
 use crate::mapper::{Requestable, Select};
-use crate::plan::{
-    ChunkSimilarityScanNode, IndexScanNode, PermissionFilterNode, SEFilterNode, ScanNode,
-    SelectNode,
-};
+use crate::plan::{IndexScanNode, PermissionFilterNode, SEFilterNode, ScanNode, SelectNode};
 use crate::planner::index_selection::{IndexScanParams, SelectEstimates};
 use crate::planner::vector_routing;
 use crate::planner::PlanNode;
@@ -471,49 +468,21 @@ impl Planner {
         // - Complex filters (_and/_or with mixed scalar+relation): Apply whole filter after join
         // - Multi-level relation filters: Apply after all joins (like complex filters)
 
-        // A routed similarity on a chunked embedding scans parents through the chunk index.
-        let chunk_route = vector_route.as_ref().and_then(|route| {
-            let similarity = select.fields.iter().find_map(|field| match field {
-                Requestable::Similarity(similarity) => Some(similarity),
-                _ => None,
-            })?;
-            Some((
-                route.clone(),
-                self.chunk_target(&collection, similarity)?,
-                similarity,
-            ))
-        });
-
-        let routes_chunks = chunk_route.is_some();
+        let chunk_scan = match &vector_route {
+            Some(route) => self.chunk_route_scan(
+                route,
+                select,
+                &collection,
+                &scan_mapping,
+                scalar_filter.as_ref(),
+            )?,
+            None => None,
+        };
+        let routes_chunks = chunk_scan.is_some();
 
         // 1. Choose between IndexScanNode and ScanNode based on index availability
-        let mut plan: Box<dyn PlanNode> = if let Some((route, target, similarity)) = chunk_route {
-            let index_name = route_indexes
-                .iter()
-                .find(|index| index.id == route.index_id && index.vector().is_some())
-                .map(|index| index.name.clone())
-                .unwrap_or_default();
-            let fetcher = self
-                .fetcher
-                .clone()
-                .ok_or_else(|| QueryError::internal("a routed similarity query has no fetcher"))?;
-            let mut scan = ChunkSimilarityScanNode::new(
-                (*collection).clone(),
-                scan_mapping.clone(),
-                target,
-                route.index_id,
-                index_name,
-                route.k,
-                super::chunk_similarity::similarity_slot(&scan_mapping, similarity)?,
-                fetcher,
-            );
-            if let Some(ref doc_ids) = select.doc_ids {
-                scan = scan.with_doc_ids(doc_ids.clone());
-            }
-            if let Some(ref filter) = scalar_filter {
-                scan = scan.with_filter(filter.clone());
-            }
-            Box::new(scan)
+        let mut plan: Box<dyn PlanNode> = if let Some(scan) = chunk_scan {
+            scan
         } else if let Some(ref params) = index_scan {
             let mut index_scan_node =
                 IndexScanNode::new((*collection).clone(), scan_mapping.clone(), params.clone())

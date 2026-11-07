@@ -292,9 +292,7 @@ impl CollectionVersion {
             .map(|chunked| chunked.collection(&self.name))
     }
 
-    /// The chunk collection among `candidates` that holds the embedding `field`,
-    /// when this collection has no field of that name. An `@embedding` over a
-    /// `@chunk` field lives on the chunks, and the parent ranks by it.
+    /// The chunk collection among `candidates` holding embedding `field`, when this collection has none.
     pub fn chunk_embedding<'a, I>(
         &self,
         field: &str,

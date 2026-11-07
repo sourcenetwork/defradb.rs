@@ -2219,7 +2219,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Text chunking",
         name: "prefix_best_exact / unread_ranks_no_higher / prefix_top_is_top",
         axis: Lean,
-        anchor: "crates/query/src/plan/chunk_similarity/best.rs best_per_parent; crates/query/src/plan/chunk_similarity/search.rs ChunkSearch::run",
+        anchor: "crates/query/src/plan/chunk_similarity/best.rs best_per_parent; crates/query/src/plan/chunk_similarity/search.rs ChunkSearch::run; crates/query/src/plan/chunk_similarity/listed.rs best_score_of",
         model_ref: "ChunkSimilarity (lake build)",
         tiers: &[Boundary],
         bound_by: "",

@@ -10,7 +10,7 @@ use tracing::debug;
 
 use super::listed::best_listed_score;
 use super::search::{ChunkSearch, ParentCheck, Searched};
-use super::target::ChunkTarget;
+use super::target::{ChunkTarget, Reads};
 use crate::doc_stream::DocStream;
 use crate::document::{document_to_plan_doc, DocumentMapping};
 use crate::error::Result;
@@ -18,12 +18,7 @@ use crate::fetcher::DocFetcher;
 use crate::mapper::Filter;
 use crate::planner::{Doc, ExecInfo, PlanNode};
 
-/// Scans a parent collection for a routed similarity query on a chunked
-/// embedding, setting each parent's score to its best chunk's.
-///
-/// The nearest chunks name the parents. When the index cannot name `k` of
-/// them, every parent is scored from its listed chunks instead, as an
-/// unrouted query would be.
+/// The parent scan of a routed chunked similarity, scoring each parent by its best chunk.
 pub struct ChunkSimilarityScanNode {
     collection: CollectionVersion,
     mapping: DocumentMapping,
@@ -31,7 +26,6 @@ pub struct ChunkSimilarityScanNode {
     doc_ids: Option<Vec<String>>,
     target: ChunkTarget,
     index_id: u32,
-    index_name: String,
     k: usize,
     similarity_index: usize,
     fetcher: Arc<dyn DocFetcher>,
@@ -71,13 +65,11 @@ impl ParentCheck for Accepts<'_> {
 }
 
 impl ChunkSimilarityScanNode {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         collection: CollectionVersion,
         mapping: DocumentMapping,
         target: ChunkTarget,
         index_id: u32,
-        index_name: String,
         k: usize,
         similarity_index: usize,
         fetcher: Arc<dyn DocFetcher>,
@@ -89,7 +81,6 @@ impl ChunkSimilarityScanNode {
             doc_ids: None,
             target,
             index_id,
-            index_name,
             k,
             similarity_index,
             fetcher,
@@ -130,9 +121,9 @@ impl ChunkSimilarityScanNode {
         Ok(row)
     }
 
-    fn count_fetch(&mut self, row: &Doc) {
-        self.exec_info.docs_fetched += 1;
-        self.exec_info.fields_fetched += row.stored_field_count as u64;
+    fn count(&mut self, reads: Reads) {
+        self.exec_info.docs_fetched += reads.docs;
+        self.exec_info.fields_fetched += reads.fields;
     }
 }
 
@@ -146,11 +137,13 @@ impl PlanNode for ChunkSimilarityScanNode {
             target: &self.target,
             index_id: self.index_id,
             k: self.k,
-        };
-        let (searched, searches) = search.run(&self.accepts()).await?;
-        self.searched = true;
-        self.exec_info.indexes_fetched += searches;
-        match searched {
+        }
+        .run(&self.accepts())
+        .await?;
+        self.searched = search.searches > 0;
+        self.exec_info.indexes_fetched += search.searches;
+        self.count(search.reads);
+        match search.searched {
             Searched::Ranked(parents) => {
                 let mut rows = Vec::with_capacity(parents.len());
                 for (parent, score) in &parents {
@@ -159,10 +152,11 @@ impl PlanNode for ChunkSimilarityScanNode {
                 self.ranked = rows.into_iter();
                 self.fallback = None;
             }
-            Searched::Exhausted => {
+            Searched::Exhausted(gave_up) => {
                 debug!(
                     collection = %self.collection.name,
                     chunks = %self.target.chunks,
+                    ?gave_up,
                     "chunk vector index could not fill the page, scoring every parent"
                 );
                 self.ranked = Vec::new().into_iter();
@@ -183,7 +177,6 @@ impl PlanNode for ChunkSimilarityScanNode {
     async fn next(&mut self) -> Result<bool> {
         self.exec_info.iterations += 1;
         if let Some(row) = self.ranked.next() {
-            self.count_fetch(&row);
             self.current = row;
             return Ok(true);
         }
@@ -195,13 +188,16 @@ impl PlanNode for ChunkSimilarityScanNode {
             let Some((parent, _)) = pulled else {
                 return Ok(false);
             };
+            let mut reads = Reads::default();
+            reads.count(&parent);
             if !self.accepts().accepts(&parent)? {
+                self.count(reads);
                 continue;
             }
-            let score = best_listed_score(self.fetcher.as_ref(), &self.target, &parent).await?;
-            let row = self.scored(&parent, score)?;
-            self.count_fetch(&row);
-            self.current = row;
+            let score =
+                best_listed_score(self.fetcher.as_ref(), &self.target, &parent, &mut reads).await?;
+            self.count(reads);
+            self.current = self.scored(&parent, score)?;
             return Ok(true);
         }
     }
@@ -259,8 +255,12 @@ impl PlanNode for ChunkSimilarityScanNode {
             "fieldFetches": self.exec_info.fields_fetched,
             "indexFetches": self.exec_info.indexes_fetched,
         });
-        if self.searched {
-            obj["vectorIndex"] = JsonValue::String(self.index_name.clone());
+        if let Some(name) = self
+            .searched
+            .then(|| self.target.vector_index_name(self.index_id))
+            .flatten()
+        {
+            obj["vectorIndex"] = JsonValue::String(name.to_string());
         }
         obj
     }

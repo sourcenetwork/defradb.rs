@@ -18,6 +18,10 @@ The slow way reads every chunk of every article and does the same ranking.
 What must never happen: the fast way returning other articles, or other scores,
 than the slow way. It can't, as long as the chunks read so far really are the
 nearest ones (every chunk read scores at least as high as every chunk not read).
+Only an exact index (flat) promises that. An approximate one, like HNSW, can
+skip a near chunk: then the code still gives each article it returns its exact
+best score, by reading that article's listed chunks again, but the set of
+articles on the page may differ from the slow way's.
 The promises are `prefix_best_exact`, `unread_ranks_no_higher` and
 `prefix_top_is_top`.
 
@@ -26,6 +30,7 @@ Scores are natural numbers here: only their order matters, and larger is nearer.
 Code it models:
   crates/query/src/plan/chunk_similarity/best.rs   best_per_parent
   crates/query/src/plan/chunk_similarity/search.rs ChunkSearch::run (stops at k accepted articles)
+  crates/query/src/plan/chunk_similarity/listed.rs best_score_of (the exact score of each returned article)
 -/
 
 namespace ChunkSimilarity

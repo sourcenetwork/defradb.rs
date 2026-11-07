@@ -27,6 +27,8 @@ struct IndexedChunk {
     listed: bool,
     /// Whether its hash matches its text.
     honest: bool,
+    /// Whether the vector index returns it; an approximate index can miss one.
+    indexed: bool,
     /// Its vector: its similarity to the query vector `[1, 0]`.
     nearness: f64,
 }
@@ -37,6 +39,7 @@ fn chunk(parent: &'static str, nearness: f64) -> IndexedChunk {
         text: format!("{parent} chunk at {nearness}"),
         listed: true,
         honest: true,
+        indexed: true,
         nearness,
     }
 }
@@ -44,6 +47,13 @@ fn chunk(parent: &'static str, nearness: f64) -> IndexedChunk {
 fn superseded(parent: &'static str, nearness: f64) -> IndexedChunk {
     IndexedChunk {
         listed: false,
+        ..chunk(parent, nearness)
+    }
+}
+
+fn missed(parent: &'static str, nearness: f64) -> IndexedChunk {
+    IndexedChunk {
+        indexed: false,
         ..chunk(parent, nearness)
     }
 }
@@ -57,6 +67,7 @@ fn forged(parent: &'static str, nearness: f64) -> IndexedChunk {
 
 struct Index {
     chunks: Vec<IndexedChunk>,
+    deleted: Vec<&'static str>,
     searches: AtomicUsize,
     widest: AtomicUsize,
 }
@@ -65,6 +76,7 @@ impl Index {
     fn new(chunks: Vec<IndexedChunk>) -> Self {
         Self {
             chunks,
+            deleted: Vec::new(),
             searches: AtomicUsize::new(0),
             widest: AtomicUsize::new(0),
         }
@@ -113,6 +125,7 @@ impl Index {
         doc.set("body", NormalValue::String(body)).unwrap();
         doc.set("_body_chunks", NormalValue::StringArray(list))
             .unwrap();
+        doc.set_deleted(self.deleted.contains(&name));
         Some(doc)
     }
 }
@@ -177,11 +190,15 @@ impl DocFetcher for Index {
 
     async fn get_by_field_value(
         &self,
-        _collection: &str,
-        _field: &str,
-        _value: &str,
+        collection: &str,
+        field: &str,
+        value: &str,
     ) -> Result<Vec<Document>> {
-        unreachable!("the search reads chunks by short id")
+        assert_eq!((collection, field), (CHUNKS, "_sourceID"));
+        Ok((0..self.chunks.len() as u64)
+            .filter(|id| parent_id(self.chunks[*id as usize].parent) == value)
+            .map(|id| self.chunk_doc(id))
+            .collect())
     }
 
     fn supports_vector_search(&self) -> bool {
@@ -199,7 +216,10 @@ impl DocFetcher for Index {
         assert_eq!(collection, CHUNKS);
         self.searches.fetch_add(1, Ordering::Relaxed);
         self.widest.fetch_max(k, Ordering::Relaxed);
-        Ok((0..self.chunks.len().min(k) as u64).collect())
+        Ok((0..self.chunks.len() as u64)
+            .filter(|id| self.chunks[*id as usize].indexed)
+            .take(k)
+            .collect())
     }
 }
 
@@ -213,6 +233,7 @@ fn target() -> ChunkTarget {
         },
         chunks: CHUNKS.into(),
         source_index: None,
+        vector_indexes: Vec::new(),
         field: "v".into(),
         vector: vec![1.0, 0.0],
         metric: Metric::NegativeDot,
@@ -248,8 +269,8 @@ where
         index_id: 0,
         k,
     };
-    let (searched, _) = workers::block_on(search.run(check)).unwrap().unwrap();
-    let Searched::Ranked(parents) = searched else {
+    let found = workers::block_on(search.run(check)).unwrap().unwrap();
+    let Searched::Ranked(parents) = found.searched else {
         return None;
     };
     let name = |id: String| {
@@ -277,24 +298,43 @@ fn the_search_widens_until_its_chunks_name_k_parents() {
     ]);
     let ranked = search(&index, 2, &AnyParent).unwrap();
     assert_eq!(ranked, vec![("A", 0.9), ("B", 0.6)]);
-    // Two chunks name only A, four still only A and B is the fourth: 2, then 4.
+    // The first two chunks are both A's; the first four reach B.
     assert_eq!(index.searches.load(Ordering::Relaxed), 2);
     assert_eq!(index.widest.load(Ordering::Relaxed), 4);
 }
 
 #[test]
-fn a_superseded_or_forged_chunk_never_ranks_its_parent() {
-    let index = Index::new(vec![
-        superseded("A", 0.9),
-        forged("A", 0.8),
-        chunk("B", 0.6),
-        chunk("A", 0.1),
-    ]);
-    // A ranks by its one listed chunk, far below the two chunks above it.
+fn a_superseded_chunk_never_ranks_its_parent() {
+    let index = Index::new(vec![superseded("A", 0.9), chunk("B", 0.6), chunk("A", 0.1)]);
     assert_eq!(
         search(&index, 2, &AnyParent).unwrap(),
         vec![("B", 0.6), ("A", 0.1)]
     );
+}
+
+#[test]
+fn a_forged_chunk_never_ranks_its_parent() {
+    let index = Index::new(vec![forged("A", 0.9), chunk("B", 0.6), chunk("A", 0.1)]);
+    assert_eq!(
+        search(&index, 2, &AnyParent).unwrap(),
+        vec![("B", 0.6), ("A", 0.1)]
+    );
+}
+
+#[test]
+fn a_parent_scores_its_best_chunk_even_when_the_index_misses_it() {
+    let index = Index::new(vec![chunk("B", 0.6), chunk("A", 0.5), missed("A", 0.95)]);
+    assert_eq!(
+        search(&index, 2, &AnyParent).unwrap(),
+        vec![("B", 0.6), ("A", 0.95)]
+    );
+}
+
+#[test]
+fn a_deleted_parent_never_ranks() {
+    let mut index = Index::new(vec![chunk("A", 0.9), chunk("B", 0.6)]);
+    index.deleted = vec!["A"];
+    assert_eq!(search(&index, 1, &AnyParent).unwrap(), vec![("B", 0.6)]);
 }
 
 #[test]

@@ -12,5 +12,6 @@ mod search;
 mod target;
 
 pub use node::ChunkSimilarityNode;
+pub(crate) use node::ListedInRow;
 pub use routed::ChunkSimilarityScanNode;
 pub(crate) use target::ChunkTarget;

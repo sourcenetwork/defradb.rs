@@ -294,7 +294,7 @@ An `upsert_Article` that finds no article creates one, asks the model for each o
 
 - **Parents:** ["defra.chunk.embed"]
 
-`SIMILARITY(body_v: ...)` on `Article`, where `body_v` embeds a `@chunk` field, scores each article by its best chunk: the highest similarity among the chunks its current text lists. Each article appears once. A query the vector index can answer, as for a single-vector field, reads the chunk index nearest first, widens until the chunks it read name enough articles, and scores every article from its listed chunks when the index runs out. Any other query scores every article from its listed chunks, with the same `VECTOR_INDEX_UNUSED` warning a single-vector field gives.
+`SIMILARITY(body_v: ...)` on `Article`, where `body_v` embeds a `@chunk` field, scores each article by its best chunk: the highest similarity among the chunks its current text lists. Each article appears once. A query the vector index can answer, as for a single-vector field, reads the chunk index nearest first, widens until the chunks it read name enough articles, and scores every article from its listed chunks when the index runs out. A routed article's score is always its best listed chunk's; which articles make the page is as exact as the index, so an approximate index such as HNSW, the default, can leave out an article an exact one would return. Any other query scores every article from its listed chunks, with the same `VECTOR_INDEX_UNUSED` warning a single-vector field gives.
 
 # `defra.chunk.rank.best_chunk`: Articles rank by their best chunk, through the chunk index
 
