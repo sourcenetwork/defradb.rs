@@ -736,11 +736,7 @@ impl Planner {
             }
         }
 
-        // 4c. Add SimilarityNodes for _similarity fields.
-        // These score each document before filters/ordering can reference the result.
-        plan = self.add_similarity_nodes(plan, select, &scan_mapping, &collection)?;
-
-        // 4c2. Add BM25Nodes for BM25 full-text search fields.
+        // 4c. Add BM25Nodes for BM25 full-text search fields.
         plan = self.add_bm25_nodes(
             plan,
             select,
@@ -748,24 +744,14 @@ impl Planner {
             &[select.field.output_name().to_string()],
         )?;
 
-        // A chunked similarity reads chunks per parent, so it scores only the
-        // parents the reader may see, and the alias filter on its score waits for it.
-        let scores_chunks = !routes_chunks
-            && select.fields.iter().any(|field| {
-                matches!(field, Requestable::Similarity(similarity)
-                    if self.chunk_target(&collection, similarity).is_some())
-            });
-        if !scores_chunks {
-            plan = Self::apply_similarity_alias_filter(plan, select, &scan_mapping);
-        }
-
-        // Insert ACP permission filter for the root collection (if ACP-protected).
-        // Position: after Select/joins/similarity but before GroupBy/Aggregates/OrderBy/Limit.
+        // Check access before scoring, so a hidden document is never scored, then
+        // apply the alias filter on the scores. Before GroupBy/Aggregates/OrderBy/Limit.
         plan = self.maybe_wrap_with_acp_filter(plan, &collection);
-        if scores_chunks {
+        plan = self.add_similarity_nodes(plan, select, &scan_mapping, &collection)?;
+        if !routes_chunks {
             plan = self.add_chunk_similarity_nodes(plan, select, &scan_mapping, &collection)?;
-            plan = Self::apply_similarity_alias_filter(plan, select, &scan_mapping);
         }
+        plan = Self::apply_similarity_alias_filter(plan, select, &scan_mapping);
 
         let ordered_prefix = if select.group_by.is_none()
             && select
