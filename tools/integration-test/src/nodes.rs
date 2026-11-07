@@ -27,6 +27,8 @@ pub struct NodeSpec {
     pub dir: Option<Arc<TempDir>>,
     /// The P2P addresses a restarted node listens on again.
     pub listen: Vec<String>,
+    /// The node signs its blocks with a key it generates.
+    pub signing: bool,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -75,6 +77,7 @@ impl TestNode {
                 let options = GoOptions {
                     p2p: spec.network.then_some(listen),
                     dir: spec.dir.as_ref().map(|dir| dir.path().to_owned()),
+                    signing: spec.signing,
                 };
                 let node =
                     GoNode::start(&binary, &options).unwrap_or_else(|error| panic!("{error}"));
@@ -194,6 +197,9 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Node {
     }
     if let Some(config) = http {
         builder = builder.with_http(config);
+    }
+    if spec.signing {
+        builder = builder.enable_signing();
     }
     workers::block_on(builder.build())
         .expect("run builder")

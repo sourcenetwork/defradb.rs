@@ -32,6 +32,7 @@ pub enum GoNodeError {
 pub struct GoOptions {
     pub p2p: Option<String>,
     pub dir: Option<PathBuf>,
+    pub signing: bool,
 }
 
 /// A running Go node, killed when dropped.
@@ -78,10 +79,10 @@ impl GoNode {
             .args(["--no-keyring", "--store", store, "--no-telemetry"])
             .args(p2p)
             // Encryption and signing are off, as backbone's TestCluster
-            // started Go nodes, unless the signed-docs multiplier turns
-            // signing on.
+            // started Go nodes. Signing is on for a node that asks for it, or
+            // under the signed-docs multiplier.
             .args(["--no-encryption", "--no-searchable-encryption"]);
-        if !signed_docs(std::env::var("DEFRA_MULTIPLIERS").ok().as_deref()) {
+        if !options.signing && !signed_docs(std::env::var("DEFRA_MULTIPLIERS").ok().as_deref()) {
             command.arg("--no-signing");
         }
         let mut process = Process(

@@ -2,9 +2,10 @@
 
 use document::NormalValue;
 use query::error::{QueryError, Result};
+use rapidhash::RapidHashSet;
 use schema::CHUNK_SOURCE_ID_FIELD;
 use storage::corekv::Store;
-use storage::index::IndexIterator;
+use storage::index::{IndexIterator, RangeIterator};
 
 use crate::collection::loader::get_collection_with_index_manager;
 
@@ -63,29 +64,32 @@ where
         })
     }
 
-    pub(super) async fn exists(
+    /// Which of the `planned` hashes `parent` already has a chunk document for.
+    /// Only those are kept, since a parent's old chunks stay until it is deleted.
+    pub(super) async fn existing_of(
         &self,
         target: &ChunkCollection,
         parent: &str,
-        hash: &str,
-    ) -> Result<bool> {
-        let index = target
-            .index_manager
-            .get_index(&target.index_name)
-            .ok_or_else(|| QueryError::execution("chunk source index is not loaded"))?;
-        let values = [
-            NormalValue::String(parent.to_string()),
-            NormalValue::String(hash.to_string()),
-        ];
-        let mut entries = index
-            .get(&target.datastore, &values)
-            .await
-            .map_err(|e| QueryError::execution(format!("chunk lookup failed: {e}")))?;
-        let found = entries
+        planned: &RapidHashSet<&str>,
+    ) -> Result<RapidHashSet<String>> {
+        let mut entries = self.scan_of(target, parent).await?;
+        let mut existing = RapidHashSet::default();
+        while let Some(entry) = entries
             .next()
             .await
-            .map_err(|e| QueryError::execution(format!("chunk lookup failed: {e}")))?;
-        Ok(found.is_some())
+            .map_err(|e| QueryError::execution(format!("chunk scan failed: {e}")))?
+        {
+            // An index key does not record that the hash was a string.
+            let hash = match entry.values.into_iter().nth(1) {
+                Some(NormalValue::Bytes(hash)) => String::from_utf8(hash).ok(),
+                Some(NormalValue::String(hash)) => Some(hash),
+                _ => None,
+            };
+            if let Some(hash) = hash.filter(|hash| planned.contains(hash.as_str())) {
+                existing.insert(hash);
+            }
+        }
+        Ok(existing)
     }
 
     pub(super) async fn chunks_of(
@@ -93,19 +97,9 @@ where
         target: &ChunkCollection,
         parent: &str,
     ) -> Result<Vec<u64>> {
-        let index = target
-            .index_manager
-            .get_index(&target.index_name)
-            .ok_or_else(|| QueryError::execution("chunk source index is not loaded"))?;
-        let mut entries = index
-            .scan_prefix(
-                &target.datastore,
-                &[NormalValue::String(parent.to_string())],
-                false,
-            )
-            .await
-            .map_err(|e| QueryError::execution(format!("chunk scan failed: {e}")))?;
-        let entries = entries
+        let entries = self
+            .scan_of(target, parent)
+            .await?
             .collect_all()
             .await
             .map_err(|e| QueryError::execution(format!("chunk scan failed: {e}")))?;
@@ -113,5 +107,20 @@ where
             .into_iter()
             .map(|entry| entry.doc_short_id)
             .collect())
+    }
+
+    async fn scan_of(&self, target: &ChunkCollection, parent: &str) -> Result<RangeIterator> {
+        let index = target
+            .index_manager
+            .get_index(&target.index_name)
+            .ok_or_else(|| QueryError::execution("chunk source index is not loaded"))?;
+        index
+            .scan_prefix(
+                &target.datastore,
+                &[NormalValue::String(parent.to_string())],
+                false,
+            )
+            .await
+            .map_err(|e| QueryError::execution(format!("chunk scan failed: {e}")))
     }
 }

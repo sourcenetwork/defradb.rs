@@ -129,7 +129,8 @@ where
     S: Store + 'static,
 {
     /// Creates the chunk documents in `plans` that don't exist yet, with
-    /// their vectors from the memo. On any miss nothing is written and every
+    /// their vectors from the memo. A new parent can have some already: they
+    /// may arrive by P2P before it. On any miss nothing is written and every
     /// miss is noted for one wave.
     pub(crate) async fn create_missing(
         &self,
@@ -143,9 +144,14 @@ where
             // An update keeps the text encrypted when earlier writes did, even
             // without the flag, so its chunks must be too.
             let encrypt = plan.encrypt || self.parent_encrypts(parent_doc_id, &plan.field).await?;
+            // One scan per field: a lookup per chunk would cost a pass over the
+            // transaction's writes each time.
+            let planned: RapidHashSet<&str> =
+                plan.chunks.iter().map(|(_, hash)| hash.as_str()).collect();
+            let existing = self.existing_of(&target, parent_doc_id, &planned).await?;
             let mut docs = Vec::new();
             for (text, hash) in plan.chunks {
-                if self.exists(&target, parent_doc_id, &hash).await? {
+                if existing.contains(&hash) {
                     continue;
                 }
                 let mut doc = Self::chunk_document(&target, parent_doc_id, text, hash.clone())?;
