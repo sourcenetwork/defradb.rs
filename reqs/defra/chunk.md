@@ -218,14 +218,14 @@ Replacing the model of `/Article__body_chunk/VectorEmbeddings/0`, or removing it
 - **Parents:** ["defra.chunk.embed"]
 - **Scenarios:** ["chunk::embed_chunks::each_chunk_is_embedded_on_its_own_text"]
 
-Creating an article with four paragraphs asks the model to embed each chunk's text, followed by a newline, once. Every chunk of `Article__body_chunk` then holds the vector the model gave for its text.
+Creating an article with four paragraphs asks the model to embed each chunk's text, followed by a newline, once. Every chunk of `Article__body_chunk` then holds the vector the model gave for its text. A chunk's `_docID` is derived from its content, its vector included, so the same text embedded by another model gets another `_docID`.
 
 # `defra.chunk.embed.edit`: An edit embeds only the chunks it changes
 
 - **Parents:** ["defra.chunk.embed"]
 - **Scenarios:** ["chunk::embed_chunks::editing_one_paragraph_embeds_only_its_new_chunk"]
 
-After an article with four paragraphs is created, changing its second paragraph asks the model for that one new chunk's text and nothing else. The chunks are then the three unchanged ones with their old vectors and the new one with its own.
+After an article with four paragraphs is created, changing its second paragraph sends the model that one new chunk's text. The chunks are then the three unchanged ones with their old vectors and the new one with its own.
 
 # `defra.chunk.embed.transaction`: A create in an explicit transaction embeds its chunks
 
@@ -268,3 +268,17 @@ While the model answers every request with 500, adding an article fails with `em
 - **Scenarios:** ["chunk::embed_backup::importing_a_backup_embeds_the_chunks_again", "chunk::embed_backup::importing_a_backup_while_the_model_fails_reports_it"]
 
 A backup holds no vectors. Importing an article's backup into a second node asks that node's model for each chunk once, and every chunk there holds its vector. While the model answers with 500, the import fails with `embedding error: embedding provider returned 500 Internal Server Error`, and the second node has no `Article` and no chunks.
+
+# `defra.chunk.embed.encrypted`: An encrypted article's chunks get their vectors
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_writes::an_encrypted_article_gets_its_chunk_vectors"]
+
+Adding an article with `body` encrypted asks the model for each chunk once, and every chunk holds its vector.
+
+# `defra.chunk.embed.upsert`: An upsert embeds the chunks it creates
+
+- **Parents:** ["defra.chunk.embed"]
+- **Scenarios:** ["chunk::embed_writes::an_upsert_embeds_the_chunks_it_creates"]
+
+An `upsert_Article` that finds no article creates one, asks the model for each of its chunks once, and every chunk holds its vector.
