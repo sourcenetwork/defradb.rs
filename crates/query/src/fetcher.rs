@@ -304,6 +304,16 @@ pub trait DocFetcher: MaybeSendSync {
         ))
     }
 
+    async fn get_document_updates(
+        &self,
+        options: &DocumentUpdateOptions,
+    ) -> Result<DocumentUpdatePage> {
+        let _ = options;
+        Err(crate::error::QueryError::execution(
+            "document update queries are unsupported",
+        ))
+    }
+
     /// The conflicts of a Json field of one document: for each path, the
     /// concurrent edits its winner beat.
     async fn get_json_conflicts(&self, options: &JsonConflictOptions) -> Result<Vec<JsonConflict>> {
@@ -680,4 +690,39 @@ pub struct DocumentArrivalPage {
 pub struct DocumentArrival {
     pub cursor: u64,
     pub doc_id: String,
+}
+
+/// A node-local update cursor, scoped to one collection. Updates made before
+/// the journal was installed are not reconstructed from historical blocks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentUpdateOptions {
+    /// Collection whose local update journal is read.
+    pub collection: String,
+    /// Exclusive checkpoint in the local journal.
+    pub after: u64,
+    /// Maximum raw rows examined before authorization filtering.
+    pub limit: u64,
+}
+
+/// A page observed in one transaction snapshot. `next` includes rows hidden
+/// by authorization, and an empty page therefore need not mean an empty log.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DocumentUpdatePage {
+    /// Highest committed cursor in this snapshot.
+    pub head: u64,
+    /// Last scanned cursor, including rows not visible to the caller.
+    pub next: u64,
+    /// Updates the caller is permitted to read.
+    pub entries: Vec<DocumentUpdate>,
+}
+
+/// Identity of one locally committed document update.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentUpdate {
+    /// Local commit-order position.
+    pub cursor: u64,
+    /// The updated document.
+    pub doc_id: String,
+    /// Composite block identifying this update.
+    pub cid: String,
 }

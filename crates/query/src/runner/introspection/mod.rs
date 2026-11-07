@@ -187,6 +187,40 @@ pub fn build_introspection_schema(
         .argument(InputValue::new("docID", TypeRef::named_nn_list("ID"))),
     );
 
+    let update = Object::new("DocumentUpdate")
+        .field(Field::new("cursor", TypeRef::named_nn("String"), |_| {
+            FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+        }))
+        .field(Field::new("docID", TypeRef::named_nn("ID"), |_| {
+            FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+        }))
+        .field(Field::new("cid", TypeRef::named_nn("String"), |_| {
+            FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+        }));
+    let update_page = Object::new("DocumentUpdatePage")
+        .field(Field::new("head", TypeRef::named_nn("String"), |_| {
+            FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+        }))
+        .field(Field::new("next", TypeRef::named_nn("String"), |_| {
+            FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+        }))
+        .field(Field::new(
+            "entries",
+            TypeRef::named_nn_list_nn("DocumentUpdate"),
+            |_| FieldFuture::new(async { Ok(Some(GqlValue::List(vec![]))) }),
+        ));
+    schema_builder = schema_builder.register(update).register(update_page);
+    query_type = query_type.field(
+        Field::new(
+            "_documentUpdates",
+            TypeRef::named_nn("DocumentUpdatePage"),
+            |_| FieldFuture::new(async { Ok(Some(GqlValue::Null)) }),
+        )
+        .argument(InputValue::new("collection", TypeRef::named_nn("String")))
+        .argument(InputValue::new("after", TypeRef::named("String")))
+        .argument(InputValue::new("limit", TypeRef::named("Int"))),
+    );
+
     let json_conflict = Object::new("JsonConflict")
         .field(Field::new(
             "path",
