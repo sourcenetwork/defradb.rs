@@ -130,6 +130,14 @@ where
         ))
     })?;
     register_block_doc_id_mappings(stores.systemstore, &built.block_result, target.doc_id).await?;
+    crate::event::updates::record(
+        stores.systemstore,
+        collection.resolved_root_id(),
+        target.doc_id,
+        &built.block_result.cid.to_string(),
+    )
+    .await
+    .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
     let collection_block = write_branchable_collection_block(
         db,
         target.collection_name,

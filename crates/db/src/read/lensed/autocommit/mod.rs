@@ -59,6 +59,22 @@ impl<S: Store> LensedAutoCommitFetcher<S> {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> DocFetcher for LensedAutoCommitFetcher<S> {
+    async fn get_document_updates(
+        &self,
+        options: &query::fetcher::DocumentUpdateOptions,
+    ) -> query::error::Result<query::fetcher::DocumentUpdatePage> {
+        let txn = self
+            .db
+            .new_txn(true)
+            .await
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+        let result = crate::event::updates::read(&txn, options)
+            .await
+            .map_err(|error| query::error::QueryError::execution(error.to_string()));
+        let _ = txn.discard();
+        result
+    }
+
     async fn get_document_arrivals(
         &self,
         options: &query::fetcher::DocumentArrivalOptions,
