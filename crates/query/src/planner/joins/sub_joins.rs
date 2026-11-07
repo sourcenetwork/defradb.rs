@@ -363,10 +363,21 @@ impl Planner {
             &child_scan_mapping,
             &target_collection,
         )?;
-        if let Some(filter) = alias_filter {
-            child_plan = Box::new(
-                SelectNode::new(child_plan, child_scan_mapping.clone()).with_filter(filter),
-            );
+        // Explain shows the user's whole filter on the top select, as when it ran there.
+        let scores = nested_select
+            .fields
+            .iter()
+            .any(|field| matches!(field, Requestable::Similarity(_)));
+        let shown = combined_filter.filter(|_| scores);
+        if alias_filter.is_some() || shown.is_some() {
+            let mut top = SelectNode::new(child_plan, child_scan_mapping.clone());
+            if let Some(filter) = alias_filter {
+                top = top.with_filter(filter);
+            }
+            if let Some(filter) = shown {
+                top = top.with_explain_filter(filter);
+            }
+            child_plan = Box::new(top);
         }
 
         // Update parent mapping with the final child mapping (after sub-joins)

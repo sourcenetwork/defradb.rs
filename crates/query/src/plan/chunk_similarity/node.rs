@@ -188,16 +188,15 @@ impl PlanNode for ChunkSimilarityNode {
         if let Some(child) = self.source.explain_execute().as_object() {
             obj.extend(child.clone());
         }
-        // The chunk reads are this node's, on top of the parent scan's.
+        // The chunk reads are this node's, on top of any its source reports here.
         let own = [
             ("docFetches", self.exec_info.docs_fetched),
             ("fieldFetches", self.exec_info.fields_fetched),
             ("indexFetches", self.exec_info.indexes_fetched),
         ];
         for (key, reads) in own {
-            if let Some(child) = obj.get(key).and_then(JsonValue::as_u64) {
-                obj.insert(key.to_string(), serde_json::json!(child + reads));
-            }
+            let child = obj.get(key).and_then(JsonValue::as_u64).unwrap_or(0);
+            obj.insert(key.to_string(), serde_json::json!(child + reads));
         }
         JsonValue::Object(obj)
     }
