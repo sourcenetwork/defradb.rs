@@ -9,6 +9,7 @@ mod broadcast_chunk_filter;
 mod broadcast_mutator_broadcast;
 mod chunk_before_parent;
 mod chunk_definition;
+mod chunk_filter_support;
 mod chunk_forged;
 mod collection_block_links;
 mod collection_guard_race;
