@@ -1,3 +1,4 @@
+import HostMutationProjection
 import Lean
 
 /-!
@@ -8,6 +9,15 @@ authority, provider, and writable transaction are valid. Regolith's transaction
 validation and the native Zanzibar relationship store are external premises.
 Rust owners: acp node source relationships, `source_permission_job_for` in
 query `txn/source_nac.rs`, and defra-node transactional NAC.
+
+After a trusted embedder stages or restates a root, the host's projector
+replays the root's descendants (the membership edges beneath it) as the same
+actor, in the same transaction. A descendant that is already present needs no
+authority; a missing one needs the actor's own authority; node authority is
+never borrowed. A refused descendant rolls the whole statement back. An
+untrusted request caller gets no replay. Rust owners: `source_permission_job_for`
+in query `txn/source_nac.rs` and `DocumentMutationContext::change_source_permission`
+in db `document_projection.rs`.
 -/
 namespace SourceScopedNac
 open Lean
@@ -113,11 +123,109 @@ theorem wrongOwner (i : Admission) (h : i.sameOwner = false) : mayStage i = fals
 theorem invalidSource (i : Admission) (h : i.validSource = false) : mayStage i = false := by
   simp [mayStage, h]
 
+-- One desired membership edge beneath the root, as the projector sees it.
+-- `present` says the transaction already holds the edge. `actorAuthorized` is
+-- the actor's own native authority for it (`NodeAcpDelegation.authorized`).
+-- `nodeAuthorized` is what the node itself could do; replay must ignore it.
+structure Descendant where
+  present : Bool
+  actorAuthorized : Bool
+  nodeAuthorized : Bool
+  deriving FromJson, ToJson
+
+-- Only the trusted embedder replays; an untrusted request caller does not.
+def replays (i : Admission) : Bool := i.trustedEmbedder
+
+/-- A descendant replays under the held-bounded rule the host replay uses: an
+unchanged edge needs nothing, a missing one needs the actor's own authority.
+`nodeAuthorized` is deliberately absent, so the node is never borrowed. -/
+def descendantAllowed (d : Descendant) : Bool :=
+  HostMutationProjection.hostReplayAllowed d.present d.actorAuthorized
+
+-- Replay succeeds only when every descendant is allowed.
+def replayAllowed (ds : List Descendant) : Bool := ds.all descendantAllowed
+
+-- After a successful replay each desired descendant is present.
+def reconcile (d : Descendant) : Descendant := { d with present := true }
+
+/-- The statement's outcome: `none` is a refusal that rolls the root and every
+descendant back; `some` is what the transaction holds afterwards. -/
+def outcome (i : Admission) (ds : List Descendant) : Option (List Descendant) :=
+  if !mayStage i then none
+  else if !replays i then some ds
+  else if replayAllowed ds then some (ds.map reconcile)
+  else none
+
+-- Replay reconciles: after a trusted embedder commit every descendant exists.
+theorem embedder_replay_reconciles (i : Admission) (ds out : List Descendant)
+    (trusted : i.trustedEmbedder = true) (h : outcome i ds = some out) :
+    ∀ d ∈ out, d.present = true := by
+  unfold outcome at h
+  by_cases stage : mayStage i <;> simp [stage, replays, trusted] at h
+  by_cases ok : replayAllowed ds <;> simp [ok] at h
+  subst h
+  intro d hd
+  simp only [List.mem_map] at hd
+  obtain ⟨_, _, rfl⟩ := hd
+  rfl
+
+-- Replay never widens: every descendant it had to create was the actor's to create.
+theorem embedder_replay_never_widens (i : Admission) (ds out : List Descendant)
+    (trusted : i.trustedEmbedder = true) (h : outcome i ds = some out) :
+    ∀ d ∈ ds, d.present = false → d.actorAuthorized = true := by
+  unfold outcome at h
+  by_cases stage : mayStage i <;> simp [stage, replays, trusted] at h
+  by_cases ok : replayAllowed ds <;> simp [ok] at h
+  intro d hd missing
+  have := List.all_eq_true.mp ok d hd
+  simpa [descendantAllowed, HostMutationProjection.hostReplayAllowed, missing] using this
+
+-- A missing descendant the actor cannot create refuses the whole statement.
+theorem embedder_missing_unauthorized_refused (i : Admission) (ds : List Descendant)
+    (d : Descendant) (mem : d ∈ ds) (trusted : i.trustedEmbedder = true)
+    (missing : d.present = false) (denied : d.actorAuthorized = false) :
+    outcome i ds = none := by
+  have : replayAllowed ds = false := by
+    cases hall : replayAllowed ds
+    · rfl
+    · have := List.all_eq_true.mp hall d mem
+      simp [descendantAllowed, HostMutationProjection.hostReplayAllowed, missing, denied] at this
+  unfold outcome
+  by_cases stage : mayStage i <;> simp [stage, replays, trusted, this]
+
+-- A complete projection replays without any authority at all.
+theorem embedder_complete_replay_needs_no_authority (ds : List Descendant)
+    (complete : ∀ d ∈ ds, d.present = true) : replayAllowed ds = true := by
+  apply List.all_eq_true.mpr
+  intro d hd
+  simp [descendantAllowed, HostMutationProjection.hostReplayAllowed, complete d hd]
+
+-- Node authority never decides a descendant: replay cannot borrow it.
+theorem embedder_replay_ignores_node_authority (d : Descendant) (node : Bool) :
+    descendantAllowed { d with nodeAuthorized := node } = descendantAllowed d := by
+  rfl
+
+-- An untrusted request caller gets no replay: its descendants stay as they were.
+theorem untrusted_no_replay (i : Admission) (ds out : List Descendant)
+    (untrusted : i.trustedEmbedder = false) (h : outcome i ds = some out) : out = ds := by
+  unfold outcome at h
+  by_cases stage : mayStage i <;> simp [stage, replays, untrusted] at h
+  exact h.symm
+
 -- Emit modeled admission outcomes for serialized native conformance inputs.
+-- An input may name the root's `descendants`; without them the root has none.
 def evaluate (json : Json) : Except String Json := do
-  let inputs : Array Admission ← fromJson? json
-  pure <| toJson <| inputs.map fun input => Json.mkObj
-    [("input", toJson input), ("mayStage", toJson (mayStage input))]
+  let rows ← json.getArr?
+  let outputs ← rows.mapM fun row => do
+    let input : Admission ← fromJson? row
+    let descendants : List Descendant :=
+      ((row.getObjValAs? (List Descendant) "descendants").toOption).getD []
+    let result := outcome input descendants
+    pure <| Json.mkObj
+      [("input", toJson input), ("mayStage", toJson (mayStage input)),
+       ("committed", toJson result.isSome),
+       ("reconciled", toJson (result.map fun out => out.all (·.present)))]
+  pure <| toJson outputs
 end SourceScopedNac
 
 -- The native test sends its actual inputs to this executable model.
