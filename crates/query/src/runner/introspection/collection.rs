@@ -1,7 +1,7 @@
 use async_graphql::dynamic::*;
 use async_graphql::Value as GqlValue;
 use rapidhash::RapidHashMap;
-use schema::{CollectionVersion, FieldKind, ScalarArrayKind, ScalarKind};
+use schema::{CollectionVersion, FieldDescription, FieldKind, ScalarArrayKind, ScalarKind};
 
 const SIMILARITY_DESCRIPTION: &str = "\nReturns how similar the given vector is to the specified field's value. The metric is\n whichever one the field's vector index was created with, defaulting to cosine similarity\n when the field has no vector index. Higher values are more similar for every metric.\n";
 
@@ -13,6 +13,7 @@ const SIMILARITY_DESCRIPTION: &str = "\nReturns how similar the given vector is 
 pub(super) fn build_collection_type(
     collection: &CollectionVersion,
     id_to_name: &RapidHashMap<String, String>,
+    similarity_targets: &[&FieldDescription],
 ) -> Object {
     let mut obj = Object::new(&collection.name);
     let coll_name = &collection.name;
@@ -170,7 +171,7 @@ pub(super) fn build_collection_type(
     // _similarity: takes args for each numeric array field's similarity selector
     {
         let mut sim_args: Vec<(String, InputValue)> = Vec::new();
-        for field in &collection.fields {
+        for field in similarity_targets.iter().copied() {
             if let FieldKind::ScalarArray(arr) = &field.kind {
                 let is_numeric = matches!(
                     arr,

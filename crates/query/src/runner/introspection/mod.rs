@@ -14,7 +14,7 @@ mod operators;
 
 use async_graphql::{dynamic::*, Value as GqlValue};
 use rapidhash::RapidHashMap;
-use schema::CollectionVersion;
+use schema::{CollectionVersion, FieldDescription};
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
@@ -44,6 +44,24 @@ use operators::{
     build_not_null_string_filter_arg, build_not_null_string_list_operator_block,
     build_string_filter_arg, build_string_list_operator_block, build_string_operator_block,
 };
+
+/// The fields a `SIMILARITY` on `collection` may target: its own, and the
+/// embeddings over its `@chunk` fields, which live on its chunk collections.
+fn similarity_targets<'a>(
+    collection: &'a CollectionVersion,
+    collections: &'a [Arc<CollectionVersion>],
+) -> Vec<&'a FieldDescription> {
+    let mut targets: Vec<&FieldDescription> = collection.fields.iter().collect();
+    for chunks in collections.iter().map(Arc::as_ref) {
+        for embedding in &chunks.vector_embeddings {
+            let name = &embedding.field_name;
+            if collection.chunk_embedding(name, [chunks]).is_some() {
+                targets.extend(chunks.field_by_name(name));
+            }
+        }
+    }
+    targets
+}
 
 /// Build an async-graphql schema from collections for introspection.
 pub fn build_introspection_schema(
@@ -89,7 +107,8 @@ pub fn build_introspection_schema(
     // Create object types for each collection and add query fields
     for collection in collections {
         // Create object type for this collection (always register for type system)
-        let obj_type = build_collection_type(collection, &id_to_name);
+        let targets = similarity_targets(collection, collections);
+        let obj_type = build_collection_type(collection, &id_to_name, &targets);
         schema_builder = schema_builder.register(obj_type);
 
         // Create filter input type
@@ -110,7 +129,7 @@ pub fn build_introspection_schema(
         schema_builder = schema_builder.register(mutation_input);
 
         // Add aggregate selector types
-        let agg_types = build_aggregate_types_for_collection(collection, &id_to_name);
+        let agg_types = build_aggregate_types_for_collection(collection, &id_to_name, &targets);
         for agg_type in agg_types {
             schema_builder = schema_builder.register(agg_type);
         }

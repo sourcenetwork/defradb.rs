@@ -65,7 +65,7 @@ impl SimilarityNode {
     }
 
     /// Extract a numeric vector from a JSON array value.
-    fn extract_vector(value: &JsonValue) -> Option<Vec<f64>> {
+    pub(crate) fn extract_vector(value: &JsonValue) -> Option<Vec<f64>> {
         match value {
             JsonValue::Array(items) => {
                 let mut vec = Vec::with_capacity(items.len());
@@ -82,6 +82,19 @@ impl SimilarityNode {
             _ => None,
         }
     }
+}
+
+/// Scores a document's vector against the query vector, refusing vectors of
+/// different lengths.
+pub(crate) fn score_vectors(metric: Metric, doc_vector: &[f64], query: &[f64]) -> Result<f64> {
+    if doc_vector.len() != query.len() {
+        return Err(QueryError::execution(format!(
+            "source and vector must be of the same length. Source: {}, Vector: {}",
+            doc_vector.len(),
+            query.len()
+        )));
+    }
+    Ok(metric.similarity(doc_vector, query))
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -109,16 +122,7 @@ impl PlanNode for SimilarityNode {
         // Get the document's vector field
         if let Some(field_value) = doc.get(self.field_index) {
             if let Some(doc_vector) = Self::extract_vector(field_value) {
-                // Check vector length match
-                if doc_vector.len() != self.vector.len() {
-                    return Err(QueryError::execution(format!(
-                        "source and vector must be of the same length. Source: {}, Vector: {}",
-                        doc_vector.len(),
-                        self.vector.len()
-                    )));
-                }
-
-                let result = self.metric.similarity(&doc_vector, &self.vector);
+                let result = score_vectors(self.metric, &doc_vector, &self.vector)?;
 
                 // Store as Float (f64)
                 let json_result = serde_json::Number::from_f64(result)

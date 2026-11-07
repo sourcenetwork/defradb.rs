@@ -341,7 +341,13 @@ impl Planner {
             child_plan,
             nested_select,
             &child_scan_mapping,
-            &target_collection.indexes,
+            &target_collection,
+        )?;
+        child_plan = self.add_chunk_similarity_nodes(
+            child_plan,
+            nested_select,
+            &child_scan_mapping,
+            &target_collection,
         )?;
 
         // Now wrap with SelectNode if there's a filter (deferred from earlier).

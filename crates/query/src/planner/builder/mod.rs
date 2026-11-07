@@ -28,7 +28,10 @@ use crate::executor::GqlWarning;
 use crate::fetcher::DocFetcher;
 use crate::limits::QueryLimits;
 use crate::mapper::{Requestable, Select};
-use crate::plan::{IndexScanNode, PermissionFilterNode, SEFilterNode, ScanNode, SelectNode};
+use crate::plan::{
+    ChunkSimilarityScanNode, IndexScanNode, PermissionFilterNode, SEFilterNode, ScanNode,
+    SelectNode,
+};
 use crate::planner::index_selection::{IndexScanParams, SelectEstimates};
 use crate::planner::vector_routing;
 use crate::planner::PlanNode;
@@ -387,8 +390,9 @@ impl Planner {
         let mut warnings: Vec<GqlWarning> = Vec::new();
 
         let sim_query = vector_routing::similarity_query(select);
+        let route_indexes = self.similarity_route_indexes(select, &collection);
         let warning_field =
-            vector_routing::first_indexed_similarity(&sim_query.similarities, &collection.indexes);
+            vector_routing::first_indexed_similarity(&sim_query.similarities, &route_indexes);
 
         let vector_route = if let Some(ref fetcher) = self.fetcher {
             if rows_rejected_above_the_scan {
@@ -406,7 +410,7 @@ impl Planner {
                 }
                 None
             } else {
-                match vector_routing::route(&sim_query, &collection.indexes) {
+                match vector_routing::route(&sim_query, &route_indexes) {
                     Ok(route) => Some(route),
                     Err(reason) => {
                         debug!(
@@ -467,8 +471,50 @@ impl Planner {
         // - Complex filters (_and/_or with mixed scalar+relation): Apply whole filter after join
         // - Multi-level relation filters: Apply after all joins (like complex filters)
 
+        // A routed similarity on a chunked embedding scans parents through the chunk index.
+        let chunk_route = vector_route.as_ref().and_then(|route| {
+            let similarity = select.fields.iter().find_map(|field| match field {
+                Requestable::Similarity(similarity) => Some(similarity),
+                _ => None,
+            })?;
+            Some((
+                route.clone(),
+                self.chunk_target(&collection, similarity)?,
+                similarity,
+            ))
+        });
+
+        let routes_chunks = chunk_route.is_some();
+
         // 1. Choose between IndexScanNode and ScanNode based on index availability
-        let mut plan: Box<dyn PlanNode> = if let Some(ref params) = index_scan {
+        let mut plan: Box<dyn PlanNode> = if let Some((route, target, similarity)) = chunk_route {
+            let index_name = route_indexes
+                .iter()
+                .find(|index| index.id == route.index_id && index.vector().is_some())
+                .map(|index| index.name.clone())
+                .unwrap_or_default();
+            let fetcher = self
+                .fetcher
+                .clone()
+                .ok_or_else(|| QueryError::internal("a routed similarity query has no fetcher"))?;
+            let mut scan = ChunkSimilarityScanNode::new(
+                (*collection).clone(),
+                scan_mapping.clone(),
+                target,
+                route.index_id,
+                index_name,
+                route.k,
+                super::chunk_similarity::similarity_slot(&scan_mapping, similarity)?,
+                fetcher,
+            );
+            if let Some(ref doc_ids) = select.doc_ids {
+                scan = scan.with_doc_ids(doc_ids.clone());
+            }
+            if let Some(ref filter) = scalar_filter {
+                scan = scan.with_filter(filter.clone());
+            }
+            Box::new(scan)
+        } else if let Some(ref params) = index_scan {
             let mut index_scan_node =
                 IndexScanNode::new((*collection).clone(), scan_mapping.clone(), params.clone())
                     .with_show_deleted(select.show_deleted);
@@ -723,7 +769,7 @@ impl Planner {
 
         // 4c. Add SimilarityNodes for _similarity fields.
         // These score each document before filters/ordering can reference the result.
-        plan = self.add_similarity_nodes(plan, select, &scan_mapping, &collection.indexes)?;
+        plan = self.add_similarity_nodes(plan, select, &scan_mapping, &collection)?;
 
         // 4c2. Add BM25Nodes for BM25 full-text search fields.
         plan = self.add_bm25_nodes(
@@ -733,43 +779,24 @@ impl Planner {
             &[select.field.output_name().to_string()],
         )?;
 
-        // 4d. Apply deferred _alias filter for similarity results (non-grouped queries only).
-        // Only apply alias conditions that do NOT reference aggregate fields.
-        // Aggregate alias conditions (e.g., _alias: {publishedCount: {_gt: 0}}) must wait
-        // until after aggregate nodes compute their values (handled by compute_relation_aggregates).
-        if select.group_by.is_none() {
-            if let Some(ref filter) = select.filter {
-                let (_non_alias, alias_filter) = filter.split_alias();
-                if let Some(alias_f) = alias_filter {
-                    // Build a list of aggregate-only output names (not similarity).
-                    // Similarity alias conditions CAN be applied here (after SimilarityNode),
-                    // but aggregate alias conditions must be deferred.
-                    let aggregate_only_names: Vec<&str> = select
-                        .fields
-                        .iter()
-                        .filter_map(|f| {
-                            if let Requestable::Aggregate(agg) = f {
-                                Some(agg.output_name())
-                            } else {
-                                None
-                            }
-                        })
-                        .collect();
-                    let (stripped_alias, _) =
-                        alias_f.strip_aggregate_alias_conditions(&aggregate_only_names);
-                    // Only apply alias filter if there are non-aggregate alias conditions remaining
-                    if !stripped_alias.conditions().is_empty() {
-                        plan = Box::new(
-                            SelectNode::new(plan, scan_mapping.clone()).with_filter(stripped_alias),
-                        );
-                    }
-                }
-            }
+        // A chunked similarity reads chunks per parent, so it scores only the
+        // parents the reader may see, and the alias filter on its score waits for it.
+        let scores_chunks = !routes_chunks
+            && select.fields.iter().any(|field| {
+                matches!(field, Requestable::Similarity(similarity)
+                    if self.chunk_target(&collection, similarity).is_some())
+            });
+        if !scores_chunks {
+            plan = Self::apply_similarity_alias_filter(plan, select, &scan_mapping);
         }
 
         // Insert ACP permission filter for the root collection (if ACP-protected).
         // Position: after Select/joins/similarity but before GroupBy/Aggregates/OrderBy/Limit.
         plan = self.maybe_wrap_with_acp_filter(plan, &collection);
+        if scores_chunks {
+            plan = self.add_chunk_similarity_nodes(plan, select, &scan_mapping, &collection)?;
+            plan = Self::apply_similarity_alias_filter(plan, select, &scan_mapping);
+        }
 
         let ordered_prefix = if select.group_by.is_none()
             && select
@@ -819,6 +846,47 @@ impl Planner {
             aggregate_internal_keys,
             warnings,
         })
+    }
+
+    /// Applies the deferred `_alias` filter on similarity results (non-grouped queries only).
+    fn apply_similarity_alias_filter(
+        mut plan: Box<dyn PlanNode>,
+        select: &Select,
+        scan_mapping: &crate::document::DocumentMapping,
+    ) -> Box<dyn PlanNode> {
+        // Only apply alias conditions that do NOT reference aggregate fields.
+        // Aggregate alias conditions (e.g., _alias: {publishedCount: {_gt: 0}}) must wait
+        // until after aggregate nodes compute their values (handled by compute_relation_aggregates).
+        if select.group_by.is_none() {
+            if let Some(ref filter) = select.filter {
+                let (_non_alias, alias_filter) = filter.split_alias();
+                if let Some(alias_f) = alias_filter {
+                    // Build a list of aggregate-only output names (not similarity).
+                    // Similarity alias conditions CAN be applied here (after SimilarityNode),
+                    // but aggregate alias conditions must be deferred.
+                    let aggregate_only_names: Vec<&str> = select
+                        .fields
+                        .iter()
+                        .filter_map(|f| {
+                            if let Requestable::Aggregate(agg) = f {
+                                Some(agg.output_name())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    let (stripped_alias, _) =
+                        alias_f.strip_aggregate_alias_conditions(&aggregate_only_names);
+                    // Only apply alias filter if there are non-aggregate alias conditions remaining
+                    if !stripped_alias.conditions().is_empty() {
+                        plan = Box::new(
+                            SelectNode::new(plan, scan_mapping.clone()).with_filter(stripped_alias),
+                        );
+                    }
+                }
+            }
+        }
+        plan
     }
 
     /// Get a collection schema by name.

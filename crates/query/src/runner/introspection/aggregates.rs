@@ -1,12 +1,13 @@
 use async_graphql::dynamic::*;
 use rapidhash::RapidHashMap;
-use schema::{CollectionVersion, FieldKind, ScalarArrayKind};
+use schema::{CollectionVersion, FieldDescription, FieldKind, ScalarArrayKind};
 
 /// Build aggregate selector input types and register them for a collection.
 /// Returns the types to register.
 pub(super) fn build_aggregate_types_for_collection(
     collection: &CollectionVersion,
     id_to_name: &RapidHashMap<String, String>,
+    similarity_targets: &[&FieldDescription],
 ) -> Vec<Type> {
     let coll_name = &collection.name;
     let mut types = Vec::new();
@@ -135,7 +136,7 @@ pub(super) fn build_aggregate_types_for_collection(
 
     // Similarity selectors for numeric array fields
     let mut metric_enum_registered = false;
-    for field in &collection.fields {
+    for field in similarity_targets.iter().copied() {
         if let FieldKind::ScalarArray(arr) = &field.kind {
             let is_numeric = matches!(
                 arr,
