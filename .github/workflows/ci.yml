@@ -83,8 +83,9 @@ jobs:
             }
             core.setOutput('integration_matrix', JSON.stringify({ include: suites }));
 
-            // The other nuclei io backends run on main and in the merge queue:
-            // on a pull request they tripled P2P Linux and Conformance.
+            // The other nuclei io backends run only after merge, on main (there is
+            // no merge queue): on a pull request they tripled P2P Linux and
+            // Conformance, and what they caught there was mostly one flaky test.
             const ioVariants = [{ name: '', suffix: '', backend: '', recv: '' }];
             if (context.eventName !== 'pull_request') {
               ioVariants.push({ name: ' (epoll)', suffix: '-epoll', backend: 'epoll', recv: '' });
@@ -192,19 +193,21 @@ jobs:
 
   lint:
     name: Lint
-    needs: [lint-default, feature-checks, dependency-checks]
+    needs: [ci-scope, lint-default, feature-checks, dependency-checks]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check lint results
         env:
+          FULL: ${{ needs.ci-scope.outputs.full }}
           DEFAULT: ${{ needs.lint-default.result }}
           FEATURES: ${{ needs.feature-checks.result }}
           DEPENDENCIES: ${{ needs.dependency-checks.result }}
         run: |
           test "$DEFAULT" = success
-          # Skipped mid-stack, where the stack's tip checks the same code.
-          test "$FEATURES" = success || test "$FEATURES" = skipped
+          # Skipped mid-stack, where the stack's tip checks this code and more.
+          # Only then: a failed scope job also skips them, and leaves FULL empty.
+          test "$FEATURES" = success || { test "$FEATURES" = skipped && test "$FULL" = false; }
           test "$DEPENDENCIES" = success
 
   unit-tests:
