@@ -64,8 +64,6 @@ testo mutation::update::field_kinds::one_to_one::with_simple::mutation_update_on
 testo mutation::update::field_kinds::one_to_one::with_simple::mutation_update_one_to_one_secondary_side_collection_api #2342
 testo mutation::update::field_kinds::one_to_one::with_simple::mutation_update_one_to_one_secondary_side_gql #2342
 testo mutation::update::with_delete::update_save_deleted_doc_does_nothing #2369
-testo mutation::update::with_filter::mutation_update_with_relation_filter_and_relation_select_returns_both #2343
-testo mutation::update::with_filter::mutation_update_with_relation_filter_correctly_filters #2343
 testo mutation::update::with_filter_action::update_with_patch_does_nothing #2369
 testo query::one_to_many::with_sum::query_one_to_many_with_sum_alias_filter_on_float32_should_match_one #2516
 testo encryption::commit_relation::doc_encryption_with_encryption_secondary_relations_should_store_encrypted_commit #2365

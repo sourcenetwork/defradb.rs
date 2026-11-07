@@ -2130,6 +2130,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "Relation-filtered mutation",
+        name: "INV_DecisionHoldsAtCommit / INV_AbortOnlyOnRangeWrite",
+        axis: Tla,
+        anchor: "crates/query/src/runner/mutation_inputs.rs resolve_filter_to_doc_ids; crates/datastore/src/multistore.rs SharedTxn::set_scans_validated, SharedTxn::iterator; crates/db/src/read/doc.rs DbDocFetcher::set_scans_validated",
+        model_ref: "MC_RelationFilterScan_{Green,Red_Unvalidated}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Add DAC policy",
         name: "INV_NoPolicyWithoutPermission / INV_NoPolicyWithoutCreator / INV_NoInvalidPolicy / INV_NoPolicyWithoutAcp / INV_ReturnedIsKeptLocally / INV_NoSilentFailure / INV_GoOrder",
         axis: Tla,

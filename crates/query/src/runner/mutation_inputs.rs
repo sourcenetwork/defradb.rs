@@ -76,12 +76,42 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         &self,
         mutation: &Mutation,
         fetcher: &dyn crate::fetcher::DocFetcher,
+        identity: &Option<identity::Did>,
     ) -> Result<Option<Vec<String>>> {
         // Only resolve if there's a filter but no explicit doc_ids
         let filter = match (&mutation.filter, &mutation.doc_ids) {
             (Some(filter), None) => filter,
             _ => return Ok(None),
         };
+
+        // A relation in the filter is not a stored field of the document, so
+        // the documents are found the way a query finds them.
+        if filter.has_relation_filters() {
+            let mut select =
+                Select::new(&mutation.collection_name).with_field(Field::new("_docID"));
+            select.filter = Some(filter.clone());
+            let mut warnings = Vec::new();
+            // The write decides on every document these scans read, related
+            // ones included, so a concurrent change to any of them aborts it.
+            fetcher.set_scans_validated(true);
+            let found = self
+                .execute_nested_select_with_planner(
+                    &select,
+                    fetcher,
+                    identity.clone(),
+                    &mut warnings,
+                )
+                .await;
+            fetcher.set_scans_validated(false);
+            let found = found?;
+            let ids = found
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|doc| doc.get("_docID")?.as_str().map(str::to_string))
+                .collect();
+            return Ok(Some(ids));
+        }
 
         // Get the collection schema on-demand from provider
         let collection = self.get_collection(&mutation.collection_name).await?;
