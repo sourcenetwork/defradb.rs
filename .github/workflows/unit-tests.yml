@@ -35,7 +35,7 @@ jobs:
   unit-tests:
     name: ${{ inputs.os }}, ${{ matrix.group }}
     # `linux` runs on RunsOn, like the rest of CI; any other value is a hosted label.
-    runs-on: ${{ inputs.os == 'linux' && format('runs-on={0}-{1}-{2}/spot={3}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache', github.run_id, github.run_attempt, strategy.job-index, github.event_name == 'merge_group' && 'false' || 'pco') || inputs.os }}
+    runs-on: ${{ inputs.os == 'linux' && format('runs-on={0}-{1}-{2}/spot={3}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache', github.run_id, github.run_attempt, strategy.job-index, github.event_name == 'merge_group' && 'false' || 'pco') || inputs.os }}
     strategy:
       fail-fast: false
       matrix:

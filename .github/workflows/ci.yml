@@ -53,6 +53,7 @@ jobs:
     outputs:
       full: ${{ steps.decide.outputs.full }}
       integration_matrix: ${{ steps.decide.outputs.integration_matrix }}
+      io_variants: ${{ steps.decide.outputs.io_variants }}
     steps:
       - id: decide
         uses: actions/github-script@v9
@@ -82,9 +83,19 @@ jobs:
             }
             core.setOutput('integration_matrix', JSON.stringify({ include: suites }));
 
+            // The other nuclei io backends run only after merge, on main (there is
+            // no merge queue): on a pull request they tripled P2P Linux and
+            // Conformance, and what they caught there was mostly one flaky test.
+            const ioVariants = [{ name: '', suffix: '', backend: '', recv: '' }];
+            if (context.eventName !== 'pull_request') {
+              ioVariants.push({ name: ' (epoll)', suffix: '-epoll', backend: 'epoll', recv: '' });
+              ioVariants.push({ name: ' (no receive buffers)', suffix: '-no-recv-buffers', backend: '', recv: '0' });
+            }
+            core.setOutput('io_variants', JSON.stringify(ioVariants));
+
   lint-default:
     name: Lint (default)
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -116,7 +127,9 @@ jobs:
 
   feature-checks:
     name: Feature checks (${{ matrix.group }})
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    needs: ci-scope
+    if: needs.ci-scope.outputs.full == 'true'
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     strategy:
       fail-fast: false
       matrix:
@@ -161,7 +174,7 @@ jobs:
 
   dependency-checks:
     name: Dependency checks
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -180,18 +193,21 @@ jobs:
 
   lint:
     name: Lint
-    needs: [lint-default, feature-checks, dependency-checks]
+    needs: [ci-scope, lint-default, feature-checks, dependency-checks]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check lint results
         env:
+          FULL: ${{ needs.ci-scope.outputs.full }}
           DEFAULT: ${{ needs.lint-default.result }}
           FEATURES: ${{ needs.feature-checks.result }}
           DEPENDENCIES: ${{ needs.dependency-checks.result }}
         run: |
           test "$DEFAULT" = success
-          test "$FEATURES" = success
+          # Skipped mid-stack, where the stack's tip checks this code and more.
+          # Only then: a failed scope job also skips them, and leaves FULL empty.
+          test "$FEATURES" = success || { test "$FEATURES" = skipped && test "$FULL" = false; }
           test "$DEPENDENCIES" = success
 
   unit-tests:
@@ -210,7 +226,7 @@ jobs:
     if: needs.ci-scope.outputs.full == 'true'
     outputs:
       pin: ${{ steps.prepare.outputs.pin }}
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -319,7 +335,7 @@ jobs:
     name: Build integration binaries
     needs: ci-scope
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -366,7 +382,7 @@ jobs:
     name: Feature tests
     needs: ci-scope
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -389,7 +405,7 @@ jobs:
     name: WASM Build Check
     needs: ci-scope
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -440,7 +456,9 @@ jobs:
 
   lean-conformance:
     name: Lean Conformance
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    needs: ci-scope
+    if: needs.ci-scope.outputs.full == 'true'
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 20
     env:
       DEFRA_REQUIRE_LAKE: '1'
@@ -487,17 +505,14 @@ jobs:
         run: cargo nextest run -p conformance --lib --test lean_conformance
 
   conformance:
-    name: ${{ matrix.io.name }}
+    name: Conformance${{ matrix.io.name }}
     strategy:
       fail-fast: false
       matrix:
-        io:
-          - { name: 'Conformance', suffix: '', backend: '', recv: '' }
-          - { name: 'Conformance (epoll)', suffix: '-epoll', backend: epoll, recv: '' }
-          - { name: 'Conformance (no receive buffers)', suffix: '-no-recv-buffers', backend: '', recv: '0' }
+        io: ${{ fromJson(needs.ci-scope.outputs.io_variants) }}
     needs: [ci-scope, build-binaries]
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 45
     env:
       DEFRA_CONFORMANCE_BINARY: ${{ github.workspace }}/target/ci/defra
@@ -553,7 +568,7 @@ jobs:
     name: Integration (${{ matrix.suite }})
     needs: [ci-scope, build-binaries, go-defradb]
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -697,17 +712,14 @@ jobs:
           if-no-files-found: ignore
 
   p2p-linux:
-    name: ${{ matrix.io.name }}
+    name: P2P Integration (Linux)${{ matrix.io.name }}
     strategy:
       fail-fast: false
       matrix:
-        io:
-          - { name: 'P2P Integration (Linux)', suffix: '', backend: '', recv: '' }
-          - { name: 'P2P Integration (Linux) (epoll)', suffix: '-epoll', backend: epoll, recv: '' }
-          - { name: 'P2P Integration (Linux) (no receive buffers)', suffix: '-no-recv-buffers', backend: '', recv: '0' }
+        io: ${{ fromJson(needs.ci-scope.outputs.io_variants) }}
     needs: [ci-scope, build-binaries]
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 90
     env:
       DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defra
@@ -771,7 +783,7 @@ jobs:
     needs: ci-scope
     if: needs.ci-scope.outputs.full == 'true'
     timeout-minutes: 30
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     env:
       DEFRADB_GO_REPO: ${{ github.workspace }}/target/go-repo
     steps:
@@ -803,7 +815,7 @@ jobs:
     name: ${{ matrix.client == 'legacy' && 'Legacy integration binaries' || format('Testo ({0}, {1}/3)', matrix.client, matrix.shard) }}
     needs: [ci-scope, build-binaries, go-defradb, testo-archive]
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 90
     strategy:
       fail-fast: false
