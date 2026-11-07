@@ -24,6 +24,8 @@ pub struct State {
     pub bindings: Bindings,
     /// The transactions the test began, in order; actions name one by index.
     pub txns: Txns,
+    /// The subscriptions the test opened, by name, until it reads them.
+    pub subscriptions: crate::actions::Subscriptions,
 }
 
 /// The transactions a test has begun. Shared by every clone of the state, and

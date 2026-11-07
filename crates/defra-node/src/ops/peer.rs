@@ -151,6 +151,44 @@ impl Node {
             .await
     }
 
+    /// Fetch documents `doc_ids` of `collection` from connected peers. Go's
+    /// `SyncDocuments`.
+    pub async fn sync_documents_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        doc_ids: &[String],
+    ) -> Result<()> {
+        let p2p = self.peer(context)?;
+        let (collection, doc_ids) = (collection.to_owned(), doc_ids.to_vec());
+        self.at_edge(async move { peer::sync_documents(&*p2p, &collection, &doc_ids).await })
+            .await
+    }
+
+    /// Fetch collection versions `version_ids` from connected peers. Go's
+    /// `SyncCollectionVersions`.
+    pub async fn sync_collection_versions_as(
+        &self,
+        context: &RequestContext,
+        version_ids: &[String],
+    ) -> Result<()> {
+        let (p2p, version_ids) = (self.peer(context)?, version_ids.to_vec());
+        self.at_edge(async move { peer::sync_collection_versions(&*p2p, &version_ids).await })
+            .await
+    }
+
+    /// Fetch the history of branchable collection `collection_id` from
+    /// connected peers. Go's `SyncBranchableCollection`.
+    pub async fn sync_branchable_collection_as(
+        &self,
+        context: &RequestContext,
+        collection_id: &str,
+    ) -> Result<()> {
+        let (p2p, collection_id) = (self.peer(context)?, collection_id.to_owned());
+        self.at_edge(async move { peer::sync_branchable_collection(&*p2p, &collection_id).await })
+            .await
+    }
+
     /// The P2P operations serving `context`, or Go's `ErrNoP2P`.
     fn peer(&self, context: &RequestContext) -> Result<Arc<dyn defra_p2p_adapter::P2POperations>> {
         self.p2p_system()
