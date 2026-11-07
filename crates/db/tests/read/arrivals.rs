@@ -40,6 +40,17 @@ fn graphql_updates_page_each_committed_version_of_one_document() {
         let data = details.data.unwrap();
         let links = data["_commits"][0]["links"].as_array().unwrap();
         assert!(links.iter().any(|link| link["fieldName"] == "name"));
+        for (name, expected) in [("first", 1), ("second", 0)] {
+            let query = format!(
+                r#"{{ Users(docID: "{}", cid: ["{}"], filter: {{_and: [{{_docID: {{_eq: "{}"}}}}, {{name: {{_eq: "{}"}}}}]}}, limit: 1) {{ _docID name }} }}"#,
+                id, cid, id, name,
+            );
+            let response = runner.execute(QueryRequest::new(query)).await;
+            assert!(response.errors.is_empty(), "{:?}", response.errors);
+            let data = response.data.unwrap();
+            assert_eq!(data["Users"].as_array().unwrap().len(), expected);
+            if expected == 1 { assert_eq!(data["Users"][0]["name"], "first"); }
+        }
         let result = runner.execute(QueryRequest::new(r#"{ _documentUpdates(collection: "Users", after: "1", limit: 1) { head next entries { cursor docID cid } } }"#)).await;
         assert!(result.errors.is_empty(), "{:?}", result.errors);
         let data = result.data.unwrap();
