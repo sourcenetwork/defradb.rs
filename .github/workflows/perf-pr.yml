@@ -13,16 +13,6 @@ name: Performance (pull request)
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-    # Changes no benchmark can see. The later entries put back what this job runs.
-    paths:
-      - '**'
-      - '!**/*.md'
-      - '!proofs/**'
-      - '!tools/integration-test/**'
-      - '!.github/**'
-      - '.github/workflows/perf-pr.yml'
-      - '.github/scripts/install-linux-ci-deps.sh'
-      - '.github/scripts/apt-update-without-nodesource.sh'
 
 permissions:
   contents: read
@@ -42,26 +32,51 @@ env:
   SCCACHE_IDLE_TIMEOUT: '0'
 
 jobs:
-  # A stack is measured at its tip, which holds every change below it; the full
-  # sweep on main still measures each merge. Dependabot bumps are measured there too.
+  # A stack is measured once, at its tip, against where the stack leaves main:
+  # the PR below the tip would hide every lower change from the comparison.
+  # Whether to run is decided on that whole diff, not the tip's own, so a tip
+  # that only touches CI still measures the code below it. The full sweep on
+  # main still measures each merge; dependabot bumps are measured there too.
   scope:
     name: Benchmark scope
     runs-on: ubuntu-latest
     outputs:
       run: ${{ steps.decide.outputs.run }}
+      base: ${{ steps.decide.outputs.base }}
     steps:
       - id: decide
         uses: actions/github-script@v9
         with:
           script: |
             const pr = context.payload.pull_request;
-            let run = pr.user.login !== 'dependabot[bot]';
             const stack = pr.stack;
-            if (run && stack) {
-              run = stack.position === stack.size;
-              core.info(`stack #${stack.number} pos ${stack.position}/${stack.size} run=${run}`);
+            const tip = !stack || stack.position === stack.size;
+            let run = pr.user.login !== 'dependabot[bot]' && tip;
+            let base = pr.base.sha;
+            if (run) {
+              const from = stack ? pr.base.repo.default_branch : pr.base.sha;
+              let data = { files: [] };
+              try {
+                ({ data } = await github.rest.repos.compareCommitsWithBasehead({
+                  ...context.repo, basehead: `${from}...${pr.head.sha}`, per_page: 300,
+                }));
+                if (stack) base = data.merge_base_commit.sha;
+              } catch (e) {
+                // Measure rather than skip when the diff cannot be read.
+                core.warning(`compare failed, measuring anyway: ${e.message}`);
+                data.files = null;
+              }
+              // Changes no benchmark can see; .github only counts for what this job runs.
+              const ci = /^\.github\/(workflows\/perf(-pr)?\.yml|scripts\/(install-linux-ci-deps|apt-update-without-nodesource)\.sh)$/;
+              const blind = (p) => p.endsWith('.md') || p.startsWith('proofs/')
+                || p.startsWith('tools/integration-test/') || (p.startsWith('.github/') && !ci.test(p));
+              const files = data.files;
+              // A listing that hit the cap may have dropped the file that matters.
+              run = !files || files.length >= 300 || files.some((f) => !blind(f.filename));
             }
+            core.info(`stack=${stack ? `#${stack.number} ${stack.position}/${stack.size}` : 'none'} base=${base} run=${run}`);
             core.setOutput('run', run ? 'true' : 'false');
+            core.setOutput('base', base);
 
   # Every pull request, no ceremony. A few families on Linux, measured against
   # this PR's own merge base, and posted back as a comment.
@@ -118,7 +133,7 @@ jobs:
           path: head
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ needs.scope.outputs.base }}
           path: base
       - uses: extractions/setup-just@v4
       # Its own interpreter rather than the system one: a PEP 668 image refuses
@@ -197,7 +212,7 @@ jobs:
       - name: Assemble the four documents
         env:
           PERF_HEAD: ${{ github.event.pull_request.head.sha }}
-          PERF_BASE: ${{ github.event.pull_request.base.sha }}
+          PERF_BASE: ${{ needs.scope.outputs.base }}
           PERF_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
