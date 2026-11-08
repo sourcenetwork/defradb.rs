@@ -571,44 +571,6 @@ fn base64_cbor(value: &str) -> String {
     base64::engine::general_purpose::STANDARD.encode(cbor(value))
 }
 
-#[test]
-fn commits_for_an_immutable_field_return_the_immutable_block() {
-    workers::block_on(async {
-        let (handler, blockstore, collection) = make_handler().await;
-        let mut doc = record(&collection);
-        let (doc_id, _, created) =
-            super::merge_handler_tests::create_doc_locally(&handler, &collection, &mut doc).await;
-        let immutable_cid = load(&blockstore, &created.cid)
-            .await
-            .links
-            .unwrap()
-            .into_iter()
-            .find(|link| link.name == IMMUTABLE_LINK_NAME)
-            .unwrap()
-            .link;
-
-        let rows = commits(
-            &handler,
-            db::read::commits::CommitsQueryOptions {
-                doc_id: Some(doc_id.to_string()),
-                field_name: Some("author".into()),
-                ..Default::default()
-            },
-        )
-        .await;
-
-        assert_eq!(
-            rows.iter().map(commit_row).collect::<Vec<_>>(),
-            [(
-                immutable_cid.to_string(),
-                "author".to_string(),
-                Some(base64_cbor("did:key:alice"))
-            )]
-        );
-    })
-    .unwrap()
-}
-
 /// Downsampling reads a document's values from its commits by height.
 #[test]
 fn height_one_commits_carry_every_immutable_field_value() {

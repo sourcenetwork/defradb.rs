@@ -307,3 +307,57 @@ A node with a replication filter also asks it in the P2P receive path. On arriva
 - **Scenarios:** ["net::gossip_admission::a_gossip_burst_over_the_admission_limits_loses_no_document", "net::gossip_admission::a_gossip_head_past_the_deferral_budget_is_reported"]
 
 Gossip has no reply and no retry, so a gossip head a node refuses for its per-peer rate limit or its pending-DAG capacity is kept as a durable pending record that takes no slot, and is fetched once a slot frees: a burst over both limits loses no document. These records are bounded by bytes, per source peer (`gossip_deferral_peer_bytes`) and in all (`gossip_deferral_total_bytes`). Past a budget the head is dropped, and the node reports a `p2p-gossip-head-dropped` event naming the peer and the root, so the application can resync it.
+
+# `defra.commits`: Commit history queries beyond Go
+
+- **Parents:** ["defra"]
+
+`_commits` behaviour that Go's integration suite does not check.
+
+# `defra.commits.height_filter`: Filtering commits on height
+
+- **Parents:** ["defra.commits"]
+- **Scenarios:** ["query::commits::with_height_filter::commits_filter_on_height_ranges"]
+
+`_commits(filter: {height: …})` takes `_eq`, `_gt`, `_gte`, `_lt` and `_lte`, alone, combined in one condition, under `_and`, or under `_or`. A document created at height 1 and then updated twice has composite commits at heights 1, 2 and 3: `{height: {_gte: 2, _lte: 3}, fieldName: {_eq: "_C"}}` and `{height: {_gte: 2, _lt: 5}, …}` return heights 2 and 3, `{height: {_gt: 1, _lt: 3}, …}` returns 2, `{height: {_eq: 2}, fieldName: {_eq: "age"}}` returns the `age` commit at height 2, and an `_or` of heights 1 and 3 returns both. A range above every height (`_gt: 10`) or an empty one (`_gt: 10, _lt: 5`) returns no commits. Go returns `{"data": null}` for these filters.
+
+# `defra.commits.immutable_block`: Commits of a shared immutable block
+
+- **Parents:** ["defra.commits"]
+- **Scenarios:** ["query::commits::with_cid_immutable::commits_by_cid_list_every_immutable_field"]
+
+The `@immutable` fields of a document share one block. `_commits(cid: <that block>)` returns one commit per immutable field (`author` and `kind` for `type Record { author: String @immutable kind: String @immutable body: String }`), and `filter: {fieldName: {_eq: "kind"}}` narrows it to `kind`.
+
+# `defra.bm25`: BM25 full-text scoring
+
+- **Parents:** ["defra"]
+
+`BM25(query:, fields:)` scores each document on its `@fulltext` fields. defradb.rs only; Go has no full-text search.
+
+# `defra.bm25.score`: Matching documents score above zero
+
+- **Parents:** ["defra.bm25"]
+- **Scenarios:** ["query::bm25::simple::only_articles_with_the_term_score_above_zero", "query::bm25::simple::a_term_in_any_listed_field_scores", "query::bm25::simple::an_unknown_term_scores_zero", "query::bm25::simple::an_unaliased_score_is_named_bm25"]
+
+A document scores above zero when a term of `query` appears in any of `fields`, and exactly `0` otherwise, so an unknown term scores every document `0`. The score is returned under its alias (`score: BM25(…)`), or as `BM25` without one, and `filter: {_alias: {score: {_gt: 0}}}` keeps only the matching documents.
+
+# `defra.bm25.order`: Ordering by score
+
+- **Parents:** ["defra.bm25"]
+- **Scenarios:** ["query::bm25::simple::ordering_by_the_score_ranks_the_best_match_first"]
+
+`order: {_alias: {score: DESC}}` puts the best-scoring document first and non-matching documents, at `0`, after it.
+
+# `defra.bm25.relation_fields`: Scoring across a relation
+
+- **Parents:** ["defra.bm25"]
+- **Scenarios:** ["query::bm25::relation_paths::a_parent_field_scores_its_children", "query::bm25::relation_paths::child_fields_score_their_parent_and_order_it"]
+
+A field path can follow a relation in either direction: `fields: ["file.content"]` scores a `Function` on its file's text, and `fields: ["functions.name", "functions.content"]` scores a `File` on its functions' text, which `order: {_alias: {score: DESC}}` can sort by.
+
+# `defra.bm25.nested_selection`: Scores on a nested selection
+
+- **Parents:** ["defra.bm25"]
+- **Scenarios:** ["query::bm25::relation_paths::a_nested_one_to_many_selection_scores_each_child", "query::bm25::relation_paths::a_nested_one_to_one_selection_scores_the_parent", "query::bm25::relation_paths::a_nested_selection_filters_and_orders_by_its_score"]
+
+`BM25` can be selected on a nested one-to-many (`File { functions { score: BM25(…) } }`) or one-to-one (`Function { file { score: BM25(…) } }`) selection, and that selection can filter (`filter: {_alias: {score: {_gt: 0}}}`) and order (`order: {_alias: {score: DESC}}`) by its score.
