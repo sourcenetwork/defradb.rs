@@ -262,6 +262,14 @@ pub struct NodeInitOptions {
     pub p2p_resource_file_descriptors: u64,
     /// Streams one peer may hold open; zero keeps the default.
     pub p2p_max_streams_per_peer: usize,
+    /// Attempts a conflicting transaction gets; zero keeps the default.
+    pub max_txn_retries: u32,
+    /// Bytes a large field is split into chunks of; zero keeps the default.
+    pub chunk_size: usize,
+    /// Optional 32-byte key the store's files are encrypted at rest with.
+    pub at_rest_encryption_key: *const u8,
+    /// Length of `at_rest_encryption_key`: 32, or 0 for none.
+    pub at_rest_encryption_key_len: usize,
 }
 
 impl Default for NodeInitOptions {
@@ -303,6 +311,10 @@ impl Default for NodeInitOptions {
             p2p_resource_memory_mib: 0,
             p2p_resource_file_descriptors: 0,
             p2p_max_streams_per_peer: 0,
+            max_txn_retries: 0,
+            chunk_size: 0,
+            at_rest_encryption_key: ptr::null(),
+            at_rest_encryption_key_len: 0,
         }
     }
 }

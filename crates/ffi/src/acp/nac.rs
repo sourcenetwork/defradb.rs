@@ -177,6 +177,32 @@ pub unsafe extern "C" fn delete_nac_actor_relationship(
     }
 }
 
+/// Purge every node access control state, Go's `PurgeNACState`, as
+/// `requestor_did`; the core allows it in development mode only, for an
+/// admin. A node runs NAC in development mode, so an admin may.
+///
+/// # Safety
+///
+/// `requestor_did` must be a valid null-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn purge_nac_state(
+    node_ptr: usize,
+    requestor_did: *const c_char,
+) -> FfiResult {
+    ffi_entry! {
+        let requestor = try_ffi!(require_c_str(requestor_did, "requestor_did"));
+        let nac_manager = match NODES.get(node_ptr, |state| state.nac_manager.clone()) {
+            Some(m) => m,
+            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
+        };
+        ffi_async_ok!(node_ptr, {
+            let requestor = identity::Did::new(&requestor)
+                .map_err(|e| format!("invalid DID '{}': {}", requestor, e))?;
+            nac_manager.purge(&requestor).await.map_err(|e| e.to_string())
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

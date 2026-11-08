@@ -19,5 +19,5 @@ pub use identity::{
 };
 pub use nac::{
     add_nac_actor_relationship, delete_nac_actor_relationship, disable_nac, enable_nac,
-    get_nac_status, re_enable_nac,
+    get_nac_status, purge_nac_state, re_enable_nac,
 };
