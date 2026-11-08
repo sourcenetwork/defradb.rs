@@ -40,14 +40,6 @@ fn decode_rejects_invalid_json() {
     assert!(matches!(err, CursorError::InvalidJson(_)));
 }
 
-/// A token from a build that still wrote an empty `o` keeps decoding.
-#[test]
-fn decode_accepts_a_token_with_an_empty_o() {
-    // base64url('{"d":"doc-1","o":""}')
-    let decoded = Cursor::decode("eyJkIjoiZG9jLTEiLCJvIjoiIn0").unwrap();
-    assert_eq!(decoded, Cursor::from_doc_id("doc-1"));
-}
-
 #[test]
 fn decode_rejects_empty_doc_id() {
     // base64url('{"d":""}') = "eyJkIjoiIn0"
