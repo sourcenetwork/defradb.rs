@@ -40,6 +40,8 @@ pub mod batch;
 pub mod block;
 pub mod call;
 pub mod collection;
+#[cfg(test)]
+mod core_options_tests;
 pub mod document;
 pub mod encrypted_index;
 pub mod helpers;
@@ -54,6 +56,7 @@ pub mod p2p;
 pub mod profiling;
 pub mod query;
 pub mod remote_signer;
+pub mod replication_filter;
 pub mod runtime;
 pub mod schema;
 pub mod se_key;
@@ -250,8 +253,9 @@ pub use collection::{
     add_view, delete_collection, delete_collection_versions, delete_collections,
     delete_collections_in_txn, delete_documents, find_collection_by_id, gc_downsample_histories,
     get_collection_by_name, get_collection_by_version_id, has_collection, materialize_collection,
-    patch_collection, refresh_views, set_active_collection_version, set_collection_active_in_txn,
-    set_migration, truncate_collection, truncate_collection_with_filter,
+    patch_collection, purge_documents, refresh_views, save_many_documents,
+    set_active_collection_version, set_collection_active_in_txn, set_migration,
+    truncate_collection, truncate_collection_with_filter,
 };
 pub use document::{collection_create, is_json_array, parse_duration, parse_string_array};
 pub use encrypted_index::{

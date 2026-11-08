@@ -95,6 +95,7 @@ cbindgen = "0.28"
 sha2 = { workspace = true, features = ["asm"] }
 
 [dev-dependencies]
+ciborium.workspace = true
 defra-core = { path = "../defra-core", features = ["ambient"] }
 futures-lite.workspace = true
 tempfile = "3.17"

@@ -1,4 +1,4 @@
-use std::ffi::c_char;
+use std::ffi::{c_char, CStr};
 #[cfg(feature = "iroh")]
 use std::path::PathBuf;
 
@@ -40,6 +40,51 @@ pub unsafe extern "C" fn new_node_with_p2p(
     }
 }
 
+/// The libp2p host `options` describe: its listen addresses (the JSON list,
+/// else `listen_addr`), bootstrap peers, GossipSub and relay switches, and
+/// resource limits.
+#[cfg(feature = "libp2p")]
+fn libp2p_config(
+    options: &NodeInitOptions,
+    listen_addr: &str,
+) -> Result<defra_node::Libp2pConfig, String> {
+    let list = |raw: *const c_char, name: &str| -> Result<Option<Vec<String>>, String> {
+        if raw.is_null() {
+            return Ok(None);
+        }
+        // SAFETY: the caller promised `options`' strings are null or valid.
+        let json = unsafe { CStr::from_ptr(raw) }
+            .to_str()
+            .map_err(|_| format!("{name} is not valid UTF-8"))?;
+        if json.trim().is_empty() {
+            return Ok(None);
+        }
+        serde_json::from_str(json)
+            .map(Some)
+            .map_err(|error| format!("invalid {name}: {error}"))
+    };
+    let listen_addrs = match list(options.p2p_listen_addrs_json, "p2p_listen_addrs_json")? {
+        Some(addrs) => addrs,
+        None if !listen_addr.is_empty() => vec![listen_addr.to_string()],
+        None => return Err("listen_addr is required for libp2p transport".to_string()),
+    };
+    let nonzero = |value: u64| (value > 0).then_some(value);
+    Ok(defra_node::Libp2pConfig {
+        listen_addrs,
+        bootstrap_peers: list(options.p2p_bootstrap_peers_json, "p2p_bootstrap_peers_json")?
+            .unwrap_or_default(),
+        enable_pubsub: options.p2p_disable_pubsub == 0,
+        enable_relay: options.p2p_disable_relay == 0,
+        resource_limits: p2p::ResourceLimits {
+            memory_mib: nonzero(options.p2p_resource_memory_mib),
+            file_descriptors: nonzero(options.p2p_resource_file_descriptors),
+            max_streams_per_peer: (options.p2p_max_streams_per_peer > 0)
+                .then_some(options.p2p_max_streams_per_peer),
+        },
+        ..Default::default()
+    })
+}
+
 #[cfg_attr(
     not(any(feature = "libp2p", feature = "iroh")),
     allow(unused_variables)
@@ -56,15 +101,10 @@ fn resolve_transport(
         "" | "libp2p" => {
             #[cfg(feature = "libp2p")]
             {
-                if listen_addr.is_empty() {
-                    return Err("listen_addr is required for libp2p transport".to_string());
-                }
-                Ok(defra_node::TransportConfig::Libp2p(
-                    defra_node::Libp2pConfig {
-                        listen_addrs: vec![listen_addr.to_string()],
-                        ..Default::default()
-                    },
-                ))
+                Ok(defra_node::TransportConfig::Libp2p(libp2p_config(
+                    options,
+                    listen_addr,
+                )?))
             }
             #[cfg(not(feature = "libp2p"))]
             {
@@ -183,5 +223,131 @@ fn resolve_transport(
             "unsupported p2p transport '{}'. Supported: libp2p, iroh",
             other
         )),
+    }
+}
+
+#[cfg(all(test, feature = "libp2p"))]
+mod tests {
+    use std::ffi::{CStr, CString};
+    use std::ptr::null;
+
+    use rapidhash::RapidHashSet;
+
+    use super::*;
+    use crate::node::node_close;
+    use crate::types::defra_free_string;
+
+    fn cstr(text: &str) -> CString {
+        CString::new(text).unwrap()
+    }
+
+    #[test]
+    fn libp2p_options_reach_the_host_config() {
+        let addrs = cstr(r#"["/ip4/127.0.0.1/tcp/0", "/ip4/127.0.0.2/tcp/0"]"#);
+        let peers = cstr(r#"["/ip4/127.0.0.1/tcp/9171/p2p/12D3KooWExample"]"#);
+        let config = libp2p_config(
+            &NodeInitOptions {
+                p2p_listen_addrs_json: addrs.as_ptr(),
+                p2p_bootstrap_peers_json: peers.as_ptr(),
+                p2p_disable_pubsub: 1,
+                p2p_disable_relay: 1,
+                p2p_resource_memory_mib: 256,
+                p2p_resource_file_descriptors: 512,
+                p2p_max_streams_per_peer: 64,
+                ..NodeInitOptions::default()
+            },
+            "/ip4/0.0.0.0/tcp/1",
+        )
+        .unwrap();
+        assert_eq!(
+            config.listen_addrs,
+            ["/ip4/127.0.0.1/tcp/0", "/ip4/127.0.0.2/tcp/0"],
+            "the list replaces listen_addr"
+        );
+        assert_eq!(
+            config.bootstrap_peers,
+            ["/ip4/127.0.0.1/tcp/9171/p2p/12D3KooWExample"]
+        );
+        assert!(!config.enable_pubsub);
+        assert!(!config.enable_relay);
+        assert_eq!(config.resource_limits.memory_mib, Some(256));
+        assert_eq!(config.resource_limits.file_descriptors, Some(512));
+        assert_eq!(config.resource_limits.max_streams_per_peer, Some(64));
+    }
+
+    #[test]
+    fn libp2p_defaults_keep_the_host_defaults() {
+        let config = libp2p_config(&NodeInitOptions::default(), "/ip4/127.0.0.1/tcp/0").unwrap();
+        assert_eq!(
+            config,
+            defra_node::Libp2pConfig {
+                listen_addrs: vec!["/ip4/127.0.0.1/tcp/0".to_owned()],
+                ..Default::default()
+            }
+        );
+        let error = libp2p_config(&NodeInitOptions::default(), "").unwrap_err();
+        assert!(error.contains("listen_addr is required"), "{error}");
+        let bad = cstr("not json");
+        let error = libp2p_config(
+            &NodeInitOptions {
+                p2p_bootstrap_peers_json: bad.as_ptr(),
+                ..NodeInitOptions::default()
+            },
+            "/ip4/127.0.0.1/tcp/0",
+        )
+        .unwrap_err();
+        assert!(error.contains("p2p_bootstrap_peers_json"), "{error}");
+    }
+
+    #[test]
+    fn an_empty_listen_list_listens_on_nothing() {
+        let empty = cstr("[]");
+        let options = NodeInitOptions {
+            p2p_listen_addrs_json: empty.as_ptr(),
+            ..NodeInitOptions::default()
+        };
+        for listen_addr in ["/ip4/127.0.0.1/tcp/0", ""] {
+            let config = libp2p_config(&options, listen_addr).unwrap();
+            assert!(config.listen_addrs.is_empty(), "{listen_addr:?}");
+        }
+        let invalid = CString::from_vec_with_nul(b"[\xff]\0".to_vec()).unwrap();
+        let error = libp2p_config(
+            &NodeInitOptions {
+                p2p_listen_addrs_json: invalid.as_ptr(),
+                ..NodeInitOptions::default()
+            },
+            "/ip4/127.0.0.1/tcp/0",
+        )
+        .unwrap_err();
+        assert!(error.contains("not valid UTF-8"), "{error}");
+    }
+
+    #[test]
+    fn a_node_listens_on_every_listed_address() {
+        assert!(crate::runtime::init_runtime());
+        let addrs = cstr(r#"["/ip4/127.0.0.1/tcp/0", "/ip4/127.0.0.1/tcp/0"]"#);
+        let options = NodeInitOptions {
+            p2p_listen_addrs_json: addrs.as_ptr(),
+            p2p_resource_memory_mib: 256,
+            p2p_resource_file_descriptors: 512,
+            p2p_max_streams_per_peer: 64,
+            ..NodeInitOptions::default()
+        };
+        let result = unsafe { new_node_with_p2p(options, null()) };
+        assert_eq!(result.status, 0);
+        let node = result.node_ptr;
+        let info = unsafe { crate::p2p::p2p_peer_info(node, null()) };
+        assert_eq!(info.status, 0);
+        let text = unsafe { CStr::from_ptr(info.value) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { defra_free_string(info.value) };
+        let listening: Vec<String> = serde_json::from_str(&text).unwrap();
+        let bound: RapidHashSet<&String> = listening
+            .iter()
+            .filter(|addr| addr.starts_with("/ip4/127.0.0.1/tcp/"))
+            .collect();
+        assert_eq!(bound.len(), 2, "{listening:?}");
+        node_close(node);
     }
 }
