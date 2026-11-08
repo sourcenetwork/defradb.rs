@@ -26,6 +26,7 @@ const IDLE_WAIT: Duration = Duration::from_millis(500);
 #[serde(rename_all = "camelCase")]
 pub struct SubscriptionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "query")]
     pub request: Option<Text>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_count: Option<i64>,

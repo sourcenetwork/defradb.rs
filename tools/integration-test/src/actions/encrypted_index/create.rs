@@ -87,6 +87,12 @@ impl CliRun for NewEncryptedIndex {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             let identity = action.common.client_identity(Self::name())?;
+            if action.txn.is_some() {
+                return Err(Failure::unsupported(format!(
+                    "{} argument txn",
+                    Self::name()
+                )));
+            }
             let args = [
                 "encrypted-index",
                 "new",

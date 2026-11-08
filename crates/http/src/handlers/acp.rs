@@ -126,6 +126,13 @@ pub struct DocRelationshipResponse {
     pub existed_already: bool,
 }
 
+/// Response for deleting a document ACP relationship (Go-compatible).
+#[derive(Debug, Clone, Serialize)]
+pub struct DocRelationshipDeleteResponse {
+    #[serde(rename = "RecordFound")]
+    pub record_found: bool,
+}
+
 fn validate_add_doc_relationship(body: &DocRelationshipRequest) -> Result<(), HttpError> {
     if body.collection.is_empty() {
         return Err(HttpError::BadRequest(
@@ -303,7 +310,7 @@ pub async fn remove_doc_relationship(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     Json(body): Json<DocRelationshipRequest>,
-) -> Result<Json<DocRelationshipResponse>, HttpError> {
+) -> Result<Json<DocRelationshipDeleteResponse>, HttpError> {
     require_permission(&state, &identity, NodePermission::DacRelationDelete).await?;
 
     let requestor = identity
@@ -340,8 +347,8 @@ pub async fn remove_doc_relationship(
         .await
         .map_err(http_error_from_backend_message)?;
 
-    Ok(Json(DocRelationshipResponse {
-        existed_already: !was_removed,
+    Ok(Json(DocRelationshipDeleteResponse {
+        record_found: was_removed,
     }))
 }
 

@@ -41,6 +41,14 @@ impl Op for Start {
             .client_identity(Self::name())?
             .map(crate::scenario::identity::did);
         let (node_identity, signing) = (self.node_identity_seed, self.enable_signing);
+        // A node identity always signs here: the core has no identity that
+        // does not sign, so Go's unsigned node with an identity can't run.
+        if signing == Some(false) && node_identity.is_some() {
+            return Err(Failure::unsupported(format!(
+                "{} enableSigning false with a node identity",
+                Self::name()
+            )));
+        }
         state.start_node_with_nac(self.common.node(), self.enable_nac, owner, |spec| {
             if let Some(seed) = node_identity {
                 spec.node_identity = Some(seed);

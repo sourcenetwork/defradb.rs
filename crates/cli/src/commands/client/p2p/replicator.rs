@@ -207,8 +207,20 @@ async fn build_explicit_replay_capabilities(
     let target_peer_id = extract_public_peer_id(address)?;
     let identity = raw_identity_from_key_bytes("replicator identity", identity_key_bytes)?;
     let collections_by_name = client.collection_versions().await?;
+    // No collection named selects every collection, as the node does, so each
+    // one still carries its capability.
+    let mut selected = collections.to_vec();
+    if selected.is_empty() {
+        selected = collections_by_name
+            .iter()
+            .filter(|collection| collection.is_active)
+            .map(|collection| collection.name.clone())
+            .collect();
+        selected.sort();
+        selected.dedup();
+    }
 
-    collections
+    selected
         .iter()
         .map(|name| {
             let collection_id = collections_by_name
