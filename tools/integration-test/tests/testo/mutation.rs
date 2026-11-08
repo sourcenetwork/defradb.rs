@@ -41,6 +41,7 @@ mod add {
     mod with_variables;
     mod with_version;
 }
+mod delete_relation_filter;
 mod delete {
     mod field_kinds {
         mod one_to_many {

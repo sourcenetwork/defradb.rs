@@ -96,6 +96,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Document topic ingress | TLA+ | p2p, p2p-adapter (#2545) |
 | Add collection | TLA+ | db |
 | Collection truncate | TLA+ | db |
+| Relation-filtered mutation | TLA+ | query, datastore, db |
 | Add DAC policy | TLA+ | db, acp, vera, http, cli, ffi, defra-node |
 | Node access control operations | TLA+ & Lean | db, acp, http, cli, ffi, defra-node |
 | Filter relation paths and scalar leaves | Lean | query (#2427, #2430) |
@@ -177,7 +178,7 @@ table disagree.
 
 ### Realized status — all 21 families bound
 
-**19 behavioral tests** (driven against fresh `target/debug/defra`, each break-tested
+**19 behavioral tests** (driven against fresh `target/debug/defradb`, each break-tested
 for non-vacuity), **2 Lean-axis contract bindings**, **7 honest Boundaries** (one,
 Transaction & merge-queue concurrency, is now both — a Behavioral no-loss/no-double-apply
 storm leg plus a Boundary internal-serialization leg). One
@@ -216,7 +217,7 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 
 ```bash
 proofs/verify-all.sh                 # TLA + Lean + conformance (behavioral if binary present)
-cargo build -p cli                   # produce fresh target/debug/defra
+cargo build -p cli                   # produce fresh target/debug/defradb
 cargo test -p conformance            # Lean axis + behavioral; DEFRA_CONFORMANCE_BINARY overrides target
                                      # iroh families: DEFRA_CONFORMANCE_IROH_BINARY, else built with --features iroh
 ```
@@ -236,7 +237,7 @@ design's knobs, with the model's invariants holding and the run settled at the
 end. A deadlock names the first event the model forbids.
 
 ```bash
-cargo build -p cli --features iroh,model-trace && cp target/debug/defra target/defra-trace
+cargo build -p cli --features iroh,model-trace && cp target/debug/defradb target/defra-trace
 DEFRA_TRACE_BINARY=$PWD/target/defra-trace cargo test -p conformance --test tla_conformance -- --ignored model_trace::
 ```
 

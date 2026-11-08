@@ -23,7 +23,7 @@
 //! On macOS, capture a symbolized sample from the optimized hub with:
 //!
 //! ```text
-//! cargo build --profile profile -p cli && DEFRA_RUST_BINARY="$PWD/target/profile/defra" DEFRA_PUSH_STORM_HUB_STORE=rocksdb DEFRA_PUSH_STORM_SAMPLE_OUTPUT="$PWD/push-storm.sample.txt" cargo test -p integration-test --test legacy -- p2p_push_storm:: --ignored --nocapture
+//! cargo build --profile profile -p cli && DEFRA_RUST_BINARY="$PWD/target/profile/defradb" DEFRA_PUSH_STORM_HUB_STORE=rocksdb DEFRA_PUSH_STORM_SAMPLE_OUTPUT="$PWD/push-storm.sample.txt" cargo test -p integration-test --test legacy -- p2p_push_storm:: --ignored --nocapture
 //! ```
 //!
 //! The sample targets the hub child process rather than the test runner. Keep

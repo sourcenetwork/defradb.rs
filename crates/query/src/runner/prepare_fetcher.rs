@@ -99,6 +99,10 @@ impl DocFetcher for PreparationFetcher<'_> {
         ))
     }
 
+    fn set_scans_validated(&self, validated: bool) {
+        self.base.set_scans_validated(validated);
+    }
+
     async fn stream_all_with_deleted(
         &self,
         collection: &str,
