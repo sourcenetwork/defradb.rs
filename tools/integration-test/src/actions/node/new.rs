@@ -97,6 +97,7 @@ impl Op for NewNode {
         probe.key_type = None;
         probe.with_identity = false;
         probe.client_type = None;
+        probe.enable_searchable_encryption = false;
         // Rust nodes always run pubsub KMS, so this only says what Go's
         // harness sets up for them.
         probe.kms = false;
@@ -126,6 +127,7 @@ impl Op for NewNode {
             node_identity,
             signing,
             txn_ttl,
+            se_key: self.searchable_encryption_key()?,
             ..Default::default()
         };
         state.start_node(self.common.node(), spec);
@@ -134,6 +136,19 @@ impl Op for NewNode {
 }
 
 impl NewNode {
+    /// A key of the node's own when the scenario turns searchable encryption
+    /// on, as Go's harness generates one per node.
+    fn searchable_encryption_key(&self) -> Result<Option<[u8; 32]>, Failure> {
+        if !self.enable_searchable_encryption {
+            return Ok(None);
+        }
+        let key = crypto::generate_aes256()
+            .map_err(|e| Failure::operation(format!("searchable encryption key: {e}")))?;
+        key.try_into()
+            .map(Some)
+            .map_err(|_| Failure::operation("an AES-256 key is 32 bytes".into()))
+    }
+
     /// How long an idle HTTP transaction lives and how often the node sweeps
     /// for idle ones, Go's `TxnTTL` and `TxnTTLTick`. Rust sweeps on its
     /// tick, so Go's bucket count has nothing to set.

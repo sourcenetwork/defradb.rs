@@ -110,3 +110,4 @@ testo signature::acp_branchable::signature_acp_with_branchable_collection_if_has
 testo signature::acp_branchable::signature_acp_with_branchable_collection_if_has_no_collection_access_should_error #2723
 testo acp::nac::verify_signature::nac_gates_verify_signature_go_client_authorized_identity_allow_access #2723
 testo acp::nac::relation_admin::verify_signature::nac_admin_relation_go_client_can_verify_signature #2723
+testo searchable_encryption::truncate::truncate_removes_searchable_encryption_artifacts #2728

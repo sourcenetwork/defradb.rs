@@ -41,6 +41,9 @@ pub struct NodeSpec {
     pub signing: Option<crate::actions::shared::KeyType>,
     /// How long an idle HTTP transaction lives and the sweep interval.
     pub txn_ttl: Option<(Duration, Duration)>,
+    /// The node's own searchable-encryption key, as Go's harness gives each
+    /// node one under `EnableSearchableEncryption`.
+    pub se_key: Option<[u8; 32]>,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -117,6 +120,7 @@ impl TestNode {
                         .map(crate::scenario::identity::private_key_hex),
                     node_key: go_node_key(&spec),
                     signing: spec.signing.is_some(),
+                    se_key: spec.se_key,
                 };
                 let node = GoNode::start(&binary, &options).map_err(|error| error.to_string())?;
                 let url = node.api_url().to_owned();
@@ -161,6 +165,7 @@ impl TestNode {
             EventName::MergeComplete,
             EventName::TopicPeerEvent,
             EventName::P2PGossipHeadDropped,
+            EventName::SEArtifactReceived,
         ]);
         self.events
             .store(Some(Arc::new(Events::new(subscription.into_receiver()))));
@@ -267,9 +272,19 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
             None => builder.with_node_acp_enabled(),
         };
     }
-    workers::block_on(builder.build())
+    let node = workers::block_on(builder.build())
         .expect("run builder")
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    if let Some(key) = spec.se_key {
+        let system = node
+            .p2p_system()
+            .ok_or("searchable encryption needs a node with P2P")?;
+        system.set_replicator_push_options(defra_node::ReplicatorPushOptions {
+            se_encryption_key: Some(defra_node::Zeroizing::new(key.to_vec())),
+            se_identity_pubkey: None,
+        })?;
+    }
+    Ok(node)
 }
 
 /// The key a node signs with: its node identity's, or, for a node that only
@@ -335,6 +350,8 @@ struct EventLog {
     topics: VecDeque<(String, String, String)>,
     /// Gossip heads the node dropped past a deferral budget, not yet awaited.
     gossip_dropped: VecDeque<events::P2PGossipHeadDroppedData>,
+    /// Every document a searchable-encryption artifact arrived for.
+    se_synced: RapidHashSet<String>,
 }
 
 /// A node's recorded events.
@@ -399,6 +416,9 @@ impl Events {
             MessageData::P2PGossipHeadDropped(event) => {
                 self.update(|log| log.gossip_dropped.push_back(event))
             }
+            MessageData::SEArtifactReceived(event) => self.update(|log| {
+                log.se_synced.insert(event.doc_id);
+            }),
             _ => {}
         }
         Ok(())
@@ -426,6 +446,24 @@ impl Events {
             heads.insert(key, head);
         }
         Ok(keys.iter().map(|key| heads[*key].clone()).collect())
+    }
+
+    /// Wait until a searchable-encryption artifact arrived for each of
+    /// `doc_ids`, as Go's `WaitForSESync` waits for `SEArtifactReceived`.
+    pub async fn se_synced(&self, doc_ids: &[String], deadline: Duration) -> Result<(), String> {
+        loop {
+            let log = self.log.load_clone();
+            let missing: Vec<&String> = doc_ids
+                .iter()
+                .filter(|id| !log.se_synced.contains(*id))
+                .collect();
+            if missing.is_empty() {
+                return Ok(());
+            }
+            self.receive(deadline)
+                .await
+                .map_err(|reason| format!("no SE artifact for {missing:?}: {reason}"))?;
+        }
     }
 
     /// Wait until `doc_id` has merged `head`, or already holds it as its

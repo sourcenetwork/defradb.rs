@@ -31,7 +31,8 @@ pub enum GoNodeError {
 /// How a Go node starts: with P2P listening on `p2p`, its data in `dir`
 /// (else in memory), node access control on when `nac` says, owned by the
 /// client identity whose private key (hex) is `identity`, the node identity
-/// `node_key` names, and signing on when `signing` says.
+/// `node_key` names, signing on when `signing` says, and searchable
+/// encryption on with `se_key`.
 #[derive(Clone, Debug, Default)]
 pub struct GoOptions {
     pub p2p: Option<String>,
@@ -40,6 +41,7 @@ pub struct GoOptions {
     pub identity: Option<String>,
     pub node_key: Option<NodeKey>,
     pub signing: bool,
+    pub se_key: Option<[u8; 32]>,
 }
 
 /// A node identity's private key as Go's keyring stores it under
@@ -96,24 +98,36 @@ impl GoNode {
             "--url",
             "127.0.0.1:0",
         ]);
-        match &options.node_key {
-            // The node reads its identity from its keyring, so the key goes
-            // there first and the keyring stays on.
-            Some(key) => {
-                add_node_key(binary, &data, key)?;
-                command.env("DEFRA_KEYRING_SECRET", KEYRING_SECRET);
-            }
-            None => {
-                command.arg("--no-keyring");
-            }
+        // The node reads its identity and its searchable-encryption key from
+        // its keyring, so they go there first and the keyring stays on.
+        let mut keys = Vec::new();
+        if let Some(key) = &options.node_key {
+            let mut stored = format!("{}:", key.key_type).into_bytes();
+            stored.extend_from_slice(&key.raw);
+            keys.push(("node-identity-key", stored));
+        }
+        if let Some(key) = options.se_key {
+            keys.push(("searchable-encryption-key", key.to_vec()));
+        }
+        for (name, key) in &keys {
+            add_key(binary, &data, name, key)?;
+        }
+        if keys.is_empty() {
+            command.arg("--no-keyring");
+        } else {
+            command.env("DEFRA_KEYRING_SECRET", KEYRING_SECRET);
         }
         command
             .args(["--store", store, "--no-telemetry"])
             .args(p2p)
             // Encryption and signing are off, as backbone's TestCluster
             // started Go nodes, unless the node signs or the signed-docs
-            // multiplier turns signing on.
-            .args(["--no-encryption", "--no-searchable-encryption"]);
+            // multiplier turns signing on; searchable encryption is on when
+            // the node has its key.
+            .arg("--no-encryption");
+        if options.se_key.is_none() {
+            command.arg("--no-searchable-encryption");
+        }
         if !options.signing && !signed_docs(std::env::var("DEFRA_MULTIPLIERS").ok().as_deref()) {
             command.arg("--no-signing");
         }
@@ -156,15 +170,13 @@ impl GoNode {
     }
 }
 
-/// Store `key` as the node identity in the keyring of the node rooted at
-/// `data`, as `defradb keyring add` stores an external key.
-fn add_node_key(binary: &Path, data: &Path, key: &NodeKey) -> Result<(), GoNodeError> {
-    let mut stored = format!("{}:", key.key_type).into_bytes();
-    stored.extend_from_slice(&key.raw);
+/// Store `key` under `name` in the keyring of the node rooted at `data`, as
+/// `defradb keyring add` stores an external key.
+fn add_key(binary: &Path, data: &Path, name: &str, key: &[u8]) -> Result<(), GoNodeError> {
     let output = Command::new(binary)
         .arg("--rootdir")
         .arg(data)
-        .args(["keyring", "add", "node-identity-key", &hex::encode(stored)])
+        .args(["keyring", "add", name, &hex::encode(key)])
         .env("DEFRA_KEYRING_SECRET", KEYRING_SECRET)
         .stdin(Stdio::null())
         .output()?;
