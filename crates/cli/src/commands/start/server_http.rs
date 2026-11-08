@@ -160,9 +160,7 @@ impl Node {
         info!("Dump HTTP endpoint enabled");
 
         let collection_mgmt_adapter =
-            defra_http::collection_mgmt_adapter::CollectionManagementAdapter::new_arc(
-                database.clone(),
-            );
+            crate::collection_mgmt_adapter::CollectionManagementAdapter::new_arc(database.clone());
         server = server.with_collection_mgmt_arc(collection_mgmt_adapter);
         info!("Collection management HTTP endpoints enabled");
 

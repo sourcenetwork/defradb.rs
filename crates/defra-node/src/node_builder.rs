@@ -489,12 +489,6 @@ impl NodeBuilder {
             let server = server.with_index_arc(defra_http::index_adapter::IndexAdapter::new_arc(
                 Arc::clone(node.database()),
             ));
-            #[cfg(not(target_arch = "wasm32"))]
-            let server = server.with_collection_mgmt_arc(
-                defra_http::collection_mgmt_adapter::CollectionManagementAdapter::new_arc(
-                    Arc::clone(node.database()),
-                ),
-            );
 
             // A local document ACP is the node's own store: its routes run on
             // the pool, as the node's own calls do.

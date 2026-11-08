@@ -7,7 +7,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use defra_core::RequestContext;
 
-use crate::router::CollectionManagementOperations;
+use defra_http::router::CollectionManagementOperations;
 use storage::corekv::Store;
 
 /// Adapter that implements CollectionManagementOperations using the database.

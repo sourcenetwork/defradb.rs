@@ -6,6 +6,7 @@
 pub(crate) mod backup_adapter;
 pub(crate) mod block_adapter;
 pub mod cli;
+pub(crate) mod collection_mgmt_adapter;
 pub mod commands;
 pub mod config;
 pub(crate) mod doc_acp_adapter;
