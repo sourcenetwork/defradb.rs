@@ -270,14 +270,20 @@ fn the_replication_filter_option_asks_the_callback() {
 
     let kept = filter.allow_replication("collection", "bae-\0doc", &fields);
     assert!(!kept, "a DocID with a NUL is refused");
-    fields.insert("ratio".to_owned(), ciborium::Value::Float(f64::NAN));
-    let kept = filter.allow_replication("collection", "bae-doc", &fields);
-    assert!(!kept, "a value JSON cannot carry is refused");
     assert_eq!(
         FILTER_CALLS.load(Ordering::SeqCst) + FILTER_MISMATCHES.load(Ordering::SeqCst),
         1,
-        "neither reached the callback"
+        "without reaching the callback"
     );
+
+    fields.insert("ratio".to_owned(), ciborium::Value::Float(f64::NAN));
+    filter.allow_replication("collection", "bae-doc", &fields);
+    assert_eq!(
+        FILTER_CALLS.load(Ordering::SeqCst),
+        2,
+        "the callback still decides, without the field JSON cannot carry"
+    );
+    assert_eq!(FILTER_MISMATCHES.load(Ordering::SeqCst), 0);
     node_close(filtered);
 
     let without = node();

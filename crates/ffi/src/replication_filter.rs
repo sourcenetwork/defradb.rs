@@ -12,15 +12,15 @@ use crate::types::NodeInitOptions;
 /// `replication_filter_context`, the collection ID (not its name), the DocID
 /// and the values the document's commit writes as a JSON object in DefraDB's
 /// JSON encoding (bytes as base64, whole-number floats as integers; an
-/// encrypted field, or one that has not arrived, is absent). Return non-zero
-/// to keep it, 0 to refuse it.
+/// encrypted field, one that has not arrived, or one JSON cannot carry, such
+/// as a NaN, is absent). Return non-zero to keep it, 0 to refuse it.
 ///
 /// It is called on the node's database workers and on its network threads,
 /// from several threads at once, so it must be thread-safe, and it must not
 /// block or call back into DefraDB. One document may be asked about more
 /// than once (when it arrives, when it merges, and on a merge retry), so it
-/// must decide from its arguments alone. A document whose values cannot be
-/// passed as C strings or JSON is refused without calling it.
+/// must decide from its arguments alone. An ID holding a NUL, which no valid
+/// collection ID or DocID does, is refused without calling it.
 pub type DefraReplicationFilterCallback = unsafe extern "C" fn(
     context: usize,
     collection_id: *const c_char,
@@ -33,20 +33,25 @@ struct CallbackFilter {
     context: usize,
 }
 
-/// The callback's three string arguments.
+/// The callback's three string arguments; a field JSON cannot carry is left
+/// out, so the callback still decides.
 fn arguments(
     collection_id: &str,
     doc_id: &str,
     fields: &FieldValues,
 ) -> Result<[CString; 3], String> {
-    let fields = fields
+    let fields: serde_json::Map<_, _> = fields
         .iter()
-        .map(|(name, value)| {
-            document::cbor_value_to_json(value)
-                .map(|value| (name.clone(), value))
-                .map_err(|error| format!("field {name}: {error}"))
+        .filter_map(|(name, value)| match document::cbor_value_to_json(value) {
+            Ok(value) => Some((name.clone(), value)),
+            Err(error) => {
+                tracing::warn!(collection_id, doc_id, field = %name, %error,
+                    "replication filter left out a field JSON cannot carry");
+                None
+            }
         })
-        .collect::<Result<serde_json::Map<_, _>, _>>()?;
+        .collect();
+    // Serialized JSON escapes a NUL, so only the IDs can hold one.
     let fields = serde_json::Value::Object(fields).to_string();
     let c_string = |text: &str| CString::new(text).map_err(|error| error.to_string());
     Ok([
@@ -65,7 +70,7 @@ impl ReplicationFilter for CallbackFilter {
                     collection_id,
                     doc_id,
                     %error,
-                    "replication filter refused a document it could not pass to the callback"
+                    "replication filter refused a document whose ID holds a NUL"
                 );
                 return false;
             }
