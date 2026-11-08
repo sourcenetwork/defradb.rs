@@ -78,7 +78,7 @@ fn validate_matcher(kind: &Value, map: &Map<String, Value>) -> Result<(), Scenar
         "substring" => len == 2 && has_str(map, "value"),
         "sortedStrings" => len == 2 && has_str(map, "field"),
         "sameSchema" => len == 2 && map.get("value").is_some_and(Value::is_object),
-        "nonempty" | "cid" | "docID" | "introspectionTypes" | "nonemptyString"
+        "nonempty" | "positive" | "cid" | "docID" | "introspectionTypes" | "nonemptyString"
         | "currentTimestamp" => len == 1,
         "same" | "unique" | "branchableCreateGraph" => {
             len == 2

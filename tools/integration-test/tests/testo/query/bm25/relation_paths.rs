@@ -137,7 +137,7 @@ fn a_parent_field_scores_its_children() {
                     }
                 }"#,
                 json!({ "Function": [
-                    { "qualifiedName": "auth::handle_request", "score": -1.0 },
+                    { "qualifiedName": "auth::handle_request", "score": m::positive() },
                     { "qualifiedName": "utils::handle_request", "score": 0.0 },
                 ] }),
             )],
@@ -161,7 +161,7 @@ fn child_fields_score_their_parent_and_order_it() {
             }}"#
         )
     };
-    let auth = json!({ "name": "auth.rs", "score": -1.0 });
+    let auth = json!({ "name": "auth.rs", "score": m::positive() });
     let utils = json!({ "name": "utils.rs", "score": 0.0 });
     case(
         integration_test::scenario_id!(),
@@ -193,7 +193,7 @@ fn a_nested_one_to_many_selection_scores_each_child() {
             }}"#
         )
     };
-    let auth = json!({ "qualifiedName": "auth::handle_request", "score": -1.0 });
+    let auth = json!({ "qualifiedName": "auth::handle_request", "score": m::positive() });
     let utils = json!({ "qualifiedName": "utils::handle_request", "score": 0.0 });
     case(
         integration_test::scenario_id!(),
@@ -240,7 +240,7 @@ fn a_nested_one_to_one_selection_scores_the_parent() {
                     }
                 }"#,
                 json!({ "Function": [
-                    { "qualifiedName": "auth::parse_token", "file": { "name": "auth.rs", "score": -1.0 } },
+                    { "qualifiedName": "auth::parse_token", "file": { "name": "auth.rs", "score": m::positive() } },
                     { "qualifiedName": "utils::format_output", "file": { "name": "utils.rs", "score": 0.0 } },
                 ] }),
             )],
@@ -267,8 +267,8 @@ fn a_nested_selection_filters_and_orders_by_its_score() {
             }}"#
         )
     };
-    let guard = json!({ "qualifiedName": "auth::auth_guard", "score": -1.0 });
-    let handle = json!({ "qualifiedName": "auth::handle_request", "score": -1.0 });
+    let guard = json!({ "qualifiedName": "auth::auth_guard", "score": m::positive() });
+    let handle = json!({ "qualifiedName": "auth::handle_request", "score": m::positive() });
     let files_with = |functions: Value| {
         json!({ "File": [
             { "name": "auth.rs", "functions": functions },

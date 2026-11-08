@@ -1,7 +1,8 @@
 //! `BM25(query:, fields:)` scores documents on their `@fulltext` fields: a
 //! document with a query term in a listed field scores above zero, any other
-//! scores zero. Scores are pinned exactly, so a zero, null or string where a
-//! positive number belongs fails. BM25 is defradb.rs only, so these tests do
+//! scores zero. A matching score is checked with `m::positive()`, so a zero,
+//! null or string fails while a scoring change that keeps it above zero does
+//! not. BM25 is defradb.rs only, so these tests do
 //! not run against Go.
 
 use integration_test::actions::{Actions, AddCollection, AddDoc, Request};
@@ -97,9 +98,9 @@ fn only_articles_with_the_term_score_above_zero() {
             request(
                 &format!("query {{ Article(order: {{title: ASC}}) {{ title score: {bm25} }} }}"),
                 json!({ "Article": [
-                    { "title": "Advanced Rust Patterns", "score": -1.0 },
+                    { "title": "Advanced Rust Patterns", "score": m::positive() },
                     { "title": "Cooking with Python", "score": 0.0 },
-                    { "title": "Introduction to Rust", "score": -1.0 },
+                    { "title": "Introduction to Rust", "score": m::positive() },
                 ] }),
             ),
             titles(
@@ -129,8 +130,8 @@ fn a_term_in_any_listed_field_scores() {
                     }
                 }"#,
                 json!({ "Article": [
-                    { "title": "Database Design", "score": -1.0 },
-                    { "title": "Hello World", "score": -1.0 },
+                    { "title": "Database Design", "score": m::positive() },
+                    { "title": "Hello World", "score": m::positive() },
                 ] }),
             ),
         ],
@@ -163,11 +164,11 @@ fn a_score_is_named_by_its_alias_or_bm25() {
             article("Rust Programming", "Learn Rust"),
             request(
                 r#"query { Article { title relevance: BM25(query: "rust", fields: ["title"]) } }"#,
-                json!({ "Article": [{ "title": "Rust Programming", "relevance": -1.0 }] }),
+                json!({ "Article": [{ "title": "Rust Programming", "relevance": m::positive() }] }),
             ),
             request(
                 r#"query { Article { title BM25(query: "rust", fields: ["title"]) } }"#,
-                json!({ "Article": [{ "title": "Rust Programming", "BM25": -1.0 }] }),
+                json!({ "Article": [{ "title": "Rust Programming", "BM25": m::positive() }] }),
             ),
         ],
     );
@@ -188,7 +189,7 @@ fn ordering_by_the_score_ranks_the_best_match_first() {
             }}"#
         )
     };
-    let auth = json!({ "title": "Auth middleware", "score": -1.0 });
+    let auth = json!({ "title": "Auth middleware", "score": m::positive() });
     let utility = json!({ "title": "Utility formatters", "score": 0.0 });
     case(
         integration_test::scenario_id!(),
