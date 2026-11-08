@@ -1,7 +1,8 @@
-//! `BM25(query:, fields:)` scores documents on their `@fulltext` fields. A
-//! filter on the score's alias splits the documents that match the query
-//! (score above zero) from the ones that do not (score zero). BM25 is
-//! defradb.rs only, so these tests do not run against Go.
+//! `BM25(query:, fields:)` scores documents on their `@fulltext` fields: a
+//! document with a query term in a listed field scores above zero, any other
+//! scores zero. Scores are pinned exactly, so a zero, null or string where a
+//! positive number belongs fails. BM25 is defradb.rs only, so these tests do
+//! not run against Go.
 
 use integration_test::actions::{Actions, AddCollection, AddDoc, Request};
 use integration_test::m;
@@ -20,6 +21,15 @@ fn article(title: &str, body: &str) -> Actions {
     AddDoc {
         collection: "Article".into(),
         doc_map: Some(json!({ "title": title, "body": body, "category": "tech" })),
+        ..Default::default()
+    }
+    .into()
+}
+
+fn request(request: &str, expected: Value) -> Actions {
+    Request {
+        request: request.into(),
+        expected_data: expected,
         ..Default::default()
     }
     .into()
@@ -46,8 +56,9 @@ fn titles(condition: &str, bm25: &str, expected: &[&str]) -> Actions {
     .into()
 }
 
-fn case(actions: Vec<Actions>) {
+pub fn case(id: &'static str, actions: Vec<Actions>) {
     TestCase {
+        id,
         actions: actions.into_iter().map(Into::into).collect(),
         client_types: Some(RUST_CLIENTS),
         ..Default::default()
@@ -67,95 +78,132 @@ fn collection() -> Actions {
 #[mantra_macros::req_test("defra.bm25.score")]
 fn only_articles_with_the_term_score_above_zero() {
     let bm25 = r#"BM25(query: "rust", fields: ["title"])"#;
-    case(vec![
-        collection(),
-        article(
-            "Introduction to Rust",
-            "Rust is a systems programming language",
-        ),
-        article(
-            "Cooking with Python",
-            "Python is a great scripting language",
-        ),
-        article(
-            "Advanced Rust Patterns",
-            "Rust ownership and borrowing patterns",
-        ),
-        titles(
-            "{_gt: 0}",
-            bm25,
-            &["Introduction to Rust", "Advanced Rust Patterns"],
-        ),
-        titles("{_eq: 0}", bm25, &["Cooking with Python"]),
-    ]);
+    case(
+        integration_test::scenario_id!(),
+        vec![
+            collection(),
+            article(
+                "Introduction to Rust",
+                "Rust is a systems programming language",
+            ),
+            article(
+                "Cooking with Python",
+                "Python is a great scripting language",
+            ),
+            article(
+                "Advanced Rust Patterns",
+                "Rust ownership and borrowing patterns",
+            ),
+            request(
+                &format!("query {{ Article(order: {{title: ASC}}) {{ title score: {bm25} }} }}"),
+                json!({ "Article": [
+                    { "title": "Advanced Rust Patterns", "score": -1.0 },
+                    { "title": "Cooking with Python", "score": 0.0 },
+                    { "title": "Introduction to Rust", "score": -1.0 },
+                ] }),
+            ),
+            titles(
+                "{_gt: 0}",
+                bm25,
+                &["Introduction to Rust", "Advanced Rust Patterns"],
+            ),
+            titles("{_eq: 0}", bm25, &["Cooking with Python"]),
+        ],
+    );
 }
 
 #[test]
 #[mantra_macros::req_test("defra.bm25.score")]
 fn a_term_in_any_listed_field_scores() {
-    let bm25 = r#"BM25(query: "database", fields: ["title", "body"])"#;
-    case(vec![
-        collection(),
-        article("Hello World", "This article discusses databases"),
-        article("Database Design", "Principles of good design"),
-        titles("{_gt: 0}", bm25, &["Hello World", "Database Design"]),
-    ]);
+    case(
+        integration_test::scenario_id!(),
+        vec![
+            collection(),
+            article("Hello World", "This article discusses databases"),
+            article("Database Design", "Principles of good design"),
+            request(
+                r#"query {
+                    Article(order: {title: ASC}) {
+                        title
+                        score: BM25(query: "database", fields: ["title", "body"])
+                    }
+                }"#,
+                json!({ "Article": [
+                    { "title": "Database Design", "score": -1.0 },
+                    { "title": "Hello World", "score": -1.0 },
+                ] }),
+            ),
+        ],
+    );
 }
 
 #[test]
 #[mantra_macros::req_test("defra.bm25.score")]
 fn an_unknown_term_scores_zero() {
-    let bm25 = r#"BM25(query: "nonexistent_term_xyz", fields: ["title"])"#;
-    case(vec![
-        collection(),
-        article("Hello World", "A simple greeting"),
-        titles("{_eq: 0}", bm25, &["Hello World"]),
-    ]);
+    case(
+        integration_test::scenario_id!(),
+        vec![
+            collection(),
+            article("Hello World", "A simple greeting"),
+            request(
+                r#"query { Article { title score: BM25(query: "nonexistent_term_xyz", fields: ["title"]) } }"#,
+                json!({ "Article": [{ "title": "Hello World", "score": 0.0 }] }),
+            ),
+        ],
+    );
 }
 
 #[test]
 #[mantra_macros::req_test("defra.bm25.score")]
-fn an_unaliased_score_is_named_bm25() {
-    case(vec![
-        collection(),
-        article("Rust Programming", "Learn Rust"),
-        Request {
-            request: r#"query { Article { title BM25(query: "nothing", fields: ["title"]) } }"#
-                .into(),
-            expected_data: json!({ "Article": [{ "title": "Rust Programming", "BM25": 0.0 }] }),
-            ..Default::default()
-        }
-        .into(),
-    ]);
+fn a_score_is_named_by_its_alias_or_bm25() {
+    case(
+        integration_test::scenario_id!(),
+        vec![
+            collection(),
+            article("Rust Programming", "Learn Rust"),
+            request(
+                r#"query { Article { title relevance: BM25(query: "rust", fields: ["title"]) } }"#,
+                json!({ "Article": [{ "title": "Rust Programming", "relevance": -1.0 }] }),
+            ),
+            request(
+                r#"query { Article { title BM25(query: "rust", fields: ["title"]) } }"#,
+                json!({ "Article": [{ "title": "Rust Programming", "BM25": -1.0 }] }),
+            ),
+        ],
+    );
 }
 
+/// Ordering both ways: whatever order the documents come back in unordered,
+/// it cannot match both.
 #[test]
 #[mantra_macros::req_test("defra.bm25.order")]
 fn ordering_by_the_score_ranks_the_best_match_first() {
-    case(vec![
-        collection(),
-        article(
-            "Auth middleware",
-            "Authenticate requests through shared middleware",
-        ),
-        article(
-            "Utility formatters",
-            "Pretty print shared output for the CLI",
-        ),
-        Request {
-            request: r#"query {
-                Article(order: {_alias: {score: DESC}}) {
+    let query = |direction: &str| {
+        format!(
+            r#"query {{
+                Article(order: {{_alias: {{score: {direction}}}}}) {{
                     title
                     score: BM25(query: "auth middleware", fields: ["title", "body"])
-                }
-            }"#
-            .into(),
-            expected_data: json!({ "Article": [
-                m::object(json!({ "title": "Auth middleware" })),
-                { "title": "Utility formatters", "score": 0.0 },
-            ] }),
-            ..Default::default()
-        }
-        .into(),
-    ]);
+                }}
+            }}"#
+        )
+    };
+    let auth = json!({ "title": "Auth middleware", "score": -1.0 });
+    let utility = json!({ "title": "Utility formatters", "score": 0.0 });
+    case(
+        integration_test::scenario_id!(),
+        vec![
+            collection(),
+            article(
+                "Auth middleware",
+                "Authenticate requests through shared middleware",
+            ),
+            article(
+                "Utility formatters",
+                "Pretty print shared output for the CLI",
+            ),
+            request(&query("DESC"), json!({ "Article": [auth, utility] })),
+            request(&query("ASC"), json!({ "Article": [utility, auth] })),
+        ],
+    );
 }

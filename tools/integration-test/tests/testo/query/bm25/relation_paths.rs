@@ -2,11 +2,10 @@
 //! a `BM25` score can be selected, filtered and ordered on a nested selection.
 //! Two files, `auth.rs` and `utils.rs`, each own functions.
 
-use super::simple::RUST_CLIENTS;
+use super::simple::case;
 use integration_test::actions::{Actions, AddCollection, AddDoc, Request};
 use integration_test::m;
 use integration_test::scenario::{captures, Common};
-use integration_test::test_case::TestCase;
 use serde_json::{json, Value};
 
 const SDL: &str = r#"
@@ -113,162 +112,186 @@ fn parse_token_and_format_output() -> Vec<Actions> {
     ]
 }
 
-fn request(request: &str, expected: Value, unordered: &[&str]) -> Actions {
+fn request(request: &str, expected: Value) -> Actions {
     Request {
         request: request.into(),
         expected_data: expected,
-        common: Common {
-            unordered_documents: unordered.iter().map(|path| (*path).into()).collect(),
-            ..Default::default()
-        },
         ..Default::default()
     }
     .into()
 }
 
-fn case(actions: Vec<Vec<Actions>>) {
-    TestCase {
-        actions: actions.into_iter().flatten().map(Into::into).collect(),
-        client_types: Some(RUST_CLIENTS),
-        ..Default::default()
-    }
-    .execute();
-}
-
 #[test]
 #[mantra_macros::req_test("defra.bm25.relation_fields")]
 fn a_parent_field_scores_its_children() {
-    let query = |condition: &str| {
+    case(
+        integration_test::scenario_id!(),
+        [
+            files(),
+            handle_requests(),
+            vec![request(
+                r#"query {
+                    Function(order: {qualifiedName: ASC}) {
+                        qualifiedName
+                        score: BM25(query: "auth", fields: ["name", "content", "file.content"])
+                    }
+                }"#,
+                json!({ "Function": [
+                    { "qualifiedName": "auth::handle_request", "score": -1.0 },
+                    { "qualifiedName": "utils::handle_request", "score": 0.0 },
+                ] }),
+            )],
+        ]
+        .concat(),
+    );
+}
+
+/// Ordering both ways: whatever order the files come back in unordered, it
+/// cannot match both.
+#[test]
+#[mantra_macros::req_test("defra.bm25.relation_fields")]
+fn child_fields_score_their_parent_and_order_it() {
+    let query = |direction: &str| {
         format!(
             r#"query {{
-                Function(filter: {{_alias: {{score: {condition}}}}}) {{
-                    qualifiedName
-                    score: BM25(query: "auth", fields: ["name", "content", "file.content"])
+                File(order: {{_alias: {{score: {direction}}}}}) {{
+                    name
+                    score: BM25(query: "parse token", fields: ["name", "functions.name", "functions.content"])
                 }}
             }}"#
         )
     };
-    case(vec![
-        files(),
-        handle_requests(),
-        vec![
-            request(
-                &query("{_gt: 0}"),
-                json!({ "Function": [m::object(json!({ "qualifiedName": "auth::handle_request" }))] }),
-                &[],
-            ),
-            request(
-                &query("{_eq: 0}"),
-                json!({ "Function": [m::object(json!({ "qualifiedName": "utils::handle_request" }))] }),
-                &[],
-            ),
-        ],
-    ]);
-}
-
-#[test]
-#[mantra_macros::req_test("defra.bm25.relation_fields")]
-fn child_fields_score_their_parent_and_order_it() {
-    case(vec![
-        files(),
-        parse_token_and_format_output(),
-        vec![request(
-            r#"query {
-                File(order: {_alias: {score: DESC}}) {
-                    name
-                    score: BM25(query: "parse token", fields: ["name", "functions.name", "functions.content"])
-                }
-            }"#,
-            json!({ "File": [
-                m::object(json!({ "name": "auth.rs" })),
-                { "name": "utils.rs", "score": 0.0 },
-            ] }),
-            &[],
-        )],
-    ]);
+    let auth = json!({ "name": "auth.rs", "score": -1.0 });
+    let utils = json!({ "name": "utils.rs", "score": 0.0 });
+    case(
+        integration_test::scenario_id!(),
+        [
+            files(),
+            parse_token_and_format_output(),
+            vec![
+                request(&query("DESC"), json!({ "File": [auth, utils] })),
+                request(&query("ASC"), json!({ "File": [utils, auth] })),
+            ],
+        ]
+        .concat(),
+    );
 }
 
 #[test]
 #[mantra_macros::req_test("defra.bm25.nested_selection")]
 fn a_nested_one_to_many_selection_scores_each_child() {
-    case(vec![
-        files(),
-        handle_requests(),
-        vec![request(
-            r#"query {
-                File(order: {name: ASC}) {
+    let query = |filter: &str| {
+        format!(
+            r#"query {{
+                File(order: {{name: ASC}}) {{
                     name
-                    functions(filter: {_alias: {score: {_gt: 0}}}) {
+                    functions{filter} {{
                         qualifiedName
                         score: BM25(query: "auth", fields: ["name", "content", "file.content"])
-                    }
-                }
-            }"#,
-            json!({ "File": [
-                { "name": "auth.rs", "functions": [m::object(json!({ "qualifiedName": "auth::handle_request" }))] },
-                { "name": "utils.rs", "functions": [] },
-            ] }),
-            &[],
-        )],
-    ]);
+                    }}
+                }}
+            }}"#
+        )
+    };
+    let auth = json!({ "qualifiedName": "auth::handle_request", "score": -1.0 });
+    let utils = json!({ "qualifiedName": "utils::handle_request", "score": 0.0 });
+    case(
+        integration_test::scenario_id!(),
+        [
+            files(),
+            handle_requests(),
+            vec![
+                request(
+                    &query(""),
+                    json!({ "File": [
+                        { "name": "auth.rs", "functions": [auth] },
+                        { "name": "utils.rs", "functions": [utils] },
+                    ] }),
+                ),
+                request(
+                    &query("(filter: {_alias: {score: {_gt: 0}}})"),
+                    json!({ "File": [
+                        { "name": "auth.rs", "functions": [auth] },
+                        { "name": "utils.rs", "functions": [] },
+                    ] }),
+                ),
+            ],
+        ]
+        .concat(),
+    );
 }
 
 #[test]
 #[mantra_macros::req_test("defra.bm25.nested_selection")]
 fn a_nested_one_to_one_selection_scores_the_parent() {
-    case(vec![
-        files(),
-        parse_token_and_format_output(),
-        vec![request(
-            r#"query {
-                Function(order: {qualifiedName: ASC}) {
-                    qualifiedName
-                    file {
-                        name
-                        score: BM25(query: "parse token", fields: ["name", "functions.name", "functions.content"])
+    case(
+        integration_test::scenario_id!(),
+        [
+            files(),
+            parse_token_and_format_output(),
+            vec![request(
+                r#"query {
+                    Function(order: {qualifiedName: ASC}) {
+                        qualifiedName
+                        file {
+                            name
+                            score: BM25(query: "parse token", fields: ["name", "functions.name", "functions.content"])
+                        }
                     }
-                }
-            }"#,
-            json!({ "Function": [
-                { "qualifiedName": "auth::parse_token", "file": m::object(json!({ "name": "auth.rs" })) },
-                { "qualifiedName": "utils::format_output", "file": { "name": "utils.rs", "score": 0.0 } },
-            ] }),
-            &[],
-        )],
-    ]);
+                }"#,
+                json!({ "Function": [
+                    { "qualifiedName": "auth::parse_token", "file": { "name": "auth.rs", "score": -1.0 } },
+                    { "qualifiedName": "utils::format_output", "file": { "name": "utils.rs", "score": 0.0 } },
+                ] }),
+            )],
+        ]
+        .concat(),
+    );
 }
 
+/// Ordering both ways: whatever order the children come back in unordered, it
+/// cannot match both.
 #[test]
 #[mantra_macros::req_test("defra.bm25.nested_selection")]
 fn a_nested_selection_filters_and_orders_by_its_score() {
-    case(vec![
-        files(),
-        vec![function(
-            "auth.rs",
-            "auth_guard",
-            "auth::auth_guard",
-            5,
-            "auth guard middleware",
-        )],
-        handle_requests(),
-        vec![request(
-            r#"query {
-                File(order: {name: ASC}) {
+    let query = |direction: &str| {
+        format!(
+            r#"query {{
+                File(order: {{name: ASC}}) {{
                     name
-                    functions(filter: {_alias: {score: {_gt: 0}}}, order: {_alias: {score: DESC}}) {
+                    functions(filter: {{_alias: {{score: {{_gt: 0}}}}}}, order: {{_alias: {{score: {direction}}}}}) {{
                         qualifiedName
                         score: BM25(query: "auth guard", fields: ["name", "content", "file.content"])
-                    }
-                }
-            }"#,
-            json!({ "File": [
-                { "name": "auth.rs", "functions": [
-                    m::object(json!({ "qualifiedName": "auth::auth_guard" })),
-                    m::object(json!({ "qualifiedName": "auth::handle_request" })),
-                ] },
-                { "name": "utils.rs", "functions": [] },
-            ] }),
-            &[],
-        )],
-    ]);
+                    }}
+                }}
+            }}"#
+        )
+    };
+    let guard = json!({ "qualifiedName": "auth::auth_guard", "score": -1.0 });
+    let handle = json!({ "qualifiedName": "auth::handle_request", "score": -1.0 });
+    let files_with = |functions: Value| {
+        json!({ "File": [
+            { "name": "auth.rs", "functions": functions },
+            { "name": "utils.rs", "functions": [] },
+        ] })
+    };
+    case(
+        integration_test::scenario_id!(),
+        [
+            files(),
+            vec![function(
+                "auth.rs",
+                "auth_guard",
+                "auth::auth_guard",
+                5,
+                "auth guard middleware",
+            )],
+            handle_requests(),
+            vec![
+                request(&query("DESC"), files_with(json!([guard, handle]))),
+                request(&query("ASC"), files_with(json!([handle, guard]))),
+            ],
+        ]
+        .concat(),
+    );
 }

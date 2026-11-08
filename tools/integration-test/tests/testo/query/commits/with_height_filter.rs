@@ -1,6 +1,7 @@
 //! `_commits` filtered on `height`. A user is created at height 1, then its
 //! `age` and its `name` are updated, so its composite commits sit at heights
-//! 1, 2 and 3. Go returns `{"data": null}` for these filters, so the test runs
+//! 1, 2 and 3. Every query names the document: that sends a height bound to
+//! the document's height index instead of a walk from its heads. Go returns `{"data": null}` for these filters, so the test runs
 //! only against the Rust node.
 
 use integration_test::actions::{Actions, AddCollection, AddDoc, Request, UpdateDoc};
@@ -11,7 +12,13 @@ use serde_json::{json, Value};
 
 fn commits(filter: &str, expected: Value) -> Actions {
     Request {
-        request: format!("query {{ _commits(filter: {filter}) {{ fieldName height }} }}").into(),
+        request: Text::concat([
+            Text::from(r#"query { _commits(docID: [""#),
+            Text::reference("user"),
+            Text::from(format!(
+                r#""], filter: {filter}) {{ fieldName height }} }}"#
+            )),
+        ]),
         expected_data: json!({ "_commits": expected }),
         common: Common {
             unordered_documents: vec!["/data/_commits".into()],
@@ -68,6 +75,14 @@ fn commits_filter_on_height_ranges() {
         commits(
             r#"{height: {_gte: 2, _lt: 5}, fieldName: {_eq: "_C"}}"#,
             composite(&[2, 3]),
+        ),
+        commits(
+            r#"{height: {_gte: 2}, fieldName: {_eq: "_C"}}"#,
+            composite(&[2, 3]),
+        ),
+        commits(
+            r#"{height: {_lte: 2}, fieldName: {_eq: "_C"}}"#,
+            composite(&[1, 2]),
         ),
         commits(
             r#"{height: {_gt: 1, _lt: 3}, fieldName: {_eq: "_C"}}"#,

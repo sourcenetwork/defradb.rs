@@ -214,7 +214,7 @@ A nullable variable with no default that the request leaves out is not an error 
 
 # `defra.commits.link_delta`: Commit links and heads show their block's delta
 
-- **Parents:** ["defra"]
+- **Parents:** ["defra.commits"]
 - **Scenarios:** ["query::commits::with_link_delta::a_composite_link_shows_its_field_delta"]
 
 In `_commits { links { fieldName delta } heads { delta } }`, each link and head shows the base64 `delta` and `collectionVersionId` of the block it points to, as Go does: after an update that sets `genre: "Dystopia"`, the composite commit's `genre` link shows `aER5c3RvcGlh`, and a composite head shows `null`, since composites carry no field delta. An Immutable block shows the delta of the field the link names. defradb.rs showed `null` for every link before (#2625).
@@ -319,7 +319,7 @@ Gossip has no reply and no retry, so a gossip head a node refuses for its per-pe
 - **Parents:** ["defra.commits"]
 - **Scenarios:** ["query::commits::with_height_filter::commits_filter_on_height_ranges"]
 
-`_commits(filter: {height: …})` takes `_eq`, `_gt`, `_gte`, `_lt` and `_lte`, alone, combined in one condition, under `_and`, or under `_or`. A document created at height 1 and then updated twice has composite commits at heights 1, 2 and 3: `{height: {_gte: 2, _lte: 3}, fieldName: {_eq: "_C"}}` and `{height: {_gte: 2, _lt: 5}, …}` return heights 2 and 3, `{height: {_gt: 1, _lt: 3}, …}` returns 2, `{height: {_eq: 2}, fieldName: {_eq: "age"}}` returns the `age` commit at height 2, and an `_or` of heights 1 and 3 returns both. A range above every height (`_gt: 10`) or an empty one (`_gt: 10, _lt: 5`) returns no commits. Go returns `{"data": null}` for these filters.
+`_commits(docID: [X], filter: {height: …})` takes `_eq`, `_gt`, `_gte`, `_lt` and `_lte`, alone, combined in one condition, under `_and`, or under `_or`. A document created at height 1 and then updated twice has composite commits at heights 1, 2 and 3: `{height: {_gte: 2, _lte: 3}, fieldName: {_eq: "_C"}}` and `{height: {_gte: 2, _lt: 5}, …}` return heights 2 and 3, `{height: {_gt: 1, _lt: 3}, …}` returns 2, `{height: {_eq: 2}, fieldName: {_eq: "age"}}` returns the `age` commit at height 2, and an `_or` of heights 1 and 3 returns both. A range above every height (`_gt: 10`) or an empty one (`_gt: 10, _lt: 5`) returns no commits. Go returns `{"data": null}` for these filters.
 
 # `defra.commits.immutable_block`: Commits of a shared immutable block
 
@@ -337,7 +337,7 @@ The `@immutable` fields of a document share one block. `_commits(cid: <that bloc
 # `defra.bm25.score`: Matching documents score above zero
 
 - **Parents:** ["defra.bm25"]
-- **Scenarios:** ["query::bm25::simple::only_articles_with_the_term_score_above_zero", "query::bm25::simple::a_term_in_any_listed_field_scores", "query::bm25::simple::an_unknown_term_scores_zero", "query::bm25::simple::an_unaliased_score_is_named_bm25"]
+- **Scenarios:** ["query::bm25::simple::only_articles_with_the_term_score_above_zero", "query::bm25::simple::a_term_in_any_listed_field_scores", "query::bm25::simple::an_unknown_term_scores_zero", "query::bm25::simple::a_score_is_named_by_its_alias_or_bm25"]
 
 A document scores above zero when a term of `query` appears in any of `fields`, and exactly `0` otherwise, so an unknown term scores every document `0`. The score is returned under its alias (`score: BM25(…)`), or as `BM25` without one, and `filter: {_alias: {score: {_gt: 0}}}` keeps only the matching documents.
 
