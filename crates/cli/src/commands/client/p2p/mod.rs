@@ -35,6 +35,8 @@ pub enum P2pCommand {
     Collection(P2pCollectionArgs),
     /// Connect to a peer
     Connect(P2pConnectArgs),
+    /// Disconnect from one or more peers
+    Disconnect(P2pDisconnectArgs),
     /// Manage document P2P sync
     Document(P2pDocumentArgs),
     /// Show P2P node information
@@ -57,6 +59,14 @@ pub struct P2pConnectArgs {
     pub addresses: Vec<String>,
 }
 
+/// Arguments for p2p disconnect command
+#[derive(Args, Debug)]
+pub struct P2pDisconnectArgs {
+    /// Peer addresses to disconnect from
+    #[arg(value_name = "ADDRESS")]
+    pub addresses: Vec<String>,
+}
+
 /// Arguments for p2p info command
 #[derive(Args, Debug)]
 pub struct P2pInfoArgs {}
@@ -68,6 +78,7 @@ impl P2pArgs {
             P2pCommand::ActivePeers(args) => args.execute(ctx).await,
             P2pCommand::Collection(args) => args.execute(ctx).await,
             P2pCommand::Connect(args) => args.execute(ctx).await,
+            P2pCommand::Disconnect(args) => args.execute(ctx).await,
             P2pCommand::Document(args) => args.execute(ctx).await,
             P2pCommand::Info(args) => args.execute(ctx).await,
             P2pCommand::Manage(args) => args.execute(ctx).await,
@@ -90,6 +101,15 @@ impl P2pConnectArgs {
         let (client, _) = write_client(ctx)?;
         client.connect(&self.addresses).await?;
         println!("Connected to peer(s)");
+        Ok(())
+    }
+}
+
+impl P2pDisconnectArgs {
+    pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
+        let (client, _) = write_client(ctx)?;
+        client.disconnect(&self.addresses).await?;
+        println!("Disconnected from peer(s)");
         Ok(())
     }
 }
