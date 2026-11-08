@@ -88,7 +88,7 @@ impl GoNode {
             command.arg("--no-signing");
         }
         if options.nac {
-            command.arg("--enable-nac");
+            command.arg("--node-acp-enable");
             if let Some(key) = &options.identity {
                 command.args(["--identity", key]);
             }
