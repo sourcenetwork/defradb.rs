@@ -30,8 +30,9 @@ pub struct NodeSpec {
     pub listen: Vec<String>,
     /// Start with node access control enabled, as Go's `Start { EnableNAC }`.
     pub enable_nac: bool,
-    /// The identity starting the node, which owns its NAC when it enables it.
-    pub nac_owner: Option<String>,
+    /// The client identity seed starting the node, which owns its NAC when
+    /// it enables it.
+    pub nac_owner: Option<u64>,
     /// The node's admission limits, if not the defaults.
     pub admission: Option<crate::actions::AdmissionSpec>,
     /// The node's own identity, Go's `NodeIdentity(seed)`; the node signs as it.
@@ -110,9 +111,12 @@ impl TestNode {
                 let options = GoOptions {
                     p2p: spec.network.then_some(listen),
                     dir: spec.dir.as_ref().map(|dir| dir.path().to_owned()),
+                    nac: spec.enable_nac,
+                    identity: spec
+                        .nac_owner
+                        .map(crate::scenario::identity::private_key_hex),
                 };
-                let node =
-                    GoNode::start(&binary, &options).unwrap_or_else(|error| panic!("{error}"));
+                let node = GoNode::start(&binary, &options).map_err(|error| error.to_string())?;
                 let url = node.api_url().to_owned();
                 Ok(Self::new(None, Some(url), spec, None, vec![Arc::new(node)]))
             }
@@ -247,7 +251,7 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     }
     if spec.enable_nac {
         builder = match &spec.nac_owner {
-            Some(owner) => builder.with_node_acp_owner(owner.clone()),
+            Some(seed) => builder.with_node_acp_owner(crate::scenario::identity::did(*seed)),
             None => builder.with_node_acp_enabled(),
         };
     }
@@ -269,6 +273,26 @@ fn signing_key(spec: &NodeSpec) -> defra_node::SigningKey {
                 .expect("any 32 bytes are an Ed25519 seed"),
         ),
     }
+}
+
+/// The public key (hex) and key type a node started as `spec` signs blocks
+/// with, as their signature headers name it; `None` when it does not sign.
+pub fn signer_public_key(spec: &NodeSpec) -> Option<(String, KeyType)> {
+    if spec.node_identity.is_none() && spec.signing.is_none() {
+        return None;
+    }
+    let public = |key_type, key: Vec<u8>| {
+        ::identity::RawIdentity::from_bytes(key_type, &key)
+            .expect("a valid key")
+            .public_key_bytes()
+    };
+    let public = match signing_key(spec) {
+        defra_node::SigningKey::Secp256k1(key) => public(::identity::KeyType::Secp256k1, key),
+        // The seed, then the public key.
+        defra_node::SigningKey::Ed25519(pair) => pair[32..].to_vec(),
+        _ => unreachable!("a test node signs with secp256k1 or Ed25519"),
+    };
+    Some((hex::encode(public), spec.signing.unwrap_or_default()))
 }
 
 /// What a node's events said, read in order by the waits.

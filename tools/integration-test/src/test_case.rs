@@ -105,6 +105,13 @@ impl State {
         self.slot(name).and_then(|slot| slot.spec.node_identity)
     }
 
+    /// The public key (hex) and key type node `name` signs blocks with, if it
+    /// signs.
+    pub fn signer_of(&self, name: &str) -> Option<(String, crate::actions::shared::KeyType)> {
+        self.slot(name)
+            .and_then(|slot| crate::nodes::signer_public_key(&slot.spec))
+    }
+
     /// Start node `name` as `spec` says, closing any node of that name first.
     pub fn start_node(&mut self, name: &str, spec: NodeSpec) {
         self.stop_node(name, false);
@@ -123,15 +130,12 @@ impl State {
         &mut self,
         name: &str,
         enable_nac: bool,
-        owner: Option<String>,
+        owner: Option<u64>,
         configure: C,
     ) -> Result<(), Failure>
     where
         C: FnOnce(&mut NodeSpec),
     {
-        if self.client_type() == ClientType::GoHttp {
-            return Err(Failure::unsupported("Start on a Go node"));
-        }
         let mut spec = self
             .slot(name)
             .map(|slot| slot.spec.clone())
@@ -139,6 +143,13 @@ impl State {
         spec.enable_nac = enable_nac;
         spec.nac_owner = owner;
         configure(&mut spec);
+        if self.client_type() == ClientType::GoHttp
+            && (spec.node_identity.is_some() || spec.signing.is_some())
+        {
+            return Err(Failure::unsupported(
+                "a node identity or signing key on a Go node",
+            ));
+        }
         self.stop_node(name, true);
         let node =
             TestNode::try_start(self.client_type(), spec.clone()).map_err(Failure::operation)?;

@@ -36,10 +36,7 @@ impl Op for Start {
     }
 
     fn run_mut(&self, state: &mut State) -> Result<Value, Failure> {
-        let owner = self
-            .common
-            .client_identity(Self::name())?
-            .map(crate::scenario::identity::did);
+        let owner = self.common.client_identity(Self::name())?;
         let (node_identity, signing) = (self.node_identity_seed, self.enable_signing);
         // A node identity always signs here: the core has no identity that
         // does not sign, so Go's unsigned node with an identity can't run.

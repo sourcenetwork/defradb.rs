@@ -26,12 +26,15 @@ pub enum GoNodeError {
     NotReady { log: String },
 }
 
-/// How a Go node starts: with P2P listening on `p2p`, and its data in `dir`
-/// (else in memory).
+/// How a Go node starts: with P2P listening on `p2p`, its data in `dir`
+/// (else in memory), and node access control on when `nac` says, owned by
+/// the client identity whose private key (hex) is `identity`.
 #[derive(Clone, Debug, Default)]
 pub struct GoOptions {
     pub p2p: Option<String>,
     pub dir: Option<PathBuf>,
+    pub nac: bool,
+    pub identity: Option<String>,
 }
 
 /// A running Go node, killed when dropped.
@@ -83,6 +86,12 @@ impl GoNode {
             .args(["--no-encryption", "--no-searchable-encryption"]);
         if !signed_docs(std::env::var("DEFRA_MULTIPLIERS").ok().as_deref()) {
             command.arg("--no-signing");
+        }
+        if options.nac {
+            command.arg("--enable-nac");
+            if let Some(key) = &options.identity {
+                command.args(["--identity", key]);
+            }
         }
         let mut process = Process(
             command
