@@ -1,4 +1,4 @@
-use std::ffi::{c_char, CStr};
+use std::ffi::c_char;
 #[cfg(feature = "iroh")]
 use std::path::PathBuf;
 
@@ -53,7 +53,7 @@ fn libp2p_config(
             return Ok(None);
         }
         // SAFETY: the caller promised `options`' strings are null or valid.
-        let json = unsafe { CStr::from_ptr(raw) }
+        let json = unsafe { std::ffi::CStr::from_ptr(raw) }
             .to_str()
             .map_err(|_| format!("{name} is not valid UTF-8"))?;
         if json.trim().is_empty() {
