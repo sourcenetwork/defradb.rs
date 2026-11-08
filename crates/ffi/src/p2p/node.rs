@@ -1,4 +1,4 @@
-use std::ffi::c_char;
+use std::ffi::{c_char, CStr};
 #[cfg(feature = "iroh")]
 use std::path::PathBuf;
 
@@ -48,26 +48,31 @@ fn libp2p_config(
     options: &NodeInitOptions,
     listen_addr: &str,
 ) -> Result<defra_node::Libp2pConfig, String> {
-    let list = |raw: *const c_char, name: &str| -> Result<Vec<String>, String> {
-        // SAFETY: the caller promised `options`' strings are null or valid.
-        match unsafe { c_str_to_string(raw) } {
-            Some(json) if !json.trim().is_empty() => {
-                serde_json::from_str(&json).map_err(|error| format!("invalid {name}: {error}"))
-            }
-            _ => Ok(Vec::new()),
+    let list = |raw: *const c_char, name: &str| -> Result<Option<Vec<String>>, String> {
+        if raw.is_null() {
+            return Ok(None);
         }
+        // SAFETY: the caller promised `options`' strings are null or valid.
+        let json = unsafe { CStr::from_ptr(raw) }
+            .to_str()
+            .map_err(|_| format!("{name} is not valid UTF-8"))?;
+        if json.trim().is_empty() {
+            return Ok(None);
+        }
+        serde_json::from_str(json)
+            .map(Some)
+            .map_err(|error| format!("invalid {name}: {error}"))
     };
-    let mut listen_addrs = list(options.p2p_listen_addrs_json, "p2p_listen_addrs_json")?;
-    if listen_addrs.is_empty() && !listen_addr.is_empty() {
-        listen_addrs.push(listen_addr.to_string());
-    }
-    if listen_addrs.is_empty() {
-        return Err("listen_addr is required for libp2p transport".to_string());
-    }
+    let listen_addrs = match list(options.p2p_listen_addrs_json, "p2p_listen_addrs_json")? {
+        Some(addrs) => addrs,
+        None if !listen_addr.is_empty() => vec![listen_addr.to_string()],
+        None => return Err("listen_addr is required for libp2p transport".to_string()),
+    };
     let nonzero = |value: u64| (value > 0).then_some(value);
     Ok(defra_node::Libp2pConfig {
         listen_addrs,
-        bootstrap_peers: list(options.p2p_bootstrap_peers_json, "p2p_bootstrap_peers_json")?,
+        bootstrap_peers: list(options.p2p_bootstrap_peers_json, "p2p_bootstrap_peers_json")?
+            .unwrap_or_default(),
         enable_pubsub: options.p2p_disable_pubsub == 0,
         enable_relay: options.p2p_disable_relay == 0,
         resource_limits: p2p::ResourceLimits {
@@ -292,6 +297,29 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("p2p_bootstrap_peers_json"), "{error}");
+    }
+
+    #[test]
+    fn an_empty_listen_list_listens_on_nothing() {
+        let empty = cstr("[]");
+        let options = NodeInitOptions {
+            p2p_listen_addrs_json: empty.as_ptr(),
+            ..NodeInitOptions::default()
+        };
+        for listen_addr in ["/ip4/127.0.0.1/tcp/0", ""] {
+            let config = libp2p_config(&options, listen_addr).unwrap();
+            assert!(config.listen_addrs.is_empty(), "{listen_addr:?}");
+        }
+        let invalid = CString::from_vec_with_nul(b"[\xff]\0".to_vec()).unwrap();
+        let error = libp2p_config(
+            &NodeInitOptions {
+                p2p_listen_addrs_json: invalid.as_ptr(),
+                ..NodeInitOptions::default()
+            },
+            "/ip4/127.0.0.1/tcp/0",
+        )
+        .unwrap_err();
+        assert!(error.contains("not valid UTF-8"), "{error}");
     }
 
     #[test]

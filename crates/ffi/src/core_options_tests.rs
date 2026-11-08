@@ -210,7 +210,10 @@ fn save_many_documents_adds_and_updates_in_order() {
 }
 
 static FILTER_CALLS: AtomicUsize = AtomicUsize::new(0);
+static FILTER_MISMATCHES: AtomicUsize = AtomicUsize::new(0);
 
+/// Refuses every document, counting calls whose arguments are the expected
+/// ones apart from the rest: a panic here would abort the test binary.
 unsafe extern "C" fn refuse_with_context(
     context: usize,
     collection_id: *const c_char,
@@ -222,11 +225,16 @@ unsafe extern "C" fn refuse_with_context(
             .to_string_lossy()
             .into_owned()
     };
-    assert_eq!(context, 7);
-    assert_eq!(read(collection_id), "collection");
-    assert_eq!(read(doc_id), "bae-doc");
-    assert_eq!(read(fields_json), r#"{"name":"Alice"}"#);
-    FILTER_CALLS.fetch_add(1, Ordering::SeqCst);
+    let fields: Option<Value> = serde_json::from_str(&read(fields_json)).ok();
+    let expected = context == 7
+        && read(collection_id) == "collection"
+        && read(doc_id) == "bae-doc"
+        && fields
+            == Some(json!({ "name": "Alice", "blockNumber": 42, "weight": 3, "raw": "AQI=" }));
+    match expected {
+        true => FILTER_CALLS.fetch_add(1, Ordering::SeqCst),
+        false => FILTER_MISMATCHES.fetch_add(1, Ordering::SeqCst),
+    };
     0
 }
 
@@ -245,9 +253,31 @@ fn the_replication_filter_option_asks_the_callback() {
         .expect("the node holds the filter");
     let mut fields = db::replication_filter::FieldValues::default();
     fields.insert("name".to_owned(), ciborium::Value::Text("Alice".to_owned()));
+    fields.insert(
+        "blockNumber".to_owned(),
+        ciborium::Value::Integer(42.into()),
+    );
+    fields.insert("weight".to_owned(), ciborium::Value::Float(3.0));
+    fields.insert("raw".to_owned(), ciborium::Value::Bytes(vec![1, 2]));
     let kept = filter.allow_replication("collection", "bae-doc", &fields);
     assert!(!kept, "the callback refused it");
     assert_eq!(FILTER_CALLS.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        FILTER_MISMATCHES.load(Ordering::SeqCst),
+        0,
+        "DefraDB's JSON encoding"
+    );
+
+    let kept = filter.allow_replication("collection", "bae-\0doc", &fields);
+    assert!(!kept, "a DocID with a NUL is refused");
+    fields.insert("ratio".to_owned(), ciborium::Value::Float(f64::NAN));
+    let kept = filter.allow_replication("collection", "bae-doc", &fields);
+    assert!(!kept, "a value JSON cannot carry is refused");
+    assert_eq!(
+        FILTER_CALLS.load(Ordering::SeqCst) + FILTER_MISMATCHES.load(Ordering::SeqCst),
+        1,
+        "neither reached the callback"
+    );
     node_close(filtered);
 
     let without = node();

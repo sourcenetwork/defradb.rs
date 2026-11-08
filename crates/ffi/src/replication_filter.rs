@@ -9,12 +9,18 @@ use db::replication_filter::{FieldValues, ReplicationFilter};
 use crate::types::NodeInitOptions;
 
 /// Whether to keep a replicated document: called with
-/// `replication_filter_context`, the collection ID, the DocID and the
-/// values the document's commit writes as a JSON object (an encrypted field,
-/// or one that has not arrived, is absent). Return non-zero to keep it, 0 to
-/// refuse it. It is called on the node's database workers, from several
-/// threads at once, so it must be thread-safe, and it must not block: it
-/// decides from what it is given.
+/// `replication_filter_context`, the collection ID (not its name), the DocID
+/// and the values the document's commit writes as a JSON object in DefraDB's
+/// JSON encoding (bytes as base64, whole-number floats as integers; an
+/// encrypted field, or one that has not arrived, is absent). Return non-zero
+/// to keep it, 0 to refuse it.
+///
+/// It is called on the node's database workers and on its network threads,
+/// from several threads at once, so it must be thread-safe, and it must not
+/// block or call back into DefraDB. One document may be asked about more
+/// than once (when it arrives, when it merges, and on a merge retry), so it
+/// must decide from its arguments alone. A document whose values cannot be
+/// passed as C strings or JSON is refused without calling it.
 pub type DefraReplicationFilterCallback = unsafe extern "C" fn(
     context: usize,
     collection_id: *const c_char,
@@ -27,23 +33,50 @@ struct CallbackFilter {
     context: usize,
 }
 
+/// The callback's three string arguments.
+fn arguments(
+    collection_id: &str,
+    doc_id: &str,
+    fields: &FieldValues,
+) -> Result<[CString; 3], String> {
+    let fields = fields
+        .iter()
+        .map(|(name, value)| {
+            document::cbor_value_to_json(value)
+                .map(|value| (name.clone(), value))
+                .map_err(|error| format!("field {name}: {error}"))
+        })
+        .collect::<Result<serde_json::Map<_, _>, _>>()?;
+    let fields = serde_json::Value::Object(fields).to_string();
+    let c_string = |text: &str| CString::new(text).map_err(|error| error.to_string());
+    Ok([
+        c_string(collection_id)?,
+        c_string(doc_id)?,
+        c_string(&fields)?,
+    ])
+}
+
 impl ReplicationFilter for CallbackFilter {
     fn allow_replication(&self, collection_id: &str, doc_id: &str, fields: &FieldValues) -> bool {
-        let fields = serde_json::to_string(fields).unwrap_or_else(|_| "{}".to_owned());
-        let (Ok(collection_id), Ok(doc_id), Ok(fields)) = (
-            CString::new(collection_id),
-            CString::new(doc_id),
-            CString::new(fields),
-        ) else {
-            return true;
+        let [collection, doc, fields] = match arguments(collection_id, doc_id, fields) {
+            Ok(arguments) => arguments,
+            Err(error) => {
+                tracing::warn!(
+                    collection_id,
+                    doc_id,
+                    %error,
+                    "replication filter refused a document it could not pass to the callback"
+                );
+                return false;
+            }
         };
         // SAFETY: the caller promised a thread-safe callback when it set it,
         // and the strings live until it returns.
         unsafe {
             (self.callback)(
                 self.context,
-                collection_id.as_ptr(),
-                doc_id.as_ptr(),
+                collection.as_ptr(),
+                doc.as_ptr(),
                 fields.as_ptr(),
             ) != 0
         }

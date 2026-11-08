@@ -246,7 +246,8 @@ pub struct NodeInitOptions {
     /// Passed back to `replication_filter` on every call.
     pub replication_filter_context: usize,
     /// Optional JSON array of libp2p listen multiaddrs; when set it replaces
-    /// `new_node_with_p2p`'s single address.
+    /// `new_node_with_p2p`'s single address, and `[]` starts a host that
+    /// listens on nothing and only dials out.
     pub p2p_listen_addrs_json: *const c_char,
     /// Optional JSON array of peers the libp2p host connects to at start.
     pub p2p_bootstrap_peers_json: *const c_char,
@@ -256,7 +257,8 @@ pub struct NodeInitOptions {
     pub p2p_disable_relay: c_int,
     /// libp2p resource manager memory budget in MiB; zero keeps the default.
     pub p2p_resource_memory_mib: u64,
-    /// libp2p resource manager file-descriptor budget; zero keeps the default.
+    /// libp2p resource manager file-descriptor budget, used only together
+    /// with `p2p_resource_memory_mib`; zero keeps the default.
     pub p2p_resource_file_descriptors: u64,
     /// Streams one peer may hold open; zero keeps the default.
     pub p2p_max_streams_per_peer: usize,
