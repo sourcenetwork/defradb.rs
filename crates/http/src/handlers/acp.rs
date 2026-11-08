@@ -260,9 +260,12 @@ pub async fn add_doc_relationship(
 ) -> Result<Json<DocRelationshipResponse>, HttpError> {
     require_permission(&state, &identity, NodePermission::DacRelationAdd).await?;
 
-    let requestor = identity
-        .did()
-        .ok_or_else(|| HttpError::BadRequest("identity required for document ACP".into()))?;
+    // Go counts a missing requestor as a missing required argument.
+    let requestor = identity.did().ok_or_else(|| {
+        HttpError::BadRequest(
+            "missing a required argument needed to add doc actor relationship.".into(),
+        )
+    })?;
 
     validate_add_doc_relationship(&body)?;
     let doc_acp = bound(state.require_doc_acp()?, &identity.context());
@@ -285,9 +288,12 @@ pub async fn add_doc_relationships(
 ) -> Result<Json<Vec<DocRelationshipResponse>>, HttpError> {
     require_permission(&state, &identity, NodePermission::DacRelationAdd).await?;
 
-    let requestor = identity
-        .did()
-        .ok_or_else(|| HttpError::BadRequest("identity required for document ACP".into()))?;
+    // Go counts a missing requestor as a missing required argument.
+    let requestor = identity.did().ok_or_else(|| {
+        HttpError::BadRequest(
+            "missing a required argument needed to add doc actor relationship.".into(),
+        )
+    })?;
 
     for body in &bodies {
         validate_add_doc_relationship(body)?;
@@ -313,9 +319,12 @@ pub async fn remove_doc_relationship(
 ) -> Result<Json<DocRelationshipDeleteResponse>, HttpError> {
     require_permission(&state, &identity, NodePermission::DacRelationDelete).await?;
 
-    let requestor = identity
-        .did()
-        .ok_or_else(|| HttpError::BadRequest("identity required for document ACP".into()))?;
+    // Go counts a missing requestor as a missing required argument.
+    let requestor = identity.did().ok_or_else(|| {
+        HttpError::BadRequest(
+            "missing a required argument needed to delete doc actor relationship.".into(),
+        )
+    })?;
 
     if body.collection.is_empty() {
         return Err(HttpError::BadRequest(

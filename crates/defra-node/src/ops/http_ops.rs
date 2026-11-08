@@ -181,6 +181,8 @@ impl DocumentAcpOperations for HttpNodeOps {
                     .await
             })
             .await
+            // The core answers whether it existed already; the trait, whether it is new.
+            .map(|existed| !existed)
             .map_err(text)
     }
 
