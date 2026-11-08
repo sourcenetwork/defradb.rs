@@ -382,7 +382,8 @@ async fn load_authorized_block_signature<S: Store>(
         .get(&parsed_cid.to_bytes())
         .await
         .map_err(|e| format!("failed to load block: {}", e))?
-        .ok_or_else(|| format!("could not find block: {}", cid_str))?;
+        // Go's blockstore words a missing block as `ipld: could not find <cid>`.
+        .ok_or_else(|| format!("ipld: could not find {}", cid_str))?;
     blockstore::verify_block_cid(&parsed_cid, &block_bytes)
         .map_err(|e| format!("block CID verification failed: {}", e))?;
 

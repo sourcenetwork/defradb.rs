@@ -477,6 +477,13 @@ impl NodeBuilder {
                 schema_ops: Arc::clone(&node.schema_ops),
                 context: None,
             }));
+            let ops = crate::ops::HttpNodeOps::new(node.ops());
+            let server = server
+                .with_view_arc(ops.clone())
+                .with_backup_arc(ops.clone())
+                .with_doc_acp_arc(ops.clone())
+                .with_encrypted_index_arc(ops.clone())
+                .with_block_arc(ops);
 
             #[cfg(not(target_arch = "wasm32"))]
             let server = server.with_index_arc(defra_http::index_adapter::IndexAdapter::new_arc(

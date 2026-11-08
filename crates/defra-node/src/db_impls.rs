@@ -171,7 +171,8 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
         context: &RequestContext,
         source_query: &str,
         target_sdl: &str,
-    ) -> Result<()> {
+        transform: Option<&str>,
+    ) -> Result<Vec<CollectionVersion>> {
         self.database
             .check_node_access_as(context, acp::nac::NodePermission::ViewAdd)
             .await
@@ -189,7 +190,20 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
         let selects = query::parse_query_with_limits(&wrapped_query, None, self.query_limits)
             .map_err(Error::ViewQueryParse)?;
         let select = selects.into_iter().next().ok_or(Error::ViewQueryEmpty)?;
-        let query_source = schema::QuerySource::new(query::select_to_go_json(&select));
+        let mut query_source = schema::QuerySource::new(query::select_to_go_json(&select));
+        if let Some(cid) = transform {
+            if cid.is_empty() {
+                return Err(Error::ViewTransformCidEmpty);
+            }
+            if !self
+                .database
+                .lens_store()
+                .has_transform(&lens::TransformId::new(cid))
+            {
+                return Err(Error::ViewTransformMissing(cid.to_owned()));
+            }
+            query_source = query_source.with_transform(cid);
+        }
 
         let mut materialized_names = Vec::new();
         let mut downsample_names = Vec::new();
@@ -219,7 +233,8 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
         self.validate_policies(&collections).await?;
 
         let creator = Self::creator(context)?;
-        self.database
+        let created = self
+            .database
             .create_collections_atomic_with_acp_registration_as(
                 context,
                 collections,
@@ -243,7 +258,7 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
                 .map_err(Error::DownsampleBootstrap)?;
         }
 
-        Ok(())
+        Ok(created)
     }
 
     async fn refresh_views(
