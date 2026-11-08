@@ -326,7 +326,7 @@ Gossip has no reply and no retry, so a gossip head a node refuses for its per-pe
 - **Parents:** ["defra.commits"]
 - **Scenarios:** ["query::commits::with_cid_immutable::commits_by_cid_list_every_immutable_field"]
 
-The `@immutable` fields of a document share one block. `_commits(cid: <that block>)` returns one commit per immutable field (`author` and `kind` for `type Record { author: String @immutable kind: String @immutable body: String }`), and `filter: {fieldName: {_eq: "kind"}}` narrows it to `kind`.
+The `@immutable` fields of a document share one block. `_commits(cid: <that block>)` returns one commit per immutable field (`author` and `kind` for `type Record { author: String @immutable kind: String @immutable body: String }`), and `filter: {fieldName: {_eq: "kind"}}` narrows it to `kind`. Each of those fields' commits is that block, with the field's own `delta`. Go has no `@immutable` directive.
 
 # `defra.bm25`: BM25 full-text scoring
 

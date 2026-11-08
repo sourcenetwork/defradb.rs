@@ -1,11 +1,13 @@
 //! `_commits(cid:)` on the one block that holds every `@immutable` field of a
 //! document lists each of those fields, and each field's commit is that
-//! block, carrying the field's own delta.
+//! block, carrying the field's own delta. Go has no `@immutable`, so the test
+//! runs only against the Rust node.
 
 use integration_test::actions::{AddCollection, AddDoc, Request};
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Text};
 use integration_test::test_case::TestCase;
+use integration_test::ClientType;
 use serde_json::json;
 
 fn by_immutable_cid(filter: &str) -> Text {
@@ -76,6 +78,7 @@ fn commits_by_cid_list_every_immutable_field() {
             }
             .into(),
         ],
+        client_types: Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]),
         ..Default::default()
     }
     .execute();
