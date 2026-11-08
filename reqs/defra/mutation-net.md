@@ -234,9 +234,9 @@ Listing P2P collections returns nothing until some are added, then exactly the a
 # `defra.replicator_filter.push`: Only matching documents are pushed
 
 - **Parents:** ["defra.replicator_filter"]
-- **Scenarios:** ["net::simple::replicator::with_filter::an_in_filter_pushes_only_the_listed_values", "net::simple::replicator::with_filter::a_filter_on_two_fields_pushes_documents_matching_both"]
+- **Scenarios:** ["net::simple::replicator::with_filter::an_in_filter_pushes_only_the_listed_values", "net::simple::replicator::with_filter::a_filter_on_two_fields_pushes_documents_matching_both", "net::simple::replicator::with_filter::an_and_of_filters_pushes_documents_matching_every_one"]
 
-With `{agent_did: {_in: ["did:a", "did:b"]}}`, documents for `did:a` and `did:b` reach the target and one for `did:c`, written before them, does not. With `{agent_did: {_eq: "did:a"}, kind: {_eq: "x"}}`, only the document matching both fields reaches it; `(did:a, y)` and `(did:b, x)` do not.
+With `{agent_did: {_in: ["did:a", "did:b"]}}`, documents for `did:a` and `did:b` reach the target and one for `did:c`, written before them, does not. With `{agent_did: {_eq: "did:a"}, kind: {_eq: "x"}}`, only the document matching both fields reaches it; `(did:a, y)` and `(did:b, x)` do not. `{_and: [{agent_did: {_eq: "did:a"}}, {kind: {_eq: "x"}}]}` composes filters the same way.
 
 # `defra.replicator_filter.validation`: A filter the schema cannot satisfy is refused
 

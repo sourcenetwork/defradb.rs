@@ -146,6 +146,27 @@ fn a_filter_on_two_fields_pushes_documents_matching_both() {
 }
 
 #[test]
+#[mantra_macros::req_test("defra.replicator_filter.push")]
+fn an_and_of_filters_pushes_documents_matching_every_one() {
+    case(
+        integration_test::scenario_id!(),
+        vec![
+            replicator(
+                json!({ "_and": [
+                    { "agent_did": { "_eq": "did:a" } },
+                    { "kind": { "_eq": "x" } },
+                ] }),
+                None,
+            ),
+            doc("did:a", "y"),
+            doc("did:b", "x"),
+            doc("did:a", "x"),
+            db1_holds(json!([{ "agent_did": "did:a", "kind": "x" }])),
+        ],
+    );
+}
+
+#[test]
 #[mantra_macros::req_test("defra.replicator_filter.validation")]
 fn a_filter_the_schema_cannot_satisfy_is_refused() {
     case(

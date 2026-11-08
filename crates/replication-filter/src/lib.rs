@@ -18,9 +18,6 @@ pub fn validate_replication_filter(
         ReplicationFilter::Acp { .. } => {
             Err("acp-scoped replication filters are not yet implemented (see #1036)".to_string())
         }
-        ReplicationFilter::All(subs) => subs
-            .iter()
-            .try_for_each(|f| validate_replication_filter(fields, collection_id, f)),
         ReplicationFilter::Predicate(conds) => validate_conditions(conds, fields, collection_id),
     }
 }
@@ -153,7 +150,6 @@ impl QueryReplicationFilterMatcher {
                 };
                 parsed.matches_json_object(document).unwrap_or(false)
             }
-            ReplicationFilter::All(subs) => subs.iter().all(|s| self.eval(s, document)),
             ReplicationFilter::Acp { .. } => false,
         }
     }
@@ -287,19 +283,6 @@ mod tests {
         let bool_f = predicate(json!({"active": {"_eq": true}}));
         assert!(m.matches("col", &bool_f, &json!({"active": true})));
         assert!(!m.matches("col", &bool_f, &json!({"active": false})));
-    }
-
-    #[test]
-    fn all_requires_all() {
-        let m = matcher();
-        let f = ReplicationFilter::All(vec![
-            predicate(json!({"agent_did": {"_eq": "did:a"}})),
-            predicate(json!({"kind": {"_eq": "x"}})),
-        ]);
-
-        assert!(m.matches("col", &f, &json!({"agent_did": "did:a", "kind": "x"})));
-        assert!(!m.matches("col", &f, &json!({"agent_did": "did:a", "kind": "y"})));
-        assert!(!m.matches("col", &f, &json!({"agent_did": "did:b", "kind": "x"})));
     }
 
     #[test]
