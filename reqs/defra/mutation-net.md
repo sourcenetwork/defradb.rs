@@ -224,3 +224,37 @@ Disconnecting from one or several connected peers leaves the active peer list em
 - **Scenarios:** ["net.simple.peer.subscribe.collection.p2-pcollection-add-get-multiple", "net.simple.peer.subscribe.collection.p2-pcollection-add-get-single", "net.simple.peer.subscribe.collection.p2-pcollection-add-remove-get-multiple", "net.simple.peer.subscribe.collection.p2-pcollection-add-remove-get-single", "net.simple.peer.subscribe.collection.p2-pcollection-get-all"]
 
 Listing P2P collections returns nothing until some are added, then exactly the added collection IDs; removing one leaves only the rest.
+
+# `defra.replicator_filter`: A replicator that pushes only matching documents
+
+- **Parents:** ["defra"]
+
+`AddReplicator` takes, per collection, query-filter conditions (`Filters` over HTTP, `--filter` on the CLI) that a document must match to be pushed. The sender evaluates them, so a document that does not match is never sent.
+
+# `defra.replicator_filter.push`: Only matching documents are pushed
+
+- **Parents:** ["defra.replicator_filter"]
+- **Scenarios:** ["net::simple::replicator::with_filter::an_in_filter_pushes_only_the_listed_values", "net::simple::replicator::with_filter::a_filter_on_two_fields_pushes_documents_matching_both"]
+
+With `{agent_did: {_in: ["did:a", "did:b"]}}`, documents for `did:a` and `did:b` reach the target and one for `did:c`, written before them, does not. With `{agent_did: {_eq: "did:a"}, kind: {_eq: "x"}}`, only the document matching both fields reaches it; `(did:a, y)` and `(did:b, x)` do not.
+
+# `defra.replicator_filter.validation`: A filter the schema cannot satisfy is refused
+
+- **Parents:** ["defra.replicator_filter"]
+- **Scenarios:** ["net::simple::replicator::with_filter::a_filter_the_schema_cannot_satisfy_is_refused"]
+
+Adding the replicator fails, and nothing is pushed, when the filter names a field the collection lacks (`... not found ...`), gives an `_in` value of the wrong type (`["did:a", 42]` on a String: `... does not match the field type`), or reaches a field that is not `@immutable`, even inside an `_or` (`... must be marked @immutable`).
+
+# `defra.crdt.text_convergence`: Concurrent text edits converge with both kept
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["net::simple::replicator::crdt::text::peers_editing_one_text_apart_converge_with_both_edits"]
+
+Two peers holding `"hello world"` in a `@crdt(type: text)` field edit it apart, one to `"hello brave world"` and one to `"hello world!"`. Once they replicate to each other, both read `"hello brave world!"`.
+
+# `defra.crdt.text_upsert`: An upsert edits an existing text
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["mutation::upsert::text::an_upsert_edits_an_existing_text"]
+
+An upsert on a `@crdt(type: text)` field that finds no document adds it with the `add` body (`"hello"`); once the document exists, each upsert sets the body to its `update` value, as an update does: `"hello world"`, then `"help world!"`.

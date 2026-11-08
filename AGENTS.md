@@ -458,7 +458,7 @@ Legacy areas with submodules:
 | ACP | `acp::` | audit, basic, cross_object, custom_policy, events_sse, index, link_collection, multi_identity, multi_role, negative, negative_p2p, node_access, p2p, p2p_lifecycle, policy_validation, register_ops, relation_queries, relationship, revoke_lifecycle, secp256k1_round_trip, transaction_rollback, xarchive_access_matrix |
 | P2P Iroh | `p2p_iroh::` | acp, connection, peer, replication, schema, sync |
 | NAC | `nac::` | core_operations, cross_compartment_isolation, dac_access_matrix, document_acp, multi_doc_create, operations, p2p_management, policy_evolution, relation_admin |
-| P2P | `p2p::` | connection_manager, document, feature_binaries, filtered_replication, idempotent_replay, long_history, manage_relay, management, quarantine, receiver_pull, replication, replication_advanced, resilience, sync, text_crdt, transports, trust_boundary, write_contention |
+| P2P | `p2p::` | connection_manager, document, feature_binaries, filtered_replication, idempotent_replay, long_history, manage_relay, management, quarantine, receiver_pull, replication, replication_advanced, resilience, sync, transports, trust_boundary, write_contention |
 | FTS | `fts::` | edge_cases, lifecycle, scoring |
 | Vector | `vector::` | CLI/HTTP Flat, HNSW, IVF-PQ and SSG routing, updates, deletes, and restart persistence |
 | Encryption | `encryption::` | acp, block_verify, cross_runtime_p2p, index, key_management, se_cross_runtime |
