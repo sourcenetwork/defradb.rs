@@ -162,7 +162,7 @@ The node configuration's `Libp2pConfig::orphan_sweep` sets whether the sweep run
 
 - **Parents:** ["defra"]
 
-An embedder may give a node a `db::replication_filter::ReplicationFilter` (`DbOptions::with_replication_filter`, `NodeBuilder::with_replication_filter`), asked `allow_replication(collection_id, doc_id, fields)` for every replicated document; refusing discards it. A node without one keeps every document, as before.
+An embedder may give a node a `db::replication_filter::ReplicationFilter` (`DbOptions::with_replication_filter`, `NodeBuilder::with_replication_filter`), asked `allow_replication(collection_id, collection_name, doc_id, fields)` for every replicated document; refusing discards it. `collection_name` is the collection's name, the key a Go filter matches on, and `collection_id` is the ID, which stays the same across a rename. A node without one keeps every document, as before.
 
 # `defra.replication_filter.field_values`: The fields the filter is given
 

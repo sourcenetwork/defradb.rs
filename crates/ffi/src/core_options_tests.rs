@@ -217,6 +217,7 @@ static FILTER_MISMATCHES: AtomicUsize = AtomicUsize::new(0);
 unsafe extern "C" fn refuse_with_context(
     context: usize,
     collection_id: *const c_char,
+    collection_name: *const c_char,
     doc_id: *const c_char,
     fields_json: *const c_char,
 ) -> c_int {
@@ -228,6 +229,7 @@ unsafe extern "C" fn refuse_with_context(
     let fields: Option<Value> = serde_json::from_str(&read(fields_json)).ok();
     let expected = context == 7
         && read(collection_id) == "collection"
+        && read(collection_name) == "Log"
         && read(doc_id) == "bae-doc"
         && fields
             == Some(json!({ "name": "Alice", "blockNumber": 42, "weight": 3, "raw": "AQI=" }));
@@ -259,7 +261,7 @@ fn the_replication_filter_option_asks_the_callback() {
     );
     fields.insert("weight".to_owned(), ciborium::Value::Float(3.0));
     fields.insert("raw".to_owned(), ciborium::Value::Bytes(vec![1, 2]));
-    let kept = filter.allow_replication("collection", "bae-doc", &fields);
+    let kept = filter.allow_replication("collection", "Log", "bae-doc", &fields);
     assert!(!kept, "the callback refused it");
     assert_eq!(FILTER_CALLS.load(Ordering::SeqCst), 1);
     assert_eq!(
@@ -268,7 +270,7 @@ fn the_replication_filter_option_asks_the_callback() {
         "DefraDB's JSON encoding"
     );
 
-    let kept = filter.allow_replication("collection", "bae-\0doc", &fields);
+    let kept = filter.allow_replication("collection", "Log", "bae-\0doc", &fields);
     assert!(!kept, "a DocID with a NUL is refused");
     assert_eq!(
         FILTER_CALLS.load(Ordering::SeqCst) + FILTER_MISMATCHES.load(Ordering::SeqCst),
@@ -277,7 +279,7 @@ fn the_replication_filter_option_asks_the_callback() {
     );
 
     fields.insert("ratio".to_owned(), ciborium::Value::Float(f64::NAN));
-    filter.allow_replication("collection", "bae-doc", &fields);
+    filter.allow_replication("collection", "Log", "bae-doc", &fields);
     assert_eq!(
         FILTER_CALLS.load(Ordering::SeqCst),
         2,
