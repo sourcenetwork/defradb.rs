@@ -1,3 +1,4 @@
+use crate::client_type::ClientType;
 use crate::scenario::{Common, Failure, Op};
 use crate::test_case::State;
 use serde::{Deserialize, Serialize};
@@ -31,11 +32,23 @@ impl Op for ListAllEncryptedIndexes {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
-        if state.client_type() != crate::client_type::ClientType::InProcess {
-            return Err(Failure::unsupported(format!(
-                "{} over HTTP or the CLI, which list one collection at a time",
-                Self::name()
-            )));
+        let node = self.common.node();
+        match state.client_type() {
+            ClientType::InProcess => {}
+            ClientType::RustHttp | ClientType::GoHttp => {
+                let all = state
+                    .http_as(node, identity, |client| async move {
+                        client.encrypted_index_list_all().await
+                    })?
+                    .map_err(|e| Failure::operation(e.to_string()))?;
+                return Ok(json!({ "indexes": all }));
+            }
+            ClientType::Cli => {
+                let all = state
+                    .defra_client_as(node, None, identity, &["encrypted-index", "list"])
+                    .map_err(Failure::operation)?;
+                return Ok(json!({ "indexes": all }));
+            }
         }
         let all = state
             .block_on(
