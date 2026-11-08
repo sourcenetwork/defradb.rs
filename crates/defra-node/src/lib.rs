@@ -414,11 +414,7 @@ impl Node {
         Fut: std::future::Future<Output = Result<T>> + 'static,
         T: Send + 'static,
     {
-        if self.remote_acp {
-            make().await
-        } else {
-            self.on_pool(make).await
-        }
+        self.ops().on_acp(make).await
     }
 
     /// The context the node's own operations run in: the node's identity acts
@@ -696,7 +692,7 @@ impl Node {
         relation: &str,
         target: &str,
     ) -> Result<bool> {
-        let ops = Arc::clone(&self.acp_ops);
+        let ops = self.ops().acp_ops;
         let owned = |value: &str| value.to_owned();
         let (identity, collection, doc_id) = (owned(identity), owned(collection), owned(doc_id));
         let (relation, target) = (owned(relation), owned(target));
@@ -722,7 +718,7 @@ impl Node {
         relation: &str,
         target: &str,
     ) -> Result<bool> {
-        let ops = Arc::clone(&self.acp_ops);
+        let ops = self.ops().acp_ops;
         let owned = |value: &str| value.to_owned();
         let (identity, collection, doc_id) = (owned(identity), owned(collection), owned(doc_id));
         let (relation, target) = (owned(relation), owned(target));
