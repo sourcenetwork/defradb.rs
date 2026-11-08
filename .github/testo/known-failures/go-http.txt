@@ -47,3 +47,6 @@ testo query::cyclic_fragments::a_fragment_spreading_itself_fails_validation #261
 testo query::cyclic_fragments::fragments_spreading_each_other_fail_validation #2619
 testo query::cyclic_fragments::a_cycle_no_field_spreads_still_fails_validation #2619
 testo net::info::connect_peers::net_info_connect_multiple_peers #2726
+testo acp::nac::disconnect_p2p_peer::nac_gates_disconnect_p2_p_peer_authorized_identity_allow_access #2727
+testo acp::nac::list_p2p_replicator::nac_gates_list_p2_p_replicator_authorized_identity_allow_access #2727
+testo acp::nac::relation_admin::list_p2p_replicator::nac_admin_relation_can_list_p2_p_replicator #2727

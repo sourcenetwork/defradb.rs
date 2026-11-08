@@ -111,13 +111,6 @@ impl Op for NewNode {
             .or(self.with_identity.then_some(u64::MAX - 1));
         let signing = (self.enable_signing || self.key_type.is_some())
             .then(|| self.key_type.unwrap_or_default());
-        if state.client_type() == ClientType::GoHttp
-            && (node_identity.is_some() || signing.is_some())
-        {
-            return Err(Failure::unsupported(
-                "a node identity or signing key on a Go node",
-            ));
-        }
         let txn_ttl = self.txn_ttl(state.client_type())?;
         let dir = match self.database_dir {
             Some(_) => Some(Arc::new(tempfile::tempdir().map_err(|e| {

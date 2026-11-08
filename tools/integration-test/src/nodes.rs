@@ -115,6 +115,8 @@ impl TestNode {
                     identity: spec
                         .nac_owner
                         .map(crate::scenario::identity::private_key_hex),
+                    node_key: go_node_key(&spec),
+                    signing: spec.signing.is_some(),
                 };
                 let node = GoNode::start(&binary, &options).map_err(|error| error.to_string())?;
                 let url = node.api_url().to_owned();
@@ -201,7 +203,17 @@ impl TestNode {
                 .map_err(|e| e.to_string())?
                 .map_err(|e| e.to_string()),
             (None, Some(url)) => {
-                let client = HttpClient::new(url, &network_edge()).map_err(|e| e.to_string())?;
+                // The node's NAC owner may read it once NAC is on.
+                let token = self.spec.nac_owner.map(|seed| {
+                    cli::commands::client::generate_auth_token(
+                        &crate::scenario::identity::private_key_hex(seed),
+                        url,
+                    )
+                    .expect("a token for a test identity")
+                });
+                let client = HttpClient::new(url, &network_edge())
+                    .map_err(|e| e.to_string())?
+                    .with_auth_token(token);
                 workers::block_on(network_edge().spawn(async move { client.peer_info().await }))
                     .map_err(|e| e.to_string())?
                     .map_err(|e| e.to_string())?
@@ -273,6 +285,21 @@ fn signing_key(spec: &NodeSpec) -> defra_node::SigningKey {
                 .expect("any 32 bytes are an Ed25519 seed"),
         ),
     }
+}
+
+/// The node identity a Go node started as `spec` loads from its keyring: the
+/// key a Rust node started the same way signs with.
+fn go_node_key(spec: &NodeSpec) -> Option<crate::go_node::NodeKey> {
+    if spec.node_identity.is_none() && spec.signing.is_none() {
+        return None;
+    }
+    let (key_type, raw) = match signing_key(spec) {
+        defra_node::SigningKey::Secp256k1(key) => ("secp256k1", key),
+        // Go's Ed25519 private key is the seed, then the public key.
+        defra_node::SigningKey::Ed25519(pair) => ("ed25519", pair),
+        _ => unreachable!("a test node signs with secp256k1 or Ed25519"),
+    };
+    Some(crate::go_node::NodeKey { key_type, raw })
 }
 
 /// The public key (hex) and key type a node started as `spec` signs blocks

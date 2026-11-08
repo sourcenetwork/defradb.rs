@@ -143,13 +143,6 @@ impl State {
         spec.enable_nac = enable_nac;
         spec.nac_owner = owner;
         configure(&mut spec);
-        if self.client_type() == ClientType::GoHttp
-            && (spec.node_identity.is_some() || spec.signing.is_some())
-        {
-            return Err(Failure::unsupported(
-                "a node identity or signing key on a Go node",
-            ));
-        }
         self.stop_node(name, true);
         let node =
             TestNode::try_start(self.client_type(), spec.clone()).map_err(Failure::operation)?;
