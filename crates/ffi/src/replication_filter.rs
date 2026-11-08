@@ -11,10 +11,11 @@ use crate::types::NodeInitOptions;
 /// Whether to keep a replicated document: called with
 /// `replication_filter_context`, the collection ID, the collection name (the
 /// key a Go filter matches on; the ID stays the same across a rename), the
-/// DocID and the values the document's commit writes as a JSON object in DefraDB's
-/// JSON encoding (bytes as base64, whole-number floats as integers; an
-/// encrypted field, one that has not arrived, or one JSON cannot carry, such
-/// as a NaN, is absent). Return non-zero to keep it, 0 to refuse it.
+/// DocID and the values the document's commit writes as a JSON object that
+/// keeps each value's kind: an integer as a JSON integer (any `i64` or
+/// `u64`), a float always with a fraction or exponent (`3.0`, never `3`), bytes
+/// as base64. An encrypted field, one that has not arrived, or one JSON cannot
+/// carry, such as a NaN, is absent. Return non-zero to keep it, 0 to refuse it.
 ///
 /// It is called on the node's database workers and on its network threads,
 /// from several threads at once, so it must be thread-safe, and it must not
@@ -35,6 +36,42 @@ struct CallbackFilter {
     context: usize,
 }
 
+/// `value` as JSON that keeps its kind, so the callback can tell an integer
+/// from a whole-number float as Go's CBOR decoder does; none when JSON cannot
+/// carry it (a non-finite float, an integer outside `i64` and `u64`).
+fn value_json(value: &ciborium::Value) -> Option<serde_json::Value> {
+    use base64::Engine;
+    use ciborium::Value;
+    Some(match value {
+        Value::Null => serde_json::Value::Null,
+        Value::Bool(value) => serde_json::Value::Bool(*value),
+        Value::Integer(value) => {
+            let value = i128::from(*value);
+            match i64::try_from(value) {
+                Ok(signed) => signed.into(),
+                Err(_) => u64::try_from(value).ok()?.into(),
+            }
+        }
+        Value::Float(value) => serde_json::Number::from_f64(*value)?.into(),
+        Value::Text(text) => serde_json::Value::String(text.clone()),
+        Value::Bytes(bytes) => {
+            serde_json::Value::String(base64::engine::general_purpose::STANDARD.encode(bytes))
+        }
+        Value::Array(items) => items
+            .iter()
+            .map(value_json)
+            .collect::<Option<Vec<_>>>()?
+            .into(),
+        Value::Map(entries) => entries
+            .iter()
+            .map(|(key, value)| Some((key.as_text()?.to_owned(), value_json(value)?)))
+            .collect::<Option<serde_json::Map<_, _>>>()?
+            .into(),
+        Value::Tag(_, inner) => value_json(inner)?,
+        _ => return None,
+    })
+}
+
 /// The callback's four string arguments; a field JSON cannot carry is left
 /// out, so the callback still decides.
 fn arguments(
@@ -45,10 +82,10 @@ fn arguments(
 ) -> Result<[CString; 4], String> {
     let fields: serde_json::Map<_, _> = fields
         .iter()
-        .filter_map(|(name, value)| match document::cbor_value_to_json(value) {
-            Ok(value) => Some((name.clone(), value)),
-            Err(error) => {
-                tracing::warn!(collection_id, doc_id, field = %name, %error,
+        .filter_map(|(name, value)| match value_json(value) {
+            Some(value) => Some((name.clone(), value)),
+            None => {
+                tracing::warn!(collection_id, doc_id, field = %name,
                     "replication filter left out a field JSON cannot carry");
                 None
             }

@@ -232,7 +232,9 @@ unsafe extern "C" fn refuse_with_context(
         && read(collection_name) == "Log"
         && read(doc_id) == "bae-doc"
         && fields
-            == Some(json!({ "name": "Alice", "blockNumber": 42, "weight": 3, "raw": "AQI=" }));
+            == Some(
+                json!({ "name": "Alice", "blockNumber": 42, "big": u64::MAX, "weight": 3.0, "raw": "AQI=" }),
+            );
     match expected {
         true => FILTER_CALLS.fetch_add(1, Ordering::SeqCst),
         false => FILTER_MISMATCHES.fetch_add(1, Ordering::SeqCst),
@@ -259,6 +261,7 @@ fn the_replication_filter_option_asks_the_callback() {
         "blockNumber".to_owned(),
         ciborium::Value::Integer(42.into()),
     );
+    fields.insert("big".to_owned(), ciborium::Value::Integer(u64::MAX.into()));
     fields.insert("weight".to_owned(), ciborium::Value::Float(3.0));
     fields.insert("raw".to_owned(), ciborium::Value::Bytes(vec![1, 2]));
     let kept = filter.allow_replication("collection", "Log", "bae-doc", &fields);
@@ -267,7 +270,7 @@ fn the_replication_filter_option_asks_the_callback() {
     assert_eq!(
         FILTER_MISMATCHES.load(Ordering::SeqCst),
         0,
-        "DefraDB's JSON encoding"
+        "each value keeps its kind"
     );
 
     let kept = filter.allow_replication("collection", "Log", "bae-\0doc", &fields);
