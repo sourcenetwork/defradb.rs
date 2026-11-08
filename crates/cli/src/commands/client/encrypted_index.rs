@@ -52,9 +52,10 @@ pub struct EncryptedIndexDeleteArgs {
 /// Arguments for encrypted-index list command
 #[derive(Args, Debug)]
 pub struct EncryptedIndexListArgs {
-    /// Collection name
+    /// Collection name; without one, every collection's encrypted indexes
+    /// are listed, as Go's CLI lists them.
     #[arg(long, short = 'c')]
-    pub collection: String,
+    pub collection: Option<String>,
 }
 
 impl EncryptedIndexArgs {
@@ -108,14 +109,18 @@ impl EncryptedIndexDeleteArgs {
 
 impl EncryptedIndexListArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        validate_identifier(&self.collection)?;
-
         let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
-        let indexes = client.encrypted_index_list(&self.collection).await?;
-        println!("{}", serde_json::to_string_pretty(&indexes)?);
+        let printed = match &self.collection {
+            Some(collection) => {
+                validate_identifier(collection)?;
+                serde_json::to_string_pretty(&client.encrypted_index_list(collection).await?)?
+            }
+            None => serde_json::to_string_pretty(&client.encrypted_index_list_all().await?)?,
+        };
+        println!("{printed}");
         Ok(())
     }
 }
