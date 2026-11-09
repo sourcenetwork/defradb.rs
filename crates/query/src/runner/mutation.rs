@@ -867,8 +867,14 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                 // Keep the filter even when it was already resolved to IDs.
                 // UpdateNode revalidates it against the document snapshot that
                 // is passed to the mutator, closing the selection/write race
-                // without filtering the post-update result.
-                if let Some(ref filter) = mutation.filter {
+                // without filtering the post-update result. A relation filter
+                // is not a field of that snapshot: the planner already chose
+                // its IDs in this transaction, so it is not checked again.
+                if let Some(filter) = mutation
+                    .filter
+                    .as_ref()
+                    .filter(|filter| !filter.has_relation_filters())
+                {
                     node = node.with_filter(filter.clone());
                 }
 

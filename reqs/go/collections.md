@@ -44,6 +44,13 @@ A one-to-many relation gets its relation ID field on the one side regardless of 
 
 The GraphQL types, inputs and arguments DefraDB generates from collection definitions, checked through introspection queries.
 
+# `go.collection_version.introspection.full_schema`: The whole introspected schema matches the golden
+
+- **Parents:** ["go.collection_version.introspection"]
+- **Go-Tests:** ["internal/request/graphql/schema/manager_npx_test.go::TestWriteSDL"]
+
+The goldens are Go's three schema generator fixtures (one collection; a one-to-one relation; a one-to-many relation), the SDL files in `internal/request/graphql/schema/testfixtures/*.gen.graphql`, copied verbatim from Go DefraDB at `GO_COMPAT_COMMIT` into `tools/integration-test/tests/testo/collection_version/introspection_golden/`. The response to the standard client introspection query (`introspection_golden/client_introspection.gql`, the Altair/GraphiQL/Postman query) describes at least what each golden prints: its directives, types, fields, arguments, input fields, enum values, type references, default values and descriptions. The one-collection fixture is checked whole. A relation fixture is checked only for what a relation adds: its own types and the root types, since every other type is shared and the one-collection check covers it. Types named `__…` are left out, since the GraphQL spec defines them and each library words them its own way. Lists may come in any order, and descriptions compare by their words, so reflowed text and an empty or missing description match. What defradb.rs adds on top of Go (a type, field, argument or enum value the golden lacks) is allowed; anything the golden has must be there with the same value. Go is the reference, not the definition, so a deliberate difference is made by saying why here and leaving that part out of the check. Go keeps these fixtures in step with its generator in `TestWriteSDL`; a pin bump copies them again.
+
 # `go.collection_version.introspection.similarity`: `_similarity` on vector-capable fields
 
 - **Parents:** ["go.collection_version.introspection"]

@@ -50,7 +50,7 @@ impl Op for PatchCollection {
         let migration = self.lens.as_ref().map(Lens::to_wire);
         state
             .block_on(state.node_on(self.common.node())?.patch_collection_as(
-                &state.context(self.txn),
+                &state.context_as(self.txn, self.common.identity_seed),
                 self.patch.as_str(),
                 migration.as_ref(),
             ))
@@ -62,7 +62,7 @@ impl Op for PatchCollection {
 impl PatchCollection {
     /// Fails on the arguments no client supports yet.
     fn check_arguments(&self) -> Result<(), Failure> {
-        self.common.plain(Self::name())?;
+        self.common.client_identity(Self::name())?;
         let unsupported = [
             ("async", self.r#async),
             ("collection", self.collection.is_some()),
@@ -96,11 +96,15 @@ impl HttpRun for PatchCollection {
             let migration = action.lens.as_ref().map(Lens::to_wire);
             let in_txn = txn.is_some();
             state
-                .http_on(action.common.node(), |client| async move {
-                    client
-                        .patch_collection(txn.as_deref(), &patch, migration.as_ref())
-                        .await
-                })?
+                .http_as(
+                    action.common.node(),
+                    action.common.identity_seed,
+                    |client| async move {
+                        client
+                            .patch_collection(txn.as_deref(), &patch, migration.as_ref())
+                            .await
+                    },
+                )?
                 .map_err(|e| Failure::operation(e.to_string()))?;
             if !in_txn {
                 state.wait_for_indexes_built(action.common.node())?;
@@ -118,7 +122,12 @@ impl CliRun for PatchCollection {
             let mut args = vec!["collection", "patch", action.patch.as_str()];
             args.extend(migration.as_deref());
             state
-                .defra_client_on(action.common.node(), action.txn, &args)
+                .defra_client_as(
+                    action.common.node(),
+                    action.txn,
+                    action.common.identity_seed,
+                    &args,
+                )
                 .map(|_| json!({}))
                 .map_err(Failure::operation)
         });

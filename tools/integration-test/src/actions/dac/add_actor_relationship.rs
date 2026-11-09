@@ -1,8 +1,9 @@
+use super::relationship::{Change, Relationship};
 use crate::clients::{CliRun, HttpRun};
 use crate::scenario::{Common, Failure, Op, Text};
 use crate::test_case::State;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use testo::prelude::*;
 
 /// The `dac.addActorRelationship` op.
@@ -41,53 +42,40 @@ impl Op for AddDACActorRelationship {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        let (requester, target) = self.actors()?;
-        state
-            .block_on(
-                state
-                    .node_on(self.common.node())?
-                    .add_dac_actor_relationship(
-                        &requester,
-                        &self.collection,
-                        self.doc_id.as_str(),
-                        &self.relation,
-                        &target,
-                    ),
-            )
-            .map(|existed_already| json!({ "existedAlready": existed_already }))
-            .map_err(|e| Failure::operation(e.to_string()))
+        self.relationship(state)?.in_process(state)
     }
 }
 
 impl AddDACActorRelationship {
-    /// The DIDs of the actor granting and the actor granted.
-    fn actors(&self) -> Result<(String, String), Failure> {
-        let requester = match self.common.client_identity(Self::name())? {
-            Some(seed) => crate::scenario::identity::did(seed),
-            None => {
-                return Err(Failure::unsupported(format!(
-                    "{} without an identity",
-                    Self::name()
-                )))
-            }
+    fn relationship(&self, state: &State) -> Result<Relationship<'_>, Failure> {
+        let target = match &self.target_identity_node {
+            Some(node) => state
+                .node_identity_of(node)
+                .map(crate::scenario::identity::node_did)
+                .ok_or_else(|| {
+                    // Go gives every node an identity; a Rust node has one
+                    // only when the test names it.
+                    Failure::unsupported(format!(
+                        "{} argument targetIdentityNode: node {node} was started with no identity",
+                        Self::name()
+                    ))
+                })?,
+            None => crate::actions::nac::target_actor(
+                Self::name(),
+                self.target_actor.as_deref(),
+                self.target_identity_seed,
+                None,
+            )?,
         };
-        if self.target_identity_node.is_some() {
-            return Err(Failure::unsupported(format!(
-                "{} argument targetIdentityNode",
-                Self::name()
-            )));
-        }
-        let target = match (&self.target_actor, self.target_identity_seed) {
-            (Some(actor), _) => actor.clone(),
-            (None, Some(seed)) => crate::scenario::identity::did(seed),
-            (None, None) => {
-                return Err(Failure::operation(format!(
-                    "{} names no target actor",
-                    Self::name()
-                )))
-            }
-        };
-        Ok((requester, target))
+        Ok(Relationship {
+            change: Change::Add,
+            op: Self::name(),
+            common: &self.common,
+            collection: &self.collection,
+            doc_id: self.doc_id.as_str(),
+            relation: &self.relation,
+            target,
+        })
     }
 }
 
@@ -102,21 +90,7 @@ impl Action for AddDACActorRelationship {
 impl HttpRun for AddDACActorRelationship {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            let (_, target) = action.actors()?;
-            let identity = action.common.client_identity(Self::name())?;
-            let (collection, doc_id, relation) = (
-                action.collection.clone(),
-                action.doc_id.as_str().to_owned(),
-                action.relation.clone(),
-            );
-            state
-                .http_as(action.common.node(), identity, |client| async move {
-                    client
-                        .acp_doc_relationship_add(&collection, &doc_id, &relation, &target)
-                        .await
-                })?
-                .map_err(|e| Failure::operation(e.to_string()))
-                .and_then(|printed| existed_already(&printed))
+            action.relationship(state)?.http(state)
         });
     }
 }
@@ -124,35 +98,7 @@ impl HttpRun for AddDACActorRelationship {
 impl CliRun for AddDACActorRelationship {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            let (_, target) = action.actors()?;
-            let identity = action.common.client_identity(Self::name())?;
-            let args = [
-                "acp",
-                "document",
-                "relationship",
-                "add",
-                "--collection",
-                &action.collection,
-                "--docID",
-                action.doc_id.as_str(),
-                "--relation",
-                &action.relation,
-                "--actor",
-                &target,
-            ];
-            state
-                .defra_client_as(action.common.node(), None, identity, &args)
-                .map_err(Failure::operation)
-                .and_then(|printed| existed_already(&printed))
+            action.relationship(state)?.cli(state)
         });
     }
-}
-
-/// Go's `existedAlready` from what the server printed.
-fn existed_already(printed: &Value) -> Result<Value, Failure> {
-    ["ExistedAlready", "existedAlready", "existed_already"]
-        .iter()
-        .find_map(|key| printed.get(*key).and_then(Value::as_bool))
-        .map(|existed| json!({ "existedAlready": existed }))
-        .ok_or_else(|| Failure::operation(format!("no existedAlready in {printed}")))
 }

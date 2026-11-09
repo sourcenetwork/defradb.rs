@@ -425,6 +425,37 @@ impl<S: Store> crate::database::DB<S> {
             .await
     }
 
+    /// Every view transform in `schemas` names a lens whose config `txn`
+    /// reads (Go: `lensCIDExists` on the transaction's lens store). The read
+    /// is validated at commit, and the config commits before the in-memory
+    /// lens store registers it, so a committed lens is never reported missing.
+    /// Every lens the node holds has a config: added here (`add_lens`), in a
+    /// transaction, as a migration, or fetched by P2P sync
+    /// (`commit_synced_lens`).
+    async fn require_view_transforms(
+        &self,
+        txn: &crate::txn::DbTxn<S>,
+        schemas: &[CollectionVersion],
+    ) -> Result<()> {
+        let transforms = schemas
+            .iter()
+            .flat_map(|schema| [&schema.query, &schema.downsample_source])
+            .filter_map(|source| source.as_ref()?.transform.as_ref());
+        for transform in transforms {
+            let key = storage::keys::systemstore::LensConfigKey::new(transform.as_str());
+            if txn
+                .systemstore()?
+                .get(&key.bytes())
+                .await
+                .map_err(Error::Storage)?
+                .is_none()
+            {
+                return Err(Error::ViewTransformMissing(transform.clone()));
+            }
+        }
+        Ok(())
+    }
+
     async fn create_collections_atomic_inner(
         &self,
         context: &defra_core::RequestContext,
@@ -438,6 +469,7 @@ impl<S: Store> crate::database::DB<S> {
         let existing = self.get_all_collection_versions_with_txn(&mut txn).await?;
         schema::definition_validation::validate_new_collections_with_existing(&schemas, &existing)
             .map_err(Error::Other)?;
+        self.require_view_transforms(&txn, &schemas).await?;
 
         // Track old collection_id -> new collection_id mappings.
         // When views are created, create_collection_with_txn regenerates CIDs to include

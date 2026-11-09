@@ -42,7 +42,7 @@ use crate::ExplicitReplayAuthorization;
 use super::SyncManager;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum AnnouncedBlockKind {
+pub(super) enum AnnouncedBlockKind {
     Head { priority: u64, parents: Vec<Cid> },
     Descendant,
 }
@@ -76,7 +76,7 @@ pub(super) enum Processed {
     DurablyRegistered,
 }
 
-fn announced_block_kind(bytes: &[u8]) -> AnnouncedBlockKind {
+pub(super) fn announced_block_kind(bytes: &[u8]) -> AnnouncedBlockKind {
     let Ok(block) = defra_core::Block::from_dag_cbor(bytes) else {
         return AnnouncedBlockKind::Descendant;
     };
@@ -678,7 +678,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     root: *cid,
                     parents: announced_block_kind.parents(),
                     record: &record,
-                    capacity: durable_cap,
+                    capacity: Some(durable_cap),
                     peer_capacity: peer_share,
                 };
                 let refusal = match store.register(registration, &self.persisted).await {
@@ -886,7 +886,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 root: *cid,
                 parents: &[],
                 record: &record,
-                capacity,
+                capacity: Some(capacity),
                 peer_capacity,
             };
             match store.register(registration, &self.persisted).await? {

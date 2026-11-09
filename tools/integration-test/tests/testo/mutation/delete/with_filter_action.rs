@@ -1,10 +1,11 @@
-//! Generated from the conformance scenarios of tests/integration/mutation/delete/with_filter_action_test.go at defradb 137dc624052b.
+//! Generated from the conformance scenarios of tests/integration/mutation/delete/with_filter_action_test.go at defradb 307364d9d828.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::shared::Filter;
 use integration_test::actions::{AddCollection, AddDoc, DeleteWithFilter, Request};
 use integration_test::scenario::{captures, Common};
 use integration_test::test_case::TestCase;
+use integration_test::ClientType;
 use serde_json::json;
 
 #[test]
@@ -207,6 +208,12 @@ fn delete_with_map_filter_large_integer_straddling2_to53_deletes_only_exact_matc
             }
             .into(),
         ],
+        client_types: Some(&[
+            ClientType::InProcess,
+            ClientType::RustHttp,
+            ClientType::GoHttp,
+            ClientType::Cli,
+        ]),
         ..Default::default()
     }
     .execute();

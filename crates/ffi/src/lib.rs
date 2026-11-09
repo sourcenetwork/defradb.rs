@@ -40,7 +40,10 @@ pub mod batch;
 pub mod block;
 pub mod call;
 pub mod collection;
+#[cfg(test)]
+mod core_options_tests;
 pub mod document;
+pub mod dump;
 pub mod encrypted_index;
 pub mod helpers;
 pub mod index;
@@ -50,11 +53,14 @@ pub mod mobile_config;
 pub mod mobile_schema;
 pub mod nac_check;
 pub mod node;
+#[cfg(test)]
+mod node_settings_tests;
 pub mod p2p;
 #[cfg(feature = "profiling")]
 pub mod profiling;
 pub mod query;
 pub mod remote_signer;
+pub mod replication_filter;
 pub mod runtime;
 pub mod schema;
 pub mod se_key;
@@ -240,8 +246,8 @@ pub use acp::{
     add_dac_actor_relationship, add_dac_policy, add_nac_actor_relationship,
     bind_identity_bearer_token, create_identity, delete_dac_actor_relationship,
     delete_nac_actor_relationship, disable_nac, enable_nac, get_dac_policy, get_nac_status,
-    get_node_identity, list_dac_policies, node_set_default_identity, re_enable_nac,
-    RegisterIdentity,
+    get_node_identity, list_dac_policies, node_set_default_identity, purge_nac_state,
+    re_enable_nac, RegisterIdentity,
 };
 pub use action::list_actions;
 pub use backup::{basic_export, basic_import};
@@ -251,10 +257,12 @@ pub use collection::{
     add_view, delete_collection, delete_collection_versions, delete_collections,
     delete_collections_in_txn, delete_documents, find_collection_by_id, gc_downsample_histories,
     get_collection_by_name, get_collection_by_version_id, has_collection, materialize_collection,
-    patch_collection, refresh_views, set_active_collection_version, set_collection_active_in_txn,
-    set_migration, truncate_collection, truncate_collection_with_filter,
+    patch_collection, purge_documents, refresh_views, save_many_documents,
+    set_active_collection_version, set_collection_active_in_txn, set_migration,
+    truncate_collection, truncate_collection_with_filter,
 };
 pub use document::{collection_create, is_json_array, parse_duration, parse_string_array};
+pub use dump::print_dump;
 pub use encrypted_index::{
     add_encrypted_index, delete_encrypted_index, list_all_encrypted_indexes, list_encrypted_indexes,
 };
@@ -267,7 +275,7 @@ pub use mobile::{
     defra_mobile_peer_info, defra_mobile_shareable_address, defra_mobile_sync_collection,
     defra_mobile_sync_status,
 };
-pub use node::{new_node, node_close};
+pub use node::{max_txn_retries, new_node, node_close};
 pub use p2p::{
     new_node_with_p2p, p2p_active_peers, p2p_add_collections, p2p_add_documents,
     p2p_add_replicator, p2p_add_replicator_with_filter, p2p_connect, p2p_delete_collections,

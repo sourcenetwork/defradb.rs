@@ -30,8 +30,12 @@ impl Op for AddCollection {
         &self.common
     }
 
+    /// Go's `ExpectedResults` are checked against the returned collections.
     fn expected_data(&self) -> &Value {
-        &self.expected_data
+        match self.expected_data.is_null() {
+            true => &self.expected_results,
+            false => &self.expected_data,
+        }
     }
 
     fn expected_error(&self) -> Option<&str> {
@@ -39,29 +43,28 @@ impl Op for AddCollection {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        self.check_arguments()?;
+        let identity = self.common.client_identity(Self::name())?;
         state
             .block_on(
                 state
                     .node_on(self.common.node())?
-                    .add_collection_as(&state.context(self.txn), self.sdl.as_str()),
+                    .add_collection_as(&state.context_as(self.txn, identity), self.sdl.as_str()),
             )
-            .map(|_| json!({}))
+            .map(|collections| json!({ "collections": collections }))
             .map_err(|e| Failure::operation(e.to_string()))
     }
 }
 
 impl AddCollection {
-    /// Fails on the arguments no client supports yet.
-    fn check_arguments(&self) -> Result<(), Failure> {
-        self.common.plain(Self::name())?;
-        if !self.expected_results.is_null() {
-            return Err(Failure::unsupported(format!(
-                "{} argument expectedResults",
-                Self::name()
-            )));
+    /// The collections an HTTP or CLI add printed, as the in-process add
+    /// returns them, when the action checks them.
+    fn printed(&self, output: Value) -> Result<Value, Failure> {
+        if self.expected_results.is_null() {
+            return Ok(json!({}));
         }
-        Ok(())
+        let collections: Vec<schema::CollectionVersion> = serde_json::from_value(output)
+            .map_err(|e| Failure::operation(format!("collection add output: {e}")))?;
+        Ok(json!({ "collections": collections }))
     }
 
     /// Fails on the Rust-only directives a Go node does not know.
@@ -88,16 +91,16 @@ impl Action for AddCollection {
 impl HttpRun for AddCollection {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.check_arguments()?;
+            let identity = action.common.client_identity(Self::name())?;
             action.check_go(state)?;
             let sdl = action.sdl.as_str().to_owned();
             let txn = state.txn_id(action.txn);
             state
-                .http_on(action.common.node(), |client| async move {
+                .http_as(action.common.node(), identity, |client| async move {
                     client.schema_add(&sdl, txn.as_deref()).await
                 })?
-                .map(|_| json!({}))
                 .map_err(|e| Failure::operation(e.to_string()))
+                .and_then(|output| action.printed(output))
         });
     }
 }
@@ -105,15 +108,16 @@ impl HttpRun for AddCollection {
 impl CliRun for AddCollection {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.check_arguments()?;
+            let identity = action.common.client_identity(Self::name())?;
             state
-                .defra_client_on(
+                .defra_client_as(
                     action.common.node(),
                     action.txn,
+                    identity,
                     &["collection", "add", action.sdl.as_str()],
                 )
-                .map(|_| json!({}))
                 .map_err(Failure::operation)
+                .and_then(|output| action.printed(output))
         });
     }
 }

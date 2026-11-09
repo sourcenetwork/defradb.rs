@@ -1,32 +1,6 @@
 //! P2P command unit tests
 
-use super::collection::P2pCollectionAddArgs;
-use super::replicator::{P2pReplicatorAddArgs, P2pReplicatorCommand};
-
-#[test]
-fn test_p2p_replicator_add_args() {
-    let args = P2pReplicatorAddArgs {
-        collection: vec!["Users".to_string(), "Posts".to_string()],
-        addresses: vec!["/ip4/127.0.0.1/tcp/9000".to_string()],
-        filter_field: None,
-        filter_value: None,
-        filter: None,
-    };
-    assert_eq!(args.collection.len(), 2);
-    assert_eq!(args.addresses.len(), 1);
-}
-
-#[test]
-fn test_p2p_replicator_add_args_no_address() {
-    let args = P2pReplicatorAddArgs {
-        collection: vec!["Users".to_string()],
-        addresses: vec![],
-        filter_field: None,
-        filter_value: None,
-        filter: None,
-    };
-    assert!(args.addresses.is_empty());
-}
+use super::replicator::P2pReplicatorCommand;
 
 #[test]
 fn test_p2p_replicator_forget_parses() {
@@ -43,14 +17,6 @@ fn test_p2p_replicator_forget_parses() {
         panic!("expected forget subcommand");
     };
     assert_eq!(args.peer_id, "peer-123");
-}
-
-#[test]
-fn test_p2p_collection_add_args() {
-    let args = P2pCollectionAddArgs {
-        collections: "Users".to_string(),
-    };
-    assert_eq!(args.collections, "Users");
 }
 
 #[test]
@@ -131,4 +97,28 @@ fn test_p2p_manage_replicator_add_parses() {
     };
     assert_eq!(add.address, "/ip4/127.0.0.1/tcp/9001/p2p/def");
     assert_eq!(add.collection_ids, vec!["Users"]);
+}
+
+#[test]
+fn test_p2p_disconnect_parses_every_address() {
+    use clap::Parser;
+
+    use super::P2pCommand;
+
+    #[derive(Parser)]
+    struct Wrap {
+        #[command(subcommand)]
+        cmd: P2pCommand,
+    }
+
+    let wrap = Wrap::parse_from([
+        "p2p",
+        "disconnect",
+        "/ip4/1.2.3.4/tcp/1",
+        "/ip4/1.2.3.4/tcp/2",
+    ]);
+    let P2pCommand::Disconnect(args) = wrap.cmd else {
+        panic!("expected disconnect subcommand");
+    };
+    assert_eq!(args.addresses, ["/ip4/1.2.3.4/tcp/1", "/ip4/1.2.3.4/tcp/2"]);
 }

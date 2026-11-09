@@ -263,3 +263,10 @@ A collection patch that adds, removes or modifies a secondary index, or changes 
 - **Scenarios:** ["txn.txn-get-collections-inside-txn-with-add-schema-succeeds", "txn.txn-get-collections-inside-txn-without-add-schema-no-collections", "txn.txn-list-lenses-inside-txn-with-add-lens-succeeds", "txn.txn-list-lenses-inside-txn-without-add-lens-no-lenses"]
 
 `GetCollections` and `ListLenses` inside the transaction that added a collection or lens return it; run in a different transaction they return nothing.
+
+# `defra.txn.verify-signature.view`: Verification inside a transaction decides at its view
+
+- **Parents:** ["go.txn.verify-signature"]
+- **Scenarios:** ["signature::txn_acp::an_anonymous_caller_cannot_verify_a_block_the_txn_created"]
+
+`VerifySignature` inside a transaction checks NAC `SignatureVerify`, reads the block and checks document access as the caller, all at the transaction's view, its own writes included. With a `users` policy whose `read` is `reader`, a document that identity 1 creates in a transaction begun anonymously is registered to identity 1 there, before the transaction commits, so it is not public: the anonymous caller verifying the signature of its composite block in that transaction gets `missing permission`.
