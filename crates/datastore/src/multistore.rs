@@ -12,6 +12,25 @@ use storage::corekv::{
 };
 use storage::namespace::Namespace;
 
+/// A trusted host projection run inside the document's transaction. An error
+/// rejects the mutation and its staged projection. The host must stage all
+/// effects through this view, validate every read its decision depends on,
+/// and use native authorization for ACP changes. A transaction may call the
+/// projector more than once as it writes or merges documents.
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait DocumentMutationProjector: storage::corekv::MaybeSendSync {
+    /// Reconcile existing documents on startup before network service begins.
+    async fn reconcile(&self, view: &NamespaceView) -> Result<()>;
+
+    async fn project(&self, view: &NamespaceView, collection: &str, doc_id: &str) -> Result<()>;
+
+    /// Reconcile dependent sources after a trusted host source change.
+    async fn source_changed(&self, _view: &NamespaceView) -> Result<()> {
+        Ok(())
+    }
+}
+
 /// One transaction shared by its namespace views.
 ///
 /// Reads and writes take `&self` and go straight to the transaction, which
@@ -30,6 +49,7 @@ pub struct SharedTxn {
     queued: QueuedCallbacks,
     /// The CRDT types of the node whose store the transaction runs on.
     crdts: storage::Crdts,
+    projector: Option<Arc<dyn DocumentMutationProjector>>,
     /// Whether the scans opened now validate their range at commit.
     scans_validated: AtomicBool,
 }
@@ -129,8 +149,13 @@ impl SharedTxn {
             queued: QueuedCallbacks::new(txn.is_readonly()),
             txn: Some(txn),
             crdts,
+            projector: None,
             scans_validated: AtomicBool::new(false),
         })
+    }
+
+    pub(crate) fn set_document_projector(&mut self, projector: Arc<dyn DocumentMutationProjector>) {
+        self.projector = Some(projector);
     }
 
     /// The CRDT types of the node whose store the transaction runs on.
@@ -259,6 +284,7 @@ impl Drop for SharedTxn {
 pub struct WeakNamespaceView {
     txn: std::sync::Weak<SharedTxn>,
     namespace: Namespace,
+    projection_actor: Option<Arc<str>>,
 }
 
 impl WeakNamespaceView {
@@ -268,6 +294,7 @@ impl WeakNamespaceView {
         self.txn.upgrade().map(|txn| NamespaceView {
             txn,
             namespace: self.namespace,
+            projection_actor: self.projection_actor.clone(),
         })
     }
 }
@@ -276,9 +303,39 @@ impl WeakNamespaceView {
 pub struct NamespaceView {
     txn: Arc<SharedTxn>,
     namespace: Namespace,
+    projection_actor: Option<Arc<str>>,
 }
 
 impl NamespaceView {
+    /// Bind the actor admitted by the request boundary to this operation's
+    /// view. The actor is never stored on the transaction or shared by turns.
+    pub fn with_projection_actor(mut self, actor: Option<&str>) -> Self {
+        self.projection_actor = actor.map(Arc::from);
+        self
+    }
+
+    pub fn projection_actor(&self) -> Option<&str> {
+        self.projection_actor.as_deref()
+    }
+    pub fn has_document_projector(&self) -> bool {
+        self.txn.projector.is_some()
+    }
+
+    /// Reconcile trusted host sources on this view's transaction.
+    pub async fn project_host_source_change(&self) -> Result<()> {
+        if let Some(projector) = &self.txn.projector {
+            projector.source_changed(self).await?;
+        }
+        Ok(())
+    }
+
+    /// Run the trusted document projector inside this view's transaction.
+    pub async fn project_document(&self, collection: &str, doc_id: &str) -> Result<()> {
+        if let Some(projector) = &self.txn.projector {
+            projector.project(self, collection, doc_id).await?;
+        }
+        Ok(())
+    }
     pub async fn merge(&self, key: &[u8], operand: &[u8]) -> Result<()> {
         self.txn.merge(self.namespace, key, operand).await
     }
@@ -306,7 +363,11 @@ impl NamespaceView {
 
     /// Create a new namespace view.
     pub fn new(txn: Arc<SharedTxn>, namespace: Namespace) -> Self {
-        Self { txn, namespace }
+        Self {
+            txn,
+            namespace,
+            projection_actor: None,
+        }
     }
 
     /// The CRDT types of the node whose store the transaction runs on.
@@ -328,6 +389,7 @@ impl NamespaceView {
         Self {
             txn: self.txn.clone(),
             namespace,
+            projection_actor: self.projection_actor.clone(),
         }
     }
 
@@ -337,6 +399,7 @@ impl NamespaceView {
         WeakNamespaceView {
             txn: Arc::downgrade(&self.txn),
             namespace: self.namespace,
+            projection_actor: self.projection_actor.clone(),
         }
     }
 
@@ -386,6 +449,7 @@ impl Clone for NamespaceView {
         Self {
             txn: self.txn.clone(),
             namespace: self.namespace,
+            projection_actor: self.projection_actor.clone(),
         }
     }
 }

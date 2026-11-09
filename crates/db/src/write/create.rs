@@ -27,6 +27,9 @@ use crate::write::WriteStores;
 
 #[cfg(feature = "native")]
 mod runs;
+#[cfg(test)]
+#[path = "../../tests/write/create_schema_binding.rs"]
+mod schema_binding_tests;
 
 /// A stored create: the document under its derived ID, its composite block
 /// and, for a branchable collection, the collection block.
@@ -162,7 +165,7 @@ where
 
 /// Every block of one document, computed without touching storage. Blocks
 /// prepared before the request reached the database are reused while they
-/// name this identity and the schema version they were built against is
+/// name this identity and the complete schema they were built against is
 /// still current.
 pub(crate) fn compute(
     collection: &Collection,
@@ -175,7 +178,7 @@ pub(crate) fn compute(
         .write_preparation()
         .and_then(|write| write.payload::<PreparedCreateBlocks>())
         .filter(|prepared| {
-            prepared.collection_version_id == collection.version_id()
+            crate::collection::loader::same_schema(&prepared.schema, collection.schema())
                 && prepared.computed.doc_short_id == identity.doc_short_id
         })
     {

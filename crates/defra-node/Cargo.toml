@@ -116,6 +116,9 @@ net = { path = "../net" }
 mimalloc.workspace = true
 
 [dev-dependencies]
+async-tungstenite = "0.29.1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio-tungstenite = "0.26.2"
 zanzibar = { path = "../zanzibar" }
 document = { path = "../document" }
 defra-core = { path = "../defra-core", features = ["ambient"] }

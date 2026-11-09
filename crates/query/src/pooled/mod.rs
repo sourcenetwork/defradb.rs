@@ -172,6 +172,20 @@ impl QueryExecutor for PooledExecutor {
             .await
     }
 
+    async fn observe_document_access_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        collection: &str,
+        doc_ids: &[String],
+        actor: identity::Did,
+        mode: crate::owners::DocumentAccessMode,
+    ) -> Result<Vec<crate::owners::DocumentAccessDecision>> {
+        self.inner
+            .observe_document_access_in_txn(context, handle, collection, doc_ids, actor, mode)
+            .await
+    }
+
     async fn begin_txn(
         &self,
         readonly: bool,
@@ -302,6 +316,14 @@ impl QueryExecutor for PooledExecutor {
         self.inner.nac_status_as(context).await
     }
 
+    async fn explain_nac_subject_as(
+        &self,
+        context: &RequestContext,
+        subject: &str,
+    ) -> std::result::Result<Vec<acp::nac::PermissionProvenance>, TransactionError> {
+        self.inner.explain_nac_subject_as(context, subject).await
+    }
+
     async fn disable_nac_as(
         &self,
         context: &RequestContext,
@@ -324,6 +346,16 @@ impl QueryExecutor for PooledExecutor {
     ) -> std::result::Result<bool, TransactionError> {
         self.inner
             .add_nac_actor_relationship_as(context, relation, target_actor)
+            .await
+    }
+
+    async fn change_nac_source_permission_as(
+        &self,
+        context: &RequestContext,
+        edge: &crate::txn::SourcePermission,
+    ) -> std::result::Result<bool, TransactionError> {
+        self.inner
+            .change_nac_source_permission_as(context, edge)
             .await
     }
 

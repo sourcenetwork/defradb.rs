@@ -34,6 +34,41 @@ pub(super) enum Turned {
     NeedsInput(PreparedInputRequest, Option<Arc<dyn DocMutator>>),
 }
 
+/// Delegated observations must never fall back to a detached node check.
+pub(super) async fn turn_node_permission(
+    fetcher: &dyn DocFetcher,
+    identity: &Did,
+    permission: acp::nac::NodePermission,
+    require_bound: bool,
+) -> crate::error::Result<Option<bool>> {
+    if require_bound {
+        fetcher
+            .check_bound_node_permission(identity, permission, false)
+            .await
+    } else {
+        fetcher.check_node_permission(identity, permission).await
+    }
+}
+
+/// A certified provider is already bound to the row transaction. Only ordinary
+/// queries may ask the fetcher to choose a provider on their behalf.
+pub(super) async fn turn_acp(
+    fetcher: &dyn DocFetcher,
+    original: Arc<dyn acp::DocumentACP>,
+    certified: Option<Arc<dyn acp::DocumentACP>>,
+) -> crate::error::Result<Arc<dyn acp::DocumentACP>> {
+    match certified {
+        Some(provider) => Ok(provider),
+        None => fetcher.scoped_acp(original).await,
+    }
+}
+
+/// The authenticated principal and certified ACP for a delegated read turn.
+pub(super) struct DelegatedAuthority {
+    pub identity: Did,
+    pub acp: Arc<dyn acp::DocumentACP>,
+}
+
 fn parse_error(message: String) -> QueryResponse {
     QueryResponse {
         data: None,
@@ -76,6 +111,11 @@ where
         let inputs = PreparedInputMemo::default();
         let context = self.context();
         loop {
+            if !request.context.authorization_valid_now() {
+                return Ok(QueryResponse::error(QueryResponseError::from_query_error(
+                    QueryError::permission_denied("request authorization expired before dispatch"),
+                )));
+            }
             let runner = self.scoped_runner(self.acp.clone());
             let attempt = request.clone();
             let memo = inputs.clone();
@@ -115,6 +155,18 @@ where
         inputs: PreparedInputMemo,
         parsed: Option<ParsedOperation>,
     ) -> Turned {
+        self.run_turn_with_delegation(turn, request, inputs, parsed, None)
+            .await
+    }
+
+    pub(super) async fn run_turn_with_delegation(
+        &self,
+        turn: &mut dyn TxnTurn,
+        request: QueryRequest,
+        inputs: PreparedInputMemo,
+        parsed: Option<ParsedOperation>,
+        delegation: Option<DelegatedAuthority>,
+    ) -> Turned {
         let variables = convert_variables(&request.variables);
         let parsed = match parsed {
             Some(parsed) => parsed,
@@ -133,7 +185,7 @@ where
             }
         }
         let turned = self
-            .lent(turn, parsed, request, variables, inputs)
+            .lent(turn, parsed, request, variables, inputs, delegation)
             .await
             .unwrap_or_else(|error| Turned::Done(QueryResponse::error(error.to_string())));
         if statement {
@@ -156,43 +208,105 @@ where
         request: QueryRequest,
         variables: Option<rapidhash::RapidHashMap<String, serde_json::Value>>,
         inputs: PreparedInputMemo,
+        delegation: Option<DelegatedAuthority>,
     ) -> std::result::Result<Turned, TransactionError> {
         let txn_ctx = turn.context()?;
+        let require_authority = request.context.transactional_authority_required();
         // The transaction's own provider, so its uncommitted schemas are visible.
-        let txn_provider = txn_ctx
-            .collection_provider()
-            .unwrap_or_else(|| self.collection_provider.clone());
+        let txn_provider = match txn_ctx.collection_provider() {
+            Some(provider) => provider,
+            None if require_authority => {
+                return Ok(Turned::Done(QueryResponse::error(
+                    "transaction-bound schema is unavailable for verified mutation",
+                )))
+            }
+            None => self.collection_provider.clone(),
+        };
 
         // Validate that all referenced collections exist before execution.
         if let Err(error) = validate_parsed_operation(&parsed, txn_provider.as_ref()).await {
             return Ok(Turned::Done(parse_error(error.to_string())));
         }
 
-        let nac_identity = request.identity.clone().unwrap_or_else(Did::wildcard);
-        match txn_ctx
-            .doc_fetcher()
-            .check_node_permission(&nac_identity, permission_for_operation(&parsed))
+        let require_bound_nac = delegation.is_some();
+        let (nac_actor, bound_acp) = match delegation {
+            Some(delegation) => (Some(delegation.identity), Some(delegation.acp)),
+            None => (request.identity.clone(), None),
+        };
+        let nac_identity = nac_actor.clone().unwrap_or_else(Did::wildcard);
+        let fetcher = txn_ctx.doc_fetcher();
+        let nac_check = if require_authority {
+            fetcher
+                .check_verified_node_permission(&nac_identity, permission_for_operation(&parsed))
+                .await
+        } else {
+            turn_node_permission(
+                fetcher.as_ref(),
+                &nac_identity,
+                permission_for_operation(&parsed),
+                require_bound_nac,
+            )
             .await
-        {
+        };
+        match nac_check {
             Ok(Some(false)) => {
                 return Ok(Turned::Done(QueryResponse::success(serde_json::json!({}))))
             }
             Ok(Some(true)) => {}
+            Ok(None) if require_bound_nac || require_authority => {
+                return Ok(Turned::Done(QueryResponse::error(
+                    "transaction-bound node authorization is unavailable",
+                )));
+            }
             Ok(None) => {
-                if let Some(denial) = check_nac(self, &request.identity, &parsed).await {
+                if let Some(denial) = check_nac(self, &nac_actor, &parsed).await {
                     return Ok(Turned::Done(denial));
                 }
             }
             Err(error) => return Ok(Turned::Done(QueryResponse::error(error.to_string()))),
         }
 
+        let bound_acp = if require_authority {
+            let mut enforcing = false;
+            if let ParsedOperation::Mutation { mutations, .. } = &parsed {
+                for mutation in mutations {
+                    match txn_provider.get_collection(&mutation.collection_name).await {
+                        Ok(Some(collection)) => enforcing |= collection.policy.is_some(),
+                        Ok(None) => {
+                            return Ok(Turned::Done(QueryResponse::error(
+                                "transaction-bound collection is unavailable",
+                            )))
+                        }
+                        Err(error) => {
+                            return Ok(Turned::Done(QueryResponse::error(error.to_string())))
+                        }
+                    }
+                }
+            }
+            if enforcing {
+                match fetcher.transaction_acp(self.acp.clone()).await {
+                    Ok(Some(acp)) => Some(acp),
+                    Ok(None) => {
+                        return Ok(Turned::Done(QueryResponse::error(
+                            "transaction-bound document authorization is unavailable",
+                        )))
+                    }
+                    Err(error) => return Ok(Turned::Done(QueryResponse::error(error.to_string()))),
+                }
+            } else {
+                bound_acp
+            }
+        } else {
+            bound_acp
+        };
         let identity = self.resolve_identity(request.identity);
         let mut warnings: Vec<GqlWarning> = Vec::new();
 
-        let scoped_acp = match txn_ctx.doc_fetcher().scoped_acp(self.acp.clone()).await {
-            Ok(provider) => provider,
-            Err(error) => return Ok(Turned::Done(QueryResponse::error(error.to_string()))),
-        };
+        let scoped_acp =
+            match turn_acp(txn_ctx.doc_fetcher().as_ref(), self.acp.clone(), bound_acp).await {
+                Ok(provider) => provider,
+                Err(error) => return Ok(Turned::Done(QueryResponse::error(error.to_string()))),
+            };
         let mut scoped_runner = self.scoped_runner(scoped_acp);
         scoped_runner.collection_provider = txn_provider.clone();
         if !scoped_runner.acp.supports_transactions() {

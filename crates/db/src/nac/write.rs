@@ -69,11 +69,13 @@ where
     {
         let nac = Arc::clone(&self.nac);
         let config = self.config.clone();
+        let transaction_store_bound = self.transaction_store_bound;
         let op = Arc::new(op);
         let attempt: ScopeAttempt = Box::new(move |store| {
             let manager = Arc::new(NacManager {
                 nac: Arc::new(nac.scoped(store)),
                 config: config.clone(),
+                transaction_store_bound,
             });
             let op = Arc::clone(&op);
             Box::pin(async move {
