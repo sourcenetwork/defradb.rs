@@ -353,6 +353,49 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         self.registry.acp_light_client_status_as(context).await
     }
 
+    async fn nac_status_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<acp::nac::NacStatus, TransactionError> {
+        self.registry.nac_status_as(context).await
+    }
+
+    async fn disable_nac_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry.disable_nac_as(context).await
+    }
+
+    async fn re_enable_nac_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry.re_enable_nac_as(context).await
+    }
+
+    async fn add_nac_actor_relationship_as(
+        &self,
+        context: &RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        self.registry
+            .add_nac_actor_relationship_as(context, relation, target_actor)
+            .await
+    }
+
+    async fn delete_nac_actor_relationship_as(
+        &self,
+        context: &RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        self.registry
+            .delete_nac_actor_relationship_as(context, relation, target_actor)
+            .await
+    }
+
     async fn set_migration_as(
         &self,
         context: &RequestContext,

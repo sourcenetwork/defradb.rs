@@ -57,10 +57,22 @@ pub(crate) async fn build_node_state(
     // A persistent store opens with the server profile, as FFI always has.
     // The embedding process is this node's only caller, so its transactions
     // serve whichever identity a request acts as, as in Go.
-    let mut builder = defra_node::NodeBuilder::default()
+    let builder = defra_node::NodeBuilder::default()
         .with_config(config)
         .with_store_profile(defra_node::StoreProfile::Server)
         .with_txn_ownership(db::TxnOwnership::Embedder);
+    let mut builder = crate::replication_filter::with_replication_filter(builder, &options);
+    // SAFETY: the caller promised `at_rest_encryption_key` is null or
+    // readable for its length.
+    if let Some(key) = unsafe { at_rest_key(&options) }? {
+        builder = builder.with_at_rest_encryption_key(key);
+    }
+    if options.max_txn_retries > 0 {
+        builder = builder.with_max_txn_retries(options.max_txn_retries);
+    }
+    if options.chunk_size > 0 {
+        builder = builder.with_chunk_size(options.chunk_size);
+    }
     if let Some(path) = &db_path_opt {
         builder = builder.data_path(path);
     }
@@ -215,6 +227,47 @@ fn resolve_embedded_config(options: &NodeInitOptions) -> Result<defra_node::Node
         query_limits: query::QueryLimits::default(),
         ..Default::default()
     })
+}
+
+/// The at-rest encryption key `options` gives, if any.
+///
+/// # Safety
+///
+/// `options.at_rest_encryption_key` must be null or readable for
+/// `at_rest_encryption_key_len` bytes.
+unsafe fn at_rest_key(options: &NodeInitOptions) -> Result<Option<[u8; 32]>, String> {
+    if options.at_rest_encryption_key.is_null() || options.at_rest_encryption_key_len == 0 {
+        return Ok(None);
+    }
+    // SAFETY: non-null and readable for its length, as the caller promised.
+    let key = unsafe {
+        std::slice::from_raw_parts(
+            options.at_rest_encryption_key,
+            options.at_rest_encryption_key_len,
+        )
+    };
+    key.try_into().map(Some).map_err(|_| {
+        format!(
+            "at_rest_encryption_key must be 32 bytes, not {}",
+            options.at_rest_encryption_key_len
+        )
+    })
+}
+
+/// The attempts a conflicting transaction gets, Go's `MaxTxnRetries`.
+///
+/// # Returns
+///
+/// - Status 0: Success (value is the number)
+/// - Status 1: Error (error field contains message)
+#[no_mangle]
+pub extern "C" fn max_txn_retries(node_ptr: usize) -> FfiResult {
+    ffi_entry! {
+        NODES
+            .get(node_ptr, |state| state.database.options().max_txn_retries())
+            .map(|retries| FfiResult::success(retries.to_string()))
+            .unwrap_or_else(|| FfiResult::error(ERR_INVALID_NODE_HANDLE))
+    }
 }
 
 /// The sync limits the caller set; a zero leaves the node's default.

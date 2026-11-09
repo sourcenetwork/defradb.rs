@@ -2,7 +2,7 @@ mod memory;
 mod traits;
 
 pub use memory::MemoryZanzibarStore;
-pub use traits::{ZanzibarScope, ZanzibarStore};
+pub use traits::{ScopeAttempt, ScopeOutcome, ScopeValue, ZanzibarScope, ZanzibarStore};
 
 #[derive(Debug, Clone, Default)]
 pub struct StorePolicyOptions {

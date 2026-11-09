@@ -35,7 +35,7 @@ dependencies = [
 [[package]]
 name = "acp-light-client"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=330e38f184215f40a2bc926480b542bb75051b6d#330e38f184215f40a2bc926480b542bb75051b6d"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=0959bd78d13463ac9a4104b3ae0f3c46fb54547b#0959bd78d13463ac9a4104b3ae0f3c46fb54547b"
 dependencies = [
  "alloy-primitives",
  "commonware-codec",
@@ -3814,7 +3814,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c54e03a951783e8b327515db3f2a2fd0e3bed362a96b066f341ce66ed49b4ead"
 dependencies = [
  "data-encoding",
- "syn 3.0.9",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -3885,6 +3885,7 @@ dependencies = [
  "tracing",
  "web-time",
  "workers",
+ "zanzibar",
  "zeroize",
 ]
 
@@ -3983,7 +3984,7 @@ dependencies = [
 [[package]]
 name = "defra-harness"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=330e38f184215f40a2bc926480b542bb75051b6d#330e38f184215f40a2bc926480b542bb75051b6d"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=0959bd78d13463ac9a4104b3ae0f3c46fb54547b#0959bd78d13463ac9a4104b3ae0f3c46fb54547b"
 dependencies = [
  "eyre",
  "futures",
@@ -3997,7 +3998,7 @@ dependencies = [
  "test-infra",
  "tokio",
  "tracing",
- "vera-harness 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=330e38f184215f40a2bc926480b542bb75051b6d)",
+ "vera-harness 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=0959bd78d13463ac9a4104b3ae0f3c46fb54547b)",
 ]
 
 [[package]]
@@ -4016,6 +4017,7 @@ dependencies = [
  "defra-http",
  "defra-p2p-adapter",
  "defra-version",
+ "document",
  "edge",
  "events",
  "futures",
@@ -4897,6 +4899,7 @@ dependencies = [
  "base64 0.23.1",
  "blockstore",
  "cbindgen",
+ "ciborium",
  "cid",
  "crypto",
  "db",
@@ -6246,7 +6249,6 @@ dependencies = [
  "commonware-codec",
  "crypto",
  "ctor",
- "db",
  "defra-core",
  "defra-harness",
  "defra-node",
@@ -6254,6 +6256,7 @@ dependencies = [
  "edge",
  "events",
  "futures",
+ "graphql-parser",
  "hex",
  "identity",
  "keyring 0.5.0",
@@ -12642,7 +12645,7 @@ dependencies = [
 [[package]]
 name = "test-infra"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=330e38f184215f40a2bc926480b542bb75051b6d#330e38f184215f40a2bc926480b542bb75051b6d"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=0959bd78d13463ac9a4104b3ae0f3c46fb54547b#0959bd78d13463ac9a4104b3ae0f3c46fb54547b"
 dependencies = [
  "eyre",
  "futures",
@@ -12658,7 +12661,7 @@ dependencies = [
 [[package]]
 name = "testo"
 version = "0.0.1"
-source = "git+https://github.com/sourcenetwork/testo.rs?rev=79d83b0adedf00f85f9fd9aecc6fd009ed41332a#79d83b0adedf00f85f9fd9aecc6fd009ed41332a"
+source = "git+https://github.com/sourcenetwork/testo.rs?rev=dc53fa515d5c39511845407dcd42a7650c07f66c#dc53fa515d5c39511845407dcd42a7650c07f66c"
 dependencies = [
  "testo_derive",
 ]
@@ -12666,7 +12669,7 @@ dependencies = [
 [[package]]
 name = "testo_derive"
 version = "0.0.1"
-source = "git+https://github.com/sourcenetwork/testo.rs?rev=79d83b0adedf00f85f9fd9aecc6fd009ed41332a#79d83b0adedf00f85f9fd9aecc6fd009ed41332a"
+source = "git+https://github.com/sourcenetwork/testo.rs?rev=dc53fa515d5c39511845407dcd42a7650c07f66c#dc53fa515d5c39511845407dcd42a7650c07f66c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -13805,6 +13808,22 @@ dependencies = [
 [[package]]
 name = "vera-harness"
 version = "0.1.0"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=0959bd78d13463ac9a4104b3ae0f3c46fb54547b#0959bd78d13463ac9a4104b3ae0f3c46fb54547b"
+dependencies = [
+ "cosmrs",
+ "eyre",
+ "hex",
+ "regex",
+ "reqwest 0.12.28",
+ "serde_json",
+ "test-infra",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "vera-harness"
+version = "0.1.0"
 source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "alloy-consensus",
@@ -13832,22 +13851,6 @@ dependencies = [
  "vera-modules",
  "vera-node",
  "vera-test-infra",
-]
-
-[[package]]
-name = "vera-harness"
-version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=330e38f184215f40a2bc926480b542bb75051b6d#330e38f184215f40a2bc926480b542bb75051b6d"
-dependencies = [
- "cosmrs",
- "eyre",
- "hex",
- "regex",
- "reqwest 0.12.28",
- "serde_json",
- "test-infra",
- "tokio",
- "tracing",
 ]
 
 [[package]]

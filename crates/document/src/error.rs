@@ -42,7 +42,9 @@ pub enum Error {
     #[error("JSON number out of range: {0}")]
     JsonNumberOutOfRange(String),
 
-    #[error("non-finite float value not supported in JSON: {0}")]
+    /// A NaN or an infinity, which JSON cannot carry; Go's `encoding/json`
+    /// text, its value as Go's `strconv` writes it.
+    #[error("json: unsupported value: {0}")]
     NonFiniteFloat(String),
 
     #[error("CBOR encode error: {0}")]

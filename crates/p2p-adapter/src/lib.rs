@@ -478,7 +478,7 @@ pub(crate) fn p2p_filter_to_http(
             }
             Some(crate::ReplicationFilter::predicate(conds.clone()))
         }
-        p2p::ReplicationFilter::Acp { .. } | p2p::ReplicationFilter::All(_) => {
+        p2p::ReplicationFilter::Acp { .. } => {
             tracing::warn!(
                 "replication filter variant not representable over HTTP yet; omitted from replicator listing"
             );

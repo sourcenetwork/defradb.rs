@@ -45,12 +45,12 @@ impl Op for GetCollections {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        self.common.plain(Self::name())?;
+        let identity = self.common.client_identity(Self::name())?;
         let collections = state
             .block_on(
                 state
                     .node_on(self.common.node())?
-                    .get_collections_as(&state.context(self.txn), &self.selector()),
+                    .get_collections_as(&state.context_as(self.txn, identity), &self.selector()),
             )
             .map_err(|e| Failure::operation(e.to_string()))?;
         Ok(json!({ "collections": collections }))
@@ -79,10 +79,10 @@ impl Action for GetCollections {
 impl HttpRun for GetCollections {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.common.plain(Self::name())?;
+            let identity = action.common.client_identity(Self::name())?;
             let (txn, selector) = (state.txn_id(action.txn), action.selector());
             let collections = state
-                .http_on(action.common.node(), |client| async move {
+                .http_as(action.common.node(), identity, |client| async move {
                     client.get_collections(txn.as_deref(), &selector).await
                 })?
                 .map_err(|e| Failure::operation(e.to_string()))?;
@@ -93,11 +93,27 @@ impl HttpRun for GetCollections {
 
 impl CliRun for GetCollections {
     fn execute_cli(&self, state: &mut State) {
-        crate::scenario::execute_with(self, state, |_, _| {
-            Err(Failure::unsupported(format!(
-                "{}: the CLI has no collection lookup by selector",
-                Self::name()
-            )))
+        crate::scenario::execute_with(self, state, |action, state| {
+            let identity = action.common.client_identity(Self::name())?;
+            let mut args = vec!["collection", "describe"];
+            for (flag, value) in [
+                ("--collection-name", &action.collection_name),
+                ("--version-id", &action.version_id),
+                ("--collection-id", &action.collection_id),
+            ] {
+                if let Some(value) = value {
+                    args.extend([flag, value.as_str()]);
+                }
+            }
+            if action.get_inactive.unwrap_or_default() {
+                args.push("--get-inactive");
+            }
+            let output = state
+                .defra_client_as(action.common.node(), action.txn, identity, &args)
+                .map_err(Failure::operation)?;
+            let collections: Vec<schema::CollectionVersion> = serde_json::from_value(output)
+                .map_err(|e| Failure::operation(format!("collection describe output: {e}")))?;
+            Ok(json!({ "collections": collections }))
         });
     }
 }

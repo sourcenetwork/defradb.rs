@@ -465,7 +465,6 @@ impl<'a> SdlParser<'a> {
         directive: &Directive<'_, String>,
         field_name: Option<&str>,
     ) -> Result<ParsedIndex> {
-        let type_name = self.current_type.clone().unwrap_or_default();
         let mut kind: Option<IndexKindSelector> = None;
         let mut name: Option<String> = None;
         let mut ordered = OrderedIndexArgs::default();
@@ -506,11 +505,11 @@ impl<'a> SdlParser<'a> {
                     };
                     for (member, member_value) in members {
                         self.read_ordered_index_property(
+                            "@index ordered",
                             member,
                             member_value,
                             &mut ordered,
                             &mut kind,
-                            &type_name,
                             field_name,
                         )?;
                     }
@@ -521,11 +520,11 @@ impl<'a> SdlParser<'a> {
                 }
                 other => {
                     self.read_ordered_index_property(
+                        "@index",
                         other,
                         value,
                         &mut ordered,
                         &mut kind,
-                        &type_name,
                         field_name,
                     )?;
                 }
@@ -571,13 +570,16 @@ impl<'a> SdlParser<'a> {
     /// Writing the same property from both places is refused: the two forms
     /// merge, and a merge that silently drops one of two explicit values is
     /// worse than a parse error.
+    ///
+    /// `scope` names where the property was written, so an unknown name is
+    /// reported against the block that lacks it rather than the directive.
     fn read_ordered_index_property(
         &mut self,
+        scope: &str,
         name: &str,
         value: &SchemaValue<'_>,
         config: &mut OrderedIndexArgs,
         kind: &mut Option<IndexKindSelector>,
-        type_name: &str,
         field_name: Option<&str>,
     ) -> Result<()> {
         let (written, expected_type) = match name {
@@ -586,7 +588,7 @@ impl<'a> SdlParser<'a> {
             "includes" | "fields" => (&mut config.has_includes, "[IndexField]"),
             other => {
                 return Err(QueryError::parse(format!(
-                    "@index has no argument named '{other}'"
+                    "{scope} has no argument named '{other}'"
                 )))
             }
         };
@@ -599,7 +601,7 @@ impl<'a> SdlParser<'a> {
         match name {
             "unique" => match value {
                 SchemaValue::Boolean(unique) => config.unique = *unique,
-                _ => self.warn_index_argument_type(name, expected_type, type_name, field_name),
+                _ => self.warn_index_argument_type(name, expected_type, field_name),
             },
             "direction" => match value {
                 SchemaValue::String(text) | SchemaValue::Enum(text) => {
@@ -608,7 +610,7 @@ impl<'a> SdlParser<'a> {
                         _ => IndexDirection::Asc,
                     };
                 }
-                _ => self.warn_index_argument_type(name, expected_type, type_name, field_name),
+                _ => self.warn_index_argument_type(name, expected_type, field_name),
             },
             _ => config.includes = read_includes_value(value),
         }
@@ -619,14 +621,13 @@ impl<'a> SdlParser<'a> {
         &mut self,
         argument_name: &str,
         expected_type: &str,
-        type_name: &str,
         field_name: Option<&str>,
     ) {
         self.warnings.push(ParseWarning::InvalidArgumentType {
             directive_name: "index".to_string(),
             argument_name: argument_name.to_string(),
             expected_type: expected_type.to_string(),
-            type_name: type_name.to_string(),
+            type_name: self.current_type.clone().unwrap_or_default(),
             field_name: field_name.map(str::to_string),
         });
     }

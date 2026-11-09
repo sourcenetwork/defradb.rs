@@ -41,6 +41,7 @@ mod add {
     mod with_variables;
     mod with_version;
 }
+mod delete_relation_filter;
 mod delete {
     mod field_kinds {
         mod one_to_many {
@@ -117,6 +118,7 @@ mod update {
         }
         mod string;
     }
+    mod txn;
     mod underscored_collection;
     mod with_default_values;
     mod with_delete;
@@ -130,4 +132,5 @@ mod update {
 mod upsert {
     mod date_time;
     mod simple;
+    mod text;
 }

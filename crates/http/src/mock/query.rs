@@ -14,12 +14,17 @@ use query::TransactionHandle;
 /// A truncate the mock was asked for: the collection and its filter.
 type TruncateCall = (String, Option<Filter>);
 
+/// A NAC relationship the mock holds: the relation and its target actor.
+type NacRelationship = (String, String);
+
 /// Mock executor for testing HTTP routes with pattern-matched query responses.
 #[derive(Debug, Clone)]
 pub struct MockQueryExecutor {
     schema_sdl: String,
     /// Each truncate asked for: the collection and its filter.
     truncated: Arc<Atom<Vec<TruncateCall>>>,
+    /// The NAC relationships added, oldest first.
+    nac_relationships: Arc<Atom<Vec<NacRelationship>>>,
 }
 
 /// Mock executor for testing error paths. Schema errors are optional.
@@ -132,12 +137,18 @@ impl MockQueryExecutor {
         Self {
             schema_sdl: schema.into(),
             truncated: Arc::default(),
+            nac_relationships: Arc::default(),
         }
     }
 
     /// The truncates asked for, oldest first.
     pub fn truncated_collections(&self) -> Vec<TruncateCall> {
         self.truncated.load_clone()
+    }
+
+    /// The NAC relationships added, oldest first.
+    pub fn nac_relationships(&self) -> Vec<NacRelationship> {
+        self.nac_relationships.load_clone()
     }
 }
 
@@ -170,6 +181,22 @@ impl QueryExecutor for MockQueryExecutor {
             calls.push((name.to_owned(), filter.cloned()))
         });
         Ok(())
+    }
+
+    async fn add_nac_actor_relationship_as(
+        &self,
+        _context: &defra_core::RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        let entry = (relation.to_owned(), target_actor.to_owned());
+        Ok(crate::mock::update_vec(&self.nac_relationships, |held| {
+            let existed = held.contains(&entry);
+            if !existed {
+                held.push(entry.clone());
+            }
+            existed
+        }))
     }
 
     async fn add_dac_policy_as(

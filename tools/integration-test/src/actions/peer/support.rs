@@ -3,8 +3,6 @@
 
 use std::time::Duration;
 
-use defra_core::RequestContext;
-
 use crate::scenario::Failure;
 use crate::test_case::State;
 
@@ -14,10 +12,6 @@ pub const REPLICATOR_COMPLETED: Duration = Duration::from_secs(1);
 pub const UPDATE_EVENT: Duration = Duration::from_secs(1);
 /// How long Go's harness waits for each merge event.
 pub const MERGE_EVENT: Duration = Duration::from_secs(30);
-
-pub fn ambient() -> RequestContext {
-    RequestContext::ambient()
-}
 
 pub fn failed<E>(error: E) -> Failure
 where

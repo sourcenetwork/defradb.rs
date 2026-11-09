@@ -116,6 +116,8 @@ blst = "0.3"
 getrandom = "0.2"
 tempfile = "3"
 mantra-macros = "0.9"
+# Store wrappers that race a NAC decision against another commit.
+zanzibar = { path = "../zanzibar" }
 
 [lints]
 workspace = true

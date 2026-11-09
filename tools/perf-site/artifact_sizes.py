@@ -54,7 +54,7 @@ def main():
         "artifacts",
         nargs="+",
         metavar="LABEL=PATH",
-        help="an artifact to weigh, e.g. defra=target/release/defra",
+        help="an artifact to weigh, e.g. defra=target/release/defradb",
     )
     ap.add_argument("--out", required=True, help="append the family record here")
     args = ap.parse_args()

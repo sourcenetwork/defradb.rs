@@ -99,7 +99,7 @@ pub fn build_cli_variant(workspace: &Path, features: &[&str], output_name: &str)
         .expect("failed to build defra test binary");
     assert!(status.success(), "cargo build -p cli failed");
 
-    let source = target_dir.join(format!("defra{}", std::env::consts::EXE_SUFFIX));
+    let source = target_dir.join(format!("defradb{}", std::env::consts::EXE_SUFFIX));
     let destination = target_dir.join(format!("{output_name}{}", std::env::consts::EXE_SUFFIX));
     let temporary = temporary_snapshot_path(&target_dir, output_name);
 
@@ -152,7 +152,7 @@ mod tests {
         let dev = TestBuild::of(Path::new("/shared/debug/deps/p2p-1a2b")).unwrap();
         assert_eq!(dev.profile, "dev");
         assert_eq!(dev.target_dir, PathBuf::from("/shared"));
-        assert_eq!(TestBuild::of(Path::new("/usr/bin/defra")), None);
+        assert_eq!(TestBuild::of(Path::new("/usr/bin/defradb")), None);
     }
 
     #[test]

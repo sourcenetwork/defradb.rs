@@ -131,6 +131,12 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
         true
     }
 
+    fn set_scans_validated(&self, validated: bool) {
+        if let Some(datastore) = self.shared_txn().ok().and_then(|txn| txn.datastore().ok()) {
+            datastore.set_scans_validated(validated);
+        }
+    }
+
     async fn stream_by_doc_short_ids(
         &self,
         collection_name: &str,

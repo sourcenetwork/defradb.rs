@@ -35,7 +35,7 @@
 \*   create.rs              embed, identity, seed_identity, memo_identity (the memo ordinal keeps the short ID), prepare_keys, compute, compute_many, persist
 \*   autocommit/create.rs   create_many_with_resolved_inputs (seed once, resolve waves), create_impl, run_create_attempt
 \*   autocommit/batch.rs    BatchMutator::create_as (with a memo: memo-ordinal short ID, keys asked of the memo)
-\*   doc.rs                 DbDocMutator::create_as, next_create_identity
+\*   doc.rs                 DbDocMutator::create_as, create_identity
 \*   update.rs              write_local, write_blocks
 \*   autocommit/update.rs   run_update_attempt
 \*   autocommit/batch.rs    BatchMutator::update_as (with a memo: keys asked of the memo)

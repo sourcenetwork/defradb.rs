@@ -2,9 +2,8 @@
 
 use serde_json::Value as JsonValue;
 
-use super::{CollectionDescribeArgs, CollectionListArgs};
+use super::CollectionListArgs;
 use crate::commands::client::http_client::HttpClient;
-use crate::commands::client::validate_identifier;
 use crate::commands::client::ClientContext;
 use crate::error::{Error, Result};
 
@@ -61,63 +60,6 @@ impl CollectionListArgs {
         for name in collections {
             println!("{name}");
         }
-
-        Ok(())
-    }
-}
-
-impl CollectionDescribeArgs {
-    /// Execute the collection describe command
-    pub async fn execute(&self, ctx: &ClientContext, name: Option<&str>) -> Result<()> {
-        let collection_name =
-            name.ok_or_else(|| Error::MissingInput("--name is required for describe".to_string()))?;
-        validate_identifier(collection_name)?;
-
-        let query = format!(
-            r#"
-{{
-  __type(name: "{name}") {{
-    name
-    fields {{
-      name
-      type {{
-        name
-        kind
-        ofType {{
-          name
-          kind
-        }}
-      }}
-    }}
-  }}
-}}
-"#,
-            name = collection_name
-        );
-
-        let client = HttpClient::new(&ctx.url, &ctx.edge)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
-        let response = client.graphql(&query, None, ctx.tx_id.clone()).await?;
-
-        if response.has_errors() {
-            return Err(Error::Server(response.error_message()));
-        }
-
-        let data = response
-            .data
-            .ok_or_else(|| Error::Server("Server returned success but with no data".to_string()))?;
-
-        let type_info = data
-            .get("__type")
-            .ok_or_else(|| Error::CollectionNotFound(collection_name.to_string()))?;
-
-        if type_info.is_null() {
-            return Err(Error::CollectionNotFound(collection_name.to_string()));
-        }
-
-        let output = serde_json::to_string_pretty(type_info)?;
-        println!("{output}");
 
         Ok(())
     }
