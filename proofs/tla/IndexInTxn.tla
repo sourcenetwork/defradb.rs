@@ -52,6 +52,17 @@
 \*   crates/defra-node/src/ops/encrypted_index.rs NodeOps (routes a txn)
 \*   crates/cli/src/encrypted_index_adapter.rs    EncryptedIndexAdapter (routes a txn)
 \*   crates/http/src/handlers/encrypted_index.rs  the x-defradb-tx context
+\* Views follow them too. AddView stages its view collections in the
+\* caller's transaction, and building its materialized views (and
+\* bootstrapping its downsamples) is the follow-up work, run at commit and
+\* awaited. RefreshViews stages nothing; its rebuild is the follow-up work,
+\* run at commit from what the transaction committed. An AddView whose
+\* multi-type SDL fails part way is rolled back to its savepoint:
+\*   crates/db/src/collection/ops/create.rs        DB::stage_new_collections
+\*   crates/db/src/txn/registry/views.rs           add_view_in_txn,
+\*                                                 refresh_views_in_txn
+\*   crates/defra-node/src/db_impls.rs             DbSchemaOps (routes a txn)
+\*   crates/http/src/handlers/views.rs             the x-defradb-tx context
 EXTENDS Naturals
 
 CONSTANTS
@@ -59,12 +70,13 @@ CONSTANTS
   WorkOnCommit,   \* the backfill waits for the commit to be durable
   RefreshCatalog, \* the transaction drops its cached definition after the change
   AwaitWork,      \* the commit returns only once the backfill is done
+  ReadCommitted,  \* the follow-up work reads what the transaction committed
   RollBackFailed  \* a change that fails part way is rolled back to its savepoint
 
 \* Each switch is on or off.
 ASSUME WriteThroughTxn \in BOOLEAN
 ASSUME WorkOnCommit \in BOOLEAN /\ RefreshCatalog \in BOOLEAN /\ AwaitWork \in BOOLEAN
-ASSUME RollBackFailed \in BOOLEAN
+ASSUME ReadCommitted \in BOOLEAN /\ RollBackFailed \in BOOLEAN
 
 VARIABLES
   staged,     \* the definition change is written into the client's transaction
@@ -72,26 +84,38 @@ VARIABLES
   listed,     \* the client listed the indexes in the transaction
   outcome,    \* "open", "committed" or "discarded"
   visible,    \* other clients can see the change
-  workRan,    \* the backfill (or entry removal) has run
+  workRan,    \* the backfill (or entry removal, view build, view rebuild) has run
   returned,   \* the client's commit call has returned
+  wrote,      \* the client wrote a document in its transaction before the change
+  sawWrite,   \* the follow-up work saw that document
   leftover    \* writes of a failed change are still in the transaction
 
-vars == <<staged, listedNew, listed, outcome, visible, workRan, returned, leftover>>
+vars == <<staged, listedNew, listed, outcome, visible, workRan, returned, wrote, sawWrite,
+          leftover>>
 
 \* Every variable holds a value of the shape it should.
 TypeOK ==
   \* the flags are true or false
   /\ staged \in BOOLEAN /\ listedNew \in BOOLEAN /\ listed \in BOOLEAN
   /\ visible \in BOOLEAN /\ workRan \in BOOLEAN /\ returned \in BOOLEAN
-  /\ leftover \in BOOLEAN
+  /\ wrote \in BOOLEAN /\ sawWrite \in BOOLEAN /\ leftover \in BOOLEAN
   \* the transaction is open or ended one of two ways
   /\ outcome \in {"open", "committed", "discarded"}
 
-\* A fresh transaction: nothing staged, listed, seen, run or left over.
+\* A fresh transaction: nothing staged, listed, seen, run, written or left over.
 Init ==
   /\ staged = FALSE /\ listedNew = FALSE /\ listed = FALSE
   /\ outcome = "open" /\ visible = FALSE /\ workRan = FALSE /\ returned = FALSE
-  /\ leftover = FALSE
+  /\ wrote = FALSE /\ sawWrite = FALSE /\ leftover = FALSE
+
+\* The client writes a document in its transaction before the change, as a
+\* RefreshViews scenario adds a document and then asks for the rebuild.
+WriteDoc ==
+  \* only before the change, once, while the transaction is open
+  /\ outcome = "open" /\ ~staged /\ ~wrote
+  /\ wrote' = TRUE
+  /\ UNCHANGED <<staged, listedNew, listed, outcome, visible, workRan, returned, sawWrite,
+                 leftover>>
 
 \* The client creates or drops the index in its transaction. If the follow-up
 \* work does not wait for the commit, it runs right here.
@@ -101,9 +125,11 @@ Change ==
   /\ staged' = TRUE
   \* the bug a RED plants: the backfill starts before any commit
   /\ workRan' = (~WorkOnCommit)
+  \* work run now runs outside the transaction, so it cannot see its write
+  /\ sawWrite' = FALSE
   \* the bug a RED plants: the change commits in a transaction of its own
   /\ visible' = (~WriteThroughTxn)
-  /\ UNCHANGED <<listedNew, listed, outcome, returned, leftover>>
+  /\ UNCHANGED <<listedNew, listed, outcome, returned, wrote, leftover>>
 
 \* The client's change fails after writing part of the definition, and the
 \* client gets the error. Rolled back to its savepoint, nothing of it stays;
@@ -113,7 +139,8 @@ FailChange ==
   /\ outcome = "open" /\ ~staged
   \* the bug a RED plants: no savepoint, so the partial writes remain
   /\ leftover' = (leftover \/ ~RollBackFailed)
-  /\ UNCHANGED <<staged, listedNew, listed, outcome, visible, workRan, returned>>
+  /\ UNCHANGED <<staged, listedNew, listed, outcome, visible, workRan, returned, wrote,
+                 sawWrite>>
 
 \* The client lists the indexes in its transaction. It sees the change only
 \* if the transaction's cached definition was dropped after the change.
@@ -122,7 +149,7 @@ List ==
   /\ outcome = "open" /\ staged /\ ~listed
   /\ listed' = TRUE
   /\ listedNew' = RefreshCatalog
-  /\ UNCHANGED <<staged, outcome, visible, workRan, returned, leftover>>
+  /\ UNCHANGED <<staged, outcome, visible, workRan, returned, wrote, sawWrite, leftover>>
 
 \* The client commits and the change becomes visible. Awaited, the commit
 \* call runs the follow-up work before it returns; otherwise (the RED) it
@@ -133,24 +160,29 @@ Commit ==
   /\ outcome' = "committed" /\ visible' = (visible \/ staged) /\ returned' = TRUE
   \* awaited: the work for a staged change is done when the call returns
   /\ workRan' = (workRan \/ (staged /\ AwaitWork))
-  /\ UNCHANGED <<staged, listedNew, listed, leftover>>
+  \* work run at commit reads the committed state, write included, unless
+  \* (the RED) it reads a snapshot taken before the transaction committed
+  /\ sawWrite' = IF ~workRan /\ staged /\ AwaitWork THEN (wrote /\ ReadCommitted) ELSE sawWrite
+  /\ UNCHANGED <<staged, listedNew, listed, wrote, leftover>>
 
 \* Work the commit did not wait for runs after the call has returned.
 Finish ==
   \* only for a committed change whose work has not run yet
   /\ outcome = "committed" /\ staged /\ ~workRan
   /\ workRan' = TRUE
-  /\ UNCHANGED <<staged, listedNew, listed, outcome, visible, returned, leftover>>
+  \* it reads the committed state, unless (the RED) a stale snapshot
+  /\ sawWrite' = (wrote /\ ReadCommitted)
+  /\ UNCHANGED <<staged, listedNew, listed, outcome, visible, returned, wrote, leftover>>
 
 \* The client discards its transaction: nothing lands, nothing follows.
 Discard ==
   \* only an open transaction
   /\ outcome = "open"
   /\ outcome' = "discarded" /\ returned' = TRUE
-  /\ UNCHANGED <<staged, listedNew, listed, visible, workRan, leftover>>
+  /\ UNCHANGED <<staged, listedNew, listed, visible, workRan, wrote, sawWrite, leftover>>
 
 \* Any step can happen next.
-Next == Change \/ FailChange \/ List \/ Commit \/ Finish \/ Discard
+Next == WriteDoc \/ Change \/ FailChange \/ List \/ Commit \/ Finish \/ Discard
 
 \* A finished transaction stays finished.
 Done == outcome # "open" /\ UNCHANGED vars
@@ -171,6 +203,11 @@ INV_SeesOwnChange == listed => listedNew
 \* the commit is awaited, so the index is built before the call returns.
 INV_BuiltWhenCommitReturns ==
   (returned /\ outcome = "committed" /\ staged) => workRan
+
+\* Follow-up work that ran saw every document the transaction wrote before
+\* the change: a RefreshViews in a transaction rebuilds from what it
+\* committed, the documents it added included.
+INV_WorkSeesTxnWrites == (workRan /\ wrote) => sawWrite
 
 \* A commit never carries the half-written definition of a change that
 \* failed: the client was told it failed, so none of it may land.

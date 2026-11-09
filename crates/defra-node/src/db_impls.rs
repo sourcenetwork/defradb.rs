@@ -87,6 +87,8 @@ pub(crate) struct DbSchemaOps<S: storage::corekv::Store + 'static> {
     database: Arc<db::DB<S>>,
     query_limits: query::QueryLimits,
     document_acp: Arc<dyn acp::DocumentACP>,
+    /// Runs the operations a request makes inside its transaction.
+    transaction_registry: Arc<db::DbTransactionRegistry<S>>,
 }
 
 impl<S: storage::corekv::Store + 'static> DbSchemaOps<S> {
@@ -94,11 +96,13 @@ impl<S: storage::corekv::Store + 'static> DbSchemaOps<S> {
         database: Arc<db::DB<S>>,
         query_limits: query::QueryLimits,
         document_acp: Arc<dyn acp::DocumentACP>,
+        transaction_registry: Arc<db::DbTransactionRegistry<S>>,
     ) -> Self {
         Self {
             database,
             query_limits,
             document_acp,
+            transaction_registry,
         }
     }
 
@@ -227,6 +231,24 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
         self.validate_policies(&collections).await?;
 
         let creator = Self::creator(context)?;
+        if let Some(txn) = context.txn() {
+            return self
+                .transaction_registry
+                .add_view_in_txn(
+                    context,
+                    &txn.to_string(),
+                    collections,
+                    self.document_acp.clone(),
+                    creator,
+                    materialized_names,
+                    downsample_names,
+                )
+                .await
+                .map_err(|error| match error {
+                    db::Error::ViewTransformMissing(cid) => Error::ViewTransformMissing(cid),
+                    error => Error::ViewCollectionCreate(error),
+                });
+        }
         let created = self
             .database
             .create_collections_atomic_with_acp_registration_as(
@@ -267,6 +289,13 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
             .check_node_access_as(context, acp::nac::NodePermission::ViewRefresh)
             .await
             .map_err(Error::from)?;
+        if let Some(txn) = context.txn() {
+            return self
+                .transaction_registry
+                .refresh_views_in_txn(context, &txn.to_string(), selector)
+                .await
+                .map_err(Error::MaterializedViewRefresh);
+        }
         self.database
             .refresh_views(selector)
             .await
