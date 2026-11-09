@@ -251,3 +251,6 @@ lean_lib CursorToken where
 
 @[default_target]
 lean_lib ViewQuerySource where
+
+@[default_target]
+lean_lib CollectionPatch where

@@ -3,47 +3,32 @@ use lens::TransformStore;
 use storage::corekv::OnCommit;
 
 impl<S: Store> crate::database::DB<S> {
-    /// Create and store a new schema version from a validated patched schema.
+    /// Stage a new schema version from a validated patched schema on `txn`.
     ///
-    /// Handles default CRDTs for new fields, cross-collection validation,
-    /// unique index creation, CID generation, placeholder/pending migration
-    /// linking, IsActive handling, transaction writes, and cache updates.
-    #[allow(clippy::too_many_arguments)]
+    /// Handles cross-collection validation against `siblings` (the other
+    /// collections the same patch changes and has not staged yet), unique index
+    /// creation, CID generation, placeholder/pending migration linking,
+    /// IsActive handling, transaction writes, and cache updates on commit.
     pub(crate) async fn store_new_version(
         &self,
-        mut new_schema: CollectionVersion,
-        old_schema: &CollectionVersion,
-        old_version_id: &str,
-        actual_name: &str,
-        collection_id: &str,
-        collection_name: &str,
-        is_active_explicitly_set: bool,
+        txn: &mut DbTxn<S>,
+        prepared: &PreparedPatch,
+        siblings: &[CollectionVersion],
         migration: Option<lens::LensConfig>,
-    ) -> Result<CollectionVersion> {
-        // Start the write transaction before loading schema metadata so all
-        // version/head decisions use the snapshot that will be committed.
-        let mut txn = self.new_txn(false).await?;
-
-        // Go compatibility: default new fields with CType::None to CType::LwwRegister.
-        // Go's patchCollection does this in collection_define.go for new fields that
-        // don't have an explicit CRDT type. This must happen before CID generation.
-        {
-            let old_field_names: rapidhash::RapidHashSet<&str> =
-                old_schema.fields.iter().map(|f| f.name.as_str()).collect();
-            for field in &mut new_schema.fields {
-                if !old_field_names.contains(field.name.as_str())
-                    && !field.kind.is_relation()
-                    && field.crdt_type == schema::CType::None
-                {
-                    field.crdt_type = schema::CType::LwwRegister;
-                }
-            }
-        }
+    ) -> Result<PatchOutcome> {
+        let mut new_schema = prepared.new_schema.clone();
+        let old_schema = &prepared.old_schema;
+        let old_version_id = old_schema.version_id.as_str();
+        let actual_name = old_schema.name.as_str();
+        let collection_id = old_schema.collection_id.as_str();
+        let collection_name = prepared.collection_name.as_str();
+        let is_active_explicitly_set = prepared.is_active_explicitly_set;
 
         // Run Go-compatible cross-collection validators (before schema validate() which
         // uses different error messages). These validators cover duplicate fields,
         // CRDT/kind compatibility, and all Go-specific patch constraints.
-        let all_existing = self.get_all_collection_versions_with_txn(&mut txn).await?;
+        let all_existing = self.get_all_collection_versions_with_txn(txn).await?;
+        let patched = with_siblings(&all_existing, siblings);
         let Some(persisted_old_schema) = all_existing.iter().find(|version| {
             version.collection_id == collection_id && version.version_id == old_version_id
         }) else {
@@ -63,7 +48,7 @@ impl<S: Store> crate::database::DB<S> {
         {
             return Err(Error::Storage(storage::Error::TxnConflict));
         }
-        let new_collections: Vec<CollectionVersion> = all_existing
+        let new_collections: Vec<CollectionVersion> = patched
             .iter()
             .filter(|c| c.version_id != old_version_id)
             .cloned()
@@ -121,7 +106,7 @@ impl<S: Store> crate::database::DB<S> {
                 {
                     Some(&new_schema)
                 } else {
-                    all_existing.iter().find(|c| {
+                    patched.iter().find(|c| {
                         (c.name == other_col_id || c.collection_id == other_col_id) && c.is_active
                     })
                 };
@@ -544,15 +529,30 @@ impl<S: Store> crate::database::DB<S> {
                     .map_err(Error::Storage)?;
             }
         }
-        txn.commit().await?;
+        Ok(PatchOutcome {
+            schema: new_schema,
+            committed_migration,
+            is_new_version: true,
+        })
+    }
 
+    /// The work a staged patch step owes once its transaction has committed.
+    pub(crate) async fn finish_patch(&self, outcome: PatchOutcome) -> Result<CollectionVersion> {
+        let PatchOutcome {
+            schema: new_schema,
+            committed_migration,
+            is_new_version,
+        } = outcome;
+        if !is_new_version {
+            return Ok(new_schema);
+        }
         if let Some((transform_id, config)) = committed_migration {
             self.bump_migration_generation();
             self.register_committed_lens(transform_id, config).await;
         }
 
         // Clean up any pending migration that was linked to this version
-        self.pending_migrations.remove(&new_version_id);
+        self.pending_migrations.remove(&new_schema.version_id);
 
         // Cross-collection one-to-one index creation.
         // When collections are patched sequentially (e.g., Author then Book), the

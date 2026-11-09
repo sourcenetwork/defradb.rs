@@ -6,8 +6,16 @@ use crate::executor::{QueryResponse, SECONDARY_RELATION_ERROR_CODE, TXN_CONFLICT
 /// The `_docID` of each document mutation `op` on `collection` returned, or
 /// the request's first error with its text unchanged.
 pub(super) fn doc_ids(response: QueryResponse, op: &str, collection: &str) -> Result<Vec<String>> {
-    refused(&response)?;
     let key = format!("{op}_{collection}");
+    // The schema has no mutation for a collection that does not exist.
+    if response.errors.first().is_some_and(|error| {
+        error.message.ends_with(&format!(
+            "Cannot query field \"{key}\" on type \"Mutation\"."
+        ))
+    }) {
+        return Err(Error::CollectionNotFound(collection.to_owned()));
+    }
+    refused(&response)?;
     let docs = response
         .data
         .as_ref()

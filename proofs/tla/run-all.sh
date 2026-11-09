@@ -349,6 +349,10 @@ RUNS=(
   "MC_AddCollection_Red_Validate.cfg AddCollection.tla RED" # schema validation left out (INV_NoCollectionUnlessAllChecksPass)
   "MC_AddCollection_Red_Policy.cfg AddCollection.tla RED" # @policy check left out (INV_NoCollectionUnlessAllChecksPass)
   "MC_AddCollection_Red_OneByOne.cfg AddCollection.tla RED" # collections created one at a time: a later failure leaves earlier ones (INV_AllOrNone)
+  "MC_CollectionPatch_Green.cfg CollectionPatch.tla GREEN" # #2375/#2376: a patch over several collections validates them together, refuses dangling removals, and commits all or none
+  "MC_CollectionPatch_Red_OneByOne.cfg CollectionPatch.tla RED" # a commit per collection: a later failure leaves earlier ones (INV_AllOrNone)
+  "MC_CollectionPatch_Red_Alone.cfg CollectionPatch.tla RED" # each collection validated alone: a relation across two is refused (INV_ValidPatchApplies)
+  "MC_CollectionPatch_Red_NoRefCheck.cfg CollectionPatch.tla RED" # removal not checked against staying fields (INV_NothingUnlessValid)
   "MC_Truncate_Green.cfg Truncate.tla GREEN" # #2321: truncate checks nac, then for a filter branchable, txn and shape, before a delete that is durable at once
   "MC_Truncate_Red_Nac.cfg Truncate.tla RED" # permission check left out: a caller without CollectionTruncate removes documents (INV_NoRemovalWithoutPermission)
   "MC_Truncate_Red_Branchable.cfg Truncate.tla RED" # branchable check left out: a filtered truncate splits shared history (INV_FilteredNeverOnBranchable)

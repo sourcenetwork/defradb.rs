@@ -104,6 +104,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Server drain | TLA+ | net, pg-compat, edge |
 | Document topic ingress | TLA+ | p2p, p2p-adapter (#2545) |
 | Add collection | TLA+ | db |
+| Collection patch | TLA+ & Lean | db |
 | Collection truncate | TLA+ | db |
 | Relation-filtered mutation | TLA+ | query, datastore, db |
 | Add DAC policy | TLA+ | db, acp, vera, http, cli, ffi, defra-node |

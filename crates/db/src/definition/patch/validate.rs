@@ -20,6 +20,19 @@ impl<S: Store> crate::database::DB<S> {
         let mut new_schema: CollectionVersion = serde_json::from_value(schema_json)
             .map_err(|e| Error::InvalidPatch(format!("invalid resulting schema: {}", e)))?;
 
+        // Go's substituteRelationFieldKinds: a kind naming the host collection is a
+        // self reference.
+        for field in &mut new_schema.fields {
+            if let schema::FieldKind::Named { name, is_array } = &field.kind {
+                if *name == new_schema.name {
+                    field.kind = schema::FieldKind::SelfRef {
+                        relative_id: String::new(),
+                        is_array: *is_array,
+                    };
+                }
+            }
+        }
+
         // Go compatibility: check for removed/empty required fields after deserialization.
         // Go's JSON unmarshaling uses zero values for missing fields; our serde defaults
         // replicate this. Now check for invalid empty values that indicate patch corruption.

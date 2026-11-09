@@ -29,7 +29,7 @@
 \*     get_collections_as, patch_collection_as, set_active_collection_version_as,
 \*     set_migration_as, add_lens_as, list_lenses_as
 \*   - the NAC checks                              crates/db/src/definition/patch/mod.rs,
-\*     crates/db/src/collection/ops/version.rs, crates/db/src/collection/ops/select.rs,
+\*     crates/db/src/collection/ops/{version,version_delete}.rs, crates/db/src/collection/ops/select.rs,
 \*     crates/db/src/definition/migration/{set,lenses}.rs, crates/db/src/txn/registry/lenses.rs
 \*   - the edges that call it                      crates/defra-node/src/ops/collection.rs,
 \*     crates/http/src/handlers/{collections,lens}.rs, crates/ffi/src/{lens,schema}.rs,
