@@ -36,4 +36,4 @@ path, management auth, block integrity, CRDT merge laws) is delegated to crates
 already covered by existing TLA+/Lean slices (Replicator, Convergence, Kms, Commits,
 Auth, Integrity, Acp, CRDT-laws). The crate's own contribution is `Arc`-graph wiring,
 teardown ordering, and idempotent recovery replay — covered by integration tests
-(`tests/shutdown.rs`, `iroh_smoke.rs`, `se_owner.rs`, `bm25_smoke.rs`). No new model.
+(`tests/shutdown.rs`, `iroh_smoke.rs`, `se_owner.rs`, and the testo `query::bm25` scenarios). No new model.
