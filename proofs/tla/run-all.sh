@@ -139,6 +139,15 @@ RUNS=(
   "MC_TruncateChunks_Green.cfg TruncateChunks.tla GREEN" # truncate empties chunks before parents
   "MC_TruncateChunks_Red_ParentsFirst.cfg TruncateChunks.tla RED" # parents first strands a racing create (INV_LiveParentHasChunks)
   "MC_TruncateChunks_Red_PurgeLeavesChunks.cfg TruncateChunks.tla RED" # purge leaves the chunks of purged articles (INV_PurgedHaveNoChunks)
+  "MC_FilteredChunkPush_Green.cfg FilteredChunkPush.tla GREEN" # #2424: a filtered peer gets a chunk only with its parent, decided by the parent
+  "MC_FilteredChunkPush_Red_DropChunks.cfg FilteredChunkPush.tla RED" # chunks of a filtered article left out (LIVE_ChunkFollowsItsArticle)
+  "MC_FilteredChunkPush_Red_ChunkUnfiltered.cfg FilteredChunkPush.tla RED" # chunk collection not filtered with its article (INV_NothingUnmatched)
+  "MC_FilteredChunkPush_Red_MatchOwnDoc.cfg FilteredChunkPush.tla RED" # chunk matched on its own document (INV_NothingUnmatched)
+  "MC_FilteredChunkPush_Red_ForwardWithoutSource.cfg FilteredChunkPush.tla RED" # no article document lets the chunk through (INV_NothingUnmatched)
+  "MC_FilteredChunkPush_Red_TxnNoSource.cfg FilteredChunkPush.tla RED" # explicit transaction drops the article document (LIVE_ChunkFollowsItsArticle)
+  "MC_FilteredChunkPush_Red_RetryWithoutArticle.cfg FilteredChunkPush.tla RED" # a chunk retry sends the chunk alone (INV_ChunkOnlyWithItsArticle)
+  "MC_FilteredChunkPush_Red_RetryNeverEnds.cfg FilteredChunkPush.tla RED" # a chunk without its article fails its retry forever (LIVE_RetriesEnd)
+  "MC_FilteredChunkPush_Red_ChunkReplayAlone.cfg FilteredChunkPush.tla RED" # a chunk-only replay sends chunks without their article (INV_ChunkOnlyWithItsArticle)
   "MC_ChunkMarkerHandoff_Green.cfg ChunkMarkerHandoff.tla GREEN" # a committed head keeps its marker registration past the request deadline
   "MC_ChunkMarkerHandoff_Red_RequestOwned.cfg ChunkMarkerHandoff.tla RED" # the deadline drops the chunks not registered yet (INV_CommittedHeadOwned)
   "MC_PeerConnection_Green.cfg PeerConnection.tla GREEN"

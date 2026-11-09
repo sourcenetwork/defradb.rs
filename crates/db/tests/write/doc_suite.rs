@@ -1438,7 +1438,7 @@ fn create_in_tx_forwards_to_broadcaster_on_commit() {
         assert_ne!(event.doc_cid, cid::Cid::default(), "doc_cid populated");
         assert!(!event.doc_block.is_empty(), "doc_block populated");
         assert_eq!(
-            event.document_json.as_ref().and_then(|json| json.get("x")),
+            event.filter_document.own().and_then(|json| json.get("x")),
             Some(&serde_json::json!(1)),
             "document_json populated for filtered transaction replication"
         );

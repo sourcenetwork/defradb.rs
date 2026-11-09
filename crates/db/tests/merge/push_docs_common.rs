@@ -316,6 +316,7 @@ fn multi_head_doc_reads_acknowledged_after_ladder() {
             &doc_id,
             "col-push-note",
             generation,
+            &[],
             &p2p::ReplicationFilters::new(),
             &p2p::EqOnlyFilterMatcher,
             &p2p::sync::HeadHintCarAuthority::default(),

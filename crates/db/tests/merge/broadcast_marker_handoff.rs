@@ -4,25 +4,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use blockstore::DefraBlockstore;
-use db::merge::BroadcastMutator;
-use db::DB;
-use document::{DocID, Document, NormalValue};
+use document::DocID;
 use futures::future::{select, Either};
-use p2p::sync::{SyncConfig, SyncCoordinator};
 use query::mutator::DocMutator;
 use rapidhash::RapidHashSet;
 use regolith::sync::Atom;
-use storage::RegolithStore;
 
-use super::push_docs_replay::ConnectedPeerTransport;
-
-const SDL: &str = "type Article { body: String @chunk(maxChars: 64) }";
-const CHUNKS: &str = "Article__body_chunk";
-const PEER: &str = "receiver";
-const FAILURE_CHANNEL_CAPACITY: usize = 64;
-/// The generation the recorder gives every marker it registers.
-const MARKER_GENERATION: u64 = 1;
+use super::broadcast_chunk_filter::{node, with_parent, Node, MARKER_GENERATION};
+use super::chunk_filter_support::PUBLIC;
 
 /// Long enough for several chunks at the schema's `maxChars: 64`.
 const BODY: &str = "First paragraph of the article, long enough for a chunk.\n\n\
@@ -73,56 +62,6 @@ async fn abandon_after_first_marker<F>(
     }
 }
 
-type Mutator =
-    BroadcastMutator<RegolithStore, DefraBlockstore<RegolithStore>, ConnectedPeerTransport>;
-
-struct Node {
-    db: Arc<DB<RegolithStore>>,
-    mutator: Mutator,
-    /// The DocIDs a marker was registered for.
-    pushed: Atom<Vec<String>>,
-    failures: p2p::sync::PushFailureReceiver,
-}
-
-/// A node whose only replicator takes articles and their chunks.
-async fn node() -> Node {
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-    db.set_network(edge::testing::edge());
-    db.create_collections_atomic(query::parse_sdl(SDL).unwrap())
-        .await
-        .unwrap();
-    let id_of = |name: &str| {
-        db.get_collection(name)
-            .unwrap()
-            .unwrap()
-            .collection_id()
-            .to_string()
-    };
-    let replicator = p2p::ReplicatorInfo::from_raw(
-        PEER.to_string(),
-        vec![id_of("Article"), id_of(CHUNKS)],
-        vec![],
-    );
-    let transport =
-        ConnectedPeerTransport::new("sender", PEER).listing_replicators(vec![replicator]);
-    let (mut sync, _events) = SyncCoordinator::new(
-        transport,
-        Arc::new(DefraBlockstore::new(store, true)),
-        p2p::network::Network::on(edge::testing::edge()),
-        SyncConfig::default(),
-    )
-    .await
-    .unwrap();
-    let failures = sync.attach_failure_channel(FAILURE_CHANNEL_CAPACITY);
-    Node {
-        mutator: BroadcastMutator::new(db.clone(), Arc::new(sync)),
-        db,
-        pushed: Atom::new(Vec::new()),
-        failures,
-    }
-}
-
 impl Node {
     /// Answers registrations until `expected` are recorded or the grace ends.
     async fn registered_within_grace(&mut self, expected: usize) -> RapidHashSet<String> {
@@ -136,41 +75,7 @@ impl Node {
             }
         };
         let _ = workers::timeout(HANDOFF_GRACE, rest).await;
-        self.pushed.swap(Vec::new()).iter().cloned().collect()
-    }
-
-    fn article(&self, body: &str) -> Document {
-        let schema = self
-            .db
-            .get_collection("Article")
-            .unwrap()
-            .unwrap()
-            .schema_arc();
-        let mut doc = Document::new(schema);
-        doc.set("body", NormalValue::String(body.into())).unwrap();
-        doc
-    }
-
-    /// The DocIDs of `parent` and of every chunk it has.
-    async fn with_chunks(&self, parent: &DocID) -> RapidHashSet<String> {
-        let chunks = self.db.get_collection(CHUNKS).unwrap().unwrap();
-        let txn = self.db.new_txn(true).await.unwrap();
-        let docs = chunks
-            .get_all_with_datastore_include_deleted(
-                &txn.datastore().unwrap(),
-                &txn.systemstore().unwrap(),
-                false,
-            )
-            .await
-            .unwrap();
-        txn.force_discard().unwrap();
-        docs.into_iter()
-            .filter(|(chunk, _)| {
-                chunk.get("_sourceID") == Some(&NormalValue::String(parent.to_string()))
-            })
-            .filter_map(|(chunk, _)| chunk.id().map(|id| id.to_string()))
-            .chain(std::iter::once(parent.to_string()))
-            .collect()
+        self.take_pushed()
     }
 
     async fn only_article(&self) -> DocID {
@@ -194,7 +99,7 @@ impl Node {
 fn a_create_registers_every_chunk_after_its_caller_stops_waiting() {
     workers::block_on(async {
         let mut node = node().await;
-        let article = node.article(BODY);
+        let article = node.article(PUBLIC, BODY);
         abandon_after_first_marker(
             &mut node.failures,
             &node.pushed,
@@ -203,7 +108,7 @@ fn a_create_registers_every_chunk_after_its_caller_stops_waiting() {
         .await;
 
         let parent = node.only_article().await;
-        let expected = node.with_chunks(&parent).await;
+        let expected = with_parent(&parent, node.chunks_of(&parent).await);
         assert!(
             expected.len() > 2,
             "the body must split into several chunks"
@@ -217,7 +122,7 @@ fn a_create_registers_every_chunk_after_its_caller_stops_waiting() {
 fn a_batch_registers_every_chunk_after_its_caller_stops_waiting() {
     workers::block_on(async {
         let mut node = node().await;
-        let article = node.article(BODY);
+        let article = node.article(PUBLIC, BODY);
         let batch = node.mutator.begin_batch().await.unwrap().unwrap();
         let operation: query::mutator::MutationBatchOperation = Arc::new(move |mutator, _| {
             let article = article.clone();
@@ -229,7 +134,7 @@ fn a_batch_registers_every_chunk_after_its_caller_stops_waiting() {
         abandon_after_first_marker(&mut node.failures, &node.pushed, batch.run(operation)).await;
 
         let parent = node.only_article().await;
-        let expected = node.with_chunks(&parent).await;
+        let expected = with_parent(&parent, node.chunks_of(&parent).await);
         assert!(
             expected.len() > 2,
             "the body must split into several chunks"

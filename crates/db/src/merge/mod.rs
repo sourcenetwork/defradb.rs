@@ -14,6 +14,7 @@ pub mod push_docs_common;
 pub mod push_docs_creator;
 mod push_docs_network;
 pub mod push_docs_replay;
+mod push_filter;
 pub mod redriven_sink;
 pub mod replication;
 pub mod replication_ack;

@@ -13,6 +13,8 @@ use crate::block::builder::BlockResult;
 pub(super) enum DecidedBy {
     /// The document's own fields, when it encoded.
     Own(Option<serde_json::Value>),
+    /// The parent's fields, for a `@chunk` chunk.
+    Parent(Option<Arc<serde_json::Value>>),
     /// A branchable collection's head, which no filter decides.
     Collection,
 }
@@ -51,46 +53,39 @@ impl CommittedHead {
     {
         let creator = self.creator.as_deref();
         match &self.decided_by {
-            DecidedBy::Own(Some(document)) => {
-                sync.push_document_to_replicators_with_creator(
+            DecidedBy::Own(document) => {
+                sync.push_found_document_to_replicators_with_creator(
                     &self.cid,
                     &self.block,
                     &self.doc_id,
                     &self.collection_id,
-                    document,
+                    document.as_ref(),
                     creator,
                 )
                 .await
             }
-            DecidedBy::Own(None) => {
-                p2p::model_trace!(Commit {
-                    doc: &self.doc_id,
-                    head: self.cid.to_string(),
-                    parents: p2p::model_trace::parents_of(&self.block),
-                });
-                self.push_unfiltered(sync, creator).await
+            DecidedBy::Parent(source) => {
+                sync.push_chunk_to_replicators_with_creator(
+                    &self.cid,
+                    &self.block,
+                    &self.doc_id,
+                    &self.collection_id,
+                    source.as_ref(),
+                    creator,
+                )
+                .await
             }
-            DecidedBy::Collection => self.push_unfiltered(sync, creator).await,
+            DecidedBy::Collection => {
+                sync.push_to_replicators_with_creator(
+                    &self.cid,
+                    &self.block,
+                    &self.doc_id,
+                    &self.collection_id,
+                    creator,
+                )
+                .await
+            }
         }
-    }
-
-    async fn push_unfiltered<B, T>(
-        &self,
-        sync: &SyncCoordinator<B, T>,
-        creator: Option<&str>,
-    ) -> p2p::error::Result<()>
-    where
-        B: Blockstore + 'static,
-        T: P2PTransport,
-    {
-        sync.push_to_replicators_with_creator(
-            &self.cid,
-            &self.block,
-            &self.doc_id,
-            &self.collection_id,
-            creator,
-        )
-        .await
     }
 }
 

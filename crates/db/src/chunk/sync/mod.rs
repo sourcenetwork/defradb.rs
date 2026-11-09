@@ -29,13 +29,6 @@ use crate::event::emission::TxnBroadcaster;
 use crate::index::IndexManager;
 use crate::txn::DbTxn;
 
-// As JSON, the form filtered replication matches against.
-fn json(doc: &Document) -> Option<serde_json::Value> {
-    Some(serde_json::Value::Object(
-        doc.to_map().ok()?.into_iter().collect(),
-    ))
-}
-
 /// The chunk documents one field's new text needs.
 pub(crate) struct FieldChunks {
     field: String,
@@ -128,12 +121,12 @@ impl<S> ChunkWrites<'_, S>
 where
     S: Store + 'static,
 {
-    /// Creates the chunk documents in `plans` that don't exist yet. An existing
-    /// chunk is never rewritten, since the same hash means the same content.
-    /// A new parent can have some already: they may arrive by P2P before it.
+    /// Creates the chunks in `plans` that don't exist yet; one that came by P2P
+    /// first is kept. A filtered peer decides them by `source`, the parent.
     pub(crate) async fn create_missing(
         &self,
         parent_doc_id: &str,
+        source: Option<&std::sync::Arc<serde_json::Value>>,
         plans: Vec<FieldChunks>,
     ) -> Result<Vec<DerivedWrite>> {
         let mut written = Vec::new();
@@ -152,7 +145,7 @@ where
                     continue;
                 }
                 written.push(
-                    self.create(&target, parent_doc_id, text, hash, encrypt)
+                    self.create(&target, parent_doc_id, text, hash, encrypt, source)
                         .await?,
                 );
             }
@@ -165,12 +158,13 @@ where
         &self,
         parent: &CollectionVersion,
         parent_doc_id: &str,
+        source: Option<&std::sync::Arc<serde_json::Value>>,
     ) -> Result<Vec<DerivedWrite>> {
         let mut written = Vec::new();
         for chunked in &parent.chunked_fields {
             let target = self.open(&chunked.collection(&parent.name)).await?;
             for doc_short_id in self.chunks_of(&target, parent_doc_id).await? {
-                if let Some(write) = self.delete(&target, doc_short_id).await? {
+                if let Some(write) = self.delete(&target, doc_short_id, source).await? {
                     written.push(write);
                 }
             }
