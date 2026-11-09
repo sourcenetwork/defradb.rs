@@ -11,6 +11,7 @@
 
 mod batch;
 pub mod broadcast;
+mod heads;
 mod pooled_repusher;
 
 pub use pooled_repusher::pooled_se_repusher;
@@ -37,6 +38,7 @@ use self::batch::BroadcastBatchMutator;
 use self::broadcast::{
     broadcast_with_retry_with_creator, log_broadcast_failure, spawn_gossip_or_report, AnnouncedRoot,
 };
+use self::heads::{register_committed_heads, CommittedHead, DecidedBy};
 use crate::block::builder::{build_blocks_from_document, BlockResult};
 use crate::block::reader::read_latest_composite_block;
 use crate::database::DB;
@@ -66,16 +68,15 @@ fn gossip_roots(
     .collect()
 }
 
-fn capture_marker_error(slot: &mut Option<String>, result: p2p::error::Result<()>) {
-    if let Err(error) = result {
-        let message = error.to_string();
-        match slot {
-            Some(existing) => {
-                existing.push_str("; ");
-                existing.push_str(&message);
-            }
-            None => *slot = Some(message),
+// A chunk document that does not encode is pushed without it.
+fn derived_document_json(write: &query::mutator::DerivedWrite) -> Option<serde_json::Value> {
+    match write.document.as_ref().map(|document| document.to_map()) {
+        Some(Ok(map)) => Some(serde_json::Value::Object(map.into_iter().collect())),
+        Some(Err(error)) => {
+            tracing::warn!(doc_id = %write.doc_id, %error, "chunk document did not encode; pushed without it");
+            None
         }
+        None => None,
     }
 }
 
@@ -302,68 +303,74 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> SeArtifactRep
 }
 
 impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMutator<S, B, T> {
-    /// Publishes a write's derived writes, each like a normal write. Returns the
-    /// first error, which the write's broadcast status reports.
-    async fn publish_derived(
+    /// Registers one write's heads: its own, its branchable collection's, then
+    /// its derived writes'. Returns every registration error, joined.
+    async fn register_write_heads(
         &self,
+        block: &BlockResult,
+        collection_block: Option<&BlockResult>,
+        collection_id: &str,
+        creator: Option<&str>,
+        decided_by: DecidedBy,
+        derived: Vec<CommittedHead>,
+    ) -> Option<String> {
+        let mut heads = vec![CommittedHead::of(block, collection_id, creator, decided_by)];
+        if let Some(collection_block) = collection_block {
+            heads.push(CommittedHead::of(
+                collection_block,
+                collection_id,
+                creator,
+                DecidedBy::Collection,
+            ));
+        }
+        heads.extend(derived);
+        heads::joined(register_committed_heads(&self.sync, heads).await)
+    }
+
+    /// The heads of a write's derived writes.
+    fn derived_heads(
         context: &RequestContext,
         derived: &[query::mutator::DerivedWrite],
-    ) -> Option<String> {
-        if derived.is_empty() {
-            return None;
-        }
-        let creator_did = context.creator().map(str::to_owned);
-        let mut marker_error = None;
-        let mut blocks = Vec::with_capacity(derived.len());
-        for write in derived {
-            let block = BlockResult {
+    ) -> Vec<CommittedHead> {
+        derived
+            .iter()
+            .map(|write| CommittedHead {
                 cid: write.commit_cid,
                 block: write.commit_block.clone(),
                 doc_id: write.doc_id.to_string(),
-                field_cids: vec![],
-                encryption_cids: vec![],
-            };
-            let document_map = match write.document.as_ref().map(|document| document.to_map()) {
-                Some(Ok(map)) => Some(map),
-                Some(Err(error)) => {
-                    tracing::warn!(doc_id = %block.doc_id, %error, "chunk document did not encode; pushed without it");
-                    None
-                }
-                None => None,
-            };
-            let marker = match document_map {
-                Some(map) => {
-                    let document_json = serde_json::Value::Object(map.into_iter().collect());
-                    self.sync
-                        .push_document_to_replicators_with_creator(
-                            &block.cid,
-                            &block.block,
-                            &block.doc_id,
-                            &write.collection_id,
-                            &document_json,
-                            creator_did.as_deref(),
-                        )
-                        .await
-                }
-                None => {
-                    self.sync
-                        .push_to_replicators_with_creator(
-                            &block.cid,
-                            &block.block,
-                            &block.doc_id,
-                            &write.collection_id,
-                            creator_did.as_deref(),
-                        )
-                        .await
-                }
-            };
-            capture_marker_error(&mut marker_error, marker);
-            blocks.push((
-                block,
-                write.collection_id.clone(),
-                write.collection_name.clone(),
-            ));
+                collection_id: write.collection_id.clone(),
+                creator: context.creator().map(str::to_owned),
+                decided_by: DecidedBy::Own(derived_document_json(write)),
+            })
+            .collect()
+    }
+
+    /// Gossips a write's derived writes once their markers are registered.
+    async fn gossip_derived(
+        &self,
+        context: &RequestContext,
+        derived: &[query::mutator::DerivedWrite],
+    ) {
+        if derived.is_empty() {
+            return;
         }
+        let creator_did = context.creator().map(str::to_owned);
+        let blocks: Vec<_> = derived
+            .iter()
+            .map(|write| {
+                (
+                    BlockResult {
+                        cid: write.commit_cid,
+                        block: write.commit_block.clone(),
+                        doc_id: write.doc_id.to_string(),
+                        field_cids: vec![],
+                        encryption_cids: vec![],
+                    },
+                    write.collection_id.clone(),
+                    write.collection_name.clone(),
+                )
+            })
+            .collect();
         let sync = self.sync.clone();
         let bus = self.db.event_bus().cloned();
         let roots = blocks
@@ -393,7 +400,6 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
             },
         )
         .await;
-        marker_error
     }
 
     async fn broadcast_update_result(
@@ -403,7 +409,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
         se_fields: Vec<String>,
         result: UpdateResult,
     ) -> query::error::Result<UpdateResult> {
-        let derived_error = self.publish_derived(context, &result.derived).await;
+        let derived_heads = Self::derived_heads(context, &result.derived);
         let collection = self
             .db
             .get_collection(collection_name)
@@ -429,6 +435,8 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
                             error = %e,
                             "Failed to read composite block for P2P broadcast"
                         );
+                        register_committed_heads(&self.sync, derived_heads).await;
+                        self.gossip_derived(context, &result.derived).await;
                         return Ok(UpdateResult::with_broadcast(
                             result.document,
                             result.fields_modified,
@@ -480,35 +488,17 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
         // Transfer durable head-hint ownership before returning the committed
         // mutation. The remaining gossip/artifact work may be asynchronous,
         // but a crash must not land between commit and scope-marker creation.
-        let creator_ref = creator_did.as_deref();
-        let mut marker_error = None;
-        capture_marker_error(
-            &mut marker_error,
-            self.sync
-                .push_document_to_replicators_with_creator(
-                    &block_result.cid,
-                    &block_result.block,
-                    &block_result.doc_id,
-                    &collection_id,
-                    &document_json,
-                    creator_ref,
-                )
-                .await,
-        );
-        if let Some(col_block_result) = branchable_data.as_ref() {
-            capture_marker_error(
-                &mut marker_error,
-                self.sync
-                    .push_to_replicators_with_creator(
-                        &col_block_result.cid,
-                        &col_block_result.block,
-                        &col_block_result.doc_id,
-                        &collection_id,
-                        creator_ref,
-                    )
-                    .await,
-            );
-        }
+        let marker_error = self
+            .register_write_heads(
+                &block_result,
+                branchable_data.as_ref(),
+                &collection_id,
+                creator_did.as_deref(),
+                DecidedBy::Own(Some(document_json.clone())),
+                derived_heads,
+            )
+            .await;
+        self.gossip_derived(context, &result.derived).await;
 
         let roots = gossip_roots(&block_result, branchable_data.as_ref(), &collection_id);
         let report_bus = bus.clone();
@@ -557,7 +547,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
         Ok(UpdateResult::with_broadcast(
             result.document,
             result.fields_modified,
-            marker_broadcast_status(marker_error.or(derived_error)),
+            marker_broadcast_status(marker_error),
         ))
     }
 }
@@ -741,7 +731,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
 
         // Execute the create mutation
         let result = self.inner.create_as(context, collection_name, doc).await?;
-        let derived_error = self.publish_derived(context, &result.derived).await;
+        let derived_heads = Self::derived_heads(context, &result.derived);
 
         // Build the block result for broadcast
         let (cid, block, doc_id_str) =
@@ -765,6 +755,8 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                             error = %e,
                             "Failed to build blocks for P2P broadcast"
                         );
+                        register_committed_heads(&self.sync, derived_heads).await;
+                        self.gossip_derived(context, &result.derived).await;
                         return Ok(CreateResult::with_broadcast(
                             result.doc_id,
                             result.document,
@@ -822,35 +814,17 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
 
         // Register the document/collection scope markers before the committed
         // mutation is returned. Network transmission remains queue-owned.
-        let creator_ref = creator_did.as_deref();
-        let mut marker_error = None;
-        capture_marker_error(
-            &mut marker_error,
-            self.sync
-                .push_document_to_replicators_with_creator(
-                    &block_result.cid,
-                    &block_result.block,
-                    &block_result.doc_id,
-                    &collection_id,
-                    &document_json,
-                    creator_ref,
-                )
-                .await,
-        );
-        if let Some(col_block_result) = branchable_data.as_ref() {
-            capture_marker_error(
-                &mut marker_error,
-                self.sync
-                    .push_to_replicators_with_creator(
-                        &col_block_result.cid,
-                        &col_block_result.block,
-                        &col_block_result.doc_id,
-                        &collection_id,
-                        creator_ref,
-                    )
-                    .await,
-            );
-        }
+        let marker_error = self
+            .register_write_heads(
+                &block_result,
+                branchable_data.as_ref(),
+                &collection_id,
+                creator_did.as_deref(),
+                DecidedBy::Own(Some(document_json.clone())),
+                derived_heads,
+            )
+            .await;
+        self.gossip_derived(context, &result.derived).await;
 
         // The local transaction is already committed. Gossip delivery is not
         // awaited, only a broadcast slot: gossip-only peers have no marker.
@@ -906,7 +880,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             result.document,
             return_cid,
             return_block,
-            marker_broadcast_status(marker_error.or(derived_error)),
+            marker_broadcast_status(marker_error),
         ))
     }
 
@@ -937,14 +911,11 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             .inner
             .create_many_as(context, collection_name, docs)
             .await?;
+        let mut derived_heads = Vec::new();
+        let mut derived_writes = Vec::new();
         for result in &results {
-            if let Some(error) = self.publish_derived(context, &result.derived).await {
-                tracing::error!(
-                    doc_id = %result.doc_id,
-                    error = %error,
-                    "Failed to register chunk writes for replication"
-                );
-            }
+            derived_heads.extend(Self::derived_heads(context, &result.derived));
+            derived_writes.extend(result.derived.iter().cloned());
         }
 
         let creator_did = context.creator().map(str::to_owned);
@@ -1056,40 +1027,50 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             // before handing only the non-authoritative gossip/artifact work
             // to the background task.
             let creator_ref = creator_did.as_deref();
+            let mut owners = Vec::new();
+            let mut heads = Vec::new();
             for (result_index, block_result, branchable_data, _, document_json) in &broadcast_work {
-                let mut marker_error = None;
-                capture_marker_error(
-                    &mut marker_error,
-                    self.sync
-                        .push_document_to_replicators_with_creator(
-                            &block_result.cid,
-                            &block_result.block,
-                            &block_result.doc_id,
-                            &collection_id,
-                            document_json,
-                            creator_ref,
-                        )
-                        .await,
-                );
+                owners.push(Some(*result_index));
+                heads.push(CommittedHead::of(
+                    block_result,
+                    &collection_id,
+                    creator_ref,
+                    DecidedBy::Own(Some(document_json.clone())),
+                ));
                 if let Some(col_block_result) = branchable_data {
-                    capture_marker_error(
-                        &mut marker_error,
-                        self.sync
-                            .push_to_replicators_with_creator(
-                                &col_block_result.cid,
-                                &col_block_result.block,
-                                &col_block_result.doc_id,
-                                &collection_id,
-                                creator_ref,
-                            )
-                            .await,
-                    );
-                }
-                if let Some(error) = marker_error {
-                    broadcast_results[*result_index].broadcast_status =
-                        BroadcastStatus::Failed(error);
+                    owners.push(Some(*result_index));
+                    heads.push(CommittedHead::of(
+                        col_block_result,
+                        &collection_id,
+                        creator_ref,
+                        DecidedBy::Collection,
+                    ));
                 }
             }
+            owners.extend(derived_heads.iter().map(|_| None));
+            heads.append(&mut derived_heads);
+            let errors = register_committed_heads(&self.sync, heads).await;
+            for (owner, error) in owners.into_iter().zip(errors) {
+                let Some(error) = error else {
+                    continue;
+                };
+                match owner {
+                    Some(index) => {
+                        let status = &mut broadcast_results[index].broadcast_status;
+                        *status = match std::mem::replace(status, BroadcastStatus::Pending) {
+                            BroadcastStatus::Failed(existing) => {
+                                BroadcastStatus::Failed(format!("{existing}; {error}"))
+                            }
+                            _ => BroadcastStatus::Failed(error),
+                        };
+                    }
+                    None => tracing::error!(
+                        %error,
+                        "Failed to register chunk writes for replication"
+                    ),
+                }
+            }
+            self.gossip_derived(context, &derived_writes).await;
 
             let roots = broadcast_work
                 .iter()
@@ -1152,6 +1133,9 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                 },
             )
             .await;
+        } else {
+            register_committed_heads(&self.sync, derived_heads).await;
+            self.gossip_derived(context, &derived_writes).await;
         }
 
         Ok(broadcast_results)
@@ -1262,12 +1246,14 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             .inner
             .delete_as(context, collection_name, doc_id)
             .await?;
-        let derived_error = self.publish_derived(context, &result.derived).await;
+        let derived_heads = Self::derived_heads(context, &result.derived);
 
         // No-op delete (missing doc): the inner mutator wrote nothing, so
         // there's no tombstone block to read or broadcast. Returning here
         // also avoids re-broadcasting the previous (stale) head.
         if !result.existed {
+            register_committed_heads(&self.sync, derived_heads).await;
+            self.gossip_derived(context, &result.derived).await;
             return Ok(result);
         }
 
@@ -1295,6 +1281,8 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                             error = %e,
                             "Failed to read delete composite block for P2P broadcast"
                         );
+                        register_committed_heads(&self.sync, derived_heads).await;
+                        self.gossip_derived(context, &result.derived).await;
                         return Ok(DeleteResult::with_broadcast(
                             result.doc_id,
                             result.existed,
@@ -1331,55 +1319,17 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
         // Preserve the committed delete as a durable scope obligation before
         // returning. Deletes and branchable collection commits use the same
         // head-hint queue as creates and updates.
-        let creator_ref = creator_did.as_deref();
-        let mut marker_error = None;
-        if let Some(document_json) = pre_delete_document_json.as_ref() {
-            capture_marker_error(
-                &mut marker_error,
-                self.sync
-                    .push_document_to_replicators_with_creator(
-                        &block_result.cid,
-                        &block_result.block,
-                        &block_result.doc_id,
-                        &collection_id,
-                        document_json,
-                        creator_ref,
-                    )
-                    .await,
-            );
-        } else {
-            p2p::model_trace!(Commit {
-                doc: &block_result.doc_id,
-                head: block_result.cid.to_string(),
-                parents: p2p::model_trace::parents_of(&block_result.block),
-            });
-            capture_marker_error(
-                &mut marker_error,
-                self.sync
-                    .push_to_replicators_with_creator(
-                        &block_result.cid,
-                        &block_result.block,
-                        &block_result.doc_id,
-                        &collection_id,
-                        creator_ref,
-                    )
-                    .await,
-            );
-        }
-        if let Some(col_block_result) = branchable_data.as_ref() {
-            capture_marker_error(
-                &mut marker_error,
-                self.sync
-                    .push_to_replicators_with_creator(
-                        &col_block_result.cid,
-                        &col_block_result.block,
-                        &col_block_result.doc_id,
-                        &collection_id,
-                        creator_ref,
-                    )
-                    .await,
-            );
-        }
+        let marker_error = self
+            .register_write_heads(
+                &block_result,
+                branchable_data.as_ref(),
+                &collection_id,
+                creator_did.as_deref(),
+                DecidedBy::Own(pre_delete_document_json),
+                derived_heads,
+            )
+            .await;
+        self.gossip_derived(context, &result.derived).await;
 
         // The local transaction is already committed; gossip delivery is not
         // awaited, only a broadcast slot.
@@ -1427,7 +1377,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
         Ok(DeleteResult::with_broadcast(
             result.doc_id,
             result.existed,
-            marker_broadcast_status(marker_error.or(derived_error)),
+            marker_broadcast_status(marker_error),
         ))
     }
 

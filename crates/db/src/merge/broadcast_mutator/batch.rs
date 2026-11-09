@@ -18,6 +18,8 @@ use tracing::{error, warn};
 use crate::block::builder::BlockResult;
 use crate::database::DB;
 
+use super::heads::{register_committed_heads, CommittedHead, DecidedBy};
+
 fn document_json_value(doc: &Document) -> Option<serde_json::Value> {
     Some(serde_json::Value::Object(
         doc.to_map().ok()?.into_iter().collect(),
@@ -185,51 +187,37 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport + 'static>
         Ok(())
     }
 
-    async fn register_pending_static(
-        sync: &SyncCoordinator<B, T>,
-        pending: &PendingBroadcast,
-    ) -> p2p::error::Result<()> {
-        let creator_ref = pending.creator_did.as_deref();
-        if let Some(document_json) = pending.document_json.as_ref() {
-            sync.push_document_to_replicators_with_creator(
-                &pending.cid,
-                &pending.block,
-                &pending.doc_id,
-                &pending.collection_id,
-                document_json,
-                creator_ref,
-            )
-            .await?;
-        } else {
-            p2p::model_trace!(Commit {
-                doc: &pending.doc_id,
-                head: pending.cid.to_string(),
-                parents: p2p::model_trace::parents_of(&pending.block),
+    /// The heads one pending broadcast must register markers for.
+    fn pending_heads(pending: &PendingBroadcast) -> Vec<CommittedHead> {
+        let mut heads = vec![CommittedHead {
+            cid: pending.cid,
+            block: pending.block.clone(),
+            doc_id: pending.doc_id.clone(),
+            collection_id: pending.collection_id.clone(),
+            creator: pending.creator_did.clone(),
+            decided_by: DecidedBy::Own(pending.document_json.clone()),
+        }];
+        if let (Some(cid), Some(block)) = (pending.broadcast_cid, pending.broadcast_block.as_ref())
+        {
+            heads.push(CommittedHead {
+                cid,
+                block: block.clone(),
+                doc_id: String::new(),
+                collection_id: pending.collection_id.clone(),
+                creator: pending.creator_did.clone(),
+                decided_by: DecidedBy::Collection,
             });
-            sync.push_to_replicators_with_creator(
-                &pending.cid,
-                &pending.block,
-                &pending.doc_id,
-                &pending.collection_id,
-                creator_ref,
-            )
-            .await?;
         }
+        heads
+    }
 
-        if let (Some(col_cid), Some(col_block)) = (
-            pending.broadcast_cid.as_ref(),
-            pending.broadcast_block.as_ref(),
-        ) {
-            sync.push_to_replicators_with_creator(
-                col_cid,
-                col_block,
-                "",
-                &pending.collection_id,
-                creator_ref,
-            )
-            .await?;
-        }
-        Ok(())
+    /// Registers every pending broadcast's markers, returning their errors.
+    async fn register_pending(
+        sync: &Arc<SyncCoordinator<B, T>>,
+        pending: &[PendingBroadcast],
+    ) -> Option<String> {
+        let heads = pending.iter().flat_map(Self::pending_heads).collect();
+        super::heads::joined(register_committed_heads(sync, heads).await)
     }
 
     /// Gossip a committed batch's heads, waiting for room in the pending-gossip
@@ -714,17 +702,11 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> MutationBatch
             .await?;
         let pending_broadcasts = committed.pop().unwrap_or_default();
         if !pending_broadcasts.is_empty() {
-            let mut marker_errors = Vec::new();
-            for pending in &pending_broadcasts {
-                if let Err(error) = Self::register_pending_static(&self.sync, pending).await {
-                    marker_errors.push(error.to_string());
-                }
-            }
+            let marker_error = Self::register_pending(&self.sync, &pending_broadcasts).await;
             self.spawn_batch_gossip(pending_broadcasts).await;
-            if !marker_errors.is_empty() {
+            if let Some(error) = marker_error {
                 return Err(query::error::QueryError::execution(format!(
-                    "committed batch has undurable P2P head markers: {}",
-                    marker_errors.join("; ")
+                    "committed batch has undurable P2P head markers: {error}"
                 )));
             }
         }
@@ -743,17 +725,11 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> MutationBatch
 
         let pending_broadcasts = self.drain_pending_broadcasts();
         if !pending_broadcasts.is_empty() {
-            let mut marker_errors = Vec::new();
-            for pending in &pending_broadcasts {
-                if let Err(error) = Self::register_pending_static(&self.sync, pending).await {
-                    marker_errors.push(error.to_string());
-                }
-            }
+            let marker_error = Self::register_pending(&self.sync, &pending_broadcasts).await;
             self.spawn_batch_gossip(pending_broadcasts).await;
-            if !marker_errors.is_empty() {
+            if let Some(error) = marker_error {
                 return Err(query::error::QueryError::execution(format!(
-                    "committed batch has undurable P2P head markers: {}",
-                    marker_errors.join("; ")
+                    "committed batch has undurable P2P head markers: {error}"
                 )));
             }
         }
