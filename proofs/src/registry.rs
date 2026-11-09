@@ -2538,6 +2538,39 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A document write or a truncate checks `get-collection` and then
+        // its own permission, in Go's order, inside its transaction, and a
+        // call that names no identity acts as no one, never as the node.
+        family: "Node access control operations",
+        name: "INV_NoEffectWithoutPermission / INV_RefusalNamesGoFirst",
+        axis: Tla,
+        anchor: "crates/acp/src/nac/permission.rs NodePermission::go_order; crates/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/db/src/write/autocommit/batch.rs check_attempt_node_access; crates/defra-node/src/ops/request.rs caller, txn_owner",
+        model_ref: "MC_NacOrder_{Green,Red_SkipGet,Red_OwnFirst,Red_AnonAsNode,Red_OutsideTxn}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Node access control operations",
+        name: "goOrder_collection_write / goOrder_alone / firstMissing_none_iff / firstMissing_some / allowed_needs_both / refused_get_collection_first / no_bypass_when_off / no_bypass_anonymous / bypass_iff_held",
+        axis: Lean,
+        anchor: "crates/acp/src/nac/permission.rs NodePermission::go_order; crates/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/db/src/read/lensed/fetcher/mod.rs dac_bypass",
+        model_ref: "NacOrder (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A read bypasses document access control exactly when node access
+        // control is on and grants the caller `bypass-dac`, decided at the
+        // read's own snapshot.
+        family: "Node access control operations",
+        name: "INV_BypassOnlyWhenGranted / INV_BypassWhenGranted",
+        axis: Tla,
+        anchor: "crates/query/src/runner/turn.rs lent; crates/db/src/read/lensed/fetcher/mod.rs dac_bypass; crates/db/src/collection/acp.rs check_doc_permission_as",
+        model_ref: "MC_NacDacBypass_{Green,Red_NacOff,Red_Never,Red_Live}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Iroh solicited replies",
         name: "INV_NoUnsolicitedAdmitted / INV_SolicitedAdmitted / INV_NoReplyStreamOnV2",
         axis: Tla,

@@ -48,10 +48,6 @@ impl Node {
         name: &str,
         filter: Option<&Filter>,
     ) -> Result<()> {
-        // Go reads the collection before it truncates, so that permission is
-        // the first one checked.
-        self.check_access(context, acp::nac::NodePermission::CollectionGet)
-            .await?;
         self.runner()
             .truncate_collection_as(&self.caller(context), name, filter)
             .await
