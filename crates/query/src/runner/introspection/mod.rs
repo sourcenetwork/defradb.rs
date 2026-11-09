@@ -88,7 +88,7 @@ pub fn build_introspection_schema(
     let mut schema_builder = Schema::build("Query", mutation_name, Some("Subscription"));
 
     // Build a Query type with fields for each collection
-    let mut query_type = Object::new("Query").description("Root query type");
+    let mut query_type = Object::new("Query");
     // Subscriptions are served over SSE; this type only describes them.
     let mut subscription_type = Subscription::new("Subscription");
 
@@ -528,9 +528,20 @@ mod tests {
 
             for type_name in ["collection", "query", "commit"] {
                 assert_non_null_aggregate(&result[type_name], "AVG", "Float");
-                assert_non_null_aggregate(&result[type_name], "COUNT", "Int");
+                if type_name != "commit" {
+                    assert_non_null_aggregate(&result[type_name], "COUNT", "Int");
+                }
                 assert_non_null_aggregate(&result[type_name], "SUM", "Float");
             }
+            // Go's `Commit.COUNT` is a nullable `Int`.
+            let commit_count = result["commit"]["fields"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|field| field["name"] == "COUNT")
+                .unwrap();
+            assert_eq!(commit_count["type"]["kind"], "SCALAR");
+            assert_eq!(commit_count["type"]["name"], "Int");
         })
         .unwrap()
     }

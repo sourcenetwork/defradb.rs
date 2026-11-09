@@ -52,12 +52,14 @@ macro_rules! scalar_operator_block {
                     $scalar,
                     "\n values.\n"
                 ))
+                // Only `IDOperatorBlock` uses this arm; Go's `_in`/`_nin`
+                // there take non-null elements.
                 .field(
                     InputValue::new("_eq", TypeRef::named($scalar))
                         .description(super::descriptions::EQ_OPERATOR),
                 )
                 .field(
-                    InputValue::new("_in", TypeRef::named_list($scalar))
+                    InputValue::new("_in", TypeRef::named_nn_list($scalar))
                         .description(super::descriptions::IN_OPERATOR),
                 )
                 .field(
@@ -65,7 +67,7 @@ macro_rules! scalar_operator_block {
                         .description(super::descriptions::NEQ_OPERATOR),
                 )
                 .field(
-                    InputValue::new("_nin", TypeRef::named_list($scalar))
+                    InputValue::new("_nin", TypeRef::named_nn_list($scalar))
                         .description(super::descriptions::NIN_OPERATOR),
                 )
         }
