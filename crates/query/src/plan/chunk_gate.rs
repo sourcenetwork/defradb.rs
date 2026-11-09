@@ -21,7 +21,7 @@ use crate::error::Result;
 use crate::fetcher::DocFetcher;
 
 /// Reads one document, validating only `fields` where the fetcher can.
-async fn get_projected(
+pub(crate) async fn get_projected(
     fetcher: &dyn DocFetcher,
     collection: &str,
     doc_id: &str,

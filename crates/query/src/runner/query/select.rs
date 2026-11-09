@@ -3,6 +3,7 @@
 use acp::{DocumentPermission, Identity};
 use identity::Did;
 use serde_json::Value as JsonValue;
+use std::sync::Arc;
 
 use crate::error::{QueryError, Result};
 use crate::executor::GqlWarning;
@@ -263,10 +264,19 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
         // Validate similarity fields against the collection schema
         if has_similarity {
+            // An embedding over a `@chunk` field lives on its chunk collection.
+            let mut chunk_collections = Vec::new();
+            for name in collection.chunk_collection_names() {
+                chunk_collections.push(self.get_collection(&name).await?);
+            }
             for field in &select.fields {
                 if let Requestable::Similarity(sim) = field {
                     let target = &sim.target_field;
-                    let schema_field = collection.field_by_name(target);
+                    let schema_field = collection.field_by_name(target).or_else(|| {
+                        collection
+                            .chunk_embedding(target, chunk_collections.iter().map(Arc::as_ref))
+                            .and_then(|chunks| chunks.field_by_name(target))
+                    });
                     // Check that the target field exists and is a numeric array
                     let element_kind = schema_field.and_then(|f| {
                         if let schema::FieldKind::ScalarArray(arr) = &f.kind {

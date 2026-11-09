@@ -210,6 +210,15 @@ impl CliRun for Request {
             }
             state
                 .defra_client_as(action.common.node(), action.txn, identity, &args)
+                .map(|mut printed| {
+                    let extensions = printed
+                        .as_object_mut()
+                        .and_then(|printed| printed.remove("extensions"));
+                    if let Some(checked) = action.checked_extensions(extensions) {
+                        printed["extensions"] = checked;
+                    }
+                    printed
+                })
                 .map_err(Failure::operation)
                 .and_then(|envelope| action.typed(envelope))
         });

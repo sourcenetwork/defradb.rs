@@ -333,8 +333,8 @@ impl PlanNode for SelectNode {
 
         // Go DefraDB format: always include filter (null if none)
         // Strip _docID conditions - Go handles doc_ids separately and doesn't show them as filters
-        // Use explain_filter as fallback when no real filter is set (for relation filter display).
-        let display_filter = self.filter.as_ref().or(self.explain_filter.as_ref());
+        // An explain filter, when set, is what the user wrote; it may cover more than this node applies.
+        let display_filter = self.explain_filter.as_ref().or(self.filter.as_ref());
         if let Some(filter) = display_filter {
             obj.insert("filter".to_string(), super::strip_docid_from_filter(filter));
         } else {

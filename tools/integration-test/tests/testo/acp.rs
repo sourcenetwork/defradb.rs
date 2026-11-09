@@ -79,6 +79,7 @@ mod dac {
     mod register_and_read;
     mod register_and_update;
     mod relation_objects;
+    mod similarity;
     mod relationship {
         mod doc_actor {
             mod add {

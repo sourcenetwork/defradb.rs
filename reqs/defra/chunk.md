@@ -246,7 +246,7 @@ An `@embedding` of a `@chunk` field gives every chunk its own vector, made from 
 - **Parents:** ["defra.chunk.embed"]
 - **Scenarios:** ["chunk::embed_declare::the_embedding_moves_from_the_parent_to_its_chunks"]
 
-With `body: String @chunk` and `body_v: [Float32!] @embedding(fields: ["body"], ...) @index(vector: {dimensions: 3})` on `Article`, the field `body_v`, its embedding and its vector index belong to `Article__body_chunk`, embedding the chunk's `text`. `Article__body_chunk { body_v }` returns `[]` before any document is added. `Article` has no `body_v`, so `SIMILARITY(body_v: ...)` on `Article` fails with `Unknown argument "body_v" on field "SIMILARITY" of type "Article"`; a similarity search over passages queries `Article__body_chunk`.
+With `body: String @chunk` and `body_v: [Float32!] @embedding(fields: ["body"], ...) @index(vector: {dimensions: 3})` on `Article`, the field `body_v`, its embedding and its vector index belong to `Article__body_chunk`, embedding the chunk's `text`. `Article__body_chunk { body_v }` returns `[]` before any document is added. `Article` has no `body_v`, so `Article { body_v }` fails with `Cannot query field "body_v" on type "Article"`; a similarity search over passages queries `Article__body_chunk`, and `SIMILARITY(body_v: ...)` on `Article` ranks articles by their chunks (`defra.chunk.rank`).
 
 # `defra.chunk.embed.declare_only_field`: The embedding embeds the chunked field alone
 
@@ -331,3 +331,101 @@ Adding an article with `body` encrypted asks the model for each chunk once, and 
 - **Scenarios:** ["chunk::embed_writes::an_upsert_embeds_the_chunks_it_creates"]
 
 An `upsert_Article` that finds no article creates one, asks the model for each of its chunks once, and every chunk holds its vector.
+
+# `defra.chunk.rank`: Ranking articles by their best chunk
+
+- **Parents:** ["defra.chunk.embed"]
+
+`SIMILARITY(body_v: ...)` on `Article`, where `body_v` embeds a `@chunk` field, scores each article by its best chunk: the highest similarity among the chunks its current text lists. Each article appears once. A query the vector index can answer, as for a single-vector field, reads the chunk index nearest first, widens until the chunks it read name enough articles, and scores every article from its listed chunks when the index runs out. A routed article's score is always its best listed chunk's; which articles make the page is as exact as the index, so an approximate index such as HNSW, the default, can leave out an article an exact one would return. Any other query scores every article from its listed chunks, with the same `VECTOR_INDEX_UNUSED` warning a single-vector field gives.
+
+# `defra.chunk.rank.best_chunk`: Articles rank by their best chunk, through the chunk index
+
+- **Parents:** ["defra.chunk.rank"]
+- **Scenarios:** ["chunk::rank_best_chunk::articles_rank_by_their_best_chunk_through_the_chunk_index"]
+
+With an article whose second paragraph is about rivers, one about rivers and engines, and one about music, `Article(order: {_alias: {sim: DESC}}, limit: 2) { title sim: SIMILARITY(body_v: {vector: [1, 0, 0]}) }` returns the first with similarity 1 and the second with similarity 0.7071. Under `@explain(type: execute)`, the article scan names the chunk collection's vector index in `vectorIndex` and reads it once.
+
+# `defra.chunk.rank.widen`: A filtered query widens its chunk search
+
+- **Parents:** ["defra.chunk.rank"]
+- **Scenarios:** ["chunk::rank_filtered::a_filtered_query_widens_past_the_chunks_of_filtered_out_articles"]
+
+With three draft articles about rivers and one titled `kept` about rivers and engines, the same query with `limit: 1, filter: {title: {_eq: "kept"}}` returns `kept` with similarity 0.7071. The chunk index is read three times, for one, two and then four chunks.
+
+# `defra.chunk.rank.unrouted`: An unrouted query scores every article from its chunks
+
+- **Parents:** ["defra.chunk.rank"]
+- **Scenarios:** ["chunk::rank_unrouted::a_query_without_a_limit_scores_every_article_from_all_its_chunks"]
+
+Without a limit the same query returns every article, best first, each scored by its best chunk, with the warning `VECTOR_INDEX_UNUSED` whose detail is `{"field": "body_v", "reason": "noLimit"}`.
+
+# `defra.chunk.rank.superseded`: A replaced chunk never ranks its article
+
+- **Parents:** ["defra.chunk.rank"]
+- **Scenarios:** ["chunk::rank_superseded::a_replaced_chunk_does_not_rank_its_article"]
+
+An article about rivers, edited to be about music, keeps its old rivers chunk stored and indexed, but its score is its music chunk's, 0. With another article about rivers and engines, `limit: 1` returns that other article, and `limit: 2`, or no limit at all, returns it and then the edited article with similarity 0.
+
+# `defra.chunk.rank.access`: A reader ranks only the articles they may read
+
+- **Parents:** ["defra.chunk.rank"]
+- **Scenarios:** ["chunk::rank_access::a_reader_ranks_only_the_articles_they_may_read_through_a_grant_and_a_delete"]
+
+Under a local policy, with Alice's article about rivers and a public article about engines created with no identity, `limit: 2` returns both to Alice, hers first with similarity 1. `limit: 1` returns the public article, with similarity 0, to Bob and to a request with no identity, though Alice's article is nearer. Once Alice makes Bob a reader, `limit: 1` returns her article to Bob, and still the public one to a request with no identity. Once she deletes it, `limit: 1` returns the public article to Bob and to Alice.
+
+# `defra.chunk.rank.offset`: An offset skips the best articles
+
+- **Parents:** ["defra.chunk.rank"]
+- **Scenarios:** ["chunk::rank_best_chunk::an_offset_skips_the_best_articles"]
+
+With the three articles of `defra.chunk.rank.best_chunk`, `limit: 1, offset: 1` returns the article about rivers and engines, with similarity 0.7071.
+
+# `defra.chunk.rank.doc_ids`: Requested docIDs narrow a routed query
+
+- **Parents:** ["defra.chunk.rank"]
+- **Scenarios:** ["chunk::rank_filtered::requested_doc_ids_narrow_a_routed_query"]
+
+With an article about rivers and one about rivers and engines, `limit: 1, docID: [<the second>]` returns the second, with similarity 0.7071.
+
+# `defra.chunk.rank.fallback`: An index that can't fill the page falls back to every article
+
+- **Parents:** ["defra.chunk.rank"]
+- **Scenarios:** ["chunk::rank_fallback::an_index_that_cannot_fill_the_page_falls_back_to_every_article"]
+
+With two articles that have chunks and one with no body, `limit: 3` returns all three, best first, the one with no body with similarity `null`. Under `@explain(type: execute)` the article scan names the chunk vector index and reads it twice before reading every article.
+
+# `defra.chunk.rank.metric`: A chunk index with another metric ranks by it
+
+- **Parents:** ["defra.chunk.rank"]
+- **Scenarios:** ["chunk::rank_metric::a_dot_product_index_ranks_by_dot_product"]
+
+With `@index(vector: {dimensions: 3, hnsw: {metric: DOT}})` on `body_v`, an article about rivers and rivers ranks above one about rivers, with similarities 2 and 1.
+
+# `defra.chunk.rank.wrong_length`: A query vector of the wrong length fails
+
+- **Parents:** ["defra.chunk.rank"]
+- **Scenarios:** ["chunk::rank_unrouted::a_vector_of_the_wrong_length_names_the_chunk_field"]
+
+`SIMILARITY(body_v: {vector: [1, 0]})` against 3-dimension chunk vectors fails with `source and vector must be of the same length. Source: 3, Vector: 2, Field: Article__body_chunk.body_v`.
+
+# `defra.chunk.rank.nested`: A nested ranking scores only readable articles
+
+- **Parents:** ["defra.chunk.rank"]
+- **Scenarios:** ["chunk::rank_nested::a_nested_ranking_scores_only_the_articles_the_reader_may_read"]
+
+With `Author { articles: [Article] }`, `Article` under a local policy, an author `hidden` with only Alice's article about rivers and an author `shared` with another of hers and a public article with no body, `Author { name articles { title sim: SIMILARITY(body_v: ...) } }` gives Alice's two articles similarity 1 and the public one `null` for Alice, and only the public one for Bob. For Bob, the same query on `hidden` with a vector of the wrong length returns `hidden` with no articles, because his query never scores Alice's article. On an author `open` with a public article about engines, that query fails for Bob with `source and vector must be of the same length. Source: 3, Vector: 2, Field: Article__body_chunk.body_v`.
+
+# `defra.chunk.rank.nested_alias`: A nested filter on scores waits for the scores
+
+- **Parents:** ["defra.chunk.rank"]
+- **Scenarios:** ["chunk::rank_nested::a_nested_filter_on_scores_waits_for_the_scores"]
+
+With an author's articles about music (`x`), rivers, and rivers and engines (`half`), `articles(filter: {_or: [{title: {_eq: "x"}}, {_alias: {sim: {_gt: 0.9}}}]})` returns `x` and `rivers`, `articles(filter: {_not: {_alias: {sim: {_gt: 0.5}}}})` returns `x`, and `articles(docID: [<half>], filter: {_alias: {sim: {_gt: 0.5}}})` returns `half`, while the same with `x`'s docID returns nothing.
+
+# `defra.chunk.rank.nested_shape`: A nested ranking takes a filter, an order and a limit
+
+- **Parents:** ["defra.chunk.rank"]
+- **Scenarios:** ["chunk::rank_nested::a_nested_ranking_takes_a_filter_an_order_and_a_limit"]
+
+With the same articles, `articles(filter: {title: {_ne: "rivers"}}, order: {_alias: {sim: DESC}}, limit: 1)` returns `half`, with similarity 0.7071. Under `@explain`, the nested select shows the filter the query wrote.
+

@@ -45,7 +45,11 @@ impl QueryArgs {
         }
 
         let data = response.data.unwrap_or(serde_json::Value::Null);
-        let wrapped = serde_json::json!({ "data": data });
+        let mut wrapped = serde_json::json!({ "data": data });
+        // Warnings, such as an unused vector index, travel in the extensions.
+        if let Some(extensions) = response.extensions.filter(|value| !value.is_null()) {
+            wrapped["extensions"] = extensions;
+        }
         let output = serde_json::to_string_pretty(&wrapped)?;
         println!("{output}");
 

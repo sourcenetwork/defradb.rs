@@ -21,17 +21,14 @@ fn the_embedding_moves_from_the_parent_to_its_chunks() {
         }
         .into(),
         Request {
-            request: "query { Article { sim: SIMILARITY(body_v: {vector: [1, 0, 0]}) } }".into(),
-            expected_error: Some(PARENT_SIMILARITY_ERROR.into()),
+            request: "query { Article { body_v } }".into(),
+            expected_error: Some(r#"Cannot query field "body_v" on type "Article""#.into()),
             ..Default::default()
         }
         .into(),
     ])
     .execute();
 }
-
-const PARENT_SIMILARITY_ERROR: &str =
-    r#"Unknown argument "body_v" on field "SIMILARITY" of type "Article""#;
 
 #[test]
 #[mantra_macros::req_test("defra.chunk.embed.declare_only_field")]

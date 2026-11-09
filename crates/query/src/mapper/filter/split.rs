@@ -132,6 +132,18 @@ impl Filter {
         (non_alias_filter, alias_filter)
     }
 
+    /// Splits off what can run before computed scores, and what must wait for them.
+    ///
+    /// An `_alias` under `_or`, `_and` or `_not` can't be split off, so the whole filter waits.
+    pub fn split_for_scores(&self) -> (Option<Filter>, Option<Filter>) {
+        match self.split_alias() {
+            (Some(row), _) if names_alias(&JsonValue::Object(row.conditions().clone())) => {
+                (None, Some(self.clone()))
+            }
+            split => split,
+        }
+    }
+
     /// Strip _alias conditions from the filter that reference aggregate field names.
     ///
     /// This is used to prevent _alias conditions on computed aggregates from being
@@ -166,5 +178,14 @@ impl Filter {
             Filter::from_conditions_with_max_depth(new_conditions, self.max_depth()),
             has_aggregate_alias,
         )
+    }
+}
+
+/// Whether a filter names `_alias` at any depth.
+fn names_alias(value: &JsonValue) -> bool {
+    match value {
+        JsonValue::Object(map) => map.contains_key("_alias") || map.values().any(names_alias),
+        JsonValue::Array(items) => items.iter().any(names_alias),
+        _ => false,
     }
 }
