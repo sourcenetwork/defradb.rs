@@ -1,5 +1,6 @@
-//! Adapter to bridge database collection management operations to HTTP's
-//! CollectionManagementOperations trait.
+//! The database's collection management, as the HTTP API's
+//! [`CollectionManagementOperations`]: the `defradb start` server serves it,
+//! and an embedded node's server when its config turns it on.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -7,7 +8,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use defra_core::RequestContext;
 
-use defra_http::router::CollectionManagementOperations;
+use crate::router::CollectionManagementOperations;
 use storage::corekv::Store;
 
 /// Adapter that implements CollectionManagementOperations using the database.

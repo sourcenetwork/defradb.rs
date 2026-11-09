@@ -133,7 +133,8 @@ impl TestNode {
                 let url = format!("http://{}", listener.local_addr().expect("local address"));
                 let mut config = HttpConfig::with_listener(listener)
                     .expect("http config")
-                    .with_dev_mode(true);
+                    .with_dev_mode(true)
+                    .with_collection_management(true);
                 if let Some((ttl, tick)) = spec.txn_ttl {
                     config = config
                         .with_transaction_idle_timeout(ttl)

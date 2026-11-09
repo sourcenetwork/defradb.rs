@@ -58,6 +58,7 @@ pub struct HttpConfig {
     pub(crate) router_transform: Option<defra_http::RouterTransform>,
     pub(crate) listener: Option<std::net::TcpListener>,
     pub(crate) dev_mode: bool,
+    pub(crate) collection_management: bool,
 }
 
 #[cfg(feature = "http")]
@@ -78,6 +79,7 @@ impl HttpConfig {
             router_transform: None,
             listener: None,
             dev_mode: false,
+            collection_management: false,
         }
     }
 
@@ -134,6 +136,15 @@ impl HttpConfig {
     /// the CLI's `--development` does.
     pub fn with_dev_mode(mut self, dev_mode: bool) -> Self {
         self.dev_mode = dev_mode;
+        self
+    }
+
+    /// Serve collection management (`/actions`, deleting collections and
+    /// versions, purge), as `defradb start` and Go's server do. Off by
+    /// default: an application embedding a node exposes collection
+    /// observation only, unless it opts in.
+    pub fn with_collection_management(mut self, enabled: bool) -> Self {
+        self.collection_management = enabled;
         self
     }
 }
