@@ -86,6 +86,7 @@ mod sync {
         mod patch;
         mod simple;
         mod view;
+        mod view_over_synced_lens;
         mod with_nonnillable_array_fields;
         mod with_nonnillable_scalar_fields;
     }

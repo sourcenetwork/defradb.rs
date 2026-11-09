@@ -429,8 +429,9 @@ impl<S: Store> crate::database::DB<S> {
     /// reads (Go: `lensCIDExists` on the transaction's lens store). The read
     /// is validated at commit, and the config commits before the in-memory
     /// lens store registers it, so a committed lens is never reported missing.
-    /// A lens that P2P sync registers has no config, only its in-memory entry;
-    /// lenses are never removed, so that entry is as stable as a config.
+    /// Every lens the node holds has a config: added here (`add_lens`), in a
+    /// transaction, as a migration, or fetched by P2P sync
+    /// (`commit_synced_lens`).
     async fn require_view_transforms(
         &self,
         txn: &crate::txn::DbTxn<S>,
@@ -442,16 +443,12 @@ impl<S: Store> crate::database::DB<S> {
             .filter_map(|source| source.as_ref()?.transform.as_ref());
         for transform in transforms {
             let key = storage::keys::systemstore::LensConfigKey::new(transform.as_str());
-            let committed = txn
+            if txn
                 .systemstore()?
                 .get(&key.bytes())
                 .await
                 .map_err(Error::Storage)?
-                .is_some();
-            if !committed
-                && !self
-                    .lens_store()
-                    .has_transform(&lens::TransformId::new(transform.as_str()))
+                .is_none()
             {
                 return Err(Error::ViewTransformMissing(transform.clone()));
             }

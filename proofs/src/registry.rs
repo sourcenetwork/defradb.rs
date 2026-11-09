@@ -2506,14 +2506,15 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         // #2724: the NAC, empty-CID and lens checks against the view's commit,
-        // while the lens is being added and the permission changes. The lens
-        // config is read in the create transaction (require_view_transforms);
+        // while the lens arrives (added locally or fetched by P2P sync) and
+        // the permission changes. Both arrivals commit the lens config, and
+        // the create transaction reads it (require_view_transforms);
         // NAC ViewAdd is still read before it, a known gap (#2736):
         // Green_NacBefore and Red_KnownGap_NacBefore.
         family: "Add view with a lens transform",
         name: "INV_NoEmptyTransform / INV_StoredTransformExists / INV_StoredIsAccepted / INV_NoViewWithoutPermission / INV_NoValidRejected",
         axis: Tla,
-        anchor: "crates/defra-node/src/db_impls.rs DbSchemaOps::add_view; crates/db/src/collection/ops/create.rs DB::create_collections_atomic_with_acp_registration_as, DB::require_view_transforms; crates/db/src/definition/migration/committed_lenses.rs DB::add_lens, write_lens_config",
+        anchor: "crates/defra-node/src/db_impls.rs DbSchemaOps::add_view; crates/db/src/collection/ops/create.rs DB::create_collections_atomic_with_acp_registration_as, DB::require_view_transforms; crates/db/src/definition/migration/committed_lenses.rs DB::add_lens, DB::commit_synced_lens, write_lens_config; crates/p2p-adapter/src/version_syncer.rs sync_lens; crates/p2p-adapter/src/transport_version_syncer.rs sync_lens",
         model_ref: "MC_AddViewTransform_{Green,Green_NacBefore,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",

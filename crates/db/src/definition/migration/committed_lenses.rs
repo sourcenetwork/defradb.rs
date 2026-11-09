@@ -309,6 +309,19 @@ where
         Ok(lens.id)
     }
 
+    /// Keep a lens that P2P sync fetched under its block CID `id`: its config
+    /// commits as a local lens's does, then it is registered. Its blocks are
+    /// already in the blockstore. Like Go's lens node, which keeps a synced
+    /// lens in the store `getLensStore` reads, so a restart reloads it and a
+    /// view's lens check finds it in its transaction.
+    pub async fn commit_synced_lens(&self, id: TransformId, config: LensConfig) -> Result<()> {
+        let txn = self.new_txn(false).await?;
+        write_lens_config(&txn.systemstore()?, &id, &config).await?;
+        txn.commit().await?;
+        self.register_committed_lens(id, config).await;
+        Ok(())
+    }
+
     /// Reload persisted lens configs from the systemstore into the lens store.
     ///
     /// Called during database open to restore transforms that were registered

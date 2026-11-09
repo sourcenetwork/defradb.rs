@@ -249,7 +249,9 @@ RUNS=(
   "MC_AddViewTransform_Red_NoLens.cfg AddViewTransform.tla RED" # lens check left out (INV_StoredTransformExists)
   "MC_AddViewTransform_Red_NoStore.cfg AddViewTransform.tla RED" # accepted CID not stored on the query source (INV_StoredIsAccepted)
   "MC_AddViewTransform_Red_LensInMemory.cfg AddViewTransform.tla RED" # lens asked of the in-memory store, as before the fix: it lags the lens commit (INV_NoValidRejected)
-  "MC_AddViewTransform_Green_NacBefore.cfg AddViewTransform.tla GREEN" # the code as it is: NAC still before the transaction, every other promise holds
+  "MC_AddViewTransform_Red_SyncMemoryOnly.cfg AddViewTransform.tla RED" # P2P sync keeps a lens in memory only: a held lens is refused (INV_NoValidRejected)
+  "MC_AddViewTransform_Red_SyncMemoryOnly_Restart.cfg AddViewTransform.tla RED" # before the fix: memory-only sync and a memory check store a lens a restart loses (INV_StoredTransformExists)
+  "MC_AddViewTransform_Green_NacBefore.cfg AddViewTransform.tla GREEN" # the code as it is: lenses from either path decided in the transaction; NAC still before it, every other promise holds
   "MC_AddViewTransform_Red_KnownGap_NacBefore.cfg AddViewTransform.tla RED" # known gap (#2736): NAC ViewAdd read before the view's transaction (INV_NoViewWithoutPermission)
   "MC_VerifySignature_Green_Pool.cfg VerifySignature.tla GREEN" # #2724: with no transaction, NAC, block and document ACP read one read-only view
   "MC_VerifySignature_Green_Txn.cfg VerifySignature.tla GREEN" # #2724: in the caller's transaction, all three read its view, pending writes included
