@@ -4,11 +4,10 @@
 
 use acp::nac::NodePermission;
 use defra_core::RequestContext;
-use schema::EncryptedIndexDescription;
 use serde::Serialize;
-use storage::corekv::Key;
 
 use super::handle::{Database, NodeOps};
+use crate::ops::request::transaction_error;
 use crate::{Error, Node, Result};
 
 /// An encrypted index as Go lists it.
@@ -69,6 +68,7 @@ impl Node {
 }
 
 /// The operations of [`Node`] above, as `context` names: no default caller.
+/// Each runs in the transaction `context` carries, or in one of its own.
 impl NodeOps {
     /// Add an equality encrypted index on `field_name` of `collection`.
     pub(crate) async fn add_encrypted_index(
@@ -77,35 +77,27 @@ impl NodeOps {
         collection: &str,
         field_name: &str,
     ) -> Result<EncryptedIndexListing> {
-        let (database, context) = (self.database.clone(), context.clone());
-        let (collection, field) = (collection.to_owned(), field_name.to_owned());
-        self.on_pool(move || async move {
-            database
-                .check_node_access_as(&context, NodePermission::CollectionGet)
-                .await?;
-            database
-                .check_node_access_as(&context, NodePermission::EncryptedIndexAdd)
-                .await?;
-            rewrite(&database, &collection, |schema| {
-                if !schema.fields.iter().any(|f| f.name == field) {
-                    return Err(Error::EncryptedIndexFieldMissing(field.clone()));
-                }
-                if schema
-                    .encrypted_indexes
-                    .iter()
-                    .any(|i| i.field_name == field)
-                {
-                    return Err(Error::EncryptedIndexExists(field.clone()));
-                }
-                schema
-                    .encrypted_indexes
-                    .push(EncryptedIndexDescription::new(&field));
-                Ok(())
+        self.allowed(context, NodePermission::EncryptedIndexAdd)
+            .await?;
+        if context.txn().is_some() {
+            self.runner
+                .add_encrypted_index_in_txn_as(context, collection, field_name)
+                .await
+                .map_err(transaction_error)?;
+        } else {
+            let database = self.database.clone();
+            let (collection, field) = (collection.to_owned(), field_name.to_owned());
+            self.on_pool(move || async move {
+                let txn = database.new_txn(false).await.map_err(Error::TxnCreate)?;
+                database
+                    .add_encrypted_index_in(&txn, &collection, &field)
+                    .await
+                    .map_err(definition_error)?;
+                txn.commit().await.map_err(Error::Commit)
             })
             .await?;
-            Ok(listing(&field))
-        })
-        .await
+        }
+        Ok(listing(field_name))
     }
 
     /// The encrypted indexes of `collection`.
@@ -114,18 +106,28 @@ impl NodeOps {
         context: &RequestContext,
         collection: &str,
     ) -> Result<Vec<EncryptedIndexListing>> {
-        let (database, context) = (self.database.clone(), context.clone());
-        let collection = collection.to_owned();
-        self.on_pool(move || async move {
-            database
-                .check_node_access_as(&context, NodePermission::CollectionGet)
-                .await?;
-            database
-                .check_node_access_as(&context, NodePermission::EncryptedIndexList)
-                .await?;
-            indexes_of(&database, &collection)
-        })
-        .await
+        self.allowed(context, NodePermission::EncryptedIndexList)
+            .await?;
+        let fields = if context.txn().is_some() {
+            self.runner
+                .encrypted_indexes_in_txn_as(context, collection)
+                .await
+                .map_err(transaction_error)?
+        } else {
+            let database = self.database.clone();
+            let collection = collection.to_owned();
+            self.on_pool(move || async move {
+                let txn = database.new_txn(true).await.map_err(Error::TxnCreate)?;
+                let fields = database
+                    .encrypted_indexes_in(&txn, &collection)
+                    .await
+                    .map_err(definition_error);
+                let _ = txn.discard();
+                fields
+            })
+            .await?
+        };
+        Ok(fields.iter().map(|field| listing(field)).collect())
     }
 
     /// Every collection's encrypted indexes, by collection name; a
@@ -158,29 +160,48 @@ impl NodeOps {
         collection: &str,
         field_name: &str,
     ) -> Result<()> {
-        let (database, context) = (self.database.clone(), context.clone());
+        self.allowed(context, NodePermission::EncryptedIndexDelete)
+            .await?;
+        if context.txn().is_some() {
+            return self
+                .runner
+                .delete_encrypted_index_in_txn_as(context, collection, field_name)
+                .await
+                .map_err(transaction_error);
+        }
+        let database = self.database.clone();
         let (collection, field) = (collection.to_owned(), field_name.to_owned());
+        self.on_pool(move || async move {
+            let txn = database.new_txn(false).await.map_err(Error::TxnCreate)?;
+            database
+                .delete_encrypted_index_in(&txn, &collection, &field)
+                .await
+                .map_err(definition_error)?;
+            txn.commit().await.map_err(Error::Commit)
+        })
+        .await
+    }
+
+    /// The NAC checks every encrypted index operation makes: the caller may
+    /// read collections and may do `permission`.
+    async fn allowed(&self, context: &RequestContext, permission: NodePermission) -> Result<()> {
+        let (database, context) = (self.database.clone(), context.clone());
         self.on_pool(move || async move {
             database
                 .check_node_access_as(&context, NodePermission::CollectionGet)
                 .await?;
-            database
-                .check_node_access_as(&context, NodePermission::EncryptedIndexDelete)
-                .await?;
-            rewrite(&database, &collection, |schema| {
-                if !schema
-                    .encrypted_indexes
-                    .iter()
-                    .any(|i| i.field_name == field)
-                {
-                    return Err(Error::EncryptedIndexMissing(field.clone()));
-                }
-                schema.encrypted_indexes.retain(|i| i.field_name != field);
-                Ok(())
-            })
-            .await
+            Ok(database.check_node_access_as(&context, permission).await?)
         })
         .await
+    }
+}
+
+/// A definition change's error in the node's words: a missing collection as
+/// Go reports it, the rest as the core does.
+fn definition_error(error: db::Error) -> Error {
+    match error {
+        db::Error::CollectionNotFound(name) => Error::CollectionMissing(name),
+        other => Error::from(other),
     }
 }
 
@@ -202,36 +223,4 @@ fn indexes_of(database: &Database, collection: &str) -> Result<Vec<EncryptedInde
         .iter()
         .map(|index| listing(&index.field_name))
         .collect())
-}
-
-/// Change `collection`'s definition with `change` and save it.
-async fn rewrite<F>(database: &Database, collection: &str, change: F) -> Result<()>
-where
-    F: FnOnce(&mut schema::CollectionVersion) -> Result<()>,
-{
-    let col = database
-        .get_collection(collection)
-        .map_err(Error::CollectionLookupFailed)?
-        .ok_or_else(|| Error::CollectionMissing(collection.to_owned()))?;
-    let mut updated = col.schema().clone();
-    change(&mut updated)?;
-
-    let txn = database.new_txn(false).await.map_err(Error::TxnCreate)?;
-    {
-        let collection_key = storage::keys::systemstore::CollectionKey::new(&updated.version_id);
-        let schema_data = serde_json::to_vec(&updated).map_err(Error::SchemaSerialize)?;
-        let systemstore = txn.systemstore().map_err(Error::SystemstoreOpen)?;
-        systemstore
-            .set(&collection_key.bytes(), &schema_data)
-            .await
-            .map_err(Error::SchemaSave)?;
-        let name_key = storage::keys::systemstore::CollectionNameKey::new(collection);
-        systemstore
-            .set(&name_key.bytes(), updated.version_id.as_bytes())
-            .await
-            .map_err(Error::NameMappingSave)?;
-    }
-    txn.commit().await.map_err(Error::Commit)?;
-    database.reload_cache().await.map_err(Error::CacheReload)?;
-    Ok(())
 }

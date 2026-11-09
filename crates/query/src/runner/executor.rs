@@ -353,6 +353,38 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         self.registry.indexes_in_txn_as(context, collection).await
     }
 
+    async fn add_encrypted_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        field: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry
+            .add_encrypted_index_in_txn_as(context, collection, field)
+            .await
+    }
+
+    async fn delete_encrypted_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        field: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry
+            .delete_encrypted_index_in_txn_as(context, collection, field)
+            .await
+    }
+
+    async fn encrypted_indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> std::result::Result<Vec<String>, TransactionError> {
+        self.registry
+            .encrypted_indexes_in_txn_as(context, collection)
+            .await
+    }
+
     async fn set_active_collection_version_as(
         &self,
         context: &RequestContext,

@@ -92,6 +92,63 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         })
         .await
     }
+
+    /// Go's `AddEncryptedIndex` in transaction `txn_id`.
+    pub async fn add_encrypted_index_in_txn(
+        &self,
+        context: &RequestContext,
+        txn_id: &str,
+        collection: &str,
+        field: &str,
+    ) -> Result<()> {
+        let db = self.db.clone();
+        let (collection, field) = (collection.to_owned(), field.to_owned());
+        self.in_txn(context, txn_id, move |owned| {
+            Box::pin(async move {
+                let txn = owned.alone()?;
+                db.add_encrypted_index_in(txn, &collection, &field).await
+            })
+        })
+        .await
+    }
+
+    /// Go's `DeleteEncryptedIndex` in transaction `txn_id`.
+    pub async fn delete_encrypted_index_in_txn(
+        &self,
+        context: &RequestContext,
+        txn_id: &str,
+        collection: &str,
+        field: &str,
+    ) -> Result<()> {
+        let db = self.db.clone();
+        let (collection, field) = (collection.to_owned(), field.to_owned());
+        self.in_txn(context, txn_id, move |owned| {
+            Box::pin(async move {
+                let txn = owned.alone()?;
+                db.delete_encrypted_index_in(txn, &collection, &field).await
+            })
+        })
+        .await
+    }
+
+    /// Go's `ListEncryptedIndexes` in transaction `txn_id`: the fields with
+    /// an encrypted index, its own uncommitted changes included.
+    pub async fn encrypted_indexes_in_txn(
+        &self,
+        context: &RequestContext,
+        txn_id: &str,
+        collection: &str,
+    ) -> Result<Vec<String>> {
+        let db = self.db.clone();
+        let collection = collection.to_owned();
+        self.in_txn(context, txn_id, move |owned| {
+            Box::pin(async move {
+                let txn = owned.alone()?;
+                db.encrypted_indexes_in(txn, &collection).await
+            })
+        })
+        .await
+    }
 }
 
 /// Node access for an operation on a collection, read in `txn`:

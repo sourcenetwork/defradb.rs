@@ -308,6 +308,41 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .map_err(operation_error)
     }
 
+    async fn add_encrypted_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        field: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let id = context_txn(context)?;
+        self.add_encrypted_index_in_txn(context, &id, collection, field)
+            .await
+            .map_err(operation_error)
+    }
+
+    async fn delete_encrypted_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        field: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let id = context_txn(context)?;
+        self.delete_encrypted_index_in_txn(context, &id, collection, field)
+            .await
+            .map_err(operation_error)
+    }
+
+    async fn encrypted_indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> std::result::Result<Vec<String>, TransactionError> {
+        let id = context_txn(context)?;
+        self.encrypted_indexes_in_txn(context, &id, collection)
+            .await
+            .map_err(operation_error)
+    }
+
     async fn truncate_collection_as(
         &self,
         context: &RequestContext,

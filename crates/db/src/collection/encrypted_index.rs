@@ -1,0 +1,135 @@
+//! Encrypted (searchable-encryption) indexes as Go's `AddEncryptedIndex`,
+//! `ListEncryptedIndexes` and `DeleteEncryptedIndex` keep them: on the
+//! collection's definition. Each reads and writes the definition through the
+//! transaction it is given, so in an explicit transaction the change is
+//! visible to it at once and to others once it commits.
+
+use schema::{CollectionVersion, EncryptedIndexDescription};
+use storage::corekv::{Key, OnCommit, Store};
+use storage::keys::systemstore::{CollectionKey, CollectionNameKey};
+
+use crate::collection::loader::load_collection_from_systemstore;
+use crate::collection::Collection;
+use crate::error::{Error, Result};
+use crate::txn::DbTxn;
+use crate::DB;
+
+impl<S: Store> DB<S> {
+    /// Add an equality encrypted index on `field` of `collection`, in `txn`.
+    pub async fn add_encrypted_index_in(
+        &self,
+        txn: &DbTxn<S>,
+        collection: &str,
+        field: &str,
+    ) -> Result<()> {
+        self.rewrite_definition_in(txn, collection, |schema| {
+            if !schema.fields.iter().any(|f| f.name == field) {
+                return Err(Error::EncryptedIndexFieldMissing(field.to_owned()));
+            }
+            if schema
+                .encrypted_indexes
+                .iter()
+                .any(|i| i.field_name == field)
+            {
+                return Err(Error::EncryptedIndexExists(field.to_owned()));
+            }
+            schema
+                .encrypted_indexes
+                .push(EncryptedIndexDescription::new(field));
+            Ok(())
+        })
+        .await
+    }
+
+    /// Delete the encrypted index on `field` of `collection`, in `txn`.
+    pub async fn delete_encrypted_index_in(
+        &self,
+        txn: &DbTxn<S>,
+        collection: &str,
+        field: &str,
+    ) -> Result<()> {
+        self.rewrite_definition_in(txn, collection, |schema| {
+            if !schema
+                .encrypted_indexes
+                .iter()
+                .any(|i| i.field_name == field)
+            {
+                return Err(Error::EncryptedIndexMissing(field.to_owned()));
+            }
+            schema.encrypted_indexes.retain(|i| i.field_name != field);
+            Ok(())
+        })
+        .await
+    }
+
+    /// The fields of `collection` that carry an encrypted index, as `txn`
+    /// sees the definition.
+    pub async fn encrypted_indexes_in(
+        &self,
+        txn: &DbTxn<S>,
+        collection: &str,
+    ) -> Result<Vec<String>> {
+        let found = definition_in(txn, collection).await?;
+        Ok(found
+            .schema()
+            .encrypted_indexes
+            .iter()
+            .map(|index| index.field_name.clone())
+            .collect())
+    }
+
+    /// Change `collection`'s active definition with `change` and stage it on
+    /// `txn`. The rest of `txn` reads the new definition, and the shared
+    /// cache takes it once `txn` commits.
+    async fn rewrite_definition_in<F>(
+        &self,
+        txn: &DbTxn<S>,
+        collection: &str,
+        change: F,
+    ) -> Result<()>
+    where
+        F: FnOnce(&mut CollectionVersion) -> Result<()>,
+    {
+        let found = definition_in(txn, collection).await?;
+        let mut updated = found.schema().clone();
+        change(&mut updated)?;
+        let data = serde_json::to_vec(&updated).map_err(|error| {
+            Error::collection_schema_json(
+                format!("failed to serialize schema for collection '{collection}'"),
+                error,
+            )
+        })?;
+        let systemstore = txn.systemstore()?;
+        systemstore
+            .set(&CollectionKey::new(&updated.version_id).bytes(), &data)
+            .await?;
+        systemstore
+            .set(
+                &CollectionNameKey::new(collection).bytes(),
+                updated.version_id.as_bytes(),
+            )
+            .await?;
+        let cached = Collection::load_index_actions(updated, &systemstore).await?;
+        txn.uncache_collection(collection);
+        let cache = std::sync::Arc::clone(&self.collections);
+        txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
+            cache.rcu(|old| {
+                let mut cache = old.clone();
+                cache.put(cached.clone());
+                cache
+            });
+        })))?;
+        Ok(())
+    }
+}
+
+/// `collection`'s active definition as `txn` stores it.
+async fn definition_in<S>(txn: &DbTxn<S>, collection: &str) -> Result<Collection>
+where
+    S: Store,
+{
+    load_collection_from_systemstore(&txn.systemstore()?, collection)
+        .await
+        .map_err(|error| Error::Other(error.to_string()))?
+        .ok_or_else(|| Error::CollectionNotFound(collection.to_owned()))
+}
