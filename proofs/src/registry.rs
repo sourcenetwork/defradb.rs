@@ -2306,6 +2306,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "Text chunking",
+        name: "INV_CommittedHeadOwned / LIVE_AllDelivered",
+        axis: Tla,
+        anchor: "crates/db/src/merge/broadcast_mutator/heads.rs register_committed_heads; crates/db/src/merge/broadcast_mutator/mod.rs BroadcastMutator::register_write_heads, BroadcastMutator::derived_heads; crates/db/src/merge/broadcast_mutator/batch.rs BroadcastBatchMutator::register_pending",
+        model_ref: "MC_ChunkMarkerHandoff_Green.cfg / MC_ChunkMarkerHandoff_Red_RequestOwned.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/db/tests/merge/broadcast_marker_handoff.rs a_create_registers_every_chunk_after_its_caller_stops_waiting, a_batch_registers_every_chunk_after_its_caller_stops_waiting",
+    },
+    Property {
         // One task serves a pg-compat connection: one deadline read at the
         // accept bounds the peek, the SSL and GSS refusals and the startup;
         // an extended-protocol error skips to the Sync; a fatal error or a
