@@ -7004,7 +7004,6 @@ dependencies = [
  "kovan-queue",
  "nuclei",
  "orbis",
- "rand 0.10.3",
  "rapidhash",
  "regolith",
  "serde",
