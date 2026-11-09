@@ -38,6 +38,8 @@ pub unsafe extern "C" fn defra_document_save_many(
                 .filter(|field| !field.is_empty())
                 .map(str::to_string)
                 .collect(),
+            // The call's signer already holds `opts.enable_signing` (DocumentCall::begin).
+            enable_signing: None,
         };
         let target = call.target().clone();
         ffi_async!(target &target, {

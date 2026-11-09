@@ -20,7 +20,7 @@ pub async fn execute_with_context(
     identity: &ExtractIdentity,
     mut request: QueryRequest,
 ) -> QueryResponse {
-    request.context = request_context(state, identity).await;
+    request.context = request_context(state, identity, &request).await;
     let context = request.context.clone();
     context
         .mirror(execute_prepared_with_executor(
@@ -89,7 +89,7 @@ pub async fn execute_in_txn_with_context(
     mut request: QueryRequest,
     txn_handle: TransactionHandle,
 ) -> QueryResponse {
-    request.context = request_context(state, identity).await;
+    request.context = request_context(state, identity, &request).await;
     let context = request.context.clone();
     context
         .mirror(state.executor.execute_in_txn(request, &txn_handle))
@@ -120,16 +120,19 @@ pub async fn execute_with_resolved_context(
 }
 
 /// The context of the request `identity` acts in, with the signing config,
-/// batch session and DAC bypass it resolves to.
+/// batch session and DAC bypass it resolves to, and `request`'s own signing
+/// choice.
 async fn request_context(
     state: &AppState,
     identity: &ExtractIdentity,
+    request: &QueryRequest,
 ) -> defra_core::RequestContext {
     with_signing_and_bypass(
         identity.context(),
         resolve_signing_config(state, identity),
         resolve_dac_bypass(state, identity).await,
     )
+    .with_signing_override(request.context.signing_override())
 }
 
 /// `context` signing with `signing_config`, collecting into its batch session,

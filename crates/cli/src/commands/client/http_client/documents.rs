@@ -171,6 +171,14 @@ impl HttpClient {
         doc: &Value,
         options: &AddOptions,
     ) -> Result<String> {
+        // GraphQL text carries no signing choice, and Go reads
+        // `enableSigning` only on its document routes, so a save that makes
+        // one goes as Go's own client sends it: read, then patch or add.
+        if let Some(enable) = options.enable_signing {
+            return self
+                .save_on_document_routes(txn, collection, doc_id, doc, options, enable)
+                .await;
+        }
         let run = |request: QueryRequest| async move {
             match self
                 .graphql(&request.query, None, Some(txn.to_owned()))
@@ -195,15 +203,59 @@ impl HttpClient {
         };
         Ok(documents::save(run, collection, Some(doc_id), doc, options).await?)
     }
+
+    /// Go's `SaveDocument` over its document routes in transaction `txn`:
+    /// patch document `doc_id` when it exists, else add `doc`, both with
+    /// `enableSigning=enable`.
+    async fn save_on_document_routes(
+        &self,
+        txn: &str,
+        collection: &str,
+        doc_id: &str,
+        doc: &Value,
+        options: &AddOptions,
+        enable: bool,
+    ) -> Result<String> {
+        let path = format!(
+            "collections/{}/document/{}",
+            encode(collection),
+            encode(doc_id)
+        );
+        let shown = [("show_deleted", "true".to_owned())];
+        match self.send(Method::GET, &path, &shown, None, Some(txn)).await {
+            Ok(_) => {
+                let signing = [("enableSigning", enable.to_string())];
+                self.send(
+                    Method::PATCH,
+                    &path,
+                    &signing,
+                    Some(doc.to_string()),
+                    Some(txn),
+                )
+                .await?;
+                Ok(doc_id.to_owned())
+            }
+            Err(Error::Server(message)) if message.contains("document not found") => {
+                let ids = self
+                    .add_docs(Some(txn), collection, std::slice::from_ref(doc), options)
+                    .await?;
+                ids.into_iter().next().ok_or_else(not_found)
+            }
+            Err(error) => Err(error),
+        }
+    }
 }
 
 fn not_found() -> Error {
     Error::Documents(documents::Error::DocumentNotFound)
 }
 
-/// Go's `encrypt` and `encryptFields` query parameters.
+/// Go's `encrypt`, `encryptFields` and `enableSigning` query parameters.
 fn encryption(options: &AddOptions) -> Vec<(&'static str, String)> {
     let mut query = Vec::new();
+    if let Some(enable) = options.enable_signing {
+        query.push(("enableSigning", enable.to_string()));
+    }
     if options.encrypt_doc {
         query.push(("encrypt", "true".to_owned()));
     }

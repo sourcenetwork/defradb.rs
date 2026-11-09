@@ -258,6 +258,7 @@ fn encryption_is_asked_for_in_the_mutation() {
     let options = AddOptions {
         encrypt_doc: true,
         encrypted_fields: vec!["name".into(), "age".into()],
+        ..AddOptions::default()
     };
     assert_eq!(
         add("Users", &[json!({"name": "Alice"})], &options).unwrap(),

@@ -134,18 +134,39 @@ fn json_body(body: &Bytes) -> Result<JsonValue, HttpError> {
     serde_json::from_slice(body).map_err(|e| HttpError::BadRequest(e.to_string()))
 }
 
-/// Go's `encrypt` and `encryptFields` query parameters.
+/// Go's `encrypt`, `encryptFields` and `enableSigning` query parameters.
 #[derive(Debug, Default, Deserialize)]
 pub struct AddParams {
     #[serde(default)]
     encrypt: Option<String>,
     #[serde(default, rename = "encryptFields")]
     encrypt_fields: Option<String>,
+    #[serde(default, rename = "enableSigning")]
+    enable_signing: Option<String>,
+}
+
+/// Go's `enableSigning` query parameter: the write's own signing choice.
+#[derive(Debug, Default, Deserialize)]
+pub struct SigningParams {
+    #[serde(default, rename = "enableSigning")]
+    enable_signing: Option<String>,
+}
+
+/// `enableSigning` as a choice; absent follows the node.
+// ponytail: `true` and `false` only; Go's ParseBool also takes `1`, `t`,
+// `F`… and refuses anything else.
+fn signing_choice(value: Option<&str>) -> Option<bool> {
+    match value {
+        Some("true") => Some(true),
+        Some("false") => Some(false),
+        _ => None,
+    }
 }
 
 impl AddParams {
     fn options(&self) -> AddOptions {
         AddOptions {
+            enable_signing: signing_choice(self.enable_signing.as_deref()),
             encrypt_doc: self.encrypt.as_deref() == Some("true"),
             encrypted_fields: self
                 .encrypt_fields
@@ -196,11 +217,18 @@ pub async fn update_document(
     identity: ExtractIdentity,
     headers: HeaderMap,
     Path((collection, doc_id)): Path<(String, String)>,
+    Query(params): Query<SigningParams>,
     body: Bytes,
 ) -> Result<StatusCode, HttpError> {
     let patch = json_body(&body)?;
     let server = Server::new(state, identity, &headers)?;
-    documents::update(|m| server.run(m), &collection, &doc_id, &patch)
+    let enable_signing = signing_choice(params.enable_signing.as_deref());
+    let run = |mutation| {
+        let mut request = QueryRequest::new(mutation);
+        request.context = request.context.with_signing_override(enable_signing);
+        server.run_request(request)
+    };
+    documents::update(run, &collection, &doc_id, &patch)
         .await
         .map(|()| StatusCode::OK)
         .map_err(refused)
