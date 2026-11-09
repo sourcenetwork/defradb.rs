@@ -244,6 +244,23 @@ RUNS=(
   "MC_DacPolicyAdd_Red_Valid.cfg DacPolicyAdd.tla RED" # policy not checked before the store or the remote create (INV_NoInvalidPolicy)
   "MC_DacPolicyAdd_Red_Mirror.cfg DacPolicyAdd.tla RED" # remote policy not kept locally, as the node's Vera path did (INV_ReturnedIsKeptLocally)
   "MC_DacPolicyAdd_Red_Order.cfg DacPolicyAdd.tla RED" # creator checked before ACP, as the HTTP handler did (INV_GoOrder)
+  "MC_AddViewTransform_Green.cfg AddViewTransform.tla GREEN" # #2724: target design, NAC and the lens config both decided in the view's transaction; the accepted CID is stored as asked
+  "MC_AddViewTransform_Red_NoEmpty.cfg AddViewTransform.tla RED" # empty-CID check left out (INV_NoEmptyTransform)
+  "MC_AddViewTransform_Red_NoLens.cfg AddViewTransform.tla RED" # lens check left out (INV_StoredTransformExists)
+  "MC_AddViewTransform_Red_NoStore.cfg AddViewTransform.tla RED" # accepted CID not stored on the query source (INV_StoredIsAccepted)
+  "MC_AddViewTransform_Red_LensInMemory.cfg AddViewTransform.tla RED" # lens asked of the in-memory store, as before the fix: it lags the lens commit (INV_NoValidRejected)
+  "MC_AddViewTransform_Red_SyncMemoryOnly.cfg AddViewTransform.tla RED" # P2P sync keeps a lens in memory only: a held lens is refused (INV_NoValidRejected)
+  "MC_AddViewTransform_Red_SyncMemoryOnly_Restart.cfg AddViewTransform.tla RED" # before the fix: memory-only sync and a memory check store a lens a restart loses (INV_StoredTransformExists)
+  "MC_AddViewTransform_Green_NacBefore.cfg AddViewTransform.tla GREEN" # the code as it is: lenses from either path decided in the transaction; NAC still before it, every other promise holds
+  "MC_AddViewTransform_Red_KnownGap_NacBefore.cfg AddViewTransform.tla RED" # known gap (#2736): NAC ViewAdd read before the view's transaction (INV_NoViewWithoutPermission)
+  "MC_VerifySignature_Green_Pool.cfg VerifySignature.tla GREEN" # #2724: with no transaction, NAC, block and document ACP read one read-only view
+  "MC_VerifySignature_Green_Txn.cfg VerifySignature.tla GREEN" # #2724: in the caller's transaction, all three read its view, pending writes included
+  "MC_VerifySignature_Red_NoNac.cfg VerifySignature.tla RED" # NAC check left out (INV_VerifiedAtOnePoint)
+  "MC_VerifySignature_Red_NoAcp.cfg VerifySignature.tla RED" # document ACP check left out (INV_VerifiedAtOnePoint)
+  "MC_VerifySignature_Red_NoBlock.cfg VerifySignature.tla RED" # block presence check left out (INV_VerifiedAtOnePoint)
+  "MC_VerifySignature_Red_NacLatest.cfg VerifySignature.tla RED" # NAC read before the snapshot (INV_VerifiedAtOnePoint)
+  "MC_VerifySignature_Red_AcpLatest.cfg VerifySignature.tla RED" # document ACP unbound from the caller's transaction (INV_VerifiedAtOnePoint)
+  "MC_VerifySignature_Red_BlockLatest.cfg VerifySignature.tla RED" # block read from the latest commit (INV_VerifiedAtOnePoint)
   "MC_NodeAcpOps_Green.cfg NodeAcpOps.tla GREEN" # #2321: NAC disable, re-enable and relationships check in Go's order; re-enable checks the stored relationships; a restart keeps NAC as it was
   "MC_NodeAcpOps_Red_Configured.cfg NodeAcpOps.tla RED" # set-up check left out (INV_NoChangeUnlessConfigured)
   "MC_NodeAcpOps_Red_Already.cfg NodeAcpOps.tla RED" # already-off/on checks left out (INV_NoSilentNoOp)

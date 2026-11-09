@@ -98,3 +98,27 @@ fn test_p2p_manage_replicator_add_parses() {
     assert_eq!(add.address, "/ip4/127.0.0.1/tcp/9001/p2p/def");
     assert_eq!(add.collection_ids, vec!["Users"]);
 }
+
+#[test]
+fn test_p2p_disconnect_parses_every_address() {
+    use clap::Parser;
+
+    use super::P2pCommand;
+
+    #[derive(Parser)]
+    struct Wrap {
+        #[command(subcommand)]
+        cmd: P2pCommand,
+    }
+
+    let wrap = Wrap::parse_from([
+        "p2p",
+        "disconnect",
+        "/ip4/1.2.3.4/tcp/1",
+        "/ip4/1.2.3.4/tcp/2",
+    ]);
+    let P2pCommand::Disconnect(args) = wrap.cmd else {
+        panic!("expected disconnect subcommand");
+    };
+    assert_eq!(args.addresses, ["/ip4/1.2.3.4/tcp/1", "/ip4/1.2.3.4/tcp/2"]);
+}

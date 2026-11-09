@@ -258,3 +258,10 @@ Two peers holding `"hello world"` in a `@crdt(type: text)` field edit it apart, 
 - **Scenarios:** ["mutation::upsert::text::an_upsert_edits_an_existing_text"]
 
 An upsert on a `@crdt(type: text)` field that finds no document adds it with the `add` body (`"hello"`); once the document exists, each upsert sets the body to its `update` value, as an update does: `"hello world"`, then `"help world!"`.
+
+# `defra.net.sync.lens_is_kept`: A lens P2P sync fetches is kept like a local one
+
+- **Parents:** ["go.net.sync.collection_version_view"]
+- **Scenarios:** ["net::sync::collection_version::view_over_synced_lens::a_view_names_a_lens_p2p_sync_fetched_before_and_after_a_restart"]
+
+When `SyncCollectionVersions` fetches a view version whose query source names a lens, the receiving node commits that lens's config as if it had added the lens itself, then registers it. A view on the receiving node can then name the lens with `AddView(transform_cid)`, before and after the node restarts; it never fails with `lens CID not found`.

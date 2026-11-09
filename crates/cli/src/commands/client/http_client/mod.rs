@@ -422,6 +422,16 @@ impl HttpClient {
         Ok(())
     }
 
+    /// POST `path` with no body: its JSON answer, or null when it has none.
+    async fn post_json_or_null(&self, path: &str) -> Result<JsonValue> {
+        let url = format!("{}{}", self.base_url, path);
+        let text = self.request_text("POST", &url, None).await?;
+        match text.trim().is_empty() {
+            true => Ok(JsonValue::Null),
+            false => Ok(serde_json::from_str(&text)?),
+        }
+    }
+
     async fn request_text(&self, method: &str, url: &str, body: Option<&str>) -> Result<String> {
         let response = self.send_with_retry(method, url, body).await?;
         if !response.status().is_success() {
@@ -437,8 +447,15 @@ impl HttpClient {
     // ACP / NAC
     endpoint!(acp_list_policies,   GET  "/api/v0/acp/policy"         => Vec<AcpPolicy>);
     endpoint!(nac_status,          GET  "/api/v0/acp/node/status"    => JsonValue);
-    endpoint!(nac_disable,         POST "/api/v0/acp/node/disable"   => JsonValue);
-    endpoint!(nac_re_enable,       POST "/api/v0/acp/node/re-enable" => JsonValue);
+    /// Disable node access control. Go answers with an empty body, read as null.
+    pub async fn nac_disable(&self) -> Result<JsonValue> {
+        self.post_json_or_null("/api/v0/acp/node/disable").await
+    }
+
+    /// Re-enable node access control. Go answers with an empty body, read as null.
+    pub async fn nac_re_enable(&self) -> Result<JsonValue> {
+        self.post_json_or_null("/api/v0/acp/node/re-enable").await
+    }
 
     // Lens
 

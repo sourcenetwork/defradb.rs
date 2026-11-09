@@ -89,6 +89,12 @@ pub enum Error {
     /// The source query of a view selects nothing.
     #[error("invalid view query: no selections found")]
     ViewQueryEmpty,
+    /// A view's lens transform CID is empty, which Go's `cid.Decode` refuses.
+    #[error("cid too short")]
+    ViewTransformCidEmpty,
+    /// A view names a lens transform CID the node does not hold.
+    #[error("lens CID not found: {0}")]
+    ViewTransformMissing(String),
     /// A downsample definition is invalid.
     #[error("invalid downsample definition: {0}")]
     InvalidDownsample(#[source] db::Error),

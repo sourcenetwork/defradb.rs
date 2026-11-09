@@ -158,6 +158,7 @@ client_actions! {
         TxnDiscard,
         UpdateDoc,
         UpdateWithFilter,
+        VerifyBlockSignature,
     ],
     shared: [
         Connect,
@@ -174,7 +175,6 @@ client_actions! {
         Restart,
         Start,
         SubscriptionRequest,
-        VerifyBlockSignature,
         Wait,
         WaitForIndexReady,
         WaitForPeersEvents,

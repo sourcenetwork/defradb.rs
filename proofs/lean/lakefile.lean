@@ -173,3 +173,6 @@ lean_lib SecondaryRelation where
 
 @[default_target]
 lean_lib CursorToken where
+
+@[default_target]
+lean_lib ViewQuerySource where

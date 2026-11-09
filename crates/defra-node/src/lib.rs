@@ -143,7 +143,8 @@ trait SchemaOps: Send + Sync {
         context: &RequestContext,
         source_query: &str,
         target_sdl: &str,
-    ) -> Result<()>;
+        transform: Option<&str>,
+    ) -> Result<Vec<CollectionVersion>>;
     async fn refresh_views(
         &self,
         context: &RequestContext,
@@ -413,11 +414,7 @@ impl Node {
         Fut: std::future::Future<Output = Result<T>> + 'static,
         T: Send + 'static,
     {
-        if self.remote_acp {
-            make().await
-        } else {
-            self.on_pool(make).await
-        }
+        self.ops().on_acp(make).await
     }
 
     /// The context the node's own operations run in: the node's identity acts
@@ -510,21 +507,23 @@ impl Node {
     /// `target_sdl` is the SDL for the view collection (may include directives
     /// like `@downsample` that are forward-declared for future defradb.rs support).
     pub async fn add_view(&self, source_query: &str, target_sdl: &str) -> Result<()> {
-        self.add_view_as(&self.node_context(), source_query, target_sdl)
+        self.add_view_as(&self.node_context(), source_query, target_sdl, None)
             .await
+            .map(drop)
     }
 
     /// [`Self::add_view`] as `context`'s identity, which node access control
-    /// checks.
+    /// checks, its documents run through the stored lens `transform` when it
+    /// names one; the view collections it created (Go: `client.Store::AddView`).
     pub async fn add_view_as(
         &self,
         context: &RequestContext,
         source_query: &str,
         target_sdl: &str,
-    ) -> Result<()> {
-        let (ops, context) = (Arc::clone(&self.schema_ops), context.clone());
-        let (query, sdl) = (source_query.to_owned(), target_sdl.to_owned());
-        self.on_pool(move || async move { ops.add_view(&context, &query, &sdl).await })
+        transform: Option<&str>,
+    ) -> Result<Vec<CollectionVersion>> {
+        self.ops()
+            .add_view(context, source_query, target_sdl, transform)
             .await
     }
 
@@ -535,9 +534,7 @@ impl Node {
         context: &RequestContext,
         selector: db::CollectionSelector,
     ) -> Result<()> {
-        let (ops, context) = (Arc::clone(&self.schema_ops), context.clone());
-        self.on_pool(move || async move { ops.refresh_views(&context, selector).await })
-            .await
+        self.ops().refresh_views(context, selector).await
     }
 
     /// Eagerly migrate and cache every known-version document in a collection.
@@ -695,7 +692,7 @@ impl Node {
         relation: &str,
         target: &str,
     ) -> Result<bool> {
-        let ops = Arc::clone(&self.acp_ops);
+        let ops = self.ops().acp_ops;
         let owned = |value: &str| value.to_owned();
         let (identity, collection, doc_id) = (owned(identity), owned(collection), owned(doc_id));
         let (relation, target) = (owned(relation), owned(target));
@@ -721,7 +718,7 @@ impl Node {
         relation: &str,
         target: &str,
     ) -> Result<bool> {
-        let ops = Arc::clone(&self.acp_ops);
+        let ops = self.ops().acp_ops;
         let owned = |value: &str| value.to_owned();
         let (identity, collection, doc_id) = (owned(identity), owned(collection), owned(doc_id));
         let (relation, target) = (owned(relation), owned(target));

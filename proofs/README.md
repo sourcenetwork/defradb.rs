@@ -98,6 +98,8 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Collection truncate | TLA+ | db |
 | Relation-filtered mutation | TLA+ | query, datastore, db |
 | Add DAC policy | TLA+ | db, acp, vera, http, cli, ffi, defra-node |
+| Add view with a lens transform | TLA+ & Lean | defra-node, db, schema, lens (#2724; NAC before the create transaction is a known gap, #2736) |
+| Verify block signature | TLA+ | defra-node, db, acp (#2724) |
 | Node access control operations | TLA+ & Lean | db, acp, http, cli, ffi, defra-node |
 | Filter relation paths and scalar leaves | Lean | query (#2427, #2430) |
 | Orphan block sweep | TLA+ & Lean | db, storage |

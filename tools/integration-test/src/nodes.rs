@@ -30,8 +30,9 @@ pub struct NodeSpec {
     pub listen: Vec<String>,
     /// Start with node access control enabled, as Go's `Start { EnableNAC }`.
     pub enable_nac: bool,
-    /// The identity starting the node, which owns its NAC when it enables it.
-    pub nac_owner: Option<String>,
+    /// The client identity seed starting the node, which owns its NAC when
+    /// it enables it.
+    pub nac_owner: Option<u64>,
     /// The node's admission limits, if not the defaults.
     pub admission: Option<crate::actions::AdmissionSpec>,
     /// The node's own identity, Go's `NodeIdentity(seed)`; the node signs as it.
@@ -40,6 +41,9 @@ pub struct NodeSpec {
     pub signing: Option<crate::actions::shared::KeyType>,
     /// How long an idle HTTP transaction lives and the sweep interval.
     pub txn_ttl: Option<(Duration, Duration)>,
+    /// The node's own searchable-encryption key, as Go's harness gives each
+    /// node one under `EnableSearchableEncryption`.
+    pub se_key: Option<[u8; 32]>,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -110,9 +114,15 @@ impl TestNode {
                 let options = GoOptions {
                     p2p: spec.network.then_some(listen),
                     dir: spec.dir.as_ref().map(|dir| dir.path().to_owned()),
+                    nac: spec.enable_nac,
+                    identity: spec
+                        .nac_owner
+                        .map(crate::scenario::identity::private_key_hex),
+                    node_key: go_node_key(&spec),
+                    signing: spec.signing.is_some(),
+                    se_key: spec.se_key,
                 };
-                let node =
-                    GoNode::start(&binary, &options).unwrap_or_else(|error| panic!("{error}"));
+                let node = GoNode::start(&binary, &options).map_err(|error| error.to_string())?;
                 let url = node.api_url().to_owned();
                 Ok(Self::new(None, Some(url), spec, None, vec![Arc::new(node)]))
             }
@@ -155,6 +165,7 @@ impl TestNode {
             EventName::MergeComplete,
             EventName::TopicPeerEvent,
             EventName::P2PGossipHeadDropped,
+            EventName::SEArtifactReceived,
         ]);
         self.events
             .store(Some(Arc::new(Events::new(subscription.into_receiver()))));
@@ -197,7 +208,17 @@ impl TestNode {
                 .map_err(|e| e.to_string())?
                 .map_err(|e| e.to_string()),
             (None, Some(url)) => {
-                let client = HttpClient::new(url, &network_edge()).map_err(|e| e.to_string())?;
+                // The node's NAC owner may read it once NAC is on.
+                let token = self.spec.nac_owner.map(|seed| {
+                    cli::commands::client::generate_auth_token(
+                        &crate::scenario::identity::private_key_hex(seed),
+                        url,
+                    )
+                    .expect("a token for a test identity")
+                });
+                let client = HttpClient::new(url, &network_edge())
+                    .map_err(|e| e.to_string())?
+                    .with_auth_token(token);
                 workers::block_on(network_edge().spawn(async move { client.peer_info().await }))
                     .map_err(|e| e.to_string())?
                     .map_err(|e| e.to_string())?
@@ -247,13 +268,23 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     }
     if spec.enable_nac {
         builder = match &spec.nac_owner {
-            Some(owner) => builder.with_node_acp_owner(owner.clone()),
+            Some(seed) => builder.with_node_acp_owner(crate::scenario::identity::did(*seed)),
             None => builder.with_node_acp_enabled(),
         };
     }
-    workers::block_on(builder.build())
+    let node = workers::block_on(builder.build())
         .expect("run builder")
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    if let Some(key) = spec.se_key {
+        let system = node
+            .p2p_system()
+            .ok_or("searchable encryption needs a node with P2P")?;
+        system.set_replicator_push_options(defra_node::ReplicatorPushOptions {
+            se_encryption_key: Some(defra_node::Zeroizing::new(key.to_vec())),
+            se_identity_pubkey: None,
+        })?;
+    }
+    Ok(node)
 }
 
 /// The key a node signs with: its node identity's, or, for a node that only
@@ -271,6 +302,41 @@ fn signing_key(spec: &NodeSpec) -> defra_node::SigningKey {
     }
 }
 
+/// The node identity a Go node started as `spec` loads from its keyring: the
+/// key a Rust node started the same way signs with.
+fn go_node_key(spec: &NodeSpec) -> Option<crate::go_node::NodeKey> {
+    if spec.node_identity.is_none() && spec.signing.is_none() {
+        return None;
+    }
+    let (key_type, raw) = match signing_key(spec) {
+        defra_node::SigningKey::Secp256k1(key) => ("secp256k1", key),
+        // Go's Ed25519 private key is the seed, then the public key.
+        defra_node::SigningKey::Ed25519(pair) => ("ed25519", pair),
+        _ => unreachable!("a test node signs with secp256k1 or Ed25519"),
+    };
+    Some(crate::go_node::NodeKey { key_type, raw })
+}
+
+/// The public key (hex) and key type a node started as `spec` signs blocks
+/// with, as their signature headers name it; `None` when it does not sign.
+pub fn signer_public_key(spec: &NodeSpec) -> Option<(String, KeyType)> {
+    if spec.node_identity.is_none() && spec.signing.is_none() {
+        return None;
+    }
+    let public = |key_type, key: Vec<u8>| {
+        ::identity::RawIdentity::from_bytes(key_type, &key)
+            .expect("a valid key")
+            .public_key_bytes()
+    };
+    let public = match signing_key(spec) {
+        defra_node::SigningKey::Secp256k1(key) => public(::identity::KeyType::Secp256k1, key),
+        // The seed, then the public key.
+        defra_node::SigningKey::Ed25519(pair) => pair[32..].to_vec(),
+        _ => unreachable!("a test node signs with secp256k1 or Ed25519"),
+    };
+    Some((hex::encode(public), spec.signing.unwrap_or_default()))
+}
+
 /// What a node's events said, read in order by the waits.
 #[derive(Clone, Default)]
 struct EventLog {
@@ -284,6 +350,8 @@ struct EventLog {
     topics: VecDeque<(String, String, String)>,
     /// Gossip heads the node dropped past a deferral budget, not yet awaited.
     gossip_dropped: VecDeque<events::P2PGossipHeadDroppedData>,
+    /// Every document a searchable-encryption artifact arrived for.
+    se_synced: RapidHashSet<String>,
 }
 
 /// A node's recorded events.
@@ -348,6 +416,9 @@ impl Events {
             MessageData::P2PGossipHeadDropped(event) => {
                 self.update(|log| log.gossip_dropped.push_back(event))
             }
+            MessageData::SEArtifactReceived(event) => self.update(|log| {
+                log.se_synced.insert(event.doc_id);
+            }),
             _ => {}
         }
         Ok(())
@@ -375,6 +446,24 @@ impl Events {
             heads.insert(key, head);
         }
         Ok(keys.iter().map(|key| heads[*key].clone()).collect())
+    }
+
+    /// Wait until a searchable-encryption artifact arrived for each of
+    /// `doc_ids`, as Go's `WaitForSESync` waits for `SEArtifactReceived`.
+    pub async fn se_synced(&self, doc_ids: &[String], deadline: Duration) -> Result<(), String> {
+        loop {
+            let log = self.log.load_clone();
+            let missing: Vec<&String> = doc_ids
+                .iter()
+                .filter(|id| !log.se_synced.contains(*id))
+                .collect();
+            if missing.is_empty() {
+                return Ok(());
+            }
+            self.receive(deadline)
+                .await
+                .map_err(|reason| format!("no SE artifact for {missing:?}: {reason}"))?;
+        }
     }
 
     /// Wait until `doc_id` has merged `head`, or already holds it as its

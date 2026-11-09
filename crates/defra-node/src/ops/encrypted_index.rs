@@ -2,14 +2,13 @@
 //! as Go's `AddEncryptedIndex`, `ListEncryptedIndexes` and
 //! `DeleteEncryptedIndex` keep them: on the collection's definition.
 
-use std::sync::Arc;
-
 use acp::nac::NodePermission;
 use defra_core::RequestContext;
 use schema::EncryptedIndexDescription;
 use serde::Serialize;
 use storage::corekv::Key;
 
+use super::handle::{Database, NodeOps};
 use crate::{Error, Node, Result};
 
 /// An encrypted index as Go lists it.
@@ -21,8 +20,6 @@ pub struct EncryptedIndexListing {
     pub index_type: String,
 }
 
-type Database = Arc<db::DB<storage::RegolithStore>>;
-
 impl Node {
     /// Add an equality encrypted index on `field_name` of `collection`.
     pub async fn add_encrypted_index_as(
@@ -31,7 +28,56 @@ impl Node {
         collection: &str,
         field_name: &str,
     ) -> Result<EncryptedIndexListing> {
-        let (database, context) = (Arc::clone(self.database()), self.caller(context));
+        self.ops()
+            .add_encrypted_index(&self.caller(context), collection, field_name)
+            .await
+    }
+
+    /// The encrypted indexes of `collection`.
+    pub async fn list_encrypted_indexes_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> Result<Vec<EncryptedIndexListing>> {
+        self.ops()
+            .list_encrypted_indexes(&self.caller(context), collection)
+            .await
+    }
+
+    /// Every collection's encrypted indexes, by collection name; a
+    /// collection without one is left out.
+    pub async fn list_all_encrypted_indexes_as(
+        &self,
+        context: &RequestContext,
+    ) -> Result<Vec<(String, Vec<EncryptedIndexListing>)>> {
+        self.ops()
+            .list_all_encrypted_indexes(&self.caller(context))
+            .await
+    }
+
+    /// Delete the encrypted index on `field_name` of `collection`.
+    pub async fn delete_encrypted_index_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        field_name: &str,
+    ) -> Result<()> {
+        self.ops()
+            .delete_encrypted_index(&self.caller(context), collection, field_name)
+            .await
+    }
+}
+
+/// The operations of [`Node`] above, as `context` names: no default caller.
+impl NodeOps {
+    /// Add an equality encrypted index on `field_name` of `collection`.
+    pub(crate) async fn add_encrypted_index(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        field_name: &str,
+    ) -> Result<EncryptedIndexListing> {
+        let (database, context) = (self.database.clone(), context.clone());
         let (collection, field) = (collection.to_owned(), field_name.to_owned());
         self.on_pool(move || async move {
             database
@@ -63,12 +109,12 @@ impl Node {
     }
 
     /// The encrypted indexes of `collection`.
-    pub async fn list_encrypted_indexes_as(
+    pub(crate) async fn list_encrypted_indexes(
         &self,
         context: &RequestContext,
         collection: &str,
     ) -> Result<Vec<EncryptedIndexListing>> {
-        let (database, context) = (Arc::clone(self.database()), self.caller(context));
+        let (database, context) = (self.database.clone(), context.clone());
         let collection = collection.to_owned();
         self.on_pool(move || async move {
             database
@@ -84,11 +130,11 @@ impl Node {
 
     /// Every collection's encrypted indexes, by collection name; a
     /// collection without one is left out.
-    pub async fn list_all_encrypted_indexes_as(
+    pub(crate) async fn list_all_encrypted_indexes(
         &self,
         context: &RequestContext,
     ) -> Result<Vec<(String, Vec<EncryptedIndexListing>)>> {
-        let (database, context) = (Arc::clone(self.database()), self.caller(context));
+        let (database, context) = (self.database.clone(), context.clone());
         self.on_pool(move || async move {
             database
                 .check_node_access_as(&context, NodePermission::EncryptedIndexListAll)
@@ -106,13 +152,13 @@ impl Node {
     }
 
     /// Delete the encrypted index on `field_name` of `collection`.
-    pub async fn delete_encrypted_index_as(
+    pub(crate) async fn delete_encrypted_index(
         &self,
         context: &RequestContext,
         collection: &str,
         field_name: &str,
     ) -> Result<()> {
-        let (database, context) = (Arc::clone(self.database()), self.caller(context));
+        let (database, context) = (self.database.clone(), context.clone());
         let (collection, field) = (collection.to_owned(), field_name.to_owned());
         self.on_pool(move || async move {
             database

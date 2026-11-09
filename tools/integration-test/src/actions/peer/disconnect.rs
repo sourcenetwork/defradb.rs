@@ -70,11 +70,16 @@ impl HttpRun for DisconnectPeers {
 
 impl CliRun for DisconnectPeers {
     fn execute_cli(&self, state: &mut State) {
-        crate::scenario::execute_with(self, state, |_, _| {
-            Err(Failure::unsupported(format!(
-                "{}: the CLI has no disconnect command",
-                Self::name()
-            )))
+        crate::scenario::execute_with(self, state, |action, state| {
+            let identity = action.common.client_identity(Self::name())?;
+            let targets: Vec<&str> = action.targets.iter().map(String::as_str).collect();
+            let addresses = addresses_of(state, &targets)?;
+            let mut args = vec!["p2p", "disconnect"];
+            args.extend(addresses.iter().map(String::as_str));
+            state
+                .defra_client_as(action.common.node(), None, identity, &args)
+                .map_err(Failure::operation)?;
+            Ok(json!({}))
         });
     }
 }

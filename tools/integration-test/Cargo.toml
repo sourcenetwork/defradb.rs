@@ -45,7 +45,7 @@ serde.workspace = true
 tempfile = "3.17"
 thiserror.workspace = true
 workers = { path = "../../crates/workers" }
-testo = { git = "https://github.com/sourcenetwork/testo.rs", rev = "79d83b0adedf00f85f9fd9aecc6fd009ed41332a" }
+testo = { git = "https://github.com/sourcenetwork/testo.rs", rev = "dc53fa515d5c39511845407dcd42a7650c07f66c" }
 kovan.workspace = true
 regolith.workspace = true
 rapidhash.workspace = true
