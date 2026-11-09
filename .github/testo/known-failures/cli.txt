@@ -75,8 +75,10 @@ testo acp::nac::list_p2p_replicator::nac_gates_list_p2_p_replicator_authorized_i
 testo acp::nac::relation_admin::add_p2p_replicator::nac_admin_relation_can_add_p2_p_replicator #2709
 testo acp::nac::relation_admin::list_p2p_replicator::nac_admin_relation_can_list_p2_p_replicator #2702
 testo collection::refresh::list_actions::refresh_collection_list_action_does_not_list_completed_refreshes #2708
+testo collection::refresh::list_actions::refresh_collection_list_action_lists_uncompleted_refresh #2708
 testo collection::refresh::list_actions::refresh_collection_list_action_records_error_against_refresh_action #2708
 testo collection::truncate::list_actions::truncate_collection_list_action_does_not_list_completed_truncates #2708
+testo collection::truncate::list_actions::truncate_collection_list_action_lists_uncompleted_truncates #2708
 testo encryption::peer::doc_encryption_peer_upon_sync_should_sync_encrypted_dag #2705
 testo index::list_actions::index_backfill_after_successful_build_lists_no_action #2708
 testo signature::commit::signature_with_commit_query_should_be_hex_encoded #2701

@@ -17,7 +17,7 @@ mod replicator;
 pub mod shared;
 mod txn;
 mod view;
-mod wait;
+pub(crate) mod wait;
 
 pub use backup::*;
 pub use block::*;
@@ -27,7 +27,7 @@ pub use document::*;
 pub use encrypted_index::*;
 pub use index::*;
 pub use lens::*;
-pub use list_actions::ListActions;
+pub use list_actions::{ListActions, PendingList};
 pub use nac::*;
 pub use node::*;
 pub use parallel::Parallel;

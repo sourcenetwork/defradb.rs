@@ -26,6 +26,8 @@ pub struct State {
     pub txns: Txns,
     /// The subscriptions the test opened, by name, until it reads them.
     pub subscriptions: crate::actions::Subscriptions,
+    /// The action list an asynchronous `ListActions` takes, until it is read.
+    pub pending_list: crate::actions::PendingList,
 }
 
 /// The transactions a test has begun. Shared by every clone of the state, and
