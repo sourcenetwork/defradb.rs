@@ -8,6 +8,7 @@ use rapidhash::RapidHashMap;
 use serde_json::Value as JsonValue;
 
 use crate::error::Result;
+use crate::executor::GqlWarning;
 use crate::query_parse::{parse_query_with_limits, ExplainType};
 use crate::txn::TransactionRegistry;
 
@@ -42,17 +43,25 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         caller_identity: Option<Did>,
         explain_type: ExplainType,
     ) -> Result<JsonValue> {
-        self.explain_query_with_identity_and_vars(query, caller_identity, explain_type, None)
-            .await
+        self.explain_query_with_identity_and_vars(
+            query,
+            caller_identity,
+            explain_type,
+            None,
+            &mut Vec::new(),
+        )
+        .await
     }
 
-    /// Generate an explanation of the query plan with variable support.
+    /// Generate an explanation of the query plan with variable support. An
+    /// executed explain adds the warnings its plans raise to `warnings`.
     pub async fn explain_query_with_identity_and_vars(
         &self,
         query: &str,
         caller_identity: Option<Did>,
         explain_type: ExplainType,
         variables: Option<&RapidHashMap<String, JsonValue>>,
+        warnings: &mut Vec<GqlWarning>,
     ) -> Result<JsonValue> {
         match explain_type {
             ExplainType::Simple | ExplainType::Debug => {
@@ -98,7 +107,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             }
             ExplainType::Execute => {
                 // Execute mode: run the query and collect metrics
-                self.execute_explain_with_vars(query, caller_identity, variables)
+                self.execute_explain_with_vars(query, caller_identity, variables, warnings)
                     .await
             }
         }
