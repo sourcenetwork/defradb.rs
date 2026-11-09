@@ -183,13 +183,19 @@ fn wait_until_built(state: &State, action: &NewIndex, collection: &str) -> Resul
     let deadline = Instant::now() + BUILD_TIMEOUT;
     loop {
         let collection = collection.to_owned();
+        let remaining = deadline.saturating_duration_since(Instant::now());
         let indexes = state
             .http_as(
                 action.common.node(),
                 action.common.identity_seed,
-                |client| async move { client.index_listing(&collection).await },
+                |client| async move {
+                    workers::timeout(remaining, client.index_listing(&collection))
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .map_err(|e| e.to_string())
+                },
             )?
-            .map_err(|e| Failure::operation(e.to_string()))?;
+            .map_err(Failure::operation)?;
         if !indexes
             .as_array()
             .is_some_and(|all| all.iter().any(building))
