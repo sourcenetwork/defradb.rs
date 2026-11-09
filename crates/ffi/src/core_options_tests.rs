@@ -35,7 +35,11 @@ fn add(node: usize, name: &str, age: i64) -> String {
 }
 
 fn users(node: usize) -> Value {
-    query(node, "query { User(order: {name: ASC}) { _docID name age } }")["data"]["User"].clone()
+    query(
+        node,
+        "query { User(order: {name: ASC}) { _docID name age } }",
+    )["data"]["User"]
+        .clone()
 }
 
 fn begin(node: usize) -> usize {
@@ -70,9 +74,16 @@ fn purging_documents_in_a_transaction_removes_them_on_commit() {
 
     let txn = begin(node);
     assert_eq!(purge(txn, &json!([alice])).unwrap(), json!({ "Count": 1 }));
-    assert_eq!(users(node).as_array().unwrap().len(), 2, "not yet committed");
+    assert_eq!(
+        users(node).as_array().unwrap().len(),
+        2,
+        "not yet committed"
+    );
     ok(defra_transaction_commit(txn));
-    assert_eq!(users(node), json!([{ "_docID": bob, "name": "Bob", "age": 7 }]));
+    assert_eq!(
+        users(node),
+        json!([{ "_docID": bob, "name": "Bob", "age": 7 }])
+    );
 
     assert_eq!(
         purge(node, &json!([bob])).unwrap(),
@@ -110,7 +121,11 @@ fn save_many_adds_and_updates_in_order() {
     );
     assert_eq!(saved[0], ids[0]);
     let carol = saved[1].clone();
-    assert_eq!(users(node).as_array().unwrap().len(), 2, "not yet committed");
+    assert_eq!(
+        users(node).as_array().unwrap().len(),
+        2,
+        "not yet committed"
+    );
     ok(defra_transaction_commit(txn));
     assert_eq!(
         users(node),

@@ -139,7 +139,9 @@ impl ReplicationFilter for CallbackFilter {
 }
 
 /// The replication filter `options` sets, if any.
-pub(crate) fn from_options(options: &NodeInitOptions) -> Option<defra_node::ReplicationFilterHandle> {
+pub(crate) fn from_options(
+    options: &NodeInitOptions,
+) -> Option<defra_node::ReplicationFilterHandle> {
     options.replication_filter.map(|callback| {
         defra_node::ReplicationFilterHandle(Arc::new(CallbackFilter {
             callback,

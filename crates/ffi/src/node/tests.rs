@@ -80,7 +80,10 @@ fn invalid_options_fail_the_node() {
         enable_node_acp: 1,
         ..local_options()
     });
-    assert!(error.contains("can not start nac without identity"), "{error}");
+    assert!(
+        error.contains("can not start nac without identity"),
+        "{error}"
+    );
 }
 
 #[test]

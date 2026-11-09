@@ -6,7 +6,9 @@ use std::ptr;
 use crate::acp::{defra_acp_nac_purge, defra_acp_nac_status};
 use crate::dump::defra_print_dump;
 use crate::identities::{defra_identity_free, defra_identity_new};
-use crate::test_support::{add_collection, close, err, local_options, node, node_with, ok, ok_json};
+use crate::test_support::{
+    add_collection, close, err, local_options, node, node_with, ok, ok_json,
+};
 use crate::types::NodeInitOptions;
 
 #[test]
@@ -27,7 +29,10 @@ fn purging_node_access_control_resets_it() {
         enable_node_acp: 1,
         ..local_options()
     });
-    assert_eq!(ok_json(defra_acp_nac_status(node, owner))["status"], "enabled");
+    assert_eq!(
+        ok_json(defra_acp_nac_status(node, owner))["status"],
+        "enabled"
+    );
 
     let error = err(defra_acp_nac_purge(node, 0));
     assert!(error.contains("requires an identity"), "{error}");
