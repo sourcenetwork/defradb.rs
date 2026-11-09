@@ -688,6 +688,7 @@ impl<S: Store> DB<S> {
     where
         S: 'static,
     {
+        #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
         let bound: Arc<dyn datastore::DocumentMutationProjector> =
             Arc::new(crate::document_projection::BoundProjection::new(
                 projector,

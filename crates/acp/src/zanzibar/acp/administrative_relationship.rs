@@ -17,6 +17,7 @@ struct AdministrativeAuthorization {
 }
 
 impl AdministrativeAuthorization {
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     async fn authorize(view: datastore::NamespaceView, actor: &Did, delete: bool) -> Result<Self> {
         if actor.is_wildcard() {
             return Err(Error::PermissionDenied(

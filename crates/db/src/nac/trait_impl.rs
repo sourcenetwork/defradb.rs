@@ -49,6 +49,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
             .await
             .map_err(|error| super::error::Error::Other(error.to_string()))
     }
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     async fn check_bound_permission_in_txn(
         &self,
         view: datastore::NamespaceView,
@@ -75,6 +76,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
             .map(Some)
             .map_err(|error| super::error::Error::Other(error.to_string()))
     }
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     async fn change_source_permission_in_txn(
         &self,
         view: datastore::NamespaceView,
@@ -109,6 +111,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
                 other => super::error::Error::Other(other.to_string()),
             })
     }
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     async fn source_permission_matches_in_txn(
         &self,
         view: datastore::NamespaceView,
