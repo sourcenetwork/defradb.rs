@@ -97,6 +97,40 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         .await
     }
 
+    /// Go's `PatchCollection` inside an existing transaction: the patch reads
+    /// and writes through that transaction alone, so the transaction sees it
+    /// at once and others only once it commits. A conflict comes back to the
+    /// caller when it commits; nothing here retries. The work a patch owes
+    /// after commit (migrations, owed indexes) runs once the commit is durable.
+    pub async fn patch_collection_in_txn_as(
+        &self,
+        context: &RequestContext,
+        txn_id: &str,
+        patch: &str,
+        migration: Option<lens::LensConfig>,
+    ) -> Result<()> {
+        self.db
+            .check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
+            .await?;
+        let ops = crate::definition::patch::parse_patch(patch)?;
+        let db = self.db.clone();
+        self.in_txn(context, txn_id, move |owned| {
+            Box::pin(async move {
+                let txn = owned.alone()?;
+                let staged = db.stage_patch(txn, ops, migration).await?;
+                txn.on_commit(OnCommit::Async(Box::new(move || {
+                    Box::pin(async move {
+                        if let Err(error) = db.finish_staged(staged).await {
+                            tracing::warn!(%error, "post-commit work of a patch failed");
+                        }
+                    })
+                })))?;
+                Ok(())
+            })
+        })
+        .await
+    }
+
     /// [`Self::add_collection_in_txn_as`] in [`RequestContext::ambient`].
     pub async fn add_collection_in_txn(
         &self,

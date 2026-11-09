@@ -27,23 +27,25 @@ impl PreparedPatch {
 }
 
 impl<S: Store> crate::database::DB<S> {
-    /// Apply `patch_ops` to `collection`'s schema and validate the result on
-    /// its own. Nothing is written.
+    /// Apply `patch_ops` to `target` and validate the result on its own.
+    /// `versions` are every version `txn` sees. Nothing is written.
     pub(crate) async fn prepare_patch(
         &self,
+        txn: &DbTxn<S>,
         collection_name: &str,
-        collection: &Collection,
+        target: &CollectionVersion,
         patch_ops: serde_json::Value,
+        versions: &[CollectionVersion],
     ) -> Result<PreparedPatch> {
-        let old_schema = collection.schema().clone();
+        let old_schema = target.clone();
         let actual_name = old_schema.name.clone();
         let old_version_id = old_schema.version_id.clone();
         let collection_id = old_schema.collection_id.clone();
         // Collect known collection names for Kind validation
-        let known_collection_names: Vec<String> = self
-            .list_collections()
-            .unwrap_or_default()
-            .into_iter()
+        let known_collection_names: Vec<String> = versions
+            .iter()
+            .filter(|version| version.is_active)
+            .map(|version| version.name.clone())
             .collect();
 
         // Apply the patch to the schema JSON
@@ -116,7 +118,7 @@ impl<S: Store> crate::database::DB<S> {
         // Matches Go's validateDematerializedViewHasNoData.
         if old_schema.is_materialized
             && !new_schema.is_materialized
-            && self.collection_has_data(&old_schema).await?
+            && self.collection_has_data(txn, &old_schema).await?
         {
             return Err(Error::InvalidPatch(format!(
                 "cannot dematerialize a materialized view that has data, first truncate it and then try again. Name: {}, VersionID: {}",

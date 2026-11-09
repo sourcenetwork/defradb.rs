@@ -270,35 +270,30 @@ impl<S: Store> crate::database::DB<S> {
         Ok(versions)
     }
 
-    /// Check if a collection has any documents in the datastore.
+    /// Whether a collection has any documents, as `txn` sees it. The scan is
+    /// validated: a document another transaction writes into the collection
+    /// before `txn` commits aborts the decision that relied on it.
     pub(crate) async fn collection_has_data(
         &self,
+        txn: &DbTxn<S>,
         version: &schema::CollectionVersion,
     ) -> Result<bool> {
         if !version.is_materialized {
             return Ok(false);
         }
-
-        let txn = self.new_txn(true).await?;
-        let has_data = {
-            let datastore = txn.datastore()?;
-
-            let prefix = if version.query.is_some() {
-                // View: check view cache prefix using short ID
-                storage::keys::datastore::ViewCacheKey::collection_prefix(version.root_id)
-            } else {
-                // Regular collection: check document prefix
-                format!("/d/{}/", version.collection_id).as_bytes().to_vec()
-            };
-
-            let opts = IterOptions::new().with_prefix(prefix);
-            let mut iter = datastore.iterator(opts).await.map_err(Error::Storage)?;
-            let has_any = iter.next().await.map_err(Error::Storage)?.is_some();
-            iter.close().await.map_err(Error::Storage)?;
-            has_any
+        let datastore = txn.datastore()?;
+        let prefix = if version.query.is_some() {
+            // View: check view cache prefix using short ID
+            storage::keys::datastore::ViewCacheKey::collection_prefix(version.root_id)
+        } else {
+            // Regular collection: check document prefix
+            format!("/d/{}/", version.collection_id).as_bytes().to_vec()
         };
-        let _ = txn.discard();
-        Ok(has_data)
+        let opts = IterOptions::new().with_prefix(prefix).with_validation(true);
+        let mut iter = datastore.iterator(opts).await.map_err(Error::Storage)?;
+        let has_any = iter.next().await.map_err(Error::Storage)?.is_some();
+        iter.close().await.map_err(Error::Storage)?;
+        Ok(has_any)
     }
 }
 

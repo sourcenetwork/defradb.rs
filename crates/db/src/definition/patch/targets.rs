@@ -37,23 +37,6 @@ where
         .collect())
 }
 
-/// The distinct first path segments of a patch's operations.
-pub(crate) fn segments(ops: &Value) -> Vec<String> {
-    let mut names: Vec<String> = Vec::new();
-    for name in ops
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(target_of)
-        .flatten()
-    {
-        if !names.contains(&name) {
-            names.push(name);
-        }
-    }
-    names
-}
-
 /// The first segment of `op`'s path: `None` without a path, `Some(None)` when
 /// the path names no collection.
 fn target_of(op: &Value) -> Option<Option<String>> {
@@ -95,61 +78,60 @@ fn rename_target(ops: &mut [Value], to: &str, from: &str) {
     }
 }
 
-impl<S: Store> crate::database::DB<S> {
-    /// Go keys a patch's document by version ID, so copying `/X` to a new key
-    /// `/Y` and then removing `/X` only moves the version: it is still `X`'s.
-    /// Drop such a pair and send every `/Y/...` path to `/X/...`.
-    pub(crate) fn fold_collection_copies(&self, ops: Value) -> Result<Value> {
-        let Value::Array(mut ops) = ops else {
-            return Ok(ops);
-        };
-        let mut index = 0;
-        while index < ops.len() {
-            match self.copy_to_fold(&ops, index)? {
-                Some((from, to, remove_at)) => {
-                    ops.remove(remove_at);
-                    ops.remove(index);
-                    rename_target(&mut ops, &to, &from);
-                }
-                None => index += 1,
+/// Go keys a patch's document by version ID, so copying `/X` to a new key
+/// `/Y` and then removing `/X` only moves the version: it is still `X`'s.
+/// Drop such a pair and send every `/Y/...` path to `/X/...`. `versions` are
+/// the versions the patch starts from.
+pub(crate) fn fold_collection_copies(ops: Value, versions: &[CollectionVersion]) -> Value {
+    let Value::Array(mut ops) = ops else {
+        return ops;
+    };
+    let mut index = 0;
+    while index < ops.len() {
+        match copy_to_fold(&ops, index, versions) {
+            Some((from, to, remove_at)) => {
+                ops.remove(remove_at);
+                ops.remove(index);
+                rename_target(&mut ops, &to, &from);
             }
+            None => index += 1,
         }
-        Ok(Value::Array(ops))
     }
+    Value::Array(ops)
+}
 
-    /// When `ops[index]` copies collection `X` to a key `Y` no collection has,
-    /// a later operation removes `X`, and nothing else touches `X`: `X`, `Y`
-    /// and the remove's index.
-    fn copy_to_fold(&self, ops: &[Value], index: usize) -> Result<Option<(String, String, usize)>> {
-        let op = &ops[index];
-        let (Some("copy"), Some(from), Some(to)) =
-            (op_name(op), whole_at(op, "from"), whole_at(op, "path"))
-        else {
-            return Ok(None);
-        };
-        let remove_at = ops
-            .iter()
-            .enumerate()
-            .skip(index + 1)
-            .find_map(|(i, later)| {
-                (op_name(later) == Some("remove") && whole_at(later, "path") == Some(from))
-                    .then_some(i)
-            });
-        let Some(remove_at) = remove_at else {
-            return Ok(None);
-        };
-        let touches_from = ops.iter().enumerate().any(|(i, other)| {
-            i != index
-                && i != remove_at
-                && [other.get("path"), other.get("from")]
-                    .into_iter()
-                    .flatten()
-                    .filter_map(Value::as_str)
-                    .any(|path| first_segment(path) == Some(from))
-        });
-        if touches_from || self.get_collection(to)?.is_some() {
-            return Ok(None);
-        }
-        Ok(Some((from.to_owned(), to.to_owned(), remove_at)))
+/// When `ops[index]` copies collection `X` to a key `Y` no version has, a
+/// later operation removes `X`, and nothing else touches `X`: `X`, `Y` and
+/// the remove's index.
+fn copy_to_fold(
+    ops: &[Value],
+    index: usize,
+    versions: &[CollectionVersion],
+) -> Option<(String, String, usize)> {
+    let op = &ops[index];
+    let (Some("copy"), Some(from), Some(to)) =
+        (op_name(op), whole_at(op, "from"), whole_at(op, "path"))
+    else {
+        return None;
+    };
+    let remove_at = ops
+        .iter()
+        .enumerate()
+        .skip(index + 1)
+        .find_map(|(i, later)| {
+            (op_name(later) == Some("remove") && whole_at(later, "path") == Some(from)).then_some(i)
+        })?;
+    let touches_from = ops.iter().enumerate().any(|(i, other)| {
+        i != index
+            && i != remove_at
+            && [other.get("path"), other.get("from")]
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .any(|path| first_segment(path) == Some(from))
+    });
+    if touches_from || find_target(versions, to).is_some() {
+        return None;
     }
+    Some((from.to_owned(), to.to_owned(), remove_at))
 }

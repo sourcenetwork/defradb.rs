@@ -8,8 +8,8 @@ mod apply;
 pub mod helpers;
 mod in_place;
 pub mod json;
-mod many;
 mod prepare;
+mod stage;
 mod store;
 mod targets;
 mod validate;
@@ -22,7 +22,6 @@ use crate::definition::patch::json::{
 };
 use crate::error::{Error, Result};
 use crate::txn::DbTxn;
-use rapidhash::HashMapExt;
 use schema::{CollectionSource, CollectionVersion};
 use storage::corekv::{Key, OnCommit, Store};
 use storage::keys::systemstore::{CollectionKey, CollectionNameKey, CollectionVersionKey};
@@ -140,7 +139,8 @@ impl<S: Store> crate::database::DB<S> {
         .await
     }
 
-    /// Apply a JSON Patch and its migration as one operation.
+    /// Apply a JSON Patch and its migration as one operation, every path read
+    /// as naming `collection_name`.
     #[instrument(skip(self, patch, migration), fields(collection = %collection_name), name = "db.patch_collection")]
     pub async fn patch_collection_with_migration_as(
         &self,
@@ -151,46 +151,20 @@ impl<S: Store> crate::database::DB<S> {
     ) -> Result<CollectionVersion> {
         self.check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
             .await?;
-        let patch_ops: serde_json::Value =
-            serde_json::from_str(patch).map_err(|e| Error::InvalidPatch(e.to_string()))?;
-
-        let Some(collection) = self.find_patch_target(collection_name).await? else {
-            // Not a collection by name or version ID: a collection-level
-            // move/copy whose "path" names a new collection (e.g. /Users → /Books)
-            return self
-                .handle_unknown_collection_patch(collection_name, &patch_ops)
-                .await;
-        };
-        let prepared = self
-            .prepare_patch(collection_name, &collection, patch_ops)
-            .await?;
-
-        if prepared.is_deactivation {
-            let old = &prepared.old_schema;
-            self.delete_collection_versions_batch_as(context, vec![old.version_id.clone()])
-                .await?;
-            let mut removed = prepared.new_schema;
-            removed.is_active = false;
-            removed.version_id = old.version_id.clone();
-            removed.previous_version = old.previous_version.clone();
-            return Ok(removed);
-        }
-
+        let ops = parse_patch(patch)?;
+        let ops = ops
+            .as_array()
+            .cloned()
+            .ok_or_else(|| Error::InvalidPatch("patch must be a JSON array".into()))?;
         let mut txn = self.new_txn(false).await?;
-        let outcome = self
-            .write_prepared(&mut txn, &prepared, &[], migration)
+        let staged = self
+            .stage_groups(&mut txn, vec![(collection_name.to_owned(), ops)], migration)
             .await?;
         txn.commit().await?;
-        self.finish_patch(outcome).await
-    }
-
-    /// The collection a patch path's first segment names: by name, else by
-    /// version ID (including versions only in the KV store).
-    pub(crate) async fn find_patch_target(&self, name: &str) -> Result<Option<Collection>> {
-        match self.get_collection(name)? {
-            Some(collection) => Ok(Some(collection)),
-            None => self.get_collection_by_version_id_full(name).await,
-        }
+        let mut patched = self.finish_staged(staged).await?;
+        patched
+            .pop()
+            .ok_or_else(|| Error::CollectionNotFound(collection_name.to_owned()))
     }
 
     /// Stage `prepared` on `txn`: in place when it keeps the version, as a new
@@ -217,37 +191,37 @@ where
 {
     /// Go's `PatchCollection`: apply `patch` to the collections its paths
     /// name (`/<Name>/...` or `/<VersionID>/...`) for `context`'s caller,
-    /// with `migration` as the migration to each version it adds.
+    /// with `migration` as the migration to each version it adds, in one
+    /// transaction of its own.
     pub async fn patch_collections_as(
         &self,
         context: &defra_core::RequestContext,
         patch: &str,
         migration: Option<lens::LensConfig>,
     ) -> Result<()> {
-        let ops: serde_json::Value =
-            serde_json::from_str(patch).map_err(|e| Error::InvalidPatch(e.to_string()))?;
-        let ops = self.fold_collection_copies(ops)?;
-        let mut versions = rapidhash::RapidHashMap::new();
-        for name in targets::segments(&ops) {
-            if let Some(collection) = self.find_patch_target(&name).await? {
-                versions.insert(name, collection.schema().version_id.clone());
-            }
-        }
-        let groups = targets::group_by_target(&ops, |name| {
-            versions
-                .get(name)
-                .cloned()
-                .unwrap_or_else(|| name.to_owned())
-        })?;
-        match groups.as_slice() {
-            [(name, _)] => {
-                let patch =
-                    serde_json::to_string(&ops).map_err(|e| Error::InvalidPatch(e.to_string()))?;
-                self.patch_collection_with_migration_as(context, name, &patch, migration)
-                    .await
-                    .map(|_| ())
-            }
-            _ => self.patch_many_as(context, groups, migration).await,
-        }
+        self.check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
+            .await?;
+        let ops = parse_patch(patch)?;
+        let mut txn = self.new_txn(false).await?;
+        let staged = self.stage_patch(&mut txn, ops, migration).await?;
+        txn.commit().await?;
+        self.finish_staged(staged).await.map(|_| ())
     }
+}
+
+/// A patch document: a JSON array of operations.
+pub(crate) fn parse_patch(patch: &str) -> Result<serde_json::Value> {
+    serde_json::from_str(patch).map_err(|e| Error::InvalidPatch(e.to_string()))
+}
+
+/// The version a patch path's first segment names among `versions`: the
+/// active one of that name, else the one with that version ID.
+pub(crate) fn find_target<'v>(
+    versions: &'v [CollectionVersion],
+    name: &str,
+) -> Option<&'v CollectionVersion> {
+    versions
+        .iter()
+        .find(|version| version.is_active && version.name == name)
+        .or_else(|| versions.iter().find(|version| version.version_id == name))
 }

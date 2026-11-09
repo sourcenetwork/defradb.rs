@@ -36,7 +36,8 @@ impl<S: Store> crate::database::DB<S> {
     ) -> Result<()> {
         self.check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
             .await?;
-        let all_versions = self.get_all_collection_versions().await?;
+        let mut txn = self.new_txn(false).await?;
+        let all_versions = self.get_all_collection_versions_with_txn(&mut txn).await?;
         let Some(target) = all_versions.iter().find(|v| v.version_id == version_id) else {
             return Err(Error::CollectionVersionNotFound(version_id.to_string()));
         };
@@ -50,14 +51,13 @@ impl<S: Store> crate::database::DB<S> {
                 return Err(version_in_use());
             }
         }
-        if target.is_active && self.collection_has_data(target).await? {
+        if target.is_active && self.collection_has_data(&txn, target).await? {
             return Err(collection_has_documents());
         }
 
         let mut deleting: rapidhash::RapidHashSet<&str> =
             also_deleting.iter().map(String::as_str).collect();
         deleting.insert(version_id);
-        let txn = self.new_txn(false).await?;
         self.write_version_deletion(&txn, target).await?;
         txn.commit().await?;
         self.forget_removed_collections(&all_versions, &deleting, std::slice::from_ref(target))
@@ -84,14 +84,13 @@ impl<S: Store> crate::database::DB<S> {
         if version_ids.is_empty() {
             return Ok(());
         }
-        let all_versions = self.get_all_collection_versions().await?;
+        let mut txn = self.new_txn(false).await?;
+        let all_versions = self.get_all_collection_versions_with_txn(&mut txn).await?;
         let deleting: rapidhash::RapidHashSet<&str> =
             version_ids.iter().map(String::as_str).collect();
         let targets = self
-            .check_versions_removable(&all_versions, &deleting)
+            .check_versions_removable(&txn, &all_versions, &deleting)
             .await?;
-
-        let txn = self.new_txn(false).await?;
         for target in &targets {
             self.write_version_deletion(&txn, target).await?;
         }
@@ -99,12 +98,13 @@ impl<S: Store> crate::database::DB<S> {
         self.forget_removed_collections(&all_versions, &deleting, &targets)
     }
 
-    /// Go's checks on a patch that removes `deleting` from `all_versions`:
-    /// every version exists, none has documents, no surviving version builds
-    /// on one, and no surviving field references a removed collection. The
-    /// versions to delete.
+    /// Go's checks on a patch that removes `deleting` from `all_versions`, as
+    /// `txn` sees them: every version exists, none has documents, no surviving
+    /// version builds on one, and no surviving field references a removed
+    /// collection. The versions to delete.
     pub(crate) async fn check_versions_removable(
         &self,
+        txn: &DbTxn<S>,
         all_versions: &[CollectionVersion],
         deleting: &rapidhash::RapidHashSet<&str>,
     ) -> Result<Vec<CollectionVersion>> {
@@ -120,7 +120,7 @@ impl<S: Store> crate::database::DB<S> {
             return Err(Error::CollectionVersionNotFound(missing.to_string()));
         }
         for target in &targets {
-            if target.is_active && self.collection_has_data(target).await? {
+            if target.is_active && self.collection_has_data(txn, target).await? {
                 return Err(collection_has_documents());
             }
         }

@@ -27,7 +27,7 @@
 \* Code it models (crates/db/src/definition/patch/):
 \*   mod.rs        DB::patch_collections_as   splits the patch by collection
 \*   targets.rs    group_by_target, fold_collection_copies
-\*   many.rs       DB::patch_many_as           prepare, validate, one commit
+\*   stage.rs      DB::stage_patch, DB::stage_groups   prepare, validate, stage on one txn
 \*   prepare.rs    DB::prepare_patch           step 1
 \*   store.rs      DB::store_new_version       step 2 against `siblings`
 \*   in_place.rs   DB::write_in_place          step 2 against `siblings`

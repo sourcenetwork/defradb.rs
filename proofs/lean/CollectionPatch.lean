@@ -18,12 +18,16 @@ A patch may also add a field whose kind names the collection it lives on
 `Self`, keeps whether the field is a list, leaves every other kind alone, and
 does nothing the second time.
 
+A patch path's first segment is found among the versions the transaction
+sees: the active version of that name, else the version with that ID.
+
 What must never happen: an operation dropped, sent to the wrong collection,
 or reordered; a kind naming the host collection left as a plain name (it
 would be refused as "must specify 'Self' kind"); any other kind changed.
 
 Rust owners:
   crates/db/src/definition/patch/targets.rs   group_by_target
+  crates/db/src/definition/patch/mod.rs       find_target
   crates/db/src/definition/patch/validate.rs  validate_patched_schema (the
                                               self-reference substitution)
 -/
@@ -161,5 +165,52 @@ theorem substitute_idempotent (host : String) (k : Kind) :
   | named n b => by_cases h : n = host <;> simp [substitute, h]
   -- any other shape is untouched both times
   | _ => rfl
+
+
+-- A stored version, as far as finding a patch's target goes.
+structure Version where
+  -- the collection's name
+  name : String
+  -- the version's ID
+  id : String
+  -- the version is the collection's active one
+  active : Bool
+  deriving DecidableEq, Repr
+
+-- `find_target`: the active version the segment names by name, else the
+-- version whose ID the segment is. A patch path's first segment may be
+-- either, and the transaction's own view of the versions is what is searched.
+def findTarget (vs : List Version) (seg : String) : Option Version :=
+  -- the active version of that name first
+  match vs.find? (fun v => v.active && v.name == seg) with
+  | some v => some v
+  -- otherwise the version with that ID
+  | none => vs.find? (fun v => v.id == seg)
+
+-- When an active version has the segment as its name, the target is an
+-- active version of that name: a name is never mistaken for an old version.
+theorem name_wins (vs : List Version) (seg : String)
+    (h : ∃ v ∈ vs, v.active = true ∧ v.name = seg) :
+    ∃ v, findTarget vs seg = some v ∧ v.active = true ∧ v.name = seg := by
+  -- some version passes the name test, so the first search finds one
+  obtain ⟨w, hw, ha, hn⟩ := h
+  have hsome : (vs.find? (fun v => v.active && v.name == seg)).isSome := by
+    rw [List.find?_isSome]; exact ⟨w, hw, by simp [ha, hn]⟩
+  -- name the version the first search found
+  obtain ⟨v, hv⟩ := Option.isSome_iff_exists.mp hsome
+  -- it passed the name test, so it is active and named `seg`
+  have hp := List.find?_some hv
+  simp at hp
+  exact ⟨v, by simp [findTarget, hv], hp.1, hp.2⟩
+
+-- When no active version has that name, the segment is read as a version ID.
+theorem id_otherwise (vs : List Version) (seg : String)
+    (h : ∀ v ∈ vs, ¬ (v.active = true ∧ v.name = seg)) :
+    findTarget vs seg = vs.find? (fun v => v.id == seg) := by
+  -- the first search finds nothing
+  have hnone : vs.find? (fun v => v.active && v.name == seg) = none := by
+    rw [List.find?_eq_none]; intro v hv; simpa using h v hv
+  -- so the ID search decides
+  simp [findTarget, hnone]
 
 end CollectionPatch

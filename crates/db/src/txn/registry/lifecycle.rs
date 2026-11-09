@@ -254,10 +254,11 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         patch: &str,
         migration: Option<lens::LensConfig>,
     ) -> std::result::Result<(), TransactionError> {
-        if context.txn().is_some() {
-            return Err(TransactionError::not_supported(
-                "collection patches inside an explicit transaction are not supported yet",
-            ));
+        if let Some(id) = context.txn() {
+            return self
+                .patch_collection_in_txn_as(context, &id.to_string(), patch, migration)
+                .await
+                .map_err(operation_error);
         }
         self.db
             .patch_collections_as(context, patch, migration)

@@ -353,6 +353,11 @@ RUNS=(
   "MC_CollectionPatch_Red_OneByOne.cfg CollectionPatch.tla RED" # a commit per collection: a later failure leaves earlier ones (INV_AllOrNone)
   "MC_CollectionPatch_Red_Alone.cfg CollectionPatch.tla RED" # each collection validated alone: a relation across two is refused (INV_ValidPatchApplies)
   "MC_CollectionPatch_Red_NoRefCheck.cfg CollectionPatch.tla RED" # removal not checked against staying fields (INV_NothingUnlessValid)
+  "MC_PatchInTxn_Green.cfg PatchInTxn.tla GREEN" # #2374: a patch in an explicit transaction reads and writes through it, finishes after commit, reports conflicts
+  "MC_PatchInTxn_Red_ReadOutside.cfg PatchInTxn.tla RED" # reads outside the txn miss the caller's own writes (INV_SeesOwnWrites)
+  "MC_PatchInTxn_Red_WriteOutside.cfg PatchInTxn.tla RED" # writes in a txn of their own are seen before commit (INV_IsolatedUntilCommit)
+  "MC_PatchInTxn_Red_EarlyFinish.cfg PatchInTxn.tla RED" # post-commit work run at staging (INV_FinishOnlyAfterCommit)
+  "MC_PatchInTxn_Red_SilentRetry.cfg PatchInTxn.tla RED" # a conflict retried silently (INV_ConflictReachesCaller)
   "MC_Truncate_Green.cfg Truncate.tla GREEN" # #2321: truncate checks nac, then for a filter branchable, txn and shape, before a delete that is durable at once
   "MC_Truncate_Red_Nac.cfg Truncate.tla RED" # permission check left out: a caller without CollectionTruncate removes documents (INV_NoRemovalWithoutPermission)
   "MC_Truncate_Red_Branchable.cfg Truncate.tla RED" # branchable check left out: a filtered truncate splits shared history (INV_FilteredNeverOnBranchable)
