@@ -25,7 +25,6 @@ testo index::query_with_composite_index_field_order::query_with_composite_index_
 testo issues::t_2569::p2_p_update_with_pn_counter_float_overflow_decrement_prevents_querying #2711
 testo issues::t_2569::p2_p_update_with_pn_counter_float_overflow_increment_prevents_querying #2711
 testo issues::t_2569::p2_p_update_with_pn_counter_float_overflow_prevents_collection_get #2711
-testo query::one_to_many::with_sum::query_one_to_many_with_sum_alias_filter_on_float32_should_match_one #2516
 testo index::vector_fallback_warning::vector_index_warning_selective_filter_still_returns_matching_docs #2366
 testo index::vector_fallback_warning::vector_index_warning_with_filter_reports_warning #2366
 testo query::simple::with_similarity_vector_index::query_simple_with_similarity_on_vector_index_ascending_order_full_scans #2366

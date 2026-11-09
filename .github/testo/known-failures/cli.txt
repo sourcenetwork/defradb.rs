@@ -26,7 +26,6 @@ testo index::vector_fallback_warning::vector_index_warning_no_limit_reports_warn
 testo index::vector_fallback_warning::vector_index_warning_ordered_ascending_reports_warning #2366
 testo index::vector_fallback_warning::vector_index_warning_selective_filter_still_returns_matching_docs #2366
 testo index::vector_fallback_warning::vector_index_warning_with_filter_reports_warning #2366
-testo query::one_to_many::with_sum::query_one_to_many_with_sum_alias_filter_on_float32_should_match_one #2516
 testo query::simple::with_similarity_vector_index::query_simple_with_similarity_on_vector_index_ascending_order_full_scans #2366
 testo query::simple::with_similarity_vector_index::query_simple_with_similarity_on_vector_index_no_order_does_not_use_index #2366
 testo collection_version::introspection_golden::introspection_matches_golden_simple #2649

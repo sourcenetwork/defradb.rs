@@ -1,11 +1,13 @@
 //! Relation-based aggregate computation.
 
+use std::sync::Arc;
+
 use rapidhash::{HashSetExt, RapidHashMap, RapidHashSet};
-use schema::CollectionVersion;
+use schema::{CollectionVersion, FieldKind, ScalarKind};
 use serde_json::Value as JsonValue;
 
 use crate::error::Result;
-use crate::mapper::{Requestable, Select};
+use crate::mapper::{AggregateTarget, Requestable, Select};
 use crate::txn::TransactionRegistry;
 
 use super::super::{DocFetcher, QueryRunner};
@@ -22,6 +24,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         mut results: Vec<JsonValue>,
         select: &Select,
         aggregate_internal_keys: &RapidHashMap<String, (String, String)>,
+        float32_targets: &RapidHashSet<String>,
     ) -> Result<Vec<JsonValue>> {
         use crate::mapper::AggregateType;
 
@@ -275,9 +278,14 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                                         };
                                     }
                                     AggregateType::Sum | AggregateType::Average => {
+                                        let widen = *agg_type == AggregateType::Sum
+                                            && !float32_targets.is_empty()
+                                            && float32_targets
+                                                .contains(&float32_target_key(target));
                                         for item in &final_items {
                                             if let Some(n) = extract_numeric(item, field_name) {
-                                                total_value += n;
+                                                total_value +=
+                                                    if widen { f64::from(n as f32) } else { n };
                                                 total_count += 1;
                                             }
                                         }
@@ -608,4 +616,70 @@ fn extract_numeric(item: &JsonValue, field_name: Option<&str>) -> Option<f64> {
         }
     };
     val.as_f64().or_else(|| val.as_i64().map(|n| n as f64))
+}
+
+/// The key [`float32_relation_targets`] records a target under.
+fn float32_target_key(target: &AggregateTarget) -> String {
+    format!(
+        "{}.{}",
+        target.host_name,
+        target.field_name.as_deref().unwrap_or_default()
+    )
+}
+
+/// The aggregate targets of `select` whose values are Float32: a field of a
+/// related collection, or an inline `[Float32]` array. Their values render as
+/// the shortest decimal of their `f32`, so a sum narrows each back and adds
+/// its exact `f64` widening, as Go's float64 sum does: `4.9 + 4.5` is
+/// `9.400000095367432`.
+pub(crate) fn float32_relation_targets(
+    select: &Select,
+    collection: &CollectionVersion,
+    collections: &RapidHashMap<String, Arc<CollectionVersion>>,
+) -> RapidHashSet<String> {
+    let by_id = |id: &str| {
+        collections
+            .values()
+            .find(|c| c.collection_id == id || c.version_id == id)
+    };
+    let mut targets = RapidHashSet::new();
+    for field in &select.fields {
+        let Requestable::Aggregate(agg) = field else {
+            continue;
+        };
+        for target in &agg.targets {
+            let Some(host) = collection.field_by_name(&target.host_name) else {
+                continue;
+            };
+            let float32 = match (&host.kind, target.field_name.as_deref()) {
+                (FieldKind::ScalarArray(array), None) => {
+                    array.element_kind() == ScalarKind::NillableFloat32
+                        || array.element_kind() == ScalarKind::Float32
+                }
+                (FieldKind::Relation { collection_id, .. }, Some(name)) => by_id(collection_id)
+                    .or_else(|| collections.get(collection_id))
+                    .and_then(|related| related.field_by_name(name))
+                    .is_some_and(|f| {
+                        matches!(
+                            f.kind,
+                            FieldKind::Scalar(ScalarKind::Float32 | ScalarKind::NillableFloat32)
+                        )
+                    }),
+                _ => false,
+            };
+            if float32 {
+                targets.insert(float32_target_key(target));
+            }
+        }
+    }
+    targets
+}
+
+#[cfg(test)]
+mod float32_tests {
+    #[test]
+    fn float32_values_add_as_their_exact_widening() {
+        let sum: f64 = [4.9_f64, 4.5].iter().map(|n| f64::from(*n as f32)).sum();
+        assert_eq!(sum, 9.400000095367432);
+    }
 }
