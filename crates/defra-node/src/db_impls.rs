@@ -246,6 +246,21 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
         Ok(())
     }
 
+    async fn refresh_views(
+        &self,
+        context: &RequestContext,
+        selector: db::CollectionSelector,
+    ) -> Result<()> {
+        self.database
+            .check_node_access_as(context, acp::nac::NodePermission::ViewRefresh)
+            .await
+            .map_err(Error::from)?;
+        self.database
+            .refresh_views(selector)
+            .await
+            .map_err(Error::MaterializedViewRefresh)
+    }
+
     async fn materialize_collection(
         &self,
         context: &RequestContext,

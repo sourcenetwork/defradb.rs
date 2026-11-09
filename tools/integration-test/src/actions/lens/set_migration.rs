@@ -39,12 +39,12 @@ impl Op for ConfigureMigration {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        self.common.plain(Self::name())?;
+        let identity = self.common.client_identity(Self::name())?;
         state
             .block_on(
                 state
                     .node_on(self.common.node())?
-                    .set_migration_as(&state.context(self.txn), &self.config()),
+                    .set_migration_as(&state.context_as(self.txn, identity), &self.config()),
             )
             .map(|id| json!({ "lensID": id }))
             .map_err(|e| Failure::operation(e.to_string()))
@@ -72,11 +72,11 @@ impl Action for ConfigureMigration {
 impl HttpRun for ConfigureMigration {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.common.plain(Self::name())?;
+            let identity = action.common.client_identity(Self::name())?;
             let (txn, config) = (state.txn_id(action.txn), action.config());
             let in_txn = txn.is_some();
             let id = state
-                .http_on(action.common.node(), |client| async move {
+                .http_as(action.common.node(), identity, |client| async move {
                     client.set_migration(txn.as_deref(), &config).await
                 })?
                 .map_err(|e| Failure::operation(e.to_string()))?;
@@ -91,7 +91,7 @@ impl HttpRun for ConfigureMigration {
 impl CliRun for ConfigureMigration {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.common.plain(Self::name())?;
+            let identity = action.common.client_identity(Self::name())?;
             let lens = action.lens.to_wire().to_string();
             let args = [
                 "lens",
@@ -101,7 +101,7 @@ impl CliRun for ConfigureMigration {
                 &lens,
             ];
             let printed = state
-                .defra_client_on(action.common.node(), action.txn, &args)
+                .defra_client_as(action.common.node(), action.txn, identity, &args)
                 .map_err(Failure::operation)?;
             Ok(json!({ "lensID": printed["lensId"] }))
         });

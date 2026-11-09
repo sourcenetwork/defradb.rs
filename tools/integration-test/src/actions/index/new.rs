@@ -51,11 +51,11 @@ impl Op for NewIndex {
             .collect();
         state
             .block_on(state.node_on(self.common.node())?.create_index_as(
-                &state.context(None),
+                &state.context_as(None, self.common.identity_seed),
                 &self.collection,
                 self.index_name(),
                 fields,
-                self.index.unique,
+                self.unique(),
             ))
             .map(|_| json!({}))
             .map_err(|e| Failure::operation(e.to_string()))
@@ -68,13 +68,42 @@ impl NewIndex {
         Some(self.index.name.as_str()).filter(|name| !name.is_empty())
     }
 
+    /// Whether the index is unique, by its flag or its ordered config's.
+    fn unique(&self) -> bool {
+        let ordered = self
+            .index
+            .ordered
+            .as_ref()
+            .and_then(|config| config.get("Unique"));
+        self.index.unique
+            || ordered
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or_default()
+    }
+
     /// Fails on the arguments no client supports yet.
     fn check_arguments(&self) -> Result<(), Failure> {
-        self.common.plain(Self::name_of())?;
+        self.common.client_identity(Self::name_of())?;
+        let ordered_unique = self
+            .index
+            .ordered
+            .as_ref()
+            .and_then(|config| config.get("Unique"))
+            .and_then(serde_json::Value::as_bool);
+        if ordered_unique.is_some_and(|unique| unique != self.index.unique) && self.index.unique {
+            return Err(Failure::operation(
+                "index request sets both the deprecated unique field and an ordered config that disagree"
+                    .to_owned(),
+            ));
+        }
+        if self.index.ordered.is_some() && self.index.vector.is_some() {
+            return Err(Failure::operation(
+                "index request has more than one kind config".to_owned(),
+            ));
+        }
         let unsupported = [
             ("async", self.r#async),
             ("txn", self.txn.is_some()),
-            ("index.ordered", self.index.ordered.is_some()),
             ("index.vector", self.index.vector.is_some()),
         ];
         unsupported_argument(&unsupported)
@@ -122,13 +151,17 @@ impl HttpRun for NewIndex {
             let collection = action.collection.clone();
             let fields = action.field_names();
             let name = action.index_name().map(str::to_owned);
-            let unique = action.index.unique;
+            let unique = action.unique();
             state
-                .http_on(action.common.node(), |client| async move {
-                    client
-                        .index_create(&collection, &fields, name.as_deref(), unique, None)
-                        .await
-                })?
+                .http_as(
+                    action.common.node(),
+                    action.common.identity_seed,
+                    |client| async move {
+                        client
+                            .index_create(&collection, &fields, name.as_deref(), unique, None)
+                            .await
+                    },
+                )?
                 .map(|_| json!({}))
                 .map_err(|e| Failure::operation(e.to_string()))
         });
@@ -151,11 +184,16 @@ impl CliRun for NewIndex {
             if let Some(name) = action.index_name() {
                 args.extend(["--name", name]);
             }
-            if action.index.unique {
+            if action.unique() {
                 args.push("--unique");
             }
             state
-                .defra_client_on(action.common.node(), None, &args)
+                .defra_client_as(
+                    action.common.node(),
+                    None,
+                    action.common.identity_seed,
+                    &args,
+                )
                 .map(|_| json!({}))
                 .map_err(Failure::operation)
         });

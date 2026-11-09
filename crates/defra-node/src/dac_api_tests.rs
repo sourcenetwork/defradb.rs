@@ -214,7 +214,7 @@ fn dac_relationship_rejects_owner_relation() {
             .unwrap_err();
         assert_eq!(
             add.to_string(),
-            "OPERATION_FORBIDDEN: cannot add owner relation"
+            "failed to add document actor relationship with acp: OPERATION_FORBIDDEN: cannot add owner relation"
         );
         let delete = node
             .delete_dac_actor_relationship(DID_A, "Users", &doc_id, "owner", DID_B)
@@ -222,7 +222,7 @@ fn dac_relationship_rejects_owner_relation() {
             .unwrap_err();
         assert_eq!(
             delete.to_string(),
-            "OPERATION_FORBIDDEN: cannot delete owner relation"
+            "failed to delete document actor relationship with acp: OPERATION_FORBIDDEN: cannot delete owner relation"
         );
         node.shutdown().await.unwrap();
     })
