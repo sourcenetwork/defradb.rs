@@ -5,6 +5,7 @@ use crate::test_case::State;
 use schema::IndexedFieldDescription;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::time::{Duration, Instant};
 use testo::prelude::*;
 
 /// Creates an index on a collection.
@@ -152,20 +153,70 @@ impl HttpRun for NewIndex {
             let fields = action.field_names();
             let name = action.index_name().map(str::to_owned);
             let unique = action.unique();
+            let created = collection.clone();
             state
                 .http_as(
                     action.common.node(),
                     action.common.identity_seed,
                     |client| async move {
                         client
-                            .index_create(&collection, &fields, name.as_deref(), unique, None)
+                            .index_create(&created, &fields, name.as_deref(), unique, None)
                             .await
                     },
                 )?
-                .map(|_| json!({}))
-                .map_err(|e| Failure::operation(e.to_string()))
+                .map_err(|e| Failure::operation(e.to_string()))?;
+            wait_until_built(state, action, &collection)?;
+            Ok(json!({}))
         });
     }
+}
+
+/// How long a backfill may take before the wait gives up.
+const BUILD_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Waits until no index of `collection` is still building, as Go's
+/// `NewIndex` action does: Go builds an index in the background, so a
+/// `ListIndexes` straight after the create would see it mid-backfill.
+// ponytail: waits on every index of the collection, not just the new one; the
+// HTTP client refuses `async`, so no other index is left building on purpose.
+fn wait_until_built(state: &State, action: &NewIndex, collection: &str) -> Result<(), Failure> {
+    let deadline = Instant::now() + BUILD_TIMEOUT;
+    loop {
+        let collection = collection.to_owned();
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let indexes = state
+            .http_as(
+                action.common.node(),
+                action.common.identity_seed,
+                |client| async move {
+                    workers::timeout(remaining, client.index_listing(&collection))
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .map_err(|e| e.to_string())
+                },
+            )?
+            .map_err(Failure::operation)?;
+        if !indexes
+            .as_array()
+            .is_some_and(|all| all.iter().any(building))
+        {
+            return Ok(());
+        }
+        if Instant::now() > deadline {
+            return Err(Failure::operation(format!(
+                "{}: an index of {} was still building after {BUILD_TIMEOUT:?}",
+                NewIndex::name_of(),
+                action.collection
+            )));
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Go's building state: `BackfillIndexAction` (3) and `InProgressActionStatus` (1).
+fn building(index: &Value) -> bool {
+    let execution = &index["Execution"];
+    execution["Action"] == 3 && execution["Status"] == 1
 }
 
 impl CliRun for NewIndex {
