@@ -448,6 +448,13 @@ RUNS=(
   "MC_AddViewTransform_Red_SyncMemoryOnly_Restart.cfg AddViewTransform.tla RED" # before the fix: memory-only sync and a memory check store a lens a restart loses (INV_StoredTransformExists)
   "MC_AddViewTransform_Green_NacBefore.cfg AddViewTransform.tla GREEN" # the code as it is: lenses from either path decided in the transaction; NAC still before it, every other promise holds
   "MC_AddViewTransform_Red_KnownGap_NacBefore.cfg AddViewTransform.tla RED" # known gap (#2736): NAC ViewAdd read before the view's transaction (INV_NoViewWithoutPermission)
+  "MC_LensIndexAnswer_Green.cfg LensIndexAnswer.tla GREEN" # #2379: an index answers only when no reindex is owed; schema changes and off-version merges owe a fresh record; a rebuild clears only its own
+  "MC_LensIndexAnswer_Red_NoGate.cfg LensIndexAnswer.tla RED" # index answers while owed (INV_IndexMatchesReads)
+  "MC_LensIndexAnswer_Red_LensGate.cfg LensIndexAnswer.tla RED" # main before #2379: no index once any lens exists (INV_SettledIndexAnswers)
+  "MC_LensIndexAnswer_Red_NoSchemaOwe.cfg LensIndexAnswer.tla RED" # schema change owes nothing (INV_IndexMatchesReads)
+  "MC_LensIndexAnswer_Red_NoMergeOwe.cfg LensIndexAnswer.tla RED" # off-version merge owes nothing (INV_IndexMatchesReads)
+  "MC_LensIndexAnswer_Red_SkipIfOwed.cfg LensIndexAnswer.tla RED" # merge skips owing while a record stands (INV_IndexMatchesReads)
+  "MC_LensIndexAnswer_Red_NoTokenCheck.cfg LensIndexAnswer.tla RED" # rebuild clears a newer record (INV_IndexMatchesReads)
   "MC_VerifySignature_Green_Pool.cfg VerifySignature.tla GREEN" # #2724: with no transaction, NAC, block and document ACP read one read-only view
   "MC_VerifySignature_Green_Txn.cfg VerifySignature.tla GREEN" # #2724: in the caller's transaction, all three read its view, pending writes included
   "MC_VerifySignature_Red_NoNac.cfg VerifySignature.tla RED" # NAC check left out (INV_VerifiedAtOnePoint)

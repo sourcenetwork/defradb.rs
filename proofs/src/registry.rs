@@ -1730,6 +1730,32 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // #2378: a lens's ID is the CID of blocks that record every module and
+        // every argument value, as Go's lens store writes them; it used to
+        // hash the first module and only string arguments.
+        family: "Schema-evolution operations in the core",
+        name: "LensId.configBlock_injective / new_numbers_differ / new_keeps_later_modules / empty_lens_has_block",
+        axis: Lean,
+        anchor: "crates/defra-core/src/lens_block.rs build_lens_ipld_blocks, build_module_blocks; crates/db/src/definition/migration/committed_lenses.rs PreparedLens::new, module_arguments",
+        model_ref: "LensId (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/defra-core/tests/lens_block_id.rs every_module_and_argument_value_counts, an_empty_lens_has_gos_config_block_cid",
+    },
+    Property {
+        // #2379: an index answers queries only while no reindex is owed;
+        // schema changes and merges that store a document off the active
+        // version across a lens owe a fresh record, and a rebuild clears only
+        // the record it started from. Main before the fix refused every index
+        // once a lens existed (Red_LensGate).
+        family: "Schema-evolution operations in the core",
+        name: "INV_IndexMatchesReads / INV_SettledIndexAnswers",
+        axis: Tla,
+        anchor: "crates/db/src/definition/migration/reindex/owed.rs owe_reindex, clear_owed_reindex; crates/db/src/collection/mod.rs queryable; crates/db/src/merge/merge_handler/stale_version.rs DbMergeHandler::owe_reindex_off_active_version; crates/query/src/planner/builder/index_methods.rs try_select_index",
+        model_ref: "MC_LensIndexAnswer_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // An explicit transaction's ID is `sequence * workers + worker`. The
         // owner is the ID modulo the worker count and the sequence is the
         // quotient, so the round trip is exact for every worker below the
