@@ -438,6 +438,16 @@ impl NodeBuilder {
         self
     }
 
+    /// Keep the node identity [`NodeBuilder::with_signing_key`],
+    /// [`NodeBuilder::enable_signing`] or [`NodeBuilder::with_node_identity_did`]
+    /// gives the node, for P2P, the KMS and NAC, but write unsigned blocks and
+    /// run each request as its caller, never as the node: Go's `NodeIdentity`
+    /// with `EnableSigning` off.
+    pub fn with_identity_only(mut self) -> Self {
+        self.config.identity_only = true;
+        self
+    }
+
     /// Replicas' bytes per block chunk; the database default when unset.
     pub fn with_chunk_size(mut self, bytes: usize) -> Self {
         self.config.chunk_size = Some(bytes);
@@ -558,6 +568,7 @@ impl NodeBuilder {
         };
         let config = self.config.clone();
         let query_limits = config.query_limits;
+        let identity_only = config.identity_only;
         query_limits.check_fragment_nesting()?;
         let workers = self.workers.take();
         let node = assemble(|pool| self.open_store(pool, crdts), config, workers, extras).await?;
@@ -570,6 +581,7 @@ impl NodeBuilder {
                 address: http_cfg.address,
                 request_timeout: crate::timeout_secs(http_cfg.request_timeout),
                 query_limits,
+                no_signing: identity_only,
                 ..Default::default()
             };
             let server = defra_http::Server::from_arc_with_config(

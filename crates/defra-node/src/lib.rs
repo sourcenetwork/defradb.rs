@@ -246,6 +246,10 @@ pub struct Node {
     document_acp: Arc<dyn acp::DocumentACP>,
     embedding_config: db::EmbeddingClientConfig,
     node_identity_did: Option<String>,
+    /// Whether the node signs the blocks it writes with its identity; false
+    /// for an identity-only node ([`NodeBuilder::with_identity_only`]).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    node_signs: bool,
     node_query_identity: Option<identity::Did>,
     /// The node's share of the network runtime; `None` when the node has
     /// no network work and was given no runtime.
@@ -539,7 +543,15 @@ impl Node {
             Err(error) => return QueryResponse::error(error.to_string()),
         };
         let request = self.with_default_query_identity(request);
-        let Some(node_identity_did) = self.node_identity_did.as_deref() else {
+        // A node acts as its identity only when it signs with it, or when the
+        // caller brings its own key; an identity-only node otherwise runs each
+        // request as its caller, as Go's `NodeIdentity` without
+        // `EnableSigning` does.
+        let signing_identity = self
+            .node_identity_did
+            .as_deref()
+            .filter(|_| self.node_signs || caller_signer.is_some());
+        let Some(node_identity_did) = signing_identity else {
             if caller_signer.is_some() {
                 return QueryResponse::error(
                     "explicit embedded signing requires a configured node identity",

@@ -79,6 +79,7 @@ where
         transport,
         edge: given_edge,
         signing,
+        identity_only,
         document_acp: document_acp_config,
         query_limits,
         max_txn_retries,
@@ -101,8 +102,11 @@ where
         hold: signing_key_hold,
     } = node_identity::create_node_identity(&signing)?;
     let node_p2p_identity = raw_identity.map(Arc::new);
+    // The identity a request without its own acts as: the node's, when it
+    // signs with it. An identity-only node's requests act as their caller.
     let node_query_identity = node_identity_did
         .as_ref()
+        .filter(|_| !identity_only)
         .map(|did| identity::Did::new(did.clone()))
         .transpose()
         .map_err(Error::InvalidNodeIdentityDid)?;
@@ -589,6 +593,7 @@ where
         document_acp,
         embedding_config,
         node_identity_did,
+        node_signs: !identity_only,
         node_query_identity,
         _signing_key_hold: signing_key_hold,
         network,

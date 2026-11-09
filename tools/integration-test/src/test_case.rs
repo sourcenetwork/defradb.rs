@@ -107,6 +107,29 @@ impl State {
         self.slot(name).and_then(|slot| slot.spec.node_identity)
     }
 
+    /// The index Go's harness gives node `name` as it starts, which names its
+    /// `NodeIdentity`: how many nodes the test started before it, not
+    /// counting the default node every test begins with.
+    pub fn go_node_index(&self, name: &str) -> u64 {
+        self.nodes
+            .0
+            .keys()
+            .filter(|node| node.as_str() != name && node.as_str() != crate::scenario::DEFAULT_NODE)
+            .count() as u64
+    }
+
+    /// The client seed that acts as node `name`'s identity, as an
+    /// `identityNode` argument asks.
+    pub fn node_as_client(&self, op: &str, name: &str) -> Result<u64, Failure> {
+        self.node_identity_of(name)
+            .and_then(|seed| crate::scenario::identity::NODE_IDENTITY_BASE.checked_add(seed))
+            .ok_or_else(|| {
+                Failure::unsupported(format!(
+                    "{op} argument identityNode: node {name} was started with no identity"
+                ))
+            })
+    }
+
     /// The public key (hex) and key type node `name` signs blocks with, if it
     /// signs.
     pub fn signer_of(&self, name: &str) -> Option<(String, crate::actions::shared::KeyType)> {

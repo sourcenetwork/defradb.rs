@@ -19,6 +19,7 @@ The model proves:
 
 | Theorem | Meaning | Rust source |
 |---|---|---|
+| `NodeSigningChoice.default_build_unchanged`, `identity_only_runs_as_caller`, `identity_only_never_signs`, `identity_only_never_refused` | A node's identity and its signing are separate: an identity-only node runs each request as its caller and never signs, and a node built without `with_identity_only` runs requests as before. | `crates/defra-node/src/lib.rs`, `crates/defra-node/src/assemble.rs` |
 | `RequestDrain.start_keeps_permit`, `finish_keeps_permit`, `dropped_waiter_keeps_permit`, `expired_task_loses_permit`, `task_guard_survives_cancellation`, `caller_guard_is_abandoned`, `begin_open_has_owner`, `abandoned_begin_is_closed` | A running worker keeps its admission, and an edge-admitted commit task owns its guard when the caller stops waiting. | `crates/defra-node/src/signed_query/mod.rs`, `crates/defra-node/src/transaction.rs` |
 | `lwwState_merge_comm`, `lwwState_merge_assoc`, `lwwState_merge_idem` | LWW is a join over the deterministic priority/value key. | `crates/crdt/src/field/lww.rs` |
 | `word64Add_comm`, `word64Add_assoc` | Int64 counter accumulation is order-independent under wrapping addition. | `crates/crdt/src/field/counter.rs` |
