@@ -8,7 +8,7 @@ use crate::error::{QueryError, Result};
 use crate::executor::QueryRequest;
 use crate::mapper::MutationType;
 use crate::prepared::{PreparedMutation, PreparedMutations};
-use crate::query_parse::{validate_parsed_operation, ParsedOperation};
+use crate::query_parse::{validate_operation, ParsedOperation};
 use crate::txn::TransactionRegistry;
 
 use super::{DocFetcher, QueryRunner};
@@ -64,7 +64,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         {
             return Ok(None);
         }
-        validate_parsed_operation(&parsed, self.effective_provider().as_ref()).await?;
+        let graphql_text = request.parsed.is_none();
+        validate_operation(&parsed, self.effective_provider().as_ref(), graphql_text).await?;
         if super::executor::check_nac(self, &request.identity, &parsed)
             .await
             .is_some()

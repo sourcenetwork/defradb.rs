@@ -21,6 +21,11 @@ pub use types::{AddOptions, DocumentsResult, Filter};
 use crate::executor::{QueryRequest, QueryResponse};
 
 /// Add `docs` to `collection` and return their IDs in order.
+///
+/// Fields to encrypt go as typed mutations, as Go's collection API checks
+/// them against the collection itself (`can not encrypt build-in field`,
+/// `the given field does not exist`); GraphQL text would refuse them first
+/// as invalid `encryptFields` argument values.
 pub async fn add<R, F>(
     run: R,
     collection: &str,
@@ -28,11 +33,17 @@ pub async fn add<R, F>(
     options: &AddOptions,
 ) -> Result<Vec<String>>
 where
-    R: FnOnce(String) -> F,
+    R: FnOnce(QueryRequest) -> F,
     F: Future<Output = QueryResponse>,
 {
+    let typed =
+        !options.encrypted_fields.is_empty() && docs.iter().all(|doc| doc.get("_docID").is_none());
+    if typed {
+        let request = QueryRequest::parsed(save_many::operation(collection, docs, options)?);
+        return response::saved_doc_ids(run(request).await, docs.len());
+    }
     let mutation = request::add(collection, docs, options)?;
-    response::doc_ids(run(mutation).await, "add", collection)
+    response::doc_ids(run(QueryRequest::new(mutation)).await, "add", collection)
 }
 
 /// Set the fields `patch` names on document `doc_id`.
@@ -57,19 +68,20 @@ pub async fn save<R, F>(
     options: &AddOptions,
 ) -> Result<String>
 where
-    R: Fn(String) -> F,
+    R: Fn(QueryRequest) -> F,
     F: Future<Output = QueryResponse>,
 {
     let Some(doc_id) = doc_id else {
         let ids = add(run, collection, std::slice::from_ref(doc), options).await?;
         return response::single(ids);
     };
-    if response::deleted(run(request::lookup(collection, doc_id)?).await, collection)? {
+    let lookup = QueryRequest::new(request::lookup(collection, doc_id)?);
+    if response::deleted(run(lookup).await, collection)? {
         return Err(Error::Deleted(doc_id.to_owned()));
     }
     let mutation = request::save(collection, doc_id, doc, options)?;
     response::single(response::doc_ids(
-        run(mutation).await,
+        run(QueryRequest::new(mutation)).await,
         "upsert",
         collection,
     )?)

@@ -104,6 +104,17 @@ impl State {
         })
     }
 
+    /// The index Go's harness gives node `name` as it starts: how many nodes
+    /// the test started before it, not counting the default node every test
+    /// begins with, which Go has no counterpart of.
+    pub fn go_node_index(&self, name: &str) -> u64 {
+        self.nodes
+            .0
+            .keys()
+            .filter(|node| node.as_str() != name && node.as_str() != crate::scenario::DEFAULT_NODE)
+            .count() as u64
+    }
+
     /// The node identity seed node `name` was started with, if any.
     pub fn node_identity_of(&self, name: &str) -> Option<u64> {
         self.slot(name).and_then(|slot| slot.spec.node_identity)

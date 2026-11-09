@@ -2,7 +2,7 @@
 
 use net::http::{Method, Response};
 use query::documents::{self, AddOptions, DocumentsResult, Filter};
-use query::executor::{QueryResponse, QueryResponseError};
+use query::executor::{QueryRequest, QueryResponse, QueryResponseError};
 use serde_json::{json, Value};
 use urlencoding::encode;
 
@@ -171,8 +171,11 @@ impl HttpClient {
         doc: &Value,
         options: &AddOptions,
     ) -> Result<String> {
-        let run = |request: String| async move {
-            match self.graphql(&request, None, Some(txn.to_owned())).await {
+        let run = |request: QueryRequest| async move {
+            match self
+                .graphql(&request.query, None, Some(txn.to_owned()))
+                .await
+            {
                 Ok(response) => QueryResponse {
                     data: response.data,
                     errors: response

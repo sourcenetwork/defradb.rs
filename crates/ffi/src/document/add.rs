@@ -48,7 +48,7 @@ pub unsafe extern "C" fn defra_document_add(
                 encrypt_doc: encrypt,
                 encrypted_fields: encrypt_fields,
             };
-            let ids = query::documents::add(|m| call.respond(m), &name, &docs, &options)
+            let ids = query::documents::add(|request| call.execute(request), &name, &docs, &options)
                 .await
                 .map_err(|e| e.to_string())?;
             serde_json::to_string(&ids).map_err(|e| e.to_string())

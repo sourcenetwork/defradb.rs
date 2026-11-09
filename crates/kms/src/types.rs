@@ -23,6 +23,23 @@ pub enum KeyScope {
     Collection { collection_id: String },
 }
 
+impl KeyScope {
+    /// A fresh DEK for this scope: random, except under the hidden
+    /// Go-compatibility test switch, where a document key is derived from its
+    /// DocRef and field as Go's `generateTestEncryptionKey` does.
+    pub(crate) fn new_key(&self) -> [u8; 32] {
+        match self {
+            KeyScope::Document { doc_id, field } => match hex::decode(doc_id) {
+                Ok(doc_ref) => {
+                    defra_core::encryption::generate_encryption_key_for(&doc_ref, field.as_deref())
+                }
+                Err(_) => defra_core::encryption::generate_encryption_key(),
+            },
+            KeyScope::Collection { .. } => defra_core::encryption::generate_encryption_key(),
+        }
+    }
+}
+
 /// Outcome of an `AccessPolicy` decision. M1 ships only `Allow` / `Deny`.
 /// `AllowAttested` lands with M4 Vera.
 #[non_exhaustive]
@@ -49,6 +66,23 @@ mod tests {
             field: None,
         };
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn new_key_is_random_unless_the_test_switch_derives_gos_key() {
+        let scope = KeyScope::Document {
+            doc_id: hex::encode([0x89, 0x8a]),
+            field: Some("age".into()),
+        };
+        assert_ne!(scope.new_key(), scope.new_key());
+
+        defra_core::encryption::set_deterministic_encryption_key(true);
+        assert_eq!(&scope.new_key(), b"age\x89\x8aexamplekey1234567890example");
+        let collection = KeyScope::Collection {
+            collection_id: "c".into(),
+        };
+        assert_ne!(collection.new_key(), collection.new_key());
+        defra_core::encryption::set_deterministic_encryption_key(false);
     }
 
     #[test]

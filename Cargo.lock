@@ -6996,6 +6996,7 @@ dependencies = [
  "defra-core",
  "edge",
  "futures",
+ "hex",
  "identity",
  "inputs",
  "kovan",
