@@ -108,21 +108,39 @@ where
     let count = heads.len();
     let (done, outcome) = oneshot::channel();
     let owner = Arc::clone(sync);
+    let mut task = Unregistered { heads, ran: 0 };
     sync.spawn_background_task("register_committed_heads", async move {
-        let mut errors = Vec::with_capacity(heads.len());
-        for head in &heads {
-            errors.push(
-                head.register(&owner)
-                    .await
-                    .err()
-                    .map(|error| error.to_string()),
-            );
+        let mut errors = Vec::with_capacity(task.heads.len());
+        while let Some(head) = task.heads.get(task.ran) {
+            let result = head.register(&owner).await;
+            task.ran += 1;
+            errors.push(result.err().map(|error| error.to_string()));
         }
         let _ = done.send(errors);
     });
     outcome.await.unwrap_or_else(|_| {
         vec![Some("the coordinator stopped before registering the head's markers".into()); count]
     })
+}
+
+/// Logs, when dropped, the heads its task never registered. The request may
+/// be gone by then, so this log is the only trace of the head no peer gets.
+struct Unregistered {
+    heads: Vec<CommittedHead>,
+    ran: usize,
+}
+
+impl Drop for Unregistered {
+    fn drop(&mut self) {
+        for head in self.heads.iter().skip(self.ran) {
+            tracing::error!(
+                doc_id = %head.doc_id,
+                collection_id = %head.collection_id,
+                cid = %head.cid,
+                "Committed head has no P2P marker: P2P stopped before its registration ran"
+            );
+        }
+    }
 }
 
 /// Joins every error into one message, or `None` when all heads registered.
