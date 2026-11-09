@@ -2631,6 +2631,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "Index changes in a transaction",
+        name: "INV_WorkOnlyAfterCommit / INV_IsolatedUntilCommit / INV_SeesOwnChange / INV_BuiltWhenCommitReturns",
+        axis: Tla,
+        anchor: "crates/db/src/index/in_txn.rs DB::create_index_in, DB::drop_index_in; crates/db/src/txn/registry/indexes.rs DbTransactionRegistry::create_index_in_txn, DbTransactionRegistry::drop_index_in_txn, DbTransactionRegistry::indexes_in_txn; crates/defra-node/src/ops/index.rs Node::create_index_as, Node::delete_index_as, Node::list_indexes_as; crates/http/src/handlers/index/go_api.rs go_create_index, go_list_indexes, go_delete_index",
+        model_ref: "MC_IndexInTxn_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Collection truncate",
         name: "INV_NoRemovalWithoutPermission / INV_FilteredNeverOnBranchable / INV_FilteredRemovesOnlyCommittedMatches / INV_BadFilterRemovesNothing / INV_UnfilteredRemovesAll / INV_UnfilteredEmptiesView",
         axis: Tla,

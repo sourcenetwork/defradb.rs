@@ -184,6 +184,56 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
         ))
     }
 
+    /// Define index `name` (generated when `None`) of `kind` over `fields` of
+    /// collection `collection` in the transaction `context` carries; its
+    /// backfill runs once that transaction commits.
+    async fn create_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: Option<&str>,
+        fields: Vec<schema::IndexedFieldDescription>,
+        kind: schema::IndexKind,
+    ) -> std::result::Result<schema::IndexDescription, TransactionError> {
+        let _ = (context, collection, name, fields, kind);
+        Err(TransactionError::not_supported(
+            "index changes inside a transaction are not supported in this configuration",
+        ))
+    }
+
+    /// Drop index `name` of collection `collection` in the transaction
+    /// `context` carries; its entries go once that transaction commits.
+    async fn drop_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, collection, name);
+        Err(TransactionError::not_supported(
+            "index changes inside a transaction are not supported in this configuration",
+        ))
+    }
+
+    /// Collection `collection` and its index actions by index ID, as the
+    /// transaction `context` carries sees them.
+    async fn indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> std::result::Result<
+        (
+            schema::CollectionVersion,
+            rapidhash::RapidHashMap<u32, defra_core::ActionExecution>,
+        ),
+        TransactionError,
+    > {
+        let _ = (context, collection);
+        Err(TransactionError::not_supported(
+            "index reads inside a transaction are not supported in this configuration",
+        ))
+    }
+
     /// Make collection version `version_id` its collection's active one, for
     /// the caller `context` names, in the transaction it carries if any.
     async fn set_active_collection_version_as(

@@ -4,7 +4,7 @@
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     Json,
 };
 use defra_core::{ActionExecution, ActionStatus};
@@ -12,6 +12,7 @@ use rapidhash::{HashMapExt, RapidHashMap};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{http_error_from_backend_message, HttpError};
+use crate::handlers::txn_header::txn_context;
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
 use crate::request_scope::bound;
@@ -84,6 +85,44 @@ fn index_kind(kind: Option<schema::IndexKind>, unique: bool) -> schema::IndexKin
     ))
 }
 
+/// The indexes of `version` as a transaction sees them, each with its build
+/// state: its action record, or complete when it has none.
+fn txn_listing(
+    version: &schema::CollectionVersion,
+    actions: &RapidHashMap<u32, ActionExecution>,
+) -> Vec<GoListIndexesResult> {
+    version
+        .indexes
+        .iter()
+        .map(|index| GoListIndexesResult {
+            description: GoIndexDescription {
+                kind: index_kind(index.kind, index.unique),
+                name: index.name.clone(),
+                id: index.id,
+                fields: index
+                    .fields
+                    .iter()
+                    .map(|field| GoIndexedFieldDescription {
+                        name: field.name.clone(),
+                        descending: field.descending,
+                    })
+                    .collect(),
+                unique: index.unique,
+            },
+            collection_name: version.name.clone(),
+            execution: actions
+                .get(&index.id)
+                .cloned()
+                .unwrap_or_else(|| ActionExecution {
+                    collection_id: version.collection_id.clone(),
+                    subject: index.id.to_string(),
+                    status: ActionStatus::COMPLETED,
+                    ..Default::default()
+                }),
+        })
+        .collect()
+}
+
 fn listed_index(index: crate::router::IndexInfo) -> GoListIndexesResult {
     let execution = index.execution.unwrap_or_else(|| ActionExecution {
         collection_id: index.collection_id.clone(),
@@ -120,6 +159,7 @@ fn listed_index(index: crate::router::IndexInfo) -> GoListIndexesResult {
 pub async fn go_create_index(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
     Path(collection): Path<String>,
     Json(request): Json<GoCreateIndexRequest>,
 ) -> Result<Json<GoIndexDescription>, HttpError> {
@@ -150,6 +190,30 @@ pub async fn go_create_index(
                 field
             ))
         })?;
+    }
+
+    if let Some(context) = txn_context(&identity, &headers)? {
+        let fields: Vec<schema::IndexedFieldDescription> = request
+            .fields
+            .iter()
+            .map(|field| schema::IndexedFieldDescription {
+                name: field.name.clone(),
+                descending: field.descending,
+            })
+            .collect();
+        let kind = db::IndexManager::requested_kind(&fields, request.unique, request.vector)
+            .map_err(|e| HttpError::BadRequest(e.to_string()))?;
+        let index = state
+            .executor
+            .create_index_in_txn_as(&context, &collection, request.name.as_deref(), fields, kind)
+            .await?;
+        return Ok(Json(GoIndexDescription {
+            kind: index_kind(index.kind, index.unique),
+            name: index.name,
+            id: index.id,
+            fields: request.fields,
+            unique: index.unique,
+        }));
     }
 
     let index = index_ops
@@ -183,6 +247,7 @@ pub async fn go_create_index(
 pub async fn go_list_indexes(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
     Path(collection): Path<String>,
 ) -> Result<Json<Vec<GoListIndexesResult>>, HttpError> {
     require_permission(&state, &identity, NodePermission::IndexList).await?;
@@ -196,6 +261,14 @@ pub async fn go_list_indexes(
             collection
         ))
     })?;
+
+    if let Some(context) = txn_context(&identity, &headers)? {
+        let (version, actions) = state
+            .executor
+            .indexes_in_txn_as(&context, &collection)
+            .await?;
+        return Ok(Json(txn_listing(&version, &actions)));
+    }
 
     let indexes = index_ops
         .list_indexes(Some(&collection))
@@ -217,6 +290,7 @@ pub async fn go_list_indexes(
 pub async fn go_delete_index(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
     Path((collection, index_name)): Path<(String, String)>,
 ) -> Result<StatusCode, HttpError> {
     require_permission(&state, &identity, NodePermission::IndexDelete).await?;
@@ -238,6 +312,14 @@ pub async fn go_delete_index(
             index_name
         ))
     })?;
+
+    if let Some(context) = txn_context(&identity, &headers)? {
+        state
+            .executor
+            .drop_index_in_txn_as(&context, &collection, &index_name)
+            .await?;
+        return Ok(StatusCode::OK);
+    }
 
     index_ops
         .delete_index(&collection, &index_name)

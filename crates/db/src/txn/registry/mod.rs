@@ -37,6 +37,7 @@ mod blocks;
 mod cleanup;
 mod collections;
 mod docs;
+mod indexes;
 mod lenses;
 mod lifecycle;
 pub(crate) mod owned;

@@ -5,6 +5,7 @@ pub mod build_gate;
 pub mod create;
 pub mod drop;
 pub mod error;
+mod in_txn;
 pub mod manager;
 pub(crate) mod pages;
 pub mod vector;

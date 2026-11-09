@@ -265,6 +265,49 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .map_err(operation_error)
     }
 
+    async fn create_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: Option<&str>,
+        fields: Vec<schema::IndexedFieldDescription>,
+        kind: schema::IndexKind,
+    ) -> std::result::Result<schema::IndexDescription, TransactionError> {
+        let id = context_txn(context)?;
+        self.create_index_in_txn(context, &id, collection, name, fields, kind)
+            .await
+            .map_err(operation_error)
+    }
+
+    async fn drop_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let id = context_txn(context)?;
+        self.drop_index_in_txn(context, &id, collection, name)
+            .await
+            .map_err(operation_error)
+    }
+
+    async fn indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> std::result::Result<
+        (
+            schema::CollectionVersion,
+            rapidhash::RapidHashMap<u32, defra_core::ActionExecution>,
+        ),
+        TransactionError,
+    > {
+        let id = context_txn(context)?;
+        self.indexes_in_txn(context, &id, collection)
+            .await
+            .map_err(operation_error)
+    }
+
     async fn truncate_collection_as(
         &self,
         context: &RequestContext,
