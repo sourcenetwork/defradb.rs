@@ -568,6 +568,7 @@ impl NodeBuilder {
         };
         let config = self.config.clone();
         let query_limits = config.query_limits;
+        #[cfg(feature = "http")]
         let identity_only = config.identity_only;
         query_limits.check_fragment_nesting()?;
         let workers = self.workers.take();

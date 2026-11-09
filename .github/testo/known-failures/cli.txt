@@ -63,8 +63,6 @@ testo collection_version::introspection_golden::introspection_matches_golden_rel
 testo collection_version::introspection_golden::introspection_matches_golden_related_many #2649
 testo acp::dac::delete_with_index::acp_dac_delete_doc_by_id_with_reader_only_access_does_not_orphan_index #2708
 testo signature::txn_acp::an_anonymous_caller_cannot_verify_a_block_the_txn_created #2704
-testo acp::dac::p2p::sync_shared_field::acp_p2_p_sync_shared_field_block_access_to_first_doc #2708
-testo acp::dac::p2p::sync_shared_field::acp_p2_p_sync_shared_field_block_access_to_second_doc #2708
 testo acp::dac::subscription::acp_subscription_anonymous_subscriber_receives_nothing #2708
 testo acp::dac::subscription::acp_subscription_authenticated_owner_receives_events #2708
 testo acp::nac::add_p2p_replicator::nac_gates_add_p2_p_replicator_wrong_identity_not_authorized_error #2708
