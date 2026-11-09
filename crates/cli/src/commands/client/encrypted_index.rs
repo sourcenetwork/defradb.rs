@@ -113,7 +113,7 @@ impl EncryptedIndexListArgs {
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
-        let printed = match &self.collection {
+        let printed = match self.collection.as_deref().filter(|name| !name.is_empty()) {
             Some(collection) => {
                 validate_identifier(collection)?;
                 serde_json::to_string_pretty(&client.encrypted_index_list(collection).await?)?

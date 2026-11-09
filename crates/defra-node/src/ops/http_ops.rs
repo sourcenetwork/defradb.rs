@@ -166,7 +166,7 @@ impl DocumentAcpOperations for HttpNodeOps {
 
     async fn add_doc_relationship(
         &self,
-        requestor: &identity::Did,
+        requestor: Option<&identity::Did>,
         target_actor: &str,
         collection: &str,
         doc_id: &str,
@@ -188,7 +188,7 @@ impl DocumentAcpOperations for HttpNodeOps {
 
     async fn delete_doc_relationship(
         &self,
-        requestor: &identity::Did,
+        requestor: Option<&identity::Did>,
         target_actor: &str,
         collection: &str,
         doc_id: &str,
@@ -219,14 +219,15 @@ struct Relationship(String, String, String, String, String);
 
 impl Relationship {
     fn new(
-        requestor: &identity::Did,
+        requestor: Option<&identity::Did>,
         target: &str,
         collection: &str,
         doc_id: &str,
         relation: &str,
     ) -> Self {
         Self(
-            requestor.to_string(),
+            // The core reads an empty identity as none.
+            requestor.map(ToString::to_string).unwrap_or_default(),
             target.to_owned(),
             collection.to_owned(),
             doc_id.to_owned(),

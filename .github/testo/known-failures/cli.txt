@@ -87,12 +87,10 @@ testo acp::dac::p2p::sync_shared_field::acp_p2_p_sync_shared_field_block_access_
 testo acp::dac::p2p::sync_shared_field::acp_p2_p_sync_shared_field_block_access_to_second_doc #2708
 testo acp::dac::subscription::acp_subscription_anonymous_subscriber_receives_nothing #2708
 testo acp::dac::subscription::acp_subscription_authenticated_owner_receives_events #2708
-testo acp::nac::add_dac_relationship::nac_gates_add_dac_relationship_no_identity_not_authorized_error #2700
 testo acp::nac::add_p2p_replicator::nac_gates_add_p2_p_replicator_wrong_identity_not_authorized_error #2708
 testo acp::dac::subscription::acp_subscription_authenticated_reader_receives_events #2708
 testo acp::nac::delete_index::nac_gates_delete_index_no_identity_not_authorized_error #2700
 testo acp::nac::delete_index::nac_gates_delete_index_wrong_identity_not_authorized_error #2700
-testo acp::nac::delete_dac_relationship::nac_gates_delete_dac_relationship_no_identity_not_authorized_error #2708
 testo acp::nac::list_p2p_replicator::nac_gates_list_p2_p_replicator_authorized_identity_allow_access #2702
 testo acp::nac::new_index::nac_gates_new_index_no_identity_not_authorized_error #2702
 testo acp::nac::new_index::nac_gates_new_index_wrong_identity_not_authorized_error #2702

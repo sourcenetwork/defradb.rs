@@ -154,7 +154,7 @@ fn validate_add_doc_relationship(body: &DocRelationshipRequest) -> Result<(), Ht
 
 async fn apply_add_doc_relationship(
     doc_acp: &dyn crate::router::DocumentAcpOperations,
-    requestor: &identity::Did,
+    requestor: Option<&identity::Did>,
     body: &DocRelationshipRequest,
 ) -> Result<DocRelationshipResponse, HttpError> {
     let is_new = doc_acp
@@ -260,12 +260,7 @@ pub async fn add_doc_relationship(
 ) -> Result<Json<DocRelationshipResponse>, HttpError> {
     require_permission(&state, &identity, NodePermission::DacRelationAdd).await?;
 
-    // Go counts a missing requestor as a missing required argument.
-    let requestor = identity.did().ok_or_else(|| {
-        HttpError::BadRequest(
-            "missing a required argument needed to add doc actor relationship.".into(),
-        )
-    })?;
+    let requestor = identity.did();
 
     validate_add_doc_relationship(&body)?;
     let doc_acp = bound(state.require_doc_acp()?, &identity.context());
@@ -288,12 +283,7 @@ pub async fn add_doc_relationships(
 ) -> Result<Json<Vec<DocRelationshipResponse>>, HttpError> {
     require_permission(&state, &identity, NodePermission::DacRelationAdd).await?;
 
-    // Go counts a missing requestor as a missing required argument.
-    let requestor = identity.did().ok_or_else(|| {
-        HttpError::BadRequest(
-            "missing a required argument needed to add doc actor relationship.".into(),
-        )
-    })?;
+    let requestor = identity.did();
 
     for body in &bodies {
         validate_add_doc_relationship(body)?;
@@ -319,12 +309,7 @@ pub async fn remove_doc_relationship(
 ) -> Result<Json<DocRelationshipDeleteResponse>, HttpError> {
     require_permission(&state, &identity, NodePermission::DacRelationDelete).await?;
 
-    // Go counts a missing requestor as a missing required argument.
-    let requestor = identity.did().ok_or_else(|| {
-        HttpError::BadRequest(
-            "missing a required argument needed to delete doc actor relationship.".into(),
-        )
-    })?;
+    let requestor = identity.did();
 
     if body.collection.is_empty() {
         return Err(HttpError::BadRequest(

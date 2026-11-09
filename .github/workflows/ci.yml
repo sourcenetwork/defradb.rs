@@ -853,10 +853,10 @@ jobs:
         & not test(=acp_replay_outage_cross_runtime::c_rust_to_go_outage_replay)
       # Go gives Foo the wrong ID beside FooBar only in some runs (#2528), so a
       # known-failure entry would fail the runs it passes; go-http leaves it out.
-      # Go answers the Commit introspection description in two forms between
-      # runs (#2726); go-http leaves that scenario out too.
       # The Go node sometimes answers a query right after a migration with a
       # transaction conflict (#2392); go-http leaves that scenario out too.
+      # Go answers the Commit introspection description in two forms between
+      # runs (#2726); go-http leaves that scenario out too.
       GO_HTTP_FILTER: >-
         & not test(=collection::deterministic_ids::a_collection_beside_a_longer_namesake_gets_one_id)
         & not test(=collection_version::migrations::query::with_index::collection_migration_query_with_index_applied_after_migration_should_index_docs_on_latest_version)

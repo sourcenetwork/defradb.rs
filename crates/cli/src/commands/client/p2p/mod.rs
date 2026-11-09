@@ -109,7 +109,6 @@ impl P2pDisconnectArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
         let (client, _) = write_client(ctx)?;
         client.disconnect(&self.addresses).await?;
-        println!("Disconnected from peer(s)");
         Ok(())
     }
 }
