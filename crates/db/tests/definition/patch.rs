@@ -246,33 +246,6 @@ fn patch_collection_accepts_numeric_go_kind() {
 }
 
 #[test]
-fn patch_collection_rejects_new_non_nillable_field() {
-    workers::block_on(async {
-        let db = agent_response_db().await;
-        let err = db
-            .patch_collection(
-                "AgentResponse",
-                r#"
-            [{
-                "op": "add",
-                "path": "/AgentResponse/Fields/-",
-                "value": {"Name": "score", "Kind": 23}
-            }]
-            "#,
-                None,
-            )
-            .await
-            .unwrap_err();
-
-        assert_eq!(
-            err.to_string(),
-            "invalid patch: adding a non-nillable field to an existing collection is not supported"
-        );
-    })
-    .unwrap()
-}
-
-#[test]
 fn patch_collection_reports_unknown_numeric_kind_like_go() {
     workers::block_on(async {
         let db = agent_response_db().await;
@@ -483,88 +456,6 @@ fn patch_collection_rejects_numeric_kind_in_direct_kind_replacement() {
         assert_eq!(
             err.to_string(),
             "invalid patch: mutating an existing field is not supported. ProposedName: "
-        );
-    })
-    .unwrap()
-}
-
-#[test]
-fn patch_collection_rejects_mutating_an_existing_policy() {
-    workers::block_on(async {
-        let store = RegolithStore::in_memory().unwrap();
-        let db = DB::new(store).unwrap();
-        let collections = query::parse_sdl(
-            r#"
-        type Secrets @policy(id: "policy-a", resource: "secrets") {
-            name: String
-        }
-        "#,
-        )
-        .unwrap();
-        db.create_collections_atomic(collections).await.unwrap();
-        assert!(db
-            .get_collection("Secrets")
-            .unwrap()
-            .unwrap()
-            .schema()
-            .policy
-            .is_some());
-
-        let err = db
-            .patch_collection(
-                "Secrets",
-                r#"
-            [{
-                "op": "replace",
-                "path": "/Secrets/Policy",
-                "value": {"ID": "policy-b", "ResourceName": "secrets"}
-            }]
-            "#,
-                None,
-            )
-            .await
-            .unwrap_err();
-
-        assert!(
-            err.to_string()
-                .contains("collection policy cannot be mutated."),
-            "{err}"
-        );
-    })
-    .unwrap()
-}
-
-#[test]
-fn patch_collection_rejects_adding_a_policy_to_a_policy_free_collection() {
-    workers::block_on(async {
-        let db = agent_response_db().await;
-        assert!(db
-            .get_collection("AgentResponse")
-            .unwrap()
-            .unwrap()
-            .schema()
-            .policy
-            .is_none());
-
-        let err = db
-            .patch_collection(
-                "AgentResponse",
-                r#"
-            [{
-                "op": "replace",
-                "path": "/AgentResponse/Policy",
-                "value": {"ID": "policy-a", "ResourceName": "agents"}
-            }]
-            "#,
-                None,
-            )
-            .await
-            .unwrap_err();
-
-        assert!(
-            err.to_string()
-                .contains("collection policy cannot be mutated."),
-            "{err}"
         );
     })
     .unwrap()

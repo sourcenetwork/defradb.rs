@@ -424,7 +424,7 @@ pub fn parse_request_with_limits(
     operation_name: Option<&str>,
     limits: QueryLimits,
 ) -> Result<ParsedOperation> {
-    let doc: Document<'_, String> = graphql_parser::parse_query(query).map_err(|e| {
+    let mut doc: Document<'_, String> = graphql_parser::parse_query(query).map_err(|e| {
         let msg = e.to_string();
         if msg.contains("Parse error at") {
             QueryError::parse(format!("Syntax Error GraphQL: {}", msg))
@@ -433,6 +433,7 @@ pub fn parse_request_with_limits(
         }
     })?;
     super::fragment_cycles::check_fragment_cycles(&doc.definitions)?;
+    super::variables::omit_unset_variables(&mut doc, variables, operation_name);
 
     // Check for introspection queries (__schema, __type, __typename) before
     // normal parsing. These are handled separately by executing against the

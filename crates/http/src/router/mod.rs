@@ -25,6 +25,6 @@ pub use state::{AppState, AppStateBuilder};
 pub use traits::{
     BackupOperations, BlockOperations, CollectionManagementOperations, CollectionOperations,
     DocumentAcpOperations, DumpOperations, EncryptedIndexInfo, EncryptedIndexOperations,
-    ImportResult, IndexFieldInfo, IndexInfo, IndexOperations, NacStatus, NacStatusInfo,
-    NodeAcpOperations, NodePermission, ViewOperations,
+    ImportResult, IndexFieldInfo, IndexInfo, IndexOperations, NacStatus, NodeAcpOperations,
+    NodePermission, ViewOperations,
 };

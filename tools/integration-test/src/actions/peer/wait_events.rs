@@ -23,6 +23,10 @@ pub struct WaitForPeersEvents {
     pub topics: Option<Vec<Topic>>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub start: bool,
+    /// Wait for this many gossip heads dropped past a deferral budget, and
+    /// return how many were dropped and from how many peers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gossip_dropped: Option<usize>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -50,6 +54,18 @@ impl Op for WaitForPeersEvents {
             node.watch().map_err(Failure::unsupported)?;
             return Ok(json!({}));
         }
+        let deadline = Duration::from_millis(self.millis.unwrap_or(5000));
+        if let Some(count) = self.gossip_dropped {
+            let events = node.events().map_err(Failure::operation)?;
+            let dropped = state
+                .block_on(events.gossip_dropped(count, deadline))
+                .map_err(Failure::operation)?;
+            let peers: RapidHashSet<&str> =
+                dropped.iter().map(|event| event.peer_id.as_str()).collect();
+            let roots: RapidHashSet<String> =
+                dropped.iter().map(|event| event.cid.to_string()).collect();
+            return Ok(json!({ "dropped": roots.len(), "peers": peers.len() }));
+        }
         let mut wanted = RapidHashSet::new();
         for topic in self.topics.iter().flatten() {
             for peer in &topic.peers {
@@ -62,7 +78,6 @@ impl Op for WaitForPeersEvents {
             EventType::Joined => "JOINED",
             EventType::Left => "LEFT",
         };
-        let deadline = Duration::from_millis(self.millis.unwrap_or(5000));
         let events = node.events().map_err(Failure::operation)?;
         state
             .block_on(events.topics(wanted, kind, deadline))

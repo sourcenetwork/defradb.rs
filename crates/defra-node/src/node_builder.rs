@@ -236,6 +236,15 @@ impl NodeBuilder {
         self
     }
 
+    /// Enable Node Access Control (NAC) owned by `owner`, the identity
+    /// starting the node, as Go's `start` with NAC enabled does. A node whose
+    /// NAC was set up before keeps its owner.
+    pub fn with_node_acp_owner(mut self, owner: impl Into<String>) -> Self {
+        self.config.node_acp_enabled = true;
+        self.config.node_acp_owner = Some(owner.into());
+        self
+    }
+
     /// Set the query execution timeout.
     ///
     /// `Duration::ZERO` disables query execution timeouts.
@@ -468,6 +477,18 @@ impl NodeBuilder {
                 schema_ops: Arc::clone(&node.schema_ops),
                 context: None,
             }));
+            let ops = crate::ops::HttpNodeOps::new(node.ops());
+            let server = server
+                .with_view_arc(ops.clone())
+                .with_backup_arc(ops.clone())
+                .with_doc_acp_arc(ops.clone())
+                .with_encrypted_index_arc(ops.clone())
+                .with_block_arc(ops);
+
+            #[cfg(not(target_arch = "wasm32"))]
+            let server = server.with_index_arc(defra_http::index_adapter::IndexAdapter::new_arc(
+                Arc::clone(node.database()),
+            ));
 
             // A local document ACP is the node's own store: its routes run on
             // the pool, as the node's own calls do.

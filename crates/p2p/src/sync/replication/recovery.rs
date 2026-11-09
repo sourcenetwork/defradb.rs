@@ -125,6 +125,8 @@ where
                     "Block quarantined during recovery: merge deterministically rejected"
                 );
             }
+            // Recovery replays stored blocks; it never refuses a gossip head.
+            ReplicationResult::GossipHeadDropped { .. } => {}
             ReplicationResult::Failed { cid, error } => {
                 failure_count += 1;
                 tracing::error!(

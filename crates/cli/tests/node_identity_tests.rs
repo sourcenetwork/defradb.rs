@@ -24,7 +24,7 @@ impl RunningNode {
         let address = format!("127.0.0.1:{port}");
         let log_path = root.join("node.log");
         let log = std::fs::File::create(&log_path).unwrap();
-        let child = Command::new(env!("CARGO_BIN_EXE_defra"))
+        let child = Command::new(env!("CARGO_BIN_EXE_defradb"))
             .arg("--rootdir")
             .arg(root)
             .args(["--url", &address])

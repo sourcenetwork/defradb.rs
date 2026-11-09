@@ -15,12 +15,28 @@ use serde_json::Value as JsonValue;
 
 use crate::error::{QueryError, Result};
 use crate::limits::QueryLimits;
-use crate::mapper::{parse_mutation_name, FullTextSearch, Mutation, MutationType, Similarity};
+use crate::mapper::{
+    parse_mutation_name, Filter, FullTextSearch, Mutation, MutationType, Similarity,
+};
 
 use super::filters::parse_filter_value;
 use super::limits::FragmentPath;
 use super::parser::{parse_selection_set, FragmentMap};
 use super::values::{graphql_value_to_json, parse_doc_ids_value};
+
+/// Whether an argument is `null`, written inline or through a variable.
+fn is_null_argument(
+    value: &Value<'_, String>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
+) -> bool {
+    match value {
+        Value::Null => true,
+        Value::Variable(name) => variables
+            .and_then(|variables| variables.get(name.as_str()))
+            .is_some_and(JsonValue::is_null),
+        _ => false,
+    }
+}
 
 /// Parse a single GraphQL field into a Mutation operation.
 ///
@@ -129,17 +145,17 @@ pub(super) fn parse_field_to_mutation(
             }
 
             (MutationType::Truncate, "filter") => {
-                let is_null = match arg_value {
-                    Value::Null => true,
-                    Value::Variable(name) => variables
-                        .and_then(|variables| variables.get(name.as_str()))
-                        .is_some_and(JsonValue::is_null),
-                    _ => false,
-                };
-                if is_null {
+                if is_null_argument(arg_value, variables) {
                     return Err(QueryError::parse("truncate filter cannot be null"));
                 }
                 mutation.filter = Some(parse_filter_value(arg_value, variables)?);
+            }
+
+            (MutationType::Truncate, "docID") => {
+                if is_null_argument(arg_value, variables) {
+                    return Err(QueryError::parse("truncate docID cannot be null"));
+                }
+                mutation.doc_ids = Some(parse_doc_ids_value(arg_value, variables)?);
             }
 
             // Encryption: encrypt entire document
@@ -229,6 +245,17 @@ pub(super) fn parse_field_to_mutation(
                 "Field \"{}\" must not have a selection since type \"Boolean!\" has no subfields.",
                 field_name
             )));
+        }
+        // Go's mapper folds the docIDs into the filter, as
+        // `{_and: [{_docID: {_in: ids}}, filter]}`.
+        if let Some(doc_ids) = mutation.doc_ids.take() {
+            let mut conditions = serde_json::Map::new();
+            conditions.insert("_docID".to_owned(), serde_json::json!({ "_in": doc_ids }));
+            let by_doc_id = Filter::from_conditions(conditions);
+            mutation.filter = Some(match mutation.filter.take() {
+                Some(filter) => by_doc_id.and(filter),
+                None => by_doc_id,
+            });
         }
         return Ok(mutation);
     }

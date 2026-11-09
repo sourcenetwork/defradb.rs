@@ -44,6 +44,7 @@ mod access;
 mod accessors;
 mod authorizer;
 mod broadcast;
+mod broadcast_room;
 mod closure_depth;
 mod constructor;
 pub(crate) mod dag_context;
@@ -204,6 +205,10 @@ pub struct SyncStatus {
     pub single_flight_suppressed: u64,
     pub already_merged_fast_path: u64,
     pub pending_dag_capacity_shed: u64,
+    /// Gossip heads refused at the edge and kept as durable-only records (#2489).
+    pub gossip_heads_deferred: u64,
+    /// Gossip heads refused with the durable store full: counted losses (#2489).
+    pub gossip_heads_shed: u64,
     /// Retry-clock ticks that dispatched a due pending-DAG fetch (#1116 stage 2).
     pub pending_dag_retry_dispatched: u64,
     /// Retry-clock/claim attempts that found no due entry (#1116 stage 2).
@@ -265,7 +270,7 @@ struct SyncShutdownState {
     /// Pruners mid-way through popping and re-pushing live handles; the drain
     /// waits for zero before it takes the queue.
     pruning: AtomicUsize,
-    non_authoritative_broadcast_slots: Arc<Semaphore>,
+    non_authoritative_broadcast_slots: Arc<regolith::sync::Semaphore>,
     non_authoritative_broadcast_high_water: AtomicUsize,
     non_authoritative_broadcast_rejected: AtomicU64,
     /// Scheduled and running poll fetches keyed by pending-DAG root. One
@@ -453,20 +458,20 @@ impl SyncShutdownHandle {
         shutdown_complete_tx.push(sender);
         Self {
             inner: Arc::new(SyncShutdownState {
+                network,
                 is_shutting_down: AtomicBool::new(false),
                 shutdown_notify: Notify::new(),
                 shutdown_complete: shutdown_complete.shared(),
                 shutdown_complete_tx,
                 background_tasks: SegQueue::new(),
                 pruning: AtomicUsize::new(0),
-                non_authoritative_broadcast_slots: Arc::new(Semaphore::new(
+                non_authoritative_broadcast_slots: Arc::new(regolith::sync::Semaphore::new(
                     NON_AUTHORITATIVE_BROADCAST_TASK_LIMIT,
                 )),
                 non_authoritative_broadcast_high_water: AtomicUsize::new(0),
                 non_authoritative_broadcast_rejected: AtomicU64::new(0),
                 pending_dag_fetch_task_limit: pending_dag_fetch_task_limit.max(1),
                 pending_dag_fetch_tasks: Atom::new(RapidHashMap::new()),
-                network,
             }),
         }
     }
@@ -602,21 +607,57 @@ impl SyncShutdownHandle {
         inner.pruning.fetch_sub(1, Ordering::SeqCst);
     }
 
-    fn try_acquire_non_authoritative_broadcast_slot(&self) -> Option<OwnedSemaphorePermit> {
-        let permit = match self
+    fn try_acquire_non_authoritative_broadcast_slot(
+        &self,
+    ) -> Option<regolith::sync::OwnedSemaphorePermit> {
+        let Some(permit) = self
             .inner
             .non_authoritative_broadcast_slots
             .acquire_owned(1)
             .now_or_never()
-        {
-            Some(permit) => permit,
-            None => {
-                self.inner
-                    .non_authoritative_broadcast_rejected
-                    .fetch_add(1, Ordering::Relaxed);
-                return None;
-            }
+        else {
+            self.inner
+                .non_authoritative_broadcast_rejected
+                .fetch_add(1, Ordering::Relaxed);
+            return None;
         };
+        self.record_broadcast_high_water();
+        Some(permit)
+    }
+
+    /// Count broadcast work dropped or run inline because its wait failed.
+    fn count_broadcast_rejected(&self) {
+        self.inner
+            .non_authoritative_broadcast_rejected
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// A broadcast slot, waiting for one to free while the pool is full; `None`
+    /// once `deadline` passes first, which is counted.
+    async fn acquire_non_authoritative_broadcast_slot(
+        &self,
+        deadline: Duration,
+    ) -> Option<regolith::sync::OwnedSemaphorePermit> {
+        let slots = &self.inner.non_authoritative_broadcast_slots;
+        let permit = match slots.acquire_owned(1).now_or_never() {
+            Some(permit) => permit,
+            None => match self
+                .network()
+                .timeout(deadline, slots.acquire_owned(1))
+                .await
+            {
+                Ok(permit) => permit,
+                Err(_) => {
+                    self.count_broadcast_rejected();
+                    return None;
+                }
+            },
+        };
+        self.record_broadcast_high_water();
+        Some(permit)
+    }
+
+    fn record_broadcast_high_water(&self) {
         let current = NON_AUTHORITATIVE_BROADCAST_TASK_LIMIT.saturating_sub(
             self.inner
                 .non_authoritative_broadcast_slots
@@ -625,7 +666,6 @@ impl SyncShutdownHandle {
         self.inner
             .non_authoritative_broadcast_high_water
             .fetch_max(current, Ordering::Relaxed);
-        Some(permit)
     }
 
     fn non_authoritative_broadcast_stats(&self) -> (usize, usize, u64) {
@@ -882,6 +922,12 @@ pub(super) struct SyncRuntime<T: P2PTransport> {
     /// Maximum document IDs accepted in a single DocSync request.
     pub(super) max_doc_sync_request_doc_ids: usize,
 
+    /// How long a committed write's gossip waits for room or a publish slot.
+    pub(super) broadcast_wait_deadline: Duration,
+
+    /// The byte budget for committed writes' gossip waiting to be published.
+    pub(super) broadcast_room: Arc<broadcast_room::BroadcastRoom>,
+
     /// Shutdown state for coordinator-owned background tasks.
     pub(super) shutdown: SyncShutdownHandle,
 
@@ -1065,6 +1111,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             single_flight_suppressed: diagnostics.single_flight_suppressed,
             already_merged_fast_path: diagnostics.already_merged_fast_path,
             pending_dag_capacity_shed: diagnostics.pending_dag_capacity_shed,
+            gossip_heads_deferred: diagnostics.gossip_heads_deferred,
+            gossip_heads_shed: diagnostics.gossip_heads_shed,
             pending_dag_retry_dispatched: diagnostics.pending_dag_retry_dispatched,
             pending_dag_retry_suppressed: diagnostics.pending_dag_retry_suppressed,
             pending_dag_fetch_deferred_unavailable: diagnostics
@@ -1106,9 +1154,11 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     }
 
     /// Periodic bounded drain for durable pending-DAG registrations: sweeps
-    /// at `interval` until shutdown, so records skipped at capacity are
-    /// re-driven even when no peer reconnects and the node never restarts.
-    /// The steady-state early-exit inside the sweep makes idle ticks free.
+    /// at `interval` until shutdown, so records skipped at capacity (or whose
+    /// in-memory entries TTL-expired) are re-driven even when no peer
+    /// reconnects and the node never restarts. The steady-state early-exit
+    /// inside the sweep makes idle ticks free. A durable-only record (a
+    /// refused gossip head, #2489) also wakes it as soon as a slot frees.
     /// Run from a spawned task.
     pub async fn run_pending_dag_resync(&self, interval: Duration) {
         loop {
@@ -1121,6 +1171,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             }
             futures::select! {
                 _ = crate::rt::time::sleep(interval).fuse() => {}
+                _ = self.manager.durable_only_ready().fuse() => {}
                 _ = self.runtime.shutdown.cancelled().fuse() => return,
             }
         }
@@ -1315,6 +1366,16 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         self.runtime.shutdown.shutdown().await;
     }
 
+    /// Runs the coordinator's network work (its background tasks, the
+    /// broadcasts writes hand it, retry sleeps) on `network`. Set once, by the
+    /// node that owns the coordinator; later calls change nothing.
+    pub fn use_network(&self, _network: crate::network::Network) {
+        // The network is fixed at construction; the gossip lane is a fixed
+        // coordinator task, so it starts here rather than on the first write.
+        // Starting is idempotent.
+        self.runtime.broadcast_room.start(&self.runtime.shutdown);
+    }
+
     /// Where the coordinator's network work runs.
     pub fn network(&self) -> crate::network::Network {
         self.runtime.shutdown.network()
@@ -1330,11 +1391,19 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         }
     }
 
-    /// Spawn mutation-adjacent gossip/artifact work in a distinct bounded
-    /// pool. Callers must install durable document/collection head markers
-    /// before using this method; overflow therefore sheds only redundant,
-    /// non-authoritative dissemination work.
-    pub fn spawn_non_authoritative_broadcast_task<F>(&self, task_name: &'static str, future: F)
+    /// Run a committed write's gossip/artifact work on the lane, holding `bytes` of the
+    /// pending-gossip budget until it finishes. Gossip has no retry and only
+    /// replicators hold a durable marker, so a full budget makes the caller
+    /// wait for room instead of shedding the work (#2489). Its publishes take
+    /// a slot only after the coalescing window. Past the wait deadline the
+    /// work is dropped, counted and logged, and `Err` tells the caller to
+    /// report it.
+    pub async fn spawn_non_authoritative_broadcast_task<F>(
+        &self,
+        task_name: &'static str,
+        bytes: usize,
+        future: F,
+    ) -> std::result::Result<(), crate::network::Elapsed>
     where
         F: std::future::Future<Output = ()> + MaybeSend + 'static,
     {
@@ -1343,24 +1412,52 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 task = task_name,
                 "Skipping background broadcast during shutdown"
             );
-            return;
+            return Ok(());
         }
-        let Some(permit) = self
+        let deadline = self.runtime.broadcast_wait_deadline;
+        let Some(room) = self
             .runtime
-            .shutdown
-            .try_acquire_non_authoritative_broadcast_slot()
+            .broadcast_room
+            .reserve(&self.network(), bytes, deadline)
+            .await
         else {
+            self.runtime.shutdown.count_broadcast_rejected();
             tracing::warn!(
                 task = task_name,
-                limit = NON_AUTHORITATIVE_BROADCAST_TASK_LIMIT,
-                "Non-authoritative background broadcast pool full; durable head marker retains delivery ownership"
+                bytes,
+                in_use = self.runtime.broadcast_room.in_use(),
+                deadline_ms = deadline.as_millis() as u64,
+                "Pending gossip stayed full past the wait deadline; a committed write's gossip was dropped"
             );
-            return;
+            return Err(crate::network::Elapsed);
         };
-        self.runtime.shutdown.spawn_task(async move {
-            future.await;
-            drop(permit);
-        });
+        self.runtime.broadcast_room.run(
+            &self.runtime.shutdown,
+            Box::pin(async move {
+                future.await;
+                drop(room);
+            }),
+        );
+        Ok(())
+    }
+
+    /// A publish slot for one coalesced broadcast, waiting for one to free;
+    /// `None` past the wait deadline, which is counted and logged.
+    pub(super) async fn publish_slot(&self) -> Option<regolith::sync::OwnedSemaphorePermit> {
+        let deadline = self.runtime.broadcast_wait_deadline;
+        let slot = self
+            .runtime
+            .shutdown
+            .acquire_non_authoritative_broadcast_slot(deadline)
+            .await;
+        if slot.is_none() {
+            tracing::warn!(
+                limit = NON_AUTHORITATIVE_BROADCAST_TASK_LIMIT,
+                deadline_ms = deadline.as_millis() as u64,
+                "Publish slots stayed full past the wait deadline; a committed write's gossip was dropped"
+            );
+        }
+        slot
     }
 
     /// Like `spawn_non_authoritative_broadcast_task`, but a full pool runs the

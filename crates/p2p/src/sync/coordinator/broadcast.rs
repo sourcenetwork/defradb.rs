@@ -140,9 +140,14 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         let origin_bytes = broadcast.origin_signing_bytes()?;
         broadcast.origin_signature = Some(self.runtime.transport.sign(&origin_bytes)?);
         let broadcaster = self.runtime.broadcaster.clone();
+        // The slot is taken after the coalescing window, only for the publish:
+        // held across the window, 32 slots capped gossip near 128/s (#2489).
         self.runtime
             .broadcast_coalescer
             .run(broadcast, move |latest| async move {
+                let Some(_slot) = self.publish_slot().await else {
+                    return Err(crate::error::BROADCAST_SLOT_ELAPSED.to_string());
+                };
                 broadcaster
                     .broadcast_update(&latest)
                     .await

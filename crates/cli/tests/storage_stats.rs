@@ -3,7 +3,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 fn command(root: &std::path::Path) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_defra"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_defradb"));
     command
         .args(["--rootdir"])
         .arg(root)

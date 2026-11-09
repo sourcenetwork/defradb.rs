@@ -171,7 +171,8 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
         context: &RequestContext,
         source_query: &str,
         target_sdl: &str,
-    ) -> Result<()> {
+        transform: Option<&str>,
+    ) -> Result<Vec<CollectionVersion>> {
         self.database
             .check_node_access_as(context, acp::nac::NodePermission::ViewAdd)
             .await
@@ -189,7 +190,14 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
         let selects = query::parse_query_with_limits(&wrapped_query, None, self.query_limits)
             .map_err(Error::ViewQueryParse)?;
         let select = selects.into_iter().next().ok_or(Error::ViewQueryEmpty)?;
-        let query_source = schema::QuerySource::new(query::select_to_go_json(&select));
+        let mut query_source = schema::QuerySource::new(query::select_to_go_json(&select));
+        if let Some(cid) = transform {
+            if cid.is_empty() {
+                return Err(Error::ViewTransformCidEmpty);
+            }
+            // The create transaction checks the lens config is committed.
+            query_source = query_source.with_transform(cid);
+        }
 
         let mut materialized_names = Vec::new();
         let mut downsample_names = Vec::new();
@@ -226,7 +234,8 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
         self.validate_policies(&collections).await?;
 
         let creator = Self::creator(context)?;
-        self.database
+        let created = self
+            .database
             .create_collections_atomic_with_acp_registration_as(
                 context,
                 collections,
@@ -234,7 +243,10 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
                 creator,
             )
             .await
-            .map_err(Error::ViewCollectionCreate)?;
+            .map_err(|error| match error {
+                db::Error::ViewTransformMissing(cid) => Error::ViewTransformMissing(cid),
+                error => Error::ViewCollectionCreate(error),
+            })?;
 
         if !materialized_names.is_empty() {
             self.database
@@ -250,7 +262,22 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
                 .map_err(Error::DownsampleBootstrap)?;
         }
 
-        Ok(())
+        Ok(created)
+    }
+
+    async fn refresh_views(
+        &self,
+        context: &RequestContext,
+        selector: db::CollectionSelector,
+    ) -> Result<()> {
+        self.database
+            .check_node_access_as(context, acp::nac::NodePermission::ViewRefresh)
+            .await
+            .map_err(Error::from)?;
+        self.database
+            .refresh_views(selector)
+            .await
+            .map_err(Error::MaterializedViewRefresh)
     }
 
     async fn materialize_collection(

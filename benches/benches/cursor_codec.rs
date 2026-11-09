@@ -26,7 +26,6 @@ fn sample(keys: usize) -> Cursor {
             serde_json::json!(format!("value-{i}")),
         );
     }
-    cursor.direction = "ASC".into();
     cursor
 }
 

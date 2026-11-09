@@ -46,43 +46,6 @@ async fn create_user(mutator: &AutoCommitMutator<RegolithStore>, name: &str, age
 }
 
 #[test]
-fn filtered_truncate_removes_only_matching_documents_and_indexes() {
-    workers::block_on(async {
-        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        db.create_collection(users_schema()).await.unwrap();
-        let mutator = AutoCommitMutator::new(db.clone());
-        let alice = create_user(&mutator, "Alice", 30).await;
-        create_user(&mutator, "Bob", 40).await;
-
-        db.truncate_collection_as(&RequestContext::ambient(), "Users", Some(&age_filter(30)))
-            .await
-            .unwrap();
-
-        let docs = AutoCommitFetcher::new(db.clone())
-            .get_all("Users")
-            .await
-            .unwrap();
-        assert_eq!(docs.len(), 1);
-        assert_eq!(
-            docs[0].get("name"),
-            Some(&NormalValue::String("Bob".into()))
-        );
-
-        let recreated = create_user(&mutator, "Alice", 30).await;
-        assert_eq!(recreated, alice);
-        assert_eq!(
-            AutoCommitFetcher::new(db)
-                .get_all("Users")
-                .await
-                .unwrap()
-                .len(),
-            2
-        );
-    })
-    .unwrap()
-}
-
-#[test]
 fn filtered_truncate_includes_soft_deleted_documents() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());

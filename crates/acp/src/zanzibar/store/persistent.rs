@@ -3,6 +3,8 @@
 use std::sync::Arc;
 
 use storage::corekv::{IterOptions, Reader, Store, Writer};
+#[cfg(not(target_arch = "wasm32"))]
+use storage::corekv::{RetryAttemptError, RetryAttemptValue, RetryOptions};
 use storage::namespace::{Namespace, NamespacedStore};
 #[cfg(not(target_arch = "wasm32"))]
 use storage::RegolithStore;
@@ -10,6 +12,8 @@ use storage::RegolithStore;
 use identity::Did;
 use zanzibar::error::{Error, Result};
 use zanzibar::store::ZanzibarStore;
+#[cfg(not(target_arch = "wasm32"))]
+use zanzibar::store::{ScopeAttempt, ScopeOutcome};
 use zanzibar::types::{ObjectRef, Policy, Relationship, Subject};
 
 /// Persistent Zanzibar store backed by any Store implementation.
@@ -118,6 +122,44 @@ impl<S: Store> PersistentZanzibarStore<S> {
 impl<S: Store> ZanzibarStore for PersistentZanzibarStore<S> {
     fn supports_transactions(&self) -> bool {
         true
+    }
+
+    // NAC is the only caller, and no wasm client runs NAC, so the browser
+    // keeps the default and builds no shared handle to a single-thread txn.
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn transact(
+        &self,
+        max_attempts: u32,
+        mut attempt: ScopeAttempt,
+    ) -> Result<Option<ScopeOutcome>> {
+        let won = datastore::transact(
+            self.store.inner().as_ref(),
+            RetryOptions::new(max_attempts),
+            move |txn| {
+                let scope: Arc<dyn ZanzibarStore> = Arc::new(
+                    super::transaction::TransactionZanzibarStore::new(txn.acpstore()),
+                );
+                let tried = attempt(scope);
+                Box::pin(async move {
+                    match tried.await {
+                        Ok(value) => Ok(Box::new(value) as RetryAttemptValue),
+                        Err(refusal) => Err(RetryAttemptError::Abort(refusal)),
+                    }
+                })
+            },
+        )
+        .await;
+        match won {
+            Ok(value) => Ok(Some(Ok(value))),
+            Err(RetryAttemptError::Abort(refusal)) => Ok(Some(Err(refusal))),
+            Err(RetryAttemptError::Exhausted(conflict)) => {
+                Err(Error::TransactionConflict(conflict.to_string()))
+            }
+            Err(RetryAttemptError::Storage(error)) if error.is_txn_conflict() => {
+                Err(Error::TransactionConflict(error.to_string()))
+            }
+            Err(RetryAttemptError::Storage(error)) => Err(Error::Serialization(error.to_string())),
+        }
     }
 
     async fn begin_scope(
