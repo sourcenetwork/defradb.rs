@@ -195,13 +195,7 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
             if cid.is_empty() {
                 return Err(Error::ViewTransformCidEmpty);
             }
-            if !self
-                .database
-                .lens_store()
-                .has_transform(&lens::TransformId::new(cid))
-            {
-                return Err(Error::ViewTransformMissing(cid.to_owned()));
-            }
+            // The create transaction checks the lens config is committed.
             query_source = query_source.with_transform(cid);
         }
 
@@ -242,7 +236,10 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
                 creator,
             )
             .await
-            .map_err(Error::ViewCollectionCreate)?;
+            .map_err(|error| match error {
+                db::Error::ViewTransformMissing(cid) => Error::ViewTransformMissing(cid),
+                error => Error::ViewCollectionCreate(error),
+            })?;
 
         if !materialized_names.is_empty() {
             self.database

@@ -2499,32 +2499,34 @@ pub const PROPERTIES: &[Property] = &[
         family: "Add view with a lens transform",
         name: "ViewQuerySource.round_trip / definition_round_trip / stored_transform_is_accepted",
         axis: Lean,
-        anchor: "crates/schema/src/source.rs QuerySource::with_transform; crates/schema/src/collection.rs CollectionVersion; crates/defra-node/src/db_impls.rs DbSchemaOps::add_view",
+        anchor: "crates/schema/src/source.rs QuerySource::with_transform; crates/schema/src/collection.rs CollectionVersion; crates/defra-node/src/db_impls.rs DbSchemaOps::add_view; crates/db/src/collection/ops/create.rs DB::require_view_transforms",
         model_ref: "ViewQuerySource (lake build)",
         tiers: &[Boundary],
         bound_by: "",
     },
     Property {
         // #2724: the NAC, empty-CID and lens checks against the view's commit,
-        // while the lens is being added and the permission changes. As shipped
-        // the lens check asks the in-memory store and NAC is read before the
-        // transaction: Red_LensInMemory and Red_NacBefore.
+        // while the lens is being added and the permission changes. The lens
+        // config is read in the create transaction (require_view_transforms);
+        // NAC ViewAdd is still read before it, a known gap (#2736):
+        // Green_NacBefore and Red_KnownGap_NacBefore.
         family: "Add view with a lens transform",
         name: "INV_NoEmptyTransform / INV_StoredTransformExists / INV_StoredIsAccepted / INV_NoViewWithoutPermission / INV_NoValidRejected",
         axis: Tla,
-        anchor: "crates/defra-node/src/db_impls.rs DbSchemaOps::add_view; crates/db/src/collection/ops/create.rs DB::create_collections_atomic_with_acp_registration_as; crates/db/src/definition/migration/committed_lenses.rs DB::add_lens, CommittedLensStore::has_transform",
-        model_ref: "MC_AddViewTransform_{Green,Red_*}.cfg",
+        anchor: "crates/defra-node/src/db_impls.rs DbSchemaOps::add_view; crates/db/src/collection/ops/create.rs DB::create_collections_atomic_with_acp_registration_as, DB::require_view_transforms; crates/db/src/definition/migration/committed_lenses.rs DB::add_lens, write_lens_config",
+        model_ref: "MC_AddViewTransform_{Green,Green_NacBefore,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
     Property {
         // #2724: verify-signature's NAC, document ACP and block checks decide
-        // at the caller's transaction view. As shipped NAC and document ACP
-        // read the latest commit: Red_Shipped_{Pool,Txn,TxnRejects}.
+        // at the caller's transaction view, or the read-only one the pool path
+        // opens: NAC through check_node_access_in_txn, document ACP bound to
+        // the view's ACP store.
         family: "Verify block signature",
         name: "INV_VerifiedAtOnePoint / INV_NoValidRejected",
         axis: Tla,
-        anchor: "crates/defra-node/src/ops/block.rs NodeOps::verify_block_signature; crates/db/src/txn/registry/blocks.rs DbTransactionRegistry::verify_block_signature_in_txn_as; crates/db/src/block/verify.rs verify_block_signature_as, verify_block_signature_in_txn_as, load_authorized_block_signature; crates/db/src/access/nac.rs DB::check_node_access_as",
+        anchor: "crates/defra-node/src/ops/block.rs NodeOps::verify_block_signature; crates/db/src/txn/registry/blocks.rs DbTransactionRegistry::verify_block_signature_in_txn_as; crates/db/src/block/verify.rs verify_block_signature_as, verify_block_signature_in_txn_as, verify_block_signature_with_blockstore, load_authorized_block_signature; crates/db/src/access/nac.rs DB::check_node_access_in_txn",
         model_ref: "MC_VerifySignature_{Green_*,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",

@@ -23,18 +23,21 @@
 (*                                                                         *)
 (* The one consistent point is the transaction view: the snapshot the      *)
 (* transaction reads plus its own pending writes. Each check reads either  *)
-(* that view ("view") or whatever was committed last ("latest"). The       *)
-(* GREEN design reads all three at the view. The code as shipped reads NAC *)
-(* and document ACP at "latest", and its RED configurations show the hole. *)
+(* that view ("view") or whatever was committed last ("latest"). The code  *)
+(* reads all three at the view: NAC through check_node_access_in_txn and   *)
+(* document ACP bound to the view's ACP store. Each RED moves one read off *)
+(* the view, as the code did before #2724's fix for NAC and document ACP.  *)
 (*                                                                         *)
 (* Rust code modelled:                                                     *)
 (*   crates/defra-node/src/ops/block.rs NodeOps::verify_block_signature    *)
-(*     (NAC check, then the in-transaction or the pool path)               *)
+(*     (the in-transaction or the pool path)                               *)
 (*   crates/db/src/txn/registry/blocks.rs                                  *)
 (*     DbTransactionRegistry::verify_block_signature_in_txn_as             *)
 (*   crates/db/src/block/verify.rs verify_block_signature_as,              *)
-(*     verify_block_signature_in_txn_as, load_authorized_block_signature   *)
-(*   crates/db/src/access/nac.rs DB::check_node_access_as                  *)
+(*     verify_block_signature_in_txn_as,                                   *)
+(*     verify_block_signature_with_blockstore (NAC at the view),           *)
+(*     load_authorized_block_signature (block read, bound document ACP)    *)
+(*   crates/db/src/access/nac.rs DB::check_node_access_in_txn              *)
 (* Go reference: internal/db/verify.go.                                    *)
 (***************************************************************************)
 EXTENDS Naturals
@@ -131,9 +134,9 @@ Init ==
   /\ verdict = "pending"
   /\ env = 0
 
-\* Step 1, the NAC check. Reading at the view opens it now; reading at the
-\* latest commit (as shipped) leaves a request with no transaction to open
-\* its view later, after the check.
+\* Step 1, the NAC check. Reading at the view opens it now (the pool path
+\* opens its read-only transaction first); reading at the latest commit (a
+\* RED) leaves a request with no transaction to open its view later.
 NacStep ==
   /\ pc = "nac"
   \* the view after this step: opened only if the check reads it

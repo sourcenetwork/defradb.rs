@@ -126,6 +126,10 @@ pub enum Error {
     #[error("{0}")]
     Other(String),
 
+    /// A view names a lens transform CID with no committed lens config.
+    #[error("lens CID not found: {0}")]
+    ViewTransformMissing(String),
+
     #[error("unsafe policy transition blocked: {0}")]
     UnsafePolicyTransition(String),
 

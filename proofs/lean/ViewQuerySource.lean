@@ -23,7 +23,9 @@ Rust owner: crates/schema/src/source.rs `QuerySource` (its serde derive:
 `Query` reads through `deserialize_query_select`) and `QuerySource::with_transform`;
 crates/schema/src/collection.rs `CollectionVersion::query` (`Query`, skipped when
 none, `default`); crates/defra-node/src/db_impls.rs `DbSchemaOps::add_view`,
-which checks the CID; the definition store writes `serde_json::to_vec` of the
+which refuses the empty CID, and crates/db/src/collection/ops/create.rs
+`DB::require_view_transforms`, which refuses a CID with no lens config in the
+create transaction; the definition store writes `serde_json::to_vec` of the
 `CollectionVersion` and reads it with `serde_json::from_slice`
 (crates/db/src/collection/ops/version.rs `get_all_collection_versions_with_txn`).
 -/
@@ -211,8 +213,8 @@ inductive Refusal where
   | missing (cid : String)
 
 /-- add_view's transform check: no transform passes as none; an empty CID is
-refused; a CID the node holds passes; any other is refused. `holds` is the
-lens store's `has_transform`. -/
+refused; a CID the node holds passes; any other is refused. `holds` is
+whether the create transaction reads the CID's lens config. -/
 def accept (holds : String → Bool) : Option String → Except Refusal (Option String)
   -- no transform asked for: none
   | none => .ok none

@@ -1,6 +1,5 @@
 //! Block signatures as the caller `context` names.
 
-use acp::nac::NodePermission;
 use defra_core::RequestContext;
 
 use super::handle::NodeOps;
@@ -34,11 +33,10 @@ impl NodeOps {
         public_key: &str,
         key_type: crypto::KeyType,
     ) -> Result<()> {
+        // NAC, the block read and document ACP decide at one view: the
+        // caller's transaction, or the read-only one the pool path opens.
         let caller: acp::Identity = acting_identity(context)?.into();
         if let Some(txn) = context.txn() {
-            self.database
-                .check_node_access_as(context, NodePermission::SignatureVerify)
-                .await?;
             return self
                 .txn_registry
                 .verify_block_signature_in_txn_as(
@@ -60,9 +58,6 @@ impl NodeOps {
         );
         let (cid, public_key) = (cid.to_owned(), public_key.to_owned());
         self.on_pool(move || async move {
-            database
-                .check_node_access_as(&context, NodePermission::SignatureVerify)
-                .await?;
             db::block::verify::verify_block_signature_as(
                 &context,
                 &database,
