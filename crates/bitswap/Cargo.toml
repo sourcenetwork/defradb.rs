@@ -44,6 +44,6 @@ libp2p = { workspace = true, features = ["macros"] }
 # Test swarms on nuclei sockets.
 net = { path = "../net", features = ["libp2p"] }
 libp2p-stream = { workspace = true }
-multistream-select = "0.13"
+multistream-select = "0.14"
 serde_json = { workspace = true }
 sha2 = { workspace = true }
