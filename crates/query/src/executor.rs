@@ -675,6 +675,19 @@ pub trait QueryExecutor: MaybeSendSync {
         ))
     }
 
+    /// [`TransactionRegistry::purge_by_doc_ids_as`](crate::txn::TransactionRegistry::purge_by_doc_ids_as).
+    async fn purge_by_doc_ids_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        doc_ids: &[document::DocID],
+    ) -> std::result::Result<usize, TransactionError> {
+        let _ = (context, name, doc_ids);
+        Err(TransactionError::not_supported(
+            "document purge is not supported by this executor",
+        ))
+    }
+
     /// [`TransactionRegistry::add_dac_policy_as`](crate::txn::TransactionRegistry::add_dac_policy_as).
     async fn add_dac_policy_as(
         &self,

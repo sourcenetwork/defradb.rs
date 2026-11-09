@@ -39,11 +39,14 @@ pub struct NodeSpec {
     pub node_identity: Option<u64>,
     /// The key type the node signs with, when it signs.
     pub signing: Option<crate::actions::shared::KeyType>,
-    /// How long an idle HTTP transaction lives and the sweep interval.
+    /// How long an idle explicit transaction lives and the sweep interval.
     pub txn_ttl: Option<(Duration, Duration)>,
     /// The node's own searchable-encryption key, as Go's harness gives each
     /// node one under `EnableSearchableEncryption`.
     pub se_key: Option<[u8; 32]>,
+    /// The gate the node's index backfills pass before each batch; it lives
+    /// across a restart, as Go's package-level hook does.
+    pub index_gate: Option<Arc<crate::index_gate::TestIndexGate>>,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -144,6 +147,11 @@ impl TestNode {
             _held: held,
             events: Atom::new(None),
         }
+    }
+
+    /// The Rust node behind any client; `None` for a Go node.
+    pub fn core(&self) -> Option<Arc<Node>> {
+        self.embedded.clone()
     }
 
     /// Stop the node through the core's shutdown; a Go node is stopped when
@@ -268,6 +276,11 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     }
     if let Some(config) = http {
         builder = builder.with_http(config);
+    } else if let Some((ttl, tick)) = spec.txn_ttl {
+        builder = builder.with_transaction_idle_timeout(ttl, tick);
+    }
+    if let Some(gate) = &spec.index_gate {
+        builder = builder.with_index_build_gate(gate.clone());
     }
     if spec.node_identity.is_some() || spec.signing.is_some() {
         builder = builder.with_signing_key(signing_key(spec));

@@ -55,6 +55,9 @@ pub struct DbOptions {
     /// The embedder's check on replicated documents before their commits
     /// store anything. `None` keeps every document.
     pub replication_filter: Option<Arc<dyn crate::replication_filter::ReplicationFilter>>,
+    /// The gate every index backfill passes before each batch. `None` lets
+    /// every batch run.
+    pub index_build_gate: Option<Arc<dyn crate::index::build_gate::IndexBuildGate>>,
 }
 
 impl std::fmt::Debug for DbOptions {
@@ -78,6 +81,7 @@ impl std::fmt::Debug for DbOptions {
             )
             .field("pool", &self.pool)
             .field("replication_filter", &self.replication_filter.is_some())
+            .field("index_build_gate", &self.index_build_gate.is_some())
             .finish()
     }
 }
@@ -117,6 +121,15 @@ impl DbOptions {
         filter: Arc<dyn crate::replication_filter::ReplicationFilter>,
     ) -> Self {
         self.replication_filter = Some(filter);
+        self
+    }
+
+    /// Holds every index backfill at `gate` before each of its batches.
+    pub fn with_index_build_gate(
+        mut self,
+        gate: Arc<dyn crate::index::build_gate::IndexBuildGate>,
+    ) -> Self {
+        self.index_build_gate = Some(gate);
         self
     }
 
@@ -183,6 +196,9 @@ pub struct DB<S: Store> {
     migration_generation: AtomicU64,
     /// Whether the database has been closed.
     closed: AtomicBool,
+    /// Set when the database starts to close, so work parked at a hook (an
+    /// index build gate) stops waiting before the pool stops.
+    closing: regolith::sync::Event,
     /// Commits whose caller stopped waiting, fenced until they land: every
     /// new transaction waits for them.
     commit_fences: Arc<crate::txn::fence::CommitFences>,
@@ -279,6 +295,7 @@ impl<S: Store> DB<S> {
             txn_id_counter: AtomicU64::new(0),
             migration_generation: AtomicU64::new(0),
             closed: AtomicBool::new(false),
+            closing: regolith::sync::Event::new(),
             commit_fences: Arc::default(),
             collections: Arc::new(crate::collection::epoch::EpochedCollections::new(
                 crate::collection::CollectionMap::default(),
@@ -351,6 +368,7 @@ impl<S: Store> DB<S> {
             txn_id_counter: AtomicU64::new(0),
             migration_generation: AtomicU64::new(0),
             closed: AtomicBool::new(false),
+            closing: regolith::sync::Event::new(),
             commit_fences: Arc::default(),
             collections: Arc::new(crate::collection::epoch::EpochedCollections::new(
                 crate::collection::CollectionMap::default(),
@@ -793,6 +811,7 @@ impl<S: Store> DB<S> {
     /// pool is left to its owner: a worker cannot wait for itself to stop.
     pub async fn close(&self) -> Result<()> {
         self.closed.store(true, Ordering::SeqCst);
+        self.closing.set();
         if let Some(pool) = &self.options.pool {
             match pool.stop().await {
                 Ok(()) | Err(workers::Error::OnWorker) => {}
@@ -819,6 +838,11 @@ impl<S: Store> DB<S> {
     }
 
     /// Returns true if the database has been closed.
+    /// Done once the database starts to close.
+    pub(crate) fn closing(&self) -> regolith::sync::EventWait<'_> {
+        self.closing.wait()
+    }
+
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::SeqCst)
     }

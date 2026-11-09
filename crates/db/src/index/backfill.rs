@@ -111,6 +111,16 @@ impl<S: Store> DB<S> {
                 );
                 self.complete_action(lease).await?;
             }
+            // Stopped by the close: the action stays in progress, as after a
+            // crash, and the next open resumes it from its watermark.
+            Err(Error::DatabaseClosed) => {
+                tracing::info!(
+                    collection_id = %plan.collection_id,
+                    index_id = plan.index_id,
+                    "index backfill stopped by the database closing"
+                );
+                return Ok(());
+            }
             Err(error) => {
                 let reason = error.to_string();
                 if self.record_backfill_failure(&plan, &reason).await? {
@@ -252,6 +262,17 @@ impl<S: Store> DB<S> {
         let mut indexed = 0;
         let mut max_docs = BACKFILL_BATCH_DOCS;
         loop {
+            if let Some(gate) = &self.options().index_build_gate {
+                // A close stops the wait, as Go's gate honours its context:
+                // the pool stops only once this task ends.
+                let entered = std::pin::pin!(gate.enter(&plan.collection_id, plan.index_id));
+                let closing = std::pin::pin!(self.closing());
+                if let futures::future::Either::Right(_) =
+                    futures::future::select(entered, closing).await
+                {
+                    return Err(Error::DatabaseClosed);
+                }
+            }
             let batch = self.backfill_batch(plan, last, &mut max_docs).await?;
             indexed += batch.indexed;
             if let Some(id) = batch.last_doc_short_id {

@@ -8,6 +8,8 @@ use std::time::Duration;
 use crate::assemble::check_access_hooks;
 use crate::assemble::{assemble, Extras};
 use crate::config::{NodeConfig, NodeSigning, Persistence, SigningKey, TransportConfig};
+#[cfg(feature = "http")]
+use crate::HttpConfig;
 use crate::Node;
 #[cfg(feature = "otel")]
 use crate::TelemetryHandle;
@@ -16,8 +18,6 @@ use crate::{AccessHooks, P2PConfig};
 #[cfg(feature = "vera")]
 use crate::{DocumentAcpConfig, VeraConfig};
 use crate::{Error, QueryLimits, Result};
-#[cfg(feature = "http")]
-use crate::{HttpConfig, TransactionCleanupConfig};
 
 /// Selects which persistent storage backend to use when `data_path` is set.
 #[derive(Debug, Clone, Copy, Default)]
@@ -67,6 +67,10 @@ pub struct NodeBuilder {
     crdts: Vec<crdt::Registration>,
     txn_ownership: db::TxnOwnership,
     document_projector: Option<Arc<dyn db::DocumentMutationProjector>>,
+    /// How long an idle explicit transaction lives, and how often the sweep
+    /// looks; an HTTP config's own setting takes precedence.
+    #[cfg(not(target_arch = "wasm32"))]
+    transaction_idle: Option<(Duration, Duration)>,
 }
 
 /// Durability is a separate builder setting, so it is applied over the
@@ -307,6 +311,16 @@ impl NodeBuilder {
         self
     }
 
+    /// Hold every index backfill at `gate` before each of its batches, so a
+    /// test can watch a build half done. Go's `db.IndexBuildGate`.
+    pub fn with_index_build_gate(
+        mut self,
+        gate: Arc<dyn db::index::build_gate::IndexBuildGate>,
+    ) -> Self {
+        self.config.index_build_gate = Some(crate::IndexBuildGateHandle(gate));
+        self
+    }
+
     /// Enable the HTTP GraphQL server.
     #[cfg(feature = "http")]
     pub fn with_http(mut self, config: HttpConfig) -> Self {
@@ -437,6 +451,17 @@ impl NodeBuilder {
         self
     }
 
+    /// End explicit transactions no request has used for `idle`, checking
+    /// every `sweep`, on a node with or without an HTTP server: the sweep is
+    /// a job on a worker's deadline queue, read through the Env clock. A zero
+    /// `idle` keeps transactions until they are committed or discarded. An
+    /// HTTP config's idle timeout, when set, takes precedence.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_transaction_idle_timeout(mut self, idle: Duration, sweep: Duration) -> Self {
+        self.transaction_idle = Some((idle, sweep));
+        self
+    }
+
     /// Build and start the embedded DefraDB node.
     pub async fn build(mut self) -> Result<Node> {
         let crdts = crdt::Crdts::new(std::mem::take(&mut self.crdts))?;
@@ -444,21 +469,27 @@ impl NodeBuilder {
         check_access_hooks(&self.config, self.access_hooks.as_ref())?;
 
         #[cfg(feature = "http")]
-        let (serves_http, transaction_cleanup) = match self.http_config.as_ref() {
-            Some(config) if config.transaction_idle_timeout.is_zero() => (true, None),
-            Some(config) => {
-                if config.transaction_cleanup_interval.is_zero() {
-                    return Err(Error::ZeroCleanupInterval);
-                }
-                (
-                    true,
-                    Some(TransactionCleanupConfig {
-                        max_idle_age: config.transaction_idle_timeout,
-                        sweep_interval: config.transaction_cleanup_interval,
-                    }),
-                )
-            }
+        let (serves_http, http_idle) = match self.http_config.as_ref() {
+            Some(config) => (
+                true,
+                Some((
+                    config.transaction_idle_timeout,
+                    config.transaction_cleanup_interval,
+                )),
+            ),
             None => (false, None),
+        };
+        #[cfg(all(not(feature = "http"), not(target_arch = "wasm32")))]
+        let http_idle: Option<(Duration, Duration)> = None;
+        #[cfg(not(target_arch = "wasm32"))]
+        let transaction_cleanup = match http_idle.or(self.transaction_idle) {
+            Some((idle, _)) if idle.is_zero() => None,
+            Some((_, sweep)) if sweep.is_zero() => return Err(Error::ZeroCleanupInterval),
+            Some((idle, sweep)) => Some(crate::TransactionCleanupConfig {
+                max_idle_age: idle,
+                sweep_interval: sweep,
+            }),
+            None => None,
         };
 
         #[cfg(feature = "http")]
@@ -472,7 +503,7 @@ impl NodeBuilder {
             embedding_api_key: self.embedding_api_key.take(),
             txn_ownership: self.txn_ownership,
             document_projector: self.document_projector.take(),
-            #[cfg(feature = "http")]
+            #[cfg(not(target_arch = "wasm32"))]
             transaction_cleanup,
             #[cfg(feature = "http")]
             serves_http,

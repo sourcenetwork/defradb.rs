@@ -16,7 +16,7 @@ use crate::{BlockOps, Error, Node, Result, SchemaOps};
 use crate::access_hooks::AccessHooks;
 #[cfg(feature = "otel")]
 use crate::TelemetryHandle;
-#[cfg(feature = "http")]
+#[cfg(not(target_arch = "wasm32"))]
 use crate::TransactionCleanupConfig;
 
 /// What a build takes besides its [`NodeConfig`]: the settings that are not
@@ -28,7 +28,7 @@ pub(crate) struct Extras {
     pub embedding_api_key: Option<String>,
     pub txn_ownership: db::TxnOwnership,
     pub document_projector: Option<Arc<dyn db::DocumentMutationProjector>>,
-    #[cfg(feature = "http")]
+    #[cfg(not(target_arch = "wasm32"))]
     pub transaction_cleanup: Option<TransactionCleanupConfig>,
     #[cfg(feature = "http")]
     pub serves_http: bool,
@@ -85,6 +85,7 @@ where
         query_timeout,
         introspection_cache,
         replication_filter,
+        index_build_gate,
     } = config;
     let introspection_cache = introspection_cache.unwrap_or(true);
     #[cfg(not(any(feature = "p2p", feature = "libp2p")))]
@@ -155,6 +156,9 @@ where
     }
     if let Some(filter) = replication_filter {
         db_options = db_options.with_replication_filter(filter.0);
+    }
+    if let Some(gate) = index_build_gate {
+        db_options = db_options.with_index_build_gate(gate.0);
     }
     if let Some(identity) = node_p2p_identity.as_ref() {
         db_options = db_options.with_node_identity_arc(identity.clone());
@@ -525,7 +529,7 @@ where
     // The sweep holds the registry, and through it the database and its
     // pool: held anywhere but the shutdown set, a node dropped without
     // shutdown would keep its pool's threads and the store alive forever.
-    #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+    #[cfg(not(target_arch = "wasm32"))]
     if let Some(cleanup) = extras.transaction_cleanup {
         tracing::info!(
             max_idle_age_secs = cleanup.max_idle_age.as_secs(),

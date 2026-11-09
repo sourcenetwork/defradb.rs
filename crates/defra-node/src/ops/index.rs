@@ -34,6 +34,34 @@ impl Node {
         fields: Vec<IndexedFieldDescription>,
         unique: bool,
     ) -> Result<IndexDescription> {
+        self.new_index_as(context, collection, name, fields, unique, true)
+            .await
+    }
+
+    /// [`Self::create_index_as`], returning once the index is defined: it is
+    /// listed as building until its backfill completes. Go's
+    /// `Collection.NewIndex`.
+    pub async fn start_index_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: Option<&str>,
+        fields: Vec<IndexedFieldDescription>,
+        unique: bool,
+    ) -> Result<IndexDescription> {
+        self.new_index_as(context, collection, name, fields, unique, false)
+            .await
+    }
+
+    async fn new_index_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: Option<&str>,
+        fields: Vec<IndexedFieldDescription>,
+        unique: bool,
+        wait_for_build: bool,
+    ) -> Result<IndexDescription> {
         let database = Arc::clone(self.database());
         let context = self.caller(context);
         let (collection, name) = (collection.to_owned(), name.map(str::to_owned));
@@ -46,9 +74,18 @@ impl Node {
                 .await?;
             let kind =
                 IndexManager::requested_kind(&fields, unique, None).map_err(db::Error::from)?;
-            Ok(database
-                .create_index(&collection, name.as_deref(), fields, kind)
-                .await?)
+            Ok(match wait_for_build {
+                true => {
+                    database
+                        .create_index(&collection, name.as_deref(), fields, kind)
+                        .await?
+                }
+                false => {
+                    database
+                        .start_index(&collection, name.as_deref(), fields, kind)
+                        .await?
+                }
+            })
         })
         .await
     }

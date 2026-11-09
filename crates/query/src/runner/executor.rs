@@ -336,6 +336,17 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
             .await
     }
 
+    async fn purge_by_doc_ids_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        doc_ids: &[document::DocID],
+    ) -> std::result::Result<usize, TransactionError> {
+        self.registry
+            .purge_by_doc_ids_as(context, name, doc_ids)
+            .await
+    }
+
     async fn add_dac_policy_as(
         &self,
         context: &RequestContext,
