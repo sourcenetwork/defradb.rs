@@ -211,6 +211,9 @@ lean_lib LensListing where
 lean_lib LensId where
 
 @[default_target]
+lean_lib DocStoreTarget where
+
+@[default_target]
 lean_lib JsonSubPathCut where
 
 @[default_target]

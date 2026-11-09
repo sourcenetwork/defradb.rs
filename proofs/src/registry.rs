@@ -1784,6 +1784,19 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/defra-core/tests/lens_block_id.rs every_module_and_argument_value_counts, an_empty_lens_has_gos_config_block_cid",
     },
     Property {
+        // #2517: a document saved at another version is stored with that
+        // version's layout only when it is a real definition of the same
+        // collection; a placeholder (often in the orphan collection) is
+        // treated as unknown, so the value stays under the owning collection.
+        family: "Schema-evolution operations in the core",
+        name: "DocStoreTarget.stored_under_owner / old_stores_under_orphan",
+        axis: Lean,
+        anchor: "crates/db/src/collection/crud.rs Collection::save_with_datastore_priorities",
+        model_ref: "DocStoreTarget (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // #2379: an index answers queries only while no reindex is owed;
         // schema changes and merges that store a document off the active
         // version across a lens owe a fresh record, and a rebuild clears only
