@@ -49,6 +49,10 @@ pub enum MergeError {
     #[error("unique constraint violation during merge: {0}")]
     UniqueConstraintViolation(String),
 
+    /// A peer sent a chunk write that no local write could have made.
+    #[error("chunk rejected: {0}")]
+    ChunkRejected(String),
+
     /// A single-block `_in_txn` merge rejected its content after staging
     /// writes; the enclosing attempt is discarded and the original reason is
     /// returned as the merge outcome.
@@ -147,6 +151,7 @@ impl MergeError {
             | Self::InvalidReplayAuthorization(_)
             | Self::ImmutableFieldChanged(_)
             | Self::UniqueConstraintViolation(_)
+            | Self::ChunkRejected(_)
             | Self::RetryRejected(_)
             | Self::SignatureVerificationFailed { .. }
             | Self::DepthExceeded { .. } => MergeErrorDisposition::Terminal,

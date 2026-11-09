@@ -22,6 +22,34 @@ mod verify;
 const COLLECTION: &str = "Sample";
 pub const SHARED_DOCUMENTS: usize = 8;
 
+/// `DEFRA_BASELINE_CHUNK_MAX_CHARS` makes `left` a `@chunk` field cut at that size.
+pub fn chunk_max_chars() -> Option<u32> {
+    std::env::var("DEFRA_BASELINE_CHUNK_MAX_CHARS")
+        .ok()
+        .map(|value| {
+            value
+                .parse()
+                .expect("DEFRA_BASELINE_CHUNK_MAX_CHARS is a number")
+        })
+}
+
+async fn create_plain(db: &DB<RegolithStore>) {
+    let collection = CollectionVersion::new(
+        COLLECTION,
+        "write-baseline-v1",
+        "write-baseline",
+        vec![
+            FieldDescription::new("1", "_docID", FieldKind::doc_id(), CType::LwwRegister),
+            FieldDescription::new("2", "label", FieldKind::string(), CType::LwwRegister),
+            FieldDescription::new("3", "left", FieldKind::string(), CType::LwwRegister),
+            FieldDescription::new("4", "right", FieldKind::string(), CType::LwwRegister),
+            FieldDescription::new("5", "count", FieldKind::int(), CType::LwwRegister)
+                .with_crdt_type(CType::PnCounter),
+        ],
+    );
+    db.create_collection(collection).await.unwrap();
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum Scenario {
     Creates,
@@ -96,35 +124,22 @@ impl Fixture {
                 .unwrap(),
         );
         let db = Arc::new(DB::open_from_arc(store.clone()).await.unwrap());
-        let collection = CollectionVersion::new(
-            COLLECTION,
-            "write-baseline-v1",
-            "write-baseline",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new(
-                    "2",
-                    "label",
-                    FieldKind::string(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new("3", "left", FieldKind::string(), schema::CType::LwwRegister),
-                FieldDescription::new(
-                    "4",
-                    "right",
-                    FieldKind::string(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new("5", "count", FieldKind::int(), schema::CType::LwwRegister)
-                    .with_crdt_type(CType::PnCounter),
-            ],
-        );
-        db.create_collection(collection).await.unwrap();
+        match chunk_max_chars() {
+            Some(max_chars) => {
+                let sdl = format!(
+                    r#"type {COLLECTION} {{
+                        label: String
+                        left: String @chunk(maxChars: {max_chars})
+                        right: String
+                        count: Int @crdt(type: "pncounter")
+                    }}"#
+                );
+                db.create_collections_atomic(query::parse_sdl(&sdl).unwrap())
+                    .await
+                    .unwrap();
+            }
+            None => create_plain(&db).await,
+        }
         if matches!(scenario, Scenario::CountersIndexes) {
             db.create_index(
                 COLLECTION,

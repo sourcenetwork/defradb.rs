@@ -70,6 +70,12 @@ pub enum Error {
     #[error("invalid collection name: {0}")]
     InvalidCollectionName(String),
 
+    #[error("{0} holds generated chunks and is emptied only with its parent")]
+    TruncateGeneratedCollection(String),
+
+    #[error("{0} holds generated chunks and is deleted only with its parent")]
+    DeleteGeneratedCollection(String),
+
     #[error("database is closed")]
     DatabaseClosed,
 

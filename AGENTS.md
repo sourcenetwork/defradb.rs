@@ -465,7 +465,7 @@ Legacy areas with submodules:
 | Encryption | `encryption::` | acp, block_verify, cross_runtime_p2p, index, key_management, se_cross_runtime |
 | Identity | `identity::` | keyring_dev_mode, keyring_lifecycle, lifecycle, negative, node_identity, types |
 | Backup | `backup::` | dev_mode, dump, purge, restore |
-| Vera | `vera::` | acp_tuning, compartments, encryption_acp, p2p_acp, policy_lifecycle, resilience, smoke |
+| Vera | `vera::` | acp_tuning, chunk_access, compartments, encryption_acp, p2p_acp, policy_lifecycle, resilience, smoke |
 
 Single-purpose legacy areas, one file each:
 

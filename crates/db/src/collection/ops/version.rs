@@ -291,6 +291,9 @@ impl<S: Store> crate::database::DB<S> {
     /// - No non-deleted child versions may reference this as PreviousVersion
     ///   (unless those children are also in `also_deleting` batch)
     /// - The collection must have no documents
+    ///
+    /// A parent's `@chunk` collections go with it, so this deletes them in one
+    /// batch. A chunk collection is refused while its parent stays.
     pub async fn delete_collection_version_as(
         &self,
         context: &defra_core::RequestContext,
@@ -299,6 +302,24 @@ impl<S: Store> crate::database::DB<S> {
     ) -> Result<()> {
         self.check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
             .await?;
+        let all_versions = self.get_all_collection_versions().await?;
+        let mut requested: Vec<String> = also_deleting.to_vec();
+        requested.push(version_id.to_string());
+        let chunk_versions =
+            super::chunk_versions::chunk_versions_to_add(&all_versions, &requested)?;
+        if chunk_versions.is_empty() {
+            return self.delete_version_checked(version_id, also_deleting).await;
+        }
+        requested.extend(chunk_versions);
+        self.delete_collection_versions_batch_as(context, requested)
+            .await
+    }
+
+    async fn delete_version_checked(
+        &self,
+        version_id: &str,
+        also_deleting: &[String],
+    ) -> Result<()> {
         // Load the version from KV store
         let txn = self.new_txn(true).await?;
         let target_schema = {
@@ -326,8 +347,8 @@ impl<S: Store> crate::database::DB<S> {
         let collection_id = target_schema.collection_id.clone();
         let name = target_schema.name.clone();
 
-        // Validate: no child versions reference this (excluding batch siblings)
         let all_versions = self.get_all_collection_versions().await?;
+        // Validate: no child versions reference this (excluding batch siblings)
         for other in &all_versions {
             if let Some(ref prev) = other.previous_version {
                 if prev.source_collection_id == version_id
@@ -464,14 +485,22 @@ impl<S: Store> crate::database::DB<S> {
             .iter()
             .map(|v| (v.version_id.as_str(), v))
             .collect();
-        let deleting_versions: rapidhash::RapidHashSet<&str> =
-            version_ids.iter().map(String::as_str).collect();
 
         for version_id in &version_ids {
             if !version_map.contains_key(version_id.as_str()) {
                 return Err(Error::CollectionVersionNotFound(version_id.clone()));
             }
         }
+
+        let mut version_ids = version_ids;
+        let mut seen: rapidhash::RapidHashSet<String> = version_ids.iter().cloned().collect();
+        version_ids.retain(|id| seen.remove(id));
+        version_ids.extend(super::chunk_versions::chunk_versions_to_add(
+            &all_versions,
+            &version_ids,
+        )?);
+        let deleting_versions: rapidhash::RapidHashSet<&str> =
+            version_ids.iter().map(String::as_str).collect();
 
         for version in &all_versions {
             if deleting_versions.contains(version.version_id.as_str()) {
@@ -568,7 +597,7 @@ impl<S: Store> crate::database::DB<S> {
 
         // Delete each version in topological order
         for version_id in &sorted {
-            self.delete_collection_version_as(context, version_id, &version_ids)
+            self.delete_version_checked(version_id, &version_ids)
                 .await?;
         }
 

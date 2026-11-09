@@ -5,8 +5,11 @@ mod common;
 
 mod acp_merge_handler;
 mod acp_protected_update;
+mod broadcast_marker_handoff;
 mod broadcast_mutator_broadcast;
+mod chunk_before_parent;
 mod chunk_definition;
+mod chunk_forged;
 mod collection_block_links;
 mod collection_guard_race;
 mod collection_heads;
