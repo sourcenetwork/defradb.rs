@@ -5,21 +5,6 @@ use defra_core::RequestContext;
 use crate::{Node, Result};
 
 impl Node {
-    /// Create a view as the explicitly authenticated caller.
-    pub async fn add_view_as(
-        &self,
-        context: &RequestContext,
-        source_query: &str,
-        target_sdl: &str,
-    ) -> Result<()> {
-        let ops = Arc::clone(&self.schema_ops);
-        let context = context.clone();
-        let query = source_query.to_owned();
-        let sdl = target_sdl.to_owned();
-        self.on_pool(move || async move { ops.add_view(&context, &query, &sdl).await })
-            .await
-    }
-
     /// Materialize a collection as the explicitly authenticated caller.
     pub async fn materialize_collection_as(
         &self,
@@ -53,7 +38,7 @@ mod tests {
                 .await
                 .unwrap();
             assert!(node
-                .add_view_as(&actor, "Item { name }", "type ItemView { name: String }")
+                .add_view_as(&actor, "Item { name }", "type ItemView { name: String }", None)
                 .await
                 .is_err());
             assert!(node
@@ -65,7 +50,7 @@ mod tests {
                     .await
                     .unwrap();
             }
-            node.add_view_as(&actor, "Item { name }", "type ItemView { name: String }")
+            node.add_view_as(&actor, "Item { name }", "type ItemView { name: String }", None)
                 .await
                 .unwrap();
             node.materialize_collection_as(&actor, "Item")
@@ -77,7 +62,7 @@ mod tests {
                     .unwrap();
             }
             assert!(node
-                .add_view_as(&actor, "Item { name }", "type OtherView { name: String }")
+                .add_view_as(&actor, "Item { name }", "type OtherView { name: String }", None)
                 .await
                 .is_err());
             assert!(node

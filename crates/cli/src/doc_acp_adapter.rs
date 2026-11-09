@@ -129,7 +129,7 @@ impl<S: Store + 'static> DocumentAcpOperations for DocumentAcpAdapter<S> {
 
     async fn add_doc_relationship(
         &self,
-        requestor: &identity::Did,
+        requestor: Option<&identity::Did>,
         target_actor: &str,
         collection: &str,
         doc_id: &str,
@@ -144,6 +144,10 @@ impl<S: Store + 'static> DocumentAcpOperations for DocumentAcpAdapter<S> {
             .check_node_access_as(&self.context(), acp::nac::NodePermission::DacRelationAdd)
             .await
             .map_err(|e| format!("{}", e))?;
+        // Go counts a missing requestor as a missing required argument.
+        let Some(requestor) = requestor else {
+            return Err("missing a required argument needed to add doc actor relationship.".into());
+        };
 
         if relation == "owner" {
             return Err("OPERATION_FORBIDDEN: cannot add owner relation".into());
@@ -182,7 +186,7 @@ impl<S: Store + 'static> DocumentAcpOperations for DocumentAcpAdapter<S> {
 
     async fn delete_doc_relationship(
         &self,
-        requestor: &identity::Did,
+        requestor: Option<&identity::Did>,
         target_actor: &str,
         collection: &str,
         doc_id: &str,
@@ -197,6 +201,12 @@ impl<S: Store + 'static> DocumentAcpOperations for DocumentAcpAdapter<S> {
             .check_node_access_as(&self.context(), acp::nac::NodePermission::DacRelationDelete)
             .await
             .map_err(|e| format!("{}", e))?;
+        // Go counts a missing requestor as a missing required argument.
+        let Some(requestor) = requestor else {
+            return Err(
+                "missing a required argument needed to delete doc actor relationship.".into(),
+            );
+        };
 
         if relation == "owner" {
             return Err("OPERATION_FORBIDDEN: cannot delete owner relation".into());
@@ -253,11 +263,11 @@ mod tests {
                 .with_txn(Some(defra_core::TxnId(1)));
             let bound = adapter.bind_request(&context).unwrap();
             assert!(bound
-                .add_doc_relationship(&caller, "did:key:reader", "Record", "doc", "reader")
+                .add_doc_relationship(Some(&caller), "did:key:reader", "Record", "doc", "reader")
                 .await
                 .is_err());
             assert!(bound
-                .delete_doc_relationship(&caller, "did:key:reader", "Record", "doc", "reader")
+                .delete_doc_relationship(Some(&caller), "did:key:reader", "Record", "doc", "reader")
                 .await
                 .is_err());
         })

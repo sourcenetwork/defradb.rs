@@ -58,7 +58,7 @@ impl DocumentAcpOperations for MockDocumentAcpOperations {
 
     async fn add_doc_relationship(
         &self,
-        _requestor: &Did,
+        _requestor: Option<&Did>,
         _target_actor: &str,
         _collection: &str,
         _doc_id: &str,
@@ -70,7 +70,7 @@ impl DocumentAcpOperations for MockDocumentAcpOperations {
 
     async fn delete_doc_relationship(
         &self,
-        _requestor: &Did,
+        _requestor: Option<&Did>,
         _target_actor: &str,
         _collection: &str,
         _doc_id: &str,

@@ -318,6 +318,13 @@ pub trait DocFetcher: MaybeSendSync {
         show_deleted: bool,
     ) -> Result<Box<dyn DocStream>>;
 
+    /// Validate every scan this fetcher's transaction opens from now on,
+    /// until turned off: for the reads a write decides on, such as the
+    /// documents a relation filter picks for an update or delete. A fetcher
+    /// with no transaction spanning the decision and the write has nothing
+    /// to validate.
+    fn set_scans_validated(&self, _validated: bool) {}
+
     /// Get documents by their IDs.
     ///
     /// Returns both the found documents and the IDs that were not found.

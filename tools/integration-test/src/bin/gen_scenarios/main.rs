@@ -1,17 +1,24 @@
 //! Generates the Rust conformance tests from the scenario corpus, and checks
 //! that exporting them again gives the corpus back.
 //!
-//!   gen_scenarios generate --scenarios DIR --tests DIR --mantra DIR [--mantra DIR] --drift FILE [--area NAME]...
-//!   gen_scenarios check --scenarios DIR --exported DIR [--drift FILE] [--area NAME]...
+//!   gen_scenarios generate --scenarios DIR --tests DIR --mantra DIR [--mantra DIR] --drift FILE
+//!       [--go-repo DIR --pin COMMIT] [--area NAME]...
+//!
+//! With `--go-repo` and `--pin`, each test carries its Go `SupportedClientTypes`
+//! read at the pin, files are stamped with the pin, and a scenario already
+//! ported at the pin is generated even when its file drifted.
+//!   gen_scenarios check --scenarios DIR --exported DIR [--drift FILE] [--pin COMMIT] [--area NAME]...
 
 mod check;
 mod corpus;
 mod emit;
 mod error;
+mod go_source;
 mod lifecycle;
 mod literal;
 mod mantra;
 mod names;
+mod not_applying;
 mod parallel;
 mod text;
 mod tree;
@@ -83,6 +90,20 @@ fn generate(args: &Args) -> Result<()> {
     let drifted = drift(args)?;
     let areas = args.many("area");
     let all = corpus::load(&args.one("scenarios")?)?;
+    let mut go = match (
+        args.one("go-repo"),
+        args.values.get("pin").and_then(|v| v.first()),
+    ) {
+        (Ok(repo), Some(pin)) => Some(go_source::GoSource::new(repo, pin.clone())),
+        (Err(_), None) => None,
+        _ => {
+            return Err(GenError::Usage(
+                "--go-repo and --pin go together".to_owned(),
+            ))
+        }
+    };
+    let pin = go.as_ref().map(|go| go.pin().to_owned());
+    let mut unresolved: Vec<String> = Vec::new();
 
     let mut skipped_drift: Vec<String> = Vec::new();
     let mut unmapped: Vec<String> = Vec::new();
@@ -94,7 +115,8 @@ fn generate(args: &Args) -> Result<()> {
 
     for item in all.iter().filter(|l| selected(l, &areas)) {
         let top = item.dir[0].clone();
-        if drifted.contains(&item.scenario.source.path) {
+        let at_pin = pin.as_deref() == Some(item.scenario.source.revision.as_str());
+        if drifted.contains(&item.scenario.source.path) && !at_pin {
             skipped_drift.push(format!(
                 "{} ({})",
                 item.scenario.id, item.scenario.source.path
@@ -135,9 +157,8 @@ fn generate(args: &Args) -> Result<()> {
 
     let mut formatted: Vec<PathBuf> = Vec::new();
     for (path, items) in &placed {
-        let top = &path[0];
-        let bin = names::binary(top);
-        trees.entry(bin.clone()).or_default().insert(&path[1..]);
+        let area = &path[0];
+        trees.entry(area.clone()).or_default().insert(&path[1..]);
         let mut body = String::new();
         let mut used = emit::Used::default();
         let mut taken: RapidHashSet<String> = RapidHashSet::default();
@@ -151,32 +172,43 @@ fn generate(args: &Args) -> Result<()> {
             if leaf.is_none() {
                 unmapped.push(format!("{} ({key})", item.scenario.id));
             }
+            let clients = match go
+                .as_mut()
+                .map(|go| go.clients(&item.scenario.source.path, &item.scenario.source.test))
+            {
+                Some(go_source::Clients::Only(clients)) => Some(clients),
+                Some(go_source::Clients::Unresolved(reason)) => {
+                    unresolved.push(format!("{} ({reason})", item.scenario.id));
+                    None
+                }
+                Some(go_source::Clients::All) | None => None,
+            };
             body.push_str(&emit::test_fn(
                 item,
                 &name,
                 leaf.map(|s| s.as_str()),
+                clients.as_deref(),
                 &mut used,
             ));
             body.push('\n');
         }
-        let header = emit::file_header(items[0], body.contains("m::"), &used, &body);
-        let file = tree::file_path(&tests, &bin, path);
+        let header =
+            emit::file_header(items[0], pin.as_deref(), body.contains("m::"), &used, &body);
+        let file = tree::file_path(&tests, area, path);
         tree::write_file(&file, &format!("{header}{body}"))?;
         formatted.push(file);
     }
     for modules in &kept {
         trees
-            .entry(names::binary(&modules[0]))
+            .entry(modules[0].clone())
             .or_default()
             .insert(&modules[1..]);
     }
-    for (bin, tree) in &trees {
-        let top = tree_top(&placed, bin);
-        let directory = (bin != &top).then_some(bin.as_str());
-        let root = tests.join(format!("{bin}.rs"));
-        tree::write_file(&root, &tree.root_source(&top, directory))?;
+    for (area, tree) in &trees {
+        let root = tests.join(format!("{area}.rs"));
+        tree::write_file(&root, &tree.root_source())?;
     }
-    register_binaries(&tests, trees.keys())?;
+    register_areas(&tests, trees.keys())?;
     for chunk in formatted.chunks(100) {
         let out = io(
             &chunk[0],
@@ -198,7 +230,7 @@ fn generate(args: &Args) -> Result<()> {
         println!("  {area}: {generated} {drifted}");
     }
     println!(
-        "binaries: {}",
+        "areas: {}",
         trees.keys().cloned().collect::<Vec<_>>().join(" ")
     );
     println!("drift-skipped scenarios: {}", skipped_drift.len());
@@ -209,6 +241,10 @@ fn generate(args: &Args) -> Result<()> {
     for line in &unmapped {
         println!("  unmapped: {line}");
     }
+    println!("client types unresolved: {}", unresolved.len());
+    for line in &unresolved {
+        println!("  clients: {line}");
+    }
     println!("steps by op (corpus names):");
     for (op, count) in &ops {
         println!("  op {op}: {count}");
@@ -216,40 +252,39 @@ fn generate(args: &Args) -> Result<()> {
     Ok(())
 }
 
-/// Adds a `[[test]]` entry to the crate's Cargo.toml for each new binary.
-fn register_binaries<'a, I>(tests: &std::path::Path, bins: I) -> Result<()>
+/// Declares each new area as a module of the testo binary, `tests/testo/main.rs`.
+fn register_areas<'a, I>(tests: &std::path::Path, areas: I) -> Result<()>
 where
     I: IntoIterator<Item = &'a String>,
 {
-    let manifest = tests.join("../Cargo.toml");
-    let mut text = io(&manifest, std::fs::read_to_string(&manifest))?;
-    for bin in bins {
-        if !text.contains(&format!("path = \"tests/{bin}.rs\"")) {
-            text.push_str(&format!(
-                "\n[[test]]\nname = \"{bin}\"\npath = \"tests/{bin}.rs\"\n"
-            ));
+    let main = tests.join("main.rs");
+    let text = io(&main, std::fs::read_to_string(&main))?;
+    let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    for area in areas {
+        let declaration = format!("mod {area};");
+        if !lines.contains(&declaration) {
+            lines.push(declaration);
         }
     }
-    io(&manifest, std::fs::write(&manifest, text))
-}
-
-fn tree_top(placed: &BTreeMap<Vec<String>, Vec<&corpus::Loaded>>, bin: &str) -> String {
-    placed
-        .keys()
-        .map(|path| path[0].clone())
-        .find(|top| names::binary(top) == bin)
-        .unwrap_or_else(|| bin.to_owned())
+    let first = lines
+        .iter()
+        .position(|line| line.starts_with("mod "))
+        .unwrap_or(lines.len());
+    lines[first..].sort();
+    io(&main, std::fs::write(&main, lines.join("\n") + "\n"))
 }
 
 fn check(args: &Args) -> Result<()> {
     let scenarios = args.one("scenarios")?;
     let drifted = drift(args)?;
     let areas = args.many("area");
+    let pin = args.values.get("pin").and_then(|v| v.first());
     let loaded: Vec<corpus::Loaded> = corpus::load(&scenarios)?
         .into_iter()
         .filter(|l| {
             selected(l, &areas)
-                && !drifted.contains(&l.scenario.source.path)
+                && (!drifted.contains(&l.scenario.source.path)
+                    || pin == Some(&l.scenario.source.revision))
                 && !HAND_PORTED.contains(&l.scenario.source.path.as_str())
         })
         .collect();

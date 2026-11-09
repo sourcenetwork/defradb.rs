@@ -27,8 +27,36 @@ pub enum NodeAcpError {
     InvalidActor,
     /// The node access control store refused or failed.
     #[error(transparent)]
-    Nac(#[from] crate::nac::Error),
+    Nac(crate::nac::Error),
     /// The caller may not run the operation.
     #[error(transparent)]
     Db(#[from] Error),
+}
+
+impl From<crate::nac::Error> for NodeAcpError {
+    /// The manager's refusals as the operation's own, Go's texts included.
+    fn from(error: crate::nac::Error) -> Self {
+        match error {
+            crate::nac::Error::NotConfigured => NodeAcpError::NotConfigured,
+            crate::nac::Error::AlreadyDisabled => NodeAcpError::AlreadyDisabled,
+            crate::nac::Error::AlreadyEnabled => NodeAcpError::AlreadyEnabled,
+            crate::nac::Error::NotEnabled => NodeAcpError::AcpNotAvailable,
+            crate::nac::Error::RequiresIdentity => NodeAcpError::RequiresIdentity,
+            crate::nac::Error::RelationNotInResource => NodeAcpError::RelationNotInResource,
+            crate::nac::Error::InvalidActor => NodeAcpError::InvalidActor,
+            crate::nac::Error::NotAuthorized(permission) => Error::NotAuthorized {
+                permission: permission.as_str().to_owned(),
+            }
+            .into(),
+            other => NodeAcpError::Nac(other),
+        }
+    }
+}
+
+impl NodeAcpError {
+    /// Whether every try of the write lost its commit, so running the
+    /// operation again may succeed.
+    pub fn is_conflict(&self) -> bool {
+        matches!(self, NodeAcpError::Nac(crate::nac::Error::Conflict(_)))
+    }
 }

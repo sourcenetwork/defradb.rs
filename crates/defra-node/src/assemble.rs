@@ -101,14 +101,12 @@ where
 
     // Everything the config can refuse is checked before anything opens, so a
     // refusal has nothing to close.
-    let nac_owner = match node_acp_owner {
-        Some(owner) => Some(identity::Did::new(owner).map_err(Error::InvalidNodeAcpIdentity)?),
-        None => nac_owner(
-            node_acp_enabled,
-            &node_identity_did,
-            node_p2p_identity.is_some(),
-        )?,
-    };
+    let nac_owner = nac_owner(
+        node_acp_enabled,
+        node_acp_owner.as_deref(),
+        &node_identity_did,
+        node_p2p_identity.is_some(),
+    )?;
     #[cfg(any(feature = "p2p", feature = "libp2p"))]
     match &transport {
         #[cfg(feature = "libp2p")]
@@ -179,12 +177,18 @@ where
     let database = Arc::new(database);
 
     // Node access control: always present, off until enabled. At startup it is
-    // enabled only when asked for, and then the node identity owns the
-    // policy, so DB-layer node operations run by the node itself are always
-    // allowed (the node-DID bypass in check_node_access).
+    // enabled only when asked for, and then the configured owner, or else the
+    // node identity, owns the policy (see nac_owner). DB-layer node operations
+    // run by the node itself are always allowed (the node-DID bypass in
+    // check_node_access).
     let nac_manager = close_on_error(
         &database,
-        node_acp::create_nac_manager(store.clone(), nac_owner.as_ref()).await,
+        node_acp::create_nac_manager(
+            store.clone(),
+            nac_owner.as_ref(),
+            database.options().max_txn_retries(),
+        )
+        .await,
     )
     .await?;
     database.set_nac_manager(nac_manager.clone());
@@ -564,14 +568,23 @@ where
     })
 }
 
-/// The identity that owns node access control when it is enabled at startup.
+/// The identity that owns node access control when it is enabled at startup:
+/// the `explicit` owner, the identity starting the node as Go's `start`
+/// takes it, or else the node identity, which must hold a local key. Not
+/// enabled, there is none, whatever owner was named.
 fn nac_owner(
     enabled: bool,
+    explicit: Option<&str>,
     node_identity_did: &Option<String>,
     has_local_key: bool,
 ) -> Result<Option<identity::Did>> {
     if !enabled {
         return Ok(None);
+    }
+    if let Some(owner) = explicit {
+        return identity::Did::new(owner)
+            .map(Some)
+            .map_err(Error::InvalidNodeAcpIdentity);
     }
     let owner = node_identity_did
         .as_deref()
@@ -598,3 +611,7 @@ where
     }
     result
 }
+
+#[cfg(test)]
+#[path = "nac_owner_tests.rs"]
+mod nac_owner_tests;

@@ -71,6 +71,7 @@ pub use validation::{validate_resource_interface, REQUIRED_DOCUMENT_PERMISSIONS}
 pub use zanzibar::PersistentZanzibarStore;
 pub use zanzibar::ZanzibarDocumentACP;
 
+pub use ::zanzibar::store::{ScopeAttempt, ScopeOutcome, ScopeValue};
 pub use ::zanzibar::{
     EvaluationStep, EvaluationTrace, MemoryZanzibarStore, PermissionCheckRequest, PermissionEngine,
     PermissionExplanation, Policy, Relation, RelationExpression, Relationship, Resource,

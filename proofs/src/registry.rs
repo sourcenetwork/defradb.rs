@@ -392,7 +392,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Peer connection observation",
         name: "INV_AnsweredMeansClosed / PROP_CallerAnswered",
         axis: Tla,
-        anchor: "crates/p2p/src/host/command_handler/network.rs handle_disconnect; crates/p2p/src/host/p2p_host/swarm.rs handle_connection_closed; tools/integration-test/tests/net/info/disconnect_peers.rs",
+        anchor: "crates/p2p/src/host/command_handler/network.rs handle_disconnect; crates/p2p/src/host/p2p_host/swarm.rs handle_connection_closed; tools/integration-test/tests/testo/net/info/disconnect_peers.rs",
         model_ref: "MC_PeerDisconnect_{Green,Red_EarlyAck}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -1258,6 +1258,33 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A gossip announcement refused for rate, saturation or capacity is
+        // written as a durable pending record and promoted into a free slot
+        // later; gossip has no retry, so dropping it loses the document.
+        // Past a per-peer or total byte budget it is dropped and reported.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_HeardIsOwned / INV_HeardIsOwnedOrReported / INV_NothingDropped / LIVE_AllMerged / LIVE_AllSettled: a refused gossip head is kept durably, or reported past its budget",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/event_dispatcher.rs run_event_dispatcher, kept_when_refused; crates/p2p/src/sync/coordinator/event_handler/mod.rs handle_transport_event, handle_transport_event_with_admission; crates/p2p/src/sync/coordinator/event_handler/gossip.rs handle_gossip_message, defer_refused_gossip; crates/p2p/src/sync/manager/process/gossip_deferral.rs defer_gossip_head, drop_gossip_head; crates/p2p/src/sync/pending_store/store.rs register; crates/p2p/src/sync/manager/process/pending_dag.rs restored_root_may_fit, resync_persisted_pending_dags; crates/p2p/src/sync/coordinator/mod.rs run_pending_dag_resync",
+        model_ref: "MC_GossipAdmission_{Green,Green_PastCap,Red_SilentShed,Red_Drop,Red_MemoryDefer,Red_NoPromote,Red_LaneDrop}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A committed write's gossip waits for room in a byte-bounded pending
+        // set instead of being shed; only replicators hold a durable marker,
+        // so a shed announcement never reaches a gossip-only peer. Its
+        // coalescing window holds no publish slot. Past a wait deadline it is
+        // dropped and reported.
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_CommittedIsOwnedOrReported / INV_PendingBounded / INV_WindowHoldsNoSlot / INV_TasksBounded / LIVE_AllSettled: a committed write's gossip is published, or reported past a wait deadline, on one lane task",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/mod.rs spawn_non_authoritative_broadcast_task, publish_slot, acquire_non_authoritative_broadcast_slot; crates/p2p/src/sync/coordinator/broadcast_room.rs BroadcastRoom::reserve, BroadcastRoom::run, lane; crates/p2p/src/sync/coordinator/broadcast.rs broadcast_local_update_with_creator; crates/db/src/merge/broadcast_mutator/broadcast.rs spawn_gossip_or_report, broadcast_with_retry_with_creator",
+        model_ref: "MC_SenderBroadcast_{Green,Red_Shed,Red_SilentExpiry,Red_SlotAcrossWindow,Red_UnboundedPending,Red_TaskPerWrite}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "acquire_exclusive / join_acks_only_durable / join_processes_only_unowned: the CID guard is exclusive and a join acks only a safe block",
         axis: Lean,
@@ -1386,7 +1413,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/write/prepare.rs KMS key preparation (`generated` memo)",
         model_ref: "DocKeyScopes (lake build)",
         tiers: &[Behavioral],
-        bound_by: "tools/integration-test/tests/encryption_scenarios/field_commit.rs doc_encryption_field_with_doc_and_field_encryption_should_use_dedicated_enc_key_for_individual_fields",
+        bound_by: "tools/integration-test/tests/testo/encryption/field_commit.rs doc_encryption_field_with_doc_and_field_encryption_should_use_dedicated_enc_key_for_individual_fields",
     },
     Property {
         // Encryption reuses PriorityReconcile.lwwCM unchanged: ciphertext and
@@ -1502,7 +1529,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "JSON CRDT per-path merge",
         name: "INV_Converge / INV_MatchesReplay / INV_DisjointKept / INV_SamePathLww / INV_UpdateWins / INV_TypeClash / INV_ConflictsAreLosers / INV_DeleteCreatesNothing / INV_WriteLandsAsRead: per-path JSON merge converges, keeps every edit nothing saw, never lets a delete create a path, keeps two signers' equal edits apart by their nonces, and lands every write, several paths at once included, as its writer reads it",
         axis: Tla,
-        anchor: "crates/defra-core/src/json_crdt.rs Frontier::delta, Frontier::compose, Frontier::materialize, Frontier::conflicts, replay; crates/crdt/src/field/json.rs JsonField (TaggedCrdt: write_data, effect, replay), block_ops, settle_earlier, apply_ops, landed, mismatch; crates/defra-core/src/json_crdt.rs encode_write, decode_ops; crates/crdt/src/field/tagged.rs local_write, land; crates/db/src/merge/merge_handler/field_tagged.rs merge_field_tagged, tagged_past; crates/db/src/write/autocommit/helpers.rs prepare_tagged_writes; crates/db/src/definition/migration/helpers.rs changes_block_state; crates/defra-core/src/json_crdt_tests.rs, crates/crdt/tests/json_field.rs, crates/db/tests/merge/json_merge.rs, tools/integration-test/tests/p2p/json_crdt.rs",
+        anchor: "crates/defra-core/src/json_crdt.rs Frontier::delta, Frontier::compose, Frontier::materialize, Frontier::conflicts, replay; crates/crdt/src/field/json.rs JsonField (TaggedCrdt: write_data, effect, replay), block_ops, settle_earlier, apply_ops, landed, mismatch; crates/defra-core/src/json_crdt.rs encode_write, decode_ops; crates/crdt/src/field/tagged.rs local_write, land; crates/db/src/merge/merge_handler/field_tagged.rs merge_field_tagged, tagged_past; crates/db/src/write/autocommit/helpers.rs prepare_tagged_writes; crates/db/src/definition/migration/helpers.rs changes_block_state; crates/defra-core/src/json_crdt_tests.rs, crates/crdt/tests/json_field.rs, crates/db/tests/merge/json_merge.rs, tools/integration-test/tests/legacy/p2p/json_crdt.rs",
         model_ref: "MC_JsonCrdt_{Green_FirstValueOrMap,Green_FirstListOrDelete,Green_MultiPath,Red_DeleteWins,Red_NoCid,Red_DeleteImpliesMap,Red_SharedId,Red_NoAnchor,Red_NoSettle,Red_DeleteMakesParent,Red_MapKeepsBelow}.cfg",
         tiers: &[Contract],
         bound_by: "crates/db/tests/merge/json_merge.rs equal_concurrent_json_edits_from_two_signers_converge_in_any_order; crates/crdt/tests/json_field.rs json_meets_the_contract; crates/defra-core/src/json_crdt_tests.rs disjoint_keys_both_survive_in_any_order, an_update_beats_a_concurrent_delete_above_it",
@@ -1574,7 +1601,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Explicit transactions in the request context",
         name: "INV_OnlyOwnerRuns / INV_ReadOnlyNeverWrites / INV_FinishedNeverRuns / INV_DiscardLeavesNothing / INV_NoLostUpdate",
         axis: Tla,
-        anchor: "crates/db/src/txn/registry/lifecycle.rs begin_as, run_as, commit_as, discard_as; crates/db/src/txn/owner/mod.rs Owners::run, Owners::finish; crates/defra-node/src/ops/request.rs txn_begin, txn_commit, txn_discard; crates/query/src/runner/turn.rs read-only rejection; tools/integration-test/tests/basic/txn_context.rs",
+        anchor: "crates/db/src/txn/registry/lifecycle.rs begin_as, run_as, commit_as, discard_as; crates/db/src/txn/owner/mod.rs Owners::run, Owners::finish; crates/defra-node/src/ops/request.rs txn_begin, txn_commit, txn_discard; crates/query/src/runner/turn.rs read-only rejection; tools/integration-test/tests/testo/txn/txn_context.rs",
         model_ref: "MC_TxnContext_{Green,Red_NoOwnerCheck,Red_ReadOnlyWrites,Red_RunAfterEnd,Red_DiscardLeaks,Red_NoConflictCheck}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -2457,6 +2484,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "Relation-filtered mutation",
+        name: "INV_DecisionHoldsAtCommit / INV_AbortOnlyOnRangeWrite",
+        axis: Tla,
+        anchor: "crates/query/src/runner/mutation_inputs.rs resolve_filter_to_doc_ids; crates/datastore/src/multistore.rs SharedTxn::set_scans_validated, SharedTxn::iterator; crates/db/src/read/doc.rs DbDocFetcher::set_scans_validated",
+        model_ref: "MC_RelationFilterScan_{Green,Red_Unvalidated}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Add DAC policy",
         name: "INV_NoPolicyWithoutPermission / INV_NoPolicyWithoutCreator / INV_NoInvalidPolicy / INV_NoPolicyWithoutAcp / INV_ReturnedIsKeptLocally / INV_NoSilentFailure / INV_GoOrder",
         axis: Tla,
@@ -2467,12 +2503,39 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Node access control operations",
-        name: "INV_NoDisableWithoutPermission / INV_NoReEnableWithoutStoredPermission / INV_NoGrantUnlessAllChecksPass / INV_NoChangeUnlessConfigured / INV_RestartKeepsStatus / INV_NoSilentNoOp / INV_GoOrder",
+        name: "INV_NoStatusWithoutPermission / INV_NoDisableWithoutPermission / INV_NoReEnableWithoutStoredPermission / INV_NoGrantUnlessAllChecksPass / INV_NoChangeUnlessConfigured / INV_RestartKeepsStatus / INV_NoSilentNoOp / INV_GoOrder",
         axis: Tla,
-        anchor: "crates/db/src/access/nac_ops/mod.rs DB::disable_nac_as, DB::re_enable_nac_as, DB::check_stored_node_access, DB::add_nac_actor_relationship_as, DB::nac_relationship; crates/db/src/nac/mod.rs NacManager::initialize, NacManager::check_permission_persisted; crates/acp/src/nac/node_acp/operations.rs NodeACP::authorize_change",
+        anchor: "crates/db/src/access/nac_ops/mod.rs DB::nac_status_as, DB::disable_nac_as, DB::re_enable_nac_as, DB::add_nac_actor_relationship_as, DB::delete_nac_actor_relationship_as, DB::change_nac_relationship; crates/db/src/nac/toggle.rs NacManager::decide_toggle, NacManager::require; crates/db/src/nac/write.rs NacManager::decide_relationship; crates/db/src/nac/mod.rs NacManager::initialize; crates/acp/src/nac/node_acp/operations.rs NodeACP::authorize_change",
         model_ref: "MC_NodeAcpOps_{Green,Red_*}.cfg",
         tiers: &[Boundary],
-        bound_by: "tools/integration-test/tests/nac/core_operations.rs nac_core_operations_gate_test; crates/db/tests/nac/tests.rs test_nac_manager_disable_reenable, test_nac_manager_permission_check",
+        bound_by: "tools/integration-test/tests/legacy/nac/core_operations.rs nac_core_operations_gate_test; crates/db/tests/nac/tests.rs test_nac_manager_disable_reenable, test_nac_manager_permission_check",
+    },
+    Property {
+        family: "Node access control operations",
+        name: "INV_RaceNoChangeWithoutPermission / INV_RaceOneWinner / INV_RaceLoserHearsAlready",
+        axis: Tla,
+        anchor: "crates/db/src/nac/toggle.rs NacManager::toggle_as, NacManager::decide_toggle; crates/db/src/nac/write.rs NacManager::in_write, NacManager::decide_relationship; crates/acp/src/zanzibar/store/persistent.rs PersistentZanzibarStore::transact; crates/db/tests/access/nac_toggle_race.rs",
+        model_ref: "MC_NodeAcpOps_{Race_Green,Red_SplitScope,Red_OutsideGuard,Red_NoRetry}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/db/tests/access/nac_toggle_race.rs of_two_disables_one_wins_and_the_other_is_already_disabled",
+    },
+    Property {
+        family: "Node access control operations",
+        name: "INV_RelNoChangeWhileOff / INV_RelOffHearsGo",
+        axis: Tla,
+        anchor: "crates/db/src/nac/write.rs NacManager::in_write, NacManager::decide_relationship; crates/db/src/access/nac_ops/mod.rs DB::change_nac_relationship; crates/db/tests/access/nac_toggle_race.rs",
+        model_ref: "MC_NodeAcpOps_{Rel_Green,Red_RelOutsideGuard}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/db/tests/access/nac_toggle_race.rs a_disable_that_commits_first_refuses_the_relationship_with_gos_error",
+    },
+    Property {
+        family: "Node access control operations",
+        name: "disable_turns_off / re_enable_turns_on / re_enable_undoes_disable / toggles_keep_grants / writes_only_when_allowed / writes_only_when_configured / disable_writes_only_from_on / re_enable_writes_only_from_off / re_enable_checks_the_caller_first / rerun_after_a_win_hears_already",
+        axis: Lean,
+        anchor: "crates/acp/src/nac/node_acp/mod.rs NodeACP::load; crates/acp/src/nac/node_acp/lifecycle.rs NodeACP::disable, NodeACP::re_enable; crates/db/src/nac/toggle.rs NacManager::decide_toggle",
+        model_ref: "NacToggle (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         family: "Iroh solicited replies",
@@ -2670,7 +2733,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "P2P delivery liveness",
         name: "INV_AckBacked — a success ack stays backed across a hub restart by a merge, a resident registration or a durable record",
         axis: Tla,
-        anchor: "crates/p2p/src/sync/manager/process/pushlog.rs process_block_inner; crates/p2p/src/sync/manager/process/pending_dag.rs resync_persisted_pending_dags; tools/integration-test/tests/p2p_admission_restart.rs",
+        anchor: "crates/p2p/src/sync/manager/process/pushlog.rs process_block_inner; crates/p2p/src/sync/manager/process/pending_dag.rs resync_persisted_pending_dags; tools/integration-test/tests/legacy/p2p_admission_restart.rs",
         model_ref: "MC_PendingDagRestart_{Green,Red_ProcessLocal}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -2681,7 +2744,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "P2P delivery liveness",
         name: "INV_SuccessImpliesRegisteredOrMerged — a PushLog at pending capacity is nacked, never acked with its registration dropped",
         axis: Tla,
-        anchor: "crates/p2p/src/sync/manager/process/pushlog.rs process_block_inner; tools/integration-test/tests/p2p_admission.rs fan_in_pushlog_admission_no_silent_divergence",
+        anchor: "crates/p2p/src/sync/manager/process/pushlog.rs process_block_inner; tools/integration-test/tests/legacy/p2p_admission.rs fan_in_pushlog_admission_no_silent_divergence",
         model_ref: "MC_PushLogAdmission_{Green,Red_SuccessOnFull}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -2695,6 +2758,104 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/p2p/src/sync/coordinator/receive_gate.rs SyncCoordinator::gate_fetched",
         model_ref: "MC_ReceiveGate_Green.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Document save",
+        name: "INV_NoFork / INV_DeletedStaysDeleted / INV_RefusedOnlyDeleted",
+        axis: Tla,
+        anchor: "crates/query/src/documents/mod.rs save; crates/defra-node/src/ops/document.rs Node::save_doc; tools/integration-test/tests/testo/mutation/update/with_delete.rs update_save_deleted_doc_does_nothing",
+        model_ref: "MC_DocumentSave_{Green,Red_NoDeletedCheck,Red_SplitTxn}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Document save",
+        name: "decide_refuses_deleted / refuse_only_deleted / save_never_forks / save_under_given_id",
+        axis: Lean,
+        anchor: "crates/query/src/documents/mod.rs save; crates/query/src/plan/mutation/upsert.rs UpsertNode::next",
+        model_ref: "DocumentSave (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Mutation value checks",
+        name: "Rfc3339Nano.no_trailing_zero / trim_restores / all_zero_trims_to_nothing / nonzero_keeps_a_digit",
+        axis: Lean,
+        anchor: "crates/document/src/encoding.rs trim_rfc3339_trailing_zeros, format_time_rfc3339_nano",
+        model_ref: "Rfc3339Nano (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Mutation value checks",
+        name: "DocIdText.length_refusal_only_for_unaccepted / accepted_length_never_says_length / digits_length / parse_accepts",
+        axis: Lean,
+        anchor: "crates/defra-core/src/doc_id.rs parse_uuid, ParsedDocId::from_string",
+        model_ref: "DocIdText (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Mutation value checks",
+        name: "SecondaryRelation.primary_never_refused / secondary_id_refused / same_answer_for_relation_and_id / checks_agree",
+        axis: Lean,
+        anchor: "crates/query/src/runner/mutation_inputs.rs normalize_mutation_input_fields, input_field_name; crates/document/src/document.rs Document::set",
+        model_ref: "SecondaryRelation (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // Cursor tokens (#2481): a token is {d, k}, and an older token with an
+        // empty `o` still decodes. Tokens are pinned byte for byte by
+        // crates/cursor/tests/go_fixtures.rs; no conformance-binary test
+        // reaches them. Boundary.
+        family: "Cursor tokens",
+        name: "encode_has_no_o / decode_encode / decode_legacy_o: a token is {d, k}",
+        axis: Lean,
+        anchor: "crates/cursor/src/lib.rs Cursor::encode, Cursor::decode",
+        model_ref: "CursorToken (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // #2724: add_view accepts a transform CID only if it is non-empty and
+        // held, stores it on the view's query source, and the definition's
+        // JSON reads it back unchanged.
+        family: "Add view with a lens transform",
+        name: "ViewQuerySource.round_trip / definition_round_trip / stored_transform_is_accepted",
+        axis: Lean,
+        anchor: "crates/schema/src/source.rs QuerySource::with_transform; crates/schema/src/collection.rs CollectionVersion; crates/defra-node/src/db_impls.rs DbSchemaOps::add_view; crates/db/src/collection/ops/create.rs DB::require_view_transforms",
+        model_ref: "ViewQuerySource (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // #2724: the NAC, empty-CID and lens checks against the view's commit,
+        // while the lens arrives (added locally or fetched by P2P sync) and
+        // the permission changes. Both arrivals commit the lens config, and
+        // the create transaction reads it (require_view_transforms);
+        // NAC ViewAdd is still read before it, a known gap (#2736):
+        // Green_NacBefore and Red_KnownGap_NacBefore.
+        family: "Add view with a lens transform",
+        name: "INV_NoEmptyTransform / INV_StoredTransformExists / INV_StoredIsAccepted / INV_NoViewWithoutPermission / INV_NoValidRejected",
+        axis: Tla,
+        anchor: "crates/defra-node/src/db_impls.rs DbSchemaOps::add_view; crates/db/src/collection/ops/create.rs DB::create_collections_atomic_with_acp_registration_as, DB::require_view_transforms; crates/db/src/definition/migration/committed_lenses.rs DB::add_lens, DB::commit_synced_lens, write_lens_config; crates/p2p-adapter/src/version_syncer.rs sync_lens; crates/p2p-adapter/src/transport_version_syncer.rs sync_lens",
+        model_ref: "MC_AddViewTransform_{Green,Green_NacBefore,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // #2724: verify-signature's NAC, document ACP and block checks decide
+        // at the caller's transaction view, or the read-only one the pool path
+        // opens: NAC through check_node_access_in_txn, document ACP bound to
+        // the view's ACP store.
+        family: "Verify block signature",
+        name: "INV_VerifiedAtOnePoint / INV_NoValidRejected",
+        axis: Tla,
+        anchor: "crates/defra-node/src/ops/block.rs NodeOps::verify_block_signature; crates/db/src/txn/registry/blocks.rs DbTransactionRegistry::verify_block_signature_in_txn_as; crates/db/src/block/verify.rs verify_block_signature_as, verify_block_signature_in_txn_as, verify_block_signature_with_blockstore, load_authorized_block_signature; crates/db/src/access/nac.rs DB::check_node_access_in_txn",
+        model_ref: "MC_VerifySignature_{Green_*,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },

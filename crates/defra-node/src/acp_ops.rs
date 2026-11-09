@@ -128,21 +128,59 @@ impl<S: storage::corekv::Store + 'static> DbAcpOps<S> {
         Ok(changed)
     }
 
-    /// Resolve the caller's DID and check the node-level permission it needs.
-    async fn authorize(&self, identity: &str, permission: acp::nac::NodePermission) -> Result<Did> {
-        let did = Did::new(identity).map_err(Error::InvalidIdentityDid)?;
+    /// The requestor of a relationship change and what it targets, checked in
+    /// the order Go's `AddDACActorRelationship` and
+    /// `DeleteDACActorRelationship` check them: the change's node access, that
+    /// document ACP is available, then `get-collection` (Go reads the
+    /// collection as the caller), the collection name, the collection and its
+    /// policy; only then that the identity and every one of `required`
+    /// (document, relation, target) are given, and that the relation is not
+    /// the owner.
+    async fn relationship_requestor(
+        &self,
+        change: RelationshipChange,
+        identity: &str,
+        collection: &str,
+        required: [&str; 3],
+    ) -> Result<(Did, RelationshipTarget)> {
+        let did = match identity.is_empty() {
+            true => None,
+            false => Some(Did::new(identity).map_err(Error::InvalidIdentityDid)?),
+        };
         self.database
-            .check_node_access(Some(&did), permission)
+            .check_node_access(did.as_ref(), change.permission())
             .await?;
-        Ok(did)
+        if self.database.dac_policies().is_none() {
+            return Err(db::DacPolicyError::AcpNotAvailable.into());
+        }
+        self.database
+            .check_node_access(did.as_ref(), acp::nac::NodePermission::CollectionGet)
+            .await?;
+        if collection.is_empty() {
+            return Err(Error::CollectionNameEmpty);
+        }
+        let [_, relation, target] = required;
+        let wrap = change.wrap();
+        let policy = self.collection_policy(collection).await.map_err(wrap)?;
+        let did = match did {
+            Some(did) if required.iter().all(|value| !value.is_empty()) => did,
+            _ => return Err(Error::RelationshipArgumentMissing(change.verb())),
+        };
+        if relation == acp::OWNER_RELATION {
+            return Err(wrap(change.owner_error()));
+        }
+        let resolved = self
+            .relationship_target(policy, relation, target)
+            .await
+            .map_err(wrap)?;
+        Ok((did, resolved))
     }
 
-    async fn relationship_target(
+    /// The policy of collection `collection`, which a relationship needs.
+    async fn collection_policy(
         &self,
         collection: &str,
-        relation: &str,
-        target: &str,
-    ) -> Result<RelationshipTarget> {
+    ) -> Result<(String, schema::PolicyDescription)> {
         let collection_version = self
             .database
             .get_collection(collection)
@@ -154,7 +192,17 @@ impl<S: storage::corekv::Store + 'static> DbAcpOps<S> {
         let Some(policy) = collection_version.schema().policy.clone() else {
             return Err(Error::CollectionWithoutPolicy);
         };
+        Ok((collection_version.collection_id().to_string(), policy))
+    }
 
+    /// The target and the policy facts a relationship change on `relation`
+    /// needs, under collection policy `policy`.
+    async fn relationship_target(
+        &self,
+        (collection_id, policy): (String, schema::PolicyDescription),
+        relation: &str,
+        target: &str,
+    ) -> Result<RelationshipTarget> {
         // Parse the target into a structured subject once, at the edge: an actor
         // DID, all-actors `*`, a cross-object edge, or a userset.
         let target = acp::parse_target_subject(target).map_err(Error::InvalidTarget)?;
@@ -185,7 +233,7 @@ impl<S: storage::corekv::Store + 'static> DbAcpOps<S> {
             target,
             policy_id: policy.id,
             resource_name: policy.resource_name,
-            collection_id: collection_version.collection_id().to_string(),
+            collection_id,
             managing_relations,
         })
     }
@@ -219,6 +267,53 @@ impl<S: storage::corekv::Store + 'static> DbAcpOps<S> {
                 error,
                 "failed to publish document update after DAC grant"
             ),
+        }
+    }
+}
+
+/// Whether a relationship change adds or deletes.
+#[derive(Clone, Copy)]
+enum RelationshipChange {
+    Add,
+    Delete,
+}
+
+impl RelationshipChange {
+    fn verb(self) -> &'static str {
+        match self {
+            Self::Add => "add",
+            Self::Delete => "delete",
+        }
+    }
+
+    fn permission(self) -> acp::nac::NodePermission {
+        match self {
+            Self::Add => acp::nac::NodePermission::DacRelationAdd,
+            Self::Delete => acp::nac::NodePermission::DacRelationDelete,
+        }
+    }
+
+    /// Go's error for changing the owner relation.
+    fn owner_error(self) -> Error {
+        match self {
+            Self::Add => Error::OwnerRelationAdd,
+            Self::Delete => Error::OwnerRelationDelete,
+        }
+    }
+
+    /// Wraps an error from the policy side of the change in Go's
+    /// `failed to <verb> document actor relationship with acp`.
+    fn wrap(self) -> impl Fn(Error) -> Error + Copy {
+        // What the collection lookup finds before ACP is asked is Go's own
+        // error, unwrapped.
+        move |source| match source {
+            Error::CollectionWithoutPolicy
+            | Error::CollectionMissing(_)
+            | Error::CollectionLookup { .. } => source,
+            source => Error::RelationshipAcp {
+                verb: self.verb(),
+                source: Box::new(source),
+            },
         }
     }
 }
@@ -354,20 +449,35 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
                 )
                 .await;
         }
+        let (requestor, resolved) = self
+            .relationship_requestor(
+                RelationshipChange::Add,
+                identity,
+                collection,
+                [doc_id, relation, target],
+            )
+            .await?;
+        let wrap = RelationshipChange::Add.wrap();
+
         if self.document_acp.supports_transactions() {
-            return self.relationship_autocommit(context, identity, transactional::Relationship {
-                collection, doc_id, relation, target,
-            }, false).await;
+            return self
+                .relationship_autocommit(
+                    context,
+                    identity,
+                    transactional::Relationship {
+                        collection,
+                        doc_id,
+                        relation,
+                        target,
+                    },
+                    false,
+                )
+                .await
+                .map_err(|error| match error {
+                    Error::Acp(_) => wrap(error),
+                    other => other,
+                });
         }
-        let requestor = self
-            .authorize(identity, acp::nac::NodePermission::DacRelationAdd)
-            .await?;
-        if relation == acp::OWNER_RELATION {
-            return Err(Error::OwnerRelationAdd);
-        }
-        let resolved = self
-            .relationship_target(collection, relation, target)
-            .await?;
 
         let added = acp::bound_to_request(&self.document_acp, context)
             .add_relationship(
@@ -380,7 +490,7 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
                 &resolved.managing_relations,
             )
             .await
-            .map_err(Error::Acp)?;
+            .map_err(|error| wrap(Error::Acp(error)))?;
 
         // Local ACP relationships are node-local (matches Go): a grant is not
         // propagated to peers. Cross-node access control is Vera's role.
@@ -418,20 +528,35 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
                 )
                 .await;
         }
+        let (requestor, resolved) = self
+            .relationship_requestor(
+                RelationshipChange::Delete,
+                identity,
+                collection,
+                [doc_id, relation, target],
+            )
+            .await?;
+        let wrap = RelationshipChange::Delete.wrap();
+
         if self.document_acp.supports_transactions() {
-            return self.relationship_autocommit(context, identity, transactional::Relationship {
-                collection, doc_id, relation, target,
-            }, true).await;
+            return self
+                .relationship_autocommit(
+                    context,
+                    identity,
+                    transactional::Relationship {
+                        collection,
+                        doc_id,
+                        relation,
+                        target,
+                    },
+                    true,
+                )
+                .await
+                .map_err(|error| match error {
+                    Error::Acp(_) => wrap(error),
+                    other => other,
+                });
         }
-        let requestor = self
-            .authorize(identity, acp::nac::NodePermission::DacRelationDelete)
-            .await?;
-        if relation == acp::OWNER_RELATION {
-            return Err(Error::OwnerRelationDelete);
-        }
-        let resolved = self
-            .relationship_target(collection, relation, target)
-            .await?;
 
         // Local ACP relationships are node-local (matches Go): a revoke is not
         // propagated to peers. Cross-node access control is Vera's role.
@@ -446,6 +571,6 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
                 &resolved.managing_relations,
             )
             .await
-            .map_err(Error::Acp)
+            .map_err(|error| wrap(Error::Acp(error)))
     }
 }

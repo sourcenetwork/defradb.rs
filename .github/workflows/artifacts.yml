@@ -56,16 +56,16 @@ jobs:
         run: |
           mkdir -p artifacts
           cargo build --release -p cli
-          cp target/release/defra artifacts/defra
+          cp target/release/defradb artifacts/defradb
           cargo build --release -p cli --features iroh
-          cp target/release/defra artifacts/defra-iroh
+          cp target/release/defradb artifacts/defradb-iroh
       - uses: actions/upload-artifact@v4
         with:
           name: defra-${{ matrix.platform }}
-          path: artifacts/defra
+          path: artifacts/defradb
           retention-days: 30
       - uses: actions/upload-artifact@v4
         with:
           name: defra-iroh-${{ matrix.platform }}
-          path: artifacts/defra-iroh
+          path: artifacts/defradb-iroh
           retention-days: 30

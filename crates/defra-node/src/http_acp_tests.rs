@@ -784,3 +784,93 @@ fn source_permission_http_uses_caller_transaction() {
         node.shutdown().await.unwrap();
     }).unwrap();
 }
+
+mod bound_caller {
+    use std::sync::Arc;
+
+    use defra_core::RequestContext;
+    use defra_http::DocumentAcpOperations;
+    use identity::Did;
+    use regolith::sync::Mutex;
+
+    use crate::acp_ops::AcpOps;
+    use crate::ops::HttpNodeOps;
+    use crate::Node;
+
+    struct RecordContext(Mutex<Vec<(String, Option<String>)>>);
+
+    #[async_trait::async_trait]
+    impl AcpOps for RecordContext {
+        async fn check_doc_access(
+            &self,
+            _context: &RequestContext,
+            _actor: &Did,
+            _permission: acp::DocumentPermission,
+            _policy_id: &str,
+            _resource: &str,
+            _doc: &str,
+        ) -> crate::Result<bool> {
+            Ok(true)
+        }
+
+        async fn add_dac_actor_relationship(
+            &self,
+            context: &RequestContext,
+            requestor: &str,
+            _collection: &str,
+            _doc: &str,
+            _relation: &str,
+            _target: &str,
+        ) -> crate::Result<bool> {
+            self.0
+                .lock()
+                .await
+                .push((requestor.to_owned(), context.bearer_token_for(requestor)));
+            Ok(false)
+        }
+
+        async fn delete_dac_actor_relationship(
+            &self,
+            context: &RequestContext,
+            requestor: &str,
+            collection: &str,
+            doc: &str,
+            relation: &str,
+            target: &str,
+        ) -> crate::Result<bool> {
+            self.add_dac_actor_relationship(context, requestor, collection, doc, relation, target)
+                .await
+        }
+    }
+
+    #[test]
+    fn relationship_calls_preserve_the_bound_callers_bearer() {
+        workers::block_on(async {
+            let node = Node::builder().build().await.unwrap();
+            let recorder = Arc::new(RecordContext(Mutex::new(Vec::new())));
+            let mut ops = node.ops();
+            ops.acp_ops = recorder.clone();
+            let adapter = HttpNodeOps::new(ops);
+            let caller = Did::new("did:key:caller").unwrap();
+            let context = RequestContext::default()
+                .with_identity(Some(caller.to_string()))
+                .with_bearer(Some(caller.to_string()), Some("caller-token".into()));
+            let bound = adapter.bind_request(&context).unwrap();
+            bound
+                .add_doc_relationship(Some(&caller), "did:key:target", "Record", "doc", "reader")
+                .await
+                .unwrap();
+            let other = Did::new("did:key:other").unwrap();
+            assert!(bound
+                .add_doc_relationship(Some(&other), "did:key:target", "Record", "doc", "reader")
+                .await
+                .is_err());
+            assert_eq!(
+                *recorder.0.lock().await,
+                vec![(caller.to_string(), Some("caller-token".into()))]
+            );
+            node.shutdown().await.unwrap();
+        })
+        .unwrap();
+    }
+}

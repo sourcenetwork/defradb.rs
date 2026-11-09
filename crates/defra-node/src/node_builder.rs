@@ -490,13 +490,22 @@ impl NodeBuilder {
             .with_event_bus_arc(node.event_bus.clone())
             .with_pool(node.pool.clone())
             .with_dev_mode(http_cfg.dev_mode)
-            .with_doc_acp_arc(Arc::new(crate::http_acp::HttpDocumentAcp::new(
-                node.acp_ops.clone(),
-            )))
             .with_schema_arc(Arc::new(crate::HttpSchemaOps {
                 schema_ops: Arc::clone(&node.schema_ops),
                 context: None,
             }));
+            let ops = crate::ops::HttpNodeOps::new(node.ops());
+            let server = server
+                .with_view_arc(ops.clone())
+                .with_backup_arc(ops.clone())
+                .with_doc_acp_arc(ops.clone())
+                .with_encrypted_index_arc(ops.clone())
+                .with_block_arc(ops);
+
+            #[cfg(not(target_arch = "wasm32"))]
+            let server = server.with_index_arc(defra_http::index_adapter::IndexAdapter::new_arc(
+                Arc::clone(node.database()),
+            ));
 
             // A local document ACP is the node's own store: its routes run on
             // the pool, as the node's own calls do.

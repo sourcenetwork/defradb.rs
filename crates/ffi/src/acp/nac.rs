@@ -32,9 +32,8 @@ pub unsafe extern "C" fn get_nac_status(node_ptr: usize, identity_did: *const c_
         };
 
         ffi_async!(node_ptr, {
-            let status = runner.nac_status_as(&context).await.map_err(|e| e.to_string())?;
-            let mut info = nac_manager.info().await;
-            info.status = status.to_string();
+            runner.nac_status_as(&context).await.map_err(|e| e.to_string())?;
+            let info = nac_manager.info().await;
             serde_json::to_string(&info).map_err(|e| format!("failed to serialize NAC info: {}", e))
         })
     }
@@ -174,6 +173,32 @@ pub unsafe extern "C" fn delete_nac_actor_relationship(
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::json!({ "deleted": deleted }).to_string())
+        })
+    }
+}
+
+/// Purge every node access control state, Go's `PurgeNACState`, as
+/// `requestor_did`; the core allows it in development mode only, for an
+/// admin. A node runs NAC in development mode, so an admin may.
+///
+/// # Safety
+///
+/// `requestor_did` must be a valid null-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn purge_nac_state(
+    node_ptr: usize,
+    requestor_did: *const c_char,
+) -> FfiResult {
+    ffi_entry! {
+        let requestor = try_ffi!(require_c_str(requestor_did, "requestor_did"));
+        let nac_manager = match NODES.get(node_ptr, |state| state.nac_manager.clone()) {
+            Some(m) => m,
+            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
+        };
+        ffi_async_ok!(node_ptr, {
+            let requestor = identity::Did::new(&requestor)
+                .map_err(|e| format!("invalid DID '{}': {}", requestor, e))?;
+            nac_manager.purge(&requestor).await.map_err(|e| e.to_string())
         })
     }
 }

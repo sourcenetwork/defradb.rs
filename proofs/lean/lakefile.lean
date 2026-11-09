@@ -227,3 +227,24 @@ lean_lib AdministrativeRelationship where
 
 @[default_target]
 lean_lib CommitConflictReceipt where
+
+@[default_target]
+lean_lib NacToggle where
+
+@[default_target]
+lean_lib DocumentSave where
+
+@[default_target]
+lean_lib Rfc3339Nano where
+
+@[default_target]
+lean_lib DocIdText where
+
+@[default_target]
+lean_lib SecondaryRelation where
+
+@[default_target]
+lean_lib CursorToken where
+
+@[default_target]
+lean_lib ViewQuerySource where

@@ -5,36 +5,111 @@ macro_rules! scalar_operator_block {
     ($fn_name:ident, $type_name:literal, $scalar:literal, comparison) => {
         pub(super) fn $fn_name() -> InputObject {
             InputObject::new($type_name)
-                .field(InputValue::new("_eq", TypeRef::named($scalar)))
-                .field(InputValue::new("_geq", TypeRef::named($scalar)))
-                .field(InputValue::new("_gt", TypeRef::named($scalar)))
-                .field(InputValue::new("_in", TypeRef::named_list($scalar)))
-                .field(InputValue::new("_leq", TypeRef::named($scalar)))
-                .field(InputValue::new("_lt", TypeRef::named($scalar)))
-                .field(InputValue::new("_neq", TypeRef::named($scalar)))
-                .field(InputValue::new("_nin", TypeRef::named_list($scalar)))
+                .description(concat!(
+                    "\nThese are the set of filter operators available for use when filtering on ",
+                    $scalar,
+                    "\n values.\n"
+                ))
+                .field(
+                    InputValue::new("_eq", TypeRef::named($scalar))
+                        .description(super::descriptions::EQ_OPERATOR),
+                )
+                .field(
+                    InputValue::new("_geq", TypeRef::named($scalar))
+                        .description(super::descriptions::GEQ_OPERATOR),
+                )
+                .field(
+                    InputValue::new("_gt", TypeRef::named($scalar))
+                        .description(super::descriptions::GT_OPERATOR),
+                )
+                .field(
+                    InputValue::new("_in", TypeRef::named_list($scalar))
+                        .description(super::descriptions::IN_OPERATOR),
+                )
+                .field(
+                    InputValue::new("_leq", TypeRef::named($scalar))
+                        .description(super::descriptions::LEQ_OPERATOR),
+                )
+                .field(
+                    InputValue::new("_lt", TypeRef::named($scalar))
+                        .description(super::descriptions::LT_OPERATOR),
+                )
+                .field(
+                    InputValue::new("_neq", TypeRef::named($scalar))
+                        .description(super::descriptions::NEQ_OPERATOR),
+                )
+                .field(
+                    InputValue::new("_nin", TypeRef::named_list($scalar))
+                        .description(super::descriptions::NIN_OPERATOR),
+                )
         }
     };
     ($fn_name:ident, $type_name:literal, $scalar:literal, equality) => {
         pub(super) fn $fn_name() -> InputObject {
             InputObject::new($type_name)
-                .field(InputValue::new("_eq", TypeRef::named($scalar)))
-                .field(InputValue::new("_in", TypeRef::named_list($scalar)))
-                .field(InputValue::new("_neq", TypeRef::named($scalar)))
-                .field(InputValue::new("_nin", TypeRef::named_list($scalar)))
+                .description(concat!(
+                    "\nThese are the set of filter operators available for use when filtering on ",
+                    $scalar,
+                    "\n values.\n"
+                ))
+                .field(
+                    InputValue::new("_eq", TypeRef::named($scalar))
+                        .description(super::descriptions::EQ_OPERATOR),
+                )
+                .field(
+                    InputValue::new("_in", TypeRef::named_list($scalar))
+                        .description(super::descriptions::IN_OPERATOR),
+                )
+                .field(
+                    InputValue::new("_neq", TypeRef::named($scalar))
+                        .description(super::descriptions::NEQ_OPERATOR),
+                )
+                .field(
+                    InputValue::new("_nin", TypeRef::named_list($scalar))
+                        .description(super::descriptions::NIN_OPERATOR),
+                )
         }
     };
     ($fn_name:ident, $type_name:literal, $scalar:literal, string_ops) => {
         pub(super) fn $fn_name() -> InputObject {
             InputObject::new($type_name)
-                .field(InputValue::new("_eq", TypeRef::named($scalar)))
-                .field(InputValue::new("_ilike", TypeRef::named($scalar)))
-                .field(InputValue::new("_in", TypeRef::named_list($scalar)))
-                .field(InputValue::new("_like", TypeRef::named($scalar)))
-                .field(InputValue::new("_neq", TypeRef::named($scalar)))
-                .field(InputValue::new("_nilike", TypeRef::named($scalar)))
-                .field(InputValue::new("_nin", TypeRef::named_list($scalar)))
-                .field(InputValue::new("_nlike", TypeRef::named($scalar)))
+                .description(concat!(
+                    "\nThese are the set of filter operators available for use when filtering on ",
+                    $scalar,
+                    "\n values.\n"
+                ))
+                .field(
+                    InputValue::new("_eq", TypeRef::named($scalar))
+                        .description(super::descriptions::EQ_OPERATOR),
+                )
+                .field(
+                    InputValue::new("_ilike", TypeRef::named($scalar))
+                        .description(super::descriptions::ILIKE_OPERATOR),
+                )
+                .field(
+                    InputValue::new("_in", TypeRef::named_list($scalar))
+                        .description(super::descriptions::IN_OPERATOR),
+                )
+                .field(
+                    InputValue::new("_like", TypeRef::named($scalar))
+                        .description(super::descriptions::LIKE_OPERATOR),
+                )
+                .field(
+                    InputValue::new("_neq", TypeRef::named($scalar))
+                        .description(super::descriptions::NEQ_OPERATOR),
+                )
+                .field(
+                    InputValue::new("_nilike", TypeRef::named($scalar))
+                        .description(super::descriptions::NILIKE_OPERATOR),
+                )
+                .field(
+                    InputValue::new("_nin", TypeRef::named_list($scalar))
+                        .description(super::descriptions::NIN_OPERATOR),
+                )
+                .field(
+                    InputValue::new("_nlike", TypeRef::named($scalar))
+                        .description(super::descriptions::NLIKE_OPERATOR),
+                )
         }
     };
 }
@@ -88,12 +163,26 @@ macro_rules! filter_arg {
 /// Generates a `pub(super) fn build_*() -> InputObject` for list operator blocks
 /// (`_any`/`_all`/`_none` referencing the element block, `_count` always `IntOperatorBlock`).
 macro_rules! list_operator_block {
-    ($fn_name:ident, $type_name:literal, $element_block:literal) => {
+    ($fn_name:ident, $type_name:literal, $element_block:literal, $shown:literal) => {
         pub(super) fn $fn_name() -> InputObject {
             InputObject::new($type_name)
-                .field(InputValue::new("_any", TypeRef::named($element_block)))
-                .field(InputValue::new("_all", TypeRef::named($element_block)))
-                .field(InputValue::new("_none", TypeRef::named($element_block)))
+                .description(concat!(
+                    "These are the set of filter operators available for use when filtering on ",
+                    $shown,
+                    " values."
+                ))
+                .field(
+                    InputValue::new("_any", TypeRef::named($element_block))
+                        .description(super::descriptions::ANY_OPERATOR),
+                )
+                .field(
+                    InputValue::new("_all", TypeRef::named($element_block))
+                        .description(super::descriptions::ALL_OPERATOR),
+                )
+                .field(
+                    InputValue::new("_none", TypeRef::named($element_block))
+                        .description(super::descriptions::NONE_OPERATOR),
+                )
                 .field(InputValue::new(
                     "_count",
                     TypeRef::named("IntOperatorBlock"),
@@ -211,50 +300,60 @@ filter_arg!(
 list_operator_block!(
     build_int_list_operator_block,
     "IntListOperatorBlock",
-    "IntOperatorBlock"
+    "IntOperatorBlock",
+    "[Int]"
 );
 list_operator_block!(
     build_not_null_int_list_operator_block,
     "NotNullIntListOperatorBlock",
-    "IntOperatorBlock"
+    "IntOperatorBlock",
+    "[Int!]"
 );
 list_operator_block!(
     build_float64_list_operator_block,
     "Float64ListOperatorBlock",
-    "Float64OperatorBlock"
+    "Float64OperatorBlock",
+    "[Float64]"
 );
 list_operator_block!(
     build_not_null_float64_list_operator_block,
     "NotNullFloat64ListOperatorBlock",
-    "Float64OperatorBlock"
+    "Float64OperatorBlock",
+    "[Float64!]"
 );
 list_operator_block!(
     build_float32_list_operator_block,
     "Float32ListOperatorBlock",
-    "Float32OperatorBlock"
+    "Float32OperatorBlock",
+    "[Float32]"
 );
 list_operator_block!(
     build_not_null_float32_list_operator_block,
     "NotNullFloat32ListOperatorBlock",
-    "Float32OperatorBlock"
+    "Float32OperatorBlock",
+    "[Float32!]"
 );
 list_operator_block!(
     build_bool_list_operator_block,
     "BooleanListOperatorBlock",
-    "BooleanOperatorBlock"
+    "BooleanOperatorBlock",
+    "[Boolean]"
 );
 list_operator_block!(
     build_not_null_bool_list_operator_block,
     "NotNullBooleanListOperatorBlock",
-    "BooleanOperatorBlock"
+    "BooleanOperatorBlock",
+    "[Boolean!]"
 );
 list_operator_block!(
     build_string_list_operator_block,
     "StringListOperatorBlock",
-    "StringOperatorBlock"
+    "StringOperatorBlock",
+    "[String]"
 );
 list_operator_block!(
     build_not_null_string_list_operator_block,
     "NotNullStringListOperatorBlock",
-    "StringOperatorBlock"
+    "StringOperatorBlock",
+    "[String!]"
 );

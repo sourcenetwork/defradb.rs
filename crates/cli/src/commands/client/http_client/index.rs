@@ -178,6 +178,17 @@ impl HttpClient {
         }
     }
 
+    /// Collection `collection`'s indexes as the node answers: Go's
+    /// `[{Description, Execution}]`, the build state included.
+    pub async fn index_listing(&self, collection: &str) -> Result<serde_json::Value> {
+        let url = format!(
+            "{}/api/v0/collections/{}/indexes",
+            self.base_url,
+            encode(collection)
+        );
+        self.request_json("GET", &url, None).await
+    }
+
     pub async fn index_delete(&self, collection: &str, name: &str) -> Result<()> {
         let url = format!(
             "{}/api/v0/collections/{}/indexes/{}",

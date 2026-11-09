@@ -211,6 +211,11 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         } else {
             config.push_send_timeout.max(Duration::from_millis(1))
         };
+        let broadcast_wait_deadline = config.broadcast_wait_deadline;
+        #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+        let broadcast_room = Arc::new(super::broadcast_room::BroadcastRoom::new(
+            config.broadcast_pending_bytes,
+        ));
         let (manager, events) =
             SyncManager::new(Arc::clone(&blockstore), peer_state.clone(), config);
         manager
@@ -251,6 +256,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             }),
             &shutdown,
         );
+        // The gossip lane is a fixed coordinator task like the push workers,
+        // so it is running before the first write, not started by it.
+        broadcast_room.start(&shutdown);
 
         Ok((
             Self {
@@ -272,6 +280,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                         rate_limit_rate,
                     )),
                     max_doc_sync_request_doc_ids,
+                    broadcast_wait_deadline,
+                    broadcast_room,
                     shutdown,
                     dispatch_diagnostics: Arc::new(crate::sync::DispatchDiagnostics::default()),
                     filter_matcher,

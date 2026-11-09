@@ -463,6 +463,10 @@ pub fn generate_mutation_type(collections: &[&CollectionVersion]) -> GqlObjectTy
                 GqlType::non_null(GqlType::boolean()),
             )
             .with_arg(GqlArg::new(
+                "docID",
+                GqlType::list(GqlType::non_null(GqlType::id())),
+            ))
+            .with_arg(GqlArg::new(
                 "filter",
                 GqlType::named(format!("{}FilterInput", type_name)),
             )),
@@ -773,7 +777,8 @@ mod tests {
             .find(|f| f.name == "truncate_User")
             .unwrap();
         assert_eq!(truncate.field_type.to_sdl(), "Boolean!");
-        assert_eq!(truncate.args[0].to_sdl(), "filter: UserFilterInput");
+        assert_eq!(truncate.args[0].to_sdl(), "docID: [ID!]");
+        assert_eq!(truncate.args[1].to_sdl(), "filter: UserFilterInput");
     }
 
     #[test]

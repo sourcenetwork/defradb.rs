@@ -294,7 +294,7 @@ pub trait DocumentAcpOperations: defra_core::thread_bounds::MaybeSendSync {
     /// Returns `true` if a new relationship was created, `false` if it already existed.
     async fn add_doc_relationship(
         &self,
-        requestor: &identity::Did,
+        requestor: Option<&identity::Did>,
         target_actor: &str,
         collection: &str,
         doc_id: &str,
@@ -321,7 +321,7 @@ pub trait DocumentAcpOperations: defra_core::thread_bounds::MaybeSendSync {
     /// Returns `true` if the relationship was removed, `false` if it didn't exist.
     async fn delete_doc_relationship(
         &self,
-        requestor: &identity::Did,
+        requestor: Option<&identity::Did>,
         target_actor: &str,
         collection: &str,
         doc_id: &str,

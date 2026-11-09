@@ -5,6 +5,7 @@
 /// This matches Go DefraDB's internal/datastore/multi.go pattern.
 use async_trait::async_trait;
 use bytes::Bytes;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use storage::corekv::{
     Error, IterOptions, Iterator, OnCommit, QueuedCallbacks, Reader, Result, Txn, Writer,
@@ -49,6 +50,8 @@ pub struct SharedTxn {
     /// The CRDT types of the node whose store the transaction runs on.
     crdts: storage::Crdts,
     projector: Option<Arc<dyn DocumentMutationProjector>>,
+    /// Whether the scans opened now validate their range at commit.
+    scans_validated: AtomicBool,
 }
 
 impl SharedTxn {
@@ -147,6 +150,7 @@ impl SharedTxn {
             txn: Some(txn),
             crdts,
             projector: None,
+            scans_validated: AtomicBool::new(false),
         })
     }
 
@@ -157,6 +161,13 @@ impl SharedTxn {
     /// The CRDT types of the node whose store the transaction runs on.
     pub fn crdts(&self) -> &storage::Crdts {
         &self.crdts
+    }
+
+    /// Validate the range of every scan opened from now on, until turned
+    /// off: for the reads a write decides on, so a concurrent change inside
+    /// the scanned range aborts the decision at commit.
+    pub fn set_scans_validated(&self, validated: bool) {
+        self.scans_validated.store(validated, Ordering::Relaxed);
     }
 
     /// Get a value with namespace prefix.
@@ -204,6 +215,11 @@ impl SharedTxn {
         namespace: Namespace,
         opts: IterOptions,
     ) -> Result<Box<dyn Iterator>> {
+        let opts = if self.scans_validated.load(Ordering::Relaxed) {
+            opts.with_validation(true)
+        } else {
+            opts
+        };
         let iter = self
             .txn()?
             .iterator(prefix_iter_options(namespace, opts))
@@ -357,6 +373,12 @@ impl NamespaceView {
     /// The CRDT types of the node whose store the transaction runs on.
     pub fn crdts(&self) -> &storage::Crdts {
         self.txn.crdts()
+    }
+
+    /// See [`SharedTxn::set_scans_validated`]; it applies to every view of
+    /// the transaction.
+    pub fn set_scans_validated(&self, validated: bool) {
+        self.txn.set_scans_validated(validated);
     }
 
     /// View a different namespace of the same transaction.

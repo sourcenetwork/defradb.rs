@@ -1,5 +1,6 @@
 //! Collection command implementation
 
+mod describe;
 mod document;
 pub(crate) mod introspection;
 
@@ -161,12 +162,22 @@ impl CollectionAddArgs {
 }
 
 impl CollectionArgs {
+    /// Go's collection selector flags, as a [`schema::CollectionSelector`].
+    fn selector(&self) -> schema::CollectionSelector {
+        schema::CollectionSelector {
+            names: self.name.clone().map(|name| vec![name]),
+            version_id: self.version_id.clone(),
+            collection_id: self.collection_id.clone(),
+            get_inactive: self.get_inactive,
+        }
+    }
+
     /// Execute the collection command
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
         match &self.command {
             CollectionCommand::Add(args) => args.execute(ctx).await,
             CollectionCommand::Delete(args) => args.execute(ctx).await,
-            CollectionCommand::Describe(args) => args.execute(ctx, self.name.as_deref()).await,
+            CollectionCommand::Describe(args) => args.execute(ctx, &self.selector()).await,
             CollectionCommand::List(args) => args.execute(ctx).await,
             CollectionCommand::Patch(args) => args.execute(ctx).await,
             CollectionCommand::SetActive(args) => args.execute(ctx).await,

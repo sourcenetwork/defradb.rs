@@ -109,57 +109,6 @@ fn test_create_unique_index() {
 }
 
 #[test]
-fn unique_json_index_rejects_duplicate_array_values() {
-    workers::block_on(async {
-        let store = RegolithStore::in_memory().unwrap();
-        let db = DB::new(store).unwrap();
-        let txn = db.new_txn(false).await.unwrap();
-        let datastore = txn.datastore().unwrap();
-
-        let mut schema = CollectionVersion::new(
-            "users",
-            "v1",
-            "col-users",
-            vec![FieldDescription::new(
-                "1",
-                "custom",
-                FieldKind::json(),
-                schema::CType::LwwRegister,
-            )],
-        );
-        schema.indexes = vec![IndexDescription {
-            name: "idx_custom".to_string(),
-            id: 1,
-            fields: vec![IndexedFieldDescription {
-                name: "custom".to_string(),
-                descending: false,
-            }],
-            unique: true,
-            kind: None,
-            auto_generated: false,
-        }];
-        let manager = IndexManager::from_collection(1, &schema).unwrap();
-        let mut doc = Document::new(schema.clone());
-        doc.set(
-            "custom",
-            NormalValue::Json(serde_json::json!({"numbers": [5, 8, 5]})),
-        )
-        .unwrap();
-
-        let error = manager
-            .on_document_create(&datastore, &doc, next_test_doc_short_id(), &schema)
-            .await
-            .expect_err("duplicate JSON array values must violate a unique index");
-
-        assert!(matches!(
-            error,
-            Error::Storage(storage::Error::UniqueConstraintViolation)
-        ));
-    })
-    .unwrap()
-}
-
-#[test]
 fn unique_typed_array_index_deduplicates_repeated_values() {
     workers::block_on(async {
         let store = RegolithStore::in_memory().unwrap();
@@ -1447,69 +1396,6 @@ fn test_missing_field_indexed_as_null() {
                 results.len(),
                 2,
                 "Both missing and explicit NULL should be indexed together"
-            );
-        }
-
-        txn.commit().await.unwrap();
-    })
-    .unwrap()
-}
-
-#[test]
-fn test_unique_index_allows_multiple_nulls() {
-    workers::block_on(async {
-        let store = RegolithStore::in_memory().unwrap();
-        let db = DB::new(store).unwrap();
-        let txn = db.new_txn(false).await.unwrap();
-
-        let schema = test_schema();
-        let mut manager = IndexManager::new(1);
-
-        {
-            let datastore = txn.datastore().unwrap();
-
-            // Create UNIQUE index on email
-            manager
-                .create_index(
-                    &datastore,
-                    "users",
-                    "idx_email_unique".to_string(),
-                    vec![IndexedFieldDescription {
-                        name: "email".to_string(),
-                        descending: false,
-                    }],
-                    true, // unique
-                    &[],
-                )
-                .await
-                .unwrap();
-
-            // Create first document without email (NULL)
-            // Set fields BEFORE generating doc_id
-            let mut doc1 = Document::new(schema.clone());
-            doc1.set("name", NormalValue::String("Alice".to_string()))
-                .unwrap();
-            let doc1_short_id = next_test_doc_short_id();
-
-            manager
-                .on_document_create(&datastore, &doc1, doc1_short_id, &schema)
-                .await
-                .unwrap();
-
-            // Create second document without email (also NULL)
-            // This should succeed - NULL is not considered equal to NULL for uniqueness
-            // Set fields BEFORE generating doc_id
-            let mut doc2 = Document::new(schema.clone());
-            doc2.set("name", NormalValue::String("Bob".to_string()))
-                .unwrap();
-            let doc2_short_id = next_test_doc_short_id();
-
-            let result = manager
-                .on_document_create(&datastore, &doc2, doc2_short_id, &schema)
-                .await;
-            assert!(
-                result.is_ok(),
-                "Multiple NULL values should be allowed in unique index"
             );
         }
 

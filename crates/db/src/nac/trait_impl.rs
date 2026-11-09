@@ -7,7 +7,7 @@ use identity::Did;
 
 use crate::nac::error::Result;
 
-use super::{NacInfo, NacManager, NacManagerApi};
+use super::{NacCaller, NacInfo, NacManager, NacManagerApi, NacRelationshipRequest};
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -74,13 +74,6 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
             .await
             .map(Some)
             .map_err(|error| super::error::Error::Other(error.to_string()))
-    }
-    async fn check_permission_persisted(
-        &self,
-        identity: &Did,
-        permission: NodePermission,
-    ) -> Result<bool> {
-        NacManager::check_permission_persisted(self, identity, permission).await
     }
     async fn change_source_permission_in_txn(
         &self,
@@ -151,11 +144,18 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
     async fn enable(&self, owner: &Did) -> Result<()> {
         NacManager::enable(self, owner).await
     }
-    async fn disable(&self) -> Result<()> {
-        NacManager::disable(self).await
+    async fn disable_as(&self, caller: &NacCaller) -> Result<()> {
+        NacManager::disable_as(self, caller).await
     }
-    async fn re_enable(&self) -> Result<()> {
-        NacManager::re_enable(self).await
+    async fn re_enable_as(&self, caller: &NacCaller) -> Result<()> {
+        NacManager::re_enable_as(self, caller).await
+    }
+    async fn change_relationship_as(
+        &self,
+        caller: &NacCaller,
+        request: &NacRelationshipRequest,
+    ) -> Result<bool> {
+        NacManager::change_relationship_as(self, caller, request).await
     }
     async fn purge(&self, requestor: &Did) -> Result<()> {
         NacManager::purge(self, requestor).await

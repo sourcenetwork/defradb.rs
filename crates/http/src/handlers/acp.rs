@@ -214,6 +214,13 @@ pub async fn own_documents(
     }))
 }
 
+/// Response for deleting a document ACP relationship (Go-compatible).
+#[derive(Debug, Clone, Serialize)]
+pub struct DocRelationshipDeleteResponse {
+    #[serde(rename = "RecordFound")]
+    pub record_found: bool,
+}
+
 fn validate_add_doc_relationship(body: &DocRelationshipRequest) -> Result<(), HttpError> {
     if body.collection.is_empty() {
         return Err(HttpError::BadRequest(
@@ -235,7 +242,7 @@ fn validate_add_doc_relationship(body: &DocRelationshipRequest) -> Result<(), Ht
 
 async fn apply_add_doc_relationship(
     doc_acp: &dyn crate::router::DocumentAcpOperations,
-    requestor: &identity::Did,
+    requestor: Option<&identity::Did>,
     body: &DocRelationshipRequest,
 ) -> Result<DocRelationshipResponse, HttpError> {
     let is_new = doc_acp
@@ -342,9 +349,7 @@ pub async fn add_doc_relationship(
 ) -> Result<Json<DocRelationshipResponse>, HttpError> {
     require_permission(&state, &identity, NodePermission::DacRelationAdd).await?;
 
-    let requestor = identity
-        .did()
-        .ok_or_else(|| HttpError::BadRequest("identity required for document ACP".into()))?;
+    let requestor = identity.did();
 
     validate_add_doc_relationship(&body)?;
     let context = super::txn_header::call_context(&identity, &headers)?;
@@ -370,9 +375,7 @@ pub async fn add_doc_relationships(
 ) -> Result<Json<Vec<DocRelationshipResponse>>, HttpError> {
     require_permission(&state, &identity, NodePermission::DacRelationAdd).await?;
 
-    let requestor = identity
-        .did()
-        .ok_or_else(|| HttpError::BadRequest("identity required for document ACP".into()))?;
+    let requestor = identity.did();
 
     for body in &bodies {
         validate_add_doc_relationship(body)?;
@@ -433,12 +436,10 @@ pub async fn remove_doc_relationship(
     identity: ExtractIdentity,
     headers: HeaderMap,
     Json(body): Json<DocRelationshipRequest>,
-) -> Result<Json<DocRelationshipResponse>, HttpError> {
+) -> Result<Json<DocRelationshipDeleteResponse>, HttpError> {
     require_permission(&state, &identity, NodePermission::DacRelationDelete).await?;
 
-    let requestor = identity
-        .did()
-        .ok_or_else(|| HttpError::BadRequest("identity required for document ACP".into()))?;
+    let requestor = identity.did();
 
     if body.collection.is_empty() {
         return Err(HttpError::BadRequest(
@@ -471,8 +472,8 @@ pub async fn remove_doc_relationship(
         .await
         .map_err(http_error_from_backend_message)?;
 
-    Ok(Json(DocRelationshipResponse {
-        existed_already: !was_removed,
+    Ok(Json(DocRelationshipDeleteResponse {
+        record_found: was_removed,
     }))
 }
 

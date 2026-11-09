@@ -1,4 +1,4 @@
-use crate::actions::peer::support::{addresses_of, ambient, failed};
+use crate::actions::peer::support::{addresses_of, failed};
 use crate::clients::{CliRun, HttpRun};
 use crate::scenario::{Common, Failure, Op};
 use crate::test_case::State;
@@ -33,12 +33,12 @@ impl Op for DisconnectPeers {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        self.common.plain(Self::name())?;
+        let identity = self.common.client_identity(Self::name())?;
         let targets: Vec<&str> = self.targets.iter().map(String::as_str).collect();
         let addresses = addresses_of(state, &targets)?;
         let node = state.node_on(self.common.node())?;
         state
-            .block_on(node.disconnect_as(&ambient(), &addresses))
+            .block_on(node.disconnect_as(&state.context_as(None, identity), &addresses))
             .map_err(failed)?;
         Ok(json!({}))
     }
@@ -55,11 +55,11 @@ impl Action for DisconnectPeers {
 impl HttpRun for DisconnectPeers {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.common.plain(Self::name())?;
+            let identity = action.common.client_identity(Self::name())?;
             let targets: Vec<&str> = action.targets.iter().map(String::as_str).collect();
             let addresses = addresses_of(state, &targets)?;
             state
-                .http_on(action.common.node(), |client| async move {
+                .http_as(action.common.node(), identity, |client| async move {
                     client.disconnect(&addresses).await
                 })?
                 .map_err(failed)?;
@@ -70,11 +70,16 @@ impl HttpRun for DisconnectPeers {
 
 impl CliRun for DisconnectPeers {
     fn execute_cli(&self, state: &mut State) {
-        crate::scenario::execute_with(self, state, |_, _| {
-            Err(Failure::unsupported(format!(
-                "{}: the CLI has no disconnect command",
-                Self::name()
-            )))
+        crate::scenario::execute_with(self, state, |action, state| {
+            let identity = action.common.client_identity(Self::name())?;
+            let targets: Vec<&str> = action.targets.iter().map(String::as_str).collect();
+            let addresses = addresses_of(state, &targets)?;
+            let mut args = vec!["p2p", "disconnect"];
+            args.extend(addresses.iter().map(String::as_str));
+            state
+                .defra_client_as(action.common.node(), None, identity, &args)
+                .map_err(Failure::operation)?;
+            Ok(json!({}))
         });
     }
 }

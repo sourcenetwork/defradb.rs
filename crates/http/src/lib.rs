@@ -109,6 +109,8 @@ pub mod go_paths;
 pub mod handlers;
 #[cfg(feature = "server")]
 pub mod identity_extractor;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+pub mod index_adapter;
 #[cfg(feature = "server")]
 pub mod nac_guard;
 #[cfg(feature = "server")]

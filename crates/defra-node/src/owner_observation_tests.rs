@@ -543,14 +543,16 @@ fn unified_access_matches_lean_and_validates_authority_at_commit() {
         let response = node.execute_request_in_txn(query::QueryRequest::new("mutation { add_Other(input: {name: \"guarded\"}) { _docID } }"), &txn).await;
         assert!(!response.has_errors(), "{:?}", response.errors);
         let nac = node.nac_manager().clone();
-        node.on_acp(move || async move { nac.disable().await.map_err(crate::Error::NacInit)?; Ok(()) }).await.unwrap();
+        let caller = db::NacCaller { identity: Some(Did::new(&owner).unwrap()), node: Some(Did::new(&owner).unwrap()) };
+        node.on_acp(move || async move { nac.disable_as(&caller).await.map_err(crate::Error::NacInit)?; Ok(()) }).await.unwrap();
         assert!(node.commit_transaction(&txn).await.is_err(), "disabling NAC must conflict with guarded commit");
         let txn = node.begin_transaction(false).await.unwrap();
         assert_eq!(node.observe_document_access_in_txn(&txn, "Users", &ids, subject.clone(), named()).await.unwrap(), [inactive, missing]);
         assert_eq!(node.observe_document_access_in_txn(&txn, "Users", &ids, subject.clone(), DocumentAccessMode::DelegatedRead).await.unwrap(), [visible, hidden]);
         node.discard_transaction(&txn).await.unwrap();
         let nac = node.nac_manager().clone();
-        node.on_acp(move || async move { nac.re_enable().await.map_err(crate::Error::NacInit)?; Ok(()) }).await.unwrap();
+        let caller = db::NacCaller { identity: Some(Did::new(&owner).unwrap()), node: Some(Did::new(&owner).unwrap()) };
+        node.on_acp(move || async move { nac.re_enable_as(&caller).await.map_err(crate::Error::NacInit)?; Ok(()) }).await.unwrap();
         let acp = node.document_acp();
         let policy_to_clear = policy.clone();
         let id_to_clear = doc.clone();

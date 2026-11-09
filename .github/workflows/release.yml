@@ -88,8 +88,8 @@ jobs:
         shell: bash
         run: |
           TAG="${GITHUB_REF_NAME}"
-          ARCHIVE="defra_${TAG}_${{ matrix.platform }}.tar.gz"
-          tar czf "${ARCHIVE}" -C "target/${{ matrix.target }}/release" defra
+          ARCHIVE="defradb_${TAG}_${{ matrix.platform }}.tar.gz"
+          tar czf "${ARCHIVE}" -C "target/${{ matrix.target }}/release" defradb
           echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
 
       - uses: actions/upload-artifact@v4
