@@ -1,6 +1,7 @@
 mod add_actor_relationship;
 mod add_policy;
 mod delete_actor_relationship;
+mod relationship;
 
 pub use add_actor_relationship::AddDACActorRelationship;
 pub use add_policy::AddDACPolicy;

@@ -417,7 +417,7 @@ that is correct but slower is not done.
 - **Rust** (1.99+): `rustup`
 - **protoc**: `brew install protobuf` — required by `crates/orbis`, whose `build.rs` compiles `proto/orbis.proto` via `tonic-prost-build`
 - **cbindgen**: `cargo install cbindgen` — generates C headers for FFI
-- **cargo-nextest**: `cargo install cargo-nextest --locked` — runs the tests; `.config/nextest.toml` builds the `defra` binaries node tests launch once per run, then runs those tests in parallel
+- **cargo-nextest**: `cargo install cargo-nextest --locked` — runs the tests; `.config/nextest.toml` builds the `defradb` binaries node tests launch once per run, then runs those tests in parallel
 - **Go** (1.26+): Required for FFI compatibility tests, and to build the pinned `GO_COMPAT_COMMIT`, which declares `go 1.26.10`
 
 ## Common Commands
@@ -445,7 +445,7 @@ integration-suite <area>` runs one area in both binaries.
 
 | Binary | Folder | What |
 |--------|--------|------|
-| `testo` | `tests/testo/` | testo scenarios (`TestCase` + actions), run under every client by `DEFRA_CLIENT` (in-process, rust-http, go-http, cli). Most are generated from the Go corpus by `scripts/generate_scenarios.sh`. Every new integration test goes here. Areas: `acp`, `backup`, `collection`, `collection_version`, `encryption`, `explain`, `index`, `issues`, `mutation`, `net`, `node`, `query`, `searchable_encryption`, `signature`, `subscription`, `txn`, `view`, plus the framework self-tests `matchers` and `export`. |
+| `testo` | `tests/testo/` | testo scenarios (`TestCase` + actions), run under every client by `DEFRA_CLIENT` (in-process, rust-http, go-http, cli). Most are generated from the Go corpus by `scripts/generate_scenarios.sh`. Every new integration test goes here. Areas: `acp`, `backup`, `collection`, `collection_version`, `cursor`, `encryption`, `explain`, `index`, `issues`, `mutation`, `net`, `node`, `query`, `searchable_encryption`, `signature`, `subscription`, `txn`, `view`, plus the framework self-tests `matchers` and `export`. |
 | `legacy` | `tests/legacy/` | hand-written `TestCluster`/`DefraClient` tests, deleted as testo covers them. Areas below. |
 | `verars` | `tests/verars/` | vera.rs native ACP tests (compartments, native_worker, p2p_acp, policy_generations, policy_lifecycle, smoke, verified_records). Its own binary so the Native consumer workflow builds only these in release; run with `--test verars`. |
 
@@ -454,17 +454,16 @@ Legacy areas with submodules:
 | Area | Filter | Modules |
 |------|--------|---------|
 | Basic | `basic::` | batch_mutations, collection_delete_4657, crdt_input_ops, collection_management, document_lifecycle, regolith_crash_reopen, multi_collection, patch_secondary_relation_4709, self_ref_relations_4712, smoke, transactions, truncate_parallel |
-| Query | `query::` | commits_aggregate, commits_collection_id, commits_height_filter, continuous_rollup, datetime_index_range, default_values_v1, downsample, downsample_gc, exhaustive_orphans_4454, explain_nested, gql_list_args, index_fallback_4633, index_management, lens_persistence, lens_reindex_secondary_index_979, limits, multi_cid_vectors, planner_4656, planner_4684, sdl_generate, subscription_docid, subscription_root_shape, view |
+| Query | `query::` | commits_aggregate, commits_collection_id, continuous_rollup, datetime_index_range, default_values_v1, downsample, downsample_gc, exhaustive_orphans_4454, explain_nested, gql_list_args, index_fallback_4633, index_management, lens_persistence, lens_reindex_secondary_index_979, limits, multi_cid_vectors, planner_4656, planner_4684, sdl_generate, subscription_docid, subscription_root_shape, view |
 | ACP | `acp::` | audit, basic, cross_object, custom_policy, events_sse, index, link_collection, multi_identity, multi_role, negative, negative_p2p, node_access, p2p, p2p_lifecycle, policy_validation, register_ops, relation_queries, relationship, revoke_lifecycle, secp256k1_round_trip, transaction_rollback, xarchive_access_matrix |
 | P2P Iroh | `p2p_iroh::` | acp, connection, peer, replication, schema, sync |
 | NAC | `nac::` | core_operations, cross_compartment_isolation, dac_access_matrix, document_acp, multi_doc_create, operations, p2p_management, policy_evolution, relation_admin |
-| P2P | `p2p::` | connection_manager, document, feature_binaries, filtered_replication, idempotent_replay, long_history, manage_relay, management, quarantine, receiver_pull, replication, replication_advanced, resilience, sync, text_crdt, transports, trust_boundary, write_contention |
-| FTS | `fts::` | basic, edge_cases, lifecycle, relation_paths, scoring |
+| P2P | `p2p::` | connection_manager, document, feature_binaries, filtered_replication, idempotent_replay, long_history, manage_relay, management, quarantine, receiver_pull, replication, replication_advanced, resilience, sync, transports, trust_boundary, write_contention |
+| FTS | `fts::` | edge_cases, lifecycle, scoring |
 | Vector | `vector::` | CLI/HTTP Flat, HNSW, IVF-PQ and SSG routing, updates, deletes, and restart persistence |
 | Encryption | `encryption::` | acp, block_verify, cross_runtime_p2p, index, key_management, se_cross_runtime |
 | Identity | `identity::` | keyring_dev_mode, keyring_lifecycle, lifecycle, negative, node_identity, types |
 | Backup | `backup::` | dev_mode, dump, purge, restore |
-| Cursor | `cursor::` | composite_index, error_paths, reindex_datetime_visibility, smoke |
 | Vera | `vera::` | acp_tuning, compartments, encryption_acp, p2p_acp, policy_lifecycle, resilience, smoke |
 
 Single-purpose legacy areas, one file each:

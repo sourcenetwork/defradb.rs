@@ -3804,7 +3804,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c54e03a951783e8b327515db3f2a2fd0e3bed362a96b066f341ce66ed49b4ead"
 dependencies = [
  "data-encoding",
- "syn 3.0.9",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -3874,6 +3874,7 @@ dependencies = [
  "tracing",
  "web-time",
  "workers",
+ "zanzibar",
  "zeroize",
 ]
 
@@ -4005,6 +4006,7 @@ dependencies = [
  "defra-http",
  "defra-p2p-adapter",
  "defra-version",
+ "document",
  "edge",
  "events",
  "futures",
@@ -4886,6 +4888,7 @@ dependencies = [
  "base64 0.23.1",
  "blockstore",
  "cbindgen",
+ "ciborium",
  "cid",
  "crypto",
  "db",
@@ -6243,6 +6246,7 @@ dependencies = [
  "edge",
  "events",
  "futures",
+ "graphql-parser",
  "hex",
  "identity",
  "keyring 0.5.0",
@@ -12646,7 +12650,7 @@ dependencies = [
 [[package]]
 name = "testo"
 version = "0.0.1"
-source = "git+https://github.com/sourcenetwork/testo.rs?rev=79d83b0adedf00f85f9fd9aecc6fd009ed41332a#79d83b0adedf00f85f9fd9aecc6fd009ed41332a"
+source = "git+https://github.com/sourcenetwork/testo.rs?rev=dc53fa515d5c39511845407dcd42a7650c07f66c#dc53fa515d5c39511845407dcd42a7650c07f66c"
 dependencies = [
  "testo_derive",
 ]
@@ -12654,7 +12658,7 @@ dependencies = [
 [[package]]
 name = "testo_derive"
 version = "0.0.1"
-source = "git+https://github.com/sourcenetwork/testo.rs?rev=79d83b0adedf00f85f9fd9aecc6fd009ed41332a#79d83b0adedf00f85f9fd9aecc6fd009ed41332a"
+source = "git+https://github.com/sourcenetwork/testo.rs?rev=dc53fa515d5c39511845407dcd42a7650c07f66c#dc53fa515d5c39511845407dcd42a7650c07f66c"
 dependencies = [
  "proc-macro2",
  "quote",

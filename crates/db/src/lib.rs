@@ -78,6 +78,7 @@ pub use access::dac::{DacPolicies, DacPolicyError};
 pub use access::kms::{
     DbBlockDocIDResolver, DbDocCollectionLookup, DbEncBlockStore, DbNodeAcpRead,
 };
+pub use access::nac_ops::NodeAcpError;
 pub use access::node::{bound_node_access_checker, node_access_checker, NodeAccessChecker};
 pub use collection::acp::{
     block_unsafe_policy_transition, check_doc_permission, check_policy_transition,
@@ -123,7 +124,10 @@ pub use write::doc::DbDocMutator;
 // NAC exports
 #[cfg(not(target_arch = "wasm32"))]
 pub use nac::create_persistent_nac_manager;
-pub use nac::{create_memory_nac_manager, NacConfig, NacInfo, NacManager, NacManagerApi};
+pub use nac::{
+    create_memory_nac_manager, NacCaller, NacChange, NacConfig, NacInfo, NacManager, NacManagerApi,
+    NacRelation, NacRelationshipRequest,
+};
 
 // Re-export related crate types for convenience
 pub use datastore::{BasicTxn, NamespaceView};

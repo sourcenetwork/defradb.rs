@@ -74,6 +74,6 @@ where
                 add_field_values(&mut fields, &block);
             }
         }
-        filter.allow_replication(collection_id, doc_id, &fields)
+        filter.allow_replication(collection_id, collection.name(), doc_id, &fields)
     }
 }

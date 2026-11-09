@@ -1,5 +1,7 @@
 use crate::actions::shared::{IndexGate, KeyType, NodeClient};
+use crate::client_type::ClientType;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::nodes::NodeSpec;
 use crate::scenario::{Common, Failure, Op};
@@ -7,6 +9,20 @@ use crate::test_case::State;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use testo::prelude::*;
+
+/// A Rust receiver's admission limits: its pending-DAG map and its per-peer
+/// rate bucket (tokens, and tokens refilled per second).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdmissionSpec {
+    pub max_pending_dags: usize,
+    pub rate_limit_burst: u32,
+    pub rate_limit_rate: f64,
+    /// The byte budget for one peer's deferred gossip heads; `None` keeps
+    /// the default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deferral_peer_bytes: Option<u64>,
+}
 
 /// Starts a node. Without options it is a plain in-process node; every option below is one of the corpus's ways to start one.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -43,6 +59,9 @@ pub struct NewNode {
     pub with_identity: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_document_acp_test: bool,
+    /// A Rust node with the given admission limits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission: Option<AdmissionSpec>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -72,10 +91,28 @@ impl Op for NewNode {
         probe.expected_error = None;
         probe.network = false;
         probe.database_dir = None;
+        probe.admission = None;
+        probe.node_identity_seed = None;
+        probe.enable_signing = false;
+        probe.key_type = None;
+        probe.with_identity = false;
+        probe.client_type = None;
+        probe.enable_searchable_encryption = false;
+        // Rust nodes always run pubsub KMS, so this only says what Go's
+        // harness sets up for them.
+        probe.kms = false;
+        (probe.ttl_millis, probe.tick_millis, probe.buckets) = (None, None, None);
         if probe != Self::default() {
             let options = serde_json::to_string(&probe).unwrap_or_default();
             return Err(Failure::unsupported(format!("{} {options}", Self::name())));
         }
+        self.check_client(state.client_type())?;
+        let node_identity = self
+            .node_identity_seed
+            .or(self.with_identity.then_some(u64::MAX - 1));
+        let signing = (self.enable_signing || self.key_type.is_some())
+            .then(|| self.key_type.unwrap_or_default());
+        let txn_ttl = self.txn_ttl(state.client_type())?;
         let dir = match self.database_dir {
             Some(_) => Some(Arc::new(tempfile::tempdir().map_err(|e| {
                 Failure::operation(format!("could not make the node's directory: {e}"))
@@ -86,9 +123,69 @@ impl Op for NewNode {
             network: self.network,
             dir,
             listen: Vec::new(),
+            admission: self.admission.clone(),
+            node_identity,
+            signing,
+            txn_ttl,
+            se_key: self.searchable_encryption_key()?,
+            ..Default::default()
         };
         state.start_node(self.common.node(), spec);
         Ok(json!({}))
+    }
+}
+
+impl NewNode {
+    /// A key of the node's own when the scenario turns searchable encryption
+    /// on, as Go's harness generates one per node.
+    fn searchable_encryption_key(&self) -> Result<Option<[u8; 32]>, Failure> {
+        if !self.enable_searchable_encryption {
+            return Ok(None);
+        }
+        let key = crypto::generate_aes256()
+            .map_err(|e| Failure::operation(format!("searchable encryption key: {e}")))?;
+        key.try_into()
+            .map(Some)
+            .map_err(|_| Failure::operation("an AES-256 key is 32 bytes".into()))
+    }
+
+    /// How long an idle HTTP transaction lives and how often the node sweeps
+    /// for idle ones, Go's `TxnTTL` and `TxnTTLTick`. Rust sweeps on its
+    /// tick, so Go's bucket count has nothing to set.
+    fn txn_ttl(&self, client: ClientType) -> Result<Option<(Duration, Duration)>, Failure> {
+        let Some(ttl) = self.ttl_millis else {
+            return Ok(None);
+        };
+        if !matches!(client, ClientType::RustHttp | ClientType::Cli) {
+            return Err(Failure::unsupported(format!(
+                "{} argument ttlMillis under {client:?}: only a node serving HTTP times out transactions",
+                Self::name()
+            )));
+        }
+        let tick = self.tick_millis.unwrap_or(ttl);
+        Ok(Some((
+            Duration::from_millis(ttl),
+            Duration::from_millis(tick),
+        )))
+    }
+
+    /// A scenario pinned to one client runs only under that client, as Go's
+    /// harness skips it under the others.
+    fn check_client(&self, running: ClientType) -> Result<(), Failure> {
+        let fits = match self.client_type {
+            None => true,
+            Some(NodeClient::Http) => matches!(running, ClientType::RustHttp | ClientType::GoHttp),
+            Some(NodeClient::Cli) => running == ClientType::Cli,
+            Some(NodeClient::C) => false,
+        };
+        match fits {
+            true => Ok(()),
+            false => Err(Failure::unsupported(format!(
+                "{} for the {:?} client under {running:?}",
+                Self::name(),
+                self.client_type.unwrap_or_default()
+            ))),
+        }
     }
 }
 

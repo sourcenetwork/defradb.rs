@@ -24,6 +24,7 @@ documentation_style = "c"
 include = [
     "DefraRemoteSignAsyncCallback",
     "DefraRemoteSignCallback",
+    "DefraReplicationFilterCallback",
     "DefraResultCallback",
     "CollectionOptions",
     "DefraResult",

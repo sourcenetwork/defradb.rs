@@ -14,6 +14,7 @@
 
 mod bitswap;
 mod estimates;
+mod gossip_deferral;
 mod join;
 mod pending_dag;
 mod pushlog;
@@ -92,6 +93,8 @@ pub struct SyncManager<B: Blockstore> {
     /// Coalesced wakeup for the sole bounded receiver dispatch owner.
     pub(super) pending_dag_ready: regolith::sync::Notify,
 
+    /// Wakes the resync loop when a durable-only record may now fit a slot.
+    pub(super) durable_only_ready: regolith::sync::Notify,
     /// How much of the pending map each source peer holds, over minutes.
     pub(super) pending_occupancy: crate::sync::arbitration::PendingOccupancy,
 
@@ -116,6 +119,9 @@ pub struct SyncManager<B: Blockstore> {
 
     /// Lifetime of an unacknowledged `pending_dags` entry.
     pub(super) pending_dag_ttl: std::time::Duration,
+    /// Byte budgets for deferred gossip heads, per source peer and in all.
+    pub(super) gossip_deferral_peer_bytes: u64,
+    pub(super) gossip_deferral_total_bytes: u64,
 
     /// Durable backing for push-originated pending registrations (#1099).
     /// Empty until the embedding layer installs a store; process-local
@@ -213,6 +219,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             peer_state,
             pending_dags: Arc::new(SharedPendingDags::default()),
             pending_dag_ready: regolith::sync::Notify::new(),
+            durable_only_ready: regolith::sync::Notify::new(),
             pending_occupancy: crate::sync::arbitration::PendingOccupancy::default(),
             query_to_root: HopscotchMap::with_hasher(RandomState::default()),
             block_sync_completions: BlockSyncCompletionTracker::with_capacity(
@@ -227,6 +234,8 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             pending_dag_ttl: config
                 .pending_dag_ttl
                 .max(std::time::Duration::from_secs(1)),
+            gossip_deferral_peer_bytes: config.gossip_deferral_peer_bytes,
+            gossip_deferral_total_bytes: config.gossip_deferral_total_bytes,
             pending_store: regolith::sync::OnceCell::new(),
             persisted: Arc::new(PersistedView::default()),
             pending_resync_in_flight: std::sync::atomic::AtomicBool::new(false),
@@ -441,7 +450,12 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             return false;
         };
         match store.remove(root_cid, &self.persisted).await {
-            Ok(removed) => removed,
+            Ok(removed) => {
+                if removed && self.persisted.len() > self.pending_dag_count() {
+                    self.durable_only_ready.notify_one();
+                }
+                removed
+            }
             Err(error) => {
                 tracing::warn!(
                     root_cid = %root_cid,

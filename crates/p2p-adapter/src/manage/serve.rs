@@ -477,10 +477,17 @@ mod tests {
         async fn enable(&self, _owner: &Did) -> db::nac::Result<()> {
             unimplemented!()
         }
-        async fn disable(&self, _requestor: &Did) -> db::nac::Result<()> {
+        async fn disable_as(&self, _caller: &db::NacCaller) -> db::nac::Result<()> {
             unimplemented!()
         }
-        async fn re_enable(&self, _requestor: &Did) -> db::nac::Result<()> {
+        async fn re_enable_as(&self, _caller: &db::NacCaller) -> db::nac::Result<()> {
+            unimplemented!()
+        }
+        async fn change_relationship_as(
+            &self,
+            _caller: &db::NacCaller,
+            _request: &db::NacRelationshipRequest,
+        ) -> db::nac::Result<bool> {
             unimplemented!()
         }
         async fn purge(&self, _requestor: &Did) -> db::nac::Result<()> {

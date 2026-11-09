@@ -2,8 +2,6 @@ mod aggregate_groupby_1595;
 mod cid_scoping_1604;
 mod commits_aggregate;
 mod commits_collection_id;
-mod commits_height_filter;
-mod commits_immutable;
 mod continuous_rollup;
 mod cross_runtime_indexes;
 mod datetime_index_range;

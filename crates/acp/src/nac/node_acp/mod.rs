@@ -86,6 +86,25 @@ impl<S: ZanzibarStore + ?Sized + 'static> NodeACP<S> {
         self.store.begin_scope(readonly).await
     }
 
+    /// [`ZanzibarStore::transact`] on this NodeACP's store.
+    pub async fn transact(
+        &self,
+        max_attempts: u32,
+        attempt: zanzibar::store::ScopeAttempt,
+    ) -> zanzibar::error::Result<Option<zanzibar::store::ScopeOutcome>> {
+        self.store.transact(max_attempts, attempt).await
+    }
+
+    /// Take the status and owner a committed write left, as read by the
+    /// scope that wrote it.
+    pub fn publish(&self, status: NacStatus, owner: Option<Did>) {
+        match owner {
+            Some(owner) => self.owner.store_some(owner),
+            None => self.owner.store_none(),
+        }
+        self.status.store(status);
+    }
+
     pub fn supports_transactions(&self) -> bool {
         self.store.supports_transactions()
     }

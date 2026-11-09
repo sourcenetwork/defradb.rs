@@ -79,10 +79,22 @@ impl DocumentCall {
         collection(&self.runner, &self.context, &self.selector).await
     }
 
+    /// The context the call acts in: the caller's identity, its transaction,
+    /// its document ACP bypass and its signer.
+    pub(crate) fn context(&self) -> &defra_core::RequestContext {
+        &self.context
+    }
+
     /// Runs the GraphQL document `query` on the call's node or in its
     /// transaction: the request path the core's document writes take.
     pub(crate) async fn respond(&self, query: String) -> query::QueryResponse {
-        let request = query::QueryRequest::new(query)
+        self.execute(query::QueryRequest::new(query)).await
+    }
+
+    /// Runs `request`, GraphQL text or typed mutations, as the caller, on the
+    /// call's node or in its transaction.
+    pub(crate) async fn execute(&self, request: query::QueryRequest) -> query::QueryResponse {
+        let request = request
             .with_context(self.context.clone())
             .with_identity(self.identity.clone());
         match self.target.txn_id() {

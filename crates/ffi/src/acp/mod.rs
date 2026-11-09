@@ -14,8 +14,8 @@ pub use dac::{
 };
 pub use identity::{defra_identity_new_from_bearer_token, defra_node_set_identity};
 pub use nac::{
-    defra_acp_nac_disable, defra_acp_nac_re_enable, defra_acp_nac_relationship_add,
-    defra_acp_nac_relationship_delete, defra_acp_nac_status,
+    defra_acp_nac_disable, defra_acp_nac_purge, defra_acp_nac_re_enable,
+    defra_acp_nac_relationship_add, defra_acp_nac_relationship_delete, defra_acp_nac_status,
 };
 
 #[cfg(test)]

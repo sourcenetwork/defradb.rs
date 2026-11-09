@@ -155,9 +155,9 @@
     "id": "go.query.commits.filter.fieldname-cid",
     "verdict": "partial",
     "rust_tests": [
-      "tools/integration-test/tests/legacy/query/commits_immutable.rs::rust_commits_by_cid_list_every_immutable_field"
+      "tools/integration-test/tests/testo/query/commits/with_cid_immutable.rs::commits_by_cid_list_every_immutable_field"
     ],
-    "evidence": "commits_immutable.rs:56 asserts `_commits(cid: C, filter: {fieldName: {_eq: \"kind\"}})` returns that field commit",
+    "evidence": "with_cid_immutable.rs:75 asserts `_commits(cid: C, filter: {fieldName: {_eq: \"kind\"}})` returns that field commit",
     "note": "Tested on a shared @immutable block only. Unverified: the same CID with a non-matching or unknown fieldName returning an empty list."
   },
   {

@@ -367,6 +367,28 @@ pub struct NodeInitOptions {
     pub rate_limit_burst: u32,
     /// Per-peer rate limit refill rate (tokens/sec). 0 means use default (50).
     pub rate_limit_rate: f64,
+    /// Optional replication filter, asked whether to keep each replicated
+    /// document before its commit stores anything; a
+    /// `DefraReplicationFilterCallback`, spelled out so C sees a nullable
+    /// function pointer. Null keeps everything.
+    pub replication_filter: Option<
+        unsafe extern "C" fn(
+            context: usize,
+            collection_id: *const c_char,
+            collection_name: *const c_char,
+            doc_id: *const c_char,
+            fields_json: *const c_char,
+        ) -> c_int,
+    >,
+    /// Passed back to `replication_filter` on every call.
+    pub replication_filter_context: usize,
+    /// libp2p resource manager memory budget in MiB; zero keeps the default.
+    pub p2p_resource_memory_mib: u64,
+    /// libp2p resource manager file-descriptor budget, used only together
+    /// with `p2p_resource_memory_mib`; zero keeps the default.
+    pub p2p_resource_file_descriptors: u64,
+    /// Streams one peer may hold open; zero keeps the default.
+    pub p2p_max_streams_per_peer: usize,
 }
 
 impl Default for NodeInitOptions {
@@ -429,6 +451,11 @@ impl Default for NodeInitOptions {
             max_doc_sync_request_doc_ids: 0,
             rate_limit_burst: 0,
             rate_limit_rate: 0.0,
+            replication_filter: None,
+            replication_filter_context: 0,
+            p2p_resource_memory_mib: 0,
+            p2p_resource_file_descriptors: 0,
+            p2p_max_streams_per_peer: 0,
         }
     }
 }

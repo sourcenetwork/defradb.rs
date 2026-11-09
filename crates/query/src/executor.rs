@@ -32,6 +32,10 @@ pub const TXN_RETRY_EXHAUSTED_ERROR_CODE: &str = "TXN_RETRY_EXHAUSTED";
 /// remains unknown; clients must not infer that replaying a mutation is safe.
 pub const STORAGE_FULL_ERROR_CODE: &str = "STORAGE_FULL";
 
+/// A mutation input named the secondary side of a relation. The collection
+/// API reports it in Go's collection words rather than GraphQL's.
+pub const SECONDARY_RELATION_ERROR_CODE: &str = "SECONDARY_RELATION_INPUT";
+
 /// Stable conflict message recognized by the remote DefraDB client.
 pub const TXN_CONFLICT_MESSAGE: &str = "transaction conflict. Please retry";
 
@@ -336,6 +340,8 @@ impl QueryResponseError {
             &error,
             crate::error::QueryError::Storage(cause) if cause.is_storage_full()
         );
+        let is_secondary_relation =
+            matches!(&error, crate::error::QueryError::SecondaryRelationInput(_));
         let retry_input = match &error {
             crate::error::QueryError::NeedsInput(request) => Some(request.clone()),
             _ => None,
@@ -347,6 +353,8 @@ impl QueryResponseError {
             response_error.with_code(TXN_RETRY_EXHAUSTED_ERROR_CODE)
         } else if is_storage_full {
             response_error.with_code(STORAGE_FULL_ERROR_CODE)
+        } else if is_secondary_relation {
+            response_error.with_code(SECONDARY_RELATION_ERROR_CODE)
         } else {
             response_error
         };
@@ -683,6 +691,65 @@ pub trait QueryExecutor: MaybeSendSync {
         let _ = context;
         Err(TransactionError::not_supported(
             "DAC policies are not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::nac_status_as`](crate::txn::TransactionRegistry::nac_status_as).
+    async fn nac_status_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<acp::nac::NacStatus, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "node access control is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::disable_nac_as`](crate::txn::TransactionRegistry::disable_nac_as).
+    async fn disable_nac_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "node access control is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::re_enable_nac_as`](crate::txn::TransactionRegistry::re_enable_nac_as).
+    async fn re_enable_nac_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "node access control is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::add_nac_actor_relationship_as`](crate::txn::TransactionRegistry::add_nac_actor_relationship_as).
+    async fn add_nac_actor_relationship_as(
+        &self,
+        context: &RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        let _ = (context, relation, target_actor);
+        Err(TransactionError::not_supported(
+            "node access control is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::delete_nac_actor_relationship_as`](crate::txn::TransactionRegistry::delete_nac_actor_relationship_as).
+    async fn delete_nac_actor_relationship_as(
+        &self,
+        context: &RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        let _ = (context, relation, target_actor);
+        Err(TransactionError::not_supported(
+            "node access control is not supported by this executor",
         ))
     }
 

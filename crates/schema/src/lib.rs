@@ -10,6 +10,7 @@ mod cid;
 mod collection;
 mod crdt_name;
 mod ctype;
+mod display;
 mod embedding;
 mod error;
 mod field;

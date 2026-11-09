@@ -1,4 +1,4 @@
-use crate::actions::peer::support::{ambient, failed};
+use crate::actions::peer::support::failed;
 use crate::clients::{CliRun, HttpRun};
 use crate::scenario::{Common, Failure, Op};
 use crate::test_case::State;
@@ -32,11 +32,11 @@ impl Op for ListP2PCollections {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        self.common.plain(Self::name())?;
+        let identity = self.common.client_identity(Self::name())?;
 
         let node = state.node_on(self.common.node())?;
         let listed = state
-            .block_on(node.list_p2p_collections_as(&ambient()))
+            .block_on(node.list_p2p_collections_as(&state.context_as(None, identity)))
             .map_err(failed)?;
         Ok(json!({ "collections": listed }))
     }
@@ -53,10 +53,10 @@ impl Action for ListP2PCollections {
 impl HttpRun for ListP2PCollections {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.common.plain(Self::name())?;
+            let identity = action.common.client_identity(Self::name())?;
 
             let listed = state
-                .http_on(action.common.node(), |client| async move {
+                .http_as(action.common.node(), identity, |client| async move {
                     client.list_p2p_collections().await
                 })?
                 .map_err(failed)?;
@@ -68,10 +68,15 @@ impl HttpRun for ListP2PCollections {
 impl CliRun for ListP2PCollections {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.common.plain(Self::name())?;
+            let identity = action.common.client_identity(Self::name())?;
 
             let printed = state
-                .defra_client_on(action.common.node(), None, &["p2p", "collection", "list"])
+                .defra_client_as(
+                    action.common.node(),
+                    None,
+                    identity,
+                    &["p2p", "collection", "list"],
+                )
                 .map_err(Failure::operation)?;
             Ok(json!({ "collections": printed }))
         });

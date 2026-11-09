@@ -1,10 +1,12 @@
-//! Documents: added, read, updated and deleted, one by ID or many by
+//! Documents: added, read, updated, deleted and purged, one by ID or many by
 //! filter.
 
 mod add;
 mod delete;
 mod get;
+mod purge;
 mod run;
+mod save_many;
 mod update;
 
 use std::ffi::c_char;
@@ -58,6 +60,8 @@ fn filter_value(filter: &str) -> Result<serde_json::Value, String> {
 pub use add::defra_document_add;
 pub use delete::defra_document_delete;
 pub use get::defra_document_get;
+pub use purge::defra_document_purge;
+pub use save_many::defra_document_save_many;
 pub use update::defra_document_update;
 
 #[cfg(test)]

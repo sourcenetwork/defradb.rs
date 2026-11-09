@@ -21,6 +21,8 @@ pub mod batch;
 pub mod block;
 pub mod call;
 pub mod collection;
+#[cfg(test)]
+mod core_options_tests;
 pub mod document;
 pub mod dump;
 mod duration;
@@ -31,11 +33,14 @@ pub mod index;
 pub mod lens;
 pub mod nac_check;
 pub mod node;
+#[cfg(test)]
+mod node_settings_tests;
 pub mod p2p;
 #[cfg(feature = "profiling")]
 pub mod profiling;
 pub mod query;
 pub mod remote_signer;
+pub mod replication_filter;
 pub mod request;
 pub mod runtime;
 pub mod state;

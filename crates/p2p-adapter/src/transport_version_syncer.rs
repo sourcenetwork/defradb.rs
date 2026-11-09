@@ -221,8 +221,7 @@ async fn sync_lens<S: storage::corekv::Store + 'static, B: Blockstore, T: P2PTra
     };
 
     let transform_id = lens::TransformId::new(transform_cid.to_string());
-    db.lens_store()
-        .add_with_id(transform_id, config)
+    db.commit_synced_lens(transform_id, config)
         .await
         .map_err(|error| P2PError::internal(format!("register lens: {error}")))?;
 

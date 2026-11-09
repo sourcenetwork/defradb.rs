@@ -1,11 +1,12 @@
-//! Generated from the conformance scenarios of tests/integration/mutation/update/crdt/pncounter_test.go at defradb 137dc624052b.
+//! Generated from the conformance scenarios of tests/integration/mutation/update/crdt/pncounter_test.go at defradb 307364d9d828.
 //! License: AGPL-3.0-only OR LicenseRef-BSL-tests. Copyright 2026 Democratized Data Foundation.
 
 use integration_test::actions::{
     AddCollection, AddDoc, Request, UpdateDoc, WaitForPeersEvents, WaitForSync,
 };
 use integration_test::scenario::{captures, Common, Text};
-use integration_test::test_case::TestCase;
+use integration_test::test_case::{NotApplying, TestCase};
+use integration_test::ClientType;
 use serde_json::json;
 
 #[test]
@@ -70,6 +71,8 @@ fn pn_counter_update_float_kind_with_decrement_overflow_negative_inf() {
             }
             .into(),
         ],
+        client_types: Some(&[ClientType::InProcess]),
+        not_applying: Some(NotApplying::Interop(r#"The result holds an infinite Float, which JSON cannot carry, so Go's own HTTP and CLI clients cannot read it back (defradb#2569) and Go runs this only in-process. defradb.rs refuses it on every client with Go's encoding error, "json: unsupported value: +Inf" (tests/query/non_finite_float.rs)."#)),
         ..Default::default()
     }
     .execute();
@@ -137,6 +140,8 @@ fn pn_counter_update_float_kind_with_positive_increment_overflow_positive_inf() 
             }
             .into(),
         ],
+        client_types: Some(&[ClientType::InProcess]),
+        not_applying: Some(NotApplying::Interop(r#"The result holds an infinite Float, which JSON cannot carry, so Go's own HTTP and CLI clients cannot read it back (defradb#2569) and Go runs this only in-process. defradb.rs refuses it on every client with Go's encoding error, "json: unsupported value: +Inf" (tests/query/non_finite_float.rs)."#)),
         ..Default::default()
     }
     .execute();
@@ -239,6 +244,7 @@ fn pn_counter_update_int_kind_with_positive_increment_overflow_rolls_over_to_min
             }
             .into(),
         ],
+        client_types: Some(&[ClientType::InProcess, ClientType::Cli, ClientType::RustHttp, ClientType::GoHttp]),
         ..Default::default()
     }
     .execute();

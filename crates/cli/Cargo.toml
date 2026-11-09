@@ -16,7 +16,7 @@ name = "cli"
 path = "src/lib.rs"
 
 [[bin]]
-name = "defra"
+name = "defradb"
 path = "src/main.rs"
 
 [dependencies]

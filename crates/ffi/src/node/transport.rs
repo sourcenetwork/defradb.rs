@@ -120,6 +120,14 @@ fn libp2p(
             stream_timeout_secs: (options.p2p_block_sync_timeout_ms > 0)
                 .then(|| (options.p2p_block_sync_timeout_ms as u64).div_ceil(1000)),
             sync: sync_tuning(options, retry_intervals),
+            resource_limits: p2p::ResourceLimits {
+                memory_mib: (options.p2p_resource_memory_mib > 0)
+                    .then_some(options.p2p_resource_memory_mib),
+                file_descriptors: (options.p2p_resource_file_descriptors > 0)
+                    .then_some(options.p2p_resource_file_descriptors),
+                max_streams_per_peer: (options.p2p_max_streams_per_peer > 0)
+                    .then_some(options.p2p_max_streams_per_peer),
+            },
             ..Default::default()
         },
     ))
@@ -248,4 +256,35 @@ unsafe fn iroh(
     }
 
     Ok(defra_node::TransportConfig::Iroh(config))
+}
+
+#[cfg(all(test, feature = "libp2p"))]
+mod tests {
+    use super::*;
+
+    fn libp2p_config(options: &NodeInitOptions) -> defra_node::Libp2pConfig {
+        match unsafe { read(options) }.unwrap() {
+            defra_node::TransportConfig::Libp2p(config) => config,
+            _ => panic!("not a libp2p transport"),
+        }
+    }
+
+    #[test]
+    fn the_libp2p_resource_limits_reach_the_host_config() {
+        let config = libp2p_config(&NodeInitOptions {
+            p2p_resource_memory_mib: 256,
+            p2p_resource_file_descriptors: 512,
+            p2p_max_streams_per_peer: 64,
+            ..NodeInitOptions::default()
+        });
+        assert_eq!(config.resource_limits.memory_mib, Some(256));
+        assert_eq!(config.resource_limits.file_descriptors, Some(512));
+        assert_eq!(config.resource_limits.max_streams_per_peer, Some(64));
+    }
+
+    #[test]
+    fn zero_resource_limits_keep_the_host_defaults() {
+        let config = libp2p_config(&NodeInitOptions::default());
+        assert_eq!(config.resource_limits, p2p::ResourceLimits::default());
+    }
 }

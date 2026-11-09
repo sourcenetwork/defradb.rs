@@ -30,7 +30,7 @@ start_defra() {
   local rootdir
   rootdir="$(mktemp -d)"
   echo "=== starting defra on 127.0.0.1:$port ==="
-  "$REPO_ROOT/target/debug/defra" start \
+  "$REPO_ROOT/target/debug/defradb" start \
     --rootdir "$rootdir" \
     --no-keyring \
     --store memory \

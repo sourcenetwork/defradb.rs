@@ -96,6 +96,20 @@ impl Node {
             .map_err(transaction_error)
     }
 
+    /// Node access control for `permission`, for the operations that check
+    /// one before the work they hand on, as Go's do.
+    pub(crate) async fn check_access(
+        &self,
+        context: &RequestContext,
+        permission: acp::nac::NodePermission,
+    ) -> Result<()> {
+        let (database, context) = (Arc::clone(self.database()), self.caller(context));
+        self.on_pool(move || async move {
+            Ok(database.check_node_access_as(&context, permission).await?)
+        })
+        .await
+    }
+
     /// `context` acting as the node when it names no identity of its own, as
     /// [`Node::begin_transaction`] does.
     pub(crate) fn caller(&self, context: &RequestContext) -> RequestContext {
