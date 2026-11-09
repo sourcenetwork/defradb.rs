@@ -91,6 +91,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Depth-cut DAG fetch | TLA+, Lean | p2p |
 | Have-set DAG fetch | TLA+, Lean | p2p |
 | Index drop during backfill | TLA+ | db-index |
+| Index build gate and close | TLA+ | db-index, db |
 | Purge by DocID | TLA+ | db |
 | Replication filter | TLA+ | db-merge |
 | Node startup | TLA+, Lean | defra-node, storage |
