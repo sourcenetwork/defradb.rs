@@ -135,6 +135,13 @@ impl P2pReplicatorAddArgs {
     }
 
     fn build_filters(&self) -> Result<ReplicationFilters> {
+        let filtered = self.filter.is_some() || self.filter_field.is_some();
+        if filtered && self.collection.is_empty() {
+            return Err(Error::MissingInput(
+                "a replication filter applies per collection: name one with --collection"
+                    .to_string(),
+            ));
+        }
         if let Some(raw) = self.filter.as_deref() {
             let value: serde_json::Value = serde_json::from_str(raw)
                 .map_err(|e| Error::InvalidConfig(format!("--filter is not valid JSON: {e}")))?;
@@ -353,6 +360,19 @@ mod tests {
             filter_field: None,
             filter_value: None,
             filter: Some(r#"["not","an","object"]"#.to_string()),
+        };
+
+        assert!(args.build_filters().is_err());
+    }
+
+    #[test]
+    fn build_filters_without_a_collection_is_refused() {
+        let args = P2pReplicatorAddArgs {
+            collection: vec![],
+            addresses: vec![],
+            filter_field: None,
+            filter_value: None,
+            filter: Some(r#"{"agent_did":{"_eq":"did:a"}}"#.to_string()),
         };
 
         assert!(args.build_filters().is_err());
