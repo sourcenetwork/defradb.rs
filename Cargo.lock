@@ -13805,6 +13805,22 @@ dependencies = [
 [[package]]
 name = "vera-harness"
 version = "0.1.0"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=330e38f184215f40a2bc926480b542bb75051b6d#330e38f184215f40a2bc926480b542bb75051b6d"
+dependencies = [
+ "cosmrs",
+ "eyre",
+ "hex",
+ "regex",
+ "reqwest 0.12.28",
+ "serde_json",
+ "test-infra",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "vera-harness"
+version = "0.1.0"
 source = "git+https://github.com/sourcenetwork/vera.rs?rev=523de40514848e9f0349f3bf7d5a0e9d161402c9#523de40514848e9f0349f3bf7d5a0e9d161402c9"
 dependencies = [
  "alloy-consensus",
@@ -13832,22 +13848,6 @@ dependencies = [
  "vera-modules",
  "vera-node",
  "vera-test-infra",
-]
-
-[[package]]
-name = "vera-harness"
-version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=330e38f184215f40a2bc926480b542bb75051b6d#330e38f184215f40a2bc926480b542bb75051b6d"
-dependencies = [
- "cosmrs",
- "eyre",
- "hex",
- "regex",
- "reqwest 0.12.28",
- "serde_json",
- "test-infra",
- "tokio",
- "tracing",
 ]
 
 [[package]]
