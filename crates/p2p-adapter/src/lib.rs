@@ -137,6 +137,7 @@ pub fn chunk_parents(
     }
 }
 
+#[cfg_attr(not(any(feature = "iroh", feature = "libp2p")), allow(dead_code))]
 fn chunk_parents_of<F>(names: &[String], chunks_of: F) -> Vec<(String, String)>
 where
     F: Fn(&str) -> Vec<String>,
