@@ -498,9 +498,8 @@ fn cbor_array_to_json_array<I: Iterator<Item = ciborium::Value>>(iter: I) -> Res
     Ok(NormalValue::JsonArray(json_arr))
 }
 
-/// Convert a ciborium::Value to a serde_json::Value in DefraDB's JSON
-/// encoding: bytes as base64, whole-number floats as integers.
-pub fn cbor_value_to_json(value: &ciborium::Value) -> Result<serde_json::Value> {
+/// Convert a ciborium::Value to a serde_json::Value.
+fn cbor_value_to_json(value: &ciborium::Value) -> Result<serde_json::Value> {
     match value {
         ciborium::Value::Null => Ok(serde_json::Value::Null),
         ciborium::Value::Bool(b) => Ok(serde_json::Value::Bool(*b)),

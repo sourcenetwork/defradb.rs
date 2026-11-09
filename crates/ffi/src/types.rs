@@ -239,6 +239,7 @@ pub struct NodeInitOptions {
         unsafe extern "C" fn(
             context: usize,
             collection_id: *const c_char,
+            collection_name: *const c_char,
             doc_id: *const c_char,
             fields_json: *const c_char,
         ) -> c_int,

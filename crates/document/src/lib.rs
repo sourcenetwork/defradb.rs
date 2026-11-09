@@ -49,7 +49,6 @@ mod write_preparation;
 pub use commit_row::CommitRow;
 pub use doc_id::{validate_doc_ids, DocID, DOC_ID_V0, SDN_NAMESPACE_V0};
 pub use document::Document;
-pub use encoding_cbor::cbor_value_to_json;
 pub use error::{Error, Result};
 pub use field::{special, Field};
 pub use field_op::FieldOp;

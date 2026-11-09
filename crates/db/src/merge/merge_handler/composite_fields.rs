@@ -179,11 +179,23 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .as_ref()
             .filter(|_| !branchable)
         {
-            let collection_id = context
-                .collection
-                .as_ref()
+            let found;
+            let collection = match context.collection.as_ref() {
+                Some(collection) => Some(collection),
+                None => {
+                    found = context
+                        .metadata
+                        .collection_id
+                        .and_then(|id| self.db.find_collection_by_id(id).ok().flatten());
+                    found.as_ref()
+                }
+            };
+            let collection_id = collection
                 .map(|collection| collection.collection_id())
                 .or(context.metadata.collection_id)
+                .unwrap_or_default();
+            let collection_name = collection
+                .map(|collection| collection.name())
                 .unwrap_or_default();
             // A refusal drops the whole document, so a commit after the
             // first finding no heads follows a refused one: the commits
@@ -196,7 +208,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     .next()
                     .is_none();
             if follows_refusal
-                || !filter.allow_replication(collection_id, context.doc_id_str, &filtered_fields)
+                || !filter.allow_replication(
+                    collection_id,
+                    collection_name,
+                    context.doc_id_str,
+                    &filtered_fields,
+                )
             {
                 return Ok(Some(MergeOutcome::terminal_skip(
                     "refused by the replication filter",

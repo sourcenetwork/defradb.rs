@@ -41,6 +41,7 @@ workers = { path = "../workers" }
 # Serialization
 serde.workspace = true
 serde_json.workspace = true
+ciborium.workspace = true
 serde_yaml = "0.9"
 serde_ipld_dagcbor.workspace = true
 serde_bytes.workspace = true
@@ -95,7 +96,6 @@ cbindgen = "0.28"
 sha2 = { workspace = true, features = ["asm"] }
 
 [dev-dependencies]
-ciborium.workspace = true
 defra-core = { path = "../defra-core", features = ["ambient"] }
 futures-lite.workspace = true
 tempfile = "3.17"
