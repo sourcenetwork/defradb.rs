@@ -19,7 +19,13 @@ use super::replicated::logs;
 struct Cutoff(i64);
 
 impl ReplicationFilter for Cutoff {
-    fn allow_replication(&self, _collection: &str, _doc: &str, fields: &FieldValues) -> bool {
+    fn allow_replication(
+        &self,
+        _collection_id: &str,
+        _collection_name: &str,
+        _doc: &str,
+        fields: &FieldValues,
+    ) -> bool {
         match fields.get("blockNumber") {
             Some(ciborium::Value::Integer(value)) => i128::from(*value) > i128::from(self.0),
             _ => true,

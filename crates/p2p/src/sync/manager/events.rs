@@ -57,6 +57,16 @@ pub enum SyncEvent {
     /// Failed to process a sync request.
     SyncError { cid: Cid, error: String },
 
+    /// A gossip head refused at admission could not be kept: a byte budget
+    /// for deferred heads was full (#2489). Nothing will fetch it, so an
+    /// application that needs the document resyncs it from `peer_id`.
+    GossipHeadDropped {
+        root_cid: Cid,
+        doc_id: String,
+        collection_id: String,
+        peer_id: String,
+    },
+
     /// DAG has missing blocks that need to be fetched.
     ///
     /// The coordinator should:

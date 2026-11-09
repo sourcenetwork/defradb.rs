@@ -93,7 +93,7 @@ fn exporter_unreachable_logs_hint_once_and_suppresses_raw() {
         .expect("free otlp port distinct from http port");
     let rootdir = tempfile::tempdir().expect("tempdir");
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_defra"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_defradb"))
         .arg("start")
         .arg("--rootdir")
         .arg(rootdir.path())

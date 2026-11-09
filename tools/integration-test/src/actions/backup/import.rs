@@ -1,3 +1,4 @@
+use super::file::{refuse_go, BackupFile};
 use crate::clients::{CliRun, HttpRun};
 use crate::scenario::{Common, Failure, Op, Text};
 use crate::test_case::State;
@@ -34,31 +35,16 @@ impl Op for ImportBackup {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        self.check_arguments()?;
-        let node = state.node_on(self.common.node())?;
+        let identity = self.common.client_identity(Self::name())?;
+        let content = self.through_file()?;
         state
-            .block_on(db::backup::import_database_as(
-                &state.context(None),
-                node.database(),
-                node.runner(),
-                self.import_content.as_str(),
-            ))
-            .map(|_| json!({}))
-            .map_err(Failure::operation)
-    }
-}
-
-impl ImportBackup {
-    /// Fails on the arguments no client supports yet.
-    fn check_arguments(&self) -> Result<(), Failure> {
-        self.common.plain(Self::name())?;
-        match self.missing_file {
-            true => Err(Failure::unsupported(format!(
-                "{} argument missingFile",
-                Self::name()
-            ))),
-            false => Ok(()),
-        }
+            .block_on(
+                state
+                    .node_on(self.common.node())?
+                    .import_backup_as(&state.context_as(None, identity), &content),
+            )
+            .map(|()| json!({}))
+            .map_err(|e| Failure::operation(e.to_string()))
     }
 }
 
@@ -70,19 +56,25 @@ impl Action for ImportBackup {
     }
 }
 
+impl ImportBackup {
+    /// The backup as the node reads it back from its file.
+    fn through_file(&self) -> Result<String, Failure> {
+        let file = BackupFile::new(false)?;
+        if !self.missing_file {
+            file.write(self.import_content.as_str())?;
+        }
+        file.read()
+    }
+}
+
 impl HttpRun for ImportBackup {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.check_arguments()?;
-            if state.node(action.common.node())?.is_go() {
-                return Err(Failure::unsupported(format!(
-                    "{} on a Go node: Go's backup route takes a file on the server",
-                    Self::name()
-                )));
-            }
-            let content = action.import_content.as_str().to_owned();
+            let identity = action.common.client_identity(Self::name())?;
+            refuse_go(state, Self::name())?;
+            let content = action.through_file()?;
             state
-                .http_on(action.common.node(), |client| async move {
+                .http_as(action.common.node(), identity, |client| async move {
                     client.backup_import(&content).await
                 })?
                 .map(|()| json!({}))
@@ -94,14 +86,14 @@ impl HttpRun for ImportBackup {
 impl CliRun for ImportBackup {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.check_arguments()?;
-            let dir = tempfile::tempdir().expect("a directory for the backup file");
-            let file = dir.path().join("backup.json");
-            std::fs::write(&file, action.import_content.as_str())
-                .map_err(|e| Failure::operation(format!("write the backup file: {e}")))?;
-            let file = file.to_string_lossy().into_owned();
+            let identity = action.common.client_identity(Self::name())?;
+            let file = BackupFile::new(false)?;
+            if !action.missing_file {
+                file.write(action.import_content.as_str())?;
+            }
+            let args = ["--development", "backup", "import", file.as_str()];
             state
-                .defra_client_development(action.common.node(), &["backup", "import", &file])
+                .defra_client_as(action.common.node(), None, identity, &args)
                 .map(|_| json!({}))
                 .map_err(Failure::operation)
         });

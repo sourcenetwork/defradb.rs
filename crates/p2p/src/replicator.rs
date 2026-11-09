@@ -55,8 +55,6 @@ pub enum ReplicationFilter {
     Predicate(serde_json::Map<String, JsonValue>),
     /// Deferred ACP-based filter (not evaluated in p2p; reserved for future use).
     Acp { relation: String },
-    /// AND-composition of sub-filters.
-    All(Vec<ReplicationFilter>),
 }
 
 impl Eq for ReplicationFilter {}
@@ -67,7 +65,6 @@ impl Eq for ReplicationFilter {}
 enum ReplicationFilterTagged {
     Predicate(serde_json::Map<String, JsonValue>),
     Acp { relation: String },
-    All(Vec<ReplicationFilter>),
 }
 
 /// Legacy wire shape: `{"Field": "...", "Value": ...}`.
@@ -86,7 +83,6 @@ impl From<&ReplicationFilter> for ReplicationFilterTagged {
             ReplicationFilter::Acp { relation } => ReplicationFilterTagged::Acp {
                 relation: relation.clone(),
             },
-            ReplicationFilter::All(v) => ReplicationFilterTagged::All(v.clone()),
         }
     }
 }
@@ -113,7 +109,6 @@ impl<'de> Deserialize<'de> for ReplicationFilter {
             Ok(match tagged {
                 ReplicationFilterTagged::Predicate(m) => ReplicationFilter::Predicate(m),
                 ReplicationFilterTagged::Acp { relation } => ReplicationFilter::Acp { relation },
-                ReplicationFilterTagged::All(v) => ReplicationFilter::All(v),
             })
         }
     }
@@ -152,8 +147,8 @@ pub trait ReplicationFilterMatcher: Send + Sync {
 
 /// Default matcher that handles only the simple `{field: {"_eq": value}}` predicate shape.
 ///
-/// Handles `Predicate` (single `_eq` per field), `All` (all sub-filters must match),
-/// `Acp` → always false (not evaluated in p2p).
+/// Handles `Predicate` (single `_eq` per field); `Acp` → always false (not
+/// evaluated in p2p).
 pub struct EqOnlyFilterMatcher;
 
 impl ReplicationFilterMatcher for EqOnlyFilterMatcher {
@@ -180,9 +175,6 @@ impl ReplicationFilterMatcher for EqOnlyFilterMatcher {
                         .is_some_and(|expected| json_scalar_eq(field_val, expected))
                 })
             }
-            ReplicationFilter::All(filters) => filters
-                .iter()
-                .all(|f| self.matches(_collection_id, f, document)),
             ReplicationFilter::Acp { .. } => false,
         }
     }

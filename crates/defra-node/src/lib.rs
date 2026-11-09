@@ -55,6 +55,7 @@ mod node_query_identity_tests;
 #[cfg(test)]
 mod on_pool_tests;
 mod ops;
+pub use ops::{EncryptedIndexListing, IndexListing};
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
 mod p2p_runtime;
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
@@ -141,6 +142,12 @@ trait SchemaOps: Send + Sync {
         context: &RequestContext,
         source_query: &str,
         target_sdl: &str,
+        transform: Option<&str>,
+    ) -> Result<Vec<CollectionVersion>>;
+    async fn refresh_views(
+        &self,
+        context: &RequestContext,
+        selector: db::CollectionSelector,
     ) -> Result<()>;
     async fn materialize_collection(
         &self,
@@ -181,122 +188,6 @@ impl defra_http::router::CollectionOperations for HttpSchemaOps {
             .add_collection(
                 &RequestContext::bound_or_ambient(self.context.as_ref()),
                 sdl,
-            )
-            .await
-            .map_err(|error| error.to_string())
-    }
-}
-
-#[cfg(feature = "http")]
-struct HttpBackupOps {
-    database: Arc<db::DB<storage::RegolithStore>>,
-    runner: Arc<dyn QueryExecutor>,
-    /// The request these operations serve, for ones bound to it.
-    context: Option<RequestContext>,
-}
-
-#[cfg(feature = "http")]
-#[async_trait::async_trait]
-impl defra_http::router::BackupOperations for HttpBackupOps {
-    fn bind_request(
-        &self,
-        context: &RequestContext,
-    ) -> Option<Arc<dyn defra_http::router::BackupOperations>> {
-        Some(Arc::new(Self {
-            database: Arc::clone(&self.database),
-            runner: Arc::clone(&self.runner),
-            context: Some(context.clone()),
-        }))
-    }
-
-    async fn export(
-        &self,
-        collections: Option<Vec<String>>,
-        pretty: bool,
-    ) -> Result<String, String> {
-        let context = RequestContext::bound_or_ambient(self.context.as_ref());
-        let names = collections.unwrap_or_default();
-        db::backup::export_database_as(&context, &self.database, &self.runner, &names, pretty).await
-    }
-
-    async fn import(&self, data: &str) -> Result<defra_http::router::ImportResult, String> {
-        let context = RequestContext::bound_or_ambient(self.context.as_ref());
-        let stats =
-            db::backup::import_database_as(&context, &self.database, &self.runner, data).await?;
-        Ok(defra_http::router::ImportResult {
-            documents_imported: stats.documents_imported,
-            documents_skipped: 0,
-            collections_affected: stats.collections_affected,
-            errors: vec![],
-        })
-    }
-}
-
-#[cfg(feature = "http")]
-struct HttpDocAcpOps {
-    acp_ops: Arc<dyn acp_ops::AcpOps>,
-    document_acp: Arc<dyn acp::DocumentACP>,
-}
-
-#[cfg(feature = "http")]
-#[async_trait::async_trait]
-impl defra_http::router::DocumentAcpOperations for HttpDocAcpOps {
-    async fn check_doc_access(
-        &self,
-        actor: &identity::Did,
-        permission: acp::DocumentPermission,
-        policy_id: &str,
-        resource_name: &str,
-        doc_id: &str,
-    ) -> std::result::Result<bool, String> {
-        self.document_acp
-            .check_doc_access(
-                &acp::Identity::Authenticated(actor.clone()),
-                permission,
-                policy_id,
-                resource_name,
-                doc_id,
-            )
-            .await
-            .map_err(|error| error.to_string())
-    }
-
-    async fn add_doc_relationship(
-        &self,
-        requestor: &identity::Did,
-        target_actor: &str,
-        collection: &str,
-        doc_id: &str,
-        relation: &str,
-    ) -> std::result::Result<bool, String> {
-        self.acp_ops
-            .add_dac_actor_relationship(
-                requestor.as_ref(),
-                collection,
-                doc_id,
-                relation,
-                target_actor,
-            )
-            .await
-            .map(|existed_already| !existed_already)
-            .map_err(|error| error.to_string())
-    }
-
-    async fn delete_doc_relationship(
-        &self,
-        requestor: &identity::Did,
-        target_actor: &str,
-        collection: &str,
-        doc_id: &str,
-        relation: &str,
-    ) -> std::result::Result<bool, String> {
-        self.acp_ops
-            .delete_dac_actor_relationship(
-                requestor.as_ref(),
-                collection,
-                doc_id,
-                relation,
-                target_actor,
             )
             .await
             .map_err(|error| error.to_string())
@@ -522,11 +413,7 @@ impl Node {
         Fut: std::future::Future<Output = Result<T>> + 'static,
         T: Send + 'static,
     {
-        if self.remote_acp {
-            make().await
-        } else {
-            self.on_pool(make).await
-        }
+        self.ops().on_acp(make).await
     }
 
     /// The context the node's own operations run in: the node's identity acts
@@ -619,10 +506,34 @@ impl Node {
     /// `target_sdl` is the SDL for the view collection (may include directives
     /// like `@downsample` that are forward-declared for future defradb.rs support).
     pub async fn add_view(&self, source_query: &str, target_sdl: &str) -> Result<()> {
-        let (ops, context) = (Arc::clone(&self.schema_ops), self.node_context());
-        let (query, sdl) = (source_query.to_owned(), target_sdl.to_owned());
-        self.on_pool(move || async move { ops.add_view(&context, &query, &sdl).await })
+        self.add_view_as(&self.node_context(), source_query, target_sdl, None)
             .await
+            .map(drop)
+    }
+
+    /// [`Self::add_view`] as `context`'s identity, which node access control
+    /// checks, its documents run through the stored lens `transform` when it
+    /// names one; the view collections it created (Go: `client.Store::AddView`).
+    pub async fn add_view_as(
+        &self,
+        context: &RequestContext,
+        source_query: &str,
+        target_sdl: &str,
+        transform: Option<&str>,
+    ) -> Result<Vec<CollectionVersion>> {
+        self.ops()
+            .add_view(context, source_query, target_sdl, transform)
+            .await
+    }
+
+    /// Refresh the materialized views `selector` names, every one when it
+    /// names none (Go: `client.Store::RefreshViews`).
+    pub async fn refresh_views_as(
+        &self,
+        context: &RequestContext,
+        selector: db::CollectionSelector,
+    ) -> Result<()> {
+        self.ops().refresh_views(context, selector).await
     }
 
     /// Eagerly migrate and cache every known-version document in a collection.
@@ -780,7 +691,7 @@ impl Node {
         relation: &str,
         target: &str,
     ) -> Result<bool> {
-        let ops = Arc::clone(&self.acp_ops);
+        let ops = self.ops().acp_ops;
         let owned = |value: &str| value.to_owned();
         let (identity, collection, doc_id) = (owned(identity), owned(collection), owned(doc_id));
         let (relation, target) = (owned(relation), owned(target));
@@ -806,7 +717,7 @@ impl Node {
         relation: &str,
         target: &str,
     ) -> Result<bool> {
-        let ops = Arc::clone(&self.acp_ops);
+        let ops = self.ops().acp_ops;
         let owned = |value: &str| value.to_owned();
         let (identity, collection, doc_id) = (owned(identity), owned(collection), owned(doc_id));
         let (relation, target) = (owned(relation), owned(target));
@@ -923,10 +834,9 @@ impl Node {
     /// of `collection`, so the node can write SE artifacts and act as an SE
     /// query owner (#976).
     pub async fn add_encrypted_index(&self, collection: &str, field_name: &str) -> Result<()> {
-        let database = Arc::clone(&self.database);
-        let (collection, field_name) = (collection.to_owned(), field_name.to_owned());
-        self.on_pool(move || add_encrypted_index(database, collection, field_name))
+        self.add_encrypted_index_as(&self.node_context(), collection, field_name)
             .await
+            .map(drop)
     }
 
     /// Authorize a peer to open an inbound P2P connection to this node while
@@ -1131,59 +1041,6 @@ fn refused_transaction(error: edge::EdgeError, step: &str) -> query::Transaction
         }
         error => format!("transaction task failed: {error}"),
     })
-}
-
-/// Adds the encrypted index [`Node::add_encrypted_index`] names, on
-/// the worker it runs on.
-async fn add_encrypted_index(
-    database: Arc<db::DB<storage::RegolithStore>>,
-    collection: String,
-    field_name: String,
-) -> Result<()> {
-    use storage::corekv::Key;
-
-    let (collection, field_name) = (collection.as_str(), field_name.as_str());
-    let col = database
-        .get_collection(collection)
-        .map_err(Error::CollectionLookupFailed)?
-        .ok_or_else(|| Error::CollectionMissing(collection.to_owned()))?;
-    let schema = col.schema();
-
-    if !schema.fields.iter().any(|f| f.name == field_name) {
-        return Err(Error::EncryptedIndexFieldMissing(field_name.to_owned()));
-    }
-    if schema
-        .encrypted_indexes
-        .iter()
-        .any(|idx| idx.field_name == field_name)
-    {
-        return Err(Error::EncryptedIndexExists(field_name.to_owned()));
-    }
-
-    let txn = database.new_txn(false).await.map_err(Error::TxnCreate)?;
-    {
-        let mut updated_schema = schema.clone();
-        updated_schema
-            .encrypted_indexes
-            .push(schema::EncryptedIndexDescription::new(field_name));
-
-        let collection_key =
-            storage::keys::systemstore::CollectionKey::new(&updated_schema.version_id);
-        let schema_data = serde_json::to_vec(&updated_schema).map_err(Error::SchemaSerialize)?;
-        let systemstore = txn.systemstore().map_err(Error::SystemstoreOpen)?;
-        systemstore
-            .set(&collection_key.bytes(), &schema_data)
-            .await
-            .map_err(Error::SchemaSave)?;
-        let name_key = storage::keys::systemstore::CollectionNameKey::new(collection);
-        systemstore
-            .set(&name_key.bytes(), updated_schema.version_id.as_bytes())
-            .await
-            .map_err(Error::NameMappingSave)?;
-    }
-    txn.commit().await.map_err(Error::Commit)?;
-    database.reload_cache().await.map_err(Error::CacheReload)?;
-    Ok(())
 }
 
 async fn execute_autocommit_request(

@@ -33,7 +33,7 @@ api="http://127.0.0.1:${api_port}"
 relay="http://127.0.0.1:${relay_port}"
 
 cargo build -p cli --features iroh-relay-server --manifest-path "$root/Cargo.toml"
-defra="$root/target/debug/defra"
+defra="$root/target/debug/defradb"
 
 # `defra start` writes a complete default config before anything else, which is
 # the only reliable way to get every section the loader requires.

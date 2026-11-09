@@ -311,7 +311,7 @@ jobs:
           python3 -m pip install --quiet --break-system-packages brotli || \
             echo "::notice::brotli is unavailable; the bundle is reported gzip-only"
           python3 tools/perf-site/artifact_sizes.py --out bench-size.jsonl \
-            "defra=target/release/defra" \
+            "defra=target/release/defradb" \
             "defra-wasm=pkg/wasm/defra_wasm_bg.wasm"
       - name: Record how quiet the host is
         run: python3 tools/perf-site/loadguard.py --out loadguard.json

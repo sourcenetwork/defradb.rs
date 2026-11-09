@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 use crate::did::Did;
-use crate::thread_bounds::MaybeSendSync;
+use crate::thread_bounds::{MaybeBoxFuture, MaybeSendSync};
 
 use super::StorePolicyOptions;
 use crate::error::Result;
@@ -24,6 +24,18 @@ pub trait ZanzibarStore: MaybeSendSync {
     /// Open one snapshot for a complete standalone authorization operation.
     /// A store already bound to a caller's transaction returns `None`.
     async fn begin_scope(&self, _readonly: bool) -> Result<Option<Box<dyn ZanzibarScope>>> {
+        Ok(None)
+    }
+
+    /// Run `attempt` on a fresh write scope per try and commit the try that
+    /// wins; a lost commit runs it again, `max_attempts` tries in all. The
+    /// inner result is the winning try's value or the refusal that ended it.
+    /// A store already bound to a caller's transaction returns `None`.
+    async fn transact(
+        &self,
+        _max_attempts: u32,
+        _attempt: ScopeAttempt,
+    ) -> Result<Option<ScopeOutcome>> {
         Ok(None)
     }
 
@@ -111,3 +123,23 @@ pub trait ZanzibarScope: crate::thread_bounds::MaybeSend {
     fn store(&self) -> std::sync::Arc<dyn ZanzibarStore>;
     async fn commit(self: Box<Self>) -> Result<()>;
 }
+
+/// What one try of [`ZanzibarStore::transact`] ends with, boxed so a store
+/// carries any caller's value or refusal.
+#[cfg(not(target_arch = "wasm32"))]
+pub type ScopeValue = Box<dyn std::any::Any + Send>;
+#[cfg(target_arch = "wasm32")]
+pub type ScopeValue = Box<dyn std::any::Any>;
+
+/// The winning try's value, or the refusal that ended the transaction
+/// without a retry.
+pub type ScopeOutcome = std::result::Result<ScopeValue, ScopeValue>;
+
+/// One try of [`ZanzibarStore::transact`], run on that try's scope.
+#[cfg(not(target_arch = "wasm32"))]
+pub type ScopeAttempt = Box<
+    dyn FnMut(std::sync::Arc<dyn ZanzibarStore>) -> MaybeBoxFuture<'static, ScopeOutcome> + Send,
+>;
+#[cfg(target_arch = "wasm32")]
+pub type ScopeAttempt =
+    Box<dyn FnMut(std::sync::Arc<dyn ZanzibarStore>) -> MaybeBoxFuture<'static, ScopeOutcome>>;

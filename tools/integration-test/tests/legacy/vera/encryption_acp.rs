@@ -15,7 +15,6 @@
 
 use std::time::Duration;
 
-use integration_test::node::{DefraNode, RustNode};
 use integration_test::{extract_p2p_addr, generate_identity, TestCluster};
 use integration_test::{vera_cli_binary, BinarySource};
 
@@ -203,7 +202,7 @@ async fn encryption_acp_user_and_node_access() {
     edge::compat(async {
         let (cluster, _policy_id, ids) = setup_two_nodes().await;
 
-        let binary = RustNode::from_workspace().binary_path().to_path_buf();
+        let binary = integration_test::rust_binary();
         let user = generate_identity(&binary).expect("user identity");
 
         let c0 = cluster.client(0);
@@ -275,7 +274,7 @@ async fn encryption_acp_user_access_not_node() {
     edge::compat(async {
         let (cluster, _policy_id, ids) = setup_two_nodes().await;
 
-        let binary = RustNode::from_workspace().binary_path().to_path_buf();
+        let binary = integration_test::rust_binary();
         let user = generate_identity(&binary).expect("user identity");
 
         let c0 = cluster.client(0);

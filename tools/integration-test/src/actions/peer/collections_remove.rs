@@ -1,4 +1,4 @@
-use crate::actions::peer::support::{ambient, failed};
+use crate::actions::peer::support::failed;
 use crate::clients::{CliRun, HttpRun};
 use crate::scenario::{Common, Failure, Op};
 use crate::test_case::State;
@@ -33,11 +33,11 @@ impl Op for DeleteCollectionSubscription {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        self.common.plain(Self::name())?;
+        let identity = self.common.client_identity(Self::name())?;
         let names = self.collections.clone();
         let node = state.node_on(self.common.node())?;
         state
-            .block_on(node.delete_p2p_collections_as(&ambient(), &names))
+            .block_on(node.delete_p2p_collections_as(&state.context_as(None, identity), &names))
             .map_err(failed)?;
         Ok(json!({}))
     }
@@ -54,10 +54,10 @@ impl Action for DeleteCollectionSubscription {
 impl HttpRun for DeleteCollectionSubscription {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.common.plain(Self::name())?;
+            let identity = action.common.client_identity(Self::name())?;
             let names = action.collections.clone();
             state
-                .http_on(action.common.node(), |client| async move {
+                .http_as(action.common.node(), identity, |client| async move {
                     client.delete_p2p_collections(&names).await
                 })?
                 .map_err(failed)?;
@@ -69,12 +69,13 @@ impl HttpRun for DeleteCollectionSubscription {
 impl CliRun for DeleteCollectionSubscription {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.common.plain(Self::name())?;
+            let identity = action.common.client_identity(Self::name())?;
             let names = action.collections.join(",");
             state
-                .defra_client_on(
+                .defra_client_as(
                     action.common.node(),
                     None,
+                    identity,
                     &["p2p", "collection", "delete", &names],
                 )
                 .map_err(Failure::operation)?;

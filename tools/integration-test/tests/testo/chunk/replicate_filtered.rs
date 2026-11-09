@@ -74,7 +74,7 @@ fn public_only_replicator() -> Actions {
     AddReplicator {
         target: "db1".into(),
         collections: vec!["Article".into()],
-        filter: Some(json!({ "kind": { "_eq": PUBLIC } })),
+        filter: json!({ "kind": { "_eq": PUBLIC } }),
         common: on(Some("db0")),
         ..Default::default()
     }

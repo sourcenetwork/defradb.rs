@@ -20,21 +20,21 @@ use super::chunk_filter_support::{public_only_replicator, CHUNKS, PEER, PUBLIC, 
 
 const FAILURE_CHANNEL_CAPACITY: usize = 64;
 /// The generation the recorder gives every marker it registers.
-const MARKER_GENERATION: u64 = 1;
+pub(super) const MARKER_GENERATION: u64 = 1;
 
 type Mutator =
     BroadcastMutator<RegolithStore, DefraBlockstore<RegolithStore>, ConnectedPeerTransport>;
 
-struct Node {
-    db: Arc<DB<RegolithStore>>,
-    mutator: Mutator,
+pub(super) struct Node {
+    pub(super) db: Arc<DB<RegolithStore>>,
+    pub(super) mutator: Mutator,
     /// The DocIDs a push job was registered for.
-    pushed: Atom<Vec<String>>,
-    failures: p2p::sync::PushFailureReceiver,
+    pub(super) pushed: Atom<Vec<String>>,
+    pub(super) failures: p2p::sync::PushFailureReceiver,
 }
 
 // A node whose only replicator takes public articles, with their chunks.
-async fn node() -> Node {
+pub(super) async fn node() -> Node {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let db = Arc::new(DB::from_arc(store.clone()).unwrap());
     db.set_network(edge::testing::edge());
@@ -96,11 +96,11 @@ where
 }
 
 impl Node {
-    fn take_pushed(&self) -> RapidHashSet<String> {
+    pub(super) fn take_pushed(&self) -> RapidHashSet<String> {
         self.pushed.swap(Vec::new()).iter().cloned().collect()
     }
 
-    fn article(&self, kind: &str, body: &str) -> Document {
+    pub(super) fn article(&self, kind: &str, body: &str) -> Document {
         let schema = self
             .db
             .get_collection("Article")
@@ -116,7 +116,7 @@ impl Node {
 
 impl Node {
     /// The DocIDs of every chunk `parent` ever had, deleted ones too.
-    async fn chunks_of(&self, parent: &DocID) -> RapidHashSet<String> {
+    pub(super) async fn chunks_of(&self, parent: &DocID) -> RapidHashSet<String> {
         let chunks = self.db.get_collection(CHUNKS).unwrap().unwrap();
         let txn = self.db.new_txn(true).await.unwrap();
         let docs = chunks
@@ -137,7 +137,7 @@ impl Node {
     }
 }
 
-fn with_parent(parent: &DocID, chunks: RapidHashSet<String>) -> RapidHashSet<String> {
+pub(super) fn with_parent(parent: &DocID, chunks: RapidHashSet<String>) -> RapidHashSet<String> {
     let mut docs = chunks;
     docs.insert(parent.to_string());
     docs

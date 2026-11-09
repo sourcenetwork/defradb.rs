@@ -124,18 +124,18 @@ class Tests(unittest.TestCase):
     def test_artifact_requires_unique_release_executable_under_owned_target(self):
         target = self.root / 'target'
         target.mkdir()
-        binary = target / 'defra'
+        binary = target / 'defradb'
         binary.write_bytes(b'fixture')
-        item = {'reason': 'compiler-artifact', 'target': {'name': 'defra'},
+        item = {'reason': 'compiler-artifact', 'target': {'name': 'defradb'},
                 'profile': {'debug_assertions': False}, 'executable': str(binary)}
         log = self.root / 'build.log'
         log.write_text(json.dumps(item) + '\n')
-        self.assertEqual(driver.artifact(log, 'defra', target), binary.resolve())
+        self.assertEqual(driver.artifact(log, 'defradb', target), binary.resolve())
         for entries in ([item, item], [{**item, 'profile': {'debug_assertions': True}}],
                         [{**item, 'executable': str(self.root / 'outside')}], []):
             log.write_text(''.join(json.dumps(x) + '\n' for x in entries))
             with self.assertRaises(ValueError):
-                driver.artifact(log, 'defra', target)
+                driver.artifact(log, 'defradb', target)
 
     def test_environment_removes_profile_compiler_runtime_and_deadline_overrides(self):
         poison = {key: 'poison' for key in ('CARGO_PROFILE_RELEASE_LTO', 'RUSTC', 'RUSTDOC',
@@ -249,10 +249,10 @@ class Tests(unittest.TestCase):
         runs = {c[1]: c for c in runner.calls if c[0] == 'run'}
         self.assertEqual(runs['build-defra'][2][runs['build-defra'][2].index('--features') + 1], 'vera')
         first_test = next(i for i, c in enumerate(runner.calls) if c[0] == 'test')
-        self.assertLess(runner.calls.index(('stage', 'defra')), first_test)
+        self.assertLess(runner.calls.index(('stage', 'defradb')), first_test)
         self.assertLess(runner.calls.index(('stage', 'verad')), first_test)
-        self.assertEqual(runs['compile-native'][3]['DEFRA_RUST_BINARY'], '/staged/defra')
-        self.assertEqual(runs['compile-native'][3]['DEFRA_VERA_BINARY'], '/staged/defra')
+        self.assertEqual(runs['compile-native'][3]['DEFRA_RUST_BINARY'], '/staged/defradb')
+        self.assertEqual(runs['compile-native'][3]['DEFRA_VERA_BINARY'], '/staged/defradb')
         self.assertEqual(runs['compile-native'][3]['VERAD_BINARY'], '/staged/verad')
         tests = [c for c in runner.calls if c[0] == 'test']
         self.assertEqual(len(tests), 8)

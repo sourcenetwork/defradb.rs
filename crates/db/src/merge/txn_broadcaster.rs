@@ -15,7 +15,7 @@ use p2p::transport::P2PTransport;
 use regolith::sync::{Atom, Event};
 
 use crate::merge::broadcast_mutator::broadcast::{
-    broadcast_with_retry_with_creator, log_broadcast_failure,
+    broadcast_with_retry_with_creator, log_broadcast_failure, spawn_gossip_or_report,
 };
 
 /// `TxnBroadcaster` that fans committed transactional writes out to peers via
@@ -31,6 +31,8 @@ where
     T: P2PTransport + 'static,
 {
     sync: Arc<SyncCoordinator<B, T>>,
+    /// Where a push that found no peers is reported.
+    bus: Option<Arc<dyn events::Bus>>,
     /// Set when the last submitted write's task finished.
     last: Atom<Arc<Event>>,
 }
@@ -40,11 +42,12 @@ where
     B: Blockstore + defra_core::thread_bounds::MaybeSendSync + 'static,
     T: P2PTransport + 'static,
 {
-    pub fn new(sync: Arc<SyncCoordinator<B, T>>) -> Self {
+    pub fn new(sync: Arc<SyncCoordinator<B, T>>, bus: Option<Arc<dyn events::Bus>>) -> Self {
         let finished = Event::new();
         finished.set();
         Self {
             sync,
+            bus,
             last: Atom::new(Arc::new(finished)),
         }
     }
@@ -102,12 +105,13 @@ where
             registered: false,
         };
         let sync = Arc::clone(&self.sync);
+        let bus = self.bus.clone();
         // A task skipped at shutdown is dropped here with `done` and
         // `finished`, so neither its transaction nor the next write waits.
         self.sync
             .spawn_background_task("ordered_transaction_broadcast", async move {
                 previous.wait().await;
-                broadcast(&sync, event).await;
+                broadcast(&sync, bus.as_ref(), event).await;
                 unregistered.registered();
                 drop(done);
                 drop(finished);
@@ -115,8 +119,11 @@ where
     }
 }
 
-async fn broadcast<B, T>(sync: &Arc<SyncCoordinator<B, T>>, event: TxnBroadcastEvent)
-where
+async fn broadcast<B, T>(
+    sync: &Arc<SyncCoordinator<B, T>>,
+    bus: Option<&Arc<dyn events::Bus>>,
+    event: TxnBroadcastEvent,
+) where
     B: Blockstore + defra_core::thread_bounds::MaybeSendSync + 'static,
     T: P2PTransport + 'static,
 {
@@ -189,49 +196,75 @@ where
     }
 
     let gossip = Arc::clone(sync);
+    let report_bus = bus;
+    let bus = bus.cloned();
+    let roots = std::iter::once((
+        doc_cid,
+        doc_id.clone(),
+        collection_id.clone(),
+        doc_block.len(),
+    ))
+    .chain(collection_block.as_ref().map(|(col_cid, col_block)| {
+        (
+            *col_cid,
+            String::new(),
+            collection_id.clone(),
+            col_block.len(),
+        )
+    }))
+    .collect();
 
     // The transaction's broadcast is done once its scope markers are
-    // durable. Gossip still runs under the node lifecycle without holding
-    // the transaction or the next broadcast open.
-    sync.spawn_non_authoritative_broadcast_task("broadcast_transaction_update", async move {
-        let creator_ref = creator_did.as_deref();
+    // durable and its gossip holds a broadcast slot. Gossip still runs under
+    // the node lifecycle without holding the transaction open.
+    spawn_gossip_or_report(
+        sync,
+        report_bus,
+        "broadcast_transaction_update",
+        roots,
+        async move {
+            let creator_ref = creator_did.as_deref();
 
-        let doc_block_result = BlockResult {
-            cid: doc_cid,
-            block: doc_block,
-            doc_id: doc_id.clone(),
-            field_cids: vec![],
-            encryption_cids: vec![],
-        };
-        log_broadcast_failure(
-            &broadcast_with_retry_with_creator(
-                &gossip,
-                &doc_block_result,
-                &collection_id,
-                &collection_name,
-                creator_ref,
-            )
-            .await,
-        );
-
-        if let Some((col_cid, col_block)) = collection_block {
-            let col_block_result = BlockResult {
-                cid: col_cid,
-                block: col_block,
-                doc_id: String::new(),
+            let doc_block_result = BlockResult {
+                cid: doc_cid,
+                block: doc_block,
+                doc_id: doc_id.clone(),
                 field_cids: vec![],
                 encryption_cids: vec![],
             };
             log_broadcast_failure(
                 &broadcast_with_retry_with_creator(
                     &gossip,
-                    &col_block_result,
+                    bus.as_ref(),
+                    &doc_block_result,
                     &collection_id,
                     &collection_name,
                     creator_ref,
                 )
                 .await,
             );
-        }
-    });
+
+            if let Some((col_cid, col_block)) = collection_block {
+                let col_block_result = BlockResult {
+                    cid: col_cid,
+                    block: col_block,
+                    doc_id: String::new(),
+                    field_cids: vec![],
+                    encryption_cids: vec![],
+                };
+                log_broadcast_failure(
+                    &broadcast_with_retry_with_creator(
+                        &gossip,
+                        bus.as_ref(),
+                        &col_block_result,
+                        &collection_id,
+                        &collection_name,
+                        creator_ref,
+                    )
+                    .await,
+                );
+            }
+        },
+    )
+    .await;
 }

@@ -39,7 +39,7 @@
 \*     ReplicatorInfo::matches_chunk_source, ReplicatorInfo::matches_filter
 \*   crates/p2p/src/sync/coordinator/broadcast.rs  push_jobs, PendingPush::admission
 \*   crates/p2p-adapter/src/lib.rs  with_chunk_collections, chunk_source_ids
-\*   crates/db/src/merge/broadcast_mutator/mod.rs  BroadcastMutator::publish_derived
+\*   crates/db/src/merge/broadcast_mutator/mod.rs  BroadcastMutator::derived_heads
 \*   crates/db/src/merge/broadcast_mutator/batch.rs  BroadcastBatchMutator::capture_derived
 \*   crates/db/src/chunk/sync/write.rs  ChunkWrites::publish (explicit transaction)
 \*   crates/db/src/merge/txn_broadcaster.rs  broadcast (explicit transaction)

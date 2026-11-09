@@ -16,6 +16,7 @@ fn generated_collection_has_no_mutations() {
             expected_data: json!({ "__schema": { "mutationType": { "fields": [
                 { "name": "add_Article" },
                 { "name": "update_Article" },
+                { "name": "upsert_Article" },
                 { "name": "delete_Article" },
                 { "name": "truncate_Article" },
             ] } } }),

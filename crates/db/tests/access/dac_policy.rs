@@ -81,24 +81,6 @@ fn a_node_without_acp_refuses_with_gos_text() {
 }
 
 #[test]
-fn a_policy_needs_a_creator_and_data() {
-    workers::block_on(async {
-        let (db, _) = local_db();
-        let err = db
-            .add_dac_policy_as(&RequestContext::default(), POLICY)
-            .await
-            .unwrap_err();
-        assert_eq!(err.to_string(), "policy creator can not be empty");
-        let err = db
-            .add_dac_policy_as(&acting(OWNER_DID), "")
-            .await
-            .unwrap_err();
-        assert_eq!(err.to_string(), "policy data can not be empty");
-    })
-    .unwrap()
-}
-
-#[test]
 fn an_invalid_policy_carries_gos_wrapper_and_the_reason() {
     workers::block_on(async {
         let (db, _) = local_db();

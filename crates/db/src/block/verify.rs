@@ -217,23 +217,20 @@ pub async fn verify_block_signature_as<S: Store>(
     key_type: crypto::KeyType,
     caller_identity: &acp::Identity,
 ) -> Result<(), String> {
-    let pub_key = crypto::public_key_from_string(key_type, public_key_hex)
-        .map_err(|e| format!("invalid public key: {}", e))?;
-
     let txn = database
         .new_txn(true)
         .await
         .map_err(|e| format!("failed to create transaction: {}", e))?;
 
     verify_block_signature_with_txn(
+        context,
         database,
         document_acp,
         &txn,
         cid_str,
-        pub_key.as_ref(),
         public_key_hex,
+        key_type,
         caller_identity,
-        context.dac_bypass(),
     )
     .await
 }
@@ -272,33 +269,47 @@ pub async fn verify_block_signature_in_txn_as<S: Store>(
     key_type: crypto::KeyType,
     caller_identity: &acp::Identity,
 ) -> Result<(), String> {
-    let pub_key = crypto::public_key_from_string(key_type, public_key_hex)
-        .map_err(|e| format!("invalid public key: {}", e))?;
-
     verify_block_signature_with_txn(
+        context,
         database,
         document_acp,
         txn,
         cid_str,
-        pub_key.as_ref(),
         public_key_hex,
+        key_type,
         caller_identity,
-        context.dac_bypass(),
     )
     .await
 }
 
+/// Verify at one view: NAC, the block read and document ACP all decide at
+/// `txn`. NAC goes first, as in Go's `VerifySignature`.
 #[allow(clippy::too_many_arguments)]
 async fn verify_block_signature_with_txn<S: Store>(
+    context: &RequestContext,
     database: &Arc<DB<S>>,
     document_acp: &dyn acp::DocumentACP,
     txn: &DbTxn<S>,
     cid_str: &str,
-    pub_key: &dyn crypto::PublicKey,
     public_key_hex: &str,
+    key_type: crypto::KeyType,
     caller_identity: &acp::Identity,
-    dac_bypass: bool,
 ) -> Result<(), String> {
+    let systemstore = txn
+        .systemstore()
+        .map_err(|e| format!("failed to get systemstore: {}", e))?;
+    database
+        .check_node_access_in_txn(
+            context,
+            systemstore.sibling(storage::namespace::Namespace::Acpstore),
+            acp::nac::NodePermission::SignatureVerify,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let pub_key = crypto::public_key_from_string(key_type, public_key_hex)
+        .map_err(|e| format!("invalid public key: {}", e))?;
+    let dac_bypass = context.dac_bypass();
+
     let (block, signature, _, _) = load_authorized_block_signature(
         database,
         document_acp,
@@ -315,7 +326,7 @@ async fn verify_block_signature_with_txn<S: Store>(
         return Err("signature was created by a different key".to_string());
     }
 
-    verify_signature_bytes(&block, &signature, pub_key)
+    verify_signature_bytes(&block, &signature, pub_key.as_ref())
 }
 
 async fn load_authorized_block_signature<S: Store>(
@@ -345,7 +356,8 @@ async fn load_authorized_block_signature<S: Store>(
         .get(&parsed_cid.to_bytes())
         .await
         .map_err(|e| format!("failed to load block: {}", e))?
-        .ok_or_else(|| format!("could not find block: {}", cid_str))?;
+        // Go's blockstore words a missing block as `ipld: could not find <cid>`.
+        .ok_or_else(|| format!("ipld: could not find {}", cid_str))?;
     blockstore::verify_block_cid(&parsed_cid, &block_bytes)
         .map_err(|e| format!("block CID verification failed: {}", e))?;
 
@@ -414,8 +426,12 @@ async fn load_authorized_block_signature<S: Store>(
                     }
                 };
 
+                // Decide at the view the block was read at. A remote provider
+                // cannot join the transaction and stays at the network edge.
+                let bound = document_acp
+                    .bind_transaction(systemstore.sibling(storage::namespace::Namespace::Acpstore));
                 let checker = acp::read_access::DirectChecker {
-                    acp: document_acp,
+                    acp: bound.as_deref().unwrap_or(document_acp),
                     identity: caller_identity,
                 };
 

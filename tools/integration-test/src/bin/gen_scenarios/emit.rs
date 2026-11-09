@@ -436,7 +436,13 @@ fn step_text(step: &WireStep, used: &mut Used, depth: usize) -> String {
 }
 
 /// One `#[test]` function for the scenario.
-pub fn test_fn(loaded: &Loaded, name: &str, leaf: Option<&str>, used: &mut Used) -> String {
+pub fn test_fn(
+    loaded: &Loaded,
+    name: &str,
+    leaf: Option<&str>,
+    clients: Option<&[&str]>,
+    used: &mut Used,
+) -> String {
     let mut steps = loaded.scenario.steps.clone();
     let without_db = lifecycle::strip_implicit(&mut steps);
     let steps = parallel::expand(steps);
@@ -520,17 +526,37 @@ pub fn test_fn(loaded: &Loaded, name: &str, leaf: Option<&str>, used: &mut Used)
     if without_db {
         out.push_str("        without_db: true,\n");
     }
+    if let Some(clients) = clients {
+        let clients: Vec<String> = clients.iter().map(|c| format!("ClientType::{c}")).collect();
+        out.push_str(&format!(
+            "        client_types: Some(&[{}]),\n",
+            clients.join(", ")
+        ));
+    }
+    if let Some((kind, reason)) = super::not_applying::lookup(&loaded.scenario.id) {
+        out.push_str(&format!(
+            "        not_applying: Some(NotApplying::{kind}({})),\n",
+            literal::string(reason)
+        ));
+    }
     out.push_str("        ..Default::default()\n    }\n    .execute();\n}\n");
     out
 }
 
-pub fn file_header(loaded: &Loaded, uses_matchers: bool, used: &Used, body: &str) -> String {
+pub fn file_header(
+    loaded: &Loaded,
+    pin: Option<&str>,
+    uses_matchers: bool,
+    used: &Used,
+    body: &str,
+) -> String {
     let source = &loaded.scenario.source;
+    let revision = pin.unwrap_or(&source.revision);
     let mut out = format!(
         "//! Generated from the conformance scenarios of {path} at defradb {revision}.\n\
          //! License: {license}. Copyright {copyright}.\n\n",
         path = source.path,
-        revision = &source.revision[..12.min(source.revision.len())],
+        revision = &revision[..12.min(revision.len())],
         license = source.license,
         copyright = source.copyright,
     );
@@ -558,6 +584,9 @@ pub fn file_header(loaded: &Loaded, uses_matchers: bool, used: &Used, body: &str
     if uses_matchers {
         out.push_str("use integration_test::m;\n");
     }
+    if body.contains("ClientType::") {
+        out.push_str("use integration_test::ClientType;\n");
+    }
     let mut scenario_uses = Vec::new();
     if used.common {
         scenario_uses.push("Common");
@@ -578,7 +607,10 @@ pub fn file_header(loaded: &Loaded, uses_matchers: bool, used: &Used, body: &str
             scenario_uses.join(", ")
         ));
     }
-    out.push_str("use integration_test::test_case::TestCase;\n");
+    match body.contains("NotApplying::") {
+        true => out.push_str("use integration_test::test_case::{NotApplying, TestCase};\n"),
+        false => out.push_str("use integration_test::test_case::TestCase;\n"),
+    }
     if used.chunked {
         out.push_str("use testo::action::ActionInstance;\n");
     }

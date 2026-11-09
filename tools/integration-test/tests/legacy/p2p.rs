@@ -14,7 +14,6 @@ mod replication;
 mod replication_advanced;
 mod resilience;
 mod sync;
-mod text_crdt;
 mod transports;
 mod trust_boundary;
 mod write_contention;

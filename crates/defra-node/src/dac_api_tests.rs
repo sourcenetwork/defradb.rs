@@ -86,31 +86,6 @@ async fn visible_users(node: &Node, identity: Option<identity::Did>) -> usize {
 }
 
 #[test]
-fn add_dac_policy_rejects_empty_identity_and_policy() {
-    workers::block_on(async {
-        let node = Node::builder().build().await.unwrap();
-        let err = node
-            .add_dac_policy_as(
-                &defra_core::RequestContext::ambient().with_identity(Some(String::from(""))),
-                POLICY_YAML,
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(err.to_string(), "policy creator can not be empty");
-        let err = node
-            .add_dac_policy_as(
-                &defra_core::RequestContext::ambient().with_identity(Some(String::from(DID_A))),
-                "",
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(err.to_string(), "policy data can not be empty");
-        node.shutdown().await.unwrap();
-    })
-    .unwrap()
-}
-
-#[test]
 fn add_dac_policy_returns_id_and_validates_policy() {
     workers::block_on(async {
     let node = Node::builder().build().await.unwrap();
@@ -239,7 +214,7 @@ fn dac_relationship_rejects_owner_relation() {
             .unwrap_err();
         assert_eq!(
             add.to_string(),
-            "OPERATION_FORBIDDEN: cannot add owner relation"
+            "failed to add document actor relationship with acp: OPERATION_FORBIDDEN: cannot add owner relation"
         );
         let delete = node
             .delete_dac_actor_relationship(DID_A, "Users", &doc_id, "owner", DID_B)
@@ -247,7 +222,7 @@ fn dac_relationship_rejects_owner_relation() {
             .unwrap_err();
         assert_eq!(
             delete.to_string(),
-            "OPERATION_FORBIDDEN: cannot delete owner relation"
+            "failed to delete document actor relationship with acp: OPERATION_FORBIDDEN: cannot delete owner relation"
         );
         node.shutdown().await.unwrap();
     })

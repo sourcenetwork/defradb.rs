@@ -39,6 +39,9 @@ env:
   SCCACHE_S3_KEY_PREFIX: ci/
   SCCACHE_IGNORE_SERVER_IO_ERROR: '1'
   SCCACHE_IDLE_TIMEOUT: '0'
+  # A per-second build time in defra-node changed its compile inputs in every
+  # job, so it and every crate above it missed sccache. CI builds share one.
+  DEFRA_NODE_BUILD_TIME_OVERRIDE: ci
 
 # RunsOn retries a job whose Spot instance is reclaimed, but a failed
 # merge-queue run ejects the pull request before that retry, so merge-queue
@@ -50,6 +53,7 @@ jobs:
     outputs:
       full: ${{ steps.decide.outputs.full }}
       integration_matrix: ${{ steps.decide.outputs.integration_matrix }}
+      io_variants: ${{ steps.decide.outputs.io_variants }}
     steps:
       - id: decide
         uses: actions/github-script@v9
@@ -79,9 +83,19 @@ jobs:
             }
             core.setOutput('integration_matrix', JSON.stringify({ include: suites }));
 
+            // The other nuclei io backends run only after merge, on main (there is
+            // no merge queue): on a pull request they tripled P2P Linux and
+            // Conformance, and what they caught there was mostly one flaky test.
+            const ioVariants = [{ name: '', suffix: '', backend: '', recv: '' }];
+            if (context.eventName !== 'pull_request') {
+              ioVariants.push({ name: ' (epoll)', suffix: '-epoll', backend: 'epoll', recv: '' });
+              ioVariants.push({ name: ' (no receive buffers)', suffix: '-no-recv-buffers', backend: '', recv: '0' });
+            }
+            core.setOutput('io_variants', JSON.stringify(ioVariants));
+
   lint-default:
     name: Lint (default)
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -113,7 +127,9 @@ jobs:
 
   feature-checks:
     name: Feature checks (${{ matrix.group }})
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    needs: ci-scope
+    if: needs.ci-scope.outputs.full == 'true'
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     strategy:
       fail-fast: false
       matrix:
@@ -158,7 +174,7 @@ jobs:
 
   dependency-checks:
     name: Dependency checks
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -177,18 +193,21 @@ jobs:
 
   lint:
     name: Lint
-    needs: [lint-default, feature-checks, dependency-checks]
+    needs: [ci-scope, lint-default, feature-checks, dependency-checks]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check lint results
         env:
+          FULL: ${{ needs.ci-scope.outputs.full }}
           DEFAULT: ${{ needs.lint-default.result }}
           FEATURES: ${{ needs.feature-checks.result }}
           DEPENDENCIES: ${{ needs.dependency-checks.result }}
         run: |
           test "$DEFAULT" = success
-          test "$FEATURES" = success
+          # Skipped mid-stack, where the stack's tip checks this code and more.
+          # Only then: a failed scope job also skips them, and leaves FULL empty.
+          test "$FEATURES" = success || { test "$FEATURES" = skipped && test "$FULL" = false; }
           test "$DEPENDENCIES" = success
 
   unit-tests:
@@ -207,7 +226,7 @@ jobs:
     if: needs.ci-scope.outputs.full == 'true'
     outputs:
       pin: ${{ steps.prepare.outputs.pin }}
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -316,7 +335,7 @@ jobs:
     name: Build integration binaries
     needs: ci-scope
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -332,11 +351,11 @@ jobs:
         run: |
           mkdir -p artifacts/ci
           cargo build -p cli --profile super-dev
-          cp target/super-dev/defra artifacts/ci/defra
+          cp target/super-dev/defradb artifacts/ci/defradb
           cargo build -p cli --profile super-dev --features iroh
-          cp target/super-dev/defra artifacts/ci/defra-iroh
+          cp target/super-dev/defradb artifacts/ci/defradb-iroh
           cargo build -p cli --profile super-dev --features iroh,model-trace
-          cp target/super-dev/defra artifacts/ci/defra-trace
+          cp target/super-dev/defradb artifacts/ci/defradb-trace
       - uses: actions/upload-artifact@v4
         with:
           name: defra-ci-binaries
@@ -363,7 +382,7 @@ jobs:
     name: Feature tests
     needs: ci-scope
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -386,7 +405,7 @@ jobs:
     name: WASM Build Check
     needs: ci-scope
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -437,7 +456,9 @@ jobs:
 
   lean-conformance:
     name: Lean Conformance
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    needs: ci-scope
+    if: needs.ci-scope.outputs.full == 'true'
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 20
     env:
       DEFRA_REQUIRE_LAKE: '1'
@@ -484,21 +505,18 @@ jobs:
         run: cargo nextest run -p conformance --lib --test lean_conformance
 
   conformance:
-    name: ${{ matrix.io.name }}
+    name: Conformance${{ matrix.io.name }}
     strategy:
       fail-fast: false
       matrix:
-        io:
-          - { name: 'Conformance', suffix: '', backend: '', recv: '' }
-          - { name: 'Conformance (epoll)', suffix: '-epoll', backend: epoll, recv: '' }
-          - { name: 'Conformance (no receive buffers)', suffix: '-no-recv-buffers', backend: '', recv: '0' }
+        io: ${{ fromJson(needs.ci-scope.outputs.io_variants) }}
     needs: [ci-scope, build-binaries]
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 45
     env:
-      DEFRA_CONFORMANCE_BINARY: ${{ github.workspace }}/target/ci/defra
-      DEFRA_CONFORMANCE_IROH_BINARY: ${{ github.workspace }}/target/ci/defra-iroh
+      DEFRA_CONFORMANCE_BINARY: ${{ github.workspace }}/target/ci/defradb
+      DEFRA_CONFORMANCE_IROH_BINARY: ${{ github.workspace }}/target/ci/defradb-iroh
       DEFRA_WORKSPACE_ROOT: ${{ github.workspace }}
       DEFRA_E2E_KEEP: '1'
       RUST_LOG: info
@@ -522,7 +540,7 @@ jobs:
         with:
           name: defra-ci-binaries
           path: target/ci
-      - run: chmod +x target/ci/defra target/ci/defra-iroh target/ci/defra-trace
+      - run: chmod +x target/ci/defradb target/ci/defradb-iroh target/ci/defradb-trace
       - name: Run conformance tests
         run: cargo nextest run --cargo-profile super-dev -p conformance --lib --test tla_conformance
       - uses: actions/setup-java@v5
@@ -531,7 +549,7 @@ jobs:
           java-version: '21'
       - name: Replay recorded P2P delivery runs through TLC
         env:
-          DEFRA_TRACE_BINARY: ${{ github.workspace }}/target/ci/defra-trace
+          DEFRA_TRACE_BINARY: ${{ github.workspace }}/target/ci/defradb-trace
         run: >-
           cargo nextest run --cargo-profile super-dev -p conformance --test tla_conformance
           -- --ignored model_trace::
@@ -550,14 +568,14 @@ jobs:
     name: Integration (${{ matrix.suite }})
     needs: [ci-scope, build-binaries, go-defradb]
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.ci-scope.outputs.integration_matrix) }}
     env:
-      DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defra
-      DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defra-iroh
+      DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defradb
+      DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defradb-iroh
       DEFRA_MULTIPLIERS: ${{ matrix.multipliers || '' }}
       DEFRA_E2E_KEEP: '1'
       RUST_LOG: info
@@ -583,8 +601,8 @@ jobs:
           path: target/ci
       - name: Check binaries
         run: |
-          chmod +x target/ci/defra target/ci/defra-iroh
-          target/ci/defra version --format json
+          chmod +x target/ci/defradb target/ci/defradb-iroh
+          target/ci/defradb version --format json
       - name: Install Go toolchain
         if: matrix.suite == 'go-compat'
         uses: actions/setup-go@v5
@@ -663,7 +681,7 @@ jobs:
       - name: Run go-compat conformance parity
         if: matrix.suite == 'go-compat'
         env:
-          DEFRA_CONFORMANCE_BINARY: ${{ github.workspace }}/target/ci/defra
+          DEFRA_CONFORMANCE_BINARY: ${{ github.workspace }}/target/ci/defradb
         run: >-
           cargo nextest run --cargo-profile super-dev -p conformance --test tla_conformance
           -- --ignored
@@ -694,21 +712,18 @@ jobs:
           if-no-files-found: ignore
 
   p2p-linux:
-    name: ${{ matrix.io.name }}
+    name: P2P Integration (Linux)${{ matrix.io.name }}
     strategy:
       fail-fast: false
       matrix:
-        io:
-          - { name: 'P2P Integration (Linux)', suffix: '', backend: '', recv: '' }
-          - { name: 'P2P Integration (Linux) (epoll)', suffix: '-epoll', backend: epoll, recv: '' }
-          - { name: 'P2P Integration (Linux) (no receive buffers)', suffix: '-no-recv-buffers', backend: '', recv: '0' }
+        io: ${{ fromJson(needs.ci-scope.outputs.io_variants) }}
     needs: [ci-scope, build-binaries]
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 90
     env:
-      DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defra
-      DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defra-iroh
+      DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defradb
+      DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defradb-iroh
       DEFRA_WORKSPACE_ROOT: ${{ github.workspace }}
       DEFRA_E2E_KEEP: '1'
       RUST_LOG: info
@@ -732,7 +747,7 @@ jobs:
         with:
           name: defra-ci-binaries
           path: target/ci
-      - run: chmod +x target/ci/defra target/ci/defra-iroh
+      - run: chmod +x target/ci/defradb target/ci/defradb-iroh
       - name: Run rust P2P integration tests
         run: >-
           cargo nextest run --cargo-profile super-dev -p integration-test --test legacy -E 'test(/^p2p::/) & not test(/^[a-z0-9_]+::.*::go_/)'
@@ -762,46 +777,15 @@ jobs:
   # implement counts as unsupported, not failed; testo-report.ts turns the JUnit
   # report into per-binary counts and fails on a failure missing from
   # .github/testo/known-failures/<client>.txt, or on a listed test that passes.
-  testo:
-    name: ${{ matrix.client == 'legacy' && 'Legacy integration binaries' || format('Testo ({0}, {1}/3)', matrix.client, matrix.shard) }}
-    needs: [ci-scope, build-binaries, go-defradb]
+  # The testo and legacy integration binaries, built once for every testo shard.
+  testo-archive:
+    name: Build testo archive
+    needs: ci-scope
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        client: [in-process, rust-http, go-http, cli]
-        shard: [1, 2, 3]
-        include:
-          - client: legacy
-            shard: 1
-            shards: 1
+    timeout-minutes: 30
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     env:
-      DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defra
-      DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defra-iroh
       DEFRADB_GO_REPO: ${{ github.workspace }}/target/go-repo
-      DEFRA_E2E_KEEP: '1'
-      # A failing scenario shows its in-process nodes' P2P trace.
-      DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,warn
-      TESTO: >-
-        --test testo
-      TESTO_FILTER: all()
-      # Not run anywhere: p2p_interop_bench, whose one test is an ignored
-      # benchmark that prints latencies, and verars, whose cluster needs the
-      # verad validator binary from vera.rs, which CI does not build.
-      LEGACY: >-
-        --test legacy
-      # c_rust_to_go_outage_replay (#2089) flips between runs: the Go receiver
-      # sometimes misses the protected document written while it was down. A
-      # known-failure entry would fail every run it passes, so the test is left
-      # out here instead of listed; run it again once #2089 is fixed.
-      LEGACY_FILTER: >-
-        test(/^(cursor|http_contract|issue1194_repro|acp_replay_outage_cross_runtime)::/)
-        & not test(=acp_replay_outage_cross_runtime::c_rust_to_go_outage_replay)
-      # Go gives Foo the wrong ID beside FooBar only in some runs (#2528), so a
-      # known-failure entry would fail the runs it passes; go-http leaves it out.
-      GO_HTTP_FILTER: "& not test(=collection::deterministic_ids::a_collection_beside_a_longer_namesake_gets_one_id)"
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
@@ -816,6 +800,77 @@ jobs:
         with:
           shared-key: integration
           save-if: false
+      - name: Archive the test binaries
+        run: >-
+          cargo nextest archive --cargo-profile super-dev -p integration-test
+          --test testo --test legacy --archive-file testo.tar.zst
+      - uses: actions/upload-artifact@v4
+        with:
+          name: testo-archive
+          path: testo.tar.zst
+          retention-days: 1
+          compression-level: 0
+
+  testo:
+    name: ${{ matrix.client == 'legacy' && 'Legacy integration binaries' || format('Testo ({0})', matrix.client) }}
+    needs: [ci-scope, build-binaries, go-defradb, testo-archive]
+    if: needs.ci-scope.outputs.full == 'true'
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        client: [in-process, rust-http, go-http, cli]
+        # One job per client: with the binaries built once in testo-archive,
+        # each client runs in a couple of minutes, so more shards only add
+        # runner start-up. Raise it if a client's job grows past ~10 minutes.
+        shard: [1]
+        include:
+          - client: legacy
+            shard: 1
+    env:
+      DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defradb
+      DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defradb-iroh
+      DEFRADB_GO_REPO: ${{ github.workspace }}/target/go-repo
+      DEFRA_E2E_KEEP: '1'
+      # A failing scenario shows its in-process nodes' P2P trace.
+      DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,warn
+      # Two scenarios flip between runs (#2712), so a known-failure entry would
+      # fail the runs they pass; they stay out until #2712 is fixed.
+      TESTO_FILTER: >-
+        binary(testo)
+        & not test(=encryption::peer_sec_index::doc_encryption_peer_if_encrypted_doc_has_indexed_field_should_index_after_decryption)
+        & not test(=net::sync::branchable_collection::complex_network::branchable_collection_sync_with_multiple_docs_in_complex_linked_network_should_sync_all)
+      # Not run anywhere: p2p_interop_bench, whose one test is an ignored
+      # benchmark that prints latencies, and verars, whose cluster needs the
+      # verad validator binary from vera.rs, which CI does not build.
+      # c_rust_to_go_outage_replay (#2089) flips between runs: the Go receiver
+      # sometimes misses the protected document written while it was down. A
+      # known-failure entry would fail every run it passes, so the test is left
+      # out here instead of listed; run it again once #2089 is fixed.
+      LEGACY_FILTER: >-
+        binary(legacy) & test(/^(http_contract|issue1194_repro|acp_replay_outage_cross_runtime)::/)
+        & not test(=acp_replay_outage_cross_runtime::c_rust_to_go_outage_replay)
+      # Go gives Foo the wrong ID beside FooBar only in some runs (#2528), so a
+      # known-failure entry would fail the runs it passes; go-http leaves it out.
+      # The Go node sometimes answers a query right after a migration with a
+      # transaction conflict (#2392); go-http leaves that scenario out too.
+      # Go answers the Commit introspection description in two forms between
+      # runs (#2726); go-http leaves that scenario out too.
+      GO_HTTP_FILTER: >-
+        & not test(=collection::deterministic_ids::a_collection_beside_a_longer_namesake_gets_one_id)
+        & not test(=collection_version::migrations::query::with_index::collection_migration_query_with_index_applied_after_migration_should_index_docs_on_latest_version)
+        & not test(=query::schema_descriptions::introspection_shows_go_descriptions)
+    steps:
+      - uses: runs-on/action@v2
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - uses: actions/download-artifact@v4
+        with:
+          name: testo-archive
       - uses: actions/download-artifact@v4
         with:
           name: defra-ci-binaries
@@ -833,26 +888,26 @@ jobs:
           CLIENT: ${{ matrix.client }}
           PIN: ${{ needs.go-defradb.outputs.pin }}
         run: |
-          chmod +x target/ci/defra target/ci/defra-iroh
+          chmod +x target/ci/defradb target/ci/defradb-iroh
           DIR="$HOME/.cache/defra-harness/$PIN"
           mkdir -p "$DIR"
           install -m 755 target/go/defradb "$DIR/defradb"
           echo "$DIR" >> "$GITHUB_PATH"
           echo "DEFRA_GO_BINARY=$DIR/defradb" >> "$GITHUB_ENV"
           if [ "$CLIENT" = legacy ]; then
-            echo "TESTS=$LEGACY" >> "$GITHUB_ENV"
             echo "FILTER=$LEGACY_FILTER" >> "$GITHUB_ENV"
           else
             echo "DEFRA_CLIENT=$CLIENT" >> "$GITHUB_ENV"
-            echo "TESTS=$TESTO" >> "$GITHUB_ENV"
             if [ "$CLIENT" = go-http ]; then
               echo "FILTER=($TESTO_FILTER) $GO_HTTP_FILTER" >> "$GITHUB_ENV"
             else
               echo "FILTER=$TESTO_FILTER" >> "$GITHUB_ENV"
             fi
           fi
-      - name: Build the test binaries
-        run: cargo nextest run --cargo-profile super-dev -p integration-test $TESTS -E "$FILTER" --no-run
+      - name: Point the tests at the archive
+        run: |
+          mkdir -p "$RUNNER_TEMP/nextest"
+          echo "ARCHIVE=--archive-file testo.tar.zst --workspace-remap . --extract-to $RUNNER_TEMP/nextest --extract-overwrite" >> "$GITHUB_ENV"
       - uses: oven-sh/setup-bun@v2.2.0
         with:
           bun-version: 1.3.6
@@ -860,8 +915,8 @@ jobs:
         id: run
         run: |
           set +e
-          cargo nextest run --cargo-profile super-dev -p integration-test $TESTS -E "$FILTER" \
-            --partition hash:${{ matrix.shard }}/${{ matrix.shards || 3 }} --no-fail-fast
+          cargo nextest run $ARCHIVE -E "$FILTER" \
+            --partition hash:${{ matrix.shard }}/${{ matrix.shards || 1 }} --no-fail-fast
           echo "status=$?" >> "$GITHUB_OUTPUT"
       - name: Report
         if: always() && steps.run.outcome == 'success'
@@ -870,15 +925,17 @@ jobs:
           STATUS: ${{ steps.run.outputs.status }}
         run: |
           mkdir -p testo-report
-          cp target/nextest/ci/junit.xml "testo-report/$CLIENT-${{ matrix.shard }}.xml"
+          JUNIT=$(find "$RUNNER_TEMP/nextest" target -path '*/nextest/ci/junit.xml' 2>/dev/null | head -1)
+          test -n "$JUNIT"
+          cp "$JUNIT" "testo-report/$CLIENT-${{ matrix.shard }}.xml"
           # JUnit leaves out skipped tests, so the list says what this shard selected.
-          cargo nextest list --cargo-profile super-dev -p integration-test $TESTS -E "$FILTER" \
-            --partition hash:${{ matrix.shard }}/${{ matrix.shards || 3 }} \
+          cargo nextest list $ARCHIVE -E "$FILTER" \
+            --partition hash:${{ matrix.shard }}/${{ matrix.shards || 1 }} \
             --message-format json > target/nextest-list.json
-          bun .github/scripts/testo-report.ts shard target/nextest/ci/junit.xml target/nextest-list.json \
-            "$CLIENT" "${{ matrix.shard }}/${{ matrix.shards || 3 }}" \
+          bun .github/scripts/testo-report.ts shard "$JUNIT" target/nextest-list.json \
+            "$CLIENT" "${{ matrix.shard }}/${{ matrix.shards || 1 }}" \
             ".github/testo/known-failures/$CLIENT.txt" "testo-report/$CLIENT-${{ matrix.shard }}.json"
-          if [ "$STATUS" != 0 ] && ! grep -q '<failure' target/nextest/ci/junit.xml; then
+          if [ "$STATUS" != 0 ] && ! grep -q '<failure' "$JUNIT"; then
             echo "::error::nextest exited $STATUS without a failing test"
             exit 1
           fi
@@ -892,13 +949,21 @@ jobs:
 
   testo-summary:
     name: Testo summary
-    needs: testo
-    if: always() && needs.testo.result != 'skipped'
+    needs: [ci-scope, testo-archive, testo]
+    # Runs whenever testo should have, so a failed archive build, which skips
+    # every shard, still shows up here as a failed summary.
+    if: always() && needs.ci-scope.outputs.full == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       issues: read
+      pull-requests: write
     steps:
+      - name: Require the testo archive
+        if: needs.testo-archive.result != 'success'
+        run: |
+          echo "::error::Build testo archive was ${{ needs.testo-archive.result }}, so no testo shard ran"
+          exit 1
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
@@ -910,4 +975,33 @@ jobs:
       - name: Check the known-failure lists and merge the reports
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bun .github/scripts/testo-report.ts summary testo-report .github/testo/known-failures
+        # The report goes to a file first so the comment below can post it too.
+        run: |
+          status=0
+          GITHUB_STEP_SUMMARY=testo-summary.md bun .github/scripts/testo-report.ts summary testo-report .github/testo/known-failures || status=$?
+          cat testo-summary.md >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      # A pull request from a fork runs with a read-only token, so the table
+      # stays in the step summary there.
+      - name: Comment on the pull request
+        if: >-
+          always() && github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.full_name == github.repository
+          && hashFiles('testo-summary.md') != ''
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const table = require('fs').readFileSync('testo-summary.md', 'utf8');
+            const marker = '<!-- defradb-testo-summary -->';
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = `${marker}\n# Testo summary\n\nFrom [this run](${run}) on \`${context.payload.pull_request.head.sha.slice(0, 9)}\`.\n\n${table}`;
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const existing = (await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number }))
+              .find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }

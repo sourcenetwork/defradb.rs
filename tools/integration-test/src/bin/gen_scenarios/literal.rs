@@ -78,6 +78,7 @@ fn matcher(map: &serde_json::Map<String, Value>, indent: usize) -> Option<String
         "cid" => "m::cid()".to_owned(),
         "docID" => "m::doc_id()".to_owned(),
         "nonempty" => "m::nonempty()".to_owned(),
+        "positive" => "m::positive()".to_owned(),
         "nonemptyString" => "m::nonempty_string()".to_owned(),
         "currentTimestamp" => "m::current_timestamp()".to_owned(),
         "introspectionTypes" => "m::introspection_types()".to_owned(),
