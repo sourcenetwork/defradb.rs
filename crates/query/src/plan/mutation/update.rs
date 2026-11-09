@@ -391,6 +391,7 @@ impl PlanNode for UpdateNode {
             };
 
             // Update each document
+            let mut misses = crate::prepared::FirstMiss::default();
             for doc_id_str in doc_ids_to_update {
                 if DocID::from_string(&doc_id_str).is_err() {
                     // Invalid DocID format - treat as not found (Go compatibility)
@@ -463,6 +464,7 @@ impl PlanNode for UpdateNode {
                     // Collect the modified field names for block creation
                     let mut modified_fields: RapidHashSet<String> = self.input.field_names();
 
+                    let mut missed = false;
                     if let Some(embeddings) = &self.prepared_embeddings {
                         let id = doc.id().map(ToString::to_string).unwrap_or_default();
                         if let Some(prepared) = embeddings.get(&id) {
@@ -492,12 +494,14 @@ impl PlanNode for UpdateNode {
                                 let Some(response) = self
                                     .prepared_inputs
                                     .as_ref()
-                                    .and_then(|memo| memo.get(&request))
+                                    .and_then(|memo| memo.get_or_want(&request))
                                 else {
                                     if !dependencies_match {
                                         crate::prepared::record_dependency_rerun();
                                     }
-                                    return Err(QueryError::NeedsInput(request));
+                                    misses.keep::<()>(Err(QueryError::NeedsInput(request)))?;
+                                    missed = true;
+                                    continue;
                                 };
                                 let vector: Vec<f64> =
                                     serde_json::from_slice(&response).map_err(|error| {
@@ -513,6 +517,10 @@ impl PlanNode for UpdateNode {
                                 modified_fields.insert(embedding.field.clone());
                             }
                         }
+                    }
+
+                    if missed {
+                        continue;
                     }
 
                     if let Some(writes) = &self.prepared_writes {
@@ -533,7 +541,7 @@ impl PlanNode for UpdateNode {
                     }
 
                     // Persist update with modified field tracking
-                    let result = if let Some(expected_fields) = projected_fields {
+                    let result = misses.keep(if let Some(expected_fields) = projected_fields {
                         self.mutator
                             .update_if_fields_unchanged_as(
                                 &self.context,
@@ -543,7 +551,7 @@ impl PlanNode for UpdateNode {
                                 doc,
                                 modified_fields,
                             )
-                            .await?
+                            .await
                     } else {
                         self.mutator
                             .update_if_unchanged_as(
@@ -553,7 +561,10 @@ impl PlanNode for UpdateNode {
                                 doc,
                                 modified_fields,
                             )
-                            .await?
+                            .await
+                    })?;
+                    let Some(result) = result else {
+                        continue;
                     };
 
                     // Convert to plan Doc
@@ -574,6 +585,7 @@ impl PlanNode for UpdateNode {
                 }
             }
 
+            misses.finish(())?;
             self.did_update = true;
         }
 

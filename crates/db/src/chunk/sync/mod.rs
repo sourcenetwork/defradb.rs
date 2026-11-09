@@ -128,15 +128,17 @@ impl<S> ChunkWrites<'_, S>
 where
     S: Store + 'static,
 {
-    /// Creates the chunk documents in `plans` that don't exist yet. An existing
-    /// chunk is never rewritten, since the same hash means the same content.
-    /// A new parent can have some already: they may arrive by P2P before it.
+    /// Creates the chunk documents in `plans` that don't exist yet, with
+    /// their vectors from the memo. A new parent can have some already: they
+    /// may arrive by P2P before it. On any miss nothing is written and every
+    /// miss is noted for one wave.
     pub(crate) async fn create_missing(
         &self,
         parent_doc_id: &str,
         plans: Vec<FieldChunks>,
     ) -> Result<Vec<DerivedWrite>> {
-        let mut written = Vec::new();
+        let mut missing = Vec::new();
+        let mut first_miss = None;
         for plan in plans {
             let target = self.open(&plan.chunk_collection).await?;
             // An update keeps the text encrypted when earlier writes did, even
@@ -147,12 +149,27 @@ where
             let planned: RapidHashSet<&str> =
                 plan.chunks.iter().map(|(_, hash)| hash.as_str()).collect();
             let existing = self.existing_of(&target, parent_doc_id, &planned).await?;
+            let mut docs = Vec::new();
             for (text, hash) in plan.chunks {
                 if existing.contains(&hash) {
                     continue;
                 }
+                let mut doc = Self::chunk_document(&target, parent_doc_id, text, hash.clone())?;
+                if let Some(miss) = self.embed(&target, &mut doc)? {
+                    first_miss.get_or_insert(miss);
+                }
+                docs.push((doc, hash));
+            }
+            missing.push((target, encrypt, docs));
+        }
+        if let Some(miss) = first_miss {
+            return Err(QueryError::NeedsInput(miss));
+        }
+        let mut written = Vec::new();
+        for (target, encrypt, docs) in missing {
+            for (doc, hash) in docs {
                 written.push(
-                    self.create(&target, parent_doc_id, text, hash, encrypt)
+                    self.create(&target, parent_doc_id, doc, hash, encrypt)
                         .await?,
                 );
             }

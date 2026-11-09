@@ -139,6 +139,12 @@ RUNS=(
   "MC_TruncateChunks_Green.cfg TruncateChunks.tla GREEN" # truncate empties chunks before parents
   "MC_TruncateChunks_Red_ParentsFirst.cfg TruncateChunks.tla RED" # parents first strands a racing create (INV_LiveParentHasChunks)
   "MC_TruncateChunks_Red_PurgeLeavesChunks.cfg TruncateChunks.tla RED" # purge leaves the chunks of purged articles (INV_PurgedHaveNoChunks)
+  "MC_ChunkEmbedding_Green.cfg ChunkEmbedding.tla GREEN" # #2201: chunk vectors come from the memo, missing ones in one embedding wave between attempts
+  "MC_ChunkEmbedding_Red_EmbedAllChunks.cfg ChunkEmbedding.tla RED" # unchanged chunks are embedded again (INV_UnchangedChunkNoCall)
+  "MC_ChunkEmbedding_Red_ResolveInsideAttempt.cfg ChunkEmbedding.tla RED" # model asked with the transaction open (INV_NoModelCallInTxn)
+  "MC_ChunkEmbedding_Red_MemoKeyedByPosition.cfg ChunkEmbedding.tla RED" # memo keyed by position hands out another text's vector (INV_VectorIsItsText)
+  "MC_ChunkEmbedding_Red_FirstMissOnly.cfg ChunkEmbedding.tla RED" # one miss per attempt needs a wave per chunk (INV_OneWave)
+  "MC_ChunkEmbedding_Red_CommitWithMisses.cfg ChunkEmbedding.tla RED" # commit with a vector missing stores a chunk without one (INV_ListedChunkHasVector)
   "MC_ChunkMarkerHandoff_Green.cfg ChunkMarkerHandoff.tla GREEN" # a committed head keeps its marker registration past the request deadline
   "MC_ChunkMarkerHandoff_Red_RequestOwned.cfg ChunkMarkerHandoff.tla RED" # the deadline drops the chunks not registered yet (INV_CommittedHeadOwned)
   "MC_PeerConnection_Green.cfg PeerConnection.tla GREEN"
