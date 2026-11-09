@@ -47,6 +47,12 @@ pub fn nonempty() -> Value {
     json!({"$match": "nonempty"})
 }
 
+/// Matches any number above zero, for a value whose exact size is not the
+/// point (a relevance score).
+pub fn positive() -> Value {
+    json!({"$match": "positive"})
+}
+
 pub fn nonempty_string() -> Value {
     json!({"$match": "nonemptyString"})
 }
