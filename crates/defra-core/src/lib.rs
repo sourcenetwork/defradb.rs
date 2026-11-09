@@ -54,7 +54,7 @@ pub use error::{Error, Result};
 pub use ipld::{collect_block_links, extract_links, walk_ipld, IpldVisitor};
 pub use lens_block::{
     build_lens_ipld_blocks, is_lens_block, CidBlock, LensConfigBlock, LensKeyValue,
-    LensModuleBlock, LensWasmBlock,
+    LensModuleBlock, LensModuleParts, LensWasmBlock,
 };
 pub use request_context::RequestContext;
 pub use signing::SigningKeyType;
