@@ -62,6 +62,7 @@ mod simple {
         mod crdt {
             mod pcounter;
             mod pncounter;
+            mod text;
         }
         mod cross_version;
         mod with_add;
@@ -69,6 +70,7 @@ mod simple {
         mod with_add_restart;
         mod with_add_update;
         mod with_delete;
+        mod with_filter;
         mod with_shared_field;
         mod with_update;
     }

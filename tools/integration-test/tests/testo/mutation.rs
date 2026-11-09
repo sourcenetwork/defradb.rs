@@ -132,4 +132,5 @@ mod update {
 mod upsert {
     mod date_time;
     mod simple;
+    mod text;
 }

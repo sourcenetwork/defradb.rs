@@ -97,7 +97,9 @@ pub use config::{
 #[cfg(feature = "p2p")]
 pub use config::{P2PConfig, PeerKeySource};
 #[cfg(feature = "managed-p2p")]
-pub use defra_p2p_adapter::{ReplicatorPushOptions, ReplicatorPushOptionsState};
+pub use defra_p2p_adapter::{
+    ReplicationFilter, ReplicationFilters, ReplicatorPushOptions, ReplicatorPushOptionsState,
+};
 pub use dense_search::{DenseHybridSearchHit, DenseHybridSearchRequest, DenseHybridSearchResponse};
 pub use error::{Error, Result};
 pub use events::EventName;
