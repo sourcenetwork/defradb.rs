@@ -259,8 +259,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 );
             }
         }
-        if !doc_is_tombstoned {
-            self.owe_reindex_off_active_version(systemstore, collection)
+        if let Some(active_version) = self
+            .indexed_active_version_off(collection)
+            .filter(|_| !doc_is_tombstoned)
+        {
+            // Boxed so the rare path does not grow every merge's future.
+            Box::pin(self.owe_reindex_off_active_version(systemstore, collection, &active_version))
                 .await?;
         }
 

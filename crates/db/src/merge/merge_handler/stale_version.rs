@@ -15,31 +15,37 @@ use crate::definition::loader::get_collections_by_collection_id;
 use crate::definition::migration::owe_reindex;
 
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
+    /// The active version of `collection`'s collection, when it is not
+    /// `collection`'s version and has indexes: the only case a merge at
+    /// `collection`'s version can leave entries that reads do not see.
+    pub(super) fn indexed_active_version_off(&self, collection: &Collection) -> Option<String> {
+        self.db.collections.peek(|cache| {
+            cache
+                .get(collection.name())
+                .filter(|active| {
+                    active.version_id() != collection.version_id()
+                        && !active.get_indexes().is_empty()
+                })
+                .map(|active| active.version_id().to_string())
+        })
+    }
+
     /// Owes `collection`'s collection a reindex, in the merge's transaction,
-    /// when the merge stored a document at `collection`'s version and the
-    /// active version reads it through a lens. It owes a full rebuild every
+    /// when the active version `active_version` reads documents stored at
+    /// `collection`'s version through a lens. It owes a full rebuild every
     /// time, so a rebuild already running when the document arrived does not
     /// clear the record without indexing it.
     pub(super) async fn owe_reindex_off_active_version(
         &self,
         systemstore: &NamespaceView,
         collection: &Collection,
+        active_version: &str,
     ) -> std::result::Result<(), MergeError> {
-        let Some(active) = self
-            .db
-            .get_collection(collection.name())
-            .map_err(MergeError::Database)?
-        else {
-            return Ok(());
-        };
-        if active.version_id() == collection.version_id() || active.get_indexes().is_empty() {
-            return Ok(());
-        }
         let collection_id = collection.collection_id();
         let versions = get_collections_by_collection_id(systemstore, collection_id)
             .await
             .map_err(MergeError::Database)?;
-        let across_lens = build_collection_history(&versions, active.version_id())
+        let across_lens = build_collection_history(&versions, active_version)
             .is_some_and(|history| history.values().any(|link| link.transform.is_some()));
         if !across_lens {
             return Ok(());
