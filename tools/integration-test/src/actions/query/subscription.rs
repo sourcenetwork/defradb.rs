@@ -59,7 +59,7 @@ enum Source {
     /// The `next` events of the node's SSE stream, read on the network edge
     /// until the stream ends or `reader` is aborted.
     Http {
-        responses: async_channel::Receiver<Value>,
+        responses: async_channel::Receiver<Result<Value, String>>,
         reader: edge::Task<()>,
     },
 }
@@ -271,7 +271,7 @@ impl OpenSubscription {
 fn read_http(
     state: &State,
     open: &OpenSubscription,
-    responses: &async_channel::Receiver<Value>,
+    responses: &async_channel::Receiver<Result<Value, String>>,
 ) -> Result<Vec<Value>, Failure> {
     let mut delivered = Vec::new();
     while open
@@ -282,6 +282,7 @@ fn read_http(
         else {
             break;
         };
+        let response = response.map_err(Failure::operation)?;
         if let Some(errors) = response.get("errors").filter(|errors| !errors.is_null()) {
             return Err(Failure::operation(errors.to_string()));
         }
@@ -291,10 +292,21 @@ fn read_http(
 }
 
 /// Read the SSE stream `response`, sending the data of each `next` event,
-/// until the stream completes, closes or fails.
-async fn read_events(mut response: net::http::Response, sender: async_channel::Sender<Value>) {
+/// until the stream completes or closes; a failed read is sent as its error.
+async fn read_events(
+    mut response: net::http::Response,
+    sender: async_channel::Sender<Result<Value, String>>,
+) {
     let mut buffer = Vec::new();
-    while let Ok(Some(chunk)) = response.chunk().await {
+    loop {
+        let chunk = match response.chunk().await {
+            Ok(Some(chunk)) => chunk,
+            Ok(None) => return,
+            Err(error) => {
+                let _ = sender.send(Err(error.to_string())).await;
+                return;
+            }
+        };
         buffer.extend(chunk.iter().copied().filter(|byte| *byte != b'\r'));
         while let Some(end) = buffer.windows(2).position(|pair| pair == b"\n\n") {
             let frame: Vec<u8> = buffer.drain(..end + 2).collect();
@@ -317,7 +329,7 @@ async fn read_events(mut response: net::http::Response, sender: async_channel::S
             let Ok(value) = serde_json::from_str(&data.join("\n")) else {
                 continue;
             };
-            if sender.send(value).await.is_err() {
+            if sender.send(Ok(value)).await.is_err() {
                 return;
             }
         }
