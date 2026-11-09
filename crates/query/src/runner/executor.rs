@@ -656,11 +656,16 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             }
             .with_warnings(warnings),
             Err(e) => {
-                tracing::error!(
-                    query = %request.query,
-                    error = %e,
-                    "Query execution failed"
-                );
+                // The caller resolves the input and runs the request again.
+                if matches!(e, crate::error::QueryError::NeedsInput(_)) {
+                    tracing::debug!(query = %request.query, "Query needs an external input");
+                } else {
+                    tracing::error!(
+                        query = %request.query,
+                        error = %e,
+                        "Query execution failed"
+                    );
+                }
                 QueryResponse {
                     data: None,
                     errors: vec![QueryResponseError::from_query_error(e)],
