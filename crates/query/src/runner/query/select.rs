@@ -218,9 +218,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         // Check if an ordering-only index can be used (planner needed for IndexScanNode)
         let has_ordering_index = select.order_by.is_some()
             && fetcher.supports_index_queries()
-            && fetcher
-                .indexes_match_documents(&select.collection_name)
-                .await?
             && !collection.indexes.is_empty()
             && select
                 .order_by
@@ -238,9 +235,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         // Check if an OR filter can use an index (planner needed for IndexScanNode with OrScan)
         let has_or_filter_index = select.filter.is_some()
             && fetcher.supports_index_queries()
-            && fetcher
-                .indexes_match_documents(&select.collection_name)
-                .await?
             && !collection.indexes.is_empty()
             && select
                 .filter
