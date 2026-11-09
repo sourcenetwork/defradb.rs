@@ -293,12 +293,13 @@ fn read_http(
 /// Read the SSE stream `response`, sending the data of each `next` event,
 /// until the stream completes, closes or fails.
 async fn read_events(mut response: net::http::Response, sender: async_channel::Sender<Value>) {
-    let mut buffer = String::new();
+    let mut buffer = Vec::new();
     while let Ok(Some(chunk)) = response.chunk().await {
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
-        while let Some(end) = buffer.find("\n\n") {
-            let event: String = buffer.drain(..end + 2).collect();
-            let (mut name, mut data) = ("message", String::new());
+        buffer.extend(chunk.iter().copied().filter(|byte| *byte != b'\r'));
+        while let Some(end) = buffer.windows(2).position(|pair| pair == b"\n\n") {
+            let frame: Vec<u8> = buffer.drain(..end + 2).collect();
+            let event = String::from_utf8_lossy(&frame);
+            let (mut name, mut data) = ("message", Vec::new());
             for line in event.lines() {
                 if let Some(value) = line.strip_prefix("event:") {
                     name = if value.trim() == "next" {
@@ -307,13 +308,13 @@ async fn read_events(mut response: net::http::Response, sender: async_channel::S
                         "other"
                     };
                 } else if let Some(value) = line.strip_prefix("data:") {
-                    data.push_str(value.trim_start());
+                    data.push(value.trim_start());
                 }
             }
             if name != "next" {
                 continue;
             }
-            let Ok(value) = serde_json::from_str(&data) else {
+            let Ok(value) = serde_json::from_str(&data.join("\n")) else {
                 continue;
             };
             if sender.send(value).await.is_err() {
