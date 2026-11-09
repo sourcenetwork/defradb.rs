@@ -1548,32 +1548,42 @@ mod p2p_tests;
 mod owner_observation_tests;
 
 #[cfg(test)]
+#[path = "../tests/unit/delegated_nac.rs"]
 mod delegated_nac_tests;
 #[cfg(test)]
+#[path = "../tests/unit/source_nac.rs"]
 mod source_nac_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "../tests/unit/document_projector.rs"]
 mod document_projector_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "../tests/unit/projection_access_notification.rs"]
 mod projection_access_notification_tests;
 #[cfg(test)]
+#[path = "../tests/unit/userset_manager.rs"]
 mod userset_manager_tests;
 
 #[cfg(test)]
+#[path = "../tests/unit/transactional_relationship.rs"]
 mod transactional_relationship_tests;
 
 #[cfg(test)]
+#[path = "../tests/unit/administrative_relationship.rs"]
 mod administrative_relationship_tests;
 #[cfg(test)]
+#[path = "../tests/unit/delegated_relationship.rs"]
 mod delegated_relationship_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "../tests/unit/verified_create.rs"]
 mod verified_create_tests;
 
 #[cfg(all(test, feature = "http"))]
 mod http_signing_tests;
 
 #[cfg(all(test, feature = "http"))]
+#[path = "../tests/unit/http_acp.rs"]
 mod http_acp_tests;
 
 #[cfg(all(test, feature = "http"))]

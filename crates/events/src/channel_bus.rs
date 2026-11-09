@@ -401,5 +401,5 @@ impl ChannelBus {
 }
 
 #[cfg(test)]
-#[path = "channel_bus_tests.rs"]
+#[path = "../tests/unit/channel_bus.rs"]
 mod tests;

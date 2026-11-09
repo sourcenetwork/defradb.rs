@@ -97,6 +97,7 @@ pub mod client_signed_update;
 #[cfg(feature = "server")]
 mod client_signer;
 #[cfg(all(test, feature = "server"))]
+#[path = "../tests/unit/client_signer.rs"]
 mod client_signer_tests;
 #[cfg(feature = "server")]
 mod client_signing;

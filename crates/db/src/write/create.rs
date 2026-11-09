@@ -28,6 +28,7 @@ use crate::write::WriteStores;
 #[cfg(feature = "native")]
 mod runs;
 #[cfg(test)]
+#[path = "../../tests/write/create_schema_binding.rs"]
 mod schema_binding_tests;
 
 /// A stored create: the document under its derived ID, its composite block

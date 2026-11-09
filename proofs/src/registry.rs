@@ -111,10 +111,10 @@ pub const PROPERTIES: &[Property] = &[
         family: "Transactional node source grants",
         name: "remove_other / remove_self / direct_survives / owner_survives / admin_survives / denied / untrusted_noop_denied / embedded_unchanged_allowed / embedder_replay_reconciles / embedder_replay_never_widens / embedder_missing_unauthorized_refused / embedder_complete_replay_needs_no_authority / embedder_replay_ignores_node_authority / untrusted_no_replay",
         axis: Lean,
-        anchor: "crates/acp/src/nac/node_acp/source.rs; crates/query/src/txn/source_nac.rs; crates/db/src/document_projection.rs; crates/defra-node/src/source_nac_tests.rs",
+        anchor: "crates/acp/src/nac/node_acp/source.rs; crates/query/src/txn/source_nac.rs; crates/db/src/document_projection.rs; crates/defra-node/tests/unit/source_nac.rs",
         model_ref: "SourceScopedNac (lake build)",
         tiers: &[Boundary, Contract],
-        bound_by: "crates/defra-node/src/source_nac_tests.rs source_admission_matches_executed_lean_model",
+        bound_by: "crates/defra-node/tests/unit/source_nac.rs source_admission_matches_executed_lean_model",
     },
     Property {
         family: "Held-bounded node permission delegation",
@@ -123,7 +123,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/acp/src/nac/delegation.rs DelegationFacts::admits, ADMIN_CLASS; crates/acp/src/nac/node_acp/operations.rs NodeACP::authorize_change; crates/acp/src/nac/node_acp/source.rs NodeACP::change_source_permission",
         model_ref: "NodeAcpDelegation (lake build)",
         tiers: &[Boundary, Contract],
-        bound_by: "crates/defra-node/src/delegated_nac_tests.rs delegation_matches_executed_lean_model, delegate_grants_and_revokes_only_held_non_admin_permissions, delegate_source_edges_follow_the_same_rule",
+        bound_by: "crates/defra-node/tests/unit/delegated_nac.rs delegation_matches_executed_lean_model, delegate_grants_and_revokes_only_held_non_admin_permissions, delegate_source_edges_follow_the_same_rule",
     },
     Property {
         family: "Explicit embedded signing",
@@ -150,7 +150,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/defra-node/src/lib.rs execute_verified_graph_in_txn; crates/db/src/block/builder/verified_client_create.rs; crates/db/src/block/builder/verified_client_mutation.rs; crates/query/src/runner/turn.rs lent",
         model_ref: "MC_VerifiedClientGraph_{Green,Red_*}.cfg",
         tiers: &[Boundary, Contract],
-        bound_by: "crates/defra-node/src/verified_create_tests.rs verified_user_create_shares_node_transaction_with_agent_effects, verified_update_and_delete_use_exact_actor_and_transaction_state, verified_create_allows_disabled_nac_and_unbound_collection",
+        bound_by: "crates/defra-node/tests/unit/verified_create.rs verified_user_create_shares_node_transaction_with_agent_effects, verified_update_and_delete_use_exact_actor_and_transaction_state, verified_create_allows_disabled_nac_and_unbound_collection",
     },
     Property {
         family: "Verified client graph transaction",
@@ -159,16 +159,16 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/block/builder/verified_client_create.rs; crates/db/src/block/builder/verified_client_mutation.rs; crates/defra-node/src/lib.rs execute_verified_graph_in_txn",
         model_ref: "VerifiedCreateHandoff and VerifiedMutationHandoff (lake build); client_create_graph::signed_create_evidence_matches_the_modeled_exact_handoff",
         tiers: &[Boundary, Contract],
-        bound_by: "crates/db/tests/block/client_create_graph.rs signed_create_evidence_matches_the_modeled_exact_handoff, trusted_delete_graph_matches_model_and_refuses_other_waves; crates/defra-node/src/verified_create_tests.rs verified_update_and_delete_use_exact_actor_and_transaction_state",
+        bound_by: "crates/db/tests/block/client_create_graph.rs signed_create_evidence_matches_the_modeled_exact_handoff, trusted_delete_graph_matches_model_and_refuses_other_waves; crates/defra-node/tests/unit/verified_create.rs verified_update_and_delete_use_exact_actor_and_transaction_state",
     },
     Property {
         family: "Transactional document relationships",
         name: "INV_ActorAuthority / actor_nac_required / actor_dac_required",
         axis: Tla,
-        anchor: "crates/defra-node/src/transaction.rs trusted embedded relationship delegation; crates/defra-node/src/delegated_relationship_tests.rs embedded_delegation_matches_executed_lean_model",
+        anchor: "crates/defra-node/src/transaction.rs trusted embedded relationship delegation; crates/defra-node/tests/unit/delegated_relationship.rs embedded_delegation_matches_executed_lean_model",
         model_ref: "MC_DelegatedRelationship_{Green,Red_*}.cfg",
         tiers: &[Boundary, Contract],
-        bound_by: "crates/defra-node/src/delegated_relationship_tests.rs embedded_delegation_matches_executed_lean_model, selected_actor_nac_revocation_conflicts_with_node_owned_grant",
+        bound_by: "crates/defra-node/tests/unit/delegated_relationship.rs embedded_delegation_matches_executed_lean_model, selected_actor_nac_revocation_conflicts_with_node_owned_grant",
     },
     Property {
         family: "Transactional document relationships",
@@ -177,7 +177,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/acp/src/zanzibar/acp/administrative_relationship.rs; crates/defra-node/src/acp_ops/transactional.rs relationship_in_txn",
         model_ref: "MC_AdministrativeRelationship_{Green,Red_*}.cfg",
         tiers: &[Boundary, Contract],
-        bound_by: "crates/defra-node/src/administrative_relationship_tests.rs native_node_admin_manages_foreign_relationships_and_rechecks_revocation",
+        bound_by: "crates/defra-node/tests/unit/administrative_relationship.rs native_node_admin_manages_foreign_relationships_and_rechecks_revocation",
     },
     Property {
         family: "Transactional document relationships",
@@ -186,7 +186,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/acp/src/zanzibar/acp/administrative_relationship.rs; crates/defra-node/src/acp_ops/transactional.rs relationship_in_txn",
         model_ref: "AdministrativeRelationship (lake build)",
         tiers: &[Boundary, Contract],
-        bound_by: "crates/defra-node/src/administrative_relationship_tests.rs administrative_relationship_admission_matches_executed_lean_model",
+        bound_by: "crates/defra-node/tests/unit/administrative_relationship.rs administrative_relationship_admission_matches_executed_lean_model",
     },
     Property {
         family: "Transactional document relationships",
@@ -195,7 +195,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/document_projection.rs notify_access_changed; crates/datastore/src/multistore.rs on_commit",
         model_ref: "MC_ProjectionAccessNotification_{Green,Red_*}.cfg",
         tiers: &[Boundary, Contract],
-        bound_by: "crates/defra-node/src/projection_access_notification_tests.rs projected_relationship_changes_notify_armed_observer_only_after_commit",
+        bound_by: "crates/defra-node/tests/unit/projection_access_notification.rs projected_relationship_changes_notify_armed_observer_only_after_commit",
     },
     Property {
         family: "Transactional document relationships",
@@ -204,7 +204,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/document_projection.rs notify_access_changed",
         model_ref: "ProjectionAccessNotification (lake build)",
         tiers: &[Boundary, Contract],
-        bound_by: "crates/defra-node/src/projection_access_notification_tests.rs projected_access_notifications_match_executed_lean_model",
+        bound_by: "crates/defra-node/tests/unit/projection_access_notification.rs projected_access_notifications_match_executed_lean_model",
     },
     Property {
         family: "Transactional document relationships",
@@ -213,7 +213,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/acp/src/zanzibar/acp/mod.rs check_manage_relation; crates/defra-node/src/acp_ops/transactional.rs relationship_in_txn",
         model_ref: "MC_UsersetRelationManager_{Green,Red_*}.cfg",
         tiers: &[Boundary, Contract],
-        bound_by: "crates/defra-node/src/userset_manager_tests.rs transactional_userset_managers_respect_owner_admin_scope_and_revocation",
+        bound_by: "crates/defra-node/tests/unit/userset_manager.rs transactional_userset_managers_respect_owner_admin_scope_and_revocation",
     },
     Property {
         family: "Transactional document relationships",
@@ -222,7 +222,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/acp/src/zanzibar/acp/mod.rs check_manage_relation",
         model_ref: "UsersetRelationManager (lake build)",
         tiers: &[Boundary, Contract],
-        bound_by: "crates/defra-node/src/userset_manager_tests.rs userset_manager_admission_matches_executed_lean_model",
+        bound_by: "crates/defra-node/tests/unit/userset_manager.rs userset_manager_admission_matches_executed_lean_model",
     },
     Property {
         family: "Transactional document relationships",
@@ -231,7 +231,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/defra-node/src/acp_ops/transactional.rs; crates/defra-node/src/ops/http_ops.rs; crates/cli/src/doc_acp_adapter.rs",
         model_ref: "MC_TransactionalRelationship_{Green,Red_*}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/defra-node/src/transactional_relationship_tests.rs relationship_grant_and_revoke_obey_commit_and_discard, stale_marker_cannot_restore_revoked_relationship, failed_relationship_statement_does_not_leak_its_writes_or_events",
+        bound_by: "crates/defra-node/tests/unit/transactional_relationship.rs relationship_grant_and_revoke_obey_commit_and_discard, stale_marker_cannot_restore_revoked_relationship, failed_relationship_statement_does_not_leak_its_writes_or_events",
     },
     Property {
         family: "Transactional document relationships",
@@ -240,25 +240,25 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/http/src/handlers/acp.rs own_documents; crates/query/src/runner/owners.rs observe_owners",
         model_ref: "MC_OwnerSelfObservation_{Green,Red_*}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/defra-node/src/http_acp_tests.rs http_owner_registration_matches_executed_model, http_relationships_and_owner_observation_use_the_authenticated_transaction",
+        bound_by: "crates/defra-node/tests/unit/http_acp.rs http_owner_registration_matches_executed_model, http_relationships_and_owner_observation_use_the_authenticated_transaction",
     },
     Property {
         family: "Transactional document relationships",
         name: "INV_HttpOwnerIsolation / http_rejects_embedder / local_embedder_allowed",
         axis: Tla,
-        anchor: "crates/defra-node/src/node_builder.rs build; crates/defra-node/src/http_acp_tests.rs http_cannot_use_the_embedder_only_transaction_registry",
+        anchor: "crates/defra-node/src/node_builder.rs build; crates/defra-node/tests/unit/http_acp.rs http_cannot_use_the_embedder_only_transaction_registry",
         model_ref: "MC_HttpTxnConfiguration_{Green,Red_Allow}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/defra-node/src/http_acp_tests.rs http_cannot_use_the_embedder_only_transaction_registry",
+        bound_by: "crates/defra-node/tests/unit/http_acp.rs http_cannot_use_the_embedder_only_transaction_registry",
     },
     Property {
         family: "Transactional document relationships",
         name: "wrong_owner_refused / readonly_refused / node_denied / document_denied / unbound_refused / expired_refused / unsupported_backend_refused",
         axis: Lean,
-        anchor: "crates/defra-node/src/transactional_relationship_tests.rs transaction_admission_matches_executed_lean_model; crates/cli/src/doc_acp_adapter.rs a_named_transaction_never_falls_back_to_autocommit",
+        anchor: "crates/defra-node/tests/unit/transactional_relationship.rs transaction_admission_matches_executed_lean_model; crates/cli/tests/unit/doc_acp_adapter.rs a_named_transaction_never_falls_back_to_autocommit",
         model_ref: "TransactionalRelationship (lake build)",
         tiers: &[Boundary, Contract],
-        bound_by: "crates/defra-node/src/transactional_relationship_tests.rs transaction_admission_matches_executed_lean_model; crates/cli/src/doc_acp_adapter.rs a_named_transaction_never_falls_back_to_autocommit",
+        bound_by: "crates/defra-node/tests/unit/transactional_relationship.rs transaction_admission_matches_executed_lean_model; crates/cli/tests/unit/doc_acp_adapter.rs a_named_transaction_never_falls_back_to_autocommit",
     },
     Property {
         family: "HTTP client-signed create",
@@ -267,7 +267,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/http/src/client_signing.rs upgrade; crates/http/src/router/state.rs AppState",
         model_ref: "ClientSigningAdmission (lake build); client_signer_tests::admission_and_token_lifetime_match_the_model",
         tiers: &[Boundary, Contract],
-        bound_by: "crates/http/src/client_signer_tests.rs admission_and_token_lifetime_match_the_model",
+        bound_by: "crates/http/tests/unit/client_signer.rs admission_and_token_lifetime_match_the_model",
     },
     Property {
         family: "HTTP client-signed create",
@@ -276,7 +276,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/write/create.rs compute; crates/db/src/write/prepare.rs PreparedCreateBlocks",
         model_ref: "ClientCreateSchema (lake build); write::create::schema_binding_tests::prepared_create_checks_immutable_definition_even_when_version_is_unchanged",
         tiers: &[Boundary, Contract],
-        bound_by: "crates/db/src/write/create/schema_binding_tests.rs prepared_create_checks_immutable_definition_even_when_version_is_unchanged",
+        bound_by: "crates/db/tests/write/create_schema_binding.rs prepared_create_checks_immutable_definition_even_when_version_is_unchanged",
     },
     Property {
         family: "HTTP client-signed create",
@@ -285,7 +285,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/http/src/client_signing.rs upgrade; crates/http/src/router/state.rs AppState",
         model_ref: "MC_SigningAdmission_{Green,Red_*}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/http/src/client_signer_tests.rs admission_and_token_lifetime_match_the_model, disconnected_and_expired_connections_release_their_slots",
+        bound_by: "crates/http/tests/unit/client_signer.rs admission_and_token_lifetime_match_the_model, disconnected_and_expired_connections_release_their_slots",
     },
     Property {
         family: "HTTP client-signed create",
@@ -294,7 +294,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/http/src/client_signing.rs run; crates/query/src/runner/turn.rs drive; crates/db/src/write/create.rs compute",
         model_ref: "MC_ClientSignedCreate_{Green,Red_*}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/defra-node/src/http_signing_tests.rs http_client_signs_the_complete_agent_create_graph; crates/http/src/client_signer_tests.rs signing_endpoint_requires_an_authenticated_caller, disconnected_and_expired_connections_release_their_slots",
+        bound_by: "crates/defra-node/src/http_signing_tests.rs http_client_signs_the_complete_agent_create_graph; crates/http/tests/unit/client_signer.rs signing_endpoint_requires_an_authenticated_caller, disconnected_and_expired_connections_release_their_slots",
     },
     Property {
         family: "HTTP client-signed create",
@@ -321,7 +321,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/http/src/client_signing.rs run; crates/db/src/block/builder/client_waves.rs ClientWaves::respond",
         model_ref: "ClientSignedCreate (lake build)",
         tiers: &[Boundary],
-        bound_by: "crates/db/tests/block/client_create_graph.rs trusted_create_graph_matches_model_and_rejects_unapproved_waves; crates/http/src/client_signer_tests.rs the_connection_signer_checks_each_signature_before_answering",
+        bound_by: "crates/db/tests/block/client_create_graph.rs trusted_create_graph_matches_model_and_rejects_unapproved_waves; crates/http/tests/unit/client_signer.rs the_connection_signer_checks_each_signature_before_answering",
     },
     Property {
         family: "HTTP client-signed update",
@@ -348,7 +348,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/http/src/client_signed_update.rs single_document_target",
         model_ref: "ClientSignedUpdateFilter (lake build); single_document_filter_admission_matches_model",
         tiers: &[Boundary],
-        bound_by: "crates/http/src/client_signed_update.rs single_document_filter_admission_matches_model",
+        bound_by: "crates/http/tests/unit/client_signed_update.rs single_document_filter_admission_matches_model",
     },
     Property {
         family: "SSE loss and error delivery",
@@ -366,7 +366,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/events/src/channel_bus.rs ChannelBus::publish_raw; crates/http/src/handlers/graphql/query.rs graphql_sse; crates/query/src/executor.rs QueryResponseError::from_query_error",
         model_ref: "SseDelivery (lake build)",
         tiers: &[Boundary],
-        bound_by: "crates/events/src/channel_bus_tests.rs overflow_wakes_reader_that_drained_before_loss_was_recorded, ordinary_raw_subscription_remains_open_after_overflow; crates/http/tests/graphql_sse_recovery.rs typed_permission_refusal_keeps_its_code_in_the_graphql_stream",
+        bound_by: "crates/events/tests/unit/channel_bus.rs overflow_wakes_reader_that_drained_before_loss_was_recorded, ordinary_raw_subscription_remains_open_after_overflow; crates/http/tests/graphql_sse_recovery.rs typed_permission_refusal_keeps_its_code_in_the_graphql_stream",
     },
     Property {
         family: "HTTP router composition",
@@ -2046,7 +2046,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/defra-node/src/signed_query/mod.rs execute_with_signing_context; crates/http/src/server.rs Server::router; crates/query/src/pooled/mod.rs PooledExecutor::execute_prepared; crates/workers/src/pool/detached.rs run_on; crates/defra-node/src/network.rs NodeEdge::drain_requests",
         model_ref: "MC_SignedRequestDrain_{Green,Red_TaskDeadline,Red_Transform}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/defra-node/src/signed_query/tests.rs a_signed_query_remains_admitted_past_the_edge_deadline; crates/defra-node/src/verified_create_tests.rs signed_writes_are_refused_once_requests_have_drained; crates/http/tests/request_admission.rs a_route_added_by_router_transform_stays_admitted_until_it_ends",
+        bound_by: "crates/defra-node/src/signed_query/tests.rs a_signed_query_remains_admitted_past_the_edge_deadline; crates/defra-node/tests/unit/verified_create.rs signed_writes_are_refused_once_requests_have_drained; crates/http/tests/request_admission.rs a_route_added_by_router_transform_stays_admitted_until_it_ends",
     },
     Property {
         // A transaction guard follows its admitted commit task rather than a
