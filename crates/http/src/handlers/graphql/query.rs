@@ -26,7 +26,7 @@ where
 use query::subscription::{
     is_subscription_operation_with_limits, response_has_data, subscription_accepts_doc_id,
     subscription_doc_ids_with_limits, subscription_to_scoped_query_with_limits,
-    validate_subscription_with_limits,
+    validate_subscription_with_limits, SUBSCRIPTION_NEEDS_SSE,
 };
 use query::{parse_request_with_limits, ParsedOperation, QueryLimits};
 
@@ -276,20 +276,18 @@ pub async fn graphql_transactional(
     // Check if this is a subscription query.
     // Fast path: skip the full GraphQL parse for mutations/queries (the common case).
     // Only do the full parse when the query might be a subscription.
-    if might_be_subscription(&request.query)
+    // A subscription sent without SSE runs as a plain request, as Go's does,
+    // so an invalid one reports its GraphQL errors; a valid one is refused
+    // after it, below.
+    let subscription = might_be_subscription(&request.query)
         && is_subscription_operation_with_limits(
             &request.query,
             request.variables.as_ref(),
             request.operation_name.as_deref(),
             state.query_limits,
-        )
-    {
+        );
+    if subscription && wants_sse(&headers) {
         require_permission(&state, &identity, permission).await?;
-        if !wants_sse(&headers) {
-            return Err(HttpError::NotAcceptable(
-                "invalid subscription transport".to_string(),
-            ));
-        }
         // Validate before opening the stream. The per-event path enforces the
         // same rules, but by then the only place left to report a failure is
         // the log -- the caller would hold a healthy stream that never fires.
@@ -348,6 +346,17 @@ pub async fn graphql_transactional(
             ran.map_err(|error| pool_failure("graphql", error))??
         }
     };
+
+    if subscription
+        && response
+            .errors
+            .iter()
+            .any(|error| error.message.contains(SUBSCRIPTION_NEEDS_SSE))
+    {
+        return Err(HttpError::NotAcceptable(
+            "invalid subscription transport".to_string(),
+        ));
+    }
 
     record_response_metrics(&response);
     if response.has_errors() {

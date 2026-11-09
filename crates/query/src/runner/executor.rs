@@ -665,8 +665,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 ParsedOperation::Subscription { .. } => {
                     // Subscriptions require SSE transport - they cannot be executed via regular request/response
                     Err(crate::error::QueryError::parse(
-                        "Subscriptions must be executed via Server-Sent Events (SSE). \
-                         Send the request with Accept: text/event-stream header.",
+                        crate::subscription::SUBSCRIPTION_NEEDS_SSE,
                     ))
                 }
                 ParsedOperation::Introspection { query } => {
