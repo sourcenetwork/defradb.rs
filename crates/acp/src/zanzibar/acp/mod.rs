@@ -1,7 +1,7 @@
 //! Zanzibar-based DocumentACP implementation.
 
-mod document_acp;
 mod administrative_relationship;
+mod document_acp;
 
 use crate::policy_cache::PolicyCache;
 use std::sync::Arc;
@@ -174,13 +174,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> ZanzibarDocumentACP<S> {
 
         for manager_relation in managers {
             let has_manager = engine
-                .check(
-                    policy_id,
-                    resource_name,
-                    doc_id,
-                    manager_relation,
-                    subject,
-                )
+                .check(policy_id, resource_name, doc_id, manager_relation, subject)
                 .await?;
 
             if has_manager {

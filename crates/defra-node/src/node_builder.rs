@@ -4,13 +4,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(feature = "p2p")]
+use crate::assemble::check_access_hooks;
+use crate::assemble::{assemble, Extras};
+use crate::config::{NodeConfig, NodeSigning, Persistence, SigningKey, TransportConfig};
 use crate::Node;
 #[cfg(feature = "otel")]
 use crate::TelemetryHandle;
-#[cfg(feature = "p2p")]
-use crate::assemble::check_access_hooks;
-use crate::assemble::{Extras, assemble};
-use crate::config::{NodeConfig, NodeSigning, Persistence, SigningKey, TransportConfig};
 #[cfg(feature = "p2p")]
 use crate::{AccessHooks, P2PConfig};
 #[cfg(feature = "vera")]

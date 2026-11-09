@@ -2473,17 +2473,30 @@ struct ReplicatedDocumentProjector;
 async fn wait_for_projector_peer(node: &Node, context: &defra_core::RequestContext) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        if !node.active_peers_as(context).await.expect("active peers").is_empty() {
+        if !node
+            .active_peers_as(context)
+            .await
+            .expect("active peers")
+            .is_empty()
+        {
             return;
         }
-        assert!(Instant::now() < deadline, "node never reported a connected peer");
-        edge::testing::edge().sleep(Duration::from_millis(100)).await;
+        assert!(
+            Instant::now() < deadline,
+            "node never reported a connected peer"
+        );
+        edge::testing::edge()
+            .sleep(Duration::from_millis(100))
+            .await;
     }
 }
 
 #[async_trait::async_trait]
 impl db::DocumentMutationProjector for ReplicatedDocumentProjector {
-    async fn reconcile(&self, _context: &db::DocumentMutationContext<'_>) -> storage::corekv::Result<()> {
+    async fn reconcile(
+        &self,
+        _context: &db::DocumentMutationContext<'_>,
+    ) -> storage::corekv::Result<()> {
         Ok(())
     }
 
@@ -2494,23 +2507,52 @@ impl db::DocumentMutationProjector for ReplicatedDocumentProjector {
         doc_id: &str,
     ) -> storage::corekv::Result<()> {
         if collection == "ProjectedPeerDoc" && !doc_id.is_empty() {
-            let system = context.view.sibling(storage::namespace::Namespace::Systemstore);
-            let collection = db::collection::loader::load_collection_from_systemstore(&system, collection)
-                .await.map_err(|e| storage::corekv::Error::Other(e.to_string()))?
-                .ok_or_else(|| storage::corekv::Error::Other("missing collection".into()))?;
-            let policy = collection.schema().policy.as_ref().ok_or_else(|| storage::corekv::Error::Other("missing policy".into()))?;
-            let acp_view = context.view.sibling(storage::namespace::Namespace::Acpstore);
-            let scoped = context.document_acp.bind_transaction(acp_view.clone())
+            let system = context
+                .view
+                .sibling(storage::namespace::Namespace::Systemstore);
+            let collection =
+                db::collection::loader::load_collection_from_systemstore(&system, collection)
+                    .await
+                    .map_err(|e| storage::corekv::Error::Other(e.to_string()))?
+                    .ok_or_else(|| storage::corekv::Error::Other("missing collection".into()))?;
+            let policy = collection
+                .schema()
+                .policy
+                .as_ref()
+                .ok_or_else(|| storage::corekv::Error::Other("missing policy".into()))?;
+            let acp_view = context
+                .view
+                .sibling(storage::namespace::Namespace::Acpstore);
+            let scoped = context
+                .document_acp
+                .bind_transaction(acp_view.clone())
                 .ok_or_else(|| storage::corekv::Error::Other("ACP cannot bind".into()))?;
-            let owner = scoped.get_doc_owner(&policy.id, &policy.resource_name, doc_id).await
+            let owner = scoped
+                .get_doc_owner(&policy.id, &policy.resource_name, doc_id)
+                .await
                 .map_err(|e| storage::corekv::Error::Other(e.to_string()))?
-                .ok_or_else(|| storage::corekv::Error::Other("verified creator not registered".into()))?;
+                .ok_or_else(|| {
+                    storage::corekv::Error::Other("verified creator not registered".into())
+                })?;
             if &owner == context.node_did {
-                return Err(storage::corekv::Error::Other("expected foreign creator".into()));
+                return Err(storage::corekv::Error::Other(
+                    "expected foreign creator".into(),
+                ));
             }
-            context.document_acp.change_node_admin_relationship(acp_view, context.node_did,
-                acp::Subject::wildcard(), &policy.id, &policy.resource_name, doc_id, "reader", false)
-                .await.map_err(|e| storage::corekv::Error::Other(e.to_string()))?;
+            context
+                .document_acp
+                .change_node_admin_relationship(
+                    acp_view,
+                    context.node_did,
+                    acp::Subject::wildcard(),
+                    &policy.id,
+                    &policy.resource_name,
+                    doc_id,
+                    "reader",
+                    false,
+                )
+                .await
+                .map_err(|e| storage::corekv::Error::Other(e.to_string()))?;
         }
         Ok(())
     }

@@ -142,8 +142,12 @@ impl MockNodeAcpOperations {
                 );
             }
             return Ok(update_vec(&self.grants, |grants| {
-                let existed = grants.iter().any(|(did, grant)| did == target && *grant == permission);
-                if !existed { grants.push((target.clone(), permission)); }
+                let existed = grants
+                    .iter()
+                    .any(|(did, grant)| did == target && *grant == permission);
+                if !existed {
+                    grants.push((target.clone(), permission));
+                }
                 existed
             }));
         }

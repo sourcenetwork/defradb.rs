@@ -283,21 +283,52 @@ trait VerifiedClientGraph {
     fn signer_did(&self) -> &str;
     fn doc_id(&self) -> &str;
     fn matches_mutation(&self, mutation: &query::mapper::Mutation) -> bool;
-    fn signing_config_for_execution(&self) -> (defra_core::signing::SigningConfig, db::block::builder::VerifiedSignatureReceipt);
+    fn signing_config_for_execution(
+        &self,
+    ) -> (
+        defra_core::signing::SigningConfig,
+        db::block::builder::VerifiedSignatureReceipt,
+    );
 }
 
 impl VerifiedClientGraph for db::block::builder::VerifiedClientCreate {
-    fn signer_did(&self) -> &str { self.signer_did() }
-    fn doc_id(&self) -> &str { self.doc_id() }
-    fn matches_mutation(&self, mutation: &query::mapper::Mutation) -> bool { self.matches_mutation(mutation) }
-    fn signing_config_for_execution(&self) -> (defra_core::signing::SigningConfig, db::block::builder::VerifiedSignatureReceipt) { self.signing_config_for_execution() }
+    fn signer_did(&self) -> &str {
+        self.signer_did()
+    }
+    fn doc_id(&self) -> &str {
+        self.doc_id()
+    }
+    fn matches_mutation(&self, mutation: &query::mapper::Mutation) -> bool {
+        self.matches_mutation(mutation)
+    }
+    fn signing_config_for_execution(
+        &self,
+    ) -> (
+        defra_core::signing::SigningConfig,
+        db::block::builder::VerifiedSignatureReceipt,
+    ) {
+        self.signing_config_for_execution()
+    }
 }
 
 impl VerifiedClientGraph for db::block::builder::VerifiedClientMutation {
-    fn signer_did(&self) -> &str { self.signer_did() }
-    fn doc_id(&self) -> &str { self.doc_id() }
-    fn matches_mutation(&self, mutation: &query::mapper::Mutation) -> bool { self.matches_mutation(mutation) }
-    fn signing_config_for_execution(&self) -> (defra_core::signing::SigningConfig, db::block::builder::VerifiedSignatureReceipt) { self.signing_config_for_execution() }
+    fn signer_did(&self) -> &str {
+        self.signer_did()
+    }
+    fn doc_id(&self) -> &str {
+        self.doc_id()
+    }
+    fn matches_mutation(&self, mutation: &query::mapper::Mutation) -> bool {
+        self.matches_mutation(mutation)
+    }
+    fn signing_config_for_execution(
+        &self,
+    ) -> (
+        defra_core::signing::SigningConfig,
+        db::block::builder::VerifiedSignatureReceipt,
+    ) {
+        self.signing_config_for_execution()
+    }
 }
 
 impl Node {
@@ -370,7 +401,8 @@ impl Node {
         handle: &TransactionHandle,
         graph: &db::block::builder::VerifiedClientCreate,
     ) -> QueryResponse {
-        self.execute_verified_graph_in_txn(request, handle, graph).await
+        self.execute_verified_graph_in_txn(request, handle, graph)
+            .await
     }
 
     /// Stage one verified client update or delete under native ACP in the
@@ -382,7 +414,8 @@ impl Node {
         handle: &TransactionHandle,
         graph: &db::block::builder::VerifiedClientMutation,
     ) -> QueryResponse {
-        self.execute_verified_graph_in_txn(request, handle, graph).await
+        self.execute_verified_graph_in_txn(request, handle, graph)
+            .await
     }
 
     async fn execute_verified_graph_in_txn<G>(
@@ -439,7 +472,8 @@ impl Node {
         let key = mutations[0].output_name();
         // The graph supplies signatures only; no caller context may carry a
         // separate actor, encryption, bearer, or transaction authority.
-        request.context = defra_core::RequestContext::default().with_transactional_authority_required();
+        request.context =
+            defra_core::RequestContext::default().with_transactional_authority_required();
         let Some(node_did) = self.node_identity_did.as_deref() else {
             let _ = self.discard_transaction(handle).await;
             return QueryResponse::error("verified create requires a configured node identity");
@@ -1580,9 +1614,9 @@ mod userset_manager_tests;
 mod transactional_relationship_tests;
 
 #[cfg(test)]
-mod delegated_relationship_tests;
-#[cfg(test)]
 mod administrative_relationship_tests;
+#[cfg(test)]
+mod delegated_relationship_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod verified_create_tests;

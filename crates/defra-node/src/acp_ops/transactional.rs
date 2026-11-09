@@ -173,13 +173,28 @@ where
                     };
                     let changed = match ordinary {
                         Ok(changed) => changed,
-                        Err(original @ (acp::Error::NotOwner { .. } | acp::Error::NotManager { .. })) => {
-                            match fetcher.change_node_admin_relationship(
-                                acp.clone(), &actor, target, &binding.id,
-                                &binding.resource_name, &doc_id, &relation, delete,
-                            ).await {
+                        Err(
+                            original
+                            @ (acp::Error::NotOwner { .. } | acp::Error::NotManager { .. }),
+                        ) => {
+                            match fetcher
+                                .change_node_admin_relationship(
+                                    acp.clone(),
+                                    &actor,
+                                    target,
+                                    &binding.id,
+                                    &binding.resource_name,
+                                    &doc_id,
+                                    &relation,
+                                    delete,
+                                )
+                                .await
+                            {
                                 Ok(changed) => changed,
-                                Err(acp::Error::PermissionDenied(_) | acp::Error::UnsupportedAdministrativeRelationship) => return Err(original.into()),
+                                Err(
+                                    acp::Error::PermissionDenied(_)
+                                    | acp::Error::UnsupportedAdministrativeRelationship,
+                                ) => return Err(original.into()),
                                 Err(error) => return Err(error.into()),
                             }
                         }

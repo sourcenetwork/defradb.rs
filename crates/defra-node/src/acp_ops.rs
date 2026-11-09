@@ -119,11 +119,19 @@ impl<S: storage::corekv::Store + 'static> DbAcpOps<S> {
         relationship: transactional::Relationship<'_>,
         delete: bool,
     ) -> Result<bool> {
-        let guard = query::TransactionGuard::begin_as(self.executor.as_ref(), context.clone(), false).await?;
-        let id = guard.handle().ok_or_else(|| query::QueryError::execution("transaction is unavailable"))?
-            .as_str().parse().map_err(|_| query::QueryError::execution("transaction ID must be numeric"))?;
+        let guard =
+            query::TransactionGuard::begin_as(self.executor.as_ref(), context.clone(), false)
+                .await?;
+        let id = guard
+            .handle()
+            .ok_or_else(|| query::QueryError::execution("transaction is unavailable"))?
+            .as_str()
+            .parse()
+            .map_err(|_| query::QueryError::execution("transaction ID must be numeric"))?;
         let txn_context = context.clone().with_txn(Some(id));
-        let changed = self.relationship_in_txn(&txn_context, context, identity, relationship, delete).await?;
+        let changed = self
+            .relationship_in_txn(&txn_context, context, identity, relationship, delete)
+            .await?;
         guard.commit().await?;
         Ok(changed)
     }
@@ -364,8 +372,7 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
             )
             .into());
         }
-        let job =
-            query::txn::embedded_source_permission_job(actor_context.clone(), edge.clone())?;
+        let job = query::txn::embedded_source_permission_job(actor_context.clone(), edge.clone())?;
         let handle = query::txn::TransactionHandle::new(id.to_string());
         Ok(self
             .registry

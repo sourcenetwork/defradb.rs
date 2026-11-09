@@ -30,12 +30,24 @@ async fn assert_user_signed_block(node: &Node, cid: &str, user_did: &str, signin
     let mut block = defra_core::block::Block::from_dag_cbor(&block_bytes).unwrap();
     let signature = defra_core::block::Signature::from_dag_cbor(&signature_bytes).unwrap();
     assert_eq!(block.generate_cid().unwrap().to_string(), cid);
-    assert_eq!(block.signature.take(), Some(signature.generate_cid().unwrap()));
-    assert_eq!(signature.header.sig_type, defra_core::block::SignatureType::EdDSA);
-    assert_eq!(signature.header.identity.as_slice(), signing.public_key_hex.as_bytes());
-    let public = crypto::public_key_from_string(crypto::KeyType::Ed25519, &signing.public_key_hex).unwrap();
+    assert_eq!(
+        block.signature.take(),
+        Some(signature.generate_cid().unwrap())
+    );
+    assert_eq!(
+        signature.header.sig_type,
+        defra_core::block::SignatureType::EdDSA
+    );
+    assert_eq!(
+        signature.header.identity.as_slice(),
+        signing.public_key_hex.as_bytes()
+    );
+    let public =
+        crypto::public_key_from_string(crypto::KeyType::Ed25519, &signing.public_key_hex).unwrap();
     assert_eq!(public.did().unwrap(), user_did);
-    assert!(public.verify(&block.to_dag_cbor().unwrap(), &signature.value).unwrap());
+    assert!(public
+        .verify(&block.to_dag_cbor().unwrap(), &signature.value)
+        .unwrap());
 }
 
 #[test]
@@ -152,8 +164,10 @@ resources:
 
 #[test]
 fn verified_update_and_delete_use_exact_actor_and_transaction_state() {
-    use db::block::builder::{ClientCreateSignatures, ClientDeleteSignatures, ClientUpdateSignatures,
-        ClientUpdateSnapshot, VerifiedClientMutation};
+    use db::block::builder::{
+        ClientCreateSignatures, ClientDeleteSignatures, ClientUpdateSignatures,
+        ClientUpdateSnapshot, VerifiedClientMutation,
+    };
     const POLICY: &str = "name: Mutations\nresources:\n  - name: records\n    relations:\n      - name: reader\n        types: [actor]\n      - name: editor\n        types: [actor]\n      - name: deleter\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader + editor + deleter\n      - name: update\n        expr: editor\n      - name: delete\n        expr: deleter\n";
     edge::testing::edge().block_on(async {
         let (admin, _) = actor();

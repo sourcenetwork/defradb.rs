@@ -751,12 +751,21 @@ fn trusted_delete_graph_matches_model_and_refuses_other_waves() {
     // The model derives acceptance from the exact intent and authenticated graph.
     let patch = json!({"name":"after"});
     let update = db::block::builder::ClientUpdateSignatures::from_input(
-        &storage::Crdts::default(), &schema, &doc_id, &patch, &snapshot, &signer,
-    ).unwrap();
-    let delete = ClientDeleteSignatures::from_snapshot(&schema, &doc_id, &snapshot, &signer).unwrap();
+        &storage::Crdts::default(),
+        &schema,
+        &doc_id,
+        &patch,
+        &snapshot,
+        &signer,
+    )
+    .unwrap();
+    let delete =
+        ClientDeleteSignatures::from_snapshot(&schema, &doc_id, &snapshot, &signer).unwrap();
     let mut cases = Vec::new();
-    for (operation, evidence) in [("update", serde_json::to_value(update.evidence()).unwrap()),
-                                   ("delete", serde_json::to_value(delete.evidence()).unwrap())] {
+    for (operation, evidence) in [
+        ("update", serde_json::to_value(update.evidence()).unwrap()),
+        ("delete", serde_json::to_value(delete.evidence()).unwrap()),
+    ] {
         let mut tampered = evidence.clone();
         let byte = tampered["composite_signature"][0].as_u64().unwrap();
         tampered["composite_signature"][0] = json!(byte ^ 1);
@@ -773,24 +782,49 @@ fn trusted_delete_graph_matches_model_and_refuses_other_waves() {
         let evidence = serde_json::from_value(wire).unwrap();
         let result = match operation {
             "update" => db::block::builder::VerifiedClientMutation::verify_update(
-                &storage::Crdts::default(), &schema, &doc_id, &patch, &snapshot, evidence),
+                &storage::Crdts::default(),
+                &schema,
+                &doc_id,
+                &patch,
+                &snapshot,
+                evidence,
+            ),
             _ => db::block::builder::VerifiedClientMutation::verify_delete(
-                &schema, &doc_id, &snapshot, evidence),
+                &schema, &doc_id, &snapshot, evidence,
+            ),
         };
         assert_eq!(result.is_ok(), expected["accepts"].as_bool().unwrap());
     }
     let unchanged = json!({"name":"before"});
     let unsigned = db::block::builder::ClientUpdateSignatures::from_input(
-        &storage::Crdts::default(), &schema, &doc_id, &unchanged, &snapshot, &signer,
-    ).unwrap();
+        &storage::Crdts::default(),
+        &schema,
+        &doc_id,
+        &unchanged,
+        &snapshot,
+        &signer,
+    )
+    .unwrap();
     assert!(unsigned.is_complete());
     let graph = json!({"signer":"user", "operation":"update", "collection":"Settings", "document":doc_id,
         "input":unchanged.to_string(), "history":head.to_string(), "blocks":[]});
-    let modeled = model("VerifiedMutationHandoff.lean", &json!([{"approved":graph, "offered":graph,
-        "claimedActor":"user", "verified":true, "nativeAuthorized":true, "authorityBound":true, "waveMatches":true, "commit":true}]));
-    assert_eq!(db::block::builder::VerifiedClientMutation::verify_update(
-        &storage::Crdts::default(), &schema, &doc_id, &unchanged, &snapshot, unsigned.evidence(),
-    ).is_ok(), modeled[0]["accepts"].as_bool().unwrap());
+    let modeled = model(
+        "VerifiedMutationHandoff.lean",
+        &json!([{"approved":graph, "offered":graph,
+        "claimedActor":"user", "verified":true, "nativeAuthorized":true, "authorityBound":true, "waveMatches":true, "commit":true}]),
+    );
+    assert_eq!(
+        db::block::builder::VerifiedClientMutation::verify_update(
+            &storage::Crdts::default(),
+            &schema,
+            &doc_id,
+            &unchanged,
+            &snapshot,
+            unsigned.evidence(),
+        )
+        .is_ok(),
+        modeled[0]["accepts"].as_bool().unwrap()
+    );
     let new_graph =
         || ClientDeleteSignatures::from_snapshot(&schema, &doc_id, &snapshot, &signer).unwrap();
     let wave = vec![new_graph().composite_block().to_vec()];

@@ -35,7 +35,10 @@ impl<S: ZanzibarStore + ?Sized + 'static> DocumentACP for ZanzibarDocumentACP<S>
         relation: &str,
         delete: bool,
     ) -> Result<bool> {
-        self.change_administrative_relationship(view, actor, target, policy_id, resource, doc_id, relation, delete).await
+        self.change_administrative_relationship(
+            view, actor, target, policy_id, resource, doc_id, relation, delete,
+        )
+        .await
     }
 
     fn supports_transactions(&self) -> bool {

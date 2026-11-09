@@ -38,7 +38,12 @@ mod tests {
                 .await
                 .unwrap();
             assert!(node
-                .add_view_as(&actor, "Item { name }", "type ItemView { name: String }", None)
+                .add_view_as(
+                    &actor,
+                    "Item { name }",
+                    "type ItemView { name: String }",
+                    None
+                )
                 .await
                 .is_err());
             assert!(node
@@ -50,9 +55,14 @@ mod tests {
                     .await
                     .unwrap();
             }
-            node.add_view_as(&actor, "Item { name }", "type ItemView { name: String }", None)
-                .await
-                .unwrap();
+            node.add_view_as(
+                &actor,
+                "Item { name }",
+                "type ItemView { name: String }",
+                None,
+            )
+            .await
+            .unwrap();
             node.materialize_collection_as(&actor, "Item")
                 .await
                 .unwrap();
@@ -62,7 +72,12 @@ mod tests {
                     .unwrap();
             }
             assert!(node
-                .add_view_as(&actor, "Item { name }", "type OtherView { name: String }", None)
+                .add_view_as(
+                    &actor,
+                    "Item { name }",
+                    "type OtherView { name: String }",
+                    None
+                )
                 .await
                 .is_err());
             assert!(node

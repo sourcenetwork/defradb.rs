@@ -274,7 +274,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             );
         }
 
-        datastore.project_document(collection.name(), context.doc_id_str).await
+        datastore
+            .project_document(collection.name(), context.doc_id_str)
+            .await
             .map_err(|error| MergeError::Database(crate::error::Error::Storage(error)))?;
         Ok(None)
     }

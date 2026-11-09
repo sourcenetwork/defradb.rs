@@ -676,9 +676,13 @@ impl Collection {
         doc: &Document,
         doc_short_id: u64,
     ) -> Result<DocID> {
-        let doc_id = self.save_with_datastore_priorities(datastore, doc, doc_short_id, None)
+        let doc_id = self
+            .save_with_datastore_priorities(datastore, doc, doc_short_id, None)
             .await?;
-        datastore.project_document(self.name(), &doc_id.to_string()).await.map_err(Error::Storage)?;
+        datastore
+            .project_document(self.name(), &doc_id.to_string())
+            .await
+            .map_err(Error::Storage)?;
         Ok(doc_id)
     }
 

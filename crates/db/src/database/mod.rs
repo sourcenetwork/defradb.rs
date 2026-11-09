@@ -1,4 +1,3 @@
-use crate::NacManagerApi;
 /// Database struct for DefraDB matching Go's internal/db/db.go.
 ///
 /// The DB struct is the main entry point for DefraDB operations.
@@ -7,6 +6,7 @@ use crate::NacManagerApi;
 use crate::error::{Error, Result};
 pub use crate::search::EmbeddingClientConfig;
 use crate::txn::DbTxn;
+use crate::NacManagerApi;
 use cid::Cid;
 use datastore::BasicTxn;
 use events::Bus;
@@ -14,8 +14,8 @@ use identity::{Identity, RawIdentity};
 use kovan_map::HopscotchMap;
 use lens::TransformStore;
 use rapidhash::fast::RandomState;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use storage::corekv::{Key, Store};
 
 pub mod action;
@@ -688,15 +688,16 @@ impl<S: Store> DB<S> {
     where
         S: 'static,
     {
-        let bound: Arc<dyn datastore::DocumentMutationProjector> = Arc::new(
-            crate::document_projection::BoundProjection::new(
+        let bound: Arc<dyn datastore::DocumentMutationProjector> =
+            Arc::new(crate::document_projection::BoundProjection::new(
                 projector,
                 document_acp,
                 node_did,
                 Arc::downgrade(self),
-            ),
-        );
-        self.document_projector.set(bound).map_err(|_| Error::Other("document projector already installed".into()))
+            ));
+        self.document_projector
+            .set(bound)
+            .map_err(|_| Error::Other("document projector already installed".into()))
     }
 
     /// Reconcile a trusted projection before exposing the node to requests.
