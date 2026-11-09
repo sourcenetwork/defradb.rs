@@ -80,6 +80,7 @@ testo collection_version::introspection_golden::introspection_matches_golden_rel
 testo acp::dac::branchable::peer::acp_p2_p_branchable_collection_synced_with_node_collection_access_local_acp #2708
 testo acp::dac::branchable::peer::acp_p2_p_branchable_collection_shared_reader_can_read_on_peer_local_acp #2708
 testo acp::dac::delete_with_index::acp_dac_delete_doc_by_id_with_reader_only_access_does_not_orphan_index #2708
+testo signature::txn_acp::an_anonymous_caller_cannot_verify_a_block_the_txn_created #2704
 testo acp::dac::p2p::sync_shared_field::acp_p2_p_sync_shared_field_block_access_to_first_doc #2708
 testo acp::dac::p2p::sync_shared_field::acp_p2_p_sync_shared_field_block_access_to_second_doc #2708
 testo acp::nac::delete_index::nac_gates_delete_index_no_identity_not_authorized_error #2700
