@@ -259,6 +259,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 );
             }
         }
+        if !doc_is_tombstoned {
+            self.owe_reindex_off_active_version(systemstore, collection)
+                .await?;
+        }
 
         if let Some(enc_key) = self.se_enc_key() {
             if let Err(e) = se_merge::generate_merge_artifacts(
