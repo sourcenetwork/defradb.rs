@@ -129,7 +129,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Explicit embedded signing",
         name: "admitted_binds",
         axis: Lean,
-        anchor: "crates/defra-node/src/embedded_signer.rs; crates/defra-node/src/lib.rs execute_request_with_signer",
+        anchor: "crates/defra-node/src/embedded_signer.rs admitted_signer; crates/defra-node/src/lib.rs execute_prepared_request",
         model_ref: "EmbeddedSigner (lake build); embedded_signer::native_admission_matches_executed_lean_model",
         tiers: &[Boundary, Contract],
         bound_by: "crates/defra-node/tests/embedded_signer.rs native_admission_matches_executed_lean_model",
@@ -138,7 +138,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Explicit embedded signing",
         name: "INV_Bound",
         axis: Tla,
-        anchor: "crates/defra-node/src/embedded_signer.rs; crates/defra-node/src/lib.rs execute_request_in_txn_with_signer",
+        anchor: "crates/defra-node/src/embedded_signer.rs admitted_signer; crates/defra-node/src/lib.rs execute_prepared_request",
         model_ref: "MC_EmbeddedSigner_{Green,Red_*}.cfg",
         tiers: &[Boundary, Contract],
         bound_by: "crates/defra-node/tests/embedded_signer.rs selected_actor_signs_create_update_and_respects_transaction_finality, selected_signer_does_not_bypass_document_acp",
@@ -2046,7 +2046,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/defra-node/src/signed_query/mod.rs execute_with_signing_context; crates/http/src/server.rs Server::router; crates/query/src/pooled/mod.rs PooledExecutor::execute_prepared; crates/workers/src/pool/detached.rs run_on; crates/defra-node/src/network.rs NodeEdge::drain_requests",
         model_ref: "MC_SignedRequestDrain_{Green,Red_TaskDeadline,Red_Transform}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/defra-node/src/signed_query/tests.rs a_signed_query_remains_admitted_past_the_edge_deadline; crates/http/tests/request_admission.rs a_route_added_by_router_transform_stays_admitted_until_it_ends",
+        bound_by: "crates/defra-node/src/signed_query/tests.rs a_signed_query_remains_admitted_past_the_edge_deadline; crates/defra-node/src/verified_create_tests.rs signed_writes_are_refused_once_requests_have_drained; crates/http/tests/request_admission.rs a_route_added_by_router_transform_stays_admitted_until_it_ends",
     },
     Property {
         // A transaction guard follows its admitted commit task rather than a

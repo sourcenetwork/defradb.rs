@@ -64,9 +64,9 @@ async fn create(
 ) -> String {
     let query = format!("mutation {{ create_{collection}(input:{{name:\"{name}\"}}) {{_docID}} }}");
     let result = node
-        .execute_request_with_signer(
-            query::QueryRequest::new(query).with_identity(Some(did.parse().unwrap())),
-            signer,
+        .execute_request(
+            signer
+                .attach(query::QueryRequest::new(query).with_identity(Some(did.parse().unwrap()))),
         )
         .await;
     assert!(!result.has_errors(), "{:?}", result.errors);

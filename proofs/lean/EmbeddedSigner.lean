@@ -4,7 +4,8 @@ import Lean
 An explicit embedded signer is admitted only when its verified local key belongs
  to the selected actor. The transaction registry still uses the node principal;
  authorization by the selected actor remains an independent requirement.
-Rust owner: `crates/defra-node/src/embedded_signer.rs` and `Node::execute_request_with_signer`.
+Rust owner: `admitted_signer` in `crates/defra-node/src/embedded_signer.rs`, which
+ `Node::execute_prepared_request` runs for every request carrying a caller's key.
 -/
 namespace EmbeddedSigner
 open Lean

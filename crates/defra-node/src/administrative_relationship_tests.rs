@@ -49,8 +49,8 @@ fn exercise_native_admin() -> Vec<bool> {
         }
         let policy = node.add_dac_policy_as(&admin_context, "name: Admin fixture\nresources:\n  - name: records\n    relations:\n      - name: reader\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n").await.unwrap();
         node.add_collection(&format!("type AdminRecord @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
-        let created = node.execute_request_with_signer(query::QueryRequest::new("mutation($input:AdminRecordMutationInputArg!) { create_AdminRecord(input:$input) {_docID} }")
-            .with_variables(json!({"input":{"name":"foreign"}})).with_identity(Some(user.did().unwrap())), &EmbeddedSigner::from_config(user_signing).unwrap()).await;
+        let created = node.execute_request(EmbeddedSigner::from_config(user_signing).unwrap().attach(query::QueryRequest::new("mutation($input:AdminRecordMutationInputArg!) { create_AdminRecord(input:$input) {_docID} }")
+            .with_variables(json!({"input":{"name":"foreign"}})).with_identity(Some(user.did().unwrap())))).await;
         assert!(!created.has_errors(), "{:?}", created.errors);
         let doc = created.data.unwrap()["add_AdminRecord"][0]["_docID"].as_str().unwrap().to_owned();
         let txn = node.begin_transaction(false).await.unwrap();

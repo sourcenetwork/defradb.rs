@@ -350,6 +350,12 @@ impl Node {
     ///
     /// Storage conflicts are returned to the caller. Eligible implicit mutations
     /// retry inside the engine-owned transaction boundary.
+    ///
+    /// A caller's key on the request ([`EmbeddedSigner::attach`]) signs in
+    /// place of the node's. The request must name that key's DID as its actor,
+    /// native ACP authorizes that actor, and the node stays the transaction
+    /// principal. This trusted embedded capability does not authenticate an
+    /// HTTP caller.
     pub async fn execute_request(&self, request: QueryRequest) -> QueryResponse {
         self.execute_prepared_request(request, None).await
     }
@@ -364,31 +370,6 @@ impl Node {
         handle: &TransactionHandle,
     ) -> QueryResponse {
         self.execute_prepared_request(request, Some(handle.clone()))
-            .await
-    }
-
-    /// Execute using a locally held signer whose DID must be the explicit actor.
-    ///
-    /// This trusted embedded capability does not authenticate an HTTP caller;
-    /// it preserves the normal actor authorization and prepared-write boundary.
-    pub async fn execute_request_with_signer(
-        &self,
-        request: QueryRequest,
-        signer: &EmbeddedSigner,
-    ) -> QueryResponse {
-        self.execute_with_embedded_signer(request, None, signer)
-            .await
-    }
-
-    /// Execute in the node-owned transaction, authorizing and signing as the
-    /// explicit request actor. The node remains the transaction principal.
-    pub async fn execute_request_in_txn_with_signer(
-        &self,
-        request: QueryRequest,
-        handle: &TransactionHandle,
-        signer: &EmbeddedSigner,
-    ) -> QueryResponse {
-        self.execute_with_embedded_signer(request, Some(handle.clone()), signer)
             .await
     }
 
@@ -492,7 +473,7 @@ impl Node {
             };
             let (signing_config, receipt) = graph.signing_config_for_execution();
             let response = execute_with_signing_context(
-                network.edge(),
+                network.requests(),
                 self.runner.clone(),
                 request,
                 Some(handle.clone()),
@@ -523,51 +504,6 @@ impl Node {
         }
     }
 
-    async fn execute_with_embedded_signer(
-        &self,
-        request: QueryRequest,
-        txn_handle: Option<TransactionHandle>,
-        signer: &EmbeddedSigner,
-    ) -> QueryResponse {
-        if request.context.dac_bypass() {
-            return QueryResponse::error("explicit embedded signing does not allow DAC bypass");
-        }
-        if request
-            .identity
-            .as_ref()
-            .map(ToString::to_string)
-            .as_deref()
-            != Some(signer.did())
-        {
-            return QueryResponse::error("explicit signing key must match the selected actor");
-        }
-        let Some(node_identity_did) = self.node_identity_did.as_deref() else {
-            return QueryResponse::error(
-                "explicit embedded signing requires a configured node identity",
-            );
-        };
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = (node_identity_did, txn_handle);
-            QueryResponse::error("explicit embedded signing is unavailable on wasm32")
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let Some(network) = self.network.as_ref() else {
-                return unavailable_node_signer_response(node_identity_did);
-            };
-            execute_with_signing_context(
-                network.edge(),
-                self.runner.clone(),
-                request,
-                txn_handle,
-                signer.config(),
-                node_identity_did.to_string(),
-            )
-            .await
-        }
-    }
-
     async fn execute_request_once(&self, request: QueryRequest) -> QueryResponse {
         self.execute_prepared_request(request, None).await
     }
@@ -577,8 +513,19 @@ impl Node {
         request: QueryRequest,
         txn_handle: Option<TransactionHandle>,
     ) -> QueryResponse {
+        // Read before the node's default fills in the actor: a caller's key
+        // signs only for an actor the caller named.
+        let caller_signer = match embedded_signer::admitted_signer(&request) {
+            Ok(signer) => signer,
+            Err(error) => return QueryResponse::error(error.to_string()),
+        };
         let request = self.with_default_query_identity(request);
         let Some(node_identity_did) = self.node_identity_did.as_deref() else {
+            if caller_signer.is_some() {
+                return QueryResponse::error(
+                    "explicit embedded signing requires a configured node identity",
+                );
+            }
             let runner = Arc::clone(&self.runner);
             return self
                 .as_request(async move {
@@ -597,11 +544,13 @@ impl Node {
         ));
 
         #[cfg(not(target_arch = "wasm32"))]
-        let signing_config = defra_core::signing::resolve_signing_config_with_flag(
-            None,
-            Some(node_identity_did),
-            true,
-        );
+        let signing_config = caller_signer.or_else(|| {
+            defra_core::signing::resolve_signing_config_with_flag(
+                None,
+                Some(node_identity_did),
+                true,
+            )
+        });
         #[cfg(not(target_arch = "wasm32"))]
         let Some(signing_config) = signing_config
         else {

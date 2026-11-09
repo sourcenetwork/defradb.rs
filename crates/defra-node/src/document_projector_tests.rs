@@ -288,11 +288,8 @@ fn local_signed_foreign_creator_is_registered_before_projector_admin_grant() {
         }
         let policy = node.add_dac_policy_as(&owner, "name: Projection fixture\nresources:\n  - name: records\n    relations:\n      - name: reader\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n").await.unwrap();
         node.add_collection_as(&owner, &format!("type ForeignProjected @policy(id: \"{policy}\", resource: \"records\") {{ name: String }}")).await.unwrap();
-        let response = node.execute_request_with_signer(
-            QueryRequest::new("mutation { create_ForeignProjected(input:{name:\"one\"}) { _docID } }")
-                .with_identity(Some(user_did.clone())),
-            &crate::EmbeddedSigner::from_config(signing).unwrap(),
-        ).await;
+        let response = node.execute_request(crate::EmbeddedSigner::from_config(signing).unwrap().attach(QueryRequest::new("mutation { create_ForeignProjected(input:{name:\"one\"}) { _docID } }")
+                .with_identity(Some(user_did.clone())))).await;
         assert!(!response.has_errors(), "{:?}", response.errors);
         let doc_id = response.data.unwrap()["add_ForeignProjected"][0]["_docID"].as_str().unwrap().to_owned();
         assert_eq!(node.document_acp().get_doc_owner(&policy, "records", &doc_id).await.unwrap(), Some(user_did));
@@ -428,7 +425,7 @@ fn source_projection_authorizes_the_actual_mutation_actor_atomically() {
         let id = created.data.unwrap()["add_ActorProjectedTool"][0]["_docID"].as_str().unwrap().to_owned();
         let user_request = |body: String| QueryRequest::new(body).with_identity(Some(user.clone()));
         let update = |enabled: bool| format!("mutation {{ update_ActorProjectedTool(docID:\"{id}\",input:{{enabled:{enabled}}}) {{_docID}} }}");
-        let rejected = node.execute_request_with_signer(user_request(update(true)), &signer).await;
+        let rejected = node.execute_request(signer.attach(user_request(update(true)))).await;
         assert!(rejected.has_errors(), "non-admin source grant must be rejected");
         assert_eq!(rejected.errors[0].code(), Some(query::executor::PERMISSION_DENIED_ERROR_CODE));
         assert!(!allowed(&node).await);
@@ -438,12 +435,12 @@ fn source_projection_authorizes_the_actual_mutation_actor_atomically() {
         let enabled = node.execute_request_in_txn(request(update(true)), &handle).await;
         assert!(!enabled.has_errors(), "{:?}", enabled.errors);
         assert!(!allowed(&node).await);
-        let denied = node.execute_request_in_txn_with_signer(user_request(update(false)), &handle, &signer).await;
+        let denied = node.execute_request_in_txn(signer.attach(user_request(update(false))), &handle).await;
         assert!(denied.has_errors(), "non-admin source removal must be rejected");
         assert_eq!(denied.errors[0].code(), Some(query::executor::PERMISSION_DENIED_ERROR_CODE));
         node.runner().commit_txn_as(&owner, &handle).await.unwrap();
         assert!(allowed(&node).await);
-        let harmless = node.execute_request_with_signer(user_request(format!("mutation {{ update_ActorProjectedTool(docID:\"{id}\",input:{{name:\"after\"}}) {{_docID}} }}")), &signer).await;
+        let harmless = node.execute_request(signer.attach(user_request(format!("mutation {{ update_ActorProjectedTool(docID:\"{id}\",input:{{name:\"after\"}}) {{_docID}} }}")))).await;
         assert!(!harmless.has_errors(), "{:?}", harmless.errors);
         let after = node.execute_request(request(format!("{{ ActorProjectedTool(docID:\"{id}\") {{ enabled name }} }}"))).await;
         assert_eq!(after.data.unwrap()["ActorProjectedTool"][0]["enabled"], true);
@@ -486,7 +483,7 @@ fn revoked_source_manager_conflicts_with_the_staged_document_and_grant() {
         let handle = node.runner().begin_txn_as(&owner, false).await.unwrap();
         let mutation = QueryRequest::new(format!("mutation {{ update_ActorProjectedTool(docID:\"{id}\",input:{{enabled:true}}) {{_docID}} }}"))
             .with_identity(Some(actor.clone()));
-        let staged = node.execute_request_in_txn_with_signer(mutation, &handle, &signer).await;
+        let staged = node.execute_request_in_txn(signer.attach(mutation), &handle).await;
         assert!(!staged.has_errors(), "{:?}", staged.errors);
         assert!(!allowed(&node).await);
         assert!(node.delete_nac_actor_relationship_as(&owner, "admin", actor.as_str()).await.unwrap());

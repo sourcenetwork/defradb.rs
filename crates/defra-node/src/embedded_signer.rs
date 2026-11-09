@@ -1,5 +1,6 @@
 use defra_core::signing::{SigningConfig, SigningKeyType};
 use identity::{Identity as _, IdentityKeyType, RawIdentity};
+use query::QueryRequest;
 
 /// A local signing capability deliberately supplied by an embedded caller.
 ///
@@ -12,7 +13,7 @@ pub struct EmbeddedSigner {
     config: SigningConfig,
 }
 
-/// Why a local signing capability cannot be constructed.
+/// Why a local signing capability cannot be built or cannot sign a request.
 #[derive(Debug, thiserror::Error)]
 pub enum EmbeddedSignerError {
     #[error("embedded signing requires a local Ed25519 key without a remote signer")]
@@ -23,6 +24,10 @@ pub enum EmbeddedSignerError {
     PublicKeyMismatch,
     #[error("cannot derive a DID from the signing key")]
     InvalidDid,
+    #[error("explicit embedded signing does not allow DAC bypass")]
+    DacBypass,
+    #[error("explicit signing key must match the selected actor")]
+    ActorMismatch,
 }
 
 impl EmbeddedSigner {
@@ -57,8 +62,36 @@ impl EmbeddedSigner {
         &self.did
     }
 
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    pub(crate) fn config(&self) -> SigningConfig {
-        self.config.clone()
+    /// `request`, signed with this key instead of the node's when
+    /// [`Node::execute_request`](crate::Node::execute_request) or
+    /// [`Node::execute_request_in_txn`](crate::Node::execute_request_in_txn)
+    /// runs it.
+    pub fn attach(&self, mut request: QueryRequest) -> QueryRequest {
+        request.context = request.context.with_signing(Some(self.config.clone()));
+        request
     }
+}
+
+/// The key a caller put on `request`, once it may sign it: a usable local key
+/// of the actor the caller named, with DAC left on.
+pub(crate) fn admitted_signer(
+    request: &QueryRequest,
+) -> Result<Option<SigningConfig>, EmbeddedSignerError> {
+    let Some(config) = request.context.signing() else {
+        return Ok(None);
+    };
+    if request.context.dac_bypass() {
+        return Err(EmbeddedSignerError::DacBypass);
+    }
+    let signer = EmbeddedSigner::from_config(config.clone())?;
+    if request
+        .identity
+        .as_ref()
+        .map(ToString::to_string)
+        .as_deref()
+        != Some(signer.did())
+    {
+        return Err(EmbeddedSignerError::ActorMismatch);
+    }
+    Ok(Some(signer.config))
 }
