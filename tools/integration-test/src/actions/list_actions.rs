@@ -1,22 +1,16 @@
-use std::sync::Arc;
-use std::time::Instant;
-
 use crate::actions::shared::ExpectedAction;
-use crate::actions::wait::{listed_actions, ACTION_POLL, ACTION_TIMEOUT};
 use crate::clients::{CliRun, HttpRun};
 use crate::scenario::{Common, Failure, Op};
 use crate::test_case::State;
-use regolith::sync::Atom;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use testo::prelude::*;
 
 /// Lists the queued collection actions, or starts listening for their events, or waits for the list to fill.
 ///
-/// The three staged forms are Go's: `listen` (`action.events.start`) opens
-/// the listening, `expectedAction` (`action.listAfterEventAsync`) lists in the
-/// background once the action shows, and the next plain `ListActions`
-/// (`action.awaitList`) reads that list.
+/// `listen` is Go's `action.events.start`: it records the node's action
+/// events, which `Wait { expectedAction }` then reads. `expectedAction` is
+/// Go's `action.listAfterEventAsync`, which lists while an action runs.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListActions {
@@ -31,45 +25,6 @@ pub struct ListActions {
     pub expected_error: Option<String>,
     #[serde(flatten)]
     pub common: Common,
-}
-
-/// What a background `ListActions` has done: `None` when nothing started,
-/// `Some(None)` while it runs, then the list it took.
-type Progress = Option<Option<Result<Value, Failure>>>;
-
-/// A background `ListActions`'s [`Progress`]. Shared by every clone of the
-/// state.
-#[derive(Clone, Default)]
-pub struct PendingList(Arc<Atom<Progress>>);
-
-impl PendingList {
-    fn start(&self) {
-        self.0.store(Some(None));
-    }
-
-    fn finish(&self, listed: Result<Value, Failure>) {
-        self.0.store(Some(Some(listed)));
-    }
-
-    /// The background list, once it is taken; `None` when none was started.
-    fn take(&self) -> Option<Result<Value, Failure>> {
-        let deadline = Instant::now() + ACTION_TIMEOUT * 2;
-        loop {
-            match self.0.load_clone() {
-                None => return None,
-                Some(Some(listed)) => {
-                    self.0.store(None);
-                    return Some(listed);
-                }
-                Some(None) if Instant::now() >= deadline => {
-                    return Some(Err(Failure::operation(
-                        "the background ListActions did not finish".to_owned(),
-                    )));
-                }
-                Some(None) => std::thread::sleep(ACTION_POLL),
-            }
-        }
-    }
 }
 
 impl Op for ListActions {
@@ -104,36 +59,20 @@ impl Op for ListActions {
 impl ListActions {
     /// The staged forms' results; `None` for a plain listing.
     ///
+    /// A list taken while an action runs is refused: the node can finish a
+    /// truncate or a view refresh before any list reads it, and nothing holds
+    /// an action in progress, so the result would depend on timing.
     fn staged(&self, state: &State) -> Option<Result<Value, Failure>> {
         if self.listen {
             return Some(self.listen(state).map(|()| json!({})));
         }
-        if let Some(expected) = &self.after_action {
-            return Some(self.list_after(state, expected.clone()).map(|()| json!({})));
+        if self.after_action.is_some() {
+            return Some(Err(Failure::unsupported(format!(
+                "{} argument expectedAction: nothing holds an action in progress for a list to see",
+                Self::name()
+            ))));
         }
-        state
-            .pending_list
-            .take()
-            .map(|listed| listed.map(|actions| json!({ "actions": actions })))
-    }
-
-    /// List the node's actions in the background once its event for
-    /// `expected` arrives, or once the wait for it times out, as Go's async
-    /// `Wait { Action }` then `ListActions` do.
-    fn list_after(&self, state: &State, expected: ExpectedAction) -> Result<(), Failure> {
-        let node = self.common.node().to_owned();
-        let events = state
-            .node(&node)?
-            .listen_actions()
-            .map_err(Failure::unsupported)?;
-        let state = state.clone();
-        state.pending_list.start();
-        std::thread::spawn(move || {
-            // Timing out lists anyway, as Go's `Wait` ends after its duration.
-            let _ = state.block_on(events.arrived(&expected, ACTION_TIMEOUT));
-            state.pending_list.finish(listed_actions(&state, &node));
-        });
-        Ok(())
+        None
     }
 
     /// Go's `action.events.start`: record the node's action events from now.

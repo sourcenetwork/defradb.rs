@@ -27,7 +27,7 @@ pub use document::*;
 pub use encrypted_index::*;
 pub use index::*;
 pub use lens::*;
-pub use list_actions::{ListActions, PendingList};
+pub use list_actions::ListActions;
 pub use nac::*;
 pub use node::*;
 pub use parallel::Parallel;
