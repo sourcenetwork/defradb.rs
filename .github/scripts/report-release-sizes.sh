@@ -47,9 +47,13 @@ previous_archive() {
   local name=$1
   if [ -n "$PREVIOUS_TAG" ]; then
     local previous_name=${name/"$CURRENT_TAG"/"$PREVIOUS_TAG"}
-    if [ -f "$PREVIOUS_DIR/$previous_name" ]; then
-      printf '%s\n' "$PREVIOUS_DIR/$previous_name"
-    fi
+    # Releases before #2096 named the CLI archive defra_*.
+    for candidate in "$previous_name" "${previous_name/#defradb_/defra_}"; do
+      if [ -f "$PREVIOUS_DIR/$candidate" ]; then
+        printf '%s\n' "$PREVIOUS_DIR/$candidate"
+        return
+      fi
+    done
   fi
 }
 
@@ -126,11 +130,12 @@ for archive in "$ARTIFACT_DIR"/*.tar.gz; do
       report_row "$label" "$current" "$previous_size"
       ffi_count=$((ffi_count + 1))
       ;;
-    defra_*.tar.gz)
-      current=$(member_size "$archive" defra)
+    defradb_*.tar.gz)
+      current=$(member_size "$archive" defradb)
       previous_size=
       if [ -n "$previous" ]; then
-        if ! previous_size=$(member_size "$previous" defra 2>/dev/null); then
+        if ! previous_size=$(member_size "$previous" defradb 2>/dev/null) &&
+          ! previous_size=$(member_size "$previous" defra 2>/dev/null); then
           previous_size=
           warn_previous "$previous"
         fi

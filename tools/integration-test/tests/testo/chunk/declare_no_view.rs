@@ -1,5 +1,4 @@
 //! `@chunk` is refused in a view, and the view is not stored (`defra.chunk.declare.no_view`).
-//! The test node serves no view routes, so rust-http and cli report this as unsupported.
 
 use integration_test::actions::{AddCollection, AddView};
 use integration_test::test_case::TestCase;

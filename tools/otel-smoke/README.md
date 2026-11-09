@@ -6,8 +6,8 @@ Two scripts:
 
 | Script | Purpose | Requires Docker |
 | --- | --- | --- |
-| `run.sh` | Positive path — starts otel-collector-contrib + Jaeger, runs `defra start --features otel` against them, asserts spans arrive with the expected resource attributes. | yes |
-| `dedup.sh` | Negative path — points `defra` at an unreachable port, asserts the "connection refused" message appears at most once (the Rust port of Go's `otel.SetErrorHandler + sync.Once` dedup). | no |
+| `run.sh` | Positive path — starts otel-collector-contrib + Jaeger, runs `defradb start --features otel` against them, asserts spans arrive with the expected resource attributes. | yes |
+| `dedup.sh` | Negative path — points `defradb` at an unreachable port, asserts the "connection refused" message appears at most once (the Rust port of Go's `otel.SetErrorHandler + sync.Once` dedup). | no |
 
 ## Quick start
 
@@ -41,7 +41,7 @@ If `--keep` is passed, the stack stays up so you can:
 
 ## What `dedup.sh` checks
 
-Boots `defra start --features otel` with `OTEL_EXPORTER_OTLP_ENDPOINT` pointed at a port nobody is listening on. Lets the batch processor retry for a few seconds. Then SIGTERMs and `grep`s the stderr — `connection refused` must appear **at most once**.
+Boots `defradb start --features otel` with `OTEL_EXPORTER_OTLP_ENDPOINT` pointed at a port nobody is listening on. Lets the batch processor retry for a few seconds. Then SIGTERMs and `grep`s the stderr — `connection refused` must appear **at most once**.
 
 ## Ports used
 

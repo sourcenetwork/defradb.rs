@@ -41,6 +41,11 @@ pub async fn export_database_as<S: Store>(
     collections: &[String],
     pretty: bool,
 ) -> Result<String, String> {
+    let identity = context
+        .identity()
+        .map(identity::Did::new)
+        .transpose()
+        .map_err(|e| format!("invalid identity: {e}"))?;
     let all_names = database
         .list_collections()
         .map_err(|e| format!("failed to list collections: {}", e))?;
@@ -129,7 +134,9 @@ pub async fn export_database_as<S: Store>(
 
         let query = format!("{{ {} {{ {} }} }}", name, query_parts.join(" "));
 
-        let request = query::QueryRequest::new(query).with_context(context.clone());
+        let request = query::QueryRequest::new(query)
+            .with_context(context.clone())
+            .with_identity(identity.clone());
         let response = runner.execute(request).await;
 
         if !response.errors.is_empty() {

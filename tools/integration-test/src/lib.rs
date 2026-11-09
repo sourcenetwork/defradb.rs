@@ -7,11 +7,14 @@ mod cross_runtime;
 pub mod export;
 mod feature_binaries;
 mod go_node;
+pub mod introspection_sdl;
 pub mod nodes;
 mod purge;
 pub mod scenario;
+mod stub_embedder;
 pub mod test_case;
 
+pub use client_type::ClientType;
 pub use scenario::m;
 
 pub use cross_runtime::{assert_query_equivalent, query_both};
@@ -86,7 +89,11 @@ pub fn workspace_root() -> PathBuf {
 pub fn rust_binary() -> PathBuf {
     std::env::var_os("DEFRA_RUST_BINARY")
         .map(PathBuf::from)
-        .unwrap_or_else(|| TestBuild::current(&workspace_root()).out_dir.join("defra"))
+        .unwrap_or_else(|| {
+            TestBuild::current(&workspace_root())
+                .out_dir
+                .join("defradb")
+        })
 }
 
 /// Generate `rust_<name>` and `go_<name>` test wrappers for a single-node test.

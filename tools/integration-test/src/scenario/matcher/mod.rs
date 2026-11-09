@@ -2,6 +2,7 @@ mod branchable;
 mod explain;
 mod relational;
 mod scalar;
+mod schema;
 mod validate;
 
 use rapidhash::RapidHashMap;

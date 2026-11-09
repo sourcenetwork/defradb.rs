@@ -69,30 +69,13 @@ impl State {
     /// failed. The root directory holds no config, so only the defaults and
     /// `--url` apply.
     fn defra_client(&self, url: &str, args: &[&str]) -> Result<Value, String> {
-        self.defra_client_in_mode(url, false, args)
-    }
-
-    /// [`State::defra_client_on`] in development mode, which backup commands need.
-    pub fn defra_client_development(&self, name: &str, args: &[&str]) -> Result<Value, String> {
-        let url = self.url_on(name).map_err(|failure| failure.message)?;
-        self.defra_client_in_mode(&url, true, args)
-    }
-
-    fn defra_client_in_mode(
-        &self,
-        url: &str,
-        development: bool,
-        args: &[&str],
-    ) -> Result<Value, String> {
         let binary = crate::rust_binary();
         let rootdir = std::env::temp_dir().join("defra-cli-client-no-config");
         let address = url.trim_start_matches("http://");
         let output = Command::new(&binary)
             .arg("--rootdir")
             .arg(&rootdir)
-            .args(["--url", address])
-            .args(development.then_some("--development"))
-            .arg("client")
+            .args(["--url", address, "client"])
             .args(args)
             .output()
             .unwrap_or_else(|e| panic!("run {}: {e}", binary.display()));

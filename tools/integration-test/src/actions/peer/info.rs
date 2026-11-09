@@ -1,4 +1,4 @@
-use crate::actions::peer::support::{ambient, failed};
+use crate::actions::peer::support::failed;
 use crate::clients::{CliRun, HttpRun};
 use crate::scenario::{Common, Failure, Op};
 use crate::test_case::State;
@@ -39,7 +39,7 @@ impl Op for PeerInfo {
         self.check_arguments()?;
         let node = state.node_on(self.common.node())?;
         let addresses = state
-            .block_on(node.peer_info_as(&ambient()))
+            .block_on(node.peer_info_as(&state.context_as(None, self.common.identity_seed)))
             .map_err(failed)?;
         Ok(self.shape(addresses))
     }
@@ -47,7 +47,7 @@ impl Op for PeerInfo {
 
 impl PeerInfo {
     fn check_arguments(&self) -> Result<(), Failure> {
-        self.common.plain(Self::name())?;
+        self.common.client_identity(Self::name())?;
         match self.validated {
             true => Err(Failure::unsupported("PeerInfo argument validated")),
             false => Ok(()),
@@ -75,9 +75,11 @@ impl HttpRun for PeerInfo {
         crate::scenario::execute_with(self, state, |action, state| {
             action.check_arguments()?;
             let addresses = state
-                .http_on(action.common.node(), |client| async move {
-                    client.peer_info().await
-                })?
+                .http_as(
+                    action.common.node(),
+                    action.common.identity_seed,
+                    |client| async move { client.peer_info().await },
+                )?
                 .map_err(failed)?;
             Ok(action.shape(addresses))
         });
@@ -89,7 +91,12 @@ impl CliRun for PeerInfo {
         crate::scenario::execute_with(self, state, |action, state| {
             action.check_arguments()?;
             let printed = state
-                .defra_client_on(action.common.node(), None, &["p2p", "info"])
+                .defra_client_as(
+                    action.common.node(),
+                    None,
+                    action.common.identity_seed,
+                    &["p2p", "info"],
+                )
                 .map_err(Failure::operation)?;
             let addresses = serde_json::from_value(printed).map_err(failed)?;
             Ok(action.shape(addresses))

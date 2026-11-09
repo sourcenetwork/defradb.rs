@@ -160,9 +160,6 @@ impl CursorNode {
         Cursor {
             doc_id: snapshot.doc_id.clone(),
             keys: snapshot.keys.clone(),
-            // Go's buildEnrichedPayload never sets Direction; keep it empty for
-            // byte-exact cursor parity.
-            direction: String::new(),
         }
     }
 

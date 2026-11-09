@@ -24,6 +24,9 @@ env:
   SCCACHE_S3_KEY_PREFIX: ci/
   SCCACHE_IGNORE_SERVER_IO_ERROR: '1'
   SCCACHE_IDLE_TIMEOUT: '0'
+  # Repeated from ci.yml for the same reason: a per-second build time would
+  # change defra-node's compile inputs on every build.
+  DEFRA_NODE_BUILD_TIME_OVERRIDE: ci
 
 jobs:
   # Linux splits the workspace five ways across RunsOn runners. macOS runs it
@@ -32,7 +35,7 @@ jobs:
   unit-tests:
     name: ${{ inputs.os }}, ${{ matrix.group }}
     # `linux` runs on RunsOn, like the rest of CI; any other value is a hosted label.
-    runs-on: ${{ inputs.os == 'linux' && format('runs-on={0}-{1}-{2}/spot={3}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache', github.run_id, github.run_attempt, strategy.job-index, github.event_name == 'merge_group' && 'false' || 'pco') || inputs.os }}
+    runs-on: ${{ inputs.os == 'linux' && format('runs-on={0}-{1}-{2}/spot={3}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache', github.run_id, github.run_attempt, strategy.job-index, github.event_name == 'merge_group' && 'false' || 'pco') || inputs.os }}
     strategy:
       fail-fast: false
       matrix:

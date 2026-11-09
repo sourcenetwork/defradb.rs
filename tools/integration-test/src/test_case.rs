@@ -24,6 +24,8 @@ pub struct State {
     pub bindings: Bindings,
     /// The transactions the test began, in order; actions name one by index.
     pub txns: Txns,
+    /// The subscriptions the test opened, by name, until it reads them.
+    pub subscriptions: crate::actions::Subscriptions,
 }
 
 /// The transactions a test has begun. Shared by every clone of the state, and
@@ -68,7 +70,7 @@ impl State {
         self.nodes.0.get(name)
     }
 
-    fn client_type(&self) -> ClientType {
+    pub fn client_type(&self) -> ClientType {
         self.client_type
             .expect("no client type: the Connect action did not run")
     }
@@ -98,6 +100,18 @@ impl State {
         })
     }
 
+    /// The node identity seed node `name` was started with, if any.
+    pub fn node_identity_of(&self, name: &str) -> Option<u64> {
+        self.slot(name).and_then(|slot| slot.spec.node_identity)
+    }
+
+    /// The public key (hex) and key type node `name` signs blocks with, if it
+    /// signs.
+    pub fn signer_of(&self, name: &str) -> Option<(String, crate::actions::shared::KeyType)> {
+        self.slot(name)
+            .and_then(|slot| crate::nodes::signer_public_key(&slot.spec))
+    }
+
     /// Start node `name` as `spec` says, closing any node of that name first.
     pub fn start_node(&mut self, name: &str, spec: NodeSpec) {
         self.stop_node(name, false);
@@ -107,6 +121,37 @@ impl State {
             node: Some(node),
         };
         self.nodes.0.insert(name.to_owned(), slot);
+    }
+
+    /// Start stopped node `name` again with NAC options, as Go's `Start`:
+    /// `enable_nac` turns NAC on, owned by `owner` when it was never set up.
+    /// A start the node refuses leaves it stopped, with the refusal.
+    pub fn start_node_with_nac<C>(
+        &mut self,
+        name: &str,
+        enable_nac: bool,
+        owner: Option<u64>,
+        configure: C,
+    ) -> Result<(), Failure>
+    where
+        C: FnOnce(&mut NodeSpec),
+    {
+        let mut spec = self
+            .slot(name)
+            .map(|slot| slot.spec.clone())
+            .unwrap_or_default();
+        spec.enable_nac = enable_nac;
+        spec.nac_owner = owner;
+        configure(&mut spec);
+        self.stop_node(name, true);
+        let node =
+            TestNode::try_start(self.client_type(), spec.clone()).map_err(Failure::operation)?;
+        let slot = Slot {
+            spec,
+            node: Some(Arc::new(node)),
+        };
+        self.nodes.0.insert(name.to_owned(), slot);
+        Ok(())
     }
 
     /// Stop node `name`; with `keep` its data and addresses stay for a restart.
@@ -200,6 +245,34 @@ pub struct TestCase {
     pub skip: Option<&'static str>,
     /// The scenario never opens the default `db` node.
     pub without_db: bool,
+    /// Why the Go scenario does not apply to defradb.rs; it is not run.
+    pub not_applying: Option<NotApplying>,
+    /// The only clients the test runs under, Go's `SupportedClientTypes`:
+    /// Go's in-process client is `InProcess`, its HTTP client `RustHttp` and
+    /// `GoHttp`, its CLI `Cli`. Unset, every client.
+    pub client_types: Option<&'static [ClientType]>,
+}
+
+/// Why a Go conformance scenario does not apply to defradb.rs. The scenario
+/// stays as Go wrote it, so the corpus round trip still checks it; what
+/// defradb.rs does instead is tested where the reason says.
+#[derive(Clone, Copy, Debug)]
+pub enum NotApplying {
+    /// What the scenario asserts cannot cross a client boundary, Go's own
+    /// included.
+    Interop(&'static str),
+    /// The scenario asserts what its requirement marks `Go-Bug-Suspect`;
+    /// defradb.rs does not copy it.
+    GoBugSuspect(&'static str),
+}
+
+impl std::fmt::Display for NotApplying {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Interop(reason) => write!(f, "interop: {reason}"),
+            Self::GoBugSuspect(reason) => write!(f, "Go-Bug-Suspect: {reason}"),
+        }
+    }
 }
 
 impl TestCase {
@@ -230,12 +303,45 @@ impl TestCase {
             eprintln!("skipped: {reason}");
             return;
         }
+        if let Some(reason) = self.not_applying {
+            eprintln!("not applying: {reason}");
+            return;
+        }
+        let clients: Vec<ClientType> = active_client_types()
+            .into_iter()
+            .filter(|client| self.client_types.is_none_or(|only| only.contains(client)))
+            .collect();
+        if clients.is_empty() {
+            eprintln!("skipped: runs only under {:?}", self.client_types);
+            return;
+        }
         trace_from_env();
-        for client_type in active_client_types() {
-            let actions = client_type.apply(&self.actions);
+        let actions = with_stub_embedder(&self.actions);
+        for client_type in clients {
+            let actions = client_type.apply(&actions);
             drop(testo::action::execute(State::default(), &actions));
         }
     }
+}
+
+/// `actions` with every embedding provider URL pointed at the stub
+/// embedder, so tests that generate embeddings need no model server.
+fn with_stub_embedder(actions: &[ActionInstance<Actions>]) -> Vec<ActionInstance<Actions>> {
+    let route = |action: &Actions| {
+        let text = serde_json::to_string(action).expect("an action serializes");
+        let routed = crate::stub_embedder::route(&text);
+        match routed == text {
+            true => action.clone(),
+            false => serde_json::from_str(&routed).expect("a routed action deserializes"),
+        }
+    };
+    actions
+        .iter()
+        .map(|instance| match instance {
+            ActionInstance::Sync(action) => ActionInstance::Sync(route(action)),
+            ActionInstance::Async(action) => ActionInstance::Async(route(action)),
+        })
+        .collect()
 }
 
 impl TestCase {
