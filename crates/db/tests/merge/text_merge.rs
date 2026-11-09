@@ -152,6 +152,57 @@ fn text(value: &str) -> NormalValue {
     NormalValue::String(value.into())
 }
 
+/// Both nodes hold "hello world". Alice sets the whole value, which is diffed
+/// into an insert; Bob appends with an explicit insert. Each then receives
+/// the other's block: one through a replay, since its parents are no longer
+/// the receiver's heads.
+#[test]
+fn concurrent_edits_of_one_text_keep_both_on_every_node() {
+    workers::block_on(async {
+        let alice = Node::open().await;
+        let bob = Node::open().await;
+        let doc_id = alice.create("hello world").await;
+        for head in alice.heads(&doc_id).await {
+            bob.receive(&alice, &doc_id, &head).await;
+        }
+        assert_eq!(bob.body().await, text("hello world"));
+
+        let mut whole = edit(&alice, &doc_id);
+        whole.set("body", text("hello brave world")).unwrap();
+        let from_alice = alice.update(whole, &["body"]).await;
+
+        let mut ops = edit(&bob, &doc_id);
+        ops.edit("body", FieldOp::Edit(vec![ins(11, "!")])).unwrap();
+        let from_bob = bob.update(ops, &["body"]).await;
+        assert_eq!(bob.body().await, text("hello world!"));
+
+        alice.receive(&bob, &doc_id, &from_bob).await;
+        bob.receive(&alice, &doc_id, &from_alice).await;
+        assert_eq!(alice.body().await, text("hello brave world!"));
+        assert_eq!(bob.body().await, text("hello brave world!"));
+
+        // A block that arrives again is already merged and changes nothing.
+        let again = alice
+            .handler
+            .handle_block(
+                &from_bob.0,
+                &from_bob.1,
+                BlockMetadata::normal(
+                    &doc_id.to_string(),
+                    COLLECTION_ID,
+                    "did:key:z6MkrTextMerge",
+                    Some("peer"),
+                    false,
+                ),
+            )
+            .await
+            .unwrap();
+        assert!(!again.is_merged(), "got {again:?}");
+        assert_eq!(alice.body().await, text("hello brave world!"));
+    })
+    .unwrap()
+}
+
 /// Two inserts at the same spot keep each run whole, in the same order on
 /// both nodes, and a delete concurrent with an insert inside its range
 /// keeps the insert.
