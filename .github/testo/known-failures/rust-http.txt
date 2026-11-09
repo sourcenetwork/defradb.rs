@@ -59,12 +59,8 @@ testo cursor::reindex::a_datetime_index_stays_cursor_visible_after_a_lens_reinde
 testo collection_version::introspection_golden::introspection_matches_golden_simple #2649
 testo collection_version::introspection_golden::introspection_matches_golden_related_one #2649
 testo collection_version::introspection_golden::introspection_matches_golden_related_many #2649
-testo acp::dac::branchable::peer::acp_p2_p_branchable_collection_synced_with_node_collection_access_local_acp #2708
-testo acp::dac::branchable::peer::acp_p2_p_branchable_collection_shared_reader_can_read_on_peer_local_acp #2708
 testo acp::dac::delete_with_index::acp_dac_delete_doc_by_id_with_reader_only_access_does_not_orphan_index #2708
 testo signature::txn_acp::an_anonymous_caller_cannot_verify_a_block_the_txn_created #2704
-testo acp::dac::p2p::sync_shared_field::acp_p2_p_sync_shared_field_block_access_to_first_doc #2708
-testo acp::dac::p2p::sync_shared_field::acp_p2_p_sync_shared_field_block_access_to_second_doc #2708
 testo acp::nac::list_p2p_replicator::nac_gates_list_p2_p_replicator_authorized_identity_allow_access #2702
 testo acp::nac::relation_admin::list_p2p_replicator::nac_admin_relation_can_list_p2_p_replicator #2702
 testo collection::refresh::list_actions::refresh_collection_list_action_does_not_list_completed_refreshes #2708

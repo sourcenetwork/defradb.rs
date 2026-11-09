@@ -75,7 +75,6 @@ testo signature::commit::signature_with_per_op_signing_disabled_should_not_sign_
 testo signature::commit::signature_with_per_op_signing_override_on_update #2701
 testo signature::peer::doc_signature_with_peers_an_different_key_types_should_sync #2701
 testo signature::peer::doc_signature_with_peers_an_different_key_types_updating_same_doc_should_sync #2701
-testo acp::dac::branchable::peer::acp_p2_p_branchable_collection_synced_with_node_collection_access_local_acp #2706
 testo signature::acp::signature_acp_if_has_access_to_doc_validate_signature #2723
 testo signature::acp_branchable::signature_acp_with_branchable_collection_if_has_collection_access_validate_signature #2723
 testo signature::acp_branchable::signature_acp_with_branchable_collection_if_has_no_collection_access_should_error #2723

@@ -88,7 +88,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Node identity and signing",
         name: "NodeSigningChoice.default_build_unchanged / identity_only_runs_as_caller / identity_only_never_signs / identity_only_never_refused",
         axis: Lean,
-        anchor: "crates/defra-node/src/lib.rs Node::execute_prepared_request; crates/defra-node/src/assemble.rs assemble (node_query_identity); crates/defra-node/src/node_builder.rs NodeBuilder::with_identity_only",
+        anchor: "crates/defra-node/src/lib.rs Node::execute_prepared_request; crates/defra-node/src/assemble.rs assemble;crates/defra-node/src/node_builder.rs NodeBuilder::with_identity_only",
         model_ref: "NodeSigningChoice (lake build)",
         tiers: &[Behavioral],
         bound_by: "tools/integration-test/tests/testo/encryption/peer_nac.rs doc_encryption_nac_gossip_sync_authorized_node_identity_allow_access",
