@@ -199,6 +199,12 @@ impl TestNode {
         Ok(done)
     }
 
+    /// The Rust node behind whichever client the test runs through, for the
+    /// test's own view of it; `None` for a Go node.
+    pub fn embedded(&self) -> Option<&Arc<Node>> {
+        self.embedded.as_ref()
+    }
+
     /// The node's P2P addresses, as Go's `PeerInfo` lists them: the test's
     /// own view of the node, whichever client the test runs through.
     pub fn peer_info(&self) -> Result<Vec<String>, String> {

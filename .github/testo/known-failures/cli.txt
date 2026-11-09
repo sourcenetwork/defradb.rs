@@ -79,9 +79,6 @@ testo acp::dac::subscription::acp_subscription_authenticated_reader_receives_eve
 testo acp::nac::list_p2p_replicator::nac_gates_list_p2_p_replicator_authorized_identity_allow_access #2702
 testo acp::nac::relation_admin::add_p2p_replicator::nac_admin_relation_can_add_p2_p_replicator #2709
 testo acp::nac::relation_admin::list_p2p_replicator::nac_admin_relation_can_list_p2_p_replicator #2702
-testo acp::nac::relation_admin::sync_p2p_branchable_collection::nac_admin_relation_can_sync_p2_p_branchable_collection #2702
-testo acp::nac::sync_p2p_branchable_collection::nac_gates_sync_p2_p_branchable_collection_no_identity_not_authorized_error #2700
-testo acp::nac::sync_p2p_branchable_collection::nac_gates_sync_p2_p_branchable_collection_wrong_identity_not_authorized_error #2709
 testo backup::simple::import::backup_import_with_invalid_file_path_return_error #2710
 testo backup::simple::export::backup_export_with_invalid_file_path_return_error #2708
 testo collection::refresh::list_actions::refresh_collection_list_action_does_not_list_completed_refreshes #2708

@@ -71,9 +71,6 @@ testo acp::dac::p2p::sync_shared_field::acp_p2_p_sync_shared_field_block_access_
 testo acp::dac::p2p::sync_shared_field::acp_p2_p_sync_shared_field_block_access_to_second_doc #2708
 testo acp::nac::list_p2p_replicator::nac_gates_list_p2_p_replicator_authorized_identity_allow_access #2702
 testo acp::nac::relation_admin::list_p2p_replicator::nac_admin_relation_can_list_p2_p_replicator #2702
-testo acp::nac::relation_admin::sync_p2p_branchable_collection::nac_admin_relation_can_sync_p2_p_branchable_collection #2708
-testo acp::nac::sync_p2p_branchable_collection::nac_gates_sync_p2_p_branchable_collection_wrong_identity_not_authorized_error #2708
-testo acp::nac::sync_p2p_branchable_collection::nac_gates_sync_p2_p_branchable_collection_no_identity_not_authorized_error #2700
 testo collection::refresh::list_actions::refresh_collection_list_action_does_not_list_completed_refreshes #2708
 testo collection::refresh::list_actions::refresh_collection_list_action_records_error_against_refresh_action #2708
 testo collection::truncate::list_actions::truncate_collection_list_action_does_not_list_completed_truncates #2708
