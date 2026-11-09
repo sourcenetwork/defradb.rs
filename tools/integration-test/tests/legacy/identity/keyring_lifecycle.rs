@@ -6,7 +6,7 @@ fn defra_binary() -> PathBuf {
 }
 
 fn is_rust_binary(binary: &Path) -> bool {
-    binary.file_name().and_then(|name| name.to_str()) == Some("defra")
+    binary == defra_binary()
 }
 
 fn go_binary() -> Option<PathBuf> {

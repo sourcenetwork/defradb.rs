@@ -241,7 +241,7 @@ fn embedded_transaction_mutation_uses_node_signer() {
         .await
         .expect_err("missing block must fail verification");
     assert!(
-        missing_error.to_string().contains("could not find block"),
+        missing_error.to_string().contains("ipld: could not find"),
         "unexpected missing-block error: {missing_error:#}"
     );
 

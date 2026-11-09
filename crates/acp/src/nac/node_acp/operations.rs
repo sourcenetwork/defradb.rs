@@ -59,6 +59,35 @@ impl<S: ZanzibarStore + ?Sized + 'static> NodeACP<S> {
         Ok(has_permission)
     }
 
+    /// Whether `identity` holds `permission` in the stored relationships,
+    /// whatever the current status: the owner holds every permission. Go
+    /// checks re-enabling this way while NAC is disabled.
+    pub async fn check_permission_persisted(
+        &self,
+        identity: &Did,
+        permission: NodePermission,
+    ) -> Result<bool> {
+        self.holds_persisted(identity, permission.as_str()).await
+    }
+
+    /// Whether `identity` is the owner or holds `relation` in the stored
+    /// relationships, whatever the current status.
+    async fn holds_persisted(&self, identity: &Did, relation: &str) -> Result<bool> {
+        if self.is_owner(identity).await {
+            return Ok(true);
+        }
+        let engine = self.engine.snapshot();
+        Ok(engine
+            .check(
+                NODE_POLICY_ID,
+                NODE_RESOURCE_NAME,
+                NODE_OBJECT_ID,
+                relation,
+                identity,
+            )
+            .await?)
+    }
+
     /// Check if an identity is the owner.
     pub async fn is_owner(&self, identity: &Did) -> bool {
         match self.owner.load() {
@@ -84,22 +113,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NodeACP<S> {
     /// `re_enable` where we need to verify admin access even when NAC
     /// is temporarily disabled.
     pub async fn is_admin_persisted(&self, identity: &Did) -> Result<bool> {
-        // Check if owner
-        if self.is_owner(identity).await {
-            return Ok(true);
-        }
-
-        // Check admin relation from stored relationships
-        let engine = self.engine.snapshot();
-        Ok(engine
-            .check(
-                NODE_POLICY_ID,
-                NODE_RESOURCE_NAME,
-                NODE_OBJECT_ID,
-                ADMIN_RELATION,
-                identity,
-            )
-            .await?)
+        self.holds_persisted(identity, ADMIN_RELATION).await
     }
 
     /// Add an admin relationship.

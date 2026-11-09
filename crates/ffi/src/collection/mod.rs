@@ -10,16 +10,18 @@
 mod migration;
 mod purge;
 mod read;
+mod save_many;
 mod view;
 mod write;
 
 pub use migration::{
     delete_collection_versions, materialize_collection, set_migration, set_migration_in_txn,
 };
-pub use purge::delete_documents;
+pub use purge::{delete_documents, purge_documents};
 pub use read::{
     find_collection_by_id, get_collection_by_name, get_collection_by_version_id, has_collection,
 };
+pub use save_many::save_many_documents;
 pub use view::{add_view, gc_downsample_histories, refresh_views};
 pub use write::{
     delete_collection, delete_collections, delete_collections_in_txn, patch_collection,

@@ -1,3 +1,4 @@
+mod gossip_admission;
 mod info {
     mod connect_peers;
     mod disconnect_peers;
@@ -61,6 +62,7 @@ mod simple {
         mod crdt {
             mod pcounter;
             mod pncounter;
+            mod text;
         }
         mod cross_version;
         mod with_add;
@@ -68,6 +70,7 @@ mod simple {
         mod with_add_restart;
         mod with_add_update;
         mod with_delete;
+        mod with_filter;
         mod with_shared_field;
         mod with_update;
     }
@@ -83,6 +86,7 @@ mod sync {
         mod patch;
         mod simple;
         mod view;
+        mod view_over_synced_lens;
         mod with_nonnillable_array_fields;
         mod with_nonnillable_scalar_fields;
     }

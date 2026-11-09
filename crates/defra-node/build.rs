@@ -5,6 +5,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=DEFRA_NODE_GIT_HASH_OVERRIDE");
     println!("cargo:rerun-if-env-changed=DEFRA_NODE_GIT_DIRTY_OVERRIDE");
     println!("cargo:rerun-if-env-changed=DEFRA_NODE_RELEASE_TAG_OVERRIDE");
+    println!("cargo:rerun-if-env-changed=DEFRA_NODE_BUILD_TIME_OVERRIDE");
 
     // Git commit hash
     let git_hash = std::env::var("DEFRA_NODE_GIT_HASH_OVERRIDE")
@@ -55,12 +56,18 @@ fn main() {
         release_tag.trim()
     );
 
-    // Build timestamp (UTC)
-    let now = Command::new("date")
-        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
-        .output()
+    // Build timestamp (UTC). CI pins it: a per-second value changes this
+    // crate's compile inputs on every build, so nothing above it hits sccache.
+    let now = std::env::var("DEFRA_NODE_BUILD_TIME_OVERRIDE")
         .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            Command::new("date")
+                .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+        })
         .unwrap_or_else(|| "unknown".into());
     println!("cargo:rustc-env=DEFRA_NODE_BUILD_TIME={}", now.trim());
 

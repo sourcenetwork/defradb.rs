@@ -7,7 +7,7 @@ use crate::scenario::ScenarioError;
 const EXPECTED: &str = "expected cid, docID, nonempty, nonemptyString, introspectionTypes, \
     explainScan metrics, explainPattern, explainTarget, named same/unique/branchableCreateGraph, \
     all/anyOf, optional value, firstWhere field/value/expect, object fields, unordered/contains \
-    items, similarityScore vectors, length value, substring value, or sortedStrings field";
+    items, similarityScore vectors, length value, substring value, sortedStrings field, or sameSchema value";
 
 fn invalid() -> ScenarioError {
     ScenarioError::Matcher(EXPECTED.to_owned())
@@ -77,7 +77,8 @@ fn validate_matcher(kind: &Value, map: &Map<String, Value>) -> Result<(), Scenar
         }
         "substring" => len == 2 && has_str(map, "value"),
         "sortedStrings" => len == 2 && has_str(map, "field"),
-        "nonempty" | "cid" | "docID" | "introspectionTypes" | "nonemptyString"
+        "sameSchema" => len == 2 && map.get("value").is_some_and(Value::is_object),
+        "nonempty" | "positive" | "cid" | "docID" | "introspectionTypes" | "nonemptyString"
         | "currentTimestamp" => len == 1,
         "same" | "unique" | "branchableCreateGraph" => {
             len == 2

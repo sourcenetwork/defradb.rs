@@ -38,13 +38,15 @@ impl Op for AddView {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        self.check_arguments()?;
+        let identity = self.common.client_identity(Self::name())?;
+        self.unsupported_txn()?;
         state
-            .block_on(
-                state
-                    .node_on(self.common.node())?
-                    .add_view(self.query.as_str(), self.sdl.as_str()),
-            )
+            .block_on(state.node_on(self.common.node())?.add_view_as(
+                &state.context_as(None, identity),
+                self.query.as_str(),
+                self.sdl.as_str(),
+                self.transform_cid.as_ref().map(Text::as_str),
+            ))
             .map(|_| json!({}))
             .map_err(|e| Failure::operation(e.to_string()))
     }
@@ -59,15 +61,14 @@ impl Action for AddView {
 }
 
 impl AddView {
-    /// Fails on the arguments no client supports yet.
-    fn check_arguments(&self) -> Result<(), Failure> {
-        self.common.plain(Self::name())?;
-        match self.txn.is_some() || self.transform_cid.is_some() {
-            true => Err(Failure::unsupported(format!(
-                "{} in a transaction or with a transform",
+    /// Fails on a transaction, which the core's view creation does not run in.
+    fn unsupported_txn(&self) -> Result<(), Failure> {
+        match self.txn {
+            Some(_) => Err(Failure::unsupported(format!(
+                "{} argument txn",
                 Self::name()
             ))),
-            false => Ok(()),
+            None => Ok(()),
         }
     }
 
@@ -84,31 +85,26 @@ impl AddView {
     }
 }
 
-const VIEWS_DISABLED: &str = "View operations are not enabled.";
-
-// A server without view routes cannot run the op, which is not a failure of it.
-fn views_failure(message: String) -> Failure {
-    match message.contains(VIEWS_DISABLED) {
-        true => Failure::unsupported(format!("{}: {VIEWS_DISABLED}", AddView::name())),
-        false => Failure::operation(message),
-    }
-}
-
 impl HttpRun for AddView {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.check_arguments()?;
+            let identity = action.common.client_identity(Self::name())?;
+            action.unsupported_txn()?;
             action.check_go(state)?;
             let (query, sdl) = (
                 action.query.as_str().to_owned(),
                 action.sdl.as_str().to_owned(),
             );
+            let transform = action
+                .transform_cid
+                .as_ref()
+                .map(|cid| cid.as_str().to_owned());
             state
-                .http_on(action.common.node(), |client| async move {
-                    client.view_add(&query, &sdl, None).await
+                .http_as(action.common.node(), identity, |client| async move {
+                    client.view_add(&query, &sdl, transform.as_deref()).await
                 })?
                 .map(|_| json!({}))
-                .map_err(|e| views_failure(e.to_string()))
+                .map_err(|e| Failure::operation(e.to_string()))
         });
     }
 }
@@ -116,22 +112,22 @@ impl HttpRun for AddView {
 impl CliRun for AddView {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.check_arguments()?;
+            let identity = action.common.client_identity(Self::name())?;
+            let mut args = vec![
+                "view",
+                "add",
+                "--query",
+                action.query.as_str(),
+                "--sdl",
+                action.sdl.as_str(),
+            ];
+            if let Some(cid) = &action.transform_cid {
+                args.extend(["--lens-cid", cid.as_str()]);
+            }
             state
-                .defra_client_on(
-                    action.common.node(),
-                    None,
-                    &[
-                        "view",
-                        "add",
-                        "--query",
-                        action.query.as_str(),
-                        "--sdl",
-                        action.sdl.as_str(),
-                    ],
-                )
+                .defra_client_as(action.common.node(), action.txn, identity, &args)
                 .map(|_| json!({}))
-                .map_err(views_failure)
+                .map_err(Failure::operation)
         });
     }
 }

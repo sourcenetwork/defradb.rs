@@ -1,6 +1,9 @@
 //! Broadcast helper functions for asynchronous P2P propagation.
 
+use std::sync::Arc;
+
 use blockstore::Blockstore;
+use events::{Bus, Message, P2PBroadcastDroppedData};
 use p2p::sync::{BroadcastResult, SyncCoordinator};
 use p2p::transport::P2PTransport;
 use query::mutator::BroadcastStatus;
@@ -16,6 +19,61 @@ fn is_expected_fire_and_forget_failure(err: &str) -> bool {
         || lower.contains("channel send error")
         || lower.contains("channel receive error")
         || p2p::error::Error::is_connection_loss_reason(&lower)
+}
+
+/// A root a committed write announces over gossip: its CID, document ID
+/// (empty for a collection block), collection ID and block length.
+pub(crate) type AnnouncedRoot = (cid::Cid, String, String, usize);
+
+/// What one pending announcement holds besides its block: its broadcast
+/// envelope, IDs, signature and coalescer entry.
+const ANNOUNCEMENT_OVERHEAD_BYTES: usize = 512;
+
+/// Hands a committed write's gossip to the bounded pending-gossip budget,
+/// waiting for room while it is full. If the wait deadline passes first,
+/// every root the work would have announced is reported as
+/// `p2p-broadcast-dropped`, since gossip never re-announces it (#2489).
+pub(crate) async fn spawn_gossip_or_report<B, T, F>(
+    sync: &SyncCoordinator<B, T>,
+    bus: Option<&Arc<dyn Bus>>,
+    task_name: &'static str,
+    roots: Vec<AnnouncedRoot>,
+    work: F,
+) where
+    B: Blockstore + 'static,
+    T: P2PTransport,
+    F: std::future::Future<Output = ()> + defra_core::thread_bounds::MaybeSend + 'static,
+{
+    let bytes = roots
+        .iter()
+        .map(|(.., block_len)| block_len + ANNOUNCEMENT_OVERHEAD_BYTES)
+        .sum();
+    if sync
+        .spawn_non_authoritative_broadcast_task(task_name, bytes, work)
+        .await
+        .is_ok()
+    {
+        return;
+    }
+    for (cid, doc_id, collection_id, _) in roots {
+        report_dropped(bus, cid, doc_id, collection_id);
+    }
+}
+
+/// Tells subscribers a committed write's root was never announced.
+fn report_dropped(
+    bus: Option<&Arc<dyn Bus>>,
+    cid: cid::Cid,
+    doc_id: String,
+    collection_id: String,
+) {
+    if let Some(bus) = bus {
+        bus.publish(Message::p2p_broadcast_dropped(P2PBroadcastDroppedData {
+            cid,
+            doc_id,
+            collection_id,
+        }));
+    }
 }
 
 pub fn broadcast_retry_delay_ms(
@@ -72,6 +130,7 @@ pub(crate) fn log_broadcast_failure(status: &BroadcastStatus) {
 /// Broadcast via GossipSub with retry, optionally overriding the creator DID.
 pub(crate) async fn broadcast_with_retry_with_creator<B: Blockstore + 'static, T: P2PTransport>(
     sync: &SyncCoordinator<B, T>,
+    bus: Option<&Arc<dyn Bus>>,
     block_result: &BlockResult,
     collection_id: &str,
     collection_name: &str,
@@ -202,6 +261,14 @@ pub(crate) async fn broadcast_with_retry_with_creator<B: Blockstore + 'static, T
                     attempts = attempt,
                     "Failed to broadcast document to P2P network - local mutation succeeded"
                 );
+                if err_str.contains(p2p::error::BROADCAST_SLOT_ELAPSED) {
+                    report_dropped(
+                        bus,
+                        block_result.cid,
+                        block_result.doc_id.clone(),
+                        collection_id.to_string(),
+                    );
+                }
                 return BroadcastStatus::Failed(e.to_string());
             }
         }

@@ -1220,7 +1220,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     root: root_cid,
                     parents: &[],
                     record: &record,
-                    capacity: self.persisted_pending_capacity(),
+                    capacity: Some(self.persisted_pending_capacity()),
                     peer_capacity: self.max_persisted_pending_per_peer(),
                 };
                 if let Err(error) = store.register(upgrade, &self.persisted).await {
@@ -1334,7 +1334,11 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// Whether the map could take a durable root that has no entry, before its
     /// block is read: `restored_root_fits` with no parents, or the root's
     /// scope has an in-memory head, which the root replaces if it links it.
-    fn restored_root_may_fit(&self, root_cid: Cid, record: &PersistedPendingDag) -> bool {
+    pub(super) fn restored_root_may_fit(
+        &self,
+        root_cid: Cid,
+        record: &PersistedPendingDag,
+    ) -> bool {
         self.restored_root_fits(root_cid, &[], record)
             || self.pending_dags.read(|pending| {
                 pending.has_scope_head(

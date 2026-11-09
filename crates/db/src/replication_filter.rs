@@ -16,10 +16,18 @@ pub type FieldValues = RapidHashMap<String, ciborium::Value>;
 /// for every replicated commit, so it must not block.
 pub trait ReplicationFilter: Send + Sync {
     /// Whether to keep the document `doc_id` of the collection with
-    /// `collection_id`, given the values its commit writes. A field that is
+    /// `collection_id`, named `collection_name` (the name a Go filter keys
+    /// on; the ID stays the same across a rename), given the values its
+    /// commit writes. A field that is
     /// encrypted, does not decode or has not arrived is absent, so a filter
     /// keeps a document whose deciding field is missing.
-    fn allow_replication(&self, collection_id: &str, doc_id: &str, fields: &FieldValues) -> bool;
+    fn allow_replication(
+        &self,
+        collection_id: &str,
+        collection_name: &str,
+        doc_id: &str,
+        fields: &FieldValues,
+    ) -> bool;
 }
 
 /// Add the values `block` holds under their field names: one for a field

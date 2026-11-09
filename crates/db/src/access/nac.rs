@@ -7,7 +7,7 @@ use storage::corekv::Store;
 
 /// The identity acting in `context`, the wildcard for an anonymous request or
 /// an identity that is not a DID.
-fn acting_did(context: &RequestContext) -> Option<Did> {
+pub(crate) fn acting_did(context: &RequestContext) -> Option<Did> {
     context.identity().and_then(|value| Did::new(value).ok())
 }
 

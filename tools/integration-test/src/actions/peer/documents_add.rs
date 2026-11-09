@@ -1,4 +1,4 @@
-use crate::actions::peer::support::{ambient, failed};
+use crate::actions::peer::support::failed;
 use crate::clients::{CliRun, HttpRun};
 use crate::scenario::{Common, Failure, Op, Text};
 use crate::test_case::State;
@@ -34,11 +34,11 @@ impl Op for AddDocumentSubscription {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        self.common.plain(Self::name())?;
+        let identity = self.common.client_identity(Self::name())?;
         let ids = self.ids();
         let node = state.node_on(self.common.node())?;
         state
-            .block_on(node.add_p2p_documents_as(&ambient(), &ids))
+            .block_on(node.add_p2p_documents_as(&state.context_as(None, identity), &ids))
             .map_err(failed)?;
         Ok(json!({}))
     }
@@ -55,10 +55,10 @@ impl Action for AddDocumentSubscription {
 impl HttpRun for AddDocumentSubscription {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.common.plain(Self::name())?;
+            let identity = action.common.client_identity(Self::name())?;
             let ids = action.ids();
             state
-                .http_on(action.common.node(), |client| async move {
+                .http_as(action.common.node(), identity, |client| async move {
                     client.add_p2p_documents(&ids).await
                 })?
                 .map_err(failed)?;
@@ -70,12 +70,13 @@ impl HttpRun for AddDocumentSubscription {
 impl CliRun for AddDocumentSubscription {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.common.plain(Self::name())?;
+            let identity = action.common.client_identity(Self::name())?;
             let ids = action.ids();
             state
-                .defra_client_on(
+                .defra_client_as(
                     action.common.node(),
                     None,
+                    identity,
                     &[
                         &["p2p", "document", "add"],
                         ids.iter()

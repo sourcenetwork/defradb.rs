@@ -1,14 +1,12 @@
 use std::ffi::c_char;
 
-use crate::helpers::require_c_str;
-use crate::nac_check::check_nac_for_node;
+use crate::helpers::{get_node_runner, require_c_str};
 use crate::state::NODES;
 use crate::types::{c_str_to_string, FfiResult};
 use crate::{ffi_async, ffi_async_ok, ffi_entry, try_ffi, ERR_INVALID_NODE_HANDLE};
-use acp::nac::{is_valid_nac_relation, NodePermission};
-use acp::normalize_auth_error;
 
-/// Get the current NAC status.
+/// Get the current NAC status, Go's `GetNACStatus`; the core checks
+/// `NacStatus` for `identity_did`.
 ///
 /// Returns a JSON object with NAC status information:
 /// ```json
@@ -20,135 +18,55 @@ use acp::normalize_auth_error;
 /// }
 /// ```
 ///
-/// This function is NAC-gated with the `NacStatus` permission.
-///
 /// # Safety
 ///
-/// Caller must ensure all pointer arguments are valid, non-null, and point to valid C strings.
+/// `identity_did` must be null or a valid null-terminated UTF-8 string.
 #[no_mangle]
 pub unsafe extern "C" fn get_nac_status(node_ptr: usize, identity_did: *const c_char) -> FfiResult {
     ffi_entry! {
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::NacStatus
-        ));
-
+        let context = try_ffi!(crate::lens::call_context(identity_did, std::ptr::null()));
+        let runner = try_ffi!(get_node_runner(node_ptr));
         let nac_manager = match NODES.get(node_ptr, |state| state.nac_manager.clone()) {
             Some(m) => m,
             None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
         };
 
         ffi_async!(node_ptr, {
+            runner.nac_status_as(&context).await.map_err(|e| e.to_string())?;
             let info = nac_manager.info().await;
-            let json = serde_json::to_string(&info)
-                .map_err(|e| format!("failed to serialize NAC info: {}", e))?;
-
-            Ok(json)
+            serde_json::to_string(&info).map_err(|e| format!("failed to serialize NAC info: {}", e))
         })
     }
 }
 
-/// Temporarily disable NAC.
-///
-/// The requestor_did must be an admin. Returns success on completion.
+/// Temporarily disable NAC, Go's `DisableNAC`, as `requestor_did`.
 ///
 /// # Safety
 ///
-/// `requestor_did` must be a valid null-terminated UTF-8 string.
+/// `requestor_did` must be null or a valid null-terminated UTF-8 string.
 #[no_mangle]
 pub unsafe extern "C" fn disable_nac(node_ptr: usize, requestor_did: *const c_char) -> FfiResult {
     ffi_entry! {
-        let requestor_str = try_ffi!(require_c_str(requestor_did, "requestor_did"));
-
-        let nac_manager = match NODES.get(node_ptr, |state| state.nac_manager.clone()) {
-            Some(m) => m,
-            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
-        };
-
+        let context = try_ffi!(crate::lens::call_context(requestor_did, std::ptr::null()));
+        let runner = try_ffi!(get_node_runner(node_ptr));
         ffi_async_ok!(node_ptr, {
-            // Check NAC state before validating DID (Go checks state first)
-            let status = nac_manager.status().await;
-            if status == acp::nac::NacStatus::NotConfigured {
-                return Err("node acp is not configured".to_string());
-            }
-            if status == acp::nac::NacStatus::DisabledTemporarily {
-                return Err("node acp is already disabled".to_string());
-            }
-
-            // Empty DID means no identity - not authorized
-            if requestor_str.is_empty() {
-                return Err(format!("not authorized to perform operation. Permission: {}", NodePermission::NacDisable));
-            }
-
-            let requestor = identity::Did::new(&requestor_str)
-                .map_err(|e| format!("invalid DID '{}': {}", requestor_str, e))?;
-
-            nac_manager
-                .disable(&requestor)
-                .await
-                .map_err(|e| normalize_auth_error(e.to_string(), "disable-nac"))?;
-
-            Ok(())
+            runner.disable_nac_as(&context).await.map_err(|e| e.to_string())
         })
     }
 }
 
-/// Re-enable NAC after temporary disable.
-///
-/// The requestor_did must be an admin. Returns success on completion.
+/// Re-enable a disabled NAC, Go's `ReEnableNAC`, as `requestor_did`.
 ///
 /// # Safety
 ///
-/// `requestor_did` must be a valid null-terminated UTF-8 string.
+/// `requestor_did` must be null or a valid null-terminated UTF-8 string.
 #[no_mangle]
 pub unsafe extern "C" fn re_enable_nac(node_ptr: usize, requestor_did: *const c_char) -> FfiResult {
     ffi_entry! {
-        let requestor_str = try_ffi!(require_c_str(requestor_did, "requestor_did"));
-
-        let nac_manager = match NODES.get(node_ptr, |state| state.nac_manager.clone()) {
-            Some(m) => m,
-            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
-        };
-
+        let context = try_ffi!(crate::lens::call_context(requestor_did, std::ptr::null()));
+        let runner = try_ffi!(get_node_runner(node_ptr));
         ffi_async_ok!(node_ptr, {
-            // Check NAC state before validating DID (Go checks state first)
-            let status = nac_manager.status().await;
-            if status == acp::nac::NacStatus::NotConfigured {
-                return Err("node acp is not configured".to_string());
-            }
-
-            // Empty DID means no identity - not authorized
-            if requestor_str.is_empty() {
-                return Err(
-                    format!("not authorized to perform operation. Permission: {}", NodePermission::NacReEnable),
-                );
-            }
-
-            let requestor = identity::Did::new(&requestor_str)
-                .map_err(|e| format!("invalid DID '{}': {}", requestor_str, e))?;
-
-            // Check admin using persisted relationships (is_admin returns true
-            // for everyone when disabled, but re-enable needs real admin check)
-            let is_admin = nac_manager
-                .is_admin_persisted(&requestor)
-                .await
-                .unwrap_or(false);
-            if !is_admin {
-                return Err(
-                    format!("not authorized to perform operation. Permission: {}", NodePermission::NacReEnable),
-                );
-            }
-            if status == acp::nac::NacStatus::Enabled {
-                return Err("node acp is already enabled".to_string());
-            }
-
-            nac_manager
-                .re_enable(&requestor)
-                .await
-                .map_err(|e| normalize_auth_error(e.to_string(), "re-enable-nac"))?;
-
-            Ok(())
+            runner.re_enable_nac_as(&context).await.map_err(|e| e.to_string())
         })
     }
 }
@@ -185,10 +103,16 @@ pub unsafe extern "C" fn enable_nac(node_ptr: usize, owner_did: *const c_char) -
     }
 }
 
-/// Add a NAC actor relationship.
-///
-/// The requestor must be an admin. The relation can be "admin" or a
-/// specific permission name (e.g., "read-document").
+/// The relation a relationship call names; `admin` when it names none.
+unsafe fn relation_or_admin(relation: *const c_char) -> String {
+    match c_str_to_string(relation) {
+        Some(relation) if !relation.is_empty() => relation,
+        _ => "admin".to_string(),
+    }
+}
+
+/// Add a NAC actor relationship, Go's `AddNACActorRelationship`, as
+/// `requestor_did`; the core checks the caller and the relation.
 ///
 /// Returns JSON with success status:
 /// ```json
@@ -197,7 +121,7 @@ pub unsafe extern "C" fn enable_nac(node_ptr: usize, owner_did: *const c_char) -
 ///
 /// # Safety
 ///
-/// All string parameters must be valid null-terminated UTF-8 strings.
+/// All string parameters must be null or valid null-terminated UTF-8 strings.
 #[no_mangle]
 pub unsafe extern "C" fn add_nac_actor_relationship(
     node_ptr: usize,
@@ -206,101 +130,22 @@ pub unsafe extern "C" fn add_nac_actor_relationship(
     target_did: *const c_char,
 ) -> FfiResult {
     ffi_entry! {
-        let requestor_str = try_ffi!(require_c_str(requestor_did, "requestor_did"));
-
-        let relation_str = match c_str_to_string(relation) {
-            Some(s) if !s.is_empty() => s,
-            _ => "admin".to_string(),
-        };
-
-        let target_str = try_ffi!(require_c_str(target_did, "target_did"));
-
-        let nac_manager = match NODES.get(node_ptr, |state| state.nac_manager.clone()) {
-            Some(m) => m,
-            None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
-        };
-
+        let context = try_ffi!(crate::lens::call_context(requestor_did, std::ptr::null()));
+        let relation = relation_or_admin(relation);
+        let target = c_str_to_string(target_did).unwrap_or_default();
+        let runner = try_ffi!(get_node_runner(node_ptr));
         ffi_async!(node_ptr, {
-            // Check NAC state before validating DID (Go checks state first)
-            let status = nac_manager.status().await;
-            if status == acp::nac::NacStatus::NotConfigured {
-                return Err("node acp is not configured".to_string());
-            }
-            if status == acp::nac::NacStatus::DisabledTemporarily {
-                return Err("operation requires ACP, but ACP not available".to_string());
-            }
-
-            // Empty or wildcard requestor: check if wildcard admin exists to decide error
-            if requestor_str.is_empty() || requestor_str == "*" {
-                let wildcard = identity::Did::wildcard();
-                let wildcard_is_admin = nac_manager.is_admin(&wildcard).await.unwrap_or(false);
-                if wildcard_is_admin {
-                    return Err("node acp relationship operation requires identity".to_string());
-                } else {
-                    return Err(
-                        format!("not authorized to perform operation. Permission: {}", NodePermission::NacRelationAdd),
-                    );
-                }
-            }
-
-            let requestor = identity::Did::new(&requestor_str).map_err(|_| {
-                format!("not authorized to perform operation. Permission: {}", NodePermission::NacRelationAdd)
-            })?;
-
-            // Check admin authorization BEFORE validating target DID
-            if !nac_manager.is_admin(&requestor).await.unwrap_or(false) {
-                return Err(
-                    format!("not authorized to perform operation. Permission: {}", NodePermission::NacRelationAdd),
-                );
-            }
-
-            // Validate relation name against NAC policy
-            if !is_valid_nac_relation(&relation_str) {
-                return Err("relation not in resource".to_string());
-            }
-
-            // Owner relation cannot be modified
-            if relation_str == "owner" {
-                return Err("relation not in resource".to_string());
-            }
-
-            // Validate target DID
-            if target_str.is_empty() {
-                return Err("actor must be a valid did".to_string());
-            }
-
-            let target = if target_str == "*" {
-                identity::Did::wildcard()
-            } else {
-                identity::Did::new(&target_str)
-                    .map_err(|e| format!("invalid target DID '{}': {}", target_str, e))?
-            };
-
-            // Route to appropriate operation based on relation
-            let added = if relation_str == "admin" {
-                nac_manager
-                    .add_admin(&requestor, &target)
-                    .await
-                    .map_err(|e| normalize_auth_error(e.to_string(), "add-nac-relation"))?
-            } else if let Some(perm) = NodePermission::parse(&relation_str) {
-                // Grant specific permission
-                nac_manager
-                    .add_permission_grant(&requestor, &target, perm)
-                    .await
-                    .map_err(|e| normalize_auth_error(e.to_string(), "add-nac-relation"))?
-            } else {
-                return Err("relation not in resource".to_string());
-            };
-
-            let json = serde_json::json!({ "added": added }).to_string();
-            Ok(json)
+            let existed = runner
+                .add_nac_actor_relationship_as(&context, &relation, &target)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!({ "added": !existed }).to_string())
         })
     }
 }
 
-/// Delete a NAC actor relationship.
-///
-/// The requestor must be an admin. The owner cannot be removed.
+/// Delete a NAC actor relationship, Go's `DeleteNACActorRelationship`, as
+/// `requestor_did`; the core checks the caller and the relation.
 ///
 /// Returns JSON with success status:
 /// ```json
@@ -309,7 +154,7 @@ pub unsafe extern "C" fn add_nac_actor_relationship(
 ///
 /// # Safety
 ///
-/// All string parameters must be valid null-terminated UTF-8 strings.
+/// All string parameters must be null or valid null-terminated UTF-8 strings.
 #[no_mangle]
 pub unsafe extern "C" fn delete_nac_actor_relationship(
     node_ptr: usize,
@@ -318,93 +163,42 @@ pub unsafe extern "C" fn delete_nac_actor_relationship(
     target_did: *const c_char,
 ) -> FfiResult {
     ffi_entry! {
-        let requestor_str = try_ffi!(require_c_str(requestor_did, "requestor_did"));
+        let context = try_ffi!(crate::lens::call_context(requestor_did, std::ptr::null()));
+        let relation = relation_or_admin(relation);
+        let target = c_str_to_string(target_did).unwrap_or_default();
+        let runner = try_ffi!(get_node_runner(node_ptr));
+        ffi_async!(node_ptr, {
+            let deleted = runner
+                .delete_nac_actor_relationship_as(&context, &relation, &target)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!({ "deleted": deleted }).to_string())
+        })
+    }
+}
 
-        let relation_str = match c_str_to_string(relation) {
-            Some(s) if !s.is_empty() => s,
-            _ => "admin".to_string(),
-        };
-
-        let target_str = try_ffi!(require_c_str(target_did, "target_did"));
-
+/// Purge every node access control state, Go's `PurgeNACState`, as
+/// `requestor_did`; the core allows it in development mode only, for an
+/// admin. A node runs NAC in development mode, so an admin may.
+///
+/// # Safety
+///
+/// `requestor_did` must be a valid null-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn purge_nac_state(
+    node_ptr: usize,
+    requestor_did: *const c_char,
+) -> FfiResult {
+    ffi_entry! {
+        let requestor = try_ffi!(require_c_str(requestor_did, "requestor_did"));
         let nac_manager = match NODES.get(node_ptr, |state| state.nac_manager.clone()) {
             Some(m) => m,
             None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
         };
-
-        ffi_async!(node_ptr, {
-            // Check NAC state before validating DID (Go checks state first)
-            let status = nac_manager.status().await;
-            if status == acp::nac::NacStatus::NotConfigured {
-                return Err("node acp is not configured".to_string());
-            }
-            if status == acp::nac::NacStatus::DisabledTemporarily {
-                return Err("operation requires ACP, but ACP not available".to_string());
-            }
-
-            // Empty or wildcard requestor: check if wildcard admin exists to decide error
-            if requestor_str.is_empty() || requestor_str == "*" {
-                let wildcard = identity::Did::wildcard();
-                let wildcard_is_admin = nac_manager.is_admin(&wildcard).await.unwrap_or(false);
-                if wildcard_is_admin {
-                    return Err("node acp relationship operation requires identity".to_string());
-                } else {
-                    return Err(
-                        format!("not authorized to perform operation. Permission: {}", NodePermission::NacRelationDelete),
-                    );
-                }
-            }
-
-            let requestor = identity::Did::new(&requestor_str).map_err(|_| {
-                format!("not authorized to perform operation. Permission: {}", NodePermission::NacRelationDelete)
-            })?;
-
-            // Check admin authorization BEFORE validating target DID
-            if !nac_manager.is_admin(&requestor).await.unwrap_or(false) {
-                return Err(
-                    format!("not authorized to perform operation. Permission: {}", NodePermission::NacRelationDelete),
-                );
-            }
-
-            // Validate relation name against NAC policy
-            if !is_valid_nac_relation(&relation_str) {
-                return Err("relation not in resource".to_string());
-            }
-
-            // Owner relation cannot be modified
-            if relation_str == "owner" {
-                return Err("relation not in resource".to_string());
-            }
-
-            // Empty target with authorized requestor: Go returns {deleted: false}
-            if target_str.is_empty() {
-                let json = serde_json::json!({ "deleted": false }).to_string();
-                return Ok(json);
-            }
-
-            let target = if target_str == "*" {
-                identity::Did::wildcard()
-            } else {
-                identity::Did::new(&target_str)
-                    .map_err(|e| format!("invalid target DID '{}': {}", target_str, e))?
-            };
-
-            let deleted = if relation_str == "admin" {
-                nac_manager
-                    .remove_admin(&requestor, &target)
-                    .await
-                    .map_err(|e| normalize_auth_error(e.to_string(), "delete-nac-relation"))?
-            } else if let Some(perm) = NodePermission::parse(&relation_str) {
-                nac_manager
-                    .remove_permission_grant(&requestor, &target, perm)
-                    .await
-                    .map_err(|e| normalize_auth_error(e.to_string(), "delete-nac-relation"))?
-            } else {
-                return Err("relation not in resource".to_string());
-            };
-
-            let json = serde_json::json!({ "deleted": deleted }).to_string();
-            Ok(json)
+        ffi_async_ok!(node_ptr, {
+            let requestor = identity::Did::new(&requestor)
+                .map_err(|e| format!("invalid DID '{}': {}", requestor, e))?;
+            nac_manager.purge(&requestor).await.map_err(|e| e.to_string())
         })
     }
 }

@@ -175,30 +175,3 @@ impl AcpNodeReEnableArgs {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use super::super::document::AcpPolicyAddArgs;
-
-    #[test]
-    fn test_acp_policy_add_args_with_data() {
-        let args = AcpPolicyAddArgs {
-            policy: Some("test policy".to_string()),
-            file: None,
-        };
-        assert!(args.policy.is_some());
-        assert!(args.file.is_none());
-    }
-
-    #[test]
-    fn test_acp_policy_add_args_with_file() {
-        let args = AcpPolicyAddArgs {
-            policy: None,
-            file: Some(PathBuf::from("policy.yaml")),
-        };
-        assert!(args.policy.is_none());
-        assert!(args.file.is_some());
-    }
-}

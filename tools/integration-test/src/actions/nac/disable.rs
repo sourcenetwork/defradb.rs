@@ -1,7 +1,8 @@
-use crate::scenario::{Common, Op};
+use crate::clients::{CliRun, HttpRun};
+use crate::scenario::{Common, Failure, Op};
 use crate::test_case::State;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use testo::prelude::*;
 
 /// The `nac.disable` op.
@@ -28,6 +29,18 @@ impl Op for DisableNAC {
     fn expected_error(&self) -> Option<&str> {
         self.expected_error.as_deref()
     }
+
+    fn run(&self, state: &State) -> Result<Value, Failure> {
+        let identity = self.common.client_identity(Self::name())?;
+        state
+            .block_on(
+                state
+                    .node_on(self.common.node())?
+                    .disable_nac_as(&state.context_as(None, identity)),
+            )
+            .map(|()| json!({}))
+            .map_err(|e| Failure::operation(e.to_string()))
+    }
 }
 
 impl Action for DisableNAC {
@@ -35,5 +48,36 @@ impl Action for DisableNAC {
 
     fn execute(&self, state: &mut State) {
         crate::scenario::execute(self, state);
+    }
+}
+
+impl HttpRun for DisableNAC {
+    fn execute_http(&self, state: &mut State) {
+        crate::scenario::execute_with(self, state, |action, state| {
+            let identity = action.common.client_identity(Self::name())?;
+            state
+                .http_as(action.common.node(), identity, |client| async move {
+                    client.nac_disable().await
+                })?
+                .map(|_| json!({}))
+                .map_err(|e| Failure::operation(e.to_string()))
+        });
+    }
+}
+
+impl CliRun for DisableNAC {
+    fn execute_cli(&self, state: &mut State) {
+        crate::scenario::execute_with(self, state, |action, state| {
+            let identity = action.common.client_identity(Self::name())?;
+            state
+                .defra_client_as(
+                    action.common.node(),
+                    None,
+                    identity,
+                    &["acp", "node", "disable"],
+                )
+                .map(|_| json!({}))
+                .map_err(Failure::operation)
+        });
     }
 }
