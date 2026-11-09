@@ -37,8 +37,9 @@ pub struct P2pReplicatorListArgs {}
 /// Arguments for replicator add command
 #[derive(Args, Debug)]
 pub struct P2pReplicatorAddArgs {
-    /// Collection(s) to replicate (comma-separated or multiple --collection)
-    #[arg(long, short = 'c', required = true, value_delimiter = ',')]
+    /// Collection(s) to replicate (comma-separated or multiple --collection);
+    /// every collection when none is given, as Go's `replicator set`.
+    #[arg(long, short = 'c', value_delimiter = ',')]
     pub collection: Vec<String>,
 
     /// Peer address(es) to replicate with
@@ -62,8 +63,9 @@ pub struct P2pReplicatorAddArgs {
 /// Arguments for replicator delete command
 #[derive(Args, Debug)]
 pub struct P2pReplicatorDeleteArgs {
-    /// Collection(s) to stop replicating (comma-separated or multiple --collection)
-    #[arg(long, short = 'c', required = true, value_delimiter = ',')]
+    /// Collection(s) to stop replicating (comma-separated or multiple --collection);
+    /// every collection when none is given, as Go's `replicator delete`.
+    #[arg(long, short = 'c', value_delimiter = ',')]
     pub collection: Vec<String>,
 
     /// Peer ID to stop replicating with
@@ -205,8 +207,20 @@ async fn build_explicit_replay_capabilities(
     let target_peer_id = extract_public_peer_id(address)?;
     let identity = raw_identity_from_key_bytes("replicator identity", identity_key_bytes)?;
     let collections_by_name = client.collection_versions().await?;
+    // No collection named selects every collection, as the node does, so each
+    // one still carries its capability.
+    let mut selected = collections.to_vec();
+    if selected.is_empty() {
+        selected = collections_by_name
+            .iter()
+            .filter(|collection| collection.is_active)
+            .map(|collection| collection.name.clone())
+            .collect();
+        selected.sort();
+        selected.dedup();
+    }
 
-    collections
+    selected
         .iter()
         .map(|name| {
             let collection_id = collections_by_name

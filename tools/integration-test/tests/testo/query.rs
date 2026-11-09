@@ -14,6 +14,7 @@ mod commits {
     }
     mod simple;
     mod with_cid;
+    mod with_cid_immutable;
     mod with_cid_shared_field;
     mod with_delete;
     mod with_depth;
@@ -31,11 +32,16 @@ mod commits {
     mod with_doc_id_typename;
     mod with_filter_compound;
     mod with_filter_in;
+    mod with_height_filter;
     mod with_link_delta;
     mod with_nested_links;
     mod with_null_input;
 }
 mod aggregate_introspection;
+mod bm25 {
+    mod relation_paths;
+    mod simple;
+}
 mod cyclic_fragments;
 mod mutation_introspection;
 mod optional_variables;

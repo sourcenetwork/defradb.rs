@@ -1,5 +1,7 @@
 use crate::actions::shared::{IndexGate, KeyType, NodeClient};
+use crate::client_type::ClientType;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::nodes::NodeSpec;
 use crate::scenario::{Common, Failure, Op};
@@ -90,10 +92,33 @@ impl Op for NewNode {
         probe.network = false;
         probe.database_dir = None;
         probe.admission = None;
+        probe.node_identity_seed = None;
+        probe.enable_signing = false;
+        probe.key_type = None;
+        probe.with_identity = false;
+        probe.client_type = None;
+        // Rust nodes always run pubsub KMS, so this only says what Go's
+        // harness sets up for them.
+        probe.kms = false;
+        (probe.ttl_millis, probe.tick_millis, probe.buckets) = (None, None, None);
         if probe != Self::default() {
             let options = serde_json::to_string(&probe).unwrap_or_default();
             return Err(Failure::unsupported(format!("{} {options}", Self::name())));
         }
+        self.check_client(state.client_type())?;
+        let node_identity = self
+            .node_identity_seed
+            .or(self.with_identity.then_some(u64::MAX - 1));
+        let signing = (self.enable_signing || self.key_type.is_some())
+            .then(|| self.key_type.unwrap_or_default());
+        if state.client_type() == ClientType::GoHttp
+            && (node_identity.is_some() || signing.is_some())
+        {
+            return Err(Failure::unsupported(
+                "a node identity or signing key on a Go node",
+            ));
+        }
+        let txn_ttl = self.txn_ttl(state.client_type())?;
         let dir = match self.database_dir {
             Some(_) => Some(Arc::new(tempfile::tempdir().map_err(|e| {
                 Failure::operation(format!("could not make the node's directory: {e}"))
@@ -105,10 +130,54 @@ impl Op for NewNode {
             dir,
             listen: Vec::new(),
             admission: self.admission.clone(),
+            node_identity,
+            signing,
+            txn_ttl,
             ..Default::default()
         };
         state.start_node(self.common.node(), spec);
         Ok(json!({}))
+    }
+}
+
+impl NewNode {
+    /// How long an idle HTTP transaction lives and how often the node sweeps
+    /// for idle ones, Go's `TxnTTL` and `TxnTTLTick`. Rust sweeps on its
+    /// tick, so Go's bucket count has nothing to set.
+    fn txn_ttl(&self, client: ClientType) -> Result<Option<(Duration, Duration)>, Failure> {
+        let Some(ttl) = self.ttl_millis else {
+            return Ok(None);
+        };
+        if !matches!(client, ClientType::RustHttp | ClientType::Cli) {
+            return Err(Failure::unsupported(format!(
+                "{} argument ttlMillis under {client:?}: only a node serving HTTP times out transactions",
+                Self::name()
+            )));
+        }
+        let tick = self.tick_millis.unwrap_or(ttl);
+        Ok(Some((
+            Duration::from_millis(ttl),
+            Duration::from_millis(tick),
+        )))
+    }
+
+    /// A scenario pinned to one client runs only under that client, as Go's
+    /// harness skips it under the others.
+    fn check_client(&self, running: ClientType) -> Result<(), Failure> {
+        let fits = match self.client_type {
+            None => true,
+            Some(NodeClient::Http) => matches!(running, ClientType::RustHttp | ClientType::GoHttp),
+            Some(NodeClient::Cli) => running == ClientType::Cli,
+            Some(NodeClient::C) => false,
+        };
+        match fits {
+            true => Ok(()),
+            false => Err(Failure::unsupported(format!(
+                "{} for the {:?} client under {running:?}",
+                Self::name(),
+                self.client_type.unwrap_or_default()
+            ))),
+        }
     }
 }
 

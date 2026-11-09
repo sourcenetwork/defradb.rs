@@ -46,3 +46,4 @@ testo index::range_filter::an_open_range_on_a_descending_index_fetches_only_the_
 testo query::cyclic_fragments::a_fragment_spreading_itself_fails_validation #2619
 testo query::cyclic_fragments::fragments_spreading_each_other_fail_validation #2619
 testo query::cyclic_fragments::a_cycle_no_field_spreads_still_fails_validation #2619
+testo index::backfill_large::index_over_many_large_existing_docs_creates_and_deletes #2711

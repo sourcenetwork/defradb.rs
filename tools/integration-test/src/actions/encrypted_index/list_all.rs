@@ -1,7 +1,7 @@
-use crate::scenario::{Common, Op};
+use crate::scenario::{Common, Failure, Op};
 use crate::test_case::State;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use testo::prelude::*;
 
 /// The `encryptedIndex.listAll` op.
@@ -27,6 +27,28 @@ impl Op for ListAllEncryptedIndexes {
 
     fn expected_error(&self) -> Option<&str> {
         self.expected_error.as_deref()
+    }
+
+    fn run(&self, state: &State) -> Result<Value, Failure> {
+        let identity = self.common.client_identity(Self::name())?;
+        if state.client_type() != crate::client_type::ClientType::InProcess {
+            return Err(Failure::unsupported(format!(
+                "{} over HTTP or the CLI, which list one collection at a time",
+                Self::name()
+            )));
+        }
+        let all = state
+            .block_on(
+                state
+                    .node_on(self.common.node())?
+                    .list_all_encrypted_indexes_as(&state.context_as(None, identity)),
+            )
+            .map_err(|e| Failure::operation(e.to_string()))?;
+        let by_collection: serde_json::Map<String, Value> = all
+            .into_iter()
+            .map(|(name, indexes)| (name, json!(indexes)))
+            .collect();
+        Ok(json!({ "indexes": by_collection }))
     }
 }
 

@@ -14,7 +14,7 @@ use crate::scenario::Failure;
 
 /// The actor a relationship names: a DID or `*` as written, or a client
 /// identity's DID. A node's identity is not offered yet.
-fn target_actor(
+pub(crate) fn target_actor(
     op: &str,
     actor: Option<&str>,
     seed: Option<u64>,

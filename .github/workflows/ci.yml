@@ -835,7 +835,12 @@ jobs:
       DEFRA_E2E_KEEP: '1'
       # A failing scenario shows its in-process nodes' P2P trace.
       DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,warn
-      TESTO_FILTER: binary(testo)
+      # Two scenarios flip between runs (#2712), so a known-failure entry would
+      # fail the runs they pass; they stay out until #2712 is fixed.
+      TESTO_FILTER: >-
+        binary(testo)
+        & not test(=encryption::peer_sec_index::doc_encryption_peer_if_encrypted_doc_has_indexed_field_should_index_after_decryption)
+        & not test(=net::sync::branchable_collection::complex_network::branchable_collection_sync_with_multiple_docs_in_complex_linked_network_should_sync_all)
       # Not run anywhere: p2p_interop_bench, whose one test is an ignored
       # benchmark that prints latencies, and verars, whose cluster needs the
       # verad validator binary from vera.rs, which CI does not build.
@@ -848,7 +853,11 @@ jobs:
         & not test(=acp_replay_outage_cross_runtime::c_rust_to_go_outage_replay)
       # Go gives Foo the wrong ID beside FooBar only in some runs (#2528), so a
       # known-failure entry would fail the runs it passes; go-http leaves it out.
-      GO_HTTP_FILTER: "& not test(=collection::deterministic_ids::a_collection_beside_a_longer_namesake_gets_one_id)"
+      # The Go node sometimes answers a query right after a migration with a
+      # transaction conflict (#2392); go-http leaves that scenario out too.
+      GO_HTTP_FILTER: >-
+        & not test(=collection::deterministic_ids::a_collection_beside_a_longer_namesake_gets_one_id)
+        & not test(=collection_version::migrations::query::with_index::collection_migration_query_with_index_applied_after_migration_should_index_docs_on_latest_version)
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4

@@ -24,6 +24,8 @@ pub struct State {
     pub bindings: Bindings,
     /// The transactions the test began, in order; actions name one by index.
     pub txns: Txns,
+    /// The subscriptions the test opened, by name, until it reads them.
+    pub subscriptions: crate::actions::Subscriptions,
 }
 
 /// The transactions a test has begun. Shared by every clone of the state, and
@@ -68,7 +70,7 @@ impl State {
         self.nodes.0.get(name)
     }
 
-    fn client_type(&self) -> ClientType {
+    pub fn client_type(&self) -> ClientType {
         self.client_type
             .expect("no client type: the Connect action did not run")
     }
@@ -98,6 +100,11 @@ impl State {
         })
     }
 
+    /// The node identity seed node `name` was started with, if any.
+    pub fn node_identity_of(&self, name: &str) -> Option<u64> {
+        self.slot(name).and_then(|slot| slot.spec.node_identity)
+    }
+
     /// Start node `name` as `spec` says, closing any node of that name first.
     pub fn start_node(&mut self, name: &str, spec: NodeSpec) {
         self.stop_node(name, false);
@@ -112,12 +119,16 @@ impl State {
     /// Start stopped node `name` again with NAC options, as Go's `Start`:
     /// `enable_nac` turns NAC on, owned by `owner` when it was never set up.
     /// A start the node refuses leaves it stopped, with the refusal.
-    pub fn start_node_with_nac(
+    pub fn start_node_with_nac<C>(
         &mut self,
         name: &str,
         enable_nac: bool,
         owner: Option<String>,
-    ) -> Result<(), Failure> {
+        configure: C,
+    ) -> Result<(), Failure>
+    where
+        C: FnOnce(&mut NodeSpec),
+    {
         if self.client_type() == ClientType::GoHttp {
             return Err(Failure::unsupported("Start on a Go node"));
         }
@@ -127,6 +138,7 @@ impl State {
             .unwrap_or_default();
         spec.enable_nac = enable_nac;
         spec.nac_owner = owner;
+        configure(&mut spec);
         self.stop_node(name, true);
         let node =
             TestNode::try_start(self.client_type(), spec.clone()).map_err(Failure::operation)?;

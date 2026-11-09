@@ -454,12 +454,12 @@ Legacy areas with submodules:
 | Area | Filter | Modules |
 |------|--------|---------|
 | Basic | `basic::` | batch_mutations, collection_delete_4657, crdt_input_ops, collection_management, document_lifecycle, regolith_crash_reopen, multi_collection, patch_secondary_relation_4709, self_ref_relations_4712, smoke, transactions, truncate_parallel |
-| Query | `query::` | commits_aggregate, commits_collection_id, commits_height_filter, continuous_rollup, datetime_index_range, default_values_v1, downsample, downsample_gc, exhaustive_orphans_4454, explain_nested, gql_list_args, index_fallback_4633, index_management, lens_persistence, lens_reindex_secondary_index_979, limits, multi_cid_vectors, planner_4656, planner_4684, sdl_generate, subscription_docid, subscription_root_shape, view |
+| Query | `query::` | commits_aggregate, commits_collection_id, continuous_rollup, datetime_index_range, default_values_v1, downsample, downsample_gc, exhaustive_orphans_4454, explain_nested, gql_list_args, index_fallback_4633, index_management, lens_persistence, lens_reindex_secondary_index_979, limits, multi_cid_vectors, planner_4656, planner_4684, sdl_generate, subscription_docid, subscription_root_shape, view |
 | ACP | `acp::` | audit, basic, cross_object, custom_policy, events_sse, index, link_collection, multi_identity, multi_role, negative, negative_p2p, node_access, p2p, p2p_lifecycle, policy_validation, register_ops, relation_queries, relationship, revoke_lifecycle, secp256k1_round_trip, transaction_rollback, xarchive_access_matrix |
 | P2P Iroh | `p2p_iroh::` | acp, connection, peer, replication, schema, sync |
 | NAC | `nac::` | core_operations, cross_compartment_isolation, dac_access_matrix, document_acp, multi_doc_create, operations, p2p_management, policy_evolution, relation_admin |
 | P2P | `p2p::` | connection_manager, document, feature_binaries, filtered_replication, idempotent_replay, long_history, manage_relay, management, quarantine, receiver_pull, replication, replication_advanced, resilience, sync, text_crdt, transports, trust_boundary, write_contention |
-| FTS | `fts::` | basic, edge_cases, lifecycle, relation_paths, scoring |
+| FTS | `fts::` | edge_cases, lifecycle, scoring |
 | Vector | `vector::` | CLI/HTTP Flat, HNSW, IVF-PQ and SSG routing, updates, deletes, and restart persistence |
 | Encryption | `encryption::` | acp, block_verify, cross_runtime_p2p, index, key_management, se_cross_runtime |
 | Identity | `identity::` | keyring_dev_mode, keyring_lifecycle, lifecycle, negative, node_identity, types |

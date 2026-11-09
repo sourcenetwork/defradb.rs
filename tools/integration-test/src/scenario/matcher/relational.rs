@@ -150,6 +150,7 @@ impl Engine<'_> {
             "currentTimestamp" => match_current_timestamp(got, Utc::now()) && next(current),
             "nonemptyString" => got.as_str().is_some_and(|s| !s.is_empty()) && next(current),
             "nonempty" => match_nonempty(got) && next(current),
+            "positive" => got.as_f64().is_some_and(|n| n > 0.0) && next(current),
             "length" => match_length(&w["value"], got) && next(current),
             "substring" => {
                 got.as_str().is_some_and(|s| s.contains(string_of("value"))) && next(current)

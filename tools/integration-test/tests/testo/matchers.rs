@@ -115,6 +115,15 @@ fn nonempty_accepts_arrays_objects_and_strings() {
 }
 
 #[test]
+fn positive_needs_a_number_above_zero() {
+    assert!(matches(m::positive(), json!(0.5)));
+    assert!(!matches(m::positive(), json!(0)));
+    assert!(!matches(m::positive(), json!(-1)));
+    assert!(!matches(m::positive(), json!("1")));
+    assert!(!matches(m::positive(), json!(null)));
+}
+
+#[test]
 fn same_binds_on_first_use_and_holds_across_steps() {
     let mut bindings = Bindings::default();
     let run = |expected: Value, actual: Value, bindings: &mut Bindings| {
