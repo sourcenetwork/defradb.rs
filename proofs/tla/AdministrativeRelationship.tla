@@ -3,14 +3,16 @@
 \* may grant or revoke a declared relation without impersonating its owner.
 \* Active NAC must authorize the real actor for bypass and the specific DAC
 \* relation operation; NAC, registration, DAC and publication share one native
-\* transaction. A concurrent NAC revocation must invalidate its commit.
+\* transaction. A concurrent NAC revocation must invalidate its commit. Only a
+\* trusted embedder's route may use this authority: Go's public routes keep its
+\* rule that only a document's managers change its relationships.
 \* Rust owners: acp DocumentACP, ZanzibarDocumentACP administrative relation,
 \* and defra-node acp_ops/transactional.rs relationship_in_txn.
 EXTENDS Naturals
 \* Each RED configuration removes one named guard.
 CONSTANT Bug, Scenario
 \* The finite cases cover real authority, every denial, and a concurrent revoke.
-Cases == {"good", "actor", "active", "nacBound", "bypass", "operation", "dacBound", "registered", "relation", "revoke", "rollback"}
+Cases == {"good", "publicRoute", "actor", "active", "nacBound", "bypass", "operation", "dacBound", "registered", "relation", "revoke", "rollback"}
 \* Track the transaction, whether its NAC read is current, and its visible effect.
 VARIABLES scenario, phase, nacLive, visible
 \* Every step describes all of the mutable state.
@@ -34,11 +36,14 @@ DacBound == scenario # "dacBound"
 Registered == scenario # "registered"
 \* The policy relation and its subject are valid; owner remains immutable.
 Relation == scenario # "relation" /\ scenario # "rollback"
+\* The change arrived through a trusted embedder's route, not a public one.
+EmbedderRoute == scenario # "publicRoute"
 \* Every condition is required before an administrator effect can be staged.
 Allowed == /\ (Actor \/ Bug = "actor") /\ (Active \/ Bug = "active")
            /\ (NacBound \/ Bug = "nacBound") /\ (Bypass \/ Bug = "bypass")
            /\ (Operation \/ Bug = "operation") /\ (DacBound \/ Bug = "dacBound")
            /\ (Registered \/ Bug = "registered") /\ (Relation \/ Bug = "relation")
+           /\ (EmbedderRoute \/ Bug = "route")
 \* A rejected request must not make the relation visible.
 Stage == /\ phase = "ready" /\ phase' = IF Allowed THEN "staged" ELSE "aborted"
          /\ visible' = (~Allowed /\ Bug = "rollback")
@@ -74,6 +79,8 @@ INV_DacBound == visible => DacBound
 INV_Registered == visible => Registered
 \* A published relation is declared and never owner.
 INV_Relation == visible => Relation
+\* A published administrative relation came through a trusted embedder's route.
+INV_EmbedderRoute == visible => EmbedderRoute
 \* Revoking the NAC authority before commit prevents the write.
 INV_Revocation == visible => nacLive
 \* A rejected statement leaves no visible relation.

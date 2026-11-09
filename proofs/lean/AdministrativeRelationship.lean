@@ -4,12 +4,15 @@ import Lean
 belongs to another actor. The capability is constructed inside the transaction
 from the acting DID's active NAC `bypass-dac` and add/delete permission; it is
 not a user identity, a caller-supplied bypass bit, or an ACP grant. NAC and DAC
-must share the transaction, whose commit validates its authorization reads. -/
+must share the transaction, whose commit validates its authorization reads.
+Only a trusted embedder's route asks for this capability: Go's public routes
+keep its rule that only a document's managers change its relationships. -/
 namespace AdministrativeRelationship
 open Lean
 
 /-- Facts read by the transaction-bound administrative relationship owner. -/
 structure Input where
+  embedderRoute : Bool
   actorMatches : Bool
   nacActive : Bool
   nacBound : Bool
@@ -22,8 +25,13 @@ structure Input where
 
 /-- The actual actor can mutate only after every native premise is satisfied. -/
 def mayAdmin (i : Input) : Bool :=
-  i.actorMatches && i.nacActive && i.nacBound && i.bypassAllowed &&
+  i.embedderRoute && i.actorMatches && i.nacActive && i.nacBound && i.bypassAllowed &&
     i.operationAllowed && i.dacBound && i.registered && i.relationValid
+
+/-- A public route never uses a node administrator's authority. -/
+theorem public_route_denied (i : Input) (h : i.embedderRoute = false) :
+    mayAdmin i = false := by
+  simp [mayAdmin, h]
 
 /-- Disabled NAC is never an administrator capability. -/
 theorem inactive_denied (i : Input) (h : i.nacActive = false) : mayAdmin i = false := by

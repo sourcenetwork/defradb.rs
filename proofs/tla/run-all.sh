@@ -510,6 +510,7 @@ RUNS=(
   "MC_AdministrativeRelationship_Red_Relation.cfg AdministrativeRelationship.tla RED" # INV_Relation
   "MC_AdministrativeRelationship_Red_Revocation.cfg AdministrativeRelationship.tla RED" # INV_Revocation
   "MC_AdministrativeRelationship_Red_Rollback.cfg AdministrativeRelationship.tla RED" # INV_Rollback
+  "MC_AdministrativeRelationship_Red_Route.cfg AdministrativeRelationship.tla RED" # INV_EmbedderRoute
   "MC_TransactionalRelationship_Green.cfg TransactionalRelationship.tla GREEN" # a grant and marker share the authorized transaction
   "MC_DelegatedRelationship_Green.cfg DelegatedRelationship.tla GREEN" # the embedder owns the transaction and the selected actor passes NAC and DAC
   "MC_DelegatedRelationship_Red_Http.cfg DelegatedRelationship.tla RED" # an HTTP caller reaches the privileged embedding boundary (INV_ActorAuthority)

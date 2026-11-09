@@ -181,7 +181,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Transactional document relationships",
-        name: "mayAdmin / inactive_denied / bypass_denied / operation_denied / unbound_nac_denied / unbound_dac_denied",
+        name: "mayAdmin / public_route_denied / inactive_denied / bypass_denied / operation_denied / unbound_nac_denied / unbound_dac_denied",
         axis: Lean,
         anchor: "crates/acp/src/zanzibar/acp/administrative_relationship.rs; crates/defra-node/src/acp_ops/transactional.rs relationship_in_txn",
         model_ref: "AdministrativeRelationship (lake build)",
@@ -228,7 +228,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Transactional document relationships",
         name: "INV_Authority / INV_Private / INV_NoRevival",
         axis: Tla,
-        anchor: "crates/defra-node/src/acp_ops/transactional.rs; crates/defra-node/src/http_acp.rs; crates/cli/src/doc_acp_adapter.rs",
+        anchor: "crates/defra-node/src/acp_ops/transactional.rs; crates/defra-node/src/ops/http_ops.rs; crates/cli/src/doc_acp_adapter.rs",
         model_ref: "MC_TransactionalRelationship_{Green,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "crates/defra-node/src/transactional_relationship_tests.rs relationship_grant_and_revoke_obey_commit_and_discard, stale_marker_cannot_restore_revoked_relationship, failed_relationship_statement_does_not_leak_its_writes_or_events",

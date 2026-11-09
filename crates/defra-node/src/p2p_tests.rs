@@ -2582,8 +2582,8 @@ fn accepted_replicated_document_runs_transactional_projector() {
         let collections = vec!["ProjectedPeerDoc".to_owned()];
         node0.add_p2p_collections_as(&context0, &collections).await.unwrap();
         node1.add_p2p_collections_as(&context1, &collections).await.unwrap();
-        node1.add_replicator_as(&context1, std::slice::from_ref(&addr0), &collections).await.unwrap();
-        node0.add_replicator_as(&context0, std::slice::from_ref(&addr1), &collections).await.unwrap();
+        node1.add_replicator_as(&context1, std::slice::from_ref(&addr0), &collections, Default::default()).await.unwrap();
+        node0.add_replicator_as(&context0, std::slice::from_ref(&addr1), &collections, Default::default()).await.unwrap();
         let response = node0.execute("mutation { add_ProjectedPeerDoc(input: {name:\"one\", age:37}) { _docID } }").await;
         assert!(response.errors.is_empty(), "{:?}", response.errors);
         let id = extract_created_doc_id(&response, "add_ProjectedPeerDoc");

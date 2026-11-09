@@ -90,9 +90,10 @@ fn exercise_native_admin() -> Vec<bool> {
         node.commit_transaction(&txn).await.unwrap();
         let visible = node.execute_request(query::QueryRequest::new("{ AdminRecord {_docID} }").with_identity(Some(outsider.did().unwrap()))).await;
         assert_eq!(visible.data.unwrap()["AdminRecord"].as_array().unwrap().len(), 1);
-        assert!(!node.add_dac_actor_relationship(&node_did, "AdminRecord", &doc, "reader", &agent_did).await.unwrap());
-        assert!(node.add_dac_actor_relationship(&node_did, "AdminRecord", &doc, "reader", &agent_did).await.unwrap());
-        assert!(node.delete_dac_actor_relationship(&node_did, "AdminRecord", &doc, "reader", &agent_did).await.unwrap());
+        let allowed = node.add_dac_actor_relationship(&node_did, "AdminRecord", &doc, "reader", &agent_did).await.is_ok();
+        decisions.push(allowed);
+        assert!(!allowed, "Go's public route admits only the document's managers");
+        assert!(node.delete_dac_actor_relationship(&node_did, "AdminRecord", &doc, "reader", "*").await.is_err());
         node.delete_nac_actor_relationship_as(&admin_context, acp::nac::NodePermission::DacRelationDelete.as_str(), &node_did).await.unwrap();
         let txn = node.begin_transaction(false).await.unwrap();
         assert!(node.delete_dac_actor_relationship_for_in_txn(&txn, &context(&node_did), "AdminRecord", &doc, "reader", "*").await.is_err());
@@ -124,7 +125,7 @@ fn administrative_relationship_admission_matches_executed_lean_model() {
     use std::process::{Command, Stdio};
     let decisions = exercise_native_admin();
     let inputs = decisions.iter().enumerate().map(|(index, _)| json!({
-        "actorMatches":true, "nacActive":true, "nacBound":true, "bypassAllowed":index >= 3,
+        "embedderRoute":index != 5, "actorMatches":true, "nacActive":true, "nacBound":true, "bypassAllowed":index >= 3,
         "operationAllowed":index != 3, "dacBound":true, "registered":true, "relationValid":true
     })).collect::<Vec<_>>();
     let mut child = Command::new("lake")

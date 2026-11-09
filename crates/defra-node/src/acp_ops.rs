@@ -130,7 +130,14 @@ impl<S: storage::corekv::Store + 'static> DbAcpOps<S> {
             .map_err(|_| query::QueryError::execution("transaction ID must be numeric"))?;
         let txn_context = context.clone().with_txn(Some(id));
         let changed = self
-            .relationship_in_txn(&txn_context, context, identity, relationship, delete)
+            .relationship_in_txn(
+                &txn_context,
+                context,
+                identity,
+                relationship,
+                delete,
+                transactional::NodeAdmin::Refused,
+            )
             .await?;
         guard.commit().await?;
         Ok(changed)
@@ -402,6 +409,7 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
             identity,
             relationship,
             delete,
+            transactional::NodeAdmin::Admitted,
         )
         .await
     }
@@ -453,6 +461,7 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
                         target,
                     },
                     false,
+                    transactional::NodeAdmin::Refused,
                 )
                 .await;
         }
@@ -532,6 +541,7 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
                         target,
                     },
                     true,
+                    transactional::NodeAdmin::Refused,
                 )
                 .await;
         }

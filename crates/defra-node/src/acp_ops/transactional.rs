@@ -15,6 +15,15 @@ pub(crate) struct Relationship<'a> {
     pub(crate) target: &'a str,
 }
 
+/// Whether a native node administrator may change a relationship it does not
+/// manage. Go's public routes refuse one; only a trusted embedder's route
+/// admits it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NodeAdmin {
+    Refused,
+    Admitted,
+}
+
 impl<S> DbAcpOps<S>
 where
     S: Store + 'static,
@@ -26,6 +35,7 @@ where
         identity: &str,
         relationship: Relationship<'_>,
         delete: bool,
+        node_admin: NodeAdmin,
     ) -> Result<bool> {
         let Relationship {
             collection,
@@ -176,7 +186,7 @@ where
                         Err(
                             original
                             @ (acp::Error::NotOwner { .. } | acp::Error::NotManager { .. }),
-                        ) => {
+                        ) if node_admin == NodeAdmin::Admitted => {
                             match fetcher
                                 .change_node_admin_relationship(
                                     acp.clone(),
