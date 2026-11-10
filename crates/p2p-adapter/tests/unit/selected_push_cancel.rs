@@ -64,8 +64,7 @@ fn dropping_a_pooled_selected_push_stops_its_worker_scheduling_the_rest() {
         })
         .unwrap();
     let peer = PeerId::new("remote-peer".into());
-    let reply_delay = Duration::from_millis(20);
-    let transport = FakeTransport::slow(peer.clone(), reply_delay);
+    let transport = FakeTransport::slow(peer.clone(), Duration::from_millis(20));
     let sends = transport.sends.clone();
     let pusher = pooled(
         DbTransportDocPusher::new_arc(
@@ -98,14 +97,13 @@ fn dropping_a_pooled_selected_push_stops_its_worker_scheduling_the_rest() {
     .unwrap();
     let at_drop = sends.load(Ordering::SeqCst);
 
-    // Long enough for the abandoned worker call to send the whole selection
-    // (25 rounds of eight 20 ms replies) had nothing stopped it.
-    std::thread::sleep(reply_delay * 25 * 4);
+    // The pool finishes the worker call it admitted before it stops, and that
+    // call joins every task it started, so nothing sends after this.
+    pool.shutdown_blocking().unwrap();
     let total = sends.load(Ordering::SeqCst);
     assert!(
         total <= at_drop + db::merge::ReplayPushConfig::default().max_concurrent_outbound_pushes,
         "{total} PushLogs after the caller gave up at {at_drop}"
     );
     assert!(total < SELECTED, "the abandoned selection was sent in full");
-    pool.shutdown_blocking().unwrap();
 }
