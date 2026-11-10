@@ -180,14 +180,14 @@ pub extern "C" fn defra_node_close(node_ptr: usize) -> DefraResult {
         // database, and the event bus is FFI's to close. The signing store is
         // process-wide and other nodes still use it, so the node gives back
         // only its own hold on its identity's key.
-        if let Some(identity) = &*state.node_identity.swap(None) {
-            identity.release();
-        }
         let result = crate::helpers::block_on(rt, async {
             let closed = state._node.shutdown().await;
             state.event_bus.close();
             closed.map_err(|error| format!("failed to close database: {}", error))
         });
+        if let Some(identity) = &*state.node_identity.swap(None) {
+            identity.release();
+        }        
         drop(state);
 
         match result {
