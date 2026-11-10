@@ -38,6 +38,18 @@ pub async fn require_permission(
     identity: &ExtractIdentity,
     permission: NodePermission,
 ) -> Result<(), HttpError> {
+    for permission in permission.go_order() {
+        require_one(state, identity, permission).await?;
+    }
+    Ok(())
+}
+
+/// One permission of [`require_permission`]'s Go order.
+async fn require_one(
+    state: &AppState,
+    identity: &ExtractIdentity,
+    permission: NodePermission,
+) -> Result<(), HttpError> {
     // If NAC is not configured, allow all operations
     let Some(nac) = &state.nac else {
         return Ok(());

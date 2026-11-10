@@ -103,19 +103,19 @@ fn parameterized_routes_use_their_registered_permissions() {
                     "/api/v0/collections/Users/indexes",
                     Method::GET,
                     "/api/v0/collections/{name}/indexes",
-                    RoutePermission::Required(NodePermission::IndexList),
+                    RoutePermission::IdentityOnly,
                 ),
                 (
                     "/api/v0/collections/Users/indexes",
                     Method::POST,
                     "/api/v0/collections/{name}/indexes",
-                    RoutePermission::Required(NodePermission::IndexCreate),
+                    RoutePermission::IdentityOnly,
                 ),
                 (
                     "/api/v0/collections/Users/indexes/by_name",
                     Method::DELETE,
                     "/api/v0/collections/{name}/indexes/{index}",
-                    RoutePermission::Required(NodePermission::IndexDelete),
+                    RoutePermission::IdentityOnly,
                 ),
                 (
                     "/api/v0/collections/Users/encrypted-indexes",

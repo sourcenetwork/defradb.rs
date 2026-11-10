@@ -118,17 +118,11 @@ pub fn route_permission(path: &str, method: &Method) -> RoutePermission {
             Method::DELETE => RoutePermission::Required(NodePermission::DocumentDelete),
             _ => RoutePermission::Required(NodePermission::DocumentRead),
         },
-        "/api/v0/collections/{name}/indexes" => match *method {
-            Method::GET => RoutePermission::Required(NodePermission::IndexList),
-            Method::POST => RoutePermission::Required(NodePermission::IndexCreate),
-            _ => RoutePermission::Required(NodePermission::IndexList),
-        },
-        "/api/v0/collections/{name}/indexes/{index}" => {
-            RoutePermission::Required(NodePermission::IndexDelete)
-        }
         // The database checks these in Go's order: the collection first
-        // (`get-collection`), then the encrypted index permission.
-        "/api/v0/collections/{name}/encrypted-indexes"
+        // (`get-collection`), then the index permission.
+        "/api/v0/collections/{name}/indexes"
+        | "/api/v0/collections/{name}/indexes/{index}"
+        | "/api/v0/collections/{name}/encrypted-indexes"
         | "/api/v0/collections/{name}/encrypted-indexes/{field}" => RoutePermission::IdentityOnly,
 
         // =====================================================================
