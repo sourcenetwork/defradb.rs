@@ -15,6 +15,7 @@ pub mod backup;
 pub mod batch;
 pub mod block;
 pub mod ccip;
+mod closing;
 pub mod collection_selector;
 pub mod collections;
 pub mod documents;

@@ -103,7 +103,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Edge completion | TLA+ | edge |
 | Edge gate continuation | TLA+ | edge, net (#2546) |
 | Iroh dial outcome | TLA+ | p2p, p2p-adapter |
-| Server drain | TLA+ | net, pg-compat, edge |
+| Server drain | TLA+ | net, pg-compat, edge, http (#2779) |
 | Document topic ingress | TLA+ | p2p, p2p-adapter (#2545) |
 | Add collection | TLA+ | db |
 | Collection truncate | TLA+ | db |
