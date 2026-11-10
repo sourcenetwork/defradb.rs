@@ -721,9 +721,11 @@ mod float32_tests {
     use std::sync::Arc;
 
     use rapidhash::{HashMapExt, RapidHashMap};
-    use schema::{CType, CollectionVersion, FieldDescription, FieldKind, ScalarArrayKind, ScalarKind};
+    use schema::{
+        CType, CollectionVersion, FieldDescription, FieldKind, ScalarArrayKind, ScalarKind,
+    };
 
-    use super::{Float32Sum, float32_relation_targets};
+    use super::{float32_relation_targets, Float32Sum};
     use crate::mapper::{Aggregate, AggregateTarget, AggregateType, Requestable, Select};
 
     fn field(name: &str, kind: FieldKind) -> FieldDescription {
@@ -736,7 +738,10 @@ mod float32_tests {
             "Book",
             "book-v1",
             "book",
-            vec![field("rating", FieldKind::Scalar(ScalarKind::NillableFloat32))],
+            vec![field(
+                "rating",
+                FieldKind::Scalar(ScalarKind::NillableFloat32),
+            )],
         );
         let users = CollectionVersion::new(
             "User",
@@ -746,7 +751,10 @@ mod float32_tests {
                 field("rating", FieldKind::Scalar(ScalarKind::NillableFloat32)),
                 field("books", FieldKind::relation("book", true)),
                 field("children", FieldKind::self_ref("", true)),
-                field("scores", FieldKind::ScalarArray(ScalarArrayKind::NillableFloat32Array)),
+                field(
+                    "scores",
+                    FieldKind::ScalarArray(ScalarArrayKind::NillableFloat32Array),
+                ),
             ],
         );
         let mut collections = RapidHashMap::new();
