@@ -94,6 +94,18 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A transaction the node begins and every request the node runs in it
+        // agree on its owner: the node's principal, which is no one on an
+        // identity-only node. The tests run that agreement on the live node.
+        family: "Node identity and signing",
+        name: "NodeSigningChoice.begin_and_execute_agree / owner_before_disagreed / default_owner_unchanged",
+        axis: Lean,
+        anchor: "crates/defra-node/src/lib.rs Node::node_principal, Node::node_context, Node::execute_prepared_request; crates/defra-node/src/signed_query/mod.rs execute_with_signing_context; crates/defra-node/src/ops/request.rs txn_owner",
+        model_ref: "NodeSigningChoice (lake build)",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/defra-node/tests/embedded_signer.rs an_identity_only_node_runs_requests_in_the_transactions_it_begins; crates/defra-node/tests/nac_embedded_test.rs an_identity_only_node_is_checked_as_its_caller_under_nac",
+    },
+    Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "LocalFetchPermit.released_before_send / release_preserves_queue",
         axis: Lean,

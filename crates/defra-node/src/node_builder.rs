@@ -443,6 +443,17 @@ impl NodeBuilder {
     /// gives the node, for P2P, the KMS and NAC, but write unsigned blocks and
     /// run each request as its caller, never as the node: Go's `NodeIdentity`
     /// with `EnableSigning` off.
+    ///
+    /// The node's own calls ([`Node::execute`], [`Node::add_collection`],
+    /// [`Node::begin_transaction`] and the rest that take no identity) then act
+    /// as no one. With node access control enabled they are checked as
+    /// anonymous, as Go checks a call that names no identity; a request that
+    /// names the node's DID keeps the node's full access. The transactions the
+    /// node begins are owned by no one, so requests that name no identity run
+    /// in them. A trusted document projector still acts as the node's DID.
+    ///
+    /// [`NodeBuilder::build`] fails with [`Error::IdentityOnlyNeedsIdentity`]
+    /// when nothing gives the node an identity.
     pub fn with_identity_only(mut self) -> Self {
         self.config.identity_only = true;
         self

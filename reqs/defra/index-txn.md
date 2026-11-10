@@ -277,3 +277,17 @@ A collection patch that adds, removes or modifies a secondary index, or changes 
 - **Scenarios:** ["txn::list_all_encrypted_indexes::txn_list_all_encrypted_indexes_sees_its_own_changes_until_commit"]
 
 `ListAllEncryptedIndexes` given a transaction (the embedded node's request context, the HTTP `x-defradb-tx` header on `GET /api/v0/encrypted-indexes`, the CLI's `encrypted-index list --tx` without `--collection`) lists every collection's encrypted indexes as that transaction sees them, as Go's `ensureContextTxn` does: an index added in the transaction is listed and one deleted in it is gone, while a listing outside the transaction still returns the committed indexes until it commits. The answer is Go's: an object keyed by collection name, each a list of `{FieldName, Type: "equality"}`, with collections that have no encrypted index left out. NAC checks `list-all-encrypted-index` in the transaction; a caller without it gets `not authorized to perform operation. Permission: list-all-encrypted-index`.
+
+# `defra.node.identity_only_transactions`: An identity-only node runs requests in the transactions it begins
+
+- **Parents:** ["go.node"]
+- **Scenarios:** ["node::identity_only::an_identity_only_node_runs_requests_in_a_transaction_it_begins"]
+
+A node that has an identity but does not sign (Go's `NodeIdentity` with `EnableSigning` off, defradb.rs's `NodeBuilder::with_identity_only`) acts as no one when a call names no identity. A transaction begun without an identity on it is owned by no one, so a request that names no identity runs in it: `add_Users(input: [{ name: "John" }])` in the transaction succeeds, and after the commit `Users` returns that document.
+
+# `defra.node.identity_only_nac`: Node access control checks an identity-only node's anonymous calls as anonymous
+
+- **Parents:** ["go.node"]
+- **Scenarios:** ["node::identity_only::an_identity_only_node_checks_an_anonymous_write_in_its_transaction_under_nac"]
+
+With node access control enabled and owned by identity 1, an identity-only node gives no anonymous call the node's access, inside a transaction it began as outside one: adding a `Users` document without an identity in that transaction fails with `not authorized to perform operation`, and nothing is written. Identity 1 adds and reads documents as usual.

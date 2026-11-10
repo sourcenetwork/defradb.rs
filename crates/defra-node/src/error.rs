@@ -240,6 +240,10 @@ pub enum Error {
     /// The node identity DID given to the builder is invalid.
     #[error("invalid node identity DID: {0}")]
     InvalidNodeIdentityDid(#[source] identity::Error),
+    /// [`crate::NodeBuilder::with_identity_only`] on a node with no identity
+    /// to keep.
+    #[error("an identity-only node needs a node identity")]
+    IdentityOnlyNeedsIdentity,
     /// Node ACP needs a node identity.
     #[error("can not start nac without identity")]
     NodeAcpNeedsIdentity,

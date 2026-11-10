@@ -16,10 +16,21 @@ request act as itself; a node built without `with_identity_only` changes how
 it runs a request (the default build is unchanged); or an identity-only node
 is refused for a signer it does not need.
 
+The second part follows a transaction the node begins. The node writes down
+an owner for it, and every request run in it must arrive as that same owner,
+or the database answers that the transaction does not exist. What must never
+happen: a request the node runs in a transaction it began, signed or not,
+arrives as someone other than the transaction's owner. Before this fix an
+identity-only node owned its transactions as its DID but ran unsigned
+requests in them as no one, so they were all refused.
+
 Rust owner: crates/defra-node/src/lib.rs `Node::execute_prepared_request`
-(the `signing_identity` filter) and crates/defra-node/src/assemble.rs
-`assemble` (`node_query_identity`, the identity a request without its own
-acts as). The HTTP server takes the same choice through
+(the `signing_identity` filter), `Node::node_principal` and
+`Node::node_context` (the owner of the transactions the node begins), and
+crates/defra-node/src/assemble.rs `assemble` (`node_query_identity`, the
+identity a request without its own acts as). The signed path stamps the
+principal in crates/defra-node/src/signed_query/mod.rs
+`execute_with_signing_context`. The HTTP server takes the same choice through
 `ServerConfig::no_signing` (crates/defra-node/src/node_builder.rs
 `NodeBuilder::build`).
 -/
@@ -91,5 +102,95 @@ theorem identity_only_never_refused (n : Node) (h : n.identityOnly = true) :
   -- Its outcome is `asCaller`, which is not a refusal.
   rw [identity_only_runs_as_caller n h]
   decide
+
+-- Who a request, or a transaction's owner, is when the caller names no one.
+inductive Principal where
+  -- The node's own DID.
+  | node
+  -- Nobody: the request context carries no identity.
+  | noOne
+  deriving DecidableEq
+
+-- How the node sends one request to the database.
+inductive Path where
+  -- No key signs it, and its context is kept as the caller gave it.
+  | unsigned
+  -- A key signs it (the node's, or a caller's `EmbeddedSigner`).
+  | signed
+  -- A caller brought a key to a node with no identity: refused, never run.
+  | refusedNoIdentity
+  deriving DecidableEq
+
+-- The node's principal, `Node::node_principal`: its DID when it acts as its
+-- identity, nobody on an identity-only node or a node without an identity.
+def principal (n : Node) : Principal :=
+  -- Only a node with an identity that is not identity-only acts as itself.
+  if n.hasIdentity && !n.identityOnly then .node else .noOne
+
+-- The owner of a transaction the node begins: `begin_transaction` and
+-- `txn_owner` begin it in `node_context`, whose identity is the principal.
+def txnOwner (n : Node) : Principal :=
+  -- The node's principal, nothing more.
+  principal n
+
+-- The owner the node gave its transactions before this fix: its DID whenever
+-- it had one, identity-only or not.
+def txnOwnerBefore (n : Node) : Principal :=
+  -- Any identity made the node the owner.
+  if n.hasIdentity then .node else .noOne
+
+-- The path `execute_prepared_request` picks, given whether the caller
+-- attached a key of its own.
+def pathOf (n : Node) (callerKey : Bool) : Path :=
+  -- A node with an identity signs when it signs itself or a caller brings a key.
+  if n.hasIdentity && (!n.identityOnly || callerKey) then .signed
+  -- A caller's key on a node with no identity is refused.
+  else if callerKey then .refusedNoIdentity
+  -- Otherwise the request runs unsigned.
+  else .unsigned
+
+-- The principal a request that names no identity arrives in the transaction
+-- as, along `p`; nothing when it never runs.
+def execPrincipal (n : Node) : Path → Option Principal
+  -- Unsigned: its context is kept, and it carries no identity.
+  | .unsigned => some .noOne
+  -- Signed: `execute_with_signing_context` stamps the node's principal, and
+  -- stamps nothing (leaving no one) when that principal is nobody.
+  | .signed => some (principal n)
+  -- Refused: it never reaches the transaction.
+  | .refusedNoIdentity => none
+
+-- Whether a request run along the node's path arrives as the owner `owner`
+-- gives the transaction: true when it does, or when it never runs.
+def agreesWith (owner : Node → Principal) (n : Node) (callerKey : Bool) : Bool :=
+  -- Look at who the request arrives as.
+  match execPrincipal n (pathOf n callerKey) with
+  -- A refused request meets no transaction, so nothing can disagree.
+  | none => true
+  -- A request that runs must arrive as the transaction's owner.
+  | some p => decide (p = owner n)
+
+-- Every request the node runs in a transaction it began arrives as that
+-- transaction's owner, on every node, signed or not.
+theorem begin_and_execute_agree (n : Node) (callerKey : Bool) :
+    agreesWith txnOwner n callerKey = true := by
+  -- Take the node apart into its three flags.
+  cases n with
+  | mk hasIdentity identityOnly signerFound =>
+    -- Each of the sixteen combinations is checked by computing it.
+    cases hasIdentity <;> cases identityOnly <;> cases signerFound <;> cases callerKey <;> decide
+
+-- The planted bug: with the old owner, an identity-only node's unsigned
+-- request arrives as no one in a transaction owned by the node, so it fails.
+theorem owner_before_disagreed :
+    agreesWith txnOwnerBefore ⟨true, true, true⟩ false = false := by
+  -- Computing that one case shows the disagreement.
+  decide
+
+-- A node built without `with_identity_only` owns its transactions as before.
+theorem default_owner_unchanged (hasIdentity signerFound : Bool) :
+    txnOwner ⟨hasIdentity, false, signerFound⟩ = txnOwnerBefore ⟨hasIdentity, false, signerFound⟩ := by
+  -- Every combination of the two flags gives the same owner.
+  cases hasIdentity <;> cases signerFound <;> decide
 
 end NodeSigningChoice

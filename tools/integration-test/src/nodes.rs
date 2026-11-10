@@ -333,9 +333,9 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     if spec.node_identity.is_some() || spec.signing.is_some() {
         builder = builder.with_signing_key(signing_key(spec));
     }
-    // Go keeps the identity and the signing apart: a node signs only when
-    // the scenario turns signing on.
-    if spec.signing.is_none() {
+    // Go keeps the identity and the signing apart: a node with an identity
+    // signs only when the scenario turns signing on.
+    if spec.node_identity.is_some() && spec.signing.is_none() {
         builder = builder.with_identity_only();
     }
     if spec.enable_nac {
