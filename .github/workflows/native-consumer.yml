@@ -45,7 +45,7 @@ jobs:
           ref: ${{ steps.vera.outputs.revision }}
           path: .native/vera
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@1.120.0
+      - uses: dtolnay/rust-toolchain@1.99.1
         with:
           components: clippy
           targets: wasm32-unknown-unknown
