@@ -917,7 +917,7 @@ fn embedded_events_require_node_permission() {
                 .unwrap();
             let events = format!("http://{address}/api/v0/events?event=update");
             let anonymous = client.get(&events).send().await.unwrap();
-            assert_refused(anonymous, "document-read").await;
+            assert_refused(anonymous, "read-document").await;
             let owner_stream = client
                 .get(&events)
                 .header("Authorization", bearer(&owner, &address.to_string()))
