@@ -61,6 +61,9 @@ lean_lib EngineTickers where
 lean_lib CpuLedger where
 
 @[default_target]
+lean_lib IdentityStore where
+
+@[default_target]
 lean_lib DefaultPool where
 
 @[default_target]

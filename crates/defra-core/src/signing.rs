@@ -18,7 +18,7 @@ mod identity_store;
 
 pub use identity_store::{
     clear_identity_store, find_remote_signer_did, get_identity, hold_identity, release_identity,
-    retain_identity, store_identity, IdentityHold,
+    retain_identity, store_identity, IdentityConflict, IdentityHold,
 };
 
 #[cfg(any(test, feature = "ambient"))]
@@ -515,8 +515,10 @@ mod tests {
         workers::block_on(async {
             let _guard = lock_identity_store().await;
             clear_identity_store();
-            store_identity("did:key:request", make_config("request"));
-            store_identity("did:key:node", make_config("node"));
+            store_identity("did:key:request", make_config("request"))
+                .expect("the store takes the identity");
+            store_identity("did:key:node", make_config("node"))
+                .expect("the store takes the identity");
 
             let disabled = resolve_signing_config_with_flag(
                 Some("did:key:request"),
@@ -539,7 +541,8 @@ mod tests {
         workers::block_on(async {
             let _guard = lock_identity_store().await;
             clear_identity_store();
-            store_identity("did:key:node", make_config("node"));
+            store_identity("did:key:node", make_config("node"))
+                .expect("the store takes the identity");
 
             let resolved = resolve_signing_config(Some("did:key:request"), Some("did:key:node"))
                 .expect("node fallback should resolve");
@@ -567,7 +570,8 @@ mod tests {
             }
 
             clear_identity_store();
-            store_identity("did:key:local", make_config("local"));
+            store_identity("did:key:local", make_config("local"))
+                .expect("the store takes the identity");
             store_identity(
                 "did:key:remote",
                 SigningConfig {
@@ -578,7 +582,8 @@ mod tests {
                     remote_signer: Some(Arc::new(NoopRemoteSigner)),
                     signing_authorization: None,
                 },
-            );
+            )
+            .expect("the store takes the identity");
 
             let resolved = find_remote_signer_did().expect("remote signer DID should resolve");
             assert_eq!(resolved, "did:key:remote");
@@ -594,8 +599,8 @@ mod tests {
             let _guard = lock_identity_store().await;
             clear_identity_store();
             let did = "did:key:held";
-            hold_identity(did, make_config("first"));
-            hold_identity(did, make_config("second"));
+            hold_identity(did, make_config("held")).expect("the store takes the identity");
+            hold_identity(did, make_config("held")).expect("the store takes the identity");
 
             release_identity(did);
             assert!(get_identity(did).is_some(), "one hold remains");
@@ -617,7 +622,7 @@ mod tests {
             let _guard = lock_identity_store().await;
             clear_identity_store();
             let did = "did:key:retained";
-            hold_identity(did, make_config("held"));
+            hold_identity(did, make_config("held")).expect("the store takes the identity");
             assert!(retain_identity(did));
 
             release_identity(did);
@@ -653,11 +658,129 @@ mod tests {
             let _guard = lock_identity_store().await;
             clear_identity_store();
             let did = "did:key:pinned";
-            store_identity(did, make_config("pinned"));
+            store_identity(did, make_config("pinned")).expect("the store takes the identity");
             assert!(retain_identity(did));
             release_identity(did);
             release_identity(did);
             assert!(get_identity(did).is_some());
+
+            clear_identity_store();
+        })
+        .unwrap()
+    }
+
+    /// `proofs/tla/IdentityStore.tla`: a clear unpins and drops what nothing
+    /// holds, but keeps a held key and its count, so a hold taken after the
+    /// clear and one taken before it are both given back to the same slot.
+    #[test]
+    fn a_clear_keeps_held_keys_and_their_count() {
+        workers::block_on(async {
+            let _guard = lock_identity_store().await;
+            clear_identity_store();
+            let held = "did:key:held-through-clear";
+            let pinned = "did:key:pinned-then-cleared";
+            hold_identity(held, make_config("held")).expect("the store takes the identity");
+            store_identity(pinned, make_config("pinned")).expect("the store takes the identity");
+
+            clear_identity_store();
+            assert!(get_identity(held).is_some(), "a held key survives a clear");
+            assert!(get_identity(pinned).is_none(), "a clear unpins");
+
+            hold_identity(held, make_config("held")).expect("the store takes the identity");
+            release_identity(held);
+            assert!(
+                get_identity(held).is_some(),
+                "the hold taken before the clear still counts"
+            );
+            release_identity(held);
+            assert!(get_identity(held).is_none(), "no hold remains");
+
+            clear_identity_store();
+        })
+        .unwrap()
+    }
+
+    /// A host signer: each registration wraps its own host context.
+    struct HostSigner(#[allow(dead_code)] u8);
+
+    impl RemoteSigner for HostSigner {
+        fn sign_sync(
+            &self,
+            _data: &[u8],
+            _authorization: Option<&SigningAuthorization>,
+        ) -> Result<Vec<u8>, String> {
+            Ok(vec![])
+        }
+    }
+
+    fn remote_config(signer: &Arc<HostSigner>) -> SigningConfig {
+        let mut config = make_config("remote");
+        config.remote_signer = Some(signer.clone());
+        config
+    }
+
+    fn signs_through(did: &str, signer: &Arc<HostSigner>) -> bool {
+        get_identity(did).is_some_and(|config| {
+            config
+                .remote_signer
+                .as_ref()
+                .is_some_and(|stored| std::ptr::addr_eq(Arc::as_ptr(stored), Arc::as_ptr(signer)))
+        })
+    }
+
+    /// `proofs/tla/IdentityStore.tla` INV_OwnSigner: while a DID is held, a
+    /// hold that brings another signer is refused and takes nothing, so the
+    /// first holder keeps signing through its own signer, also after the
+    /// refused registration's owner gives its context up. Once the DID is
+    /// free, another signer may take it.
+    #[test]
+    fn a_held_did_refuses_another_signer() {
+        workers::block_on(async {
+            let _guard = lock_identity_store().await;
+            clear_identity_store();
+            let did = "did:key:registered-twice";
+            let first = Arc::new(HostSigner(1));
+            let second = Arc::new(HostSigner(2));
+
+            hold_identity(did, remote_config(&first)).expect("the first signer takes the DID");
+            let refused = hold_identity(did, remote_config(&second))
+                .expect_err("a second signer for a held DID is refused");
+            assert_eq!(refused.did, did);
+            assert!(signs_through(did, &first), "the holder keeps its signer");
+
+            release_identity(did);
+            assert!(get_identity(did).is_none(), "the refused hold took nothing");
+
+            hold_identity(did, remote_config(&second)).expect("a free DID takes any signer");
+            assert!(signs_through(did, &second));
+            release_identity(did);
+
+            clear_identity_store();
+        })
+        .unwrap()
+    }
+
+    /// INV_OwnSigner for pins: a pin may replace a signer only pinned, never
+    /// one something holds.
+    #[test]
+    fn a_pin_replaces_only_an_unheld_signer() {
+        workers::block_on(async {
+            let _guard = lock_identity_store().await;
+            clear_identity_store();
+            let did = "did:key:pinned-and-held";
+            let first = Arc::new(HostSigner(1));
+            let second = Arc::new(HostSigner(2));
+
+            store_identity(did, remote_config(&first)).expect("a free DID takes a pin");
+            store_identity(did, remote_config(&second)).expect("a pin replaces a pin");
+            assert!(signs_through(did, &second));
+
+            assert!(retain_identity(did));
+            store_identity(did, remote_config(&first))
+                .expect_err("a pin may not re-route a holder");
+            assert!(signs_through(did, &second), "the holder keeps its signer");
+            store_identity(did, remote_config(&second)).expect("the same signer may pin");
+            release_identity(did);
 
             clear_identity_store();
         })

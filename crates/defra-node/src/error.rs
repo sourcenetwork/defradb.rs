@@ -364,6 +364,9 @@ pub enum Error {
     /// The DID of a node identity could not be derived.
     #[error("failed to derive node DID: {0}")]
     DidDerive(#[source] identity::Error),
+    /// The node's DID is already held with another signer.
+    #[error(transparent)]
+    IdentityConflict(#[from] defra_core::signing::IdentityConflict),
     /// A libp2p listen address did not parse.
     #[cfg(feature = "libp2p")]
     #[error("invalid multiaddr '{addr}': {source}")]

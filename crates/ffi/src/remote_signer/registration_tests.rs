@@ -2,6 +2,7 @@
 //! one a bearer token stands for.
 
 use std::ffi::{c_char, c_int, CString};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use crypto::{PrivateKey, PublicKey};
@@ -19,6 +20,8 @@ struct HostKey {
     private: crypto::Secp256r1PrivateKey,
     did: String,
     public: Vec<u8>,
+    /// How many signatures the host made through this context.
+    signed: AtomicUsize,
 }
 
 impl HostKey {
@@ -29,6 +32,17 @@ impl HostKey {
             did: identity.did().unwrap().to_string(),
             public: identity.public_key_bytes(),
             private,
+            signed: AtomicUsize::new(0),
+        }))
+    }
+
+    /// The same key behind a second host context, with its own handle.
+    fn another_context(&self) -> &'static Self {
+        Box::leak(Box::new(Self {
+            private: self.private.clone(),
+            did: self.did.clone(),
+            public: self.public.clone(),
+            signed: AtomicUsize::new(0),
         }))
     }
 
@@ -48,6 +62,7 @@ unsafe extern "C" fn sign(
     out_signature_len: *mut usize,
 ) -> c_int {
     let key = &*(signer_handle as *const HostKey);
+    key.signed.fetch_add(1, Ordering::SeqCst);
     let payload = std::slice::from_raw_parts(payload_ptr, payload_len);
     let Ok(signature) = key.private.sign(payload) else {
         return 2;
@@ -119,6 +134,67 @@ fn a_hex_registration_stores_a_signer_that_signs_with_the_hosts_key() {
     assert!(public.verify(message, &signature).unwrap());
 
     defra_identity_free(identity);
+}
+
+/// Signs through whatever signer the store holds for `key`'s DID.
+fn sign_with_stored(key: &HostKey) {
+    defra_core::signing::get_identity(&key.did)
+        .expect("the identity is stored")
+        .remote_signer
+        .as_ref()
+        .expect("a remote signer")
+        .sign_sync(b"which-context-signs", None)
+        .expect("the host signs");
+}
+
+/// Registering one DID twice: the second registration, with another host
+/// context, is refused while the first handle lives, so the first keeps
+/// signing through its own context and is never re-routed to one its host
+/// may free. Once the first handle is freed, the DID registers again.
+#[test]
+fn a_second_registration_of_a_held_did_is_refused_until_the_first_is_freed() {
+    let key = HostKey::new();
+    let other = key.another_context();
+    let first = register_hex(key);
+
+    let did = cstr(&key.did);
+    let public = cstr(&hex::encode(&key.public));
+    let key_type = cstr("secp256r1");
+    let error = refused(defra_identity_new_remote(
+        did.as_ptr(),
+        public.as_ptr(),
+        key_type.as_ptr(),
+        other.handle(),
+        sign,
+    ));
+    assert!(error.contains("different signer"), "{error}");
+
+    sign_with_stored(key);
+    assert_eq!(
+        key.signed.load(Ordering::SeqCst),
+        1,
+        "the first context signs"
+    );
+    assert_eq!(
+        other.signed.load(Ordering::SeqCst),
+        0,
+        "the refused one never does"
+    );
+
+    defra_identity_free(first);
+    assert!(
+        defra_core::signing::get_identity(&key.did).is_none(),
+        "the refused registration held nothing"
+    );
+
+    let second = register_hex(other);
+    sign_with_stored(other);
+    assert_eq!(
+        other.signed.load(Ordering::SeqCst),
+        1,
+        "a free DID takes the new context"
+    );
+    defra_identity_free(second);
 }
 
 #[test]

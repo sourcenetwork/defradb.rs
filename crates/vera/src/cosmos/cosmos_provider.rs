@@ -409,7 +409,8 @@ mod tests {
                 remote_signer: None,
                 signing_authorization: None,
             },
-        );
+        )
+        .expect("the store takes the identity");
     }
 
     #[test]
@@ -448,7 +449,8 @@ mod tests {
                 remote_signer: None,
                 signing_authorization: None,
             },
-        );
+        )
+        .expect("the store takes the identity");
 
         let token = resolve_cosmos_bearer_token(&did, "cosmos1device")
             .expect("resolution should succeed")

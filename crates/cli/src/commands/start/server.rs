@@ -80,7 +80,8 @@ impl Node {
                     remote_signer: None,
                     signing_authorization: None,
                 },
-            );
+            )
+            .map_err(|e| Error::InvalidIdentity(e.to_string()))?;
             info!("Stored node identity signing config for DID {}", did);
         }
 

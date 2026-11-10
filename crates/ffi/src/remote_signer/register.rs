@@ -24,6 +24,13 @@ use super::{DefraRemoteSignAsyncCallback, DefraRemoteSignCallback, FfiRemoteSign
 ///
 /// Swift can import this symbol directly from the generated Apple package.
 /// The callback is required and uses a plain C function-pointer ABI.
+///
+/// While a DID has live identity handles, its signer is fixed: registering
+/// the DID again with another `signer_handle` or callback fails until every
+/// handle for it is freed. `signer_handle` must stay valid, and `callback`
+/// callable, until the identity's handle is freed and every node started
+/// with it (or given it as its identity) is closed: a node keeps signing
+/// through them after the handle is freed.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[no_mangle]
 pub extern "C" fn defra_identity_new_remote(
@@ -232,7 +239,8 @@ fn store(
             remote_signer: Some(Arc::new(signer)),
             signing_authorization: None,
         },
-    );
+    )
+    .map_err(|error| error.to_string())?;
 
     Ok(IDENTITIES.insert(IdentityState {
         did,

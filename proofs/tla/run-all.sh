@@ -446,6 +446,14 @@ RUNS=(
   "MC_CpuLedger_Red_RunOutsideHold.cfg CpuLedger.tla RED" # caller runs a thread on a CPU its hold does not cover (INV_AloneRunsAlone)
   "MC_CpuLedger_Red_DoubleRelease.cfg CpuLedger.tla RED" # caller gives its hold back twice: a counter drops below its holders (INV_CountExact)
   "MC_CpuLedger_Red_ForgetHold.cfg CpuLedger.tla RED" # caller never gives its hold back: CPUs stay held after every pool is gone (INV_DoneLeavesNothing)
+  "MC_IdentityStore_Green.cfg IdentityStore.tla GREEN" # holders hold, retain and release one DID while it is pinned and cleared: count exact, held keys found, no key outlives its holders, no holder re-routed to another signer
+  "MC_IdentityStore_Red_ReplaceOnHold.cfg IdentityStore.tla RED" # a second hold with another signer replaces the first's (INV_OwnSigner)
+  "MC_IdentityStore_Red_PinReplacesHeld.cfg IdentityStore.tla RED" # a pin replaces a held DID's signer (INV_OwnSigner)
+  "MC_IdentityStore_Red_SplitSwap.cfg IdentityStore.tla RED" # swap split into read then write: two holds counted once (INV_CountExact)
+  "MC_IdentityStore_Red_DropCount.cfg IdentityStore.tla RED" # slot says held, not how many: one release drops the other's key (INV_KeyWhileHeld)
+  "MC_IdentityStore_Red_ClearRemoves.cfg IdentityStore.tla RED" # clear removes the slot from the map: a held DID answers no key (INV_KeyWhileHeld)
+  "MC_IdentityStore_Red_ClearDropsHeld.cfg IdentityStore.tla RED" # clear drops held keys too: a holder's key is gone (INV_KeyWhileHeld)
+  "MC_IdentityStore_Red_RetainAbsent.cfg IdentityStore.tla RED" # retain holds a key the store does not have (INV_KeyWhileHeld)
   "MC_CpuLedger_Green_Edge.cfg CpuLedger.tla GREEN" # a network runtime claims cores alone beside a pool, or gives up holding nothing
   "MC_CpuLedger_Red_EdgeNoCap.cfg CpuLedger.tla RED" # network runtime claims alone forever: its start never ends (LIVE_StartEnds)
   "MC_DefaultPool_Green.cfg DefaultPool.tla GREEN" # the first registered pool that runs is the default, else one pool started once; never a closing pool, a stop's deadline goes elsewhere, every call returns

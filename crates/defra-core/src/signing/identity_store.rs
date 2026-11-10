@@ -7,6 +7,13 @@
 //! hold and gives it back, and the key leaves the store when the last hold
 //! goes. Two holders may name one DID, so the store
 //! counts them rather than letting the first release drop the other's key.
+//!
+//! While a DID has a key its signer is fixed: a hold that brings another
+//! signer for the DID is refused, as is a pin over a held DID, so no holder
+//! is re-routed to a signer it did not bring, and none keeps signing through
+//! a signer whose owner already gave it up.
+//!
+//! Modeled by `proofs/tla/IdentityStore.tla` and `proofs/lean/IdentityStore.lean`.
 
 use std::sync::Arc;
 
@@ -16,8 +23,20 @@ use regolith::sync::{Atom, OnceCell};
 
 use super::SigningConfig;
 
-/// One DID's entry. The count and the key change together in one swap, so a
-/// release that reaches zero never drops a key a concurrent hold just stored.
+/// A hold or pin refused because the DID already has another signer.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "identity {did} is already registered with a different signer; \
+     free its existing identity handles first"
+)]
+pub struct IdentityConflict {
+    /// The DID whose signer is taken.
+    pub did: String,
+}
+
+/// One DID's entry. The count, the pin and the key change together in one
+/// swap, so a release that reaches zero never drops a key a concurrent hold
+/// just stored, and a hold never replaces a signer another holder uses.
 #[derive(Clone, Default)]
 struct Holders {
     pinned: bool,
@@ -29,6 +48,19 @@ impl Holders {
     fn retained(&self) -> bool {
         self.pinned || self.holds > 0
     }
+}
+
+/// Whether `a` and `b` sign alike: the same key, and the same remote signer
+/// (the same host callback and context) or none.
+fn same_signer(a: &SigningConfig, b: &SigningConfig) -> bool {
+    a.key_type == b.key_type
+        && a.public_key_bytes == b.public_key_bytes
+        && a.private_key_bytes == b.private_key_bytes
+        && match (&a.remote_signer, &b.remote_signer) {
+            (None, None) => true,
+            (Some(a), Some(b)) => std::ptr::addr_eq(Arc::as_ptr(a), Arc::as_ptr(b)),
+            _ => false,
+        }
 }
 
 /// A DID's entry stays in the map once made: removing it could race a hold
@@ -48,23 +80,59 @@ fn slot(did: &str) -> Slot {
         .unwrap_or_else(|| store.get_or_insert(did.to_string(), Arc::default()))
 }
 
-/// Pins `did`'s signing config for the life of the process.
-pub fn store_identity(did: &str, config: SigningConfig) {
-    slot(did).rcu(|current| Holders {
-        pinned: true,
-        holds: current.holds,
-        config: Some(config.clone()),
+/// Pins `did`'s signing config for the life of the process. A pin may
+/// replace the signer of a DID only pinned; a DID something holds keeps its
+/// signer, and a pin with another one is refused.
+pub fn store_identity(did: &str, config: SigningConfig) -> Result<(), IdentityConflict> {
+    let mut refused = false;
+    slot(did).rcu(|current| {
+        refused = current.holds > 0
+            && current
+                .config
+                .as_ref()
+                .is_some_and(|held| !same_signer(held, &config));
+        if refused {
+            return current.clone();
+        }
+        Holders {
+            pinned: true,
+            holds: current.holds,
+            config: Some(config.clone()),
+        }
     });
+    match refused {
+        true => Err(IdentityConflict {
+            did: did.to_owned(),
+        }),
+        false => Ok(()),
+    }
 }
 
 /// Stores `did`'s signing config and takes one hold on it, given back with
-/// [`release_identity`].
-pub fn hold_identity(did: &str, config: SigningConfig) {
-    slot(did).rcu(|current| Holders {
-        pinned: current.pinned,
-        holds: current.holds + 1,
-        config: Some(config.clone()),
+/// [`release_identity`]. Refused, taking nothing, when `did` already has a
+/// key with another signer.
+pub fn hold_identity(did: &str, config: SigningConfig) -> Result<(), IdentityConflict> {
+    let mut refused = false;
+    slot(did).rcu(|current| {
+        refused = current
+            .config
+            .as_ref()
+            .is_some_and(|stored| !same_signer(stored, &config));
+        if refused {
+            return current.clone();
+        }
+        Holders {
+            pinned: current.pinned,
+            holds: current.holds + 1,
+            config: current.config.clone().or_else(|| Some(config.clone())),
+        }
     });
+    match refused {
+        true => Err(IdentityConflict {
+            did: did.to_owned(),
+        }),
+        false => Ok(()),
+    }
 }
 
 /// One hold on a DID's signing config, given back when dropped.
@@ -75,11 +143,12 @@ pub struct IdentityHold {
 
 impl IdentityHold {
     /// Stores `did`'s signing config and holds it until this is dropped.
-    pub fn new(did: &str, config: SigningConfig) -> Self {
-        hold_identity(did, config);
-        Self {
+    /// Refused as [`hold_identity`] is.
+    pub fn new(did: &str, config: SigningConfig) -> Result<Self, IdentityConflict> {
+        hold_identity(did, config)?;
+        Ok(Self {
             did: did.to_owned(),
-        }
+        })
     }
 }
 
@@ -149,7 +218,20 @@ pub fn find_remote_signer_did() -> Option<String> {
     })
 }
 
-/// Clear all stored identities (for node cleanup).
+/// Unpins every identity and drops every key nothing holds. A held key stays
+/// until its last hold is given back, and every slot stays in the map: a
+/// holder gives its hold back by DID, and must find the slot it counted on.
 pub fn clear_identity_store() {
-    identity_store().clear();
+    for (_, slot) in identity_store().iter() {
+        slot.rcu(|current| {
+            let mut next = Holders {
+                pinned: false,
+                ..current.clone()
+            };
+            if !next.retained() {
+                next.config = None;
+            }
+            next
+        });
+    }
 }

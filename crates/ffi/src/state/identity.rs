@@ -57,7 +57,8 @@ impl IdentityState {
                 remote_signer: None,
                 signing_authorization: None,
             },
-        );
+        )
+        .map_err(|error| error.to_string())?;
 
         Ok(Self {
             did,

@@ -87,7 +87,7 @@ pub(crate) fn create_node_identity(config: &NodeSigning) -> Result<NodeIdentity>
                     remote_signer: None,
                     signing_authorization: None,
                 },
-            );
+            )?;
 
             Ok(NodeIdentity {
                 raw: Some(raw_identity),
