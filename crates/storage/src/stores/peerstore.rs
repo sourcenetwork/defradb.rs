@@ -72,6 +72,30 @@ pub struct Peerstore<S: Store> {
     pool: Option<workers::Pool>,
 }
 
+/// What one incarnation-fenced scope marker write did
+/// (`ReplicatorIncarnation.tla` ReplayMark).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplayMarkerWrite {
+    /// The marker was written at this generation.
+    Written(u64),
+    /// A newer marker already holds this scope, or there is no scope to
+    /// mark. The install is still current; that scope is already owed.
+    Superseded,
+    /// The peer was removed or rewritten under a new incarnation since the
+    /// caller's install began.
+    InstallReplaced,
+}
+
+impl ReplayMarkerWrite {
+    /// The generation written, if a marker was.
+    pub fn generation(self) -> Option<u64> {
+        match self {
+            Self::Written(generation) => Some(generation),
+            Self::Superseded | Self::InstallReplaced => None,
+        }
+    }
+}
+
 struct RegisterScopeMarkerAttempt {
     peer_id: String,
     expected_incarnation: u64,
@@ -485,7 +509,8 @@ impl RetryAttemptFn for RegisterScopeMarkerAttempt {
                 .await?
                 .is_none()
             {
-                return Ok(Box::new(None::<u64>) as crate::corekv::RetryAttemptValue);
+                return Ok(Box::new(ReplayMarkerWrite::InstallReplaced)
+                    as crate::corekv::RetryAttemptValue);
             }
             let incarnation_key = ReplicatorIncarnationKey::new(&self.peer_id);
             let incarnation = txn.get(&incarnation_key.bytes()).await?;
@@ -494,7 +519,8 @@ impl RetryAttemptFn for RegisterScopeMarkerAttempt {
                 None => Some(0),
             };
             if incarnation != Some(self.expected_incarnation) {
-                return Ok(Box::new(None::<u64>) as crate::corekv::RetryAttemptValue);
+                return Ok(Box::new(ReplayMarkerWrite::InstallReplaced)
+                    as crate::corekv::RetryAttemptValue);
             }
             let marker = if self.doc_id.is_empty() && self.collection_id.is_empty() {
                 None
@@ -514,7 +540,9 @@ impl RetryAttemptFn for RegisterScopeMarkerAttempt {
                     // Allocations can be committed out of order when concurrent
                     // registrations conflict and retry. Never let an older
                     // announcement replace a newer durable scope generation.
-                    return Ok(Box::new(None::<u64>) as crate::corekv::RetryAttemptValue);
+                    return Ok(
+                        Box::new(ReplayMarkerWrite::Superseded) as crate::corekv::RetryAttemptValue
+                    );
                 }
             }
             let id_key = ReplicatorRetryIDKey::new(&self.peer_id);
@@ -545,11 +573,14 @@ impl RetryAttemptFn for RegisterScopeMarkerAttempt {
             }
 
             let Some(marker) = marker else {
-                return Ok(Box::new(None::<u64>) as crate::corekv::RetryAttemptValue);
+                return Ok(
+                    Box::new(ReplayMarkerWrite::Superseded) as crate::corekv::RetryAttemptValue
+                );
             };
             txn.set(&marker, &encode_retry_marker_generation(self.generation))
                 .await?;
-            Ok(Box::new(Some(self.generation)) as crate::corekv::RetryAttemptValue)
+            Ok(Box::new(ReplayMarkerWrite::Written(self.generation))
+                as crate::corekv::RetryAttemptValue)
         })
     }
 }
@@ -931,6 +962,7 @@ impl<S: Store> Peerstore<S> {
             expected_incarnation,
         )
         .await
+        .map(ReplayMarkerWrite::generation)
     }
 
     async fn register_scope_marker_once(
@@ -940,7 +972,7 @@ impl<S: Store> Peerstore<S> {
         collection_id: &str,
         retry_info_bytes: &[u8],
         expected_incarnation: u64,
-    ) -> Result<Option<u64>> {
+    ) -> Result<ReplayMarkerWrite> {
         let peer_id = peer_id.to_owned();
         let doc_id = doc_id.to_owned();
         let collection_id = collection_id.to_owned();
@@ -1131,19 +1163,20 @@ impl<S: Store> Peerstore<S> {
     }
 
     /// Register a replay's dirty scope only while `install_incarnation` is
-    /// still the peer's incarnation, checked in the marker's own transaction.
-    /// `None` once the peer was removed or rewritten (a reconfiguration takes
-    /// a new incarnation) since the replay began (`ReplicatorIncarnation.tla`
-    /// ReplayMark).
+    /// still the peer's incarnation, checked in the marker's own transaction
+    /// (`ReplicatorIncarnation.tla` ReplayMark). Only
+    /// [`ReplayMarkerWrite::InstallReplaced`] means the peer was removed or
+    /// rewritten (a reconfiguration takes a new incarnation) since the replay
+    /// began.
     pub async fn observe_push_head_for_incarnation(
         &self,
         peer_id: &str,
         doc_id: &str,
         collection_id: &str,
         install_incarnation: u64,
-    ) -> Result<Option<u64>> {
+    ) -> Result<ReplayMarkerWrite> {
         if doc_id.is_empty() && collection_id.is_empty() {
-            return Ok(None);
+            return Ok(ReplayMarkerWrite::Superseded);
         }
         let initial = super::RetryInfo::new_initial()
             .to_bytes()
@@ -1160,7 +1193,9 @@ impl<S: Store> Peerstore<S> {
 
     /// Record a replay's unfinished document only while `install_incarnation`
     /// is still the peer's incarnation, checked in the marker's own
-    /// transaction. `None` once the peer was removed or rewritten.
+    /// transaction. Only [`ReplayMarkerWrite::InstallReplaced`] means the peer
+    /// was removed or rewritten; a newer marker already holding the scope is
+    /// [`ReplayMarkerWrite::Superseded`].
     pub async fn record_push_failure_for_incarnation(
         &self,
         peer_id: &str,
@@ -1168,9 +1203,9 @@ impl<S: Store> Peerstore<S> {
         collection_id: &str,
         retry_info_bytes: &[u8],
         install_incarnation: u64,
-    ) -> Result<Option<u64>> {
+    ) -> Result<ReplayMarkerWrite> {
         if doc_id.is_empty() && collection_id.is_empty() {
-            return Ok(None);
+            return Ok(ReplayMarkerWrite::Superseded);
         }
         self.register_scope_marker_once(
             peer_id,

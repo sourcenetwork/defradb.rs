@@ -572,7 +572,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
-        name: "Deferred replay preserves its install identity, cannot recreate or alter a replaced peer row, and writes retry markers only for its own install",
+        name: "Deferred replay preserves its install identity, cannot recreate or alter a replaced peer row, writes retry markers only for its own install, and stops recording failures only when that install is replaced",
         axis: Tla,
         anchor: "crates/db/src/merge/push_docs_replay.rs persist_replay_failures; crates/db/src/merge/push_docs.rs push_existing_docs_with_config_and_allowlist; crates/storage/src/stores/peerstore.rs observe_push_head_for_incarnation, record_push_failure_for_incarnation; crates/p2p-adapter/src/replicator_install_store.rs finish",
         model_ref: "MC_ReplicatorIncarnation_{Green,Red_Replay*}.cfg",
@@ -581,7 +581,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
-        name: "defer_preserves_incarnation / defer_does_not_resurrect / stale_defer_leaves_replacement / stale_mark_writes_nothing / deleted_mark_writes_nothing / mark_owned",
+        name: "defer_preserves_incarnation / defer_does_not_resurrect / stale_defer_leaves_replacement / stale_mark_writes_nothing / deleted_mark_writes_nothing / mark_owned / only_replacement_stops / superseded_continues",
         axis: Lean,
         anchor: "crates/db/src/merge/push_docs_replay.rs persist_replay_failures; crates/storage/src/stores/peerstore.rs record_push_failure_for_incarnation",
         model_ref: "ReplicatorInstall (lake build)",

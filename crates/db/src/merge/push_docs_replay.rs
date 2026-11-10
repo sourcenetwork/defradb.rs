@@ -148,7 +148,10 @@ pub async fn persist_replay_failures<S: storage::corekv::Store>(
                     failure.doc_id
                 )
             })?;
-        if recorded.is_none() {
+        // A newer marker already holding this document leaves the install
+        // current: the next failure is still recorded. Only a replaced install
+        // stops the replay's writes.
+        if recorded == storage::stores::peerstore::ReplayMarkerWrite::InstallReplaced {
             tracing::debug!(
                 peer_id = %peer_id,
                 install_incarnation,

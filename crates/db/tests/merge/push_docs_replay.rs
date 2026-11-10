@@ -414,6 +414,82 @@ fn stale_replay_does_not_mark_reconfigured_peer_inactive() {
     .unwrap()
 }
 
+/// A live push can commit a newer marker for one failed document between this
+/// replay's generation allocation and its transaction. That leaves the install
+/// current: the replay must still record the documents after it and mark the
+/// peer inactive (`ReplicatorIncarnation.tla` INV_FailuresRecorded).
+#[test]
+fn a_newer_marker_on_one_failed_document_does_not_stop_the_rest() {
+    workers::block_on(async {
+        use storage::corekv::{Key as _, Store as _, Writer as _};
+
+        let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
+        let peerstore = storage::stores::Peerstore::new(store.clone());
+        let peer = PeerId::new("peer-live".to_owned());
+        let info =
+            p2p::ReplicatorInfo::from_raw(peer.to_string(), vec!["notes".into()], Vec::new());
+        peerstore
+            .create_replicator(peer.as_str(), &info.to_bytes().unwrap())
+            .await
+            .unwrap();
+        let incarnation = peerstore
+            .get_replicator_incarnation(peer.as_str())
+            .await
+            .unwrap()
+            .unwrap();
+        // The live push's marker carries a generation allocated after the
+        // replay's, so the replay's transaction finds a newer one holding it.
+        let raw = storage::namespace::NamespacedStore::new(
+            store.clone(),
+            storage::namespace::Namespace::Peerstore,
+        );
+        let mut txn = raw.new_txn(false).await.unwrap();
+        txn.set(
+            &storage::keys::peerstore::ReplicatorRetryDocIDKey::new(peer.as_str(), "doc-1").bytes(),
+            &storage::stores::peerstore::encode_retry_marker_generation(u64::MAX),
+        )
+        .await
+        .unwrap();
+        txn.commit().await.unwrap();
+
+        let failures: Vec<_> = ["doc-1", "doc-2", "doc-3"]
+            .into_iter()
+            .map(|doc_id| ReplayDocumentFailure {
+                doc_id: doc_id.to_owned(),
+                collection_id: "notes".to_owned(),
+            })
+            .collect();
+        persist_replay_failures(&peerstore, &peer, incarnation, &failures)
+            .await
+            .unwrap();
+
+        let markers = peerstore.get_retry_documents(peer.as_str()).await.unwrap();
+        let generation = |doc_id: &str| {
+            markers
+                .iter()
+                .find(|marker| marker.doc_id == doc_id)
+                .map(|marker| marker.generation)
+        };
+        assert_eq!(
+            generation("doc-1"),
+            Some(u64::MAX),
+            "the newer marker stays"
+        );
+        assert!(generation("doc-2").is_some(), "doc-2 lost its retry marker");
+        assert!(generation("doc-3").is_some(), "doc-3 lost its retry marker");
+        let saved = peerstore
+            .get_replicator(peer.as_str())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            p2p::ReplicatorInfo::from_bytes(&saved).unwrap().status,
+            p2p::ReplicatorStatus::Inactive
+        );
+    })
+    .unwrap()
+}
+
 /// Removing a collection mid-replay rewrites the peer under a new incarnation
 /// (`ReplicatorIncarnation.tla` ReplayMark). The replay that began under the
 /// old one must register no marker and send nothing for the removed

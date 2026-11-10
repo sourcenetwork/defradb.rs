@@ -7,6 +7,7 @@ use p2p::message::PushLogRequest;
 use p2p::transport::PeerId;
 use p2p::P2PTransport;
 use storage::corekv::{Reader, Store};
+use storage::stores::peerstore::ReplayMarkerWrite;
 
 mod selected;
 mod selection;
@@ -417,9 +418,11 @@ where
                 // so a refused grant or signature leaves its durable retry owner intact.
                 // The marker belongs to this replay's install: once the peer is
                 // removed or rewritten (a removed collection takes a new
-                // incarnation), the replay writes nothing more and stops.
+                // incarnation), the replay writes nothing more and stops. A
+                // document a live push already holds with a newer marker is
+                // owed by that marker, so the replay leaves it to it.
                 let marker_generation = if let PushOwnership::Replicator(incarnation) = &ownership {
-                    let Some(generation) = peerstore
+                    match peerstore
                         .observe_push_head_for_incarnation(
                             peer_id.as_str(),
                             doc_id,
@@ -428,13 +431,15 @@ where
                         )
                         .await
                         .map_err(|error| format!("failed to register replay marker: {error}"))?
-                    else {
-                        let error = format!(
-                            "replicator {peer_id} removed or reconfigured during existing-document replay"
-                        );
-                        return Err(error);
-                    };
-                    Some(generation)
+                    {
+                        ReplayMarkerWrite::Written(generation) => Some(generation),
+                        ReplayMarkerWrite::Superseded => continue 'documents,
+                        ReplayMarkerWrite::InstallReplaced => {
+                            return Err(format!(
+                                "replicator {peer_id} removed or reconfigured during existing-document replay"
+                            ));
+                        }
+                    }
                 } else {
                     None
                 };

@@ -110,6 +110,45 @@ theorem deleted_mark_writes_nothing (installId : Nat) (marks : List Nat) :
   -- No incarnation equals some install, so the markers are unchanged.
   simp [markReplay]
 
+-- What one fenced replay marker write did. Only a replaced install stops the
+-- replay; a scope a live push already holds with a newer marker is covered,
+-- and the replay moves on to its next failed document.
+inductive MarkOutcome where
+  | written
+  | superseded
+  | installReplaced
+  deriving DecidableEq
+
+-- The outcome of recording one failed document. `current` is the peer's
+-- incarnation at the write (none once deleted); `held` says a newer marker
+-- already holds the document's scope.
+def markOutcome (current : Option Nat) (installId : Nat) (held : Bool) : MarkOutcome :=
+  -- The incarnation check comes first: a replaced install writes nothing.
+  if current = some installId then
+    -- The install is current: a held scope is covered, otherwise it is written.
+    if held then .superseded else .written
+  else .installReplaced
+
+-- Whether an outcome ends the replay's recording.
+def stopsReplay : MarkOutcome → Bool
+  -- Only a replaced install stops it.
+  | .installReplaced => true
+  -- A written or already-held document lets it continue.
+  | .written | .superseded => false
+
+-- A replay stops recording exactly when its install is no longer current.
+theorem only_replacement_stops (current : Option Nat) (installId : Nat) (held : Bool) :
+    stopsReplay (markOutcome current installId held) = true ↔ current ≠ some installId := by
+  -- Split on the incarnation check, then on whether the scope is held.
+  unfold markOutcome
+  split <;> (try split) <;> simp_all [stopsReplay]
+
+-- A newer marker on one document never stops a replay whose install is current.
+theorem superseded_continues (installId : Nat) :
+    stopsReplay (markOutcome (some installId) installId true) = false := by
+  -- The install is current and the scope is held: the outcome is superseded.
+  simp [markOutcome, stopsReplay]
+
 -- Every marker a replay writes names the incarnation it was written under.
 theorem mark_owned (current installId : Nat) (marks : List Nat)
     (h : markReplay (some current) installId marks ≠ marks) : current = installId := by

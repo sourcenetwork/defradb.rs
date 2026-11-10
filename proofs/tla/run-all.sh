@@ -188,6 +188,7 @@ RUNS=(
   "MC_ReplicatorIncarnation_Red_ReplayResurrect.cfg ReplicatorIncarnation.tla RED"
   "MC_ReplicatorIncarnation_Red_ReplayStale.cfg ReplicatorIncarnation.tla RED"
   "MC_ReplicatorIncarnation_Red_ReplayMarker.cfg ReplicatorIncarnation.tla RED"
+  "MC_ReplicatorIncarnation_Red_ReplaySuperseded.cfg ReplicatorIncarnation.tla RED"
   "MC_ReplicatorInstall_Green.cfg ReplicatorInstall.tla GREEN"
   "MC_ReplicatorInstall_Red_Validation.cfg ReplicatorInstall.tla RED"
   "MC_ReplicatorInstall_Red_Active.cfg ReplicatorInstall.tla RED"
