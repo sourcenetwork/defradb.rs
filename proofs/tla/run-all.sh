@@ -171,6 +171,9 @@ RUNS=(
   "MC_HistoryDriver_Red_SwallowedAbort.cfg HistoryDriver.tla RED"
   "MC_ContinuationSlot_Green.cfg ContinuationSlot.tla GREEN"
   "MC_ContinuationSlot_Red_LateClaim.cfg ContinuationSlot.tla RED"
+  "MC_PendingDagOwner_Green.cfg PendingDagOwner.tla GREEN" # only an owner's own generation releases its pending-DAG slot, and a release wakes the retry clock
+  "MC_PendingDagOwner_Red_NoGeneration.cfg PendingDagOwner.tla RED" # a losing claimant's drop frees the winner's slot: more roots work than slots (INV_Capacity)
+  "MC_PendingDagOwner_Red_NoWake.cfg PendingDagOwner.tla RED" # a release does not wake the clock: a due root waits for the tick beside a free slot (INV_NoIdleCapacity)
   "MC_HistoryTurns_Green.cfg HistoryTurns.tla GREEN"
   "MC_HistoryTurns_Red_Admission.cfg HistoryTurns.tla RED"
   "MC_HistoryTurns_Red_Atomic.cfg HistoryTurns.tla RED"

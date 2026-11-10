@@ -608,6 +608,15 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_Capacity / INV_OwnedSlot / INV_NoIdleCapacity — only an owner's own generation releases its pending-DAG slot, and the release wakes the retry clock",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/mod.rs PendingDagWorkOwner, claim_pending_dag_merge, spawn_pending_dag_fetch and run_pending_dag_retry_clock; crates/p2p/tests/unit/pending_capacity_wake.rs",
+        model_ref: "MC_PendingDagOwner_{Green,Red_NoGeneration,Red_NoWake}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
         name: "owned_slot_released — dropping the continuation owner releases its slot",
         axis: Lean,
         anchor: "crates/p2p/src/sync/coordinator/mod.rs::claim_pending_dag_merge; crates/p2p/src/sync/replication/handlers.rs::process_one_event",
