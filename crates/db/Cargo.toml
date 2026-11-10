@@ -57,7 +57,6 @@ rapidhash.workspace = true
 kovan.workspace = true
 kovan-map.workspace = true
 kovan-queue.workspace = true
-imbl.workspace = true
 regolith.workspace = true
 # The worker pool: periodic and detached jobs, deadlines.
 workers = { path = "../workers" }

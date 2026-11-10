@@ -10,14 +10,15 @@
 //! statement savepoint is a snapshot of both, taken and put back while the
 //! transaction is held alone.
 //!
-//! The snapshot is built of persistent maps, so a swap shares everything it
-//! does not change: a load copies the path to its own entry, not every
-//! collection already loaded. A replaced snapshot waits for kovan's deferred
+//! The collection map and the created set each sit behind an `Arc`, so a
+//! clone of the snapshot (a read, a savepoint, the start of a swap) is a
+//! reference. A change copies only the table it changes, whose entries are
+//! shared pointers. A replaced snapshot waits for kovan's deferred
 //! reclamation, so what it holds alone is what a load leaves behind.
 
-use imbl::shared_ptr::DefaultSharedPtr;
-use imbl::GenericHashSet;
-use rapidhash::fast::RandomState;
+use std::sync::Arc;
+
+use rapidhash::RapidHashSet;
 use regolith::sync::{Atom, SegQueue};
 
 use super::OwedAcpRegistration;
@@ -27,7 +28,7 @@ use crate::collection::Collection;
 #[derive(Clone, Default)]
 struct Collections {
     cache: CollectionCache,
-    created: GenericHashSet<String, RandomState, DefaultSharedPtr>,
+    created: Arc<RapidHashSet<String>>,
 }
 
 pub(super) struct Catalog {
@@ -89,7 +90,7 @@ impl Catalog {
 
     pub(super) fn mark_created(&self, collection_id: String) {
         self.update(|collections| {
-            collections.created.insert(collection_id.clone());
+            Arc::make_mut(&mut collections.created).insert(collection_id.clone());
         });
     }
 
