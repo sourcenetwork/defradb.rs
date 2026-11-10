@@ -320,6 +320,8 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
     }
 
     async fn sync_status(&self) -> P2PResult<serde_json::Value> {
+        self.check_nac(acp::nac::NodePermission::P2pPeerInfo)
+            .await?;
         let Some(coordinator) = self.sync_coordinator.as_ref() else {
             return Ok(serde_json::Value::Null);
         };
@@ -336,6 +338,8 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
     }
 
     async fn peer_details(&self, peer_id: &TransportPeerId) -> P2PResult<serde_json::Value> {
+        self.check_nac(acp::nac::NodePermission::P2pPeerInfo)
+            .await?;
         let Some(coordinator) = self.sync_coordinator.as_ref() else {
             return Ok(serde_json::Value::Null);
         };
@@ -369,6 +373,8 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
     }
 
     async fn shareable_address(&self) -> P2PResult<Option<String>> {
+        self.check_nac(acp::nac::NodePermission::P2pPeerInfo)
+            .await?;
         self.transport
             .listen_addresses()
             .await
