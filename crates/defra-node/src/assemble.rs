@@ -27,6 +27,7 @@ pub(crate) struct Extras {
     pub embedding_model: Option<String>,
     pub embedding_api_key: Option<String>,
     pub txn_ownership: db::TxnOwnership,
+    pub document_projector: Option<Arc<dyn db::DocumentMutationProjector>>,
     #[cfg(feature = "http")]
     pub transaction_cleanup: Option<TransactionCleanupConfig>,
     #[cfg(feature = "http")]
@@ -207,7 +208,35 @@ where
         .await,
     )
     .await?;
-    let document_acp = acp_setup.document_acp.clone();
+    database.set_document_acp(acp_setup.document_acp.clone());
+    let document_acp = database
+        .document_acp()
+        .expect("document ACP was just installed")
+        .clone();
+    if let Some(projector) = extras.document_projector {
+        let actor = close_on_error(
+            &database,
+            node_query_identity
+                .clone()
+                .ok_or(Error::DocumentProjectorNeedsIdentity),
+        )
+        .await?;
+        close_on_error(
+            &database,
+            database
+                .set_document_projector(projector, document_acp.clone(), actor)
+                .map_err(Error::DatabaseOpen),
+        )
+        .await?;
+        close_on_error(
+            &database,
+            database
+                .reconcile_document_projector()
+                .await
+                .map_err(Error::DatabaseOpen),
+        )
+        .await?;
+    }
     #[cfg(feature = "vera")]
     let remote_acp = acp_setup.vera_acp.is_some();
     #[cfg(not(feature = "vera"))]
@@ -331,16 +360,6 @@ where
             .unwrap_or_else(|| db::DbTransactionRegistry::new(database.clone()))
             .with_ownership(extras.txn_ownership),
     );
-
-    #[cfg(feature = "http")]
-    let txn_cleanup_task = extras.transaction_cleanup.map(|cleanup| {
-        tracing::info!(
-            max_idle_age_secs = cleanup.max_idle_age.as_secs(),
-            sweep_interval_secs = cleanup.sweep_interval.as_secs(),
-            "Transaction idle cleanup worker enabled"
-        );
-        registry.start_stale_transaction_cleanup(cleanup.max_idle_age, cleanup.sweep_interval)
-    });
 
     #[cfg(feature = "managed-p2p")]
     {
@@ -484,8 +503,10 @@ where
     ));
     let acp_ops: Arc<dyn acp_ops::AcpOps> = Arc::new(acp_ops::DbAcpOps::new(
         database.clone(),
+        registry.clone(),
         document_acp.clone(),
         event_bus.clone(),
+        runner.clone(),
     ));
     // Started last: nothing after this point fails, so a failed build
     // never leaves a task holding the store open. The vector sweep rebuilds
@@ -503,6 +524,20 @@ where
     #[cfg(all(feature = "vera", not(target_arch = "wasm32")))]
     if let Some(start_redrive) = redrive {
         background_tasks.push(start_redrive(database.pool()));
+    }
+    // The sweep holds the registry, and through it the database and its
+    // pool: held anywhere but the shutdown set, a node dropped without
+    // shutdown would keep its pool's threads and the store alive forever.
+    #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+    if let Some(cleanup) = extras.transaction_cleanup {
+        tracing::info!(
+            max_idle_age_secs = cleanup.max_idle_age.as_secs(),
+            sweep_interval_secs = cleanup.sweep_interval.as_secs(),
+            "Transaction idle cleanup worker enabled"
+        );
+        background_tasks.push(
+            registry.start_stale_transaction_cleanup(cleanup.max_idle_age, cleanup.sweep_interval),
+        );
     }
     let block_ops: Arc<dyn BlockOps> = Arc::new(db_impls::DbBlockOps::new(
         database.clone(),
@@ -539,8 +574,6 @@ where
         remote_acp,
         #[cfg(not(target_arch = "wasm32"))]
         transaction_stats,
-        #[cfg(feature = "http")]
-        txn_cleanup_task: crate::single_slot(txn_cleanup_task),
         #[cfg(not(target_arch = "wasm32"))]
         background_tasks,
         #[cfg(feature = "managed-p2p")]

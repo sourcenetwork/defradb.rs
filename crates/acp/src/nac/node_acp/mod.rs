@@ -7,8 +7,10 @@
 //! - **Write blocking when disabled**: All relationship modifications are blocked
 //!   when NAC is disabled to prevent privilege escalation attacks.
 
+mod explain;
 mod lifecycle;
 mod operations;
+mod source;
 
 use std::sync::Arc;
 use storage::corekv::MaybeSendSync;

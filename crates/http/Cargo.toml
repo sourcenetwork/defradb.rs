@@ -17,6 +17,7 @@ default = ["server"]
 # adapter implements; none of the server stack builds for wasm32.
 server = [
     "dep:async-stream",
+    "dep:async-tungstenite",
     "dep:axum",
     "dep:edge",
     "dep:net",
@@ -60,6 +61,7 @@ workers = { path = "../workers", optional = true }
 async-trait.workspace = true
 futures.workspace = true
 async-stream = { version = "0.3", optional = true }
+async-tungstenite = { version = "0.35.0", optional = true }
 
 # Serialization
 serde.workspace = true

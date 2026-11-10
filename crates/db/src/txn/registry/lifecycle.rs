@@ -31,6 +31,24 @@ async fn within<F: std::future::Future>(
         .map_err(TransactionError::execution)
 }
 
+impl<S: Store + 'static> DbTransactionRegistry<S> {
+    /// Trusted embedded-host only: the owner admits the transaction turn and
+    /// native NAC checks that owner on the same view. Never expose this
+    /// capability as an HTTP or GraphQL request parameter.
+    pub async fn change_host_nac_source_permission(
+        &self,
+        owner: &RequestContext,
+        edge: query::txn::SourcePermission,
+    ) -> std::result::Result<bool, TransactionError> {
+        let id = owner
+            .txn()
+            .ok_or_else(|| TransactionError::operation("an explicit transaction is required"))?;
+        let handle = TransactionHandle::new(id.to_string());
+        let job = query::txn::host_source_permission_job(owner.clone(), edge)?;
+        self.run_as(owner, &handle, None, job).await?
+    }
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
@@ -311,6 +329,17 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .map_err(|error| TransactionError::operation(error.to_string()))
     }
 
+    async fn explain_nac_subject_as(
+        &self,
+        context: &RequestContext,
+        subject: &str,
+    ) -> std::result::Result<Vec<acp::nac::PermissionProvenance>, TransactionError> {
+        self.db
+            .explain_nac_subject_as(context, subject)
+            .await
+            .map_err(|error| TransactionError::operation(error.to_string()))
+    }
+
     async fn disable_nac_as(
         &self,
         context: &RequestContext,
@@ -335,6 +364,19 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .add_nac_actor_relationship_as(context, relation, target_actor)
             .await
             .map_err(nac_error)
+    }
+
+    async fn change_nac_source_permission_as(
+        &self,
+        context: &RequestContext,
+        edge: &query::txn::SourcePermission,
+    ) -> std::result::Result<bool, TransactionError> {
+        let id = context
+            .txn()
+            .ok_or_else(|| TransactionError::operation("an explicit transaction is required"))?;
+        let handle = TransactionHandle::new(id.to_string());
+        let job = query::txn::source_permission_job(context.clone(), edge.clone())?;
+        self.run_as(context, &handle, None, job).await?
     }
 
     async fn delete_nac_actor_relationship_as(

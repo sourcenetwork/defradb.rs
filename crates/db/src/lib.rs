@@ -57,6 +57,7 @@ pub mod error;
 pub mod event;
 pub mod index;
 pub use event::emission::{BroadcastDone, TxnBroadcastEvent, TxnBroadcaster};
+pub mod document_projection;
 pub mod merge;
 pub mod nac;
 pub mod read;
@@ -67,6 +68,8 @@ pub mod search;
 pub mod txn;
 pub(crate) mod view;
 pub mod write;
+pub use datastore::NamespaceView as DocumentMutationView;
+pub use document_projection::{DocumentMutationContext, DocumentMutationProjector};
 
 // Re-export commonly used types
 pub use crate::block::builder::{build_blocks_from_document, BlockResult};

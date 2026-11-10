@@ -5,7 +5,7 @@ use regolith::sync::OnceCell;
 
 static VERA_IROH_BINARY: OnceCell<PathBuf> = OnceCell::new();
 
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn prepare_iroh_binary() {
     // Listing tests runs this constructor too, before nextest's setup script
     // has exported the binaries, so a list must not build one.
