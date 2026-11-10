@@ -7,6 +7,7 @@ mod async_backfill_migration;
 mod backfill_large;
 mod backfill_txn;
 mod backfill_unique;
+mod backfill_unique_txn;
 mod crdt;
 mod delete;
 mod get;

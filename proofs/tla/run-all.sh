@@ -413,6 +413,7 @@ RUNS=(
   "MC_IndexInTxn_Red_EarlyBackfill.cfg IndexInTxn.tla RED" # backfill at create, before commit (INV_WorkOnlyAfterCommit)
   "MC_IndexInTxn_Red_StaleCatalog.cfg IndexInTxn.tla RED" # stale cached definition in the txn (INV_SeesOwnChange)
   "MC_IndexInTxn_Red_NoAwait.cfg IndexInTxn.tla RED" # commit returns before the backfill (INV_BuiltWhenCommitReturns)
+  "MC_IndexInTxn_Red_NoSavepoint.cfg IndexInTxn.tla RED" # a failed change keeps its partial writes and the commit lands them (INV_FailedChangeLeavesNothing)
   "MC_Truncate_Green.cfg Truncate.tla GREEN" # #2321: truncate checks nac, then for a filter branchable, txn and shape, before a delete that is durable at once
   "MC_Truncate_Red_Nac.cfg Truncate.tla RED" # permission check left out: a caller without CollectionTruncate removes documents (INV_NoRemovalWithoutPermission)
   "MC_Truncate_Red_Branchable.cfg Truncate.tla RED" # branchable check left out: a filtered truncate splits shared history (INV_FilteredNeverOnBranchable)

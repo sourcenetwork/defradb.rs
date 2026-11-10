@@ -85,16 +85,15 @@ fn index_kind(kind: Option<schema::IndexKind>, unique: bool) -> schema::IndexKin
     ))
 }
 
-/// The indexes of `version` as a transaction sees them, each with its build
-/// state: its action record, or complete when it has none.
+/// [`db::index_listing`] of `version` as a transaction sees it, in Go's wire
+/// shape.
 fn txn_listing(
     version: &schema::CollectionVersion,
     actions: &RapidHashMap<u32, ActionExecution>,
 ) -> Vec<GoListIndexesResult> {
-    version
-        .indexes
-        .iter()
-        .map(|index| GoListIndexesResult {
+    db::index_listing(version, actions)
+        .into_iter()
+        .map(|(index, execution)| GoListIndexesResult {
             description: GoIndexDescription {
                 kind: index_kind(index.kind, index.unique),
                 name: index.name.clone(),
@@ -110,15 +109,7 @@ fn txn_listing(
                 unique: index.unique,
             },
             collection_name: version.name.clone(),
-            execution: actions
-                .get(&index.id)
-                .cloned()
-                .unwrap_or_else(|| ActionExecution {
-                    collection_id: version.collection_id.clone(),
-                    subject: index.id.to_string(),
-                    status: ActionStatus::COMPLETED,
-                    ..Default::default()
-                }),
+            execution,
         })
         .collect()
 }

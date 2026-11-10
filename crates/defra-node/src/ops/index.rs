@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use acp::nac::NodePermission;
 use db::IndexManager;
-use defra_core::{ActionExecution, ActionStatus, RequestContext};
+use defra_core::{ActionExecution, RequestContext};
 use schema::{IndexDescription, IndexedFieldDescription};
 use serde::Serialize;
 
@@ -65,10 +65,6 @@ impl Node {
     ) -> Result<IndexDescription> {
         let caller = self.caller(context);
         if caller.txn().is_some() {
-            self.check_access(&caller, NodePermission::CollectionGet)
-                .await?;
-            self.check_access(&caller, NodePermission::IndexCreate)
-                .await?;
             let kind =
                 IndexManager::requested_kind(&fields, unique, None).map_err(db::Error::from)?;
             return self
@@ -115,10 +111,6 @@ impl Node {
     ) -> Result<Vec<IndexListing>> {
         let caller = self.caller(context);
         if caller.txn().is_some() {
-            self.check_access(&caller, NodePermission::CollectionGet)
-                .await?;
-            self.check_access(&caller, NodePermission::IndexList)
-                .await?;
             let (version, actions) = self
                 .runner()
                 .indexes_in_txn_as(&caller, collection)
@@ -165,10 +157,6 @@ impl Node {
     ) -> Result<()> {
         let caller = self.caller(context);
         if caller.txn().is_some() {
-            self.check_access(&caller, NodePermission::CollectionGet)
-                .await?;
-            self.check_access(&caller, NodePermission::IndexDelete)
-                .await?;
             return self
                 .runner()
                 .drop_index_in_txn_as(&caller, collection, name)
@@ -197,57 +185,17 @@ impl Node {
     }
 }
 
-/// The indexes of `version` with their build state, less the index the node
-/// adds for each primary relation on its own. An index without an action
-/// record is complete.
+/// [`db::index_listing`], as the node returns it.
 fn listings(
     version: &schema::CollectionVersion,
     actions: &rapidhash::RapidHashMap<u32, ActionExecution>,
 ) -> Vec<IndexListing> {
-    version
-        .indexes
-        .iter()
-        .filter(|index| !is_hidden_relation_index(version, index))
-        .map(|index| IndexListing {
+    db::index_listing(version, actions)
+        .into_iter()
+        .map(|(index, execution)| IndexListing {
             description: index.clone(),
             collection_name: version.name.clone(),
-            execution: actions
-                .get(&index.id)
-                .cloned()
-                .unwrap_or_else(|| ActionExecution {
-                    collection_id: version.collection_id.clone(),
-                    subject: index.id.to_string(),
-                    status: ActionStatus::COMPLETED,
-                    ..Default::default()
-                }),
+            execution,
         })
         .collect()
-}
-
-/// Whether `index` is the one the node adds for a primary relation's
-/// `_<name>ID` field, which Go does not list.
-fn is_hidden_relation_index(version: &schema::CollectionVersion, index: &IndexDescription) -> bool {
-    let [field] = index.fields.as_slice() else {
-        return false;
-    };
-    if index.unique {
-        return false;
-    }
-    let Some(relation) = field
-        .name
-        .strip_prefix('_')
-        .and_then(|name| name.strip_suffix("ID"))
-    else {
-        return false;
-    };
-    index.name == format!("{}__{relation}ID_ASC", version.name)
-        && version.fields.iter().any(|candidate| {
-            candidate.name == field.name
-                && candidate.relation_name.is_some()
-                && candidate.is_primary
-                && matches!(
-                    candidate.kind,
-                    schema::FieldKind::Scalar(schema::ScalarKind::DocID)
-                )
-        })
 }

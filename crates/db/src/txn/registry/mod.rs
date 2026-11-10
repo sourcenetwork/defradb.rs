@@ -226,6 +226,26 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
     }
 }
 
+/// Ends the statement `txn` opened with `set_statement_savepoint` for one
+/// operation: kept when it succeeded, rolled back when it failed, so a
+/// failure part way leaves none of its writes, catalog changes or commit
+/// callbacks in the caller's transaction.
+fn finish_statement<S, T>(txn: &mut crate::txn::DbTxn<S>, outcome: Result<T>) -> Result<T>
+where
+    S: Store,
+{
+    match outcome {
+        Ok(value) => {
+            txn.release_statement_savepoint()?;
+            Ok(value)
+        }
+        Err(error) => {
+            txn.rollback_statement_savepoint()?;
+            Err(error)
+        }
+    }
+}
+
 /// Who began a transaction, and so may use it: the request's identity, or
 /// nobody for every request of an [`TxnOwnership::Embedder`] registry.
 type Caller = Option<String>;
