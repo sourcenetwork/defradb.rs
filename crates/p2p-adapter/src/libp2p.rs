@@ -847,6 +847,8 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
         doc_ids: Vec<String>,
         timeout: Option<std::time::Duration>,
     ) -> P2PResult<()> {
+        self.check_nac(acp::nac::NodePermission::P2pSyncDocuments)
+            .await?;
         let pusher = self
             .doc_pusher
             .as_ref()
@@ -948,6 +950,8 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
     }
 
     async fn sync_branchable_collection(&self, collection_id: &str) -> P2PResult<()> {
+        self.check_nac(acp::nac::NodePermission::P2pSyncBranchableCollection)
+            .await?;
         let pusher = self
             .doc_pusher
             .as_ref()
@@ -1050,6 +1054,8 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
     }
 
     async fn sync_collection_versions(&self, version_ids: Vec<String>) -> P2PResult<()> {
+        self.check_nac(acp::nac::NodePermission::P2pSyncCollectionVersions)
+            .await?;
         if version_ids.is_empty() {
             return Ok(());
         }

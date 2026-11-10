@@ -232,6 +232,9 @@ lean_lib CommitConflictReceipt where
 lean_lib NacToggle where
 
 @[default_target]
+lean_lib NacOrder where
+
+@[default_target]
 lean_lib DocumentSave where
 
 @[default_target]

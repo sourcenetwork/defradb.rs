@@ -374,6 +374,21 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
             })
     }
 
+    async fn dac_bypass(&self, identity: &identity::Did) -> query::error::Result<bool> {
+        // With NAC off every permission reads as held, and Go does not let
+        // that bypass DAC.
+        let Some(nac) = self.db.nac_manager() else {
+            return Ok(false);
+        };
+        if !nac.is_enabled().await {
+            return Ok(false);
+        }
+        Ok(self
+            .check_node_permission(identity, acp::nac::NodePermission::DacBypass)
+            .await?
+            .unwrap_or(false))
+    }
+
     async fn transaction_acp(
         &self,
         provider: Arc<dyn acp::DocumentACP>,

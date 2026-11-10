@@ -354,6 +354,15 @@ RUNS=(
   "MC_Truncate_Red_Branchable.cfg Truncate.tla RED" # branchable check left out: a filtered truncate splits shared history (INV_FilteredNeverOnBranchable)
   "MC_Truncate_Red_Txn.cfg Truncate.tla RED" # transaction check left out, as before: a filter on the txn view removes an uncommitted match (INV_FilteredRemovesOnlyCommittedMatches)
   "MC_Truncate_Red_Shape.cfg Truncate.tla RED" # filter shape check left out: a non-filter removes everything (INV_BadFilterRemovesNothing)
+  "MC_NacOrder_Green.cfg NacOrder.tla GREEN" # #2680/#2700: a document write checks get-collection then its own permission, in its transaction, and a call with no identity acts as no one
+  "MC_NacOrder_Red_SkipGet.cfg NacOrder.tla RED" # get-collection left out: a caller without it writes (INV_NoEffectWithoutPermission)
+  "MC_NacOrder_Red_OwnFirst.cfg NacOrder.tla RED" # the write's own permission checked first: the refusal names it, not get-collection (INV_RefusalNamesGoFirst)
+  "MC_NacOrder_Red_AnonAsNode.cfg NacOrder.tla RED" # no identity acts as the node: a caller with nothing writes (INV_NoEffectWithoutPermission)
+  "MC_NacOrder_Red_OutsideTxn.cfg NacOrder.tla RED" # permissions read outside the transaction: a revoke that lands first is missed (INV_NoEffectWithoutPermission)
+  "MC_NacDacBypass_Green.cfg NacDacBypass.tla GREEN" # #2681: a read bypasses DAC exactly when NAC is on and grants bypass-dac at its snapshot
+  "MC_NacDacBypass_Red_NacOff.cfg NacDacBypass.tla RED" # a bare permission check: NAC off reads as granted and opens DAC (INV_BypassOnlyWhenGranted)
+  "MC_NacDacBypass_Red_Never.cfg NacDacBypass.tla RED" # no bypass, as before: the node owner reads nothing it does not own (INV_BypassWhenGranted)
+  "MC_NacDacBypass_Red_Live.cfg NacDacBypass.tla RED" # grant read outside the read's transaction: a revoke after the snapshot is missed (INV_BypassOnlyWhenGranted)
   "MC_RelationFilterScan_Green.cfg RelationFilterScan.tla GREEN" # #2099: a relation-filtered delete or update scans validated, so a concurrent change to a related document aborts it
   "MC_RelationFilterScan_Red_Unvalidated.cfg RelationFilterScan.tla RED" # scans left unvalidated: the delete commits on a stale related match (INV_DecisionHoldsAtCommit)
   "MC_DacPolicyAdd_Green.cfg DacPolicyAdd.tla GREEN" # #2321: add DAC policy checks nac, acp, creator, data, valid in Go's order; a remote ACP's policy is kept locally before its ID goes back

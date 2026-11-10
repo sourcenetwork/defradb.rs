@@ -299,6 +299,24 @@ where
         } else {
             bound_acp
         };
+        // Go's `canDACBypass`, read at this request's own snapshot: a caller
+        // node access control grants `bypass-dac` reads past document ACP.
+        let bypass = match request.identity.is_some() && !self.context().dac_bypass() {
+            true => match txn_ctx.doc_fetcher().dac_bypass(&nac_identity).await {
+                Ok(bypass) => bypass,
+                Err(error) => return Ok(Turned::Done(QueryResponse::error(error.to_string()))),
+            },
+            false => false,
+        };
+        let bypassed;
+        let this = match bypass {
+            true => {
+                bypassed = self.for_request(self.context().into_owned().with_dac_bypass(true));
+                &bypassed
+            }
+            false => self,
+        };
+
         let identity = self.resolve_identity(request.identity);
         let mut warnings: Vec<GqlWarning> = Vec::new();
 
@@ -307,7 +325,7 @@ where
                 Ok(provider) => provider,
                 Err(error) => return Ok(Turned::Done(QueryResponse::error(error.to_string()))),
             };
-        let mut scoped_runner = self.scoped_runner(scoped_acp);
+        let mut scoped_runner = this.scoped_runner(scoped_acp);
         scoped_runner.collection_provider = txn_provider.clone();
         if !scoped_runner.acp.supports_transactions() {
             // Even transaction-context implementations without an ACP

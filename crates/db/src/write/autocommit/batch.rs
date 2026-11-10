@@ -126,26 +126,35 @@ impl<S: Store + 'static> BatchMutator<S> {
             .identity()
             .and_then(|value| identity::Did::new(value).ok())
             .unwrap_or_else(identity::Did::wildcard);
-        let exact_request = serde_json::to_vec(&(identity.to_string(), permission.as_str()))
-            .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
-        let request = query::prepared::PreparedInputRequest::new(
-            query::prepared::PreparedInputKind::NodePermission,
-            exact_request,
-        );
-        let Some(bytes) = inputs.get(&request) else {
-            return Err(query::error::QueryError::NeedsInput(request));
-        };
-        let allowed: bool = serde_json::from_slice(&bytes).map_err(|_| {
-            query::error::QueryError::execution("invalid prepared node permission response")
-        })?;
-        if allowed {
-            Ok(())
-        } else {
-            Err(query::error::QueryError::permission_denied(format!(
-                "not authorized for node permission {}",
-                permission.as_str()
-            )))
+        let mut checks = Vec::new();
+        for permission in permission.go_order() {
+            let exact_request = serde_json::to_vec(&(identity.to_string(), permission.as_str()))
+                .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+            let request = query::prepared::PreparedInputRequest::new(
+                query::prepared::PreparedInputKind::NodePermission,
+                exact_request,
+            );
+            checks.push((permission, inputs.get(&request), request));
         }
+        // Every unanswered permission goes in the one wave the first asks for.
+        let mut unanswered = checks.iter().filter(|(_, answer, _)| answer.is_none());
+        if let Some((_, _, first)) = unanswered.next() {
+            unanswered.for_each(|(_, _, request)| inputs.want(request.clone()));
+            return Err(query::error::QueryError::NeedsInput(first.clone()));
+        }
+        for (permission, answer, _) in checks {
+            let bytes = answer.unwrap_or_default();
+            let allowed: bool = serde_json::from_slice(&bytes).map_err(|_| {
+                query::error::QueryError::execution("invalid prepared node permission response")
+            })?;
+            if !allowed {
+                return Err(query::error::QueryError::permission_denied(format!(
+                    "not authorized for node permission {}",
+                    permission.as_str()
+                )));
+            }
+        }
+        Ok(())
     }
 
     async fn register_created_doc_with_acp(
