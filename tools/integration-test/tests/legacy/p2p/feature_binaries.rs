@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use integration_test::{build_cli_variant, workspace_root};
 
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn prepare_feature_binaries() {
     if integration_test::listing_tests() {
         return;

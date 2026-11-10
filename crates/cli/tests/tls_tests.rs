@@ -81,7 +81,7 @@ impl RunningNode {
 fn write_certificate(root: &Path) -> Certificate {
     let certified = generate_simple_self_signed(vec!["127.0.0.1".into()]).unwrap();
     std::fs::write(root.join("cert.pem"), certified.cert.pem()).unwrap();
-    std::fs::write(root.join("key.pem"), certified.key_pair.serialize_pem()).unwrap();
+    std::fs::write(root.join("key.pem"), certified.signing_key.serialize_pem()).unwrap();
     Certificate::from_der(certified.cert.der()).unwrap()
 }
 
@@ -226,8 +226,11 @@ async fn invalid_tls_configuration_fails_before_serving() {
             }
             "mismatched key" => {
                 let other = generate_simple_self_signed(vec!["127.0.0.1".into()]).unwrap();
-                std::fs::write(root.path().join("key.pem"), other.key_pair.serialize_pem())
-                    .unwrap();
+                std::fs::write(
+                    root.path().join("key.pem"),
+                    other.signing_key.serialize_pem(),
+                )
+                .unwrap();
             }
             _ => unreachable!(),
         }
