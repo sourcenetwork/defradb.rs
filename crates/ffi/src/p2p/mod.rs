@@ -58,9 +58,7 @@ fn admit(
 ) -> Result<Option<Arc<dyn P2POperations>>, DefraResult> {
     let request = Request::begin(node_ptr, identity_ptr, permission)?;
     // Go's P2P calls take a node, never a transaction.
-    let node = request
-        .require_node("P2P")
-        .map_err(|_| DefraResult::error(ERR_INVALID_HANDLE))?;
+    let node = request.require_node("P2P")?;
     let context = request.context();
     NODES
         .get(node, |state| {

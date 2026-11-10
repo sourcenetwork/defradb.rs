@@ -25,6 +25,19 @@ fn an_invalid_handle_has_no_shareable_address() {
 }
 
 #[test]
+fn a_transaction_handle_is_refused_as_a_transaction() {
+    let node = node_with(local_options());
+    let txn = crate::txn::defra_transaction_create(node, 0);
+    assert_eq!(txn.status, 0);
+    assert_eq!(
+        err(defra_p2p_peer_list(txn.txn_ptr, 0)),
+        "not supported yet: P2P in a transaction"
+    );
+    crate::txn::defra_transaction_discard(txn.txn_ptr);
+    close(node);
+}
+
+#[test]
 fn the_sync_status_needs_p2p() {
     let node = node_with(local_options());
     assert_eq!(err(defra_mobile_sync_status(node, 0)), ERR_NO_P2P);
