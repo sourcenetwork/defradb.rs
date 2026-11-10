@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use schema::{CollectionVersion, FieldKind, ScalarKind};
 use serde_json::Value as JsonValue;
 
