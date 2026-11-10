@@ -46,7 +46,9 @@
 //! `DEFRA_ALLOW_DETERMINISTIC_TEST_CRYPTO=1` before the hidden test switch can
 //! be enabled; production deployments must never set that variable.
 
-use rand::RngCore;
+use rand::rand_core::UnwrapErr;
+use rand::rngs::SysRng;
+use rand::Rng;
 use std::sync::atomic::{AtomicBool, Ordering};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -137,12 +139,12 @@ const TEST_ENCRYPTION_KEY: &str = "examplekey1234567890examplekey12";
 /// [`crate::block_signature::Encryption`]), and the data block points
 /// at it via the `encryption: Option<Cid>` link.
 ///
-/// Uses [`rand::rngs::OsRng`] which reads from the OS-provided
+/// Uses [`rand::rngs::SysRng`] which reads from the OS-provided
 /// cryptographically secure random source (`getrandom` on Linux,
 /// `SecRandomCopyBytes` on macOS, `BCryptGenRandom` on Windows).
 pub fn generate_encryption_key() -> [u8; 32] {
     let mut key = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut key);
+    UnwrapErr(SysRng).fill_bytes(&mut key);
     key
 }
 

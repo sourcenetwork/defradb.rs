@@ -67,7 +67,7 @@ pub mod wasm_lens {
     }
 }
 
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_workspace_root() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")

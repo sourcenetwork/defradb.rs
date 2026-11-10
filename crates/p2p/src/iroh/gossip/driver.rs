@@ -271,6 +271,7 @@ where
                     OutEvent::ScheduleTimer(delay, timer) => self.timers.insert(now + delay, timer),
                     OutEvent::DisconnectPeer(peer) => self.forget(peer),
                     OutEvent::PeerData(peer, data) => self.learn(peer, &data),
+                    _ => {}
                 }
             }
         }
@@ -380,7 +381,7 @@ where
         match event {
             Event::NeighborUp(_) => joined.neighbors += 1,
             Event::NeighborDown(_) => joined.neighbors = joined.neighbors.saturating_sub(1),
-            Event::Received(_) => {}
+            _ => {}
         }
         let neighbors = self.subscribed.get(&name);
         match event {
@@ -397,11 +398,10 @@ where
                     self.delivery.neighbor(&name, peer, false).await?;
                 }
             }
-            event @ Event::Received(_) => {
-                if neighbors.is_some() {
-                    self.delivery.received(&name, event).await?;
-                }
+            event @ Event::Received(_) if neighbors.is_some() => {
+                self.delivery.received(&name, event).await?;
             }
+            _ => {}
         }
         Ok(())
     }
