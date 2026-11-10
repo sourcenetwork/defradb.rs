@@ -15,7 +15,9 @@ pub(crate) mod encrypted_index_adapter;
 pub mod error;
 pub mod logging;
 #[allow(dead_code)]
-pub(crate) mod nac_adapter;
+#[cfg(test)]
+#[path = "nac_adapter_tests.rs"]
+mod nac_adapter_tests;
 #[allow(dead_code)]
 pub(crate) mod p2p_adapter;
 #[allow(dead_code)]

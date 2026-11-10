@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use crate::router::NodeAcpOperations;
 use acp::nac::{NacStatus, NodePermission};
 use db::NacManagerApi;
-use defra_http::router::NodeAcpOperations;
 use identity::Did;
 
 /// Adapter that implements NodeAcpOperations and NacChecker using NacManagerApi.
@@ -102,7 +102,3 @@ impl query::NacChecker for NacAdapter {
             .unwrap_or(false)
     }
 }
-
-#[cfg(test)]
-#[path = "nac_adapter_tests.rs"]
-mod tests;

@@ -10,7 +10,7 @@ use axum::http::{Method, Request, StatusCode};
 use storage::corekv::Store;
 use tower::ServiceExt;
 
-use super::NacAdapter;
+use defra_http::nac_adapter::NacAdapter;
 
 const OWNER: &str = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
 

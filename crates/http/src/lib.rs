@@ -112,6 +112,9 @@ pub mod handlers;
 pub mod identity_extractor;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub mod index_adapter;
+/// The node's NAC manager, as the HTTP API's [`router::NodeAcpOperations`].
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+pub mod nac_adapter;
 #[cfg(feature = "server")]
 pub mod nac_guard;
 #[cfg(feature = "server")]

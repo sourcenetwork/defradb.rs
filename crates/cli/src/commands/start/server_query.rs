@@ -25,7 +25,7 @@ impl Node {
         config: &Config,
         user_did: Option<&Did>,
         document_acp: Arc<dyn acp::DocumentACP>,
-        nac_adapter: Option<Arc<crate::nac_adapter::NacAdapter>>,
+        nac_adapter: Option<Arc<defra_http::nac_adapter::NacAdapter>>,
         mutator: Arc<dyn query::mutator::DocMutator>,
         txn_broadcaster: Option<Arc<dyn db::event::emission::TxnBroadcaster>>,
         se_transport: Option<Arc<dyn query::SeQueryTransport>>,

@@ -875,3 +875,43 @@ mod bound_caller {
         .unwrap();
     }
 }
+
+/// With node ACP on, the embedded server checks the routes that decide access
+/// at the edge, as `defradb start` does: a caller without `DocumentRead`
+/// cannot stream document updates.
+#[test]
+fn embedded_events_require_node_permission() {
+    edge::testing::edge()
+        .block_on(async {
+            let owner = identity();
+            let owner_did = owner.did().unwrap();
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let node = Node::builder()
+                .with_node_identity_did(owner_did.as_str())
+                .with_node_acp_enabled()
+                .with_http(HttpConfig::with_listener(listener).unwrap())
+                .build()
+                .await
+                .unwrap();
+            node.add_collection("type Note { text: String }")
+                .await
+                .unwrap();
+            let client = net::http::Client::builder(edge::testing::edge())
+                .no_proxy()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .unwrap();
+            let response = client
+                .get(format!("http://{address}/api/v0/events?event=update"))
+                .send()
+                .await
+                .unwrap();
+            assert!(
+                !response.status().is_success(),
+                "an anonymous caller streamed updates: {}",
+                response.status()
+            );
+        })
+        .unwrap();
+}

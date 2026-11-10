@@ -22,7 +22,7 @@ pub(super) struct HttpServerArgs<'a> {
     pub(super) query_setup: &'a QueryRunnerSetup,
     pub(super) p2p_adapter: Option<Arc<dyn defra_p2p_adapter::P2POperations>>,
     pub(super) manage_requester: Option<Arc<dyn defra_p2p_adapter::ManageRequester>>,
-    pub(super) nac_adapter: Option<Arc<crate::nac_adapter::NacAdapter>>,
+    pub(super) nac_adapter: Option<Arc<defra_http::nac_adapter::NacAdapter>>,
     pub(super) acp_setup: &'a DocumentAcpSetup,
     pub(super) zanzibar_store: Arc<dyn acp::ZanzibarStore>,
     pub(super) user_did: Option<&'a Did>,
