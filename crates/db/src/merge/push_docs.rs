@@ -232,10 +232,51 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
     allowlist: Option<&[(String, String)]>,
     stop: &SelectedPushStop,
 ) -> Result<(), String> {
-    let selected = allowlist.is_some();
     // Dropped unfinished, this call's started tasks see the stop at their next
-    // block instead of sending the rest of an abandoned selection.
-    let _stop_on_drop = selected.then(|| stop.stop_on_drop());
+    // block instead of sending the rest of an abandoned selection. A call that
+    // returns has joined every task it started.
+    let stop_on_drop = allowlist.is_some().then(|| stop.stop_on_drop());
+    let result = push_existing_docs_owned(
+        transport,
+        db,
+        document_acp,
+        peer_id,
+        collections,
+        filters,
+        se_options,
+        replay_config,
+        matcher,
+        car_authority,
+        allowlist,
+        stop,
+    )
+    .await;
+    if let Some(guard) = stop_on_drop {
+        guard.disarm();
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn push_existing_docs_owned<S, T>(
+    transport: &T,
+    db: &DB<S>,
+    document_acp: Option<&dyn DocumentACP>,
+    peer_id: &PeerId,
+    collections: &[String],
+    filters: &p2p::ReplicationFilters,
+    se_options: PushExistingDocsSeOptions<'_>,
+    replay_config: ReplayPushConfig,
+    matcher: &dyn p2p::replicator::ReplicationFilterMatcher,
+    car_authority: &p2p::sync::HeadHintCarAuthority,
+    allowlist: Option<&[(String, String)]>,
+    stop: &SelectedPushStop,
+) -> Result<(), String>
+where
+    S: Store + 'static,
+    T: P2PTransport,
+{
+    let selected = allowlist.is_some();
     let network = db.network().map_err(|error| error.to_string())?;
     super::push_docs_network::wait_for_peer(&network, transport, peer_id, stop).await?;
 

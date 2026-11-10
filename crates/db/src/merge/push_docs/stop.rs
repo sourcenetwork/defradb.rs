@@ -54,19 +54,31 @@ impl SelectedPushStop {
     }
 
     /// A guard that raises the flag when dropped, held by a caller whose
-    /// drop would otherwise leave started work scheduling the rest.
+    /// drop would otherwise leave started work scheduling the rest. The call
+    /// disarms it once it has finished, so a completed call leaves the flag
+    /// as it found it.
     pub fn stop_on_drop(&self) -> StopOnDrop {
-        StopOnDrop(self.clone())
+        StopOnDrop(Some(self.clone()))
     }
 }
 
-/// Raises its [`SelectedPushStop`] when dropped.
+/// Raises its [`SelectedPushStop`] when dropped before [`disarm`](Self::disarm).
 #[must_use = "dropping the guard stops the call"]
-pub struct StopOnDrop(SelectedPushStop);
+pub struct StopOnDrop(Option<SelectedPushStop>);
+
+impl StopOnDrop {
+    /// The call finished and joined what it started: dropping the guard no
+    /// longer stops anything.
+    pub fn disarm(mut self) {
+        self.0 = None;
+    }
+}
 
 impl Drop for StopOnDrop {
     fn drop(&mut self) {
-        self.0.stop("the caller stopped waiting");
+        if let Some(stop) = self.0.take() {
+            stop.stop("the caller stopped waiting");
+        }
     }
 }
 

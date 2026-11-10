@@ -12,8 +12,17 @@ use std::{
 
 const SELECTED: usize = 200;
 
-#[test]
-fn dropping_a_pooled_selected_push_stops_its_worker_scheduling_the_rest() {
+/// A one-worker pool, the edge, a database on that pool and its documents.
+type Fixture = (
+    workers::Pool,
+    edge::Edge,
+    Arc<db::DB<storage::RegolithStore>>,
+    Vec<(String, String)>,
+);
+
+/// A one-worker pool, the edge, a database on that pool and `count` documents
+/// in its `Users` collection.
+fn fixture(count: usize) -> Fixture {
     let pool = storage::start_pool(workers::Config::unplaced(1), None).unwrap();
     let edge = edge::testing::edge();
     let store = Arc::new(
@@ -53,7 +62,7 @@ fn dropping_a_pooled_selected_push_stops_its_worker_scheduling_the_rest() {
                 let schema = db.get_collection("Users").unwrap().unwrap().schema_arc();
                 let mutator = db::AutoCommitMutator::new(db.clone());
                 let mut docs = Vec::new();
-                for index in 0..SELECTED {
+                for index in 0..count {
                     let mut doc = document::Document::new(schema.clone());
                     doc.set("name", format!("user-{index}")).unwrap();
                     let created = mutator.create("Users", doc).await.unwrap();
@@ -63,6 +72,12 @@ fn dropping_a_pooled_selected_push_stops_its_worker_scheduling_the_rest() {
             }
         })
         .unwrap();
+    (pool, edge, db, docs)
+}
+
+#[test]
+fn dropping_a_pooled_selected_push_stops_its_worker_scheduling_the_rest() {
+    let (pool, edge, db, docs) = fixture(SELECTED);
     let peer = PeerId::new("remote-peer".into());
     let transport = FakeTransport::slow(peer.clone(), Duration::from_millis(20));
     let sends = transport.sends.clone();
@@ -106,4 +121,32 @@ fn dropping_a_pooled_selected_push_stops_its_worker_scheduling_the_rest() {
         "{total} PushLogs after the caller gave up at {at_drop}"
     );
     assert!(total < SELECTED, "the abandoned selection was sent in full");
+}
+
+/// A pooled call that returns has a finished worker call behind it, so its
+/// drop guard is disarmed: the stop stays lowered and can be used again.
+#[test]
+fn a_finished_pooled_selected_push_leaves_its_stop_lowered() {
+    let (pool, edge, db, docs) = fixture(3);
+    let peer = PeerId::new("remote-peer".into());
+    let pusher = pooled(
+        DbTransportDocPusher::new_arc(
+            db.clone(),
+            FakeTransport::slow(peer.clone(), Duration::from_millis(1)),
+            p2p::sync::HeadHintCarAuthority::default(),
+        ),
+        Some(&pool),
+    );
+    let stop = db::merge::SelectedPushStop::new();
+    edge.block_on(async {
+        for _ in 0..2 {
+            pusher
+                .push_existing_docs_by_id(&peer, &docs, &stop)
+                .await
+                .unwrap();
+            assert!(!stop.is_stopped(), "{:?}", stop.cause());
+        }
+    })
+    .unwrap();
+    pool.shutdown_blocking().unwrap();
 }

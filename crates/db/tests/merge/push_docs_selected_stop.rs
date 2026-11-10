@@ -402,6 +402,26 @@ fn a_head_paused_past_its_deadline_fails_alone_and_the_rest_are_sent() {
     workers::block_on(exercise_stop_case("pauseExpired", false, 3, false)).unwrap();
 }
 
+/// A call that returns has joined everything it started, so its drop guard
+/// is disarmed: the stop stays lowered and the caller may use it again.
+#[test]
+fn a_finished_selected_call_leaves_its_stop_lowered() {
+    workers::block_on(async {
+        let fixture = Fixture::new(3, 0).await;
+        let stop = SelectedPushStop::new();
+        for _ in 0..2 {
+            let (transport, _received) = fixture.receiver(None);
+            fixture
+                .push(&transport, Default::default(), &stop)
+                .await
+                .unwrap();
+            assert!(!stop.is_stopped(), "{:?}", stop.cause());
+        }
+        assert_eq!(fixture.acknowledged().await, 3);
+    })
+    .unwrap();
+}
+
 #[test]
 fn a_raised_stop_ends_scheduling_and_keeps_what_was_acknowledged() {
     workers::block_on(async {

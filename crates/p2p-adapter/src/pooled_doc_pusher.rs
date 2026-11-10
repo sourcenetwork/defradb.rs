@@ -184,14 +184,18 @@ impl TransportDocPusher for PooledDocPusher {
     ) -> P2PResult<()> {
         let (peer_id, docs, worker_stop) = (peer_id.clone(), docs.to_vec(), stop.clone());
         // A started worker call runs to its end once this caller is gone; the
-        // guard hands it this caller's drop so it schedules nothing more.
-        let _stop_on_drop = stop.stop_on_drop();
-        self.on_pool(move |inner| async move {
-            inner
-                .push_existing_docs_by_id(&peer_id, &docs, &worker_stop)
-                .await
-        })
-        .await
+        // guard hands it this caller's drop so it schedules nothing more. A
+        // returned worker call has finished, so the guard is disarmed then.
+        let stop_on_drop = stop.stop_on_drop();
+        let result = self
+            .on_pool(move |inner| async move {
+                inner
+                    .push_existing_docs_by_id(&peer_id, &docs, &worker_stop)
+                    .await
+            })
+            .await;
+        stop_on_drop.disarm();
+        result
     }
 
     async fn retry_doc(
