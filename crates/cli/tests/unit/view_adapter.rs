@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use db::{DbTransactionRegistry, DB};
 use defra_core::{RequestContext, TxnId};
-use defra_http::router::ViewOperations;
 use query::txn::TransactionRegistry;
 use storage::RegolithStore;
 

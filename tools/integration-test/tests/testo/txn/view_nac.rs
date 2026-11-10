@@ -1,5 +1,5 @@
 //! AddView and RefreshViews in a transaction need what they need outside
-//! one, and an embedded caller that names no identity acts as the node in a
+//! one (AddView only `add-view`, as in Go), and an embedded caller that names no identity acts as the node in a
 //! transaction, as the other definition changes do.
 
 use integration_test::actions::{
@@ -19,6 +19,12 @@ const QUERY: &str = r#"
 
 const SDL: &str = r#"
     type UserView @materialized(if: false) {
+        name: String
+    }
+"#;
+
+const TXN_SDL: &str = r#"
+    type UserTxnView @materialized(if: false) {
         name: String
     }
 "#;
@@ -63,7 +69,7 @@ fn nac_node() -> Vec<Actions> {
 // only owner and admin, so the Go client is left out.
 #[test]
 #[mantra_macros::req_test("go.acp.nac.gates.views")]
-fn txn_add_view_needs_patch_collection_as_outside_a_txn() {
+fn txn_add_view_needs_only_add_view_as_outside_a_txn() {
     let mut actions = nac_node();
     let more: Vec<Actions> = vec![
         AddNACActorRelationship {
@@ -77,9 +83,6 @@ fn txn_add_view_needs_patch_collection_as_outside_a_txn() {
         AddView {
             query: QUERY.into(),
             sdl: SDL.into(),
-            expected_error: Some(
-                "not authorized to perform operation. Permission: patch-collection".into(),
-            ),
             common: as_identity(2),
             ..Default::default()
         }
@@ -92,10 +95,13 @@ fn txn_add_view_needs_patch_collection_as_outside_a_txn() {
         AddView {
             txn: Some(0),
             query: QUERY.into(),
-            sdl: SDL.into(),
-            expected_error: Some(
-                "not authorized to perform operation. Permission: patch-collection".into(),
-            ),
+            sdl: TXN_SDL.into(),
+            common: as_identity(2),
+            ..Default::default()
+        }
+        .into(),
+        TxnCommit {
+            txn: 0,
             common: as_identity(2),
             ..Default::default()
         }

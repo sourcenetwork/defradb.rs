@@ -261,10 +261,10 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
         }
         let created = self
             .database
-            .create_collections_atomic_with_acp_registration_as(
+            .create_view_collections_as(
                 context,
                 collections,
-                self.document_acp.clone(),
+                Some(self.document_acp.clone()),
                 creator,
             )
             .await

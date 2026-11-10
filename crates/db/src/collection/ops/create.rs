@@ -395,6 +395,8 @@ impl<S: Store> crate::database::DB<S> {
         context: &defra_core::RequestContext,
         schemas: Vec<CollectionVersion>,
     ) -> Result<Vec<CollectionVersion>> {
+        self.check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
+            .await?;
         self.create_collections_atomic_inner(context, schemas, None, None)
             .await
     }
@@ -426,7 +428,25 @@ impl<S: Store> crate::database::DB<S> {
         document_acp: std::sync::Arc<dyn acp::DocumentACP>,
         creator: Option<identity::Did>,
     ) -> Result<Vec<CollectionVersion>> {
+        self.check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
+            .await?;
         self.create_collections_atomic_inner(context, schemas, Some(document_acp), creator)
+            .await
+    }
+
+    /// Create an AddView's view collections atomically, registering
+    /// branchable ACP before commit when `document_acp` is given. Unlike
+    /// [`Self::create_collections_atomic_as`] it does not check
+    /// `patch-collection`: the caller checks `add-view`, the one permission
+    /// Go's `AddView` needs.
+    pub async fn create_view_collections_as(
+        &self,
+        context: &defra_core::RequestContext,
+        schemas: Vec<CollectionVersion>,
+        document_acp: Option<std::sync::Arc<dyn acp::DocumentACP>>,
+        creator: Option<identity::Did>,
+    ) -> Result<Vec<CollectionVersion>> {
+        self.create_collections_atomic_inner(context, schemas, document_acp, creator)
             .await
     }
 
@@ -468,8 +488,6 @@ impl<S: Store> crate::database::DB<S> {
         document_acp: Option<std::sync::Arc<dyn acp::DocumentACP>>,
         creator: Option<identity::Did>,
     ) -> Result<Vec<CollectionVersion>> {
-        self.check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
-            .await?;
         let mut txn = self.new_txn(false).await?;
         let finalized_schemas = self
             .stage_new_collections(&mut txn, context, schemas, document_acp, creator)

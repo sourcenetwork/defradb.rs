@@ -13,7 +13,10 @@ use storage::corekv::Store;
 
 /// Adapter that implements ViewOperations using the database. A request in a
 /// transaction runs in it, through `registry`.
-pub struct ViewAdapter<S: Store> {
+pub struct ViewAdapter<S>
+where
+    S: Store + 'static,
+{
     database: Arc<db::DB<S>>,
     registry: Arc<db::DbTransactionRegistry<S>>,
     query_limits: query::QueryLimits,
@@ -202,21 +205,16 @@ impl<S: Store + 'static> ViewOperations for ViewAdapter<S> {
                 .await
                 .map_err(|e| format!("failed to create view collection: {}", e));
         }
-        let created_versions = if let Some(document_acp) = &self.document_acp {
-            self.database
-                .create_collections_atomic_with_acp_registration_as(
-                    &context,
-                    view_collections,
-                    document_acp.clone(),
-                    creator,
-                )
-                .await
-        } else {
-            self.database
-                .create_collections_atomic_as(&context, view_collections)
-                .await
-        }
-        .map_err(|e| format!("failed to create view collection: {}", e))?;
+        let created_versions = self
+            .database
+            .create_view_collections_as(
+                &context,
+                view_collections,
+                self.document_acp.clone(),
+                creator,
+            )
+            .await
+            .map_err(|e| format!("failed to create view collection: {}", e))?;
 
         let materialized_names: Vec<String> = created_versions
             .iter()

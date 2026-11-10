@@ -112,7 +112,7 @@ pub unsafe extern "C" fn defra_view_add(
 
             // Create all view collections atomically (all-or-nothing)
             let created_versions = database
-                .create_collections_atomic_with_acp_registration_as(&context, view_collections, document_acp.clone(), creator)
+                .create_view_collections_as(&context, view_collections, Some(document_acp.clone()), creator)
                 .await
                 .map_err(|e| format!("failed to create view collection: {}", e))?;
 

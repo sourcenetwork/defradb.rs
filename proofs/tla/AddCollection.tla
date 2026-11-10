@@ -27,7 +27,7 @@
 \*   create_collections_atomic_*     the all-or-nothing create
 \*   crates/db/src/txn/registry/schemas.rs add_collection_in_txn_as  the same checks inside a transaction
 \*   crates/db/src/txn/registry/views.rs add_view_in_txn  an AddView's view collections in a
-\*     transaction: nac (add-view, patch-collection) in it, then all or none, by its savepoint
+\*     transaction: nac (add-view) in it, then all or none, by its savepoint
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS

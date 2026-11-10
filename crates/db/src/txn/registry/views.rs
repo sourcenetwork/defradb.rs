@@ -11,8 +11,8 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
     /// it commits. Only then are the materialized views in `materialized`
     /// built and the downsamples in `downsample` bootstrapped, before the
     /// commit returns, as an autocommit `AddView` builds them before it does.
-    /// It needs `add-view` and `patch-collection`, as the autocommit form
-    /// does, and a multi-type SDL that fails part way leaves nothing.
+    /// It needs `add-view`, as the autocommit form and Go do, and a
+    /// multi-type SDL that fails part way leaves nothing.
     #[allow(clippy::too_many_arguments)]
     pub async fn add_view_in_txn(
         &self,
@@ -29,10 +29,8 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         self.in_txn(context, txn_id, move |owned| {
             Box::pin(async move {
                 let txn = owned.alone()?;
-                for permission in [NodePermission::ViewAdd, NodePermission::CollectionPatch] {
-                    db.check_node_access_in_txn(&request, txn.acpstore()?, permission)
-                        .await?;
-                }
+                db.check_node_access_in_txn(&request, txn.acpstore()?, NodePermission::ViewAdd)
+                    .await?;
                 txn.set_statement_savepoint()?;
                 let view = StagedView {
                     collections,
