@@ -83,6 +83,9 @@ kovan = "0.2.5"
 kovan-map = "0.2.5"
 kovan-queue = "0.2.5"
 kovan-channel = "0.2.5"
+# Persistent maps for a snapshot published through an Atom: a clone shares
+# every node, and an insert copies only the path to the entry it changes.
+imbl = { version = "7.0.2", default-features = false }
 
 # One rustls version workspace-wide: a crypto provider is installed into the
 # process registry of a single rustls major, so a second major in the graph

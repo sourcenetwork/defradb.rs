@@ -9,8 +9,15 @@
 //! owner writes, one request at a time, so a swap never races another. A
 //! statement savepoint is a snapshot of both, taken and put back while the
 //! transaction is held alone.
+//!
+//! The snapshot is built of persistent maps, so a swap shares everything it
+//! does not change: a load copies the path to its own entry, not every
+//! collection already loaded. A replaced snapshot waits for kovan's deferred
+//! reclamation, so what it holds alone is what a load leaves behind.
 
-use rapidhash::{HashSetExt, RapidHashSet};
+use imbl::shared_ptr::DefaultSharedPtr;
+use imbl::GenericHashSet;
+use rapidhash::fast::RandomState;
 use regolith::sync::{Atom, SegQueue};
 
 use super::OwedAcpRegistration;
@@ -20,7 +27,7 @@ use crate::collection::Collection;
 #[derive(Clone, Default)]
 struct Collections {
     cache: CollectionCache,
-    created: RapidHashSet<String>,
+    created: GenericHashSet<String, RandomState, DefaultSharedPtr>,
 }
 
 pub(super) struct Catalog {
@@ -37,10 +44,7 @@ pub(super) struct Snapshot {
 impl Catalog {
     pub(super) fn new() -> Self {
         Self {
-            collections: Atom::new(Collections {
-                cache: CollectionCache::new(),
-                created: RapidHashSet::new(),
-            }),
+            collections: Atom::new(Collections::default()),
             owed: SegQueue::new(),
         }
     }
