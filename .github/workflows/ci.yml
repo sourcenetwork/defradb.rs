@@ -52,6 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       full: ${{ steps.decide.outputs.full }}
+      heavy: ${{ steps.decide.outputs.heavy }}
       integration_matrix: ${{ steps.decide.outputs.integration_matrix }}
       io_variants: ${{ steps.decide.outputs.io_variants }}
     steps:
@@ -70,6 +71,10 @@ jobs:
               }
             }
             core.setOutput('full', full ? 'true' : 'false');
+            // A pull request runs the fast checks (lint, dependency checks, unit
+            // tests). The merge queue and main run everything else, once per batch
+            // instead of once per push.
+            core.setOutput('heavy', context.eventName === 'pull_request' ? 'false' : 'true');
 
             const suites = [
               { suite: 'signed-docs', needs_go: false, multipliers: 'signed-docs' },
@@ -83,9 +88,7 @@ jobs:
             }
             core.setOutput('integration_matrix', JSON.stringify({ include: suites }));
 
-            // The other nuclei io backends run only after merge, on main (there is
-            // no merge queue): on a pull request they tripled P2P Linux and
-            // Conformance, and what they caught there was mostly one flaky test.
+            // The other nuclei io backends run in the merge queue and on main.
             const ioVariants = [{ name: '', suffix: '', backend: '', recv: '' }];
             if (context.eventName !== 'pull_request') {
               ioVariants.push({ name: ' (epoll)', suffix: '-epoll', backend: 'epoll', recv: '' });
@@ -128,7 +131,7 @@ jobs:
   feature-checks:
     name: Feature checks (${{ matrix.group }})
     needs: ci-scope
-    if: needs.ci-scope.outputs.full == 'true'
+    if: needs.ci-scope.outputs.heavy == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     strategy:
       fail-fast: false
@@ -199,15 +202,15 @@ jobs:
     steps:
       - name: Check lint results
         env:
-          FULL: ${{ needs.ci-scope.outputs.full }}
+          HEAVY: ${{ needs.ci-scope.outputs.heavy }}
           DEFAULT: ${{ needs.lint-default.result }}
           FEATURES: ${{ needs.feature-checks.result }}
           DEPENDENCIES: ${{ needs.dependency-checks.result }}
         run: |
           test "$DEFAULT" = success
-          # Skipped mid-stack, where the stack's tip checks this code and more.
-          # Only then: a failed scope job also skips them, and leaves FULL empty.
-          test "$FEATURES" = success || { test "$FEATURES" = skipped && test "$FULL" = false; }
+          # Skipped on a pull request; the merge queue runs them. Only then: a
+          # failed scope job also skips them, and leaves HEAVY empty.
+          test "$FEATURES" = success || { test "$FEATURES" = skipped && test "$HEAVY" = false; }
           test "$DEPENDENCIES" = success
 
   unit-tests:
@@ -223,7 +226,7 @@ jobs:
   go-defradb:
     name: Go DefraDB binary
     needs: ci-scope
-    if: needs.ci-scope.outputs.full == 'true'
+    if: needs.ci-scope.outputs.heavy == 'true'
     outputs:
       pin: ${{ steps.prepare.outputs.pin }}
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
@@ -334,7 +337,7 @@ jobs:
   build-binaries:
     name: Build integration binaries
     needs: ci-scope
-    if: needs.ci-scope.outputs.full == 'true'
+    if: needs.ci-scope.outputs.heavy == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
@@ -370,18 +373,23 @@ jobs:
     steps:
       - name: Check build results
         env:
+          HEAVY: ${{ needs.ci-scope.outputs.heavy }}
           UNIT_TESTS: ${{ needs.unit-tests.result }}
           BINARIES: ${{ needs.build-binaries.result }}
           FEATURE_TESTS: ${{ needs.feature-tests.result }}
         run: |
           test "$UNIT_TESTS" = success
-          test "$BINARIES" = success
-          test "$FEATURE_TESTS" = success
+          # Skipped on a pull request; the merge queue builds and runs them.
+          if [ "$HEAVY" = false ]; then
+            test "$BINARIES" = skipped && test "$FEATURE_TESTS" = skipped
+          else
+            test "$BINARIES" = success && test "$FEATURE_TESTS" = success
+          fi
 
   feature-tests:
     name: Feature tests
     needs: ci-scope
-    if: needs.ci-scope.outputs.full == 'true'
+    if: needs.ci-scope.outputs.heavy == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
@@ -404,7 +412,7 @@ jobs:
   wasm-check:
     name: WASM Build Check
     needs: ci-scope
-    if: needs.ci-scope.outputs.full == 'true'
+    if: needs.ci-scope.outputs.heavy == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
@@ -457,7 +465,7 @@ jobs:
   lean-conformance:
     name: Lean Conformance
     needs: ci-scope
-    if: needs.ci-scope.outputs.full == 'true'
+    if: needs.ci-scope.outputs.heavy == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 20
     env:
@@ -521,7 +529,7 @@ jobs:
       matrix:
         io: ${{ fromJson(needs.ci-scope.outputs.io_variants) }}
     needs: [ci-scope, build-binaries]
-    if: needs.ci-scope.outputs.full == 'true'
+    if: needs.ci-scope.outputs.heavy == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 45
     env:
@@ -577,7 +585,7 @@ jobs:
   integration:
     name: Integration (${{ matrix.suite }})
     needs: [ci-scope, build-binaries, go-defradb]
-    if: needs.ci-scope.outputs.full == 'true'
+    if: needs.ci-scope.outputs.heavy == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 90
     strategy:
@@ -728,7 +736,7 @@ jobs:
       matrix:
         io: ${{ fromJson(needs.ci-scope.outputs.io_variants) }}
     needs: [ci-scope, build-binaries]
-    if: needs.ci-scope.outputs.full == 'true'
+    if: needs.ci-scope.outputs.heavy == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 90
     env:
@@ -791,7 +799,7 @@ jobs:
   testo-archive:
     name: Build testo archive
     needs: ci-scope
-    if: needs.ci-scope.outputs.full == 'true'
+    if: needs.ci-scope.outputs.heavy == 'true'
     timeout-minutes: 30
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     env:
@@ -824,7 +832,7 @@ jobs:
   testo:
     name: ${{ matrix.client == 'legacy' && 'Legacy integration binaries' || format('Testo ({0})', matrix.client) }}
     needs: [ci-scope, build-binaries, go-defradb, testo-archive]
-    if: needs.ci-scope.outputs.full == 'true'
+    if: needs.ci-scope.outputs.heavy == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 90
     strategy:
@@ -962,7 +970,7 @@ jobs:
     needs: [ci-scope, testo-archive, testo]
     # Runs whenever testo should have, so a failed archive build, which skips
     # every shard, still shows up here as a failed summary.
-    if: always() && needs.ci-scope.outputs.full == 'true'
+    if: always() && needs.ci-scope.outputs.heavy == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
