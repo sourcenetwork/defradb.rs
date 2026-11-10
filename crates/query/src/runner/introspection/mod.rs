@@ -547,6 +547,53 @@ mod tests {
     }
 
     #[test]
+    fn operator_list_and_root_types_match_go() {
+        workers::block_on(async {
+            let collection = CollectionVersion::new("Users", "v1", "users", vec![]);
+            let result = execute_introspection(
+                &[Arc::new(collection)],
+                r#"query {
+                id: __type(name: "IDOperatorBlock") {
+                    inputFields { name type { kind ofType { kind name } } }
+                }
+                boolean: __type(name: "BooleanOperatorBlock") {
+                    inputFields { name type { kind ofType { kind name } } }
+                }
+                commits: __type(name: "CommitsFilterArg") {
+                    inputFields { name type { kind ofType { kind name } } }
+                }
+                query: __type(name: "Query") { description }
+                mutation: __type(name: "Mutation") { description }
+            }"#,
+            )
+            .await
+            .expect("introspection execution should succeed");
+
+            let element_kind = |type_name: &str, field_name: &str| {
+                let field = result[type_name]["inputFields"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|field| field["name"] == field_name)
+                    .unwrap()
+                    .clone();
+                assert_eq!(field["type"]["kind"], "LIST", "{type_name}.{field_name}");
+                field["type"]["ofType"]["kind"].clone()
+            };
+            for field_name in ["_in", "_nin"] {
+                assert_eq!(element_kind("id", field_name), "NON_NULL");
+                assert_eq!(element_kind("boolean", field_name), "SCALAR");
+            }
+            for field_name in ["_and", "_or"] {
+                assert_eq!(element_kind("commits", field_name), "NON_NULL");
+            }
+            assert_eq!(result["query"]["description"], JsonValue::Null);
+            assert_eq!(result["mutation"]["description"], JsonValue::Null);
+        })
+        .unwrap()
+    }
+
+    #[test]
     fn collection_count_and_array_types_match_go() {
         workers::block_on(async {
             let collection = CollectionVersion::new(
