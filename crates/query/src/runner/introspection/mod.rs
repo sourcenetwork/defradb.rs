@@ -549,7 +549,26 @@ mod tests {
     #[test]
     fn operator_list_and_root_types_match_go() {
         workers::block_on(async {
-            let collection = CollectionVersion::new("Users", "v1", "users", vec![]);
+            // A _docID and a Boolean field put the ID and Boolean operator blocks in the schema.
+            let collection = CollectionVersion::new(
+                "Users",
+                "v1",
+                "users",
+                vec![
+                    FieldDescription::new(
+                        "1",
+                        "_docID",
+                        FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "2",
+                        "verified",
+                        FieldKind::bool(),
+                        schema::CType::LwwRegister,
+                    ),
+                ],
+            );
             let result = execute_introspection(
                 &[Arc::new(collection)],
                 r#"query {
@@ -572,10 +591,12 @@ mod tests {
             let element_kind = |type_name: &str, field_name: &str| {
                 let field = result[type_name]["inputFields"]
                     .as_array()
-                    .unwrap()
+                    .unwrap_or_else(|| panic!("{type_name} is not in the schema: {result}"))
                     .iter()
                     .find(|field| field["name"] == field_name)
-                    .unwrap()
+                    .unwrap_or_else(|| {
+                        panic!("{type_name} has no {field_name}: {}", result[type_name])
+                    })
                     .clone();
                 assert_eq!(field["type"]["kind"], "LIST", "{type_name}.{field_name}");
                 field["type"]["ofType"]["kind"].clone()
