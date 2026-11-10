@@ -32,6 +32,9 @@
 \*                                       crates/db/src/txn/registry/indexes.rs check_access_in
 \*                                       (an index or encrypted index created, listed or
 \*                                       dropped in a transaction)
+\*   - a write in an explicit            crates/query/src/runner/turn.rs QueryRunner::lent,
+\*     transaction, whose refusal          lent_node_permission: a refused write names the
+\*     names the first missing one         first missing permission, never answers empty
 \*   - the caller with no identity       crates/defra-node/src/ops/request.rs Node::caller
 EXTENDS Naturals, Sequences, TLC
 

@@ -97,7 +97,9 @@ fn an_identity_only_node_checks_an_anonymous_write_in_its_transaction_under_nac(
                 txn: Some(0),
                 collection: "Users".into(),
                 doc_map: Some(json!({ "name": "Anonymous" })),
-                expected_error: Some("not authorized to perform operation".into()),
+                expected_error: Some(
+                    "not authorized to perform operation. Permission: get-collection".into(),
+                ),
                 ..Default::default()
             }
             .into(),

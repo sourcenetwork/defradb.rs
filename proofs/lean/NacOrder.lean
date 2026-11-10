@@ -17,7 +17,9 @@ refuses it.
 
 Rust owner: crates/acp/src/nac/permission.rs `NodePermission::go_order`
 (the list) and crates/db/src/access/nac.rs `DB::check_node_access_as`,
-`DB::check_node_access_in_txn` (the check, first missing first). The Rust
+`DB::check_node_access_in_txn` (the check, first missing first), and, for a
+write in an explicit transaction, crates/query/src/runner/turn.rs
+`QueryRunner::lent` with `lent_node_permission`. The Rust
 checks are the testo scenarios `acp::nac::{add,update,delete}_document`,
 `update_document_with_filter` and `truncate_collection`.
 -/

@@ -290,4 +290,4 @@ A node that has an identity but does not sign (Go's `NodeIdentity` with `EnableS
 - **Parents:** ["go.node"]
 - **Scenarios:** ["node::identity_only::an_identity_only_node_checks_an_anonymous_write_in_its_transaction_under_nac"]
 
-With node access control enabled and owned by identity 1, an identity-only node gives no anonymous call the node's access, inside a transaction it began as outside one: adding a `Users` document without an identity in that transaction fails with `not authorized to perform operation`, and nothing is written. Identity 1 adds and reads documents as usual.
+With node access control enabled and owned by identity 1, an identity-only node gives no anonymous call the node's access, inside a transaction it began as outside one: adding a `Users` document without an identity in that transaction fails with `not authorized to perform operation. Permission: get-collection`, as the same write outside a transaction does, and nothing is written. A refused write in a transaction never answers with empty data. Identity 1 adds and reads documents as usual.
