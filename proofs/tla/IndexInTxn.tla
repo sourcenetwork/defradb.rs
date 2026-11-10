@@ -62,6 +62,7 @@
 \*   crates/db/src/txn/registry/views.rs           add_view_in_txn,
 \*                                                 refresh_views_in_txn
 \*   crates/defra-node/src/db_impls.rs             DbSchemaOps (routes a txn)
+\*   crates/cli/src/view_adapter.rs                ViewAdapter (routes a txn)
 \*   crates/http/src/handlers/views.rs             the x-defradb-tx context
 EXTENDS Naturals
 

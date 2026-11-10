@@ -182,10 +182,20 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
             .await
             .map_err(Error::from)?;
 
-        let known_types: rapidhash::RapidHashSet<String> = db::DB::list_collections(&self.database)
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
+        let mut known_types: rapidhash::RapidHashSet<String> =
+            db::DB::list_collections(&self.database)
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+        // A type the transaction created is known to the view's SDL too.
+        if let Some(txn) = context.txn() {
+            let in_txn = self
+                .transaction_registry
+                .get_collections_in_txn_as(context, &txn.to_string())
+                .await
+                .map_err(Error::from)?;
+            known_types.extend(in_txn.into_iter().map(|version| version.name));
+        }
 
         let mut collections = query::parse_sdl_with_known_types(target_sdl, known_types)
             .map_err(Error::ViewSchemaParse)?;
@@ -238,7 +248,7 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
                     context,
                     &txn.to_string(),
                     collections,
-                    self.document_acp.clone(),
+                    Some(self.document_acp.clone()),
                     creator,
                     materialized_names,
                     downsample_names,
