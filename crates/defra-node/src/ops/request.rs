@@ -98,7 +98,6 @@ impl Node {
 
     /// Node access control for `permission`, for the operations that check
     /// one before the work they hand on, as Go's do.
-    #[cfg(feature = "managed-p2p")]
     pub(crate) async fn check_access(
         &self,
         context: &RequestContext,
