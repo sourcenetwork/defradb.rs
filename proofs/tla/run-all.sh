@@ -430,6 +430,7 @@ RUNS=(
   "MC_NacOrder_Red_OwnFirst.cfg NacOrder.tla RED" # the write's own permission checked first: the refusal names it, not get-collection (INV_RefusalNamesGoFirst)
   "MC_NacOrder_Red_AnonAsNode.cfg NacOrder.tla RED" # no identity acts as the node: a caller with nothing writes (INV_NoEffectWithoutPermission)
   "MC_NacOrder_Red_OutsideTxn.cfg NacOrder.tla RED" # permissions read outside the transaction: a revoke that lands first is missed (INV_NoEffectWithoutPermission)
+  "MC_NacOrder_Red_EdgeOwnOnly.cfg NacOrder.tla RED" # #2787: the HTTP edge checks only the route's own permission: its refusal names it, not get-collection (INV_RefusalNamesGoFirst)
   "MC_NacDacBypass_Green.cfg NacDacBypass.tla GREEN" # #2681: a read bypasses DAC exactly when NAC is on and grants bypass-dac at its snapshot
   "MC_NacDacBypass_Red_NacOff.cfg NacDacBypass.tla RED" # a bare permission check: NAC off reads as granted and opens DAC (INV_BypassOnlyWhenGranted)
   "MC_NacDacBypass_Red_Never.cfg NacDacBypass.tla RED" # no bypass, as before: the node owner reads nothing it does not own (INV_BypassWhenGranted)

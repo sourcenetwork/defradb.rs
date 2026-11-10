@@ -11,6 +11,12 @@
 \* one: the wildcard, which holds only what was granted to everyone. It never
 \* acts as the node, which holds every permission.
 \*
+\* A request comes in process or over HTTP. Over HTTP, the server's edge
+\* checks node permissions before the database does: for a route Go serves
+\* through its `CollectionMiddleware`, `get-collection` first, then the
+\* route's own permission. The edge only adds refusals, so its refusal has to
+\* name Go's first missing permission too.
+\*
 \* While a request runs, the node owner may revoke a permission. defradb.rs
 \* reads both permissions inside the write's transaction, and regolith
 \* validates those reads at commit, so a revoke that lands first sends the
@@ -37,6 +43,9 @@
 \*     names the first missing one         the first missing permission and names it, never
 \*                                         answers empty
 \*   - the caller with no identity       crates/defra-node/src/ops/request.rs Node::caller
+\*   - the HTTP edge's checks            crates/http/src/auth_middleware.rs auth_middleware;
+\*                                       crates/http/src/route_permissions.rs reads_collection_first,
+\*                                       route_permission; crates/http/src/nac_guard.rs require_permission
 EXTENDS Naturals, Sequences, TLC
 
 CONSTANTS
@@ -54,6 +63,14 @@ GoOrder == <<Get, Own>>
 Order == CASE Bug = "OwnFirst" -> <<Own, Get>>
            [] Bug = "SkipGet"  -> <<Own>>
            [] OTHER            -> GoOrder
+
+\* The order the HTTP edge checks in: `get-collection` (reads_collection_first),
+\* then the route's own permission. RED EdgeOwnOnly checks only the route's
+\* own permission, as the edge did before it read the collection first.
+EdgeOrder == IF Bug = "EdgeOwnOnly" THEN <<Own>> ELSE GoOrder
+
+\* Where a request comes from: in process (no edge) or over HTTP (the edge first).
+Surfaces == {"in-process", "http"}
 
 \* Everyone who can send a request.
 Requesters == {a, b, c, anon}
@@ -96,10 +113,18 @@ Init ==
   /\ bad = FALSE                                                     \* nothing committed wrongly
   /\ wrong = FALSE                                                   \* nothing refused wrongly
 
-\* Requester r's attempt reads its permissions in the code's order.
-Check(r) ==
+\* Requester r's attempt, arriving over surface s, reads its permissions: over
+\* HTTP the edge's first (as r itself: the wildcard for no identity), then the
+\* database's in the code's order. The first refusal is the one r hears.
+Check(r, s) ==
   /\ checked[r] = "idle"                                             \* r has no attempt running
-  /\ LET missing == FirstMissing(Acting(r), Order) IN                \* what the code finds missing
+  /\ LET edge == IF s = "http"                                       \* only HTTP has an edge
+                   THEN FirstMissing(r, EdgeOrder)                   \* what the edge finds missing
+                   ELSE "none"                                       \* in process: nothing checked here
+         missing == IF edge # "none"                                 \* the edge refused first
+                      THEN edge                                      \* so that is the refusal
+                      ELSE FirstMissing(Acting(r), Order)            \* else what the database finds missing
+     IN
        /\ checked' = [checked EXCEPT ![r] = IF missing = "none" THEN "ok" ELSE missing]  \* remember the decision
        /\ wrong' = (wrong \/ (missing # "none" /\ missing # FirstMissing(r, GoOrder)))  \* a refusal must name Go's first
   /\ UNCHANGED <<grants, revoked, bad>>
@@ -131,7 +156,8 @@ Revoke(r, p) ==
   /\ UNCHANGED <<checked, bad, wrong>>
 
 Next ==
-  \/ \E r \in Requesters : Check(r) \/ Commit(r) \/ Refused(r)       \* a request's steps
+  \/ \E r \in Requesters, s \in Surfaces : Check(r, s)               \* a request arrives and is checked
+  \/ \E r \in Requesters : Commit(r) \/ Refused(r)                   \* a request's later steps
   \/ \E r \in Requesters, p \in {Get, Own} : Revoke(r, p)            \* a concurrent revoke
 
 Spec == Init /\ [][Next]_vars
