@@ -303,6 +303,7 @@ RUNS=(
   "MC_ConnectionAdoption_Red_HitAdopts.cfg ConnectionAdoption.tla RED"
   "MC_ConnectionAdoption_Red_PeerWide.cfg ConnectionAdoption.tla RED"
   "MC_ConnectionAdoption_Red_NoRestore.cfg ConnectionAdoption.tla RED"
+  "MC_ConnectionAdoption_Red_AdoptAnnounces.cfg ConnectionAdoption.tla RED"
   "MC_PeerDisconnect_Green.cfg PeerDisconnect.tla GREEN" # Disconnect answers only once the peer's last connection closed
   "MC_PeerDisconnect_Red_EarlyAck.cfg PeerDisconnect.tla RED" # answering before the closes (INV_AnsweredMeansClosed)
   "MC_SchemaPublication_Green.cfg SchemaPublication.tla GREEN"

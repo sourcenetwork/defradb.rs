@@ -729,12 +729,12 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Peer connection observation",
-        name: "Every new connection is served and released once; an allowlist miss keeps the sibling",
+        name: "Every new connection is served, announced by its pump and released once; an allowlist miss keeps the sibling",
         axis: Tla,
         anchor: "crates/p2p/src/iroh/endpoint_streams.rs adopt_new_connection and finish_connection; endpoint_rpc.rs connect_with_cache and restore_displaced_connection; endpoint_commands.rs handle_dial; crates/p2p/tests/iroh/shared_connection.rs",
         model_ref: "MC_ConnectionAdoption_{Green,Red_*}.cfg",
         tiers: &[Contract],
-        bound_by: "crates/p2p/tests/iroh/shared_connection.rs repeated_cache_hits_reuse_one_adopted_connection, closed_registry_refuses_adoption_and_balances_the_peer_map, cancelled_adopt_leaves_no_cached_connection_and_no_count, allowlist_miss_refuses_only_the_new_connection_and_spares_the_sibling",
+        bound_by: "crates/p2p/tests/iroh/shared_connection.rs repeated_cache_hits_reuse_one_adopted_connection, closed_registry_refuses_adoption_and_balances_the_peer_map, cancelled_adopt_still_announces_and_releases_its_connection, allowlist_miss_refuses_only_the_new_connection_and_spares_the_sibling",
     },
     Property {
         family: "Peer connection observation",

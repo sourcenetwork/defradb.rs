@@ -182,8 +182,9 @@ pub(super) enum ConnectionDirection {
 }
 
 /// Adopt a connection this endpoint just accepted or dialed: count it, cache
-/// it, recheck admission, pump its streams and announce it. A cache hit is
-/// already adopted; adopting it again would double its count.
+/// it, recheck admission and hand it to a pump that serves its streams and
+/// announces it. A cache hit is already adopted; adopting it again would
+/// double its count.
 pub(super) async fn adopt_new_connection(
     lifecycle: &ConnectionLifecycle,
     cache: &ConnectionCache,
@@ -225,12 +226,14 @@ pub(super) async fn adopt_new_connection(
         connection.close(code.into(), reason);
     }
 
-    // The pump owns the count from here, so it is spawned before the
-    // `PeerConnected` send, which can park on a full lane and be cancelled.
+    // The pump owns the count from here, and with it the `PeerConnected`
+    // send, which can park on a full lane: the adopt has no await left to be
+    // cancelled at (`ConnectionAdoption.tla` PumpAnnounce).
     let context = lifecycle.stream_context(remote_id, cache);
+    let announce = is_new && admitted;
     let pump = spawn_task(&lifecycle.spawned_tasks, {
         let (connection, context) = (connection.clone(), context.clone());
-        async move { handle_connection_streams(connection, remote_id, context).await }
+        async move { handle_connection_streams(connection, remote_id, context, announce).await }
     });
     if pump.is_none() {
         connection.close(DISCONNECT_ERROR_CODE.into(), b"endpoint shutting down");
@@ -246,15 +249,6 @@ pub(super) async fn adopt_new_connection(
     }
 
     cache.gossip.connected(remote_id, &connection);
-    if is_new
-        && lifecycle
-            .event_tx
-            .send(TransportEvent::PeerConnected(peer_id))
-            .await
-            .is_err()
-    {
-        warn!("Event channel closed, cannot emit PeerConnected");
-    }
     Ok(())
 }
 
@@ -263,13 +257,43 @@ pub(super) async fn adopt_new_connection(
 /// The tag is read inside the spawned task, not the accept loop, so a peer that
 /// stalls before writing one cannot hold up the other protocols.
 ///
-/// Emits `PeerDisconnected` only when the last connection for this peer closes.
+/// Emits `PeerConnected` when `announce` (the peer's first admitted
+/// connection), while streams are already served, and `PeerDisconnected` only
+/// when the last connection for this peer closes, always after its own
+/// `PeerConnected`.
 pub(super) async fn handle_connection_streams(
     connection: Connection,
     remote_id: EndpointId,
     context: ConnectionStreamContext,
+    announce: bool,
 ) {
     let peer_id = endpoint_id_to_peer_id(&remote_id);
+    let announcing = async {
+        if announce
+            && context
+                .event_tx
+                .send(TransportEvent::PeerConnected(peer_id.clone()))
+                .await
+                .is_err()
+        {
+            warn!("Event channel closed, cannot emit PeerConnected");
+        }
+    };
+    futures::join!(
+        announcing,
+        serve_connection_streams(&connection, remote_id, &peer_id, &context)
+    );
+
+    finish_connection(&connection, remote_id, &context).await;
+}
+
+/// Accept and dispatch the streams the peer opens until the connection closes.
+async fn serve_connection_streams(
+    connection: &Connection,
+    remote_id: EndpointId,
+    peer_id: &PeerId,
+    context: &ConnectionStreamContext,
+) {
     // On mux 0.2 every reply goes back on its request's stream.
     let replies_on_stream = connection.alpn() == protocols::ALPN_MUX;
 
@@ -324,8 +348,6 @@ pub(super) async fn handle_connection_streams(
             }
         });
     }
-
-    finish_connection(&connection, remote_id, &context).await;
 }
 
 /// Release one adopted connection: evict its cache entry, drop its count and

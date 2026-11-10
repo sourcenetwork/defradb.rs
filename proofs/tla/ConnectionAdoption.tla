@@ -5,14 +5,16 @@
 \* peer's shared RPC path, rechecked against admission, handed to a pump that
 \* serves the streams the peer opens on it, and announced with PeerConnected.
 \* That announcement can wait on a full event lane, and the adopt can be
-\* dropped while it waits. The peer may already hold a sibling connection this
+\* dropped while it waits, so the pump that owns the count also owns the
+\* announcement. The peer may already hold a sibling connection this
 \* node dialed. What must never happen: an open shared path nobody serves, a
-\* count or cache entry nobody releases, or an inbound allowlist miss that
-\* costs the sibling. Revocation races are modeled in SharedRpcConnection and
-\* GossipOwnership.
+\* count or cache entry nobody releases, a counted peer whose PeerConnected
+\* nobody will send, or an inbound allowlist miss that costs the sibling.
+\* Revocation races are modeled in SharedRpcConnection and GossipOwnership.
 \*
 \* Code: crates/p2p/src/iroh/endpoint_streams.rs adopt_new_connection,
-\* finish_connection and handle_incoming; endpoint_rpc.rs connect_with_cache,
+\* handle_connection_streams, finish_connection and handle_incoming;
+\* endpoint_rpc.rs connect_with_cache,
 \* remember_connection and restore_displaced_connection; endpoint_commands.rs
 \* handle_dial.
 \* origin, allowed, registryOpen: caller direction, admission and task registry.
@@ -22,9 +24,13 @@
 \* cached, displaced: the RPC cache slot and the handle held by the adopt future.
 \* pumped, exited: the registered stream task and whether its cleanup has run.
 \* hit: the later RPC cache lookup's local completion.
+\* owed, announced: the pump still has to send PeerConnected; PeerConnected was sent.
 EXTENDS TLC, Integers, Sequences
 \* Each switch is one safeguard; a RED configuration turns exactly one off.
-CONSTANTS AdoptRpcDial, PumpBeforeAnnounce, CleanupRefusedPump, HitSkipsAdoption, NarrowRefusal, RestoreSibling, CloseRetained
+\* Announcer: "pump" sends PeerConnected from the pump (the fix); "adopt"
+\* sends it from the adopt after spawning the pump; "adopt-first" sends it from
+\* the adopt before spawning the pump.
+CONSTANTS AdoptRpcDial, Announcer, CleanupRefusedPump, HitSkipsAdoption, NarrowRefusal, RestoreSibling, CloseRetained
 \* The scenario, fixed at the start: how the connection arose, whether the
 \* allowlist admits the peer, whether tasks can still be spawned, and whether
 \* a sibling exists. A later connection may also become the sibling.
@@ -40,14 +46,18 @@ VARIABLES origin, allowed, registryOpen, sibling,
           \* The pump: registered, and whether it has run its exit path.
           pumped, exited,
           \* Whether a later RPC already reused the connection from the cache.
-          hit
+          hit,
+          \* Whether the pump still owes PeerConnected, and whether it was sent.
+          owed, announced
 \* Every variable, for stuttering steps.
 vars == <<origin, allowed, registryOpen, sibling, step, cancelled, open, count, refused,
-          cached, displaced, siblingOpen, pumped, exited, hit>>
+          cached, displaced, siblingOpen, pumped, exited, hit, owed, announced>>
 
-\* The adopt's steps in code order; the RED order announces before pumping.
-Order == IF PumpBeforeAnnounce THEN <<"publish", "check", "spawn", "announce">>
-                               ELSE <<"publish", "check", "announce", "spawn">>
+\* The adopt's steps in code order: with the pump announcing, the adopt ends at
+\* the spawn; the RED orders announce from the adopt, after or before the spawn.
+Order == CASE Announcer = "pump" -> <<"publish", "check", "spawn">>
+           [] Announcer = "adopt" -> <<"publish", "check", "spawn", "announce">>
+           [] OTHER -> <<"publish", "check", "announce", "spawn">>
 \* Whether this connection goes through adoption at all; the pre-fix RPC dial did not.
 Adopted == origin # "rpc" \/ AdoptRpcDial
 \* An unadopted RPC dial only publishes what it dialed.
@@ -58,6 +68,11 @@ Finished == step = Len(Steps)
 Due(s) == ~cancelled /\ ~Finished /\ Steps[step + 1] = s
 \* The adopt has stopped changing the slot: returned, dropped, or waiting to announce.
 Idle == cancelled \/ Finished \/ Steps[step + 1] = "announce"
+\* The step that hands the announcement on: the spawn of a pump that announces,
+\* or the adopt's own announce.
+Handoff == IF Announcer = "pump" THEN "spawn" ELSE "announce"
+\* The adopt is still running and has not yet passed that step.
+AdoptWillAnnounce == ~cancelled /\ ~Finished /\ \E i \in (step + 1)..Len(Steps) : Steps[i] = Handoff
 \* Only an inbound connection answers to the allowlist.
 Miss == origin = "accept" /\ ~allowed
 
@@ -91,6 +106,10 @@ Init == /\ origin \in {"accept", "dial", "rpc"}
         /\ exited = FALSE
         \* No RPC has reused the connection.
         /\ hit = FALSE
+        \* No pump owes an announcement yet.
+        /\ owed = FALSE
+        \* Nothing has been announced.
+        /\ announced = FALSE
 
 \* Count the connection and make it the peer's shared RPC path.
 Publish == /\ Due("publish")
@@ -105,7 +124,7 @@ Publish == /\ Due("publish")
            \* The new connection takes the shared slot.
            /\ cached' = "new"
            \* The scenario, the sibling and the pump are untouched.
-           /\ UNCHANGED <<origin, allowed, registryOpen, sibling, cancelled, refused, siblingOpen, pumped, exited, hit>>
+           /\ UNCHANGED <<origin, allowed, registryOpen, sibling, cancelled, refused, siblingOpen, pumped, exited, hit, owed, announced>>
 
 \* Recheck admission after publishing; an inbound allowlist miss is refused.
 Check == /\ Due("check")
@@ -122,13 +141,15 @@ Check == /\ Due("check")
                         [] Miss /\ RestoreSibling /\ displaced = "sibling" -> "sibling"
                         [] OTHER -> cached
          \* The scenario, the count and the pump are untouched.
-         /\ UNCHANGED <<origin, allowed, registryOpen, sibling, cancelled, count, displaced, pumped, exited, hit>>
+         /\ UNCHANGED <<origin, allowed, registryOpen, sibling, cancelled, count, displaced, pumped, exited, hit, owed, announced>>
 
 \* Register the pump that serves the connection and owns its release.
 Spawn == /\ Due("spawn")
          /\ IF registryOpen
               \* The pump now owns the connection.
               THEN /\ pumped' = TRUE
+                   \* A pump that announces owes PeerConnected for an admitted connection.
+                   /\ owed' = (Announcer = "pump" /\ ~refused)
                    \* The adopt moves past this step.
                    /\ step' = step + 1
                    \* Spawning closes and releases nothing.
@@ -141,17 +162,27 @@ Spawn == /\ Due("spawn")
                    /\ count' = IF CleanupRefusedPump THEN count - 1 ELSE count
                    \* And it evicts its own cache entry the same way.
                    /\ cached' = IF CleanupRefusedPump /\ cached = "new" THEN "none" ELSE cached
-                   \* No pump was registered.
-                   /\ UNCHANGED pumped
+                   \* No pump was registered, so none owes an announcement.
+                   /\ UNCHANGED <<pumped, owed>>
          \* The scenario and the sibling are untouched.
-         /\ UNCHANGED <<origin, allowed, registryOpen, sibling, cancelled, refused, displaced, siblingOpen, exited, hit>>
+         /\ UNCHANGED <<origin, allowed, registryOpen, sibling, cancelled, refused, displaced, siblingOpen, exited, hit, announced>>
 
-\* The PeerConnected send completes; a refused connection skips it.
+\* The adopt's PeerConnected send completes; a refused connection skips it.
 Announce == /\ Due("announce")
             \* The adopt moves past this step.
             /\ step' = step + 1
+            \* Only an admitted connection is announced.
+            /\ announced' = (announced \/ ~refused)
             \* Announcing changes no connection state.
-            /\ UNCHANGED <<origin, allowed, registryOpen, sibling, cancelled, open, count, refused, cached, displaced, siblingOpen, pumped, exited, hit>>
+            /\ UNCHANGED <<origin, allowed, registryOpen, sibling, cancelled, open, count, refused, cached, displaced, siblingOpen, pumped, exited, hit, owed>>
+
+\* The pump's PeerConnected send completes. The pump is its own task, so
+\* dropping the adopt cannot stop it.
+PumpAnnounce == /\ pumped /\ owed
+                \* The announcement is sent and no longer owed.
+                /\ announced' = TRUE /\ owed' = FALSE
+                \* Announcing changes no connection state.
+                /\ UNCHANGED <<origin, allowed, registryOpen, sibling, step, cancelled, open, count, refused, cached, displaced, siblingOpen, pumped, exited, hit>>
 
 \* The adopt is dropped while its PeerConnected send waits on a full lane.
 Cancel == /\ Due("announce")
@@ -160,7 +191,7 @@ Cancel == /\ Due("announce")
           \* The adopt stops here, whatever steps remain.
           /\ cancelled' = TRUE
           \* Dropping it closes and releases nothing by itself.
-          /\ UNCHANGED <<origin, allowed, registryOpen, sibling, step, open, count, refused, cached, displaced, siblingOpen, pumped, exited, hit>>
+          /\ UNCHANGED <<origin, allowed, registryOpen, sibling, step, open, count, refused, cached, displaced, siblingOpen, pumped, exited, hit, owed, announced>>
 
 \* The peer, or this node, can close a published connection at any time.
 Close == /\ step >= 1
@@ -169,7 +200,7 @@ Close == /\ step >= 1
          \* It is closed from now on.
          /\ open' = FALSE
          \* Closing it touches no bookkeeping by itself.
-         /\ UNCHANGED <<origin, allowed, registryOpen, sibling, step, cancelled, count, refused, cached, displaced, siblingOpen, pumped, exited, hit>>
+         /\ UNCHANGED <<origin, allowed, registryOpen, sibling, step, cancelled, count, refused, cached, displaced, siblingOpen, pumped, exited, hit, owed, announced>>
 
 \* The pump sees its connection close and releases it, once.
 PumpExit == /\ pumped
@@ -177,6 +208,8 @@ PumpExit == /\ pumped
             /\ ~open
             \* And only once.
             /\ ~exited
+            \* Its announcement, if it owes one, goes out before its release.
+            /\ ~owed
             \* Record the exit.
             /\ exited' = TRUE
             \* The pump drops the count it owns.
@@ -184,7 +217,7 @@ PumpExit == /\ pumped
             \* And evicts only its own cache entry.
             /\ cached' = IF cached = "new" THEN "none" ELSE cached
             \* Everything else is untouched.
-            /\ UNCHANGED <<origin, allowed, registryOpen, sibling, step, cancelled, open, refused, displaced, siblingOpen, pumped, hit>>
+            /\ UNCHANGED <<origin, allowed, registryOpen, sibling, step, cancelled, open, refused, displaced, siblingOpen, pumped, hit, owed, announced>>
 
 \* A later RPC finds the open connection in the cache after the adopt returned.
 Hit == /\ Finished
@@ -197,23 +230,30 @@ Hit == /\ Finished
        \* A hit returns the handle; adopting it again would count it twice.
        /\ count' = IF HitSkipsAdoption THEN count ELSE count + 1
        \* Everything else is untouched.
-       /\ UNCHANGED <<origin, allowed, registryOpen, sibling, step, cancelled, open, refused, cached, displaced, siblingOpen, pumped, exited>>
+       /\ UNCHANGED <<origin, allowed, registryOpen, sibling, step, cancelled, open, refused, cached, displaced, siblingOpen, pumped, exited, owed, announced>>
 
 \* Another connection takes the shared slot while the RPC connection stays open.
 Replace == /\ Finished /\ origin = "rpc" /\ ~refused /\ open
+           \* Only once, and only while the RPC connection holds the slot.
            /\ ~sibling /\ cached = "new"
+           \* The newcomer becomes an open sibling holding the shared slot.
            /\ sibling' = TRUE /\ siblingOpen' = TRUE /\ cached' = "sibling"
-           /\ UNCHANGED <<origin, allowed, registryOpen, step, cancelled, open, count, refused, displaced, pumped, exited, hit>>
+           \* Everything else is untouched.
+           /\ UNCHANGED <<origin, allowed, registryOpen, step, cancelled, open, count, refused, displaced, pumped, exited, hit, owed, announced>>
 
 \* Revocation closes every retained handle, including a displaced sibling.
 Revoke == /\ Finished /\ ~refused /\ open
+          \* The new connection closes if retained handles close, or it is the cached one.
           /\ open' = IF CloseRetained \/ cached = "new" THEN FALSE ELSE open
+          \* The sibling closes the same way.
           /\ siblingOpen' = IF CloseRetained \/ cached = "sibling" THEN FALSE ELSE siblingOpen
+          \* The shared slot is emptied.
           /\ cached' = "none"
-          /\ UNCHANGED <<origin, allowed, registryOpen, sibling, step, cancelled, count, refused, displaced, pumped, exited, hit>>
+          \* Everything else is untouched.
+          /\ UNCHANGED <<origin, allowed, registryOpen, sibling, step, cancelled, count, refused, displaced, pumped, exited, hit, owed, announced>>
 
 \* Any of these may happen next, in any order the guards allow.
-Next == Publish \/ Check \/ Spawn \/ Announce \/ Cancel \/ Close \/ PumpExit \/ Hit \/ Replace \/ Revoke
+Next == Publish \/ Check \/ Spawn \/ Announce \/ PumpAnnounce \/ Cancel \/ Close \/ PumpExit \/ Hit \/ Replace \/ Revoke
 \* The whole behavior: start, then take steps.
 Spec == Init /\ [][Next]_vars
 
@@ -227,4 +267,7 @@ Served == (cached = "new" /\ open /\ Idle) => pumped
 Released == (~open /\ (Finished \/ cancelled) /\ (pumped => exited)) => (count = 0 /\ cached # "new")
 \* An inbound allowlist refusal leaves the sibling open and the shared RPC path.
 SiblingKept == (refused /\ sibling) => (siblingOpen /\ cached = "sibling")
+\* A counted, admitted connection that is not yet announced still has a live
+\* owner of its PeerConnected: the running adopt or its pump.
+Announced == (count >= 1 /\ ~refused /\ ~announced) => (owed \/ AdoptWillAnnounce)
 =============================================================================

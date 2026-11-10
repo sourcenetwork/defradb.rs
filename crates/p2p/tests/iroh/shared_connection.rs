@@ -601,10 +601,12 @@ fn revoked_adoption_closes_every_connection_and_announces_nothing() {
             adopt(&local, &sibling, ConnectionDirection::Outbound)
                 .await
                 .unwrap();
-            assert!(matches!(
-                events.try_recv(),
-                Some(TransportEvent::PeerConnected(_))
-            ));
+            // The sibling's pump announces it.
+            let connected =
+                crate::rt::time::timeout(std::time::Duration::from_secs(2), events.recv())
+                    .await
+                    .expect("the sibling's pump announces it");
+            assert!(matches!(connected, Some(TransportEvent::PeerConnected(_))));
 
             assert!(local.admission.revoke(peer.id()));
             let (_dialed, refused) = connect(&peer, &local.endpoint).await;
@@ -627,11 +629,13 @@ fn revoked_adoption_closes_every_connection_and_announces_nothing() {
         .unwrap();
 }
 
-/// `PeerConnected` parks on a full lane and the adopt is dropped there, as a
-/// shutdown would. The pump spawned before that send still releases the
-/// published connection once it closes.
+/// `PeerConnected` meets a full lane and the adopt is dropped, as a shutdown or
+/// an aborted block-sync fetch would drop it. The pump owns both the count and
+/// the announcement, so the peer is still announced once the lane has room,
+/// and the published connection is still released once it closes
+/// (`ConnectionAdoption.tla` Announced and Released).
 #[test]
-fn cancelled_adopt_leaves_no_cached_connection_and_no_count() {
+fn cancelled_adopt_still_announces_and_releases_its_connection() {
     edge::testing::edge()
         .block_on(edge::compat(async {
             let local = test_resources(
@@ -655,10 +659,24 @@ fn cancelled_adopt_leaves_no_cached_connection_and_no_count() {
                 None,
                 ConnectionDirection::Inbound,
             ));
-            assert!(futures::poll!(adopting.as_mut()).is_pending());
+            let _ = futures::poll!(adopting.as_mut());
             assert!(local.connection_cache.connections.get(&peer.id()).is_some());
             assert_eq!(open_connections(&local, &peer), 1);
             drop(adopting);
+
+            let first = received.recv().await;
+            assert!(
+                matches!(&first, Some(TransportEvent::PeerConnected(id)) if id.as_str() == "filler"),
+                "the filler leaves the lane first"
+            );
+            let announced =
+                crate::rt::time::timeout(std::time::Duration::from_secs(2), received.recv())
+                    .await
+                    .expect("the cancelled adopt's peer must still be announced");
+            assert!(
+                matches!(&announced, Some(TransportEvent::PeerConnected(id)) if id.as_str() != "filler"),
+                "got {announced:?}"
+            );
 
             accepted.close(0u32.into(), b"adopt cancelled");
             crate::rt::time::timeout(std::time::Duration::from_secs(2), async {
