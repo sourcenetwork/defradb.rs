@@ -359,6 +359,8 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
     }
 
     async fn listen_addresses(&self) -> P2PResult<Vec<String>> {
+        self.check_nac(acp::nac::NodePermission::P2pPeerInfo)
+            .await?;
         self.transport
             .listen_addresses()
             .await

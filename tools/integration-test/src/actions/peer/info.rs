@@ -37,6 +37,9 @@ impl Op for PeerInfo {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         self.check_arguments()?;
+        if self.captures_only() {
+            return Ok(self.shape(addresses_of(state, &[self.common.node()])?));
+        }
         let node = state.node_on(self.common.node())?;
         let addresses = state
             .block_on(node.peer_info_as(&state.context_as(None, self.common.identity_seed)))

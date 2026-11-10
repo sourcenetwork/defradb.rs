@@ -274,7 +274,13 @@ impl TestNode {
     /// The node's P2P addresses, as Go's `PeerInfo` lists them: the test's
     /// own view of the node, whichever client the test runs through.
     pub fn peer_info(&self) -> Result<Vec<String>, String> {
-        let context = RequestContext::ambient();
+        // The node's NAC owner may read it once NAC is on.
+        let context = match self.spec.nac_owner {
+            Some(seed) => {
+                RequestContext::ambient().with_identity(Some(crate::scenario::identity::did(seed)))
+            }
+            None => RequestContext::ambient(),
+        };
         match (&self.embedded, &self.url) {
             (Some(node), _) => workers::block_on(node.peer_info_as(&context))
                 .map_err(|e| e.to_string())?
