@@ -21,8 +21,8 @@ use defra_core::RequestContext;
 
 use crate::identity_extractor::{parse_identity_from_headers, ExtractIdentity, MiddlewareIdentity};
 use crate::nac_guard::require_permission;
-use crate::route_permissions::{route_permission, RoutePermission};
-use crate::router::AppState;
+use crate::route_permissions::{self, route_permission, RoutePermission};
+use crate::router::{AppState, NodePermission};
 
 /// Auth middleware that enforces route-level permissions.
 ///
@@ -45,6 +45,7 @@ pub async fn auth_middleware(
 
     let permission = route_permission(path, &method);
     let is_exempt = matches!(permission, RoutePermission::Exempt);
+    let reads_collection_first = route_permissions::reads_collection_first(path, &method);
 
     // Parse the caller's identity once. The same value is reused below both to
     // pre-populate the handler extension and to bind the request-scoped NAC
@@ -89,8 +90,15 @@ pub async fn auth_middleware(
         .with_bearer(scoped, bearer);
     request.extensions_mut().insert(context.clone());
     let execution = async move {
+        let identity = ExtractIdentity::from_did(acting_did);
+        if reads_collection_first {
+            if let Err(err) =
+                require_permission(&state, &identity, NodePermission::CollectionGet).await
+            {
+                return err.into_response();
+            }
+        }
         if let RoutePermission::Required(perm) = permission {
-            let identity = ExtractIdentity::from_did(acting_did);
             if let Err(err) = require_permission(&state, &identity, perm).await {
                 return err.into_response();
             }

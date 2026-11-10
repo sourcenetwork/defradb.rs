@@ -24,6 +24,25 @@ pub enum RoutePermission {
     IdentityOnly,
 }
 
+/// Whether the route reads its collection before it runs, as Go's
+/// `CollectionMiddleware` does for the collection handler's routes
+/// (`http/handler.go`): such a route checks `get-collection` before its own
+/// permission. `path` is the Axum `MatchedPath` template.
+pub fn reads_collection_first(path: &str, method: &Method) -> bool {
+    match normalize_api_version(path).as_ref() {
+        "/api/v0/collections/{name}" => {
+            matches!(*method, Method::POST | Method::PATCH | Method::DELETE)
+        }
+        "/api/v0/collections/{name}/indexes"
+        | "/api/v0/collections/{name}/indexes/{index}"
+        | "/api/v0/collections/{name}/encrypted-indexes"
+        | "/api/v0/collections/{name}/encrypted-indexes/{field}"
+        | "/api/v0/collections/{name}/truncate"
+        | "/api/v0/collections/{name}/document/{docID}" => true,
+        _ => false,
+    }
+}
+
 /// Look up the permission requirement for a route.
 ///
 /// The `path` parameter is the Axum `MatchedPath` template string
@@ -118,11 +137,17 @@ pub fn route_permission(path: &str, method: &Method) -> RoutePermission {
             Method::DELETE => RoutePermission::Required(NodePermission::DocumentDelete),
             _ => RoutePermission::Required(NodePermission::DocumentRead),
         },
+        "/api/v0/collections/{name}/indexes" => match *method {
+            Method::GET => RoutePermission::Required(NodePermission::IndexList),
+            Method::POST => RoutePermission::Required(NodePermission::IndexCreate),
+            _ => RoutePermission::Required(NodePermission::IndexList),
+        },
+        "/api/v0/collections/{name}/indexes/{index}" => {
+            RoutePermission::Required(NodePermission::IndexDelete)
+        }
         // The database checks these in Go's order: the collection first
-        // (`get-collection`), then the index permission.
-        "/api/v0/collections/{name}/indexes"
-        | "/api/v0/collections/{name}/indexes/{index}"
-        | "/api/v0/collections/{name}/encrypted-indexes"
+        // (`get-collection`), then the encrypted index permission.
+        "/api/v0/collections/{name}/encrypted-indexes"
         | "/api/v0/collections/{name}/encrypted-indexes/{field}" => RoutePermission::IdentityOnly,
 
         // =====================================================================
