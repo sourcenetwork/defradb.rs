@@ -211,6 +211,15 @@ fn revoking_node_relationship_authority_conflicts_with_pending_grant() {
                 )
                 .await
                 .map_err(crate::Error::NacInit)?;
+            // The reader whose view the test checks reads documents.
+            manager
+                .add_permission_grant(
+                    &nac_owner_copy,
+                    &Did::new(READER).unwrap(),
+                    acp::NodePermission::DocumentRead,
+                )
+                .await
+                .map_err(crate::Error::NacInit)?;
             Ok(())
         })
         .await
