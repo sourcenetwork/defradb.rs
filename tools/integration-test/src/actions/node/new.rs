@@ -137,7 +137,7 @@ impl Op for NewNode {
             admission: self.admission.clone(),
             iroh_network: self.iroh,
             node_identity,
-            go_index: Some(state.go_node_index(self.common.node())),
+            go_index: Some(state.next_go_node_index()),
             signing,
             txn_ttl,
             se_key: self.searchable_encryption_key()?,

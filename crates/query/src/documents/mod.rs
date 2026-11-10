@@ -36,8 +36,10 @@ where
     R: FnOnce(QueryRequest) -> F,
     F: Future<Output = QueryResponse>,
 {
-    let typed =
-        !options.encrypted_fields.is_empty() && docs.iter().all(|doc| doc.get("_docID").is_none());
+    // An empty list stays on the text path, which checks the collection exists.
+    let typed = !options.encrypted_fields.is_empty()
+        && !docs.is_empty()
+        && docs.iter().all(|doc| doc.get("_docID").is_none());
     if typed {
         let request = QueryRequest::parsed(save_many::operation(collection, docs, options)?);
         return response::saved_doc_ids(run(request).await, docs.len());

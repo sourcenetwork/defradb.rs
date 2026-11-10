@@ -361,6 +361,10 @@ mod tests {
     }
 
     fn encrypt_fields_result(encrypt_fields: &[&str]) -> Result<()> {
+        encrypt_fields_checked(encrypt_fields, true)
+    }
+
+    fn encrypt_fields_checked(encrypt_fields: &[&str], graphql_text: bool) -> Result<()> {
         let collection: CollectionVersion = serde_json::from_value(serde_json::json!({
             "Name": "Users",
             "Fields": [{ "Name": "_docID" }, { "Name": "name" }, { "Name": "age" }],
@@ -384,7 +388,7 @@ mod tests {
             explain: None,
         };
         let provider = StaticCollectionProvider::new(vec![collection]);
-        workers::block_on(async { validate_parsed_operation(&op, &provider).await }).unwrap()
+        workers::block_on(async { validate_operation(&op, &provider, graphql_text).await }).unwrap()
     }
 
     #[test]
@@ -422,6 +426,15 @@ mod tests {
     fn test_encrypt_fields_accepts_explicit_fields() {
         assert!(encrypt_fields_result(&["name", "age"]).is_ok());
         assert!(encrypt_fields_result(&[]).is_ok());
+    }
+
+    /// A typed operation leaves `encryptFields` to the collection API, which
+    /// gives Go's collection errors when the write runs.
+    #[test]
+    fn typed_operations_leave_encrypt_fields_to_the_write() {
+        assert!(encrypt_fields_checked(&["_docID"], false).is_ok());
+        assert!(encrypt_fields_checked(&["name", "points"], false).is_ok());
+        assert!(encrypt_fields_checked(&["_docID"], true).is_err());
     }
 
     #[test]

@@ -77,7 +77,12 @@ mod tests {
         assert_ne!(scope.new_key(), scope.new_key());
 
         defra_core::encryption::set_deterministic_encryption_key(true);
-        assert_eq!(&scope.new_key(), b"age\x89\x8aexamplekey1234567890example");
+        // A release build without the test switch env var keeps keys random.
+        if defra_core::encryption::deterministic_encryption_key_enabled() {
+            assert_eq!(&scope.new_key(), b"age\x89\x8aexamplekey1234567890example");
+        } else {
+            assert_ne!(scope.new_key(), scope.new_key());
+        }
         let collection = KeyScope::Collection {
             collection_id: "c".into(),
         };
