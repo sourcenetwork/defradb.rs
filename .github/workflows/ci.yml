@@ -53,6 +53,8 @@ jobs:
     outputs:
       full: ${{ steps.decide.outputs.full }}
       heavy: ${{ steps.decide.outputs.heavy }}
+      testo_clients: ${{ steps.decide.outputs.testo_clients }}
+      testo_matrix: ${{ steps.decide.outputs.testo_matrix }}
       integration_matrix: ${{ steps.decide.outputs.integration_matrix }}
       io_variants: ${{ steps.decide.outputs.io_variants }}
     steps:
@@ -72,9 +74,17 @@ jobs:
             }
             core.setOutput('full', full ? 'true' : 'false');
             // A pull request runs the fast checks (lint, dependency checks, unit
-            // tests). The merge queue and main run everything else, once per batch
+            // tests, in-process testo). The merge queue and main run everything else, once per batch
             // instead of once per push.
             core.setOutput('heavy', context.eventName === 'pull_request' ? 'false' : 'true');
+
+            // A pull request runs testo through the in-process client only, so a
+            // green pull request has run the scenarios; the queue runs every client.
+            const testoClients = context.eventName === 'pull_request'
+              ? ['in-process']
+              : ['in-process', 'rust-http', 'go-http', 'cli', 'legacy'];
+            core.setOutput('testo_clients', testoClients.join(','));
+            core.setOutput('testo_matrix', JSON.stringify({ include: testoClients.map((client) => ({ client, shard: 1 })) }));
 
             const suites = [
               { suite: 'signed-docs', needs_go: false, multipliers: 'signed-docs' },
@@ -226,7 +236,7 @@ jobs:
   go-defradb:
     name: Go DefraDB binary
     needs: ci-scope
-    if: needs.ci-scope.outputs.heavy == 'true'
+    if: needs.ci-scope.outputs.full == 'true'
     outputs:
       pin: ${{ steps.prepare.outputs.pin }}
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
@@ -337,7 +347,7 @@ jobs:
   build-binaries:
     name: Build integration binaries
     needs: ci-scope
-    if: needs.ci-scope.outputs.heavy == 'true'
+    if: needs.ci-scope.outputs.full == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
@@ -379,12 +389,9 @@ jobs:
           FEATURE_TESTS: ${{ needs.feature-tests.result }}
         run: |
           test "$UNIT_TESTS" = success
-          # Skipped on a pull request; the merge queue builds and runs them.
-          if [ "$HEAVY" = false ]; then
-            test "$BINARIES" = skipped && test "$FEATURE_TESTS" = skipped
-          else
-            test "$BINARIES" = success && test "$FEATURE_TESTS" = success
-          fi
+          test "$BINARIES" = success
+          # Skipped on a pull request; the merge queue runs them.
+          test "$FEATURE_TESTS" = success || { test "$FEATURE_TESTS" = skipped && test "$HEAVY" = false; }
 
   feature-tests:
     name: Feature tests
@@ -799,7 +806,7 @@ jobs:
   testo-archive:
     name: Build testo archive
     needs: ci-scope
-    if: needs.ci-scope.outputs.heavy == 'true'
+    if: needs.ci-scope.outputs.full == 'true'
     timeout-minutes: 30
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     env:
@@ -832,20 +839,15 @@ jobs:
   testo:
     name: ${{ matrix.client == 'legacy' && 'Legacy integration binaries' || format('Testo ({0})', matrix.client) }}
     needs: [ci-scope, build-binaries, go-defradb, testo-archive]
-    if: needs.ci-scope.outputs.heavy == 'true'
+    if: needs.ci-scope.outputs.full == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 90
     strategy:
       fail-fast: false
-      matrix:
-        client: [in-process, rust-http, go-http, cli]
-        # One job per client: with the binaries built once in testo-archive,
-        # each client runs in a couple of minutes, so more shards only add
-        # runner start-up. Raise it if a client's job grows past ~10 minutes.
-        shard: [1]
-        include:
-          - client: legacy
-            shard: 1
+      # One job per client: with the binaries built once in testo-archive, each
+      # client runs in a couple of minutes, so more shards only add runner
+      # start-up. Raise it if a client's job grows past ~10 minutes.
+      matrix: ${{ fromJson(needs.ci-scope.outputs.testo_matrix) }}
     env:
       DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defradb
       DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defradb-iroh
@@ -970,7 +972,7 @@ jobs:
     needs: [ci-scope, testo-archive, testo]
     # Runs whenever testo should have, so a failed archive build, which skips
     # every shard, still shows up here as a failed summary.
-    if: always() && needs.ci-scope.outputs.heavy == 'true'
+    if: always() && needs.ci-scope.outputs.full == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -996,7 +998,7 @@ jobs:
         # The report goes to a file first so the comment below can post it too.
         run: |
           status=0
-          GITHUB_STEP_SUMMARY=testo-summary.md bun .github/scripts/testo-report.ts summary testo-report .github/testo/known-failures || status=$?
+          GITHUB_STEP_SUMMARY=testo-summary.md TESTO_CLIENTS=${{ needs.ci-scope.outputs.testo_clients }} bun .github/scripts/testo-report.ts summary testo-report .github/testo/known-failures || status=$?
           cat testo-summary.md >> "$GITHUB_STEP_SUMMARY"
           exit $status
 
