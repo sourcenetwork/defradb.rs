@@ -6,8 +6,10 @@ A defradb.rs node used to sign whenever it had an identity, and ran every
 request without an identity of its own as that identity. `with_identity_only`
 keeps the identity (for P2P, the KMS and NAC) and turns both off.
 
-Who acts: one request the node runs. What it ends with: run as its caller
-and unsigned, run as the node and signed, or refused for a missing signer.
+Who acts: one request the node runs that names no identity of its own (one
+that names its own keeps it, which this model leaves out). What it ends with:
+run as its caller and unsigned, run as the node and signed, or refused for a
+missing signer.
 
 What must never happen: an identity-only node signs a block or makes a
 request act as itself; a node built without `with_identity_only` changes how
@@ -34,7 +36,7 @@ structure Node where
   -- The signing registry holds a usable signer for that DID.
   signerFound : Bool
 
--- What one request the node runs ends with.
+-- What one request without an identity of its own ends with.
 inductive Outcome where
   -- The request runs as its caller, and its blocks are unsigned.
   | asCaller
@@ -62,7 +64,8 @@ def before (hasIdentity signerFound : Bool) : Outcome :=
   else if signerFound then .asNodeSigned
   else .refused
 
--- A node built without `with_identity_only` runs every request exactly as before.
+-- A node built without `with_identity_only` runs every request without an
+-- identity of its own exactly as before.
 theorem default_build_unchanged (hasIdentity signerFound : Bool) :
     run ⟨hasIdentity, false, signerFound⟩ = before hasIdentity signerFound := by
   -- Every combination of the two flags gives the same outcome.

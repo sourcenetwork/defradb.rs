@@ -108,11 +108,13 @@ impl Op for NewNode {
             return Err(Failure::unsupported(format!("{} {options}", Self::name())));
         }
         self.check_client(state.client_type())?;
-        // Go gives node `i` its `NodeIdentity(i)` whether or not it signs.
+        // Go gives node `i` its `NodeIdentity(i)` whether or not it signs,
+        // and counts every node it starts, one with its own seed included.
+        let go_index = state.next_go_node_index();
         let node_identity = self
             .node_identity_seed
             .or(self.with_identity.then_some(u64::MAX - 1))
-            .or(Some(state.go_node_index(self.common.node())));
+            .or(Some(go_index));
         let signing = (self.enable_signing || self.key_type.is_some())
             .then(|| self.key_type.unwrap_or_default());
         let txn_ttl = self.txn_ttl(state.client_type())?;

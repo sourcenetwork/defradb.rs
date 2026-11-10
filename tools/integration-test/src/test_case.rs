@@ -28,6 +28,8 @@ pub struct State {
     pub subscriptions: crate::actions::Subscriptions,
     /// Stream-protocol streams the test keeps open across actions.
     pub streams: crate::actions::stream::KeptStreams,
+    /// How many nodes the test has started, Go's next node index.
+    pub go_nodes_started: u64,
 }
 
 /// The transactions a test has begun. Shared by every clone of the state, and
@@ -107,15 +109,14 @@ impl State {
         self.slot(name).and_then(|slot| slot.spec.node_identity)
     }
 
-    /// The index Go's harness gives node `name` as it starts, which names its
-    /// `NodeIdentity`: how many nodes the test started before it, not
-    /// counting the default node every test begins with.
-    pub fn go_node_index(&self, name: &str) -> u64 {
-        self.nodes
-            .0
-            .keys()
-            .filter(|node| node.as_str() != name && node.as_str() != crate::scenario::DEFAULT_NODE)
-            .count() as u64
+    /// The index Go's harness gives the next node the test starts, which
+    /// names its `NodeIdentity`: how many it started before, an unnamed one
+    /// included, closed ones still counted. The default node every test
+    /// begins with is not one of them, as Go has no counterpart of it.
+    pub fn next_go_node_index(&mut self) -> u64 {
+        let index = self.go_nodes_started;
+        self.go_nodes_started += 1;
+        index
     }
 
     /// The client seed that acts as node `name`'s identity, as an
