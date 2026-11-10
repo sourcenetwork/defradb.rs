@@ -79,10 +79,10 @@ rapidhash = { version = "4.5.1", features = ["unsafe"] }
 # AtomOption, HopscotchMap for shared maps, SegQueue and ArrayQueue for
 # shared queues, kovan-channel for owner tasks. Nothing shared sits behind a
 # Mutex or RwLock.
-kovan = "0.2.4"
-kovan-map = "0.2.4"
-kovan-queue = "0.2.4"
-kovan-channel = "0.2.4"
+kovan = "0.2.5"
+kovan-map = "0.2.5"
+kovan-queue = "0.2.5"
+kovan-channel = "0.2.5"
 
 # One rustls version workspace-wide: a crypto provider is installed into the
 # process registry of a single rustls major, so a second major in the graph
@@ -93,7 +93,7 @@ rustls = { version = "0.23", default-features = false }
 # Runs every task, timer and socket of ours natively. A library that needs a
 # tokio runtime is reached through `edge::compat`, the one caller of
 # async-compat.
-nuclei = "0.5.5"
+nuclei = "0.5.8"
 async-compat = { version = "0.2.6", features = ["multi-thread"] }
 async-trait = "0.1.92"
 futures = "0.3"
@@ -129,7 +129,7 @@ iroh-tickets = "1.0.0"
 postcard = { version = "1.0", features = ["alloc"] }
 
 # Storage
-regolith = "0.2.4"
+regolith = "0.2.5"
 
 # Cryptography
 ed25519-dalek = { version = "3.0", features = ["serde", "zeroize"] }
