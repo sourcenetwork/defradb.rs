@@ -27,22 +27,3 @@ jobs:
     uses: ./.github/workflows/unit-tests.yml
     with:
       os: macos-latest
-
-  # The required check: a skipped reusable workflow reports under a different
-  # name than a run one, so the merge queue waits on this job instead.
-  macos:
-    name: macOS
-    needs: unit-tests
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check macOS results
-        env:
-          EVENT: ${{ github.event_name }}
-          UNIT_TESTS: ${{ needs.unit-tests.result }}
-        run: |
-          if [ "$EVENT" = pull_request ]; then
-            test "$UNIT_TESTS" = skipped
-          else
-            test "$UNIT_TESTS" = success
-          fi
