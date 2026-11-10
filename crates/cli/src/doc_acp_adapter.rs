@@ -135,6 +135,11 @@ impl<S: Store + 'static> DocumentAcpOperations for DocumentAcpAdapter<S> {
         doc_id: &str,
         relation: &str,
     ) -> Result<bool, String> {
+        if self.context().txn().is_some() {
+            return Err(
+                "transaction-bound document relationships are unavailable on this server".into(),
+            );
+        }
         self.database
             .check_node_access_as(&self.context(), acp::nac::NodePermission::DacRelationAdd)
             .await
@@ -187,6 +192,11 @@ impl<S: Store + 'static> DocumentAcpOperations for DocumentAcpAdapter<S> {
         doc_id: &str,
         relation: &str,
     ) -> Result<bool, String> {
+        if self.context().txn().is_some() {
+            return Err(
+                "transaction-bound document relationships are unavailable on this server".into(),
+            );
+        }
         self.database
             .check_node_access_as(&self.context(), acp::nac::NodePermission::DacRelationDelete)
             .await
@@ -234,3 +244,7 @@ impl<S: Store + 'static> DocumentAcpOperations for DocumentAcpAdapter<S> {
         Ok(deleted)
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/doc_acp_adapter.rs"]
+mod tests;

@@ -272,6 +272,19 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
         ))
     }
 
+    /// Every way `subject` holds each node permission, for a caller who is
+    /// `subject`, an admin, or holds `NacStatus`.
+    async fn explain_nac_subject_as(
+        &self,
+        context: &RequestContext,
+        subject: &str,
+    ) -> std::result::Result<Vec<acp::nac::PermissionProvenance>, TransactionError> {
+        let _ = (context, subject);
+        Err(TransactionError::not_supported(
+            "node access control is not supported in this configuration",
+        ))
+    }
+
     /// Turn NAC off for the caller `context` names. Go's `DisableNAC`.
     async fn disable_nac_as(
         &self,
@@ -306,6 +319,18 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
         let _ = (context, relation, target_actor);
         Err(TransactionError::not_supported(
             "node access control is not supported in this configuration",
+        ))
+    }
+
+    /// Stage a source-specific node permission in the explicit transaction.
+    async fn change_nac_source_permission_as(
+        &self,
+        context: &RequestContext,
+        edge: &crate::txn::SourcePermission,
+    ) -> std::result::Result<bool, TransactionError> {
+        let _ = (context, edge);
+        Err(TransactionError::not_supported(
+            "transactional node source permissions are unavailable",
         ))
     }
 

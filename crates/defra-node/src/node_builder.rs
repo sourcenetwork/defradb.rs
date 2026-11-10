@@ -66,6 +66,7 @@ pub struct NodeBuilder {
     telemetry_handle: Option<TelemetryHandle>,
     crdts: Vec<crdt::Registration>,
     txn_ownership: db::TxnOwnership,
+    document_projector: Option<Arc<dyn db::DocumentMutationProjector>>,
 }
 
 /// Durability is a separate builder setting, so it is applied over the
@@ -98,6 +99,16 @@ fn with_at_rest_keys(
 }
 
 impl NodeBuilder {
+    /// Install a trusted in-process document projector. It stages its changes
+    /// through the mutation's transaction and cannot be selected over HTTP.
+    pub fn with_document_projector(
+        mut self,
+        projector: Arc<dyn db::DocumentMutationProjector>,
+    ) -> Self {
+        self.document_projector = Some(projector);
+        self
+    }
+
     /// The worker pool the node's data path runs on. Unset, the pool's own
     /// defaults (`workers::Config::default()`).
     pub fn with_workers(mut self, config: workers::Config) -> Self {
@@ -429,11 +440,17 @@ impl NodeBuilder {
             None => (false, None),
         };
 
+        #[cfg(feature = "http")]
+        if serves_http && self.txn_ownership == db::TxnOwnership::Embedder {
+            return Err(crate::Error::HttpEmbedderTransactionOwnership);
+        }
+
         let extras = Extras {
             embedding_url: self.embedding_url.take(),
             embedding_model: self.embedding_model.take(),
             embedding_api_key: self.embedding_api_key.take(),
             txn_ownership: self.txn_ownership,
+            document_projector: self.document_projector.take(),
             #[cfg(feature = "http")]
             transaction_cleanup,
             #[cfg(feature = "http")]

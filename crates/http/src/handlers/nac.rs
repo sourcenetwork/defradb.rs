@@ -5,7 +5,7 @@
 //! actor relationships. `enable` and the batch relationship route are Rust
 //! only.
 
-use axum::{extract::State, response::IntoResponse, Json};
+use axum::{extract::State, http::HeaderMap, response::IntoResponse, Json};
 
 use crate::error::{http_error_from_backend_message, HttpError};
 use crate::identity_extractor::ExtractIdentity;
@@ -21,6 +21,31 @@ pub struct GoNacRelationshipRequest {
     /// Target actor DID.
     #[serde(rename = "TargetActor")]
     pub target_actor: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct SourcePermissionResponse {
+    pub changed: bool,
+}
+
+/// Source grants are always staged in the caller's existing transaction.
+pub async fn change_source_permission(
+    State(state): State<AppState>,
+    identity: ExtractIdentity,
+    headers: HeaderMap,
+    Json(body): Json<query::txn::SourcePermission>,
+) -> Result<Json<SourcePermissionResponse>, HttpError> {
+    let context = super::txn_header::txn_context(&identity, &headers)?
+        .ok_or_else(|| HttpError::BadRequest("x-defradb-tx is required".into()))?
+        .with_dac_bypass(false);
+    if identity.did().is_none() || !context.authorization_valid_now() {
+        return Err(HttpError::Unauthorized("authentication required".into()));
+    }
+    let changed = state
+        .executor
+        .change_nac_source_permission_as(&context, &body)
+        .await?;
+    Ok(Json(SourcePermissionResponse { changed }))
 }
 
 /// Go's `client.AddActorRelationshipResult`.
@@ -101,6 +126,28 @@ pub async fn get_status(
     Ok(Json(NacStatusResult {
         status: status.to_string(),
     }))
+}
+
+/// Query for GET /api/v0/acp/node/explain.
+#[derive(Debug, serde::Deserialize)]
+pub struct ExplainQuery {
+    pub subject: String,
+}
+
+/// GET /api/v0/acp/node/explain?subject=<did>: every way the subject holds
+/// each node permission. The core allows the subject itself, an admin, or a
+/// caller holding `NacStatus`, as the embedded `Node::explain_nac_subject_as`.
+pub async fn explain_subject(
+    State(state): State<AppState>,
+    identity: ExtractIdentity,
+    axum::extract::Query(query): axum::extract::Query<ExplainQuery>,
+) -> Result<Json<Vec<acp::nac::PermissionProvenance>>, HttpError> {
+    Ok(Json(
+        state
+            .executor
+            .explain_nac_subject_as(&identity.context(), &query.subject)
+            .await?,
+    ))
 }
 
 /// POST /api/v0/acp/node/relationship. Go's
