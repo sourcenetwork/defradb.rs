@@ -331,6 +331,7 @@ where
                 })?
             };
             let permission = match permission.as_str() {
+                "get-collection" => acp::nac::NodePermission::CollectionGet,
                 "update-document" => acp::nac::NodePermission::DocumentUpdate,
                 "delete-document" => acp::nac::NodePermission::DocumentDelete,
                 "truncate-collection" => acp::nac::NodePermission::CollectionTruncate,

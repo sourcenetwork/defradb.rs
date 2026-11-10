@@ -2,8 +2,8 @@
 //! backups, document ACP relationships, encrypted indexes and block
 //! signatures run the same core operations the node's own calls do.
 //!
-//! A request runs as the identity it carries, or as none: unlike the node's
-//! in-process calls, it never acts as the node.
+//! A request runs as the identity it carries, or as none: it never acts as
+//! the node.
 
 use std::sync::Arc;
 

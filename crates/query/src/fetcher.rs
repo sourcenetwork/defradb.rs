@@ -215,6 +215,13 @@ pub trait DocFetcher: MaybeSendSync {
         ))
     }
 
+    /// Whether `identity` reads past document access control: node access
+    /// control is on and grants it `bypass-dac`, read in this fetcher's
+    /// transaction (Go's `canDACBypass`).
+    async fn dac_bypass(&self, _identity: &identity::Did) -> Result<bool> {
+        Ok(false)
+    }
+
     /// An authorization provider actually bound to this fetcher's transaction.
     /// A capability flag or an unbound provider cannot certify a row snapshot.
     async fn transaction_acp(
