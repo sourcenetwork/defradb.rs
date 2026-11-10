@@ -451,7 +451,18 @@ async fn connect_with_cache(
         }
     };
     let Some(lifecycle) = cache.lifecycle.get() else {
+        // A cache with no lifecycle (a fixture's) still makes the dial-vs-revoke
+        // check adoption makes: cache first, recheck second, so a revoke that
+        // ran during the dial either finds this connection or is found here.
         remember_connection(cache, &connection);
+        if !admission.admits_outbound(&endpoint_id) {
+            close_cached_connections(cache, &endpoint_id);
+            connection.close(DISCONNECT_ERROR_CODE.into(), b"peer revoked");
+            return Err(crate::error::Error::Dial(format!(
+                "dial to {peer_id} raced a revoke: connection closed"
+            )));
+        }
+        cache.gossip.connected(endpoint_id, &connection);
         return Ok(connection);
     };
     adopt_new_connection(
@@ -1602,6 +1613,61 @@ mod tests {
                 refused.to_string().contains("revoked"),
                 "the refusal must name the revocation; got: {refused}"
             );
+
+            accept_task.abort();
+        })
+        .await
+    }
+
+    /// A revoke that lands while a cache with no lifecycle (a fixture's) is
+    /// dialing must still close what the dial produced: the recheck after
+    /// caching is the same dial-vs-revoke check adoption makes in production.
+    #[nuclei::test]
+    async fn a_revoke_during_a_dial_without_lifecycle_closes_the_new_connection() {
+        edge::compat(async {
+            let accept_ep = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+            let dial_ep = localhost_endpoint(vec![]).await;
+            let direct_addr = accept_ep
+                .addr()
+                .ip_addrs()
+                .next()
+                .copied()
+                .expect("listener direct address");
+            let accept_task = crate::rt::spawn(edge::compat({
+                let ep = accept_ep.clone();
+                async move {
+                    let mut held = Vec::new();
+                    while let Some(incoming) = ep.accept().await {
+                        if let Ok(conn) = incoming.await {
+                            held.push(conn);
+                        }
+                    }
+                }
+            }));
+            let peer = PeerId::new(accept_ep.id().to_string());
+            let cache = new_connection_cache(GossipHandle::new());
+            let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
+
+            let mut dialing = Box::pin(connect_with_cache(
+                &dial_ep,
+                &peer,
+                Some(direct_addr),
+                &cache,
+                &admission,
+            ));
+            assert!(
+                futures::poll!(dialing.as_mut()).is_pending(),
+                "the dial is still in flight"
+            );
+            assert!(admission.revoke(accept_ep.id()));
+            let refused = dialing
+                .await
+                .expect_err("a revoke during the dial must close what it dialed");
+            assert!(
+                refused.to_string().contains("raced a revoke"),
+                "got: {refused}"
+            );
+            assert!(cache.connections.get(&accept_ep.id()).is_none());
 
             accept_task.abort();
         })
