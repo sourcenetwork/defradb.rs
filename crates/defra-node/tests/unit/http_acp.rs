@@ -883,8 +883,21 @@ mod bound_caller {
 fn embedded_events_require_node_permission() {
     edge::testing::edge()
         .block_on(async {
+            let _serial = crate::tests::SIGNING_STORE_GUARD.lock().await;
             let owner = identity();
             let owner_did = owner.did().unwrap();
+            let public = owner.public_key_bytes();
+            defra_core::signing::store_identity(
+                owner_did.as_str(),
+                SigningConfig {
+                    key_type: SigningKeyType::Ed25519,
+                    private_key_bytes: owner.private_key_bytes(),
+                    public_key_bytes: public.clone(),
+                    public_key_hex: hex::encode(public),
+                    remote_signer: None,
+                    signing_authorization: None,
+                },
+            );
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let address = listener.local_addr().unwrap();
             let node = Node::builder()

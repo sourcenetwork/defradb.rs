@@ -57,9 +57,7 @@ pub async fn require_permission(
             if wildcard_allowed {
                 return Ok(());
             }
-            return Err(HttpError::Unauthorized(
-                "not authorized to perform operation".into(),
-            ));
+            return Err(HttpError::Unauthorized(not_authorized(permission)));
         }
     };
 
@@ -70,12 +68,18 @@ pub async fn require_permission(
     })?;
 
     if !allowed {
-        return Err(HttpError::Unauthorized(
-            "not authorized to perform operation".into(),
-        ));
+        return Err(HttpError::Unauthorized(not_authorized(permission)));
     }
 
     Ok(())
+}
+
+/// Go's `ErrNotAuthorizedToPerformOperation`, which names the permission.
+fn not_authorized(permission: NodePermission) -> String {
+    format!(
+        "not authorized to perform operation. Permission: {}",
+        permission.as_str()
+    )
 }
 
 /// Get the DID from an identity extractor, returning an error if not authenticated.
