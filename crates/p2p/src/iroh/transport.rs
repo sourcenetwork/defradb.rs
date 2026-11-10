@@ -1334,7 +1334,7 @@ mod tests {
     async fn a_service_record_reaches_a_connected_peer() {
         let key0 = SecretKey::generate();
         let key1 = SecretKey::generate();
-        let (command_tx0, _events0, _replicators0, task0) =
+        let (command_tx0, mut events0, _replicators0, task0) =
             spawn_endpoint(test_config(key0.clone()), edge::testing::edge())
                 .await
                 .unwrap();
@@ -1351,14 +1351,19 @@ mod tests {
             )
             .await
             .unwrap();
-        loop {
-            let event = timeout(Duration::from_secs(5), events1.recv())
-                .await
-                .expect("timed out waiting for the records topic")
-                .expect("iroh event channel closed");
-            if matches!(&event, TransportEvent::PeerSubscribed { topic, .. } if topic == RECORDS_TOPIC)
-            {
-                break;
+        // Both sides must hold the other as a records-topic neighbour: an
+        // announcement sent before node 0 has one is lost, and the pointer
+        // lookup that recovers it runs only once per 10-second tick.
+        for events in [&mut events0, &mut events1] {
+            loop {
+                let event = timeout(Duration::from_secs(5), events.recv())
+                    .await
+                    .expect("timed out waiting for the records topic")
+                    .expect("iroh event channel closed");
+                if matches!(&event, TransportEvent::PeerSubscribed { topic, .. } if topic == RECORDS_TOPIC)
+                {
+                    break;
+                }
             }
         }
 
