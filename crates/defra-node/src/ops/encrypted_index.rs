@@ -77,14 +77,14 @@ impl NodeOps {
         collection: &str,
         field_name: &str,
     ) -> Result<EncryptedIndexListing> {
-        self.allowed(context, NodePermission::EncryptedIndexAdd)
-            .await?;
         if context.txn().is_some() {
             self.runner
                 .add_encrypted_index_in_txn_as(context, collection, field_name)
                 .await
                 .map_err(transaction_error)?;
         } else {
+            self.allowed(context, NodePermission::EncryptedIndexAdd)
+                .await?;
             let database = self.database.clone();
             let (collection, field) = (collection.to_owned(), field_name.to_owned());
             self.on_pool(move || async move {
@@ -106,14 +106,14 @@ impl NodeOps {
         context: &RequestContext,
         collection: &str,
     ) -> Result<Vec<EncryptedIndexListing>> {
-        self.allowed(context, NodePermission::EncryptedIndexList)
-            .await?;
         let fields = if context.txn().is_some() {
             self.runner
                 .encrypted_indexes_in_txn_as(context, collection)
                 .await
                 .map_err(transaction_error)?
         } else {
+            self.allowed(context, NodePermission::EncryptedIndexList)
+                .await?;
             let database = self.database.clone();
             let collection = collection.to_owned();
             self.on_pool(move || async move {
@@ -160,8 +160,6 @@ impl NodeOps {
         collection: &str,
         field_name: &str,
     ) -> Result<()> {
-        self.allowed(context, NodePermission::EncryptedIndexDelete)
-            .await?;
         if context.txn().is_some() {
             return self
                 .runner
@@ -169,6 +167,8 @@ impl NodeOps {
                 .await
                 .map_err(transaction_error);
         }
+        self.allowed(context, NodePermission::EncryptedIndexDelete)
+            .await?;
         let database = self.database.clone();
         let (collection, field) = (collection.to_owned(), field_name.to_owned());
         self.on_pool(move || async move {
@@ -182,8 +182,9 @@ impl NodeOps {
         .await
     }
 
-    /// The NAC checks every encrypted index operation makes: the caller may
-    /// read collections and may do `permission`.
+    /// The NAC checks every encrypted index operation makes outside a
+    /// transaction: the caller may read collections and may do
+    /// `permission`. In a transaction the registry checks both there.
     async fn allowed(&self, context: &RequestContext, permission: NodePermission) -> Result<()> {
         let (database, context) = (self.database.clone(), context.clone());
         self.on_pool(move || async move {

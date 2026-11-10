@@ -36,11 +36,15 @@
 \*   crates/http/src/handlers/index/go_api.rs     the x-defradb-tx branches
 \* Encrypted indexes follow the same steps with no backfill: the change is
 \* staged in the caller's transaction and the shared cache takes it once the
-\* commit is durable, before the commit call returns (the "work" here):
+\* commit is durable, before the commit call returns (the "work" here). A
+\* failed add or delete is rolled back to its savepoint the same way:
 \*   crates/db/src/collection/encrypted_index.rs  DB::add_encrypted_index_in,
 \*                                                 DB::delete_encrypted_index_in,
 \*                                                 DB::encrypted_indexes_in
+\*   crates/db/src/txn/registry/indexes.rs        add_encrypted_index_in_txn,
+\*                                                 delete_encrypted_index_in_txn
 \*   crates/defra-node/src/ops/encrypted_index.rs NodeOps (routes a txn)
+\*   crates/cli/src/encrypted_index_adapter.rs    EncryptedIndexAdapter (routes a txn)
 \*   crates/http/src/handlers/encrypted_index.rs  the x-defradb-tx context
 EXTENDS Naturals
 

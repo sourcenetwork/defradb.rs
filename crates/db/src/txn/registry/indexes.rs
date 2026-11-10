@@ -102,11 +102,15 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         field: &str,
     ) -> Result<()> {
         let db = self.db.clone();
+        let acting = context.clone();
         let (collection, field) = (collection.to_owned(), field.to_owned());
         self.in_txn(context, txn_id, move |owned| {
             Box::pin(async move {
                 let txn = owned.alone()?;
-                db.add_encrypted_index_in(txn, &collection, &field).await
+                check_access_in(&db, &acting, txn, NodePermission::EncryptedIndexAdd).await?;
+                txn.set_statement_savepoint()?;
+                let added = db.add_encrypted_index_in(txn, &collection, &field).await;
+                finish_statement(txn, added)
             })
         })
         .await
@@ -121,11 +125,15 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         field: &str,
     ) -> Result<()> {
         let db = self.db.clone();
+        let acting = context.clone();
         let (collection, field) = (collection.to_owned(), field.to_owned());
         self.in_txn(context, txn_id, move |owned| {
             Box::pin(async move {
                 let txn = owned.alone()?;
-                db.delete_encrypted_index_in(txn, &collection, &field).await
+                check_access_in(&db, &acting, txn, NodePermission::EncryptedIndexDelete).await?;
+                txn.set_statement_savepoint()?;
+                let deleted = db.delete_encrypted_index_in(txn, &collection, &field).await;
+                finish_statement(txn, deleted)
             })
         })
         .await
@@ -140,10 +148,12 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         collection: &str,
     ) -> Result<Vec<String>> {
         let db = self.db.clone();
+        let acting = context.clone();
         let collection = collection.to_owned();
         self.in_txn(context, txn_id, move |owned| {
             Box::pin(async move {
                 let txn = owned.alone()?;
+                check_access_in(&db, &acting, txn, NodePermission::EncryptedIndexList).await?;
                 db.encrypted_indexes_in(txn, &collection).await
             })
         })

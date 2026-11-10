@@ -5,25 +5,46 @@ use async_trait::async_trait;
 use defra_core::RequestContext;
 
 use defra_http::router::{EncryptedIndexInfo, EncryptedIndexOperations};
+use query::QueryExecutor;
 use storage::corekv::{Key, Store};
 
 /// Adapter that implements EncryptedIndexOperations using database SE support.
+/// A request in a transaction runs in it, through `runner`.
 pub struct EncryptedIndexAdapter<S: Store> {
     database: Arc<db::DB<S>>,
+    runner: Arc<dyn QueryExecutor>,
     /// The request this adapter serves, for one bound to it.
     context: Option<RequestContext>,
 }
 
 impl<S: Store + 'static> EncryptedIndexAdapter<S> {
-    pub fn new_arc(database: Arc<db::DB<S>>) -> Arc<dyn EncryptedIndexOperations> {
+    pub fn new_arc(
+        database: Arc<db::DB<S>>,
+        runner: Arc<dyn QueryExecutor>,
+    ) -> Arc<dyn EncryptedIndexOperations> {
         Arc::new(Self {
             database,
+            runner,
             context: None,
         })
     }
 
     fn context(&self) -> Cow<'_, RequestContext> {
         RequestContext::bound_or_ambient(self.context.as_ref())
+    }
+
+    /// The context of the request when it runs in a transaction.
+    fn in_txn(&self) -> Option<Cow<'_, RequestContext>> {
+        let context = self.context();
+        context.txn().is_some().then_some(context)
+    }
+}
+
+fn equality(collection: &str, field_name: &str) -> EncryptedIndexInfo {
+    EncryptedIndexInfo {
+        collection: collection.to_string(),
+        field_name: field_name.to_string(),
+        index_type: "equality".to_string(),
     }
 }
 
@@ -32,6 +53,7 @@ impl<S: Store + 'static> EncryptedIndexOperations for EncryptedIndexAdapter<S> {
     fn bind_request(&self, context: &RequestContext) -> Option<Arc<dyn EncryptedIndexOperations>> {
         Some(Arc::new(Self {
             database: Arc::clone(&self.database),
+            runner: Arc::clone(&self.runner),
             context: Some(context.clone()),
         }))
     }
@@ -41,6 +63,13 @@ impl<S: Store + 'static> EncryptedIndexOperations for EncryptedIndexAdapter<S> {
         collection: &str,
         field_name: &str,
     ) -> Result<EncryptedIndexInfo, String> {
+        if let Some(context) = self.in_txn() {
+            self.runner
+                .add_encrypted_index_in_txn_as(&context, collection, field_name)
+                .await
+                .map_err(|e| e.to_string())?;
+            return Ok(equality(collection, field_name));
+        }
         self.database
             .check_node_access_as(&self.context(), acp::nac::NodePermission::EncryptedIndexAdd)
             .await
@@ -127,6 +156,15 @@ impl<S: Store + 'static> EncryptedIndexOperations for EncryptedIndexAdapter<S> {
         collection: Option<&str>,
     ) -> Result<Vec<EncryptedIndexInfo>, String> {
         match collection {
+            Some(name) if self.in_txn().is_some() => {
+                let context = self.context();
+                let fields = self
+                    .runner
+                    .encrypted_indexes_in_txn_as(&context, name)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(fields.iter().map(|field| equality(name, field)).collect())
+            }
             Some(name) => {
                 self.database
                     .check_node_access_as(
@@ -189,6 +227,13 @@ impl<S: Store + 'static> EncryptedIndexOperations for EncryptedIndexAdapter<S> {
         collection: &str,
         field_name: &str,
     ) -> Result<(), String> {
+        if let Some(context) = self.in_txn() {
+            return self
+                .runner
+                .delete_encrypted_index_in_txn_as(&context, collection, field_name)
+                .await
+                .map_err(|e| e.to_string());
+        }
         self.database
             .check_node_access_as(
                 &self.context(),
@@ -261,3 +306,7 @@ impl<S: Store + 'static> EncryptedIndexOperations for EncryptedIndexAdapter<S> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/encrypted_index_adapter.rs"]
+mod tests;
