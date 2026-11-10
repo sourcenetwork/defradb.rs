@@ -142,7 +142,8 @@ impl HttpConfig {
     /// Serve collection management (`/actions`, deleting collections and
     /// versions, purge), as `defradb start` and Go's server do. Off by
     /// default: an application embedding a node exposes collection
-    /// observation only, unless it opts in.
+    /// observation only, unless it opts in. `/purge` also needs
+    /// [`Self::with_dev_mode`]; without it the route answers 403.
     pub fn with_collection_management(mut self, enabled: bool) -> Self {
         self.collection_management = enabled;
         self
