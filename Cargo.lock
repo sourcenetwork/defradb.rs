@@ -156,12 +156,11 @@ dependencies = [
 
 [[package]]
 name = "aes-kw"
-version = "0.3.1"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41ac571010bd60765c56085a4f1d412012a9be2663b1a2f2b19b49318653fd0d"
+checksum = "69fa2b352dcefb5f7f3a5fb840e02665d311d878955380515e4fd50095dd3d8c"
 dependencies = [
- "aes 0.9.4",
- "const-oid 0.10.2",
+ "aes 0.8.4",
 ]
 
 [[package]]
@@ -539,7 +538,7 @@ dependencies = [
  "alloy-serde",
  "alloy-sol-types",
  "alloy-trie",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "serde",
  "serde_json",
  "serde_with",
@@ -1778,7 +1777,7 @@ dependencies = [
  "edge",
  "events",
  "identity",
- "libp2p-identity 0.3.1",
+ "libp2p-identity 0.2.14",
  "lru 0.19.0",
  "mimalloc",
  "multihash",
@@ -3465,8 +3464,8 @@ dependencies = [
  "defra-core",
  "ed25519-dalek 3.0.0",
  "hex",
- "hkdf 0.13.0",
- "hmac 0.13.0",
+ "hkdf 0.12.4",
+ "hmac 0.12.1",
  "k256 0.14.0",
  "multibase",
  "multihash-codetable",
@@ -3783,7 +3782,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c54e03a951783e8b327515db3f2a2fd0e3bed362a96b066f341ce66ed49b4ead"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -4160,7 +4159,7 @@ dependencies = [
  "getrandom 0.2.17",
  "gloo-timers 0.4.0",
  "hex",
- "hkdf 0.13.0",
+ "hkdf 0.12.4",
  "identity",
  "iroh",
  "js-sys",
@@ -6953,7 +6952,7 @@ dependencies = [
 name = "keyring"
 version = "0.5.0"
 dependencies = [
- "aes 0.9.4",
+ "aes 0.8.4",
  "aes-gcm 0.11.1",
  "aes-kw",
  "base64 0.23.1",
@@ -7349,14 +7348,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4af6ad75465f6bf26a1001ddbf6f2b6b84a4673bf6de289f68cdbb1430098627"
 dependencies = [
  "bs58",
- "ed25519-dalek 3.0.0",
  "hkdf 0.13.0",
  "multihash",
- "prost 0.14.4",
  "sha2 0.11.1",
  "thiserror 2.0.21",
  "tracing",
- "zeroize",
 ]
 
 [[package]]
@@ -9301,12 +9297,12 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "pbkdf2"
-version = "0.13.0"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "112d82ceb8c5bf524d9af484d4e4970c9fd5a0cc15ba14ad93dccd28873b0629"
+checksum = "f8ed6a7761f76e3b9f92dfb0a60a6a6477c61024b775147ff0973a02653abaf2"
 dependencies = [
- "digest 0.11.3",
- "hmac 0.13.0",
+ "digest 0.10.7",
+ "hmac 0.12.1",
 ]
 
 [[package]]
@@ -9460,10 +9456,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "pg_interval"
-version = "0.6.0"
+name = "pg_interval_2"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8408fb1e08ebf2e7676d001caa6482d1b33e7e1f1dad9d3a758a05640eea2026"
+checksum = "a055f44628dcf9c4e68f931535dabd3544a239655fdde25a3b0e95d4b36e9260"
 dependencies = [
  "bytes",
  "chrono",
@@ -9472,12 +9468,12 @@ dependencies = [
 
 [[package]]
 name = "pgwire"
-version = "0.42.1"
+version = "0.38.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1452e6541bcc64e166ff9d350c25c09334c0c80e8f60fde5e36ff81768eeaa55"
+checksum = "24bd4e6b1bfddc5c6420dee6602ec80946700b4c31ddcb64ee190ad6d979c210"
 dependencies = [
  "async-trait",
- "base64 0.23.1",
+ "base64 0.22.1",
  "bytes",
  "chrono",
  "derive-new",
@@ -9485,7 +9481,7 @@ dependencies = [
  "hex",
  "lazy-regex",
  "md5",
- "pg_interval",
+ "pg_interval_2",
  "postgres-types",
  "rand 0.10.3",
  "ring",
@@ -10046,7 +10042,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03da047801ff44bb6a4d407d4860c05fd70bb81714e6b2f3812603d5b145b042"
 dependencies = [
  "heck",
- "itertools 0.10.5",
+ "itertools 0.14.0",
  "log",
  "multimap",
  "petgraph",
@@ -10067,7 +10063,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.10.5",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -10080,7 +10076,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.10.5",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -12267,9 +12263,9 @@ dependencies = [
 
 [[package]]
 name = "sqlparser"
-version = "0.63.0"
+version = "0.55.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3679862809bd1f92e563cf6fd820e28f39135303668001c10331d5027183e8b4"
+checksum = "c4521174166bac1ff04fe16ef4524c70144cd29682a45978978ca3d7f4e0be11"
 dependencies = [
  "log",
  "recursive",
@@ -12278,13 +12274,13 @@ dependencies = [
 
 [[package]]
 name = "sqlparser_derive"
-version = "0.6.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2905ae8e8148d8f7f5748ea95d1e949fa4fc1d7f5161547b758ad118b2e4b0aa"
+checksum = "da5fc6819faabb412da764b99d3b713bb55083c11e7e0c00144d386cd6a1939c"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.9",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -12662,7 +12658,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
