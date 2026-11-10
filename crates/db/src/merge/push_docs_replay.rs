@@ -230,8 +230,9 @@ pub enum ReplayPushSendError {
     Timeout {
         timeout: Duration,
     },
-    /// The selected head exhausted its deadline across sends and receiver pauses.
-    HeadTimeout {
+    /// The receiver kept pausing a selected head past its fixed deadline; the
+    /// head fails alone and the rest of the selection is still sent.
+    HeadDeferred {
         timeout: Duration,
     },
     Transport(p2p::Error),
@@ -257,9 +258,9 @@ impl fmt::Display for ReplayPushSendError {
             Self::Timeout { timeout } => {
                 write!(f, "replay PushLog timed out after {}s", timeout.as_secs())
             }
-            Self::HeadTimeout { timeout } => write!(
+            Self::HeadDeferred { timeout } => write!(
                 f,
-                "selected head exceeded its fixed {}ms delivery deadline",
+                "deferred: receiver pauses outlasted the head's fixed {}ms delivery deadline",
                 timeout.as_millis()
             ),
             Self::Transport(error) => write!(f, "{error}"),

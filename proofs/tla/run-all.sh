@@ -215,6 +215,7 @@ RUNS=(
   "MC_SelectedPushIsolation_Red_schedule.cfg SelectedPushIsolation.tla RED"
   "MC_SelectedPushIsolation_Red_admission.cfg SelectedPushIsolation.tla RED"
   "MC_SelectedPushIsolation_Red_partial.cfg SelectedPushIsolation.tla RED"
+  "MC_SelectedPushIsolation_Red_expiry_stop.cfg SelectedPushIsolation.tla RED"
   "MC_DocumentPush_Red_Admission.cfg DocumentPush.tla RED"
   "MC_PeerStreamCap_Green.cfg PeerStreamCap.tla GREEN"
   "MC_PeerStreamCap_Red_NoCheck.cfg PeerStreamCap.tla RED"

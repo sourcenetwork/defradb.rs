@@ -1,5 +1,6 @@
-//! A selected push retries receiver pauses and stops after a stall, lost connection, expired head deadline
-//! or caller stop, bounded by the work already started
+//! A selected push retries receiver pauses, defers a head the receiver pauses
+//! past its deadline, and stops after a stall, lost connection or caller stop,
+//! bounded by the work already started
 //! (`SelectedPushIsolation.tla`, `DocumentPush.lean` `serialRun`).
 
 use super::push_docs_replay::{ConnectedPeerTransport, ReplyScript};
@@ -342,11 +343,13 @@ fn a_lost_connection_stops_and_the_next_call_sends_every_selected_head_again() {
 
 #[test]
 fn a_receiver_pause_is_bounded_and_does_not_change_the_subscription() {
-    workers::block_on(exercise_pause_budget_case(true, false)).unwrap();
+    workers::block_on(exercise_pause_budget_case(false, false)).unwrap();
 }
 
+/// A receiver that pauses every head: each head is deferred once its own
+/// deadline is spent, none stops the call, and every head is tried.
 pub(super) async fn exercise_pause_budget_case(stops: bool, ok: bool) {
-    let fixture = Fixture::new(64, 0).await;
+    let fixture = Fixture::new(16, 0).await;
     let (transport, received) = fixture.receiver(Some(Arc::new(|_| {
         Box::pin(async { Some(Ok(pause_hint())) })
     })));
@@ -377,9 +380,26 @@ pub(super) async fn exercise_pause_budget_case(stops: bool, ok: bool) {
         transport.arrivals().len() > 1,
         "a transient capacity reply must be retried"
     );
-    assert!(fixture.selected_attempts(&received).len() > 1);
+    let attempts = fixture.selected_attempts(&received);
+    assert_eq!(
+        attempts.iter().collect::<RapidHashSet<_>>().len(),
+        16,
+        "a deferred head must leave the rest of the selection to be tried"
+    );
+    assert!(attempts.len() > 16);
+    assert!(error.contains("(0 of 16 acknowledged)"), "{error}");
+    assert!(error.contains("deferred"), "{error}");
     assert_eq!(fixture.acknowledged().await, 0);
     fixture.assert_subscription_untouched().await;
+}
+
+/// The receiver pauses the first head for longer than its whole deadline
+/// (`DocumentPush.lean` `expired_head_leaves_the_rest`). That head is deferred
+/// at once; the call does not stop, and the other heads are still sent once
+/// the receiver's pause ends.
+#[test]
+fn a_head_paused_past_its_deadline_fails_alone_and_the_rest_are_sent() {
+    workers::block_on(exercise_stop_case("pauseExpired", false, 3, false)).unwrap();
 }
 
 #[test]
@@ -469,6 +489,11 @@ pub(super) async fn exercise_stop_case(outcome: &str, stops: bool, sends: usize,
             "receiver refused the head",
         ))),
         "hinted" => Some(Ok(pause_hint())),
+        "pauseExpired" => {
+            let mut reply = pause_hint();
+            reply.retry_after_ms = Some(1000);
+            Some(Ok(reply))
+        }
         "disconnected" => Some(Err(p2p::Error::ConnectionClosed)),
         "timedOut" => None,
         other => panic!("unknown model outcome: {other}"),
@@ -511,6 +536,12 @@ pub(super) async fn exercise_stop_case(outcome: &str, stops: bool, sends: usize,
     if outcome == "hinted" {
         assert_eq!(fixture.selected_attempts(&received).len(), sends);
         assert_eq!(fixture.acknowledged().await, 3);
+    } else if outcome == "pauseExpired" {
+        fixture.assert_only_selected_sent(&received);
+        assert_eq!(fixture.acknowledged().await, 2);
+        let error = result.unwrap_err();
+        assert!(error.contains("(2 of 3 acknowledged)"), "{error}");
+        assert!(error.contains("deferred"), "{error}");
     } else {
         fixture.assert_only_selected_sent(&received);
     }

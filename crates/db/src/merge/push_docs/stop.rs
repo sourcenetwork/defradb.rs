@@ -10,8 +10,8 @@ use crate::merge::push_docs_replay::ReplayPushSendError;
 
 /// One selected push call's stop flag, shared by its caller, the pool
 /// crossing, its scheduler and every task it started. Raised once, by the
-/// first outcome that proves the transfer cannot progress (a send deadline, a
-/// lost connection, an expired head deadline) or by the caller giving up. Once
+/// first outcome that proves the transfer cannot progress (a send deadline or
+/// a lost connection) or by the caller giving up. Once
 /// raised the call starts no more documents and no task sends again; sends
 /// already on the wire end on their own deadline and are joined.
 #[derive(Clone, Debug, Default)]
@@ -71,18 +71,18 @@ impl Drop for StopOnDrop {
 }
 
 /// Whether a selected send's failure proves the transfer cannot progress now
-/// (`DocumentPush.lean` `stopsTransfer`): its deadline passed, the connection
-/// is gone (the classifier the retry sweep stops a peer's pass on), or its current
-/// head deadline expired. Any other failure is one head's own, like a
-/// refusal, and leaves the remaining documents to be tried.
+/// (`DocumentPush.lean` `stopsTransfer`): its deadline passed or the
+/// connection is gone (the classifier the retry sweep stops a peer's pass
+/// on). Any other failure is one head's own, like a refusal or a head the
+/// receiver kept pausing past its deadline, and leaves the remaining
+/// documents to be tried.
 pub(crate) fn stops_selected_transfer(error: &ReplayPushSendError) -> bool {
     match error {
-        ReplayPushSendError::Timeout { .. }
-        | ReplayPushSendError::HeadTimeout { .. }
-        | ReplayPushSendError::SemaphoreClosed => true,
+        ReplayPushSendError::Timeout { .. } | ReplayPushSendError::SemaphoreClosed => true,
         ReplayPushSendError::Transport(error) => error.is_connection_like(),
         ReplayPushSendError::Persistence(_)
         | ReplayPushSendError::Stopped
+        | ReplayPushSendError::HeadDeferred { .. }
         | ReplayPushSendError::Backpressure { .. } => false,
     }
 }

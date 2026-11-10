@@ -5,17 +5,21 @@ use std::time::Duration;
 use futures::future::{select, Either};
 use p2p::message::{PushLogReply, PushLogRequest};
 use p2p::network::Network;
+use p2p::rt::time::Instant;
 use p2p::transport::PeerId;
 use p2p::P2PTransport;
 use regolith::sync::OnceCell;
-use web_time::Instant;
 
 use super::stop::{reply_requests_pause, SelectedPushStop};
 use crate::merge::push_docs_replay::{ReplayPushGate, ReplayPushSendError};
 
 /// One current head's deadline starts at its first actual send, after initial
-/// pacing and slot admission. Every retry and receiver pause spends the same
-/// allowance. A fresh acknowledged head gives the next head its own deadline.
+/// pacing and slot admission, on the network clock its waits run on. Every
+/// retry and receiver pause spends the same allowance. A head the allowance
+/// cannot see through is deferred: it fails alone and the rest of the
+/// selection is still tried, because the receiver is answering
+/// (`SelectedPushIsolation.tla` PauseExpired). A fresh acknowledged head gives
+/// the next head its own deadline.
 pub(super) struct HeadDeadline {
     started: OnceCell<Instant>,
     within: Duration,
@@ -35,19 +39,21 @@ impl HeadDeadline {
         self.started.get_or_init_racy(Instant::now);
     }
 
-    fn remaining(&self) -> Result<Option<Duration>, ReplayPushSendError> {
-        let Some(started) = self.started.get() else {
-            return Ok(None);
-        };
-        self.within
-            .checked_sub(started.elapsed())
-            .filter(|left| !left.is_zero())
-            .map(Some)
-            .ok_or(ReplayPushSendError::HeadTimeout {
-                timeout: self.within,
-            })
+    /// What is left of the allowance, or `None` before the first send.
+    fn remaining(&self) -> Option<Duration> {
+        let started = self.started.get()?;
+        Some(self.within.saturating_sub(started.elapsed()))
     }
 
+    fn deferred(&self) -> ReplayPushSendError {
+        ReplayPushSendError::HeadDeferred {
+            timeout: self.within,
+        }
+    }
+
+    /// Wait out a receiver pause of `delay`. A pause the head's remaining
+    /// allowance cannot cover defers the head at once, since no resend could
+    /// fit in what is left.
     async fn wait(
         &self,
         delay: Duration,
@@ -56,14 +62,15 @@ impl HeadDeadline {
         if stop.is_stopped() {
             return Err(ReplayPushSendError::Stopped);
         }
-        let delay = self.remaining()?.map_or(delay, |left| delay.min(left));
+        if self.remaining().is_some_and(|left| delay >= left) {
+            return Err(self.deferred());
+        }
         let cancelled = stop.cancelled();
         let waiting = self.network.sleep(delay);
         futures::pin_mut!(cancelled, waiting);
         if matches!(select(cancelled, waiting).await, Either::Left(_)) {
             return Err(ReplayPushSendError::Stopped);
         }
-        self.remaining()?;
         Ok(())
     }
 }
@@ -98,13 +105,17 @@ where
             },
             transport.send_two_stream_request(peer, request.clone()),
         );
-        let reply = match deadline.remaining()? {
+        // A resend only happens after a receiver pause, so a head that runs out
+        // of allowance here is deferred, not taken for a silent peer: a first
+        // send carries the gate's own send deadline instead.
+        let reply = match deadline.remaining() {
             None => sending.await,
-            Some(left) => deadline.network.timeout(left, sending).await.map_err(|_| {
-                ReplayPushSendError::HeadTimeout {
-                    timeout: deadline.within,
-                }
-            })?,
+            Some(left) if left.is_zero() => return Err(deadline.deferred()),
+            Some(left) => deadline
+                .network
+                .timeout(left, sending)
+                .await
+                .map_err(|_| deadline.deferred())?,
         };
         let delay = match reply {
             Ok(reply) if reply_requests_pause(&reply) => {
