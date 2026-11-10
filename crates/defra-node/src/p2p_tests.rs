@@ -2608,3 +2608,54 @@ fn accepted_replicated_document_runs_transactional_projector() {
         node1.shutdown().await.unwrap();
     }).unwrap();
 }
+
+/// With node ACP on, a call through the unbound P2P ops names no identity and
+/// is refused every read `get-p2p-peer-info` gates, as Go refuses `PeerInfo`;
+/// the node reading as itself is allowed, and with node ACP off nothing is
+/// refused.
+#[test]
+fn unbound_peer_info_reads_are_refused_only_with_node_acp() {
+    edge::testing::edge()
+        .block_on(async {
+            let gated = Node::builder()
+                .enable_signing()
+                .with_node_acp_enabled()
+                .with_p2p(test_p2p_config())
+                .build()
+                .await
+                .unwrap();
+            let ops = gated.p2p().expect("p2p");
+            assert!(matches!(
+                ops.listen_addresses().await,
+                Err(defra_p2p_adapter::P2PError::Unauthorized(_))
+            ));
+            assert!(matches!(
+                ops.shareable_address().await,
+                Err(defra_p2p_adapter::P2PError::Unauthorized(_))
+            ));
+            assert!(matches!(
+                ops.sync_status().await,
+                Err(defra_p2p_adapter::P2PError::Unauthorized(_))
+            ));
+            let as_node = gated
+                .p2p_system()
+                .expect("p2p")
+                .ops_for(&gated.node_context());
+            assert!(as_node.listen_addresses().await.is_ok());
+            assert!(as_node.shareable_address().await.is_ok());
+            assert!(as_node.sync_status().await.is_ok());
+            gated.shutdown().await.unwrap();
+
+            let open = Node::builder()
+                .with_p2p(test_p2p_config())
+                .build()
+                .await
+                .unwrap();
+            let ops = open.p2p().expect("p2p");
+            assert!(ops.listen_addresses().await.is_ok());
+            assert!(ops.shareable_address().await.is_ok());
+            assert!(ops.sync_status().await.is_ok());
+            open.shutdown().await.unwrap();
+        })
+        .unwrap();
+}

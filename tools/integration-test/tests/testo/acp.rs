@@ -187,6 +187,7 @@ mod nac {
         mod get_collection_by_version;
         mod get_nac_status;
         mod get_p2p_active_peers;
+        mod get_p2p_peer_info;
         mod list_all_encrypted_index;
         mod list_collection;
         mod list_encrypted_index;
