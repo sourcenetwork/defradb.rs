@@ -52,6 +52,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       full: ${{ steps.decide.outputs.full }}
+      heavy: ${{ steps.decide.outputs.heavy }}
+      testo_clients: ${{ steps.decide.outputs.testo_clients }}
+      testo_matrix: ${{ steps.decide.outputs.testo_matrix }}
       integration_matrix: ${{ steps.decide.outputs.integration_matrix }}
       io_variants: ${{ steps.decide.outputs.io_variants }}
     steps:
@@ -70,6 +73,18 @@ jobs:
               }
             }
             core.setOutput('full', full ? 'true' : 'false');
+            // A pull request runs the fast checks (lint, dependency checks, unit
+            // tests, in-process testo). The merge queue and main run everything else, once per batch
+            // instead of once per push.
+            core.setOutput('heavy', context.eventName === 'pull_request' ? 'false' : 'true');
+
+            // A pull request runs testo through the in-process client only, so a
+            // green pull request has run the scenarios; the queue runs every client.
+            const testoClients = context.eventName === 'pull_request'
+              ? ['in-process']
+              : ['in-process', 'rust-http', 'go-http', 'cli', 'legacy'];
+            core.setOutput('testo_clients', testoClients.join(','));
+            core.setOutput('testo_matrix', JSON.stringify({ include: testoClients.map((client) => ({ client, shard: 1 })) }));
 
             const suites = [
               { suite: 'signed-docs', needs_go: false, multipliers: 'signed-docs' },
@@ -83,9 +98,7 @@ jobs:
             }
             core.setOutput('integration_matrix', JSON.stringify({ include: suites }));
 
-            // The other nuclei io backends run only after merge, on main (there is
-            // no merge queue): on a pull request they tripled P2P Linux and
-            // Conformance, and what they caught there was mostly one flaky test.
+            // The other nuclei io backends run in the merge queue and on main.
             const ioVariants = [{ name: '', suffix: '', backend: '', recv: '' }];
             if (context.eventName !== 'pull_request') {
               ioVariants.push({ name: ' (epoll)', suffix: '-epoll', backend: 'epoll', recv: '' });
@@ -128,7 +141,7 @@ jobs:
   feature-checks:
     name: Feature checks (${{ matrix.group }})
     needs: ci-scope
-    if: needs.ci-scope.outputs.full == 'true'
+    if: needs.ci-scope.outputs.heavy == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     strategy:
       fail-fast: false
@@ -199,15 +212,15 @@ jobs:
     steps:
       - name: Check lint results
         env:
-          FULL: ${{ needs.ci-scope.outputs.full }}
+          HEAVY: ${{ needs.ci-scope.outputs.heavy }}
           DEFAULT: ${{ needs.lint-default.result }}
           FEATURES: ${{ needs.feature-checks.result }}
           DEPENDENCIES: ${{ needs.dependency-checks.result }}
         run: |
           test "$DEFAULT" = success
-          # Skipped mid-stack, where the stack's tip checks this code and more.
-          # Only then: a failed scope job also skips them, and leaves FULL empty.
-          test "$FEATURES" = success || { test "$FEATURES" = skipped && test "$FULL" = false; }
+          # Skipped on a pull request; the merge queue runs them. Only then: a
+          # failed scope job also skips them, and leaves HEAVY empty.
+          test "$FEATURES" = success || { test "$FEATURES" = skipped && test "$HEAVY" = false; }
           test "$DEPENDENCIES" = success
 
   unit-tests:
@@ -370,18 +383,20 @@ jobs:
     steps:
       - name: Check build results
         env:
+          HEAVY: ${{ needs.ci-scope.outputs.heavy }}
           UNIT_TESTS: ${{ needs.unit-tests.result }}
           BINARIES: ${{ needs.build-binaries.result }}
           FEATURE_TESTS: ${{ needs.feature-tests.result }}
         run: |
           test "$UNIT_TESTS" = success
           test "$BINARIES" = success
-          test "$FEATURE_TESTS" = success
+          # Skipped on a pull request; the merge queue runs them.
+          test "$FEATURE_TESTS" = success || { test "$FEATURE_TESTS" = skipped && test "$HEAVY" = false; }
 
   feature-tests:
     name: Feature tests
     needs: ci-scope
-    if: needs.ci-scope.outputs.full == 'true'
+    if: needs.ci-scope.outputs.heavy == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
@@ -404,7 +419,7 @@ jobs:
   wasm-check:
     name: WASM Build Check
     needs: ci-scope
-    if: needs.ci-scope.outputs.full == 'true'
+    if: needs.ci-scope.outputs.heavy == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
@@ -457,7 +472,7 @@ jobs:
   lean-conformance:
     name: Lean Conformance
     needs: ci-scope
-    if: needs.ci-scope.outputs.full == 'true'
+    if: needs.ci-scope.outputs.heavy == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 20
     env:
@@ -521,7 +536,7 @@ jobs:
       matrix:
         io: ${{ fromJson(needs.ci-scope.outputs.io_variants) }}
     needs: [ci-scope, build-binaries]
-    if: needs.ci-scope.outputs.full == 'true'
+    if: needs.ci-scope.outputs.heavy == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 45
     env:
@@ -577,7 +592,7 @@ jobs:
   integration:
     name: Integration (${{ matrix.suite }})
     needs: [ci-scope, build-binaries, go-defradb]
-    if: needs.ci-scope.outputs.full == 'true'
+    if: needs.ci-scope.outputs.heavy == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 90
     strategy:
@@ -728,7 +743,7 @@ jobs:
       matrix:
         io: ${{ fromJson(needs.ci-scope.outputs.io_variants) }}
     needs: [ci-scope, build-binaries]
-    if: needs.ci-scope.outputs.full == 'true'
+    if: needs.ci-scope.outputs.heavy == 'true'
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 90
     env:
@@ -829,15 +844,10 @@ jobs:
     timeout-minutes: 90
     strategy:
       fail-fast: false
-      matrix:
-        client: [in-process, rust-http, go-http, cli]
-        # One job per client: with the binaries built once in testo-archive,
-        # each client runs in a couple of minutes, so more shards only add
-        # runner start-up. Raise it if a client's job grows past ~10 minutes.
-        shard: [1]
-        include:
-          - client: legacy
-            shard: 1
+      # One job per client: with the binaries built once in testo-archive, each
+      # client runs in a couple of minutes, so more shards only add runner
+      # start-up. Raise it if a client's job grows past ~10 minutes.
+      matrix: ${{ fromJson(needs.ci-scope.outputs.testo_matrix) }}
     env:
       DEFRA_RUST_BINARY: ${{ github.workspace }}/target/ci/defradb
       DEFRA_IROH_BINARY: ${{ github.workspace }}/target/ci/defradb-iroh
@@ -988,7 +998,7 @@ jobs:
         # The report goes to a file first so the comment below can post it too.
         run: |
           status=0
-          GITHUB_STEP_SUMMARY=testo-summary.md bun .github/scripts/testo-report.ts summary testo-report .github/testo/known-failures || status=$?
+          GITHUB_STEP_SUMMARY=testo-summary.md TESTO_CLIENTS=${{ needs.ci-scope.outputs.testo_clients }} bun .github/scripts/testo-report.ts summary testo-report .github/testo/known-failures || status=$?
           cat testo-summary.md >> "$GITHUB_STEP_SUMMARY"
           exit $status
 
@@ -996,18 +1006,26 @@ jobs:
       # stays in the step summary there.
       - name: Comment on the pull request
         if: >-
-          always() && github.event_name == 'pull_request'
-          && github.event.pull_request.head.repo.full_name == github.repository
-          && hashFiles('testo-summary.md') != ''
+          always() && hashFiles('testo-summary.md') != '' && (github.event_name == 'merge_group'
+          || (github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.full_name == github.repository))
         uses: actions/github-script@v9
         with:
           script: |
             const table = require('fs').readFileSync('testo-summary.md', 'utf8');
             const marker = '<!-- defradb-testo-summary -->';
             const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const body = `${marker}\n# Testo summary\n\nFrom [this run](${run}) on \`${context.payload.pull_request.head.sha.slice(0, 9)}\`.\n\n${table}`;
+            // A queue run tests this pull request on top of the ones ahead of it;
+            // its branch is gh-readonly-queue/main/pr-<number>-<base sha>. Its
+            // full table replaces the pull request run's in-process one.
+            const queue = context.eventName === 'merge_group';
+            const issue_number = queue
+              ? Number(/\/pr-(\d+)-/.exec(context.payload.merge_group.head_ref)[1])
+              : context.payload.pull_request.number;
+            const sha = queue ? context.payload.merge_group.head_sha : context.payload.pull_request.head.sha;
+            const source = queue ? 'the merge queue run' : 'this pull request run (in-process only; the merge queue runs every client)';
+            const body = `${marker}\n# Testo summary\n\nFrom [${source}](${run}) on \`${sha.slice(0, 9)}\`.\n\n${table}`;
             const { owner, repo } = context.repo;
-            const issue_number = context.payload.pull_request.number;
             const existing = (await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number }))
               .find(c => c.body && c.body.includes(marker));
             if (existing) {
