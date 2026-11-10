@@ -1130,6 +1130,58 @@ impl<S: Store> Peerstore<S> {
             .await
     }
 
+    /// Register a replay's dirty scope only while `install_incarnation` is
+    /// still the peer's incarnation, checked in the marker's own transaction.
+    /// `None` once the peer was removed or rewritten (a reconfiguration takes
+    /// a new incarnation) since the replay began (`ReplicatorIncarnation.tla`
+    /// ReplayMark).
+    pub async fn observe_push_head_for_incarnation(
+        &self,
+        peer_id: &str,
+        doc_id: &str,
+        collection_id: &str,
+        install_incarnation: u64,
+    ) -> Result<Option<u64>> {
+        if doc_id.is_empty() && collection_id.is_empty() {
+            return Ok(None);
+        }
+        let initial = super::RetryInfo::new_initial()
+            .to_bytes()
+            .map_err(crate::corekv::Error::Other)?;
+        self.register_scope_marker_once(
+            peer_id,
+            doc_id,
+            collection_id,
+            &initial,
+            install_incarnation,
+        )
+        .await
+    }
+
+    /// Record a replay's unfinished document only while `install_incarnation`
+    /// is still the peer's incarnation, checked in the marker's own
+    /// transaction. `None` once the peer was removed or rewritten.
+    pub async fn record_push_failure_for_incarnation(
+        &self,
+        peer_id: &str,
+        doc_id: &str,
+        collection_id: &str,
+        retry_info_bytes: &[u8],
+        install_incarnation: u64,
+    ) -> Result<Option<u64>> {
+        if doc_id.is_empty() && collection_id.is_empty() {
+            return Ok(None);
+        }
+        self.register_scope_marker_once(
+            peer_id,
+            doc_id,
+            collection_id,
+            retry_info_bytes,
+            install_incarnation,
+        )
+        .await
+    }
+
     /// Up to `limit` of `peer_id`'s markers in dispatch order: the scopes after
     /// the schedule's cursor, then the rest from the start. Reads no more
     /// marker keys than it returns, apart from empty legacy keys.

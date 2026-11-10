@@ -374,17 +374,23 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
 
                 // Tracked replay registers before the fallible serving capability,
                 // so a refused grant or signature leaves its durable retry owner intact.
-                let marker_generation = if matches!(&ownership, PushOwnership::Replicator(_)) {
+                // The marker belongs to this replay's install: once the peer is
+                // removed or rewritten (a removed collection takes a new
+                // incarnation), the replay writes nothing more and stops.
+                let marker_generation = if let PushOwnership::Replicator(incarnation) = &ownership {
                     let Some(generation) = peerstore
-                        .observe_push_head_with_generation(
+                        .observe_push_head_for_incarnation(
                             peer_id.as_str(),
                             doc_id,
                             collection.collection_id(),
+                            *incarnation,
                         )
                         .await
                         .map_err(|error| format!("failed to register replay marker: {error}"))?
                     else {
-                        let error = format!("replicator {peer_id} removed during existing-document replay");
+                        let error = format!(
+                            "replicator {peer_id} removed or reconfigured during existing-document replay"
+                        );
                         return Err(error);
                     };
                     Some(generation)

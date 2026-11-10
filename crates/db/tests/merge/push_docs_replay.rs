@@ -402,6 +402,156 @@ fn stale_replay_does_not_mark_reconfigured_peer_inactive() {
                 .unwrap(),
             replacement_incarnation
         );
+        assert!(
+            peerstore
+                .get_retry_documents(peer.as_str())
+                .await
+                .unwrap()
+                .is_empty(),
+            "a replay for the old install must leave no retry marker for its replacement"
+        );
+    })
+    .unwrap()
+}
+
+/// Removing a collection mid-replay rewrites the peer under a new incarnation
+/// (`ReplicatorIncarnation.tla` ReplayMark). The replay that began under the
+/// old one must register no marker and send nothing for the removed
+/// collection after that, so the new install's retry sweep has nothing of it
+/// to send.
+#[test]
+fn a_replay_outlived_by_a_collection_removal_registers_nothing_for_it() {
+    workers::block_on(async {
+        let db = Arc::new(
+            db::DB::from_arc(Arc::new(storage::RegolithStore::in_memory().unwrap())).unwrap(),
+        );
+        db.set_network(edge::testing::edge());
+        let mut removed_docs = Vec::new();
+        for (name, id) in [("Kept", "col-kept"), ("Removed", "col-removed")] {
+            db.create_collection(schema::CollectionVersion::new(
+                name,
+                format!("{id}-v1"),
+                id,
+                vec![
+                    schema::FieldDescription::new(
+                        "1",
+                        "_docID",
+                        schema::FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    ),
+                    schema::FieldDescription::new(
+                        "2",
+                        "body",
+                        schema::FieldKind::string(),
+                        schema::CType::LwwRegister,
+                    ),
+                ],
+            ))
+            .await
+            .unwrap();
+            let schema = db.get_collection(name).unwrap().unwrap().schema_arc();
+            let mutator = db::AutoCommitMutator::new(db.clone());
+            for index in 0..3 {
+                let mut doc = document::Document::new(schema.clone());
+                doc.set("body", format!("{name}-{index}")).unwrap();
+                let created = query::mutator::DocMutator::create(&mutator, name, doc)
+                    .await
+                    .unwrap();
+                if name == "Removed" {
+                    removed_docs.push(created.doc_id.to_string());
+                }
+            }
+        }
+        let peer = PeerId::new("peer-reconfigured".to_owned());
+        let peerstore = Arc::new(db.peerstore());
+        let installed = p2p::ReplicatorInfo::from_raw(
+            peer.to_string(),
+            vec!["col-kept".into(), "col-removed".into()],
+            Vec::new(),
+        );
+        peerstore
+            .create_replicator(peer.as_str(), &installed.to_bytes().unwrap())
+            .await
+            .unwrap();
+        let install_incarnation = peerstore
+            .get_replicator_incarnation(peer.as_str())
+            .await
+            .unwrap()
+            .unwrap();
+
+        // The first PushLog lands while the replay is still in the kept
+        // collection; the receiver refuses every head, so each one stays a
+        // retry obligation of whichever install the replay writes it for.
+        let removed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reconfigure = {
+            let (peerstore, peer, removed) = (peerstore.clone(), peer.clone(), removed.clone());
+            Arc::new(move |_doc: String| {
+                let (peerstore, peer, removed) = (peerstore.clone(), peer.clone(), removed.clone());
+                Box::pin(async move {
+                    if !removed.swap(true, Ordering::SeqCst) {
+                        let kept = p2p::ReplicatorInfo::from_raw(
+                            peer.to_string(),
+                            vec!["col-kept".into()],
+                            Vec::new(),
+                        );
+                        peerstore
+                            .create_replicator(peer.as_str(), &kept.to_bytes().unwrap())
+                            .await
+                            .unwrap();
+                    }
+                }) as futures::future::BoxFuture<'static, ()>
+            })
+        };
+        let (sent, received) = regolith::sync::bounded(64);
+        let transport = ConnectedPeerTransport::new("local", peer.as_str())
+            .with_replies(false, sent)
+            .with_reply_hook(reconfigure);
+
+        let result = db::merge::push_existing_docs_with_config(
+            &transport,
+            &db,
+            None,
+            &peer,
+            &["Kept".to_owned(), "Removed".to_owned()],
+            &p2p::ReplicationFilters::new(),
+            db::merge::PushExistingDocsSeOptions::default(),
+            ReplayPushConfig {
+                install_incarnation: Some(install_incarnation),
+                max_concurrent_document_tasks: 1,
+                max_concurrent_outbound_pushes: 1,
+                ..Default::default()
+            },
+            &p2p::EqOnlyFilterMatcher,
+            &p2p::sync::HeadHintCarAuthority::default(),
+        )
+        .await;
+
+        assert!(removed.load(Ordering::SeqCst));
+        assert_ne!(
+            peerstore
+                .get_replicator_incarnation(peer.as_str())
+                .await
+                .unwrap(),
+            Some(install_incarnation)
+        );
+        let error = result.expect_err("a replay outlived by its install must report it");
+        assert!(error.contains("reconfigured"), "{error}");
+        assert_eq!(removed_docs.len(), 3);
+        while let Some(request) = received.try_recv() {
+            assert!(
+                !removed_docs.contains(&request.doc_id),
+                "the outlived replay sent removed document {}",
+                request.doc_id
+            );
+        }
+        let markers = peerstore.get_retry_documents(peer.as_str()).await.unwrap();
+        for marker in &markers {
+            assert!(
+                !removed_docs.contains(&marker.doc_id) && marker.collection_id != "col-removed",
+                "the outlived replay left a retry marker for the removed collection: {}",
+                marker.doc_id
+            );
+        }
     })
     .unwrap()
 }

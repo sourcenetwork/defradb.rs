@@ -113,8 +113,10 @@ pub async fn check_retry_admission<S: storage::corekv::Store + 'static>(
 }
 
 /// Persist documents that did not finish their initial replay so the normal
-/// retry sweep owns them after the bounded attempt. Peer existence and marker
-/// writes are validated together by Peerstore transactions.
+/// retry sweep owns them after the bounded attempt. Peer existence, the
+/// install's incarnation and each marker write are validated together by
+/// Peerstore transactions: a replay outlived by its install (the peer was
+/// removed or rewritten) leaves its documents to the new install.
 pub async fn persist_replay_failures<S: storage::corekv::Store>(
     peerstore: &storage::stores::Peerstore<S>,
     peer_id: &PeerId,
@@ -131,12 +133,13 @@ pub async fn persist_replay_failures<S: storage::corekv::Store>(
             .map_err(|error| format!("failed to serialize replay retry state: {error}"))?;
         // Initial replay resolves the current document heads again on retry,
         // so this is deliberately a scope marker without a payload CID.
-        peerstore
-            .record_push_failure(
+        let recorded = peerstore
+            .record_push_failure_for_incarnation(
                 peer_id.as_str(),
                 &failure.doc_id,
                 &failure.collection_id,
                 &retry_info,
+                install_incarnation,
             )
             .await
             .map_err(|error| {
@@ -145,6 +148,14 @@ pub async fn persist_replay_failures<S: storage::corekv::Store>(
                     failure.doc_id
                 )
             })?;
+        if recorded.is_none() {
+            tracing::debug!(
+                peer_id = %peer_id,
+                install_incarnation,
+                "Replay outlived its install; leaving its unfinished documents to the current one"
+            );
+            return Ok(());
+        }
     }
 
     // Match the live-push failure recorder's observable state. Retry records

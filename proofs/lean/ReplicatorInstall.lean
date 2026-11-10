@@ -82,11 +82,40 @@ theorem defer_preserves_incarnation (row : ReplayRow) (id : Nat) :
 
 -- A replay that returns after deletion cannot recreate the peer row.
 theorem defer_does_not_resurrect (id : Nat) : deferReplay none id = none := by
+  -- A missing row takes the first branch of deferReplay, which returns no row.
   rfl
 
 -- A replay from an older install cannot change a replacement's status.
 theorem stale_defer_leaves_replacement (row : ReplayRow) (id : Nat)
     (h : row.incarnation ≠ id) : deferReplay (some row) id = some row := by
+  -- The row's incarnation differs from the install's, so the update branch is skipped.
   simp [deferReplay, h]
+
+-- A replay records a retry marker only while its own install is the peer's
+-- incarnation; the peerstore transaction compares the two with the write.
+-- `current` is the peer's incarnation at the write, or none once it is deleted.
+def markReplay (current : Option Nat) (installId : Nat) (marks : List Nat) : List Nat :=
+  -- The marker is written, tagged with the install, only for a matching incarnation.
+  if current = some installId then installId :: marks else marks
+
+-- A replay that started under an older install writes no marker for its replacement.
+theorem stale_mark_writes_nothing (current installId : Nat) (marks : List Nat)
+    (h : current ≠ installId) : markReplay (some current) installId marks = marks := by
+  -- The incarnations differ, so the comparison fails and the markers are unchanged.
+  simp [markReplay, h]
+
+-- A replay returning after the peer was deleted writes no marker either.
+theorem deleted_mark_writes_nothing (installId : Nat) (marks : List Nat) :
+    markReplay none installId marks = marks := by
+  -- No incarnation equals some install, so the markers are unchanged.
+  simp [markReplay]
+
+-- Every marker a replay writes names the incarnation it was written under.
+theorem mark_owned (current installId : Nat) (marks : List Nat)
+    (h : markReplay (some current) installId marks ≠ marks) : current = installId := by
+  -- If the incarnations differed the markers would be unchanged, contradicting h.
+  by_cases hc : current = installId
+  · exact hc
+  · exact absurd (stale_mark_writes_nothing current installId marks hc) h
 
 end ReplicatorInstall
