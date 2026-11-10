@@ -878,7 +878,8 @@ mod bound_caller {
 
 /// With node ACP on, the embedded server checks the routes that decide access
 /// at the edge, as `defradb start` does: a caller without `DocumentRead`
-/// cannot stream document updates.
+/// cannot stream document updates, even with collection management on, which
+/// lets the events filter find collections that have no document policy.
 #[test]
 fn embedded_events_require_node_permission() {
     edge::testing::edge()
@@ -891,7 +892,11 @@ fn embedded_events_require_node_permission() {
             let node = Node::builder()
                 .with_node_identity_did(&owner_did)
                 .with_node_acp_enabled()
-                .with_http(HttpConfig::with_listener(listener).unwrap())
+                .with_http(
+                    HttpConfig::with_listener(listener)
+                        .unwrap()
+                        .with_collection_management(true),
+                )
                 .build()
                 .await
                 .unwrap();
