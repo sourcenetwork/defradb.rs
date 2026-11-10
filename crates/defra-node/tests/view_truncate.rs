@@ -14,7 +14,9 @@ fn truncating_a_view_clears_its_cache_until_the_next_refresh() {
     workers::block_on(async {
         let node = Node::builder().build().await.unwrap();
         let context = RequestContext::ambient();
-        node.add_collection("type User { name: String }").await.unwrap();
+        node.add_collection("type User { name: String }")
+            .await
+            .unwrap();
         node.add_view("User { name }", "type UserView { name: String }")
             .await
             .unwrap();
