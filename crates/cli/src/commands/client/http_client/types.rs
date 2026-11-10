@@ -30,6 +30,15 @@ pub struct GraphQLResponse {
 #[derive(Debug, Deserialize)]
 pub struct GraphQLError {
     pub message: String,
+    /// The server's machine-readable error code, which Go's error mapping reads.
+    #[serde(default)]
+    pub extensions: Option<GraphQLErrorExtensions>,
+}
+
+/// GraphQL error extensions.
+#[derive(Debug, Deserialize)]
+pub struct GraphQLErrorExtensions {
+    pub code: String,
 }
 
 /// Transaction begin response (matches Go's `CreateTxResponse`).

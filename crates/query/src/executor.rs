@@ -38,6 +38,8 @@ pub const STORAGE_FULL_ERROR_CODE: &str = "STORAGE_FULL";
 /// A mutation input named the secondary side of a relation. The collection
 /// API reports it in Go's collection words rather than GraphQL's.
 pub const SECONDARY_RELATION_ERROR_CODE: &str = "SECONDARY_RELATION_INPUT";
+/// A subscription sent without `Accept: text/event-stream`; HTTP answers it with 406.
+pub const SUBSCRIPTION_NEEDS_SSE_ERROR_CODE: &str = "SUBSCRIPTION_NEEDS_SSE";
 
 /// Stable conflict message recognized by the remote DefraDB client.
 pub const TXN_CONFLICT_MESSAGE: &str = "transaction conflict. Please retry";
@@ -346,6 +348,7 @@ impl QueryResponseError {
         );
         let is_secondary_relation =
             matches!(&error, crate::error::QueryError::SecondaryRelationInput(_));
+        let needs_sse = matches!(&error, crate::error::QueryError::SubscriptionNeedsSse);
         let retry_input = match &error {
             crate::error::QueryError::NeedsInput(request) => Some(request.clone()),
             _ => None,
@@ -361,6 +364,8 @@ impl QueryResponseError {
             response_error.with_code(PERMISSION_DENIED_ERROR_CODE)
         } else if is_secondary_relation {
             response_error.with_code(SECONDARY_RELATION_ERROR_CODE)
+        } else if needs_sse {
+            response_error.with_code(SUBSCRIPTION_NEEDS_SSE_ERROR_CODE)
         } else {
             response_error
         };

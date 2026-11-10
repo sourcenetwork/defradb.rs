@@ -403,9 +403,7 @@ where
                             .await
                     }
                 }
-                ParsedOperation::Subscription { .. } => Err(QueryError::parse(
-                    crate::subscription::SUBSCRIPTION_NEEDS_SSE,
-                )),
+                ParsedOperation::Subscription { .. } => Err(QueryError::SubscriptionNeedsSse),
                 ParsedOperation::Introspection { query } => {
                     scoped_runner.execute_introspection(&query).await
                 }

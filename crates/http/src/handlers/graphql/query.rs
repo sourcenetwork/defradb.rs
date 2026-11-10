@@ -14,7 +14,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
-use query::executor::{QueryRequest, QueryResponse};
+use query::executor::{QueryRequest, QueryResponse, SUBSCRIPTION_NEEDS_SSE_ERROR_CODE};
 
 fn empty_string_as_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
@@ -26,7 +26,7 @@ where
 use query::subscription::{
     is_subscription_operation_with_limits, response_has_data, subscription_accepts_doc_id,
     subscription_doc_ids_with_limits, subscription_to_scoped_query_with_limits,
-    validate_subscription_with_limits, SUBSCRIPTION_NEEDS_SSE,
+    validate_subscription_with_limits,
 };
 use query::{parse_request_with_limits, ParsedOperation, QueryLimits};
 
@@ -351,7 +351,7 @@ pub async fn graphql_transactional(
         && response
             .errors
             .iter()
-            .any(|error| error.message.contains(SUBSCRIPTION_NEEDS_SSE))
+            .any(|error| error.code() == Some(SUBSCRIPTION_NEEDS_SSE_ERROR_CODE))
     {
         return Err(HttpError::NotAcceptable(
             "invalid subscription transport".to_string(),
