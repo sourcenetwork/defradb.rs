@@ -87,9 +87,11 @@ async fn build_persistent_p2p_node(data_path: PathBuf, secret_key_path: PathBuf)
 async fn wait_for_listen_addr(node: &Node) -> String {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
+        // Read as the node itself: with node ACP on, peer info is gated.
         let addrs = node
-            .p2p()
+            .p2p_system()
             .expect("P2P should be enabled")
+            .ops_for(&node.node_context())
             .listen_addresses()
             .await
             .expect("listen_addresses should succeed");
