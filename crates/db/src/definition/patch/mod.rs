@@ -30,8 +30,10 @@ impl<S: Store> crate::database::DB<S> {
     ///
     /// # Arguments
     ///
-    /// * `collection_name` - The name of the collection to patch (can also be version ID)
+    /// * `context` - The core params shared by most Defra functions
     /// * `patch` - JSON array of patch operations
+    /// * `migration` - Optional Lens migration to apply to documents transiting between the
+    ///    old and new versions
     ///
     /// # Patch Operations
     ///
@@ -42,10 +44,6 @@ impl<S: Store> crate::database::DB<S> {
     /// - `test` - Test that a value exists
     /// - `copy` - Copy a value from one location to another
     /// - `move` - Move a value from one location to another
-    ///
-    /// # Returns
-    ///
-    /// The updated collection version (with new version_id).
     ///
     /// # Errors
     ///
