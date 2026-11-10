@@ -648,8 +648,10 @@ fn http_inspection_routes_apply_the_embedded_gates() {
                 .build()
                 .await
                 .unwrap();
+            // Go reads the collection before it writes a document to it.
             for permission in [
                 HELD,
+                NodePermission::CollectionGet,
                 NodePermission::DocumentUpdate,
                 NodePermission::DacRelationAdd,
             ] {

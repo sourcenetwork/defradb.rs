@@ -6,6 +6,9 @@ use super::Node;
 
 const OWNER: &str = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
 const READER: &str = "did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR";
+/// Owns node ACP where a test needs one: never the reader, as the NAC owner
+/// holds `bypass-dac` and so reads past document ACP, as in Go.
+const NAC_OWNER: &str = "did:key:z6MkiMqcDKMWsVCTvyyAuMKBpBERre9BJ4SAYdwpYb39rB2i";
 const POLICY: &str = "name: Rows\nresources:\n  - name: rows\n    relations:\n      - name: reader\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n";
 
 fn actor(did: &str) -> RequestContext {
@@ -190,7 +193,7 @@ fn revoking_node_relationship_authority_conflicts_with_pending_grant() {
     workers::block_on(async {
         let (node, doc) = fixture().await;
         let nac = node.nac_manager().clone();
-        let nac_owner = Did::new(READER).unwrap();
+        let nac_owner = Did::new(NAC_OWNER).unwrap();
         let writer = Did::new(OWNER).unwrap();
         let manager = nac.clone();
         let nac_owner_copy = nac_owner.clone();
