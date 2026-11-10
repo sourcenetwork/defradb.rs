@@ -634,10 +634,19 @@ impl NodeBuilder {
             let server = server.with_index_arc(defra_http::index_adapter::IndexAdapter::new_arc(
                 Arc::clone(node.database()),
             ));
-            // With node ACP on, the routes that check permissions at the edge
-            // (events, P2P, transactions) check them, as `defradb start` does.
+            // With node ACP configured, the routes that check permissions at
+            // the edge (events, P2P, transactions) check them, as `defradb
+            // start` does. Configured covers a store a previous run enabled
+            // node ACP in: the adapter then follows its status, disabled and
+            // re-enabled included. A node never configured gets no adapter,
+            // so `/acp/node/enable` cannot hand an open node to its first
+            // caller.
             #[cfg(not(target_arch = "wasm32"))]
-            let server = match node_acp_enabled {
+            let nac_configured = node_acp_enabled
+                || db::NacManagerApi::status(&**node.nac_manager()).await
+                    != acp::nac::NacStatus::NotConfigured;
+            #[cfg(not(target_arch = "wasm32"))]
+            let server = match nac_configured {
                 true => server.with_nac_arc(Arc::new(
                     defra_http::nac_adapter::NacAdapter::new(Arc::clone(node.nac_manager()))
                         .placed_on(node.pool.as_ref()),
