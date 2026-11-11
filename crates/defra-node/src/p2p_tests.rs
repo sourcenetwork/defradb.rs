@@ -2637,6 +2637,11 @@ fn unbound_peer_info_reads_are_refused_only_with_node_acp() {
                 ops.sync_status().await,
                 Err(defra_p2p_adapter::P2PError::Unauthorized(_))
             ));
+            let own = own_transport_peer_id(ops).await;
+            assert!(matches!(
+                ops.peer_details(&own).await,
+                Err(defra_p2p_adapter::P2PError::Unauthorized(_))
+            ));
             let as_node = gated
                 .p2p_system()
                 .expect("p2p")
@@ -2644,6 +2649,7 @@ fn unbound_peer_info_reads_are_refused_only_with_node_acp() {
             assert!(as_node.listen_addresses().await.is_ok());
             assert!(as_node.shareable_address().await.is_ok());
             assert!(as_node.sync_status().await.is_ok());
+            assert!(as_node.peer_details(&own).await.is_ok());
             gated.shutdown().await.unwrap();
 
             let open = Node::builder()
@@ -2655,7 +2661,16 @@ fn unbound_peer_info_reads_are_refused_only_with_node_acp() {
             assert!(ops.listen_addresses().await.is_ok());
             assert!(ops.shareable_address().await.is_ok());
             assert!(ops.sync_status().await.is_ok());
+            let own = own_transport_peer_id(ops).await;
+            assert!(ops.peer_details(&own).await.is_ok());
             open.shutdown().await.unwrap();
         })
         .unwrap();
+}
+
+async fn own_transport_peer_id(
+    ops: &dyn defra_p2p_adapter::P2POperations,
+) -> defra_p2p_adapter::TransportPeerId {
+    let id = ops.local_peer_id().await.expect("local peer ID is ungated");
+    defra_p2p_adapter::TransportPeerId::new(id).expect("a canonical peer ID")
 }
