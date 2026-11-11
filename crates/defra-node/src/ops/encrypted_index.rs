@@ -1,12 +1,13 @@
 //! Encrypted (searchable-encryption) indexes as the caller `context` names,
-//! as Go's `AddEncryptedIndex`, `ListEncryptedIndexes` and
-//! `DeleteEncryptedIndex` keep them: on the collection's definition.
+//! as Go's `AddEncryptedIndex`, `ListEncryptedIndexes`,
+//! `ListAllEncryptedIndexes` and `DeleteEncryptedIndex` keep them: on the
+//! collection's definition.
 
 use acp::nac::NodePermission;
 use defra_core::RequestContext;
 use serde::Serialize;
 
-use super::handle::{Database, NodeOps};
+use super::handle::NodeOps;
 use crate::ops::request::transaction_error;
 use crate::{Error, Node, Result};
 
@@ -134,21 +135,31 @@ impl NodeOps {
         &self,
         context: &RequestContext,
     ) -> Result<Vec<(String, Vec<EncryptedIndexListing>)>> {
-        let (database, context) = (self.database.clone(), context.clone());
-        self.on_pool(move || async move {
-            database
-                .check_node_access_as(&context, NodePermission::EncryptedIndexListAll)
-                .await?;
-            let mut all = Vec::new();
-            for name in database.list_collections()? {
-                let indexes = indexes_of(&database, &name)?;
-                if !indexes.is_empty() {
-                    all.push((name, indexes));
-                }
-            }
-            Ok(all)
-        })
-        .await
+        let all = if context.txn().is_some() {
+            self.runner
+                .all_encrypted_indexes_in_txn_as(context)
+                .await
+                .map_err(transaction_error)?
+        } else {
+            let (database, context) = (self.database.clone(), context.clone());
+            self.on_pool(move || async move {
+                database
+                    .check_node_access_as(&context, NodePermission::EncryptedIndexListAll)
+                    .await?;
+                let txn = database.new_txn(true).await.map_err(Error::TxnCreate)?;
+                let all = database
+                    .all_encrypted_indexes_in(&txn)
+                    .await
+                    .map_err(definition_error);
+                let _ = txn.discard();
+                all
+            })
+            .await?
+        };
+        Ok(all
+            .into_iter()
+            .map(|(name, fields)| (name, fields.iter().map(|field| listing(field)).collect()))
+            .collect())
     }
 
     /// Delete the encrypted index on `field_name` of `collection`.
@@ -207,17 +218,4 @@ fn listing(field: &str) -> EncryptedIndexListing {
         field_name: field.to_owned(),
         index_type: "equality".to_owned(),
     }
-}
-
-fn indexes_of(database: &Database, collection: &str) -> Result<Vec<EncryptedIndexListing>> {
-    let col = database
-        .get_collection(collection)
-        .map_err(Error::CollectionLookupFailed)?
-        .ok_or_else(|| Error::CollectionMissing(collection.to_owned()))?;
-    Ok(col
-        .schema()
-        .encrypted_indexes
-        .iter()
-        .map(|index| listing(&index.field_name))
-        .collect())
 }

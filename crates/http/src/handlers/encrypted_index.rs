@@ -93,16 +93,21 @@ pub async fn go_list_encrypted_indexes(
     Ok(Json(indexes))
 }
 
-/// List all encrypted indexes across all collections (Go-compatible route).
+/// List all encrypted indexes across all collections (Go-compatible route),
+/// in the transaction the `x-defradb-tx` header names when given.
 ///
 /// GET /api/v0/encrypted-indexes
 pub async fn go_list_all_encrypted_indexes(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
 ) -> Result<Json<std::collections::BTreeMap<String, Vec<EncryptedIndexInfo>>>, HttpError> {
     require_permission(&state, &identity, NodePermission::EncryptedIndexListAll).await?;
 
-    let ops = bound(state.require_encrypted_index()?, &identity.context());
+    let ops = bound(
+        state.require_encrypted_index()?,
+        &call_context(&identity, &headers)?,
+    );
 
     let indexes = ops
         .list_encrypted_indexes(None)
