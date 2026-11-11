@@ -60,7 +60,7 @@ impl<S: Store> crate::database::DB<S> {
         self.check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
             .await?;
 
-        // todo - limiting the patch to a single collection is undesirable,
+        // TODO - limiting the patch to a single collection is undesirable,
         // rework this as part of https://github.com/sourcenetwork/defradb.rs/issues/2375
         let ops: serde_json::Value =
             serde_json::from_str(patch).map_err(|e| Error::InvalidPatch(e.to_string()))?;
