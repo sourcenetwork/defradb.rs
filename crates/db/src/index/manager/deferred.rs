@@ -87,6 +87,34 @@ impl IndexManager {
             .map_err(Error::Storage)
     }
 
+    /// A rebuild's write of one document after the clear. A drain may have
+    /// moved the entry since, so the keys the record names go first.
+    pub(crate) async fn replace(
+        &self,
+        datastore: &NamespaceView,
+        index: &IndexType,
+        doc_short_id: u64,
+        value_sets: &[Vec<NormalValue>],
+    ) -> Result<()> {
+        let record = index_position_key(
+            self.collection_short_id,
+            index.description().id,
+            doc_short_id,
+        );
+        let old = Self::recorded(
+            datastore
+                .get(&record)
+                .await
+                .map_err(Error::Storage)?
+                .as_deref(),
+        )?;
+        let new = Self::entry_keys(index, doc_short_id, value_sets)?;
+        for key in old.iter().filter(|key| !new.contains(key)) {
+            datastore.delete(key).await.map_err(Error::Storage)?;
+        }
+        self.place(datastore, index, doc_short_id, value_sets).await
+    }
+
     /// A backfill of one document: placed unless a drain or a create got
     /// there first. The record read decides, so a drain racing this write
     /// makes one of them run again.

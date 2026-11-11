@@ -30,7 +30,7 @@ impl IndexManager {
         for index in self.indexes.values() {
             let value_sets = self.extract_index_values(doc, index.description(), schema)?;
             if self.is_deferred(index.description(), schema) {
-                self.place(datastore, index, doc_short_id, &value_sets)
+                self.replace(datastore, index, doc_short_id, &value_sets)
                     .await?;
                 continue;
             }

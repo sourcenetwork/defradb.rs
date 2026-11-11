@@ -9,6 +9,8 @@
 
 mod cleanup;
 mod drain;
+#[cfg(test)]
+mod lifecycle_tests;
 mod overlay;
 mod record;
 mod requests;

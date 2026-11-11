@@ -188,7 +188,7 @@ async fn apply(
 }
 
 /// A log entry key ends in its position as 20 decimal digits.
-fn position(key: &[u8]) -> Result<u64> {
+pub(super) fn position(key: &[u8]) -> Result<u64> {
     key.len()
         .checked_sub(20)
         .and_then(|start| std::str::from_utf8(&key[start..]).ok())
@@ -204,7 +204,7 @@ fn doc_short_id(value: &[u8]) -> Result<u64> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use std::sync::Arc;
 
     use document::{DocID, Document, FieldOp, NormalValue};
@@ -219,9 +219,9 @@ mod tests {
     use super::*;
     use crate::AutoCommitMutator;
 
-    const NAME: &str = "Tallies";
+    pub(crate) const NAME: &str = "Tallies";
 
-    async fn indexed() -> (Arc<DB<RegolithStore>>, u32, u32) {
+    pub(crate) async fn indexed() -> (Arc<DB<RegolithStore>>, u32, u32) {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
         db.create_collection(CollectionVersion::new(
             NAME,
@@ -250,7 +250,7 @@ mod tests {
         (db, short_id, index.id)
     }
 
-    async fn create(db: &Arc<DB<RegolithStore>>, count: i64) -> DocID {
+    pub(crate) async fn create(db: &Arc<DB<RegolithStore>>, count: i64) -> DocID {
         let mut doc = Document::new(db.require_collection(NAME).unwrap().schema_arc());
         doc.set("count", NormalValue::Int(count)).unwrap();
         AutoCommitMutator::new(Arc::clone(db))
@@ -260,7 +260,7 @@ mod tests {
             .doc_id
     }
 
-    async fn increment(db: &Arc<DB<RegolithStore>>, id: &DocID) {
+    pub(crate) async fn increment(db: &Arc<DB<RegolithStore>>, id: &DocID) {
         let mut doc = Document::new(db.require_collection(NAME).unwrap().schema_arc());
         doc.set_id(id.clone());
         doc.edit("count", FieldOp::Increment(NormalValue::Int(1)))
