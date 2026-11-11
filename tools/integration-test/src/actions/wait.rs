@@ -68,7 +68,7 @@ impl Wait {
         let deadline = Instant::now() + ACTION_TIMEOUT;
         loop {
             let actions = listed_actions(state, self.common.node())?;
-            if lists(&actions, expected) {
+            if expected.listed_in(&actions) {
                 return Ok(());
             }
             if Instant::now() >= deadline {
@@ -79,15 +79,6 @@ impl Wait {
             std::thread::sleep(ACTION_POLL);
         }
     }
-}
-
-/// Whether the action list `actions` holds `expected`.
-pub(crate) fn lists(actions: &Value, expected: &ExpectedAction) -> bool {
-    actions.as_array().into_iter().flatten().any(|action| {
-        action["Action"] == json!(expected.action)
-            && action["CollectionID"] == json!(expected.collection_id)
-            && action["Status"] == json!(expected.status)
-    })
 }
 
 /// Node `node`'s action list as JSON, through the test's client.

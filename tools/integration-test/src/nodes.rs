@@ -15,11 +15,13 @@ use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 use regolith::sync::Atom;
 use tempfile::TempDir;
 
-use serde_json::Value;
-
-use crate::actions::shared::{ExpectedAction, KeyType};
+use crate::actions::shared::KeyType;
 use crate::client_type::{go_binary, network_edge, ClientType};
 use crate::go_node::{GoNode, GoOptions};
+
+mod action_events;
+
+pub use action_events::ActionEvents;
 
 /// How a node is started, kept so a restart starts it the same way.
 #[derive(Clone, Default)]
@@ -197,10 +199,7 @@ impl TestNode {
             .as_ref()
             .ok_or("action events of a node in another process")?;
         let subscription = node.event_bus().subscribe(&[EventName::ActionExecution]);
-        let actions = Arc::new(ActionEvents {
-            receiver: subscription.into_receiver(),
-            seen: Atom::new(Vec::new()),
-        });
+        let actions = Arc::new(ActionEvents::new(subscription.into_receiver()));
         self.actions.store(Some(actions.clone()));
         Ok(actions)
     }
@@ -397,44 +396,6 @@ fn field_links(bytes: &[u8]) -> RapidHashMap<String, String> {
         .filter(|link| link.name != "_head")
         .map(|link| (link.name, link.link.to_string()))
         .collect()
-}
-
-/// A node's collection action events since recording started.
-pub struct ActionEvents {
-    receiver: async_channel::Receiver<Message>,
-    /// Every action event received, each as its JSON.
-    seen: Atom<Vec<Value>>,
-}
-
-impl ActionEvents {
-    /// Wait until an event for `expected` has arrived since recording began,
-    /// up to `deadline`.
-    pub async fn arrived(
-        &self,
-        expected: &ExpectedAction,
-        deadline: Duration,
-    ) -> Result<(), String> {
-        let until = std::time::Instant::now() + deadline;
-        loop {
-            if crate::actions::wait::lists(&Value::Array(self.seen.load_clone()), expected) {
-                return Ok(());
-            }
-            let remaining = until.saturating_duration_since(std::time::Instant::now());
-            let message = match workers::timeout(remaining, self.receiver.recv()).await {
-                Ok(Ok(message)) => message,
-                Ok(Err(_)) => return Err("the node's action events closed".into()),
-                Err(_) => return Err(format!("no action event {expected:?} within {deadline:?}")),
-            };
-            if let Some(action) = message.as_action_execution() {
-                let action = serde_json::to_value(action).map_err(|e| e.to_string())?;
-                self.seen.rcu(|seen| {
-                    let mut next = seen.clone();
-                    next.push(action.clone());
-                    next
-                });
-            }
-        }
-    }
 }
 
 /// What a node's events said, read in order by the waits.

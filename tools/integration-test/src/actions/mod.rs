@@ -17,7 +17,7 @@ mod replicator;
 pub mod shared;
 mod txn;
 mod view;
-pub(crate) mod wait;
+mod wait;
 
 pub use backup::*;
 pub use block::*;
