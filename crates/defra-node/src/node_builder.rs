@@ -68,7 +68,7 @@ pub struct NodeBuilder {
     txn_ownership: db::TxnOwnership,
     document_projector: Option<Arc<dyn db::DocumentMutationProjector>>,
     /// How long an idle explicit transaction lives, and how often the sweep
-    /// looks; an HTTP config's own setting takes precedence.
+    /// looks; when set, it takes precedence over an HTTP config's setting.
     #[cfg(not(target_arch = "wasm32"))]
     transaction_idle: Option<(Duration, Duration)>,
 }
@@ -454,8 +454,9 @@ impl NodeBuilder {
     /// End explicit transactions no request has used for `idle`, checking
     /// every `sweep`, on a node with or without an HTTP server: the sweep is
     /// a job on a worker's deadline queue, read through the Env clock. A zero
-    /// `idle` keeps transactions until they are committed or discarded. An
-    /// HTTP config's idle timeout, when set, takes precedence.
+    /// `idle` keeps transactions until they are committed or discarded. This
+    /// setting takes precedence over an HTTP config's idle timeout, which
+    /// applies only when this is not called.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn with_transaction_idle_timeout(mut self, idle: Duration, sweep: Duration) -> Self {
         self.transaction_idle = Some((idle, sweep));
@@ -482,7 +483,7 @@ impl NodeBuilder {
         #[cfg(all(not(feature = "http"), not(target_arch = "wasm32")))]
         let http_idle: Option<(Duration, Duration)> = None;
         #[cfg(not(target_arch = "wasm32"))]
-        let transaction_cleanup = match http_idle.or(self.transaction_idle) {
+        let transaction_cleanup = match self.transaction_idle.or(http_idle) {
             Some((idle, _)) if idle.is_zero() => None,
             Some((_, sweep)) if sweep.is_zero() => return Err(Error::ZeroCleanupInterval),
             Some((idle, sweep)) => Some(crate::TransactionCleanupConfig {
