@@ -51,3 +51,37 @@ fn an_encrypted_index_added_in_a_transaction_lands_on_its_commit() {
     })
     .unwrap();
 }
+
+/// Without a transaction header each add and delete commits on its own and
+/// keeps the indexes other requests committed before it.
+#[test]
+fn encrypted_index_changes_outside_a_transaction_keep_each_other() {
+    workers::block_on(async {
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        let context = RequestContext::default();
+        db.add_collection(&context, "type User { name: String age: Int }")
+            .await
+            .unwrap();
+        let registry = Arc::new(DbTransactionRegistry::new(Arc::clone(&db)));
+        let runner = Arc::new(QueryRunner::with_arc_registry_and_provider(
+            LensedAutoCommitFetcher::new(Arc::clone(&db)),
+            DbCollectionProvider::new_arc(Arc::clone(&db)),
+            registry,
+        ));
+        let adapter = EncryptedIndexAdapter::new_arc(Arc::clone(&db), runner);
+
+        adapter.add_encrypted_index("User", "name").await.unwrap();
+        adapter.add_encrypted_index("User", "age").await.unwrap();
+        assert_eq!(encrypted_on_user(&db), 2, "the second add keeps the first");
+        assert!(adapter.add_encrypted_index("User", "name").await.is_err());
+
+        adapter
+            .delete_encrypted_index("User", "name")
+            .await
+            .unwrap();
+        let listed = adapter.list_encrypted_indexes(Some("User")).await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].field_name, "age");
+    })
+    .unwrap();
+}
