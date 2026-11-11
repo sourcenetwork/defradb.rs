@@ -837,12 +837,12 @@ impl<S: Store> DB<S> {
             .map_or_else(workers::default_pool, Ok)
     }
 
-    /// Returns true if the database has been closed.
     /// Done once the database starts to close.
     pub(crate) fn closing(&self) -> regolith::sync::EventWait<'_> {
         self.closing.wait()
     }
 
+    /// Returns true if the database has been closed.
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::SeqCst)
     }
