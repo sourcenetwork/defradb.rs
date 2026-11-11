@@ -106,12 +106,10 @@
   },
   {
     "id": "go.index.backfill.migration",
-    "verdict": "partial",
-    "rust_tests": [
-      "crates/db/tests/definition/migration_suite/paged_reindex.rs::a_rebuild_that_stops_part_way_stays_owed_and_resumes_after_its_last_page"
-    ],
-    "evidence": "paged_reindex.rs:57 asserts indexes answer no query mid-rebuild; :70-81 asserts the resume migrates only the remaining documents and every document is indexed exactly once at its migrated value",
-    "note": "Two collections reindexed concurrently (both listed in progress, both converge) and a migration advancing the epoch mid-build are not tested."
+    "verdict": "none",
+    "rust_tests": [],
+    "evidence": "",
+    "note": "Two collections reindexed concurrently (both listed in progress, both converge) and a migration advancing the epoch mid-build are not tested. See https://github.com/sourcenetwork/defradb.rs/issues/2803"
   },
   {
     "id": "go.index.backfill.txn",
