@@ -329,3 +329,16 @@ Two peers whose `@branchable` collection versions have diverged each create an e
 - **Scenarios:** ["searchable_encryption.patch-collection-modify-encrypted-index-should-error", "searchable_encryption.patch-collection-new-encrypted-index-should-error", "searchable_encryption.patch-collection-remove-encrypted-index-should-error"]
 
 A collection patch that adds, removes or modifies `/Users/EncryptedIndexes` fails with `collection encrypted indexes cannot be mutated`.
+
+# `defra.signature`: Block signing
+
+- **Parents:** ["defra"]
+
+Signing behaviour beyond what Go's integration suite checks.
+
+# `defra.signature.per_op_enable`: `enableSigning: true` signs on a node that does not sign
+
+- **Parents:** ["defra.signature"]
+- **Scenarios:** ["signature::per_op_signing::signature_with_per_op_signing_enabled_on_a_node_not_signing_signs_every_commit"]
+
+A node that holds a node identity but was started without signing (`--no-signing`) writes unsigned blocks by default. An add or update sent with `enableSigning: true` (the HTTP `enableSigning` query parameter, the CLI `--enable-signing` flag, or the FFI `enableSigning` option) signs its blocks anyway: every field block and the `_C` block of a new document carry a signature from the request identity's key, or the node identity's when the request has none, as Go's `EnableSigning` option does. A node with no key at all writes unsigned blocks under either choice.
