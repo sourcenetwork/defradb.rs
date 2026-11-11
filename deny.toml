@@ -88,6 +88,15 @@ ignore = [
     { id = "RUSTSEC-2026-0391", reason = "commonware-storage fork still on zstd 0.13; unreachable call; #2298" },
     { id = "RUSTSEC-2026-0398", reason = "commonware-storage fork still on zstd-safe 7; seekable off; #2298" },
     { id = "RUSTSEC-2026-0403", reason = "commonware-storage fork still on zstd-safe 7; no decompress_stream; #2298" },
+    # hickory-proto 0.25.2 comes only through libp2p 0.56's libp2p-dns; the fix
+    # (0.26.2) needs libp2p 0.57. 0487, 0489 and 0490 panic only when parsing
+    # the text (zone file) form, which a resolver never does. 0491 is reachable:
+    # a hostile DNS server answering a /dns multiaddr lookup can inflate
+    # allocations. Remove all four with the libp2p 0.57 bump (#2813).
+    { id = "RUSTSEC-2026-0487", reason = "hickory-proto 0.25 via libp2p 0.56; zone-file text parsing only; #2813" },
+    { id = "RUSTSEC-2026-0489", reason = "hickory-proto 0.25 via libp2p 0.56; zone-file text parsing only; #2813" },
+    { id = "RUSTSEC-2026-0490", reason = "hickory-proto 0.25 via libp2p 0.56; zone-file lexer only; #2813" },
+    { id = "RUSTSEC-2026-0491", reason = "hickory-proto 0.25 via libp2p 0.56; reachable via DNS answers; fix needs libp2p 0.57; #2813" },
 ]
 
 [licenses]
