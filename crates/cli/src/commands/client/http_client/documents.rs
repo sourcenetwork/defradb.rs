@@ -24,7 +24,7 @@ impl HttpClient {
             many => Value::Array(many.to_vec()).to_string(),
         };
         let path = format!("collections/{}", encode(collection));
-        let query = encryption(options);
+        let query = add_params(options);
         Ok(self
             .send(Method::POST, &path, &query, Some(body), txn)
             .await?
@@ -174,9 +174,9 @@ impl HttpClient {
         // GraphQL text carries no signing choice, and Go reads
         // `enableSigning` only on its document routes, so a save that makes
         // one goes as Go's own client sends it: read, then patch or add.
-        if let Some(enable) = options.enable_signing {
+        if options.enable_signing.is_some() {
             return self
-                .save_on_document_routes(txn, collection, doc_id, doc, options, enable)
+                .save_on_document_routes(txn, collection, doc_id, doc, options)
                 .await;
         }
         let run = |request: QueryRequest| async move {
@@ -206,7 +206,7 @@ impl HttpClient {
 
     /// Go's `SaveDocument` over its document routes in transaction `txn`:
     /// patch document `doc_id` when it exists, else add `doc`, both with
-    /// `enableSigning=enable`.
+    /// the write's `enableSigning`.
     async fn save_on_document_routes(
         &self,
         txn: &str,
@@ -214,7 +214,6 @@ impl HttpClient {
         doc_id: &str,
         doc: &Value,
         options: &AddOptions,
-        enable: bool,
     ) -> Result<String> {
         let path = format!(
             "collections/{}/document/{}",
@@ -224,7 +223,7 @@ impl HttpClient {
         let shown = [("show_deleted", "true".to_owned())];
         match self.send(Method::GET, &path, &shown, None, Some(txn)).await {
             Ok(_) => {
-                let signing = [("enableSigning", enable.to_string())];
+                let signing: Vec<_> = signing_param(options).into_iter().collect();
                 self.send(
                     Method::PATCH,
                     &path,
@@ -251,11 +250,8 @@ fn not_found() -> Error {
 }
 
 /// Go's `encrypt`, `encryptFields` and `enableSigning` query parameters.
-fn encryption(options: &AddOptions) -> Vec<(&'static str, String)> {
-    let mut query = Vec::new();
-    if let Some(enable) = options.enable_signing {
-        query.push(("enableSigning", enable.to_string()));
-    }
+fn add_params(options: &AddOptions) -> Vec<(&'static str, String)> {
+    let mut query: Vec<_> = signing_param(options).into_iter().collect();
     if options.encrypt_doc {
         query.push(("encrypt", "true".to_owned()));
     }
@@ -263,6 +259,13 @@ fn encryption(options: &AddOptions) -> Vec<(&'static str, String)> {
         query.push(("encryptFields", options.encrypted_fields.join(",")));
     }
     query
+}
+
+/// Go's `enableSigning` query parameter, when the write makes a choice.
+fn signing_param(options: &AddOptions) -> Option<(&'static str, String)> {
+    options
+        .enable_signing
+        .map(|enable| ("enableSigning", enable.to_string()))
 }
 
 /// The filter as Go's wire takes it: an object or its source text. A filter
