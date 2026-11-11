@@ -38,16 +38,33 @@ impl Op for Benchmark {
     /// Go's `benchmarkAction`: run each query `repetitions` times through the
     /// test's client, and pass when the base case takes more than `factor`
     /// times the optimized one.
+    ///
+    /// Go compares the two totals. Here the cases alternate after one untimed
+    /// warm-up each, and their medians are compared: a burst of load from the
+    /// tests running alongside lands on both cases, and one slow repetition
+    /// cannot decide the result.
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let (repetitions, factor) = self.settings()?;
-        let base = self.timed(state, &self.base_query, repetitions)?;
-        let optimized = self.timed(state, &self.optimized_query, repetitions)?;
+        self.query_once(state, &self.base_query)?;
+        self.query_once(state, &self.optimized_query)?;
+        let mut base = Vec::new();
+        let mut optimized = Vec::new();
+        for _ in 0..repetitions {
+            base.push(self.timed(state, &self.base_query)?);
+            optimized.push(self.timed(state, &self.optimized_query)?);
+        }
         Ok(json!({
-            "passed": base.as_secs_f64() / factor > optimized.as_secs_f64(),
+            "passed": median(base).as_secs_f64() / factor > median(optimized).as_secs_f64(),
             "repetitions": repetitions,
             "factor": self.expected_settings()["factor"],
         }))
     }
+}
+
+/// The middle of `times`, the upper of the two middles for an even count.
+fn median(mut times: Vec<Duration>) -> Duration {
+    times.sort_unstable();
+    times.get(times.len() / 2).copied().unwrap_or_default()
 }
 
 impl Benchmark {
@@ -59,7 +76,9 @@ impl Benchmark {
             settings["repetitions"].as_u64(),
             settings["factor"].as_f64(),
         ) {
-            (Some(repetitions), Some(factor)) if factor > 0.0 => Ok((repetitions, factor)),
+            (Some(repetitions), Some(factor)) if repetitions > 0 && factor > 0.0 => {
+                Ok((repetitions, factor))
+            }
             _ => Err(Failure::operation(format!(
                 "Benchmark needs repetitions and factor in its expected data, got {settings}"
             ))),
@@ -72,13 +91,11 @@ impl Benchmark {
             .unwrap_or(&self.expected_data)
     }
 
-    /// How long `query` takes to run `repetitions` times; an error response
-    /// fails the benchmark.
-    fn timed(&self, state: &State, query: &str, repetitions: u64) -> Result<Duration, Failure> {
+    /// How long one run of `query` takes; an error response fails the
+    /// benchmark.
+    fn timed(&self, state: &State, query: &str) -> Result<Duration, Failure> {
         let started = Instant::now();
-        for _ in 0..repetitions {
-            self.query_once(state, query)?;
-        }
+        self.query_once(state, query)?;
         Ok(started.elapsed())
     }
 
