@@ -49,9 +49,11 @@ impl IndexManager {
         let (mut hidden, mut added) = (Vec::new(), Vec::new());
         for doc in owed {
             let record = index_position_key(self.collection_short_id, desc.id, doc);
+            // It only says which stored keys to hide at this snapshot, so a
+            // drain that moves it later is no conflict.
             hidden.extend(Self::recorded(
                 datastore
-                    .get(&record)
+                    .get_parts(&record, &[])
                     .await
                     .map_err(Error::Storage)?
                     .as_deref(),

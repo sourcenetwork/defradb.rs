@@ -14,7 +14,9 @@
 \* Until a drain catches up, a read through the index skips the stored
 \* entries of owed documents (those still in the log) and checks those
 \* documents' live values instead. Inside an explicit transaction, the
-\* documents it appended itself count as owed too.
+\* documents it appended itself count as owed too. The transaction reads the
+\* position records at its snapshot without validating them, so a drain that
+\* moves a record after the read does not abort the transaction.
 \*
 \* A reindex (after a lens migration) clears the entries but keeps the
 \* records, then walks the documents one by one and writes each one's entry
@@ -32,7 +34,8 @@
 \* What must never happen: a read through the index returns a document whose
 \* value does not match, or misses one that does; the index holds an entry
 \* the position record does not name; work is left in the log forever; a
-\* drop truncates more than a page of positions in one transaction.
+\* drain aborts the explicit transaction; a drop truncates more than a page
+\* of positions in one transaction.
 \*
 \* Code it models:
 \*   crates/db/src/index/manager/deferred.rs  IndexManager::owe (the append),
@@ -41,7 +44,8 @@
 \*   crates/db/src/index/deferred/drain.rs    plan (snapshot), apply (position
 \*                                            record, live value), truncate
 \*   crates/db/src/index/manager/read.rs      IndexManager::read_index (owed docs,
-\*                                            own appends included)
+\*                                            own appends included, records read
+\*                                            unvalidated)
 \*   crates/storage/src/index/overlay.rs      the stored keys of owed docs hidden,
 \*                                            their live keys merged in order
 \*   crates/db/src/definition/migration/reindex/page.rs  clear (entries out, records kept)
@@ -56,6 +60,7 @@ CONSTANTS
   Overlay,     \* "On": reads check owed docs live | "Off": reads trust the stored entries
   OwnAppends,  \* "On": a transaction's own appends count as owed in its reads | "Off": they do not
   RecordRead,  \* "Validated": a drain's read of a position record aborts if another drain changed it | "Unvalidated"
+  TxRecordRead, \* "Unvalidated": the transaction's read of a position record never aborts it | "Validated": a drain that changes it does
   Truncate,    \* "Planned": a drain truncates through its planned head | "Head": through the head at commit
   Reindex,     \* "On": a reindex may run | "Off": it never does
   WalkRecord,  \* "Delete": the walk removes the entry the record names | "Overwrite": it only writes its own
@@ -69,6 +74,7 @@ CONSTANTS
 ASSUME Overlay \in {"On", "Off"}
 ASSUME OwnAppends \in {"On", "Off"}
 ASSUME RecordRead \in {"Validated", "Unvalidated"}
+ASSUME TxRecordRead \in {"Validated", "Unvalidated"}
 ASSUME Truncate \in {"Planned", "Head"}
 ASSUME Reindex \in {"On", "Off"}
 ASSUME WalkRecord \in {"Delete", "Overwrite"}
@@ -102,6 +108,8 @@ VARIABLES
   sAlive,   \* which documents existed in the transaction's snapshot
   sIndex,   \* the stored entries in the transaction's snapshot
   sOwed,    \* the owed documents in the transaction's snapshot
+  sRec,     \* the position records in the transaction's snapshot
+  txAborted, \* whether a drain ever aborted the transaction
   steps,    \* writes so far
   crashed,  \* whether the one crash happened
   rx,       \* the reindex: "None" (not begun), "Cleared" (entries gone, walk under way) or "Done"
@@ -113,7 +121,7 @@ VARIABLES
   biggest   \* the most log positions one drop page truncated
 
 vars == <<value, alive, index, rec, log, trunc, dpc, dP, dDocs, dRec, dLive,
-          txOpen, txd, txApp, sValue, sAlive, sIndex, sOwed, steps, crashed,
+          txOpen, txd, txApp, sValue, sAlive, sIndex, sOwed, sRec, txAborted, steps, crashed,
           rx, walked, wpc, wRec, wLive, dropped, biggest>>
 
 \* The values the check can reach.
@@ -138,7 +146,8 @@ TxFound(q) ==
   LET owed == IF OwnAppends = "On"                                   \* the docs it treats as owed
               THEN sOwed \cup {txApp[i] : i \in 1..Len(txApp)}
               ELSE sOwed
-  IN {d \in Docs \ owed : <<d, q>> \in sIndex}                       \* stored entries of settled docs
+  IN {d \in Docs : <<d, q>> \in sIndex                               \* stored entries in the snapshot,
+                   /\ ~(d \in owed /\ sRec[d] = q)}                  \* less those the snapshot's records name for owed docs
      \cup {d \in owed : sAlive[d] /\ sValue[d] + txd[d] = q}         \* owed docs, checked live with own writes
 
 \* Every variable stays in its range.
@@ -150,6 +159,7 @@ TypeOK ==
   /\ trunc \in 0..Len(log)                            \* truncation stays inside the log
   /\ dpc \in [Drains -> {"Idle", "Planned", "Read"}]  \* drain steps
   /\ txOpen \in BOOLEAN                               \* the transaction is open or not
+  /\ txAborted \in BOOLEAN                            \* a drain aborted it or not
   /\ steps \in 0..MaxSteps                            \* bounded exploration
   /\ rx \in {"None", "Cleared", "Done"}               \* reindex stages
   /\ walked \subseteq Docs                            \* walked documents
@@ -175,7 +185,9 @@ Init ==
   /\ txApp = <<>>                              \* no own appends
   /\ sValue = value /\ sAlive = alive          \* empty snapshot, unused while closed
   /\ sIndex = index /\ sOwed = {}              \* empty snapshot, unused while closed
-  /\ steps = 0                                 \* nothing written
+  /\ sRec = rec                                \* empty snapshot, unused while closed
+  /\ txAborted = FALSE                         \* no abort yet
+  /\ steps = 0                                \* nothing written
   /\ crashed = FALSE                           \* no crash yet
   /\ rx = "None" /\ walked = {}                \* no reindex yet
   /\ wpc = [d \in Docs |-> "Idle"]             \* the walk has read nothing
@@ -185,7 +197,7 @@ Init ==
   /\ biggest = 0                               \* no drop page yet
 
 \* The transaction state, left as is.
-txVars == <<txOpen, txd, txApp, sValue, sAlive, sIndex, sOwed>>
+txVars == <<txOpen, txd, txApp, sValue, sAlive, sIndex, sOwed, sRec, txAborted>>
 \* The drains' state, left as is.
 drainVars == <<dpc, dP, dDocs, dRec, dLive>>
 \* The reindex and drop state, left as is.
@@ -221,7 +233,8 @@ TxBegin ==
   /\ txOpen' = TRUE                            \* it is open
   /\ sValue' = value /\ sAlive' = alive        \* the snapshot of the documents
   /\ sIndex' = index /\ sOwed' = Owed          \* the snapshot of the index and the log
-  /\ UNCHANGED <<txd, txApp, value, alive, index, rec, log, trunc, steps, crashed>> /\ UNCHANGED drainVars
+  /\ sRec' = rec                               \* the snapshot of the position records
+  /\ UNCHANGED <<txd, txApp, txAborted, value, alive, index, rec, log, trunc, steps, crashed>> /\ UNCHANGED drainVars
   /\ UNCHANGED lifeVars
 
 \* The transaction increments a document it sees.
@@ -232,16 +245,24 @@ TxIncrement(d) ==
   /\ txd' = [txd EXCEPT ![d] = @ + 1]          \* its own increment
   /\ txApp' = Append(txApp, d)                 \* its own append, without a position yet
   /\ steps' = steps + 1                        \* one more write
-  /\ UNCHANGED <<txOpen, sValue, sAlive, sIndex, sOwed, value, alive, index, rec, log, trunc, crashed>>
+  /\ UNCHANGED <<txOpen, sValue, sAlive, sIndex, sOwed, sRec, txAborted, value, alive, index, rec, log, trunc, crashed>>
   /\ UNCHANGED drainVars /\ UNCHANGED lifeVars
 
+\* A drain moved a record the transaction's reads used since its snapshot.
+RecordMoved == \E d \in sOwed : rec[d] /= sRec[d]
+
 \* The transaction commits: its increments land and its appends take positions.
+\* Had it validated the records it read, a drain that moved one aborts it instead.
 TxCommit ==
   /\ txOpen                                    \* inside the transaction
-  /\ value' = [d \in Docs |-> value[d] + txd[d]]   \* blind increments merge on top
-  /\ log' = log \o txApp                       \* its appends take the next positions
+  /\ IF TxRecordRead = "Validated" /\ RecordMoved
+     THEN /\ txAborted' = TRUE                 \* the conflict goes back to the client
+          /\ UNCHANGED <<value, log>>          \* nothing it wrote lands
+     ELSE /\ value' = [d \in Docs |-> value[d] + txd[d]]   \* blind increments merge on top
+          /\ log' = log \o txApp               \* its appends take the next positions
+          /\ UNCHANGED txAborted
   /\ txOpen' = FALSE /\ txd' = [d \in Docs |-> 0] /\ txApp' = <<>>   \* closed
-  /\ UNCHANGED <<sValue, sAlive, sIndex, sOwed, alive, index, rec, trunc, steps, crashed>>
+  /\ UNCHANGED <<sValue, sAlive, sIndex, sOwed, sRec, alive, index, rec, trunc, steps, crashed>>
   /\ UNCHANGED drainVars /\ UNCHANGED lifeVars
 
 \* A drain plans on a snapshot: a head P (any, as a cap may stop short) and the docs up to it.
@@ -288,7 +309,7 @@ Crash ==
   /\ dpc' = [r \in Drains |-> "Idle"]          \* drains in flight are gone
   /\ txOpen' = FALSE /\ txd' = [d \in Docs |-> 0] /\ txApp' = <<>>   \* the open transaction is gone
   /\ wpc' = [d \in Docs |-> "Idle"]            \* a walk in flight is gone; the reindex resumes from what it wrote
-  /\ UNCHANGED <<dP, dDocs, dRec, dLive, sValue, sAlive, sIndex, sOwed, value, alive, index, rec, log, trunc, steps>>
+  /\ UNCHANGED <<dP, dDocs, dRec, dLive, sValue, sAlive, sIndex, sOwed, sRec, txAborted, value, alive, index, rec, log, trunc, steps>>
   /\ UNCHANGED <<rx, walked, wRec, wLive, dropped, biggest>>
 
 \* The reindex's clear: every entry goes, the records stay.
@@ -386,6 +407,9 @@ INV_RecordMatchesIndex ==
 \* No entry is an orphan: each one is the one its document's record names.
 INV_NoOrphanEntry ==
   \A d \in Docs : {v \in Values : <<d, v>> \in index} \subseteq IF rec[d] = None THEN {} ELSE {rec[d]}
+
+\* A drain never aborts the explicit transaction that read through the index.
+INV_TxNotAbortedByDrain == ~txAborted
 
 \* Once nothing is owed, the stored entries are exactly the live values (on a live index, outside a reindex).
 INV_SettledIndexExact ==

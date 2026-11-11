@@ -563,6 +563,7 @@ RUNS=(
   "MC_DeferredIndex_Red_NoOwnAppends.cfg DeferredIndex.tla RED" # a transaction misses its own increments (INV_TxReadExact)
   "MC_DeferredIndex_Red_UnvalidatedRecord.cfg DeferredIndex.tla RED" # two drains leave an entry behind (INV_RecordMatchesIndex)
   "MC_DeferredIndex_Red_TruncateHead.cfg DeferredIndex.tla RED" # a drain drops work appended after its plan (INV_ReadExact)
+  "MC_DeferredIndex_Red_ValidatedTxRecord.cfg DeferredIndex.tla RED" # a drain aborts a transaction that read through the index (INV_TxNotAbortedByDrain)
   "MC_DeferredIndex_Green_Reindex.cfg DeferredIndex.tla GREEN" # a reindex walk racing drains leaves no orphan entry
   "MC_DeferredIndex_Red_WalkOverwrite.cfg DeferredIndex.tla RED" # the walk overwrites the record and keeps the drain's entry (INV_NoOrphanEntry)
   "MC_DeferredIndex_Red_WalkUnvalidated.cfg DeferredIndex.tla RED" # the walk acts on a record a drain moved (INV_NoOrphanEntry)

@@ -399,3 +399,67 @@ fn a_unique_index_on_a_counter_keeps_one_winner() {
     })
     .unwrap();
 }
+
+#[test]
+fn a_drain_does_not_abort_a_transaction_that_read_through_the_index() {
+    use db::txn::registry::DbTransactionRegistry;
+    use query::planner::index_selection::{IndexScanParams, IndexScanType};
+    use query::txn::TransactionRegistry;
+
+    workers::block_on(async {
+        let node = Node::open().await;
+        let a = node.create("a", 1).await;
+        let b = node.create("b", 7).await;
+        node.increment(&a, 4).await;
+        let registry = DbTransactionRegistry::new(Arc::clone(&node.db));
+        let handle = registry.begin(false).await.unwrap();
+        let found = crate::common::owned::in_txn(&registry, &handle, move |ctx| {
+            Box::pin(async move {
+                let at_five = IndexScanParams {
+                    index_name: "by_count".to_string(),
+                    scan_type: IndexScanType::ExactMatch {
+                        values: vec![NormalValue::Int(5)],
+                    },
+                    limit: None,
+                    offset: 0,
+                    value_filter: None,
+                    cursor_seek: None,
+                };
+                ctx.doc_fetcher()
+                    .get_by_index_scan(COLLECTION, &at_five)
+                    .await
+                    .unwrap()
+                    .doc_ids()
+                    .len()
+            })
+        })
+        .await;
+        assert_eq!(found, 1, "the owed document is found at its live value");
+
+        node.drain().await;
+        assert_eq!(node.stored_at(5).await, 1, "the drain moved the record");
+
+        let schema = node.db.require_collection(COLLECTION).unwrap().schema_arc();
+        crate::common::owned::in_txn(&registry, &handle, move |ctx| {
+            Box::pin(async move {
+                let mut doc = document::Document::new(schema);
+                doc.set_id(document::DocID::from_string(&b).unwrap());
+                doc.set("name", NormalValue::String("renamed".to_string()))
+                    .unwrap();
+                let mut changed = rapidhash::RapidHashSet::default();
+                changed.insert("name".to_string());
+                ctx.doc_mutator()
+                    .unwrap()
+                    .update(COLLECTION, doc, changed)
+                    .await
+                    .unwrap();
+            })
+        })
+        .await;
+        registry
+            .commit(&handle)
+            .await
+            .expect("the record the read used decides nothing, so the drain is no conflict");
+    })
+    .unwrap();
+}
