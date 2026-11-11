@@ -835,7 +835,6 @@
     "id": "go.collection_version.migrations.query.incremental",
     "verdict": "partial",
     "rust_tests": [
-      "crates/db/tests/definition/migration_suite.rs::migration_context_cache_invalidates_when_graph_changes_without_version_change",
       "tools/integration-test/tests/legacy/p2p_iroh/schema/schema_migration.rs::replicated_doc_much_older_schema_version"
     ],
     "evidence": "crates/db/tests/definition/migration_suite.rs:642-650 asserts that after registering v2->v3 then the earlier edge v1->v2, a read returns values from both edges (stub transform store); tools/integration-test/tests/legacy/p2p_iroh/schema/schema_migration.rs:524-525 asserts a two-edge chain",
@@ -915,7 +914,7 @@
       "tools/integration-test/tests/testo/collection_version/migrations/query/with_restart.rs::collection_migration_query_with_restart_and_migration_before_patch_collection"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
-    "note": "lens_persistence.rs::rust_lens_survives_restart restarts with no migration configured (asserts only an empty lens list and doc count); migration_suite.rs:524-530 reopens but checks only stored, un-migrated data. Searched restart_node/open_from_arc together with lens_set/set_migration."
+    "note": "lens_persistence.rs::rust_lens_survives_restart restarts with no migration configured (asserts only an empty lens list and doc count); migration_suite.rs:524-530 reopens but checks only stored, un-migrated data. Searched restart_node/open_from_arc."
   },
   {
     "id": "go.collection_version.migrations.query.txn",
