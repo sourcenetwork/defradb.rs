@@ -75,9 +75,20 @@ impl<S: Store> DB<S> {
             .define_index(collection_name, name, fields, kind)
             .await?;
         let db = Arc::clone(self);
+        let collection = collection_name.to_owned();
+        let index_id = index.id;
         spawn_task(self.pool(), "db::index_backfill", async move {
-            // The outcome is on the index's action record.
-            let _ = db.backfill_index(lease, plan).await;
+            // The build's outcome is on the index's action record. An error
+            // here comes from settling that record or reloading the cache
+            // after it, and nothing else reports it.
+            if let Err(error) = db.backfill_index(lease, plan).await {
+                tracing::error!(
+                    collection = %collection,
+                    index_id,
+                    %error,
+                    "index backfill could not be settled"
+                );
+            }
         });
         Ok(index)
     }
