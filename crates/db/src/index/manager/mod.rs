@@ -20,10 +20,12 @@ use storage::index::FullTextIndex;
 
 mod deferred;
 mod index_type;
+mod live;
 mod read;
 mod rebuild;
 mod unique;
 pub use index_type::IndexType;
+pub(crate) use live::LiveDocs;
 pub use read::IndexRead;
 use storage::keys::IndexIDSequenceKey;
 

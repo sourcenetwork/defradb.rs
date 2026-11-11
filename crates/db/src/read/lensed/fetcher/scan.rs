@@ -21,7 +21,7 @@ impl<S: Store + 'static> LensedDocFetcher<S> {
         params: &IndexScanParams,
         cap: u64,
     ) -> query::error::Result<Option<u64>> {
-        let (collection, datastore, _) =
+        let (collection, datastore, systemstore) =
             get_collection_with_lazy_load(&*self.shared_txn()?, collection_name).await?;
         let index_manager = IndexManager::from_indexes(
             collection.resolved_root_id(),
@@ -31,7 +31,13 @@ impl<S: Store + 'static> LensedDocFetcher<S> {
         )
         .map_err(|e| query::error::QueryError::execution(format!("index manager error: {}", e)))?;
         let Some(index) = index_manager
-            .read_index(&datastore, &collection, &params.index_name)
+            .read_index(
+                &datastore,
+                &systemstore,
+                Some(&self.lens_store),
+                &collection,
+                &params.index_name,
+            )
             .await
             .map_err(|e| query::error::QueryError::execution(e.to_string()))?
         else {
@@ -79,7 +85,13 @@ impl<S: Store + 'static> LensedDocFetcher<S> {
         })?;
 
         let index = index_manager
-            .read_index(&datastore, &collection, &params.index_name)
+            .read_index(
+                &datastore,
+                &systemstore,
+                Some(&self.lens_store),
+                &collection,
+                &params.index_name,
+            )
             .await
             .map_err(|e| query::error::QueryError::execution(e.to_string()))?
             .ok_or_else(|| {

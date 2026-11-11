@@ -1,14 +1,18 @@
 //! Reading through an index, with a deferred index's owed documents checked
 //! live (`crate::index::deferred`).
 
+use std::sync::Arc;
+
 use datastore::NamespaceView;
 use document::NormalValue;
+use lens::TransformStore;
 use rapidhash::{HashSetExt, RapidHashSet};
 use schema::IndexDescription;
 use storage::corekv::{IterOptions, MaybeSend, Reader};
 use storage::index::{Bound, ExactMatchIterator, IndexOverlay, OverlayReader, RangeIterator};
 use storage::keys::{index_pending_log, index_position_key, IndexDataStoreKey};
 
+use super::live::LiveDocs;
 use super::{IndexManager, IndexType};
 use crate::collection::Collection;
 use crate::index::error::{Error, Result};
@@ -22,10 +26,13 @@ pub struct IndexRead<'a> {
 impl IndexManager {
     /// The index `name` as a read on `datastore` sees it: a deferred index
     /// hides the stored entries of the documents it still owes and shows their
-    /// live entries instead, including those this transaction owes.
+    /// live entries instead, including those this transaction owes. Owed
+    /// documents are read through `lens_store`, as a backfill indexes them.
     pub async fn read_index(
         &self,
         datastore: &NamespaceView,
+        systemstore: &NamespaceView,
+        lens_store: Option<&Arc<dyn TransformStore>>,
         collection: &Collection,
         name: &str,
     ) -> Result<Option<IndexRead<'_>>> {
@@ -47,6 +54,7 @@ impl IndexManager {
             }));
         }
         let (mut hidden, mut added) = (Vec::new(), Vec::new());
+        let mut live_docs = LiveDocs::new(collection, datastore, systemstore, lens_store);
         for doc in owed {
             let record = index_position_key(self.collection_short_id, desc.id, doc);
             // It only says which stored keys to hide at this snapshot, so a
@@ -58,11 +66,7 @@ impl IndexManager {
                     .map_err(Error::Storage)?
                     .as_deref(),
             )?);
-            let live = collection
-                .read_hint(datastore, doc)
-                .await
-                .map_err(|e| Error::Other(e.to_string()))?;
-            if let Some(live) = live {
+            if let Some(live) = live_docs.get(doc).await? {
                 let values = self.extract_index_values(&live, desc, collection.schema())?;
                 added.extend(Self::entry_keys(index, doc, &values)?);
             }

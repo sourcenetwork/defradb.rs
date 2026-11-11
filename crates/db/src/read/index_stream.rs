@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use datastore::NamespaceView;
 use document::Document;
+use lens::TransformStore;
 use query::doc_stream::DocStream;
 use query::error::{QueryError, Result};
 use query::planner::index_selection::{IndexScanParams, IndexScanType};
@@ -36,6 +39,7 @@ impl IndexDocStream {
         collection: Collection,
         datastore: NamespaceView,
         systemstore: NamespaceView,
+        lens_store: &Arc<dyn TransformStore>,
         params: &IndexScanParams,
         show_deleted: bool,
     ) -> Result<Self> {
@@ -47,7 +51,13 @@ impl IndexDocStream {
         )
         .map_err(|e| QueryError::execution(e.to_string()))?;
         let index = manager
-            .read_index(&datastore, &collection, &params.index_name)
+            .read_index(
+                &datastore,
+                &systemstore,
+                Some(lens_store),
+                &collection,
+                &params.index_name,
+            )
             .await
             .map_err(|e| QueryError::execution(e.to_string()))?
             .ok_or_else(|| {

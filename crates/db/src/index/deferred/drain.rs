@@ -8,6 +8,7 @@ use storage::keys::{index_pending_log, index_position_key};
 use crate::collection::loader::load_collection_from_systemstore;
 use crate::database::DB;
 use crate::index::error::{Error, Result};
+use crate::index::manager::LiveDocs;
 use crate::index::IndexManager;
 
 /// The most log entries one drain transaction takes, so a backlog commits in
@@ -38,13 +39,15 @@ where
         return Ok(false);
     };
     let (name, plan) = (name.to_string(), Arc::new(plan));
+    let lens_store = Arc::clone(db.lens_store());
     datastore::transact(
         db.store().as_ref(),
         db.options().retry_options(),
         move |txn| {
             let (name, plan) = (name.clone(), Arc::clone(&plan));
+            let lens_store = Arc::clone(&lens_store);
             Box::pin(async move {
-                apply(txn, &name, short_id, index_id, &plan)
+                apply(txn, &name, short_id, index_id, &plan, &lens_store)
                     .await
                     .map_err(|error| RetryAttemptError::Abort(Box::new(error)))?;
                 Ok(Box::new(()) as RetryAttemptValue)
@@ -111,12 +114,14 @@ async fn apply(
     short_id: u32,
     index_id: u32,
     plan: &Plan,
+    lens_store: &Arc<dyn lens::TransformStore>,
 ) -> Result<()> {
     let datastore = txn.datastore();
+    let systemstore = txn.systemstore();
     let log = index_pending_log(short_id, index_id);
     // Read inside the transaction, so a drop of the index commits first or
     // makes this run again and find it gone.
-    let collection = load_collection_from_systemstore(&txn.systemstore(), name)
+    let collection = load_collection_from_systemstore(&systemstore, name)
         .await
         .map_err(|e| Error::Other(e.to_string()))?;
     let desc = collection.as_ref().and_then(|collection| {
@@ -142,6 +147,7 @@ async fn apply(
     let index = manager
         .get_index(&desc.name)
         .ok_or_else(|| Error::Other(format!("index '{}' not found", desc.name)))?;
+    let mut live_docs = LiveDocs::new(&collection, &datastore, &systemstore, Some(lens_store));
     for &doc in &plan.docs {
         let record = index_position_key(short_id, index_id, doc);
         let old = IndexManager::recorded(
@@ -151,11 +157,7 @@ async fn apply(
                 .map_err(Error::Storage)?
                 .as_deref(),
         )?;
-        let new = match collection
-            .read_hint(&datastore, doc)
-            .await
-            .map_err(|e| Error::Other(e.to_string()))?
-        {
+        let new = match live_docs.get(doc).await? {
             Some(live) => IndexManager::entry_keys(
                 index,
                 doc,
@@ -275,13 +277,15 @@ pub(super) mod tests {
 
     async fn apply_committed(db: &DB<RegolithStore>, short_id: u32, index_id: u32, plan: Plan) {
         let plan = Arc::new(plan);
+        let lens_store = Arc::clone(db.lens_store());
         datastore::transact(
             db.store().as_ref(),
             db.options().retry_options(),
             move |txn| {
                 let plan = Arc::clone(&plan);
+                let lens_store = Arc::clone(&lens_store);
                 Box::pin(async move {
-                    apply(txn, NAME, short_id, index_id, &plan)
+                    apply(txn, NAME, short_id, index_id, &plan, &lens_store)
                         .await
                         .map_err(|error| RetryAttemptError::Abort(Box::new(error)))?;
                     Ok(Box::new(()) as RetryAttemptValue)
@@ -324,14 +328,79 @@ pub(super) mod tests {
             let mut first = datastore::BasicTxn::new(db.store().as_ref(), 0, false)
                 .await
                 .unwrap();
-            apply(&mut first, NAME, short_id, index_id, &planned)
-                .await
-                .unwrap();
+            apply(
+                &mut first,
+                NAME,
+                short_id,
+                index_id,
+                &planned,
+                db.lens_store(),
+            )
+            .await
+            .unwrap();
             increment(&db, &id).await;
 
             while drain_index(&db, NAME, index_id).await.unwrap() {}
 
             assert!(first.commit().await.is_err());
+        })
+        .unwrap();
+    }
+
+    /// A document at an older schema version takes whole writes that leave
+    /// its version alone, as a peer's merge does. The drain reads its value
+    /// without validating it, so such a write is no conflict.
+    #[test]
+    fn a_write_to_an_old_version_document_does_not_abort_its_drain() {
+        workers::block_on(async {
+            let (db, short_id, index_id) = indexed().await;
+            let id = create(&db, 1).await;
+            increment(&db, &id).await;
+            db.patch_collection(
+                NAME,
+                r#"[{"op":"add","path":"/Tallies/Fields/-","value":{"Name":"note","Kind":"String"}}]"#,
+                None,
+            )
+            .await
+            .unwrap();
+            let planned = plan(&db, short_id, index_id).await.unwrap().unwrap();
+            let doc_short_id = planned.docs[0];
+            let mut first = datastore::BasicTxn::new(db.store().as_ref(), 0, false)
+                .await
+                .unwrap();
+            apply(
+                &mut first,
+                NAME,
+                short_id,
+                index_id,
+                &planned,
+                db.lens_store(),
+            )
+            .await
+            .unwrap();
+
+            let collection = db.require_collection(NAME).unwrap();
+            let write = datastore::BasicTxn::new(db.store().as_ref(), 0, false)
+                .await
+                .unwrap();
+            let datastore = write.datastore();
+            let mut doc = collection
+                .read_document_unvalidated(&datastore, doc_short_id)
+                .await
+                .unwrap()
+                .unwrap();
+            doc.set("count", NormalValue::Int(7)).unwrap();
+            collection
+                .put_document_value(&datastore, doc_short_id, &doc, false, None)
+                .await
+                .unwrap();
+            drop(datastore);
+            write.commit().await.unwrap();
+
+            first
+                .commit()
+                .await
+                .expect("the drain decided nothing on the document's value");
         })
         .unwrap();
     }

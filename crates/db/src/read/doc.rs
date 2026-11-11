@@ -313,7 +313,13 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
 
         // Get the index
         let index = index_manager
-            .read_index(&datastore, &collection, &params.index_name)
+            .read_index(
+                &datastore,
+                &systemstore,
+                None,
+                &collection,
+                &params.index_name,
+            )
             .await
             .map_err(|e| query::error::QueryError::execution(e.to_string()))?
             .ok_or_else(|| {
@@ -598,10 +604,16 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
         params: &IndexScanParams,
         cap: u64,
     ) -> query::error::Result<Option<u64>> {
-        let (collection, datastore, _, index_manager) =
+        let (collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
         let Some(index) = index_manager
-            .read_index(&datastore, &collection, &params.index_name)
+            .read_index(
+                &datastore,
+                &systemstore,
+                None,
+                &collection,
+                &params.index_name,
+            )
             .await
             .map_err(|e| query::error::QueryError::execution(e.to_string()))?
         else {

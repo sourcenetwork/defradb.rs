@@ -38,8 +38,17 @@ impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
         let datastore = txn.datastore().map_err(|e| {
             query::error::QueryError::execution(format!("failed to get datastore: {}", e))
         })?;
+        let systemstore = txn.systemstore().map_err(|e| {
+            query::error::QueryError::execution(format!("failed to get systemstore: {}", e))
+        })?;
         let count = match index_manager
-            .read_index(&datastore, &collection, &params.index_name)
+            .read_index(
+                &datastore,
+                &systemstore,
+                Some(self.db.lens_store()),
+                &collection,
+                &params.index_name,
+            )
             .await
         {
             Ok(Some(index)) => crate::read::index_count::count_index_scan(
@@ -106,7 +115,13 @@ impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
         })?;
 
         let index = index_manager
-            .read_index(&datastore, &collection, &params.index_name)
+            .read_index(
+                &datastore,
+                &systemstore,
+                Some(self.db.lens_store()),
+                &collection,
+                &params.index_name,
+            )
             .await
             .map_err(|e| query::error::QueryError::execution(e.to_string()))?
             .ok_or_else(|| {

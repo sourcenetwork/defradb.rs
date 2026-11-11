@@ -464,6 +464,166 @@ fn a_drain_does_not_abort_a_transaction_that_read_through_the_index() {
     .unwrap();
 }
 
+/// A lens that multiplies `count` by ten.
+#[derive(Default)]
+struct TimesTen {
+    ids: regolith::sync::HopscotchMap<lens::TransformId, (), rapidhash::fast::RandomState>,
+}
+
+#[async_trait::async_trait]
+impl lens::TransformStore for TimesTen {
+    fn new_isolated_store(&self) -> Arc<dyn lens::TransformStore> {
+        Arc::new(Self::default())
+    }
+
+    async fn add(&self, config: lens::LensConfig) -> lens::Result<lens::TransformId> {
+        let id = lens::TransformId::new(format!("times-ten-{}", config.lenses.len()));
+        self.ids.insert(id.clone(), ());
+        Ok(id)
+    }
+
+    async fn add_with_id(
+        &self,
+        id: lens::TransformId,
+        _config: lens::LensConfig,
+    ) -> lens::Result<()> {
+        self.ids.insert(id, ());
+        Ok(())
+    }
+
+    async fn list(&self) -> lens::Result<rapidhash::RapidHashMap<String, Vec<lens::LensModule>>> {
+        Ok(rapidhash::RapidHashMap::default())
+    }
+
+    fn transform(
+        &self,
+        id: &lens::TransformId,
+        docs: lens::LensDocStream,
+    ) -> lens::Result<lens::LensDocResultStream> {
+        use futures::StreamExt;
+        if !self.has_transform(id) {
+            return Err(lens::Error::TransformNotFound(id.to_string()));
+        }
+        Ok(Box::pin(docs.map(|mut doc| {
+            if let Some(count) = doc.get("count").and_then(serde_json::Value::as_i64) {
+                doc.insert("count".to_string(), serde_json::json!(count * 10));
+            }
+            Ok(doc)
+        })))
+    }
+
+    fn inverse(
+        &self,
+        id: &lens::TransformId,
+        docs: lens::LensDocStream,
+    ) -> lens::Result<lens::LensDocResultStream> {
+        self.transform(id, docs)
+    }
+
+    fn has_transform(&self, id: &lens::TransformId) -> bool {
+        self.ids.contains_key(id)
+    }
+
+    async fn remove(&self, id: &lens::TransformId) -> lens::Result<()> {
+        self.ids.remove(id);
+        Ok(())
+    }
+}
+
+/// Stores a document at the collection version `version`, owed to the index,
+/// as a peer's increment of a document no one migrated leaves it.
+async fn seed_owed_at(db: &Arc<DB<RegolithStore>>, version: &str, name: &str, count: i64) {
+    let collection = db.require_collection(COLLECTION).unwrap();
+    let manager = db::index::IndexManager::from_collection(
+        collection.resolved_root_id(),
+        collection.schema(),
+        &crdt::Crdts::default(),
+    )
+    .unwrap();
+    let mut doc = document::Document::new(collection.schema_arc());
+    doc.set_id(document::DocID::new_v0_from_seed(&format!("old-{name}")));
+    doc.set("name", NormalValue::String(name.to_string()))
+        .unwrap();
+    doc.set("count", NormalValue::Int(count)).unwrap();
+    doc.set_collection_version_id(version);
+    let txn = db.new_txn(false).await.unwrap();
+    let datastore = txn.datastore().unwrap();
+    let systemstore = txn.systemstore().unwrap();
+    let short_id = db::docid::map::next_doc_short_id(&systemstore)
+        .await
+        .unwrap();
+    db::docid::map::set_doc_id_mapping(
+        &systemstore,
+        collection.resolved_root_id(),
+        short_id,
+        &doc.id().unwrap().to_string(),
+    )
+    .await
+    .unwrap();
+    collection
+        .create_with_indexes(&datastore, &doc, short_id, &manager)
+        .await
+        .unwrap();
+    collection
+        .save_with_datastore(&datastore, &doc, short_id)
+        .await
+        .unwrap();
+    manager
+        .on_document_update(&datastore, &doc, &doc, short_id, collection.schema())
+        .await
+        .unwrap();
+    drop((datastore, systemstore));
+    txn.commit().await.unwrap();
+}
+
+#[test]
+fn a_drain_indexes_an_old_document_at_its_migrated_value() {
+    workers::block_on(async {
+        let mut raw = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+        raw.set_lens_store(Arc::new(TimesTen::default()));
+        let db = Arc::new(raw);
+        let node = Node::with(Arc::clone(&db), true).await;
+        let v1 = db
+            .require_collection(COLLECTION)
+            .unwrap()
+            .version_id()
+            .to_string();
+        let v2 = db
+            .patch_collection(
+                COLLECTION,
+                r#"[{"op":"add","path":"/Tallies/Fields/-","value":{"Name":"note","Kind":"String"}}]"#,
+                None,
+            )
+            .await
+            .unwrap()
+            .version_id;
+        db.set_migration(
+            lens::LensConfig::new(
+                &v1,
+                &v2,
+                lens::LensModule::from_bytes(b"\0asm\x01\0\0\0".to_vec()),
+            ),
+            None,
+        )
+        .await
+        .unwrap();
+        seed_owed_at(&db, &v1, "a", 1).await;
+
+        assert_eq!(
+            node.names("{count: {_eq: 10}}", "{count: ASC}").await,
+            ["a"],
+            "a read checks the owed document at its migrated value"
+        );
+        node.drain().await;
+        assert_eq!(
+            (node.stored_at(1).await, node.stored_at(10).await),
+            (0, 1),
+            "the drain indexes the value backfill would"
+        );
+    })
+    .unwrap();
+}
+
 #[test]
 fn a_truncate_leaves_no_record_and_no_log() {
     workers::block_on(async {

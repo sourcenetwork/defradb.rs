@@ -218,6 +218,7 @@ impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
                 .map_err(|e| query::error::QueryError::execution(e.to_string()))?,
             txn.systemstore()
                 .map_err(|e| query::error::QueryError::execution(e.to_string()))?,
+            self.db.lens_store(),
             params,
             show_deleted,
         )

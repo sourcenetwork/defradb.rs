@@ -91,21 +91,32 @@ impl Collection {
         Ok(Some(doc))
     }
 
-    /// The live document for a decision on none of its fields: only the
-    /// deletion marker and the stored version are validated.
+    /// The live document, tagged with its stored version, for a decision on
+    /// none of its fields: only the deletion marker and the version are
+    /// validated. A write to its fields owes the index again, so the value
+    /// decides nothing.
     pub(crate) async fn read_hint(
         &self,
         datastore: &NamespaceView,
         doc_short_id: u64,
     ) -> Result<Option<Document>> {
+        if datastore
+            .has(&self.deleted_key(doc_short_id))
+            .await
+            .map_err(Error::Storage)?
+        {
+            return Ok(None);
+        }
         let version = self.load_version(datastore, doc_short_id).await?;
-        self.fields_at(
-            datastore,
-            doc_short_id,
-            &rapidhash::RapidHashSet::default(),
-            version.as_deref(),
-        )
-        .await
+        let doc = self
+            .read_document_unvalidated(datastore, doc_short_id)
+            .await?;
+        Ok(doc.map(|mut doc| {
+            if let Some(version) = version {
+                doc.set_collection_version_id(version);
+            }
+            doc
+        }))
     }
 
     async fn fields_at(

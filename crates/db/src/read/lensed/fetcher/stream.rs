@@ -144,6 +144,7 @@ impl<S: Store + 'static> LensedDocFetcher<S> {
             collection.clone(),
             datastore.clone(),
             systemstore,
+            &self.lens_store,
             params,
             show_deleted,
         )
