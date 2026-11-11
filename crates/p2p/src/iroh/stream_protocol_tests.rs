@@ -15,6 +15,7 @@ use super::inbound_budget::peer_share_bytes;
 use super::{
     spawn_endpoint_with_protocols, InboundStream, IrohAllowlistConfig, IrohTransport, Priority,
     ProtocolRecvStream, ProtocolSendStream, StreamHandler, StreamProtocol, RESET_CANCELLED,
+    RESET_UNKNOWN_SERVICE,
 };
 use crate::error::{Error, Result};
 use crate::rt::time::timeout;
@@ -225,7 +226,10 @@ async fn an_unregistered_tag_is_still_refused() {
     })
     .await
     .expect("the stream is stopped");
-    assert!(matches!(refused, Error::StreamReset(2)), "{refused:?}");
+    assert!(
+        matches!(refused, Error::StreamReset(code) if code == u64::from(RESET_UNKNOWN_SERVICE)),
+        "{refused:?}"
+    );
 
     assert_eq!(ping(&client, &server).await.unwrap(), b"gnip");
     assert_eq!(&signals.started().await, client.local_peer_id());

@@ -55,6 +55,9 @@ pub use addr::{
 pub use config::{IrohAllowlistConfig, IrohDiscoveryConfig, IrohRelayModeConfig};
 pub use endpoint::{spawn_endpoint, spawn_endpoint_with_protocols};
 pub use endpoint_config::{AdmissionAuthority, IrohEndpointConfig};
+pub use endpoint_streams::{
+    RESET_BUSY, RESET_MESSAGE_TOO_LARGE, RESET_STALLED, RESET_UNKNOWN_SERVICE,
+};
 pub use inbound_budget::peer_share_bytes;
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 pub use iroh::SecretKey;

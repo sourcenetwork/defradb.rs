@@ -36,8 +36,19 @@ pub const MAX_STREAM_DEADLINE: Duration = Duration::from_secs(24 * 60 * 60);
 /// What follows on the stream is up to the protocol.
 ///
 /// Put a version in the tag (`/myapp/pull/1`): a peer that does not serve a
-/// tag resets the stream with code 2, so a new version is a new tag served
-/// beside the old one.
+/// tag stops the stream with [`RESET_UNKNOWN_SERVICE`], so a new version is a
+/// new tag served beside the old one. A peer with no room for the request
+/// stops it with [`RESET_BUSY`], a request above the peer's limit for the tag
+/// with [`RESET_MESSAGE_TOO_LARGE`], a request whose body stops arriving with
+/// [`RESET_STALLED`], and a stream cut short is reset with
+/// [`RESET_CANCELLED`]. An opener sees each as [`Error::StreamReset`] with
+/// that code.
+///
+/// [`RESET_UNKNOWN_SERVICE`]: super::RESET_UNKNOWN_SERVICE
+/// [`RESET_BUSY`]: super::RESET_BUSY
+/// [`RESET_MESSAGE_TOO_LARGE`]: super::RESET_MESSAGE_TOO_LARGE
+/// [`RESET_STALLED`]: super::RESET_STALLED
+/// [`RESET_CANCELLED`]: super::RESET_CANCELLED
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StreamProtocol {
     /// Names the protocol in a stream's first frame: 1 to 64 bytes, not

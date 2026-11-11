@@ -42,12 +42,20 @@ pub(super) fn closed_by_refusal(connection: &iroh::endpoint::Connection) -> bool
     )
 }
 
-/// QUIC stream error codes sent when a stream is refused before its body is
-/// read, or reset because the body stopped arriving.
-const RESET_UNKNOWN_SERVICE: u32 = 2;
-pub(super) const RESET_MESSAGE_TOO_LARGE: u32 = 3;
-const RESET_BUSY: u32 = 4;
-pub(super) const RESET_STALLED: u32 = 5;
+/// QUIC code a stream is stopped with when no protocol serves its tag, Defra's
+/// or an embedder's. An opener sees it as
+/// [`Error::StreamReset`](crate::error::Error::StreamReset).
+pub const RESET_UNKNOWN_SERVICE: u32 = 2;
+/// QUIC code a stream is stopped with when its message is larger than its
+/// tag accepts.
+pub const RESET_MESSAGE_TOO_LARGE: u32 = 3;
+/// QUIC code a stream is stopped with when no room in the peer's share of the
+/// budget frees up for its message in time.
+pub const RESET_BUSY: u32 = 4;
+/// QUIC code a stream is reset with when its message body stops arriving.
+pub const RESET_STALLED: u32 = 5;
+/// QUIC code a stream is stopped with when it carries a reply nobody asked
+/// this peer for.
 const RESET_UNSOLICITED: u32 = 6;
 
 /// Handle an incoming QUIC connection.
