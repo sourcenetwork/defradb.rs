@@ -244,7 +244,7 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
     ) -> std::result::Result<(), TransactionError> {
         let _ = (context, collection, field);
         Err(TransactionError::not_supported(
-            "encrypted index changes inside a transaction are not supported in this configuration",
+            "encrypted index operations inside a transaction are not supported in this configuration",
         ))
     }
 
@@ -258,7 +258,7 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
     ) -> std::result::Result<(), TransactionError> {
         let _ = (context, collection, field);
         Err(TransactionError::not_supported(
-            "encrypted index changes inside a transaction are not supported in this configuration",
+            "encrypted index operations inside a transaction are not supported in this configuration",
         ))
     }
 
@@ -271,7 +271,7 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
     ) -> std::result::Result<Vec<String>, TransactionError> {
         let _ = (context, collection);
         Err(TransactionError::not_supported(
-            "encrypted index changes inside a transaction are not supported in this configuration",
+            "encrypted index operations inside a transaction are not supported in this configuration",
         ))
     }
 
