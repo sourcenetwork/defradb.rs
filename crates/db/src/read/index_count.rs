@@ -7,14 +7,14 @@ use query::planner::index_selection::IndexScanType;
 use storage::corekv::{MaybeSend, Reader, Result};
 use storage::index::IndexIterator;
 
-use crate::index::manager::IndexType;
+use crate::index::manager::IndexRead;
 
 /// Count the entries `scan` would visit on `index`, stopping at `cap`.
 ///
 /// Unfinished or unsupported scans report `cap`. Empty probes consume budget
 /// too, so long IN lists cannot hide unbounded work behind zero matched entries.
 pub(crate) async fn count_index_scan<R: Reader + MaybeSend>(
-    index: &IndexType,
+    index: &IndexRead<'_>,
     reader: &R,
     scan: &IndexScanType,
     cap: usize,
@@ -27,7 +27,7 @@ pub(crate) async fn count_index_scan<R: Reader + MaybeSend>(
 
 /// Share a work budget across all probes, including empty IN/OR branches.
 async fn count_scan<R: Reader + MaybeSend>(
-    index: &IndexType,
+    index: &IndexRead<'_>,
     reader: &R,
     scan: &IndexScanType,
     remaining: &mut usize,

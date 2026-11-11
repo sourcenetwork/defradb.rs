@@ -79,8 +79,8 @@ impl SimpleIndex {
         Ok(())
     }
 
-    /// Build the index key for a document with the given field values.
-    fn build_key(&self, values: &[NormalValue], doc_short_id: u64) -> Result<Vec<u8>> {
+    /// The key of the entry for a document with the given field values.
+    pub fn entry_key(&self, values: &[NormalValue], doc_short_id: u64) -> Result<Vec<u8>> {
         let fields = self.build_indexed_fields(values);
         IndexDataStoreKey::with_doc_short_id(
             self.collection_short_id,
@@ -189,7 +189,7 @@ impl CollectionIndex for SimpleIndex {
     ) -> Result<()> {
         validate_doc_short_id(doc_short_id, &self.desc.name)?;
         self.validate_field_count(values, doc_short_id)?;
-        let key = self.build_key(values, doc_short_id)?;
+        let key = self.entry_key(values, doc_short_id)?;
         txn.set(&key, &[]).await
     }
 
@@ -205,11 +205,11 @@ impl CollectionIndex for SimpleIndex {
         self.validate_field_count(new_values, doc_short_id)?;
 
         // Delete old entry
-        let old_key = self.build_key(old_values, doc_short_id)?;
+        let old_key = self.entry_key(old_values, doc_short_id)?;
         txn.delete(&old_key).await?;
 
         // Insert new entry
-        let new_key = self.build_key(new_values, doc_short_id)?;
+        let new_key = self.entry_key(new_values, doc_short_id)?;
         txn.set(&new_key, &[]).await
     }
 
@@ -221,7 +221,7 @@ impl CollectionIndex for SimpleIndex {
     ) -> Result<()> {
         validate_doc_short_id(doc_short_id, &self.desc.name)?;
         self.validate_field_count(values, doc_short_id)?;
-        let key = self.build_key(values, doc_short_id)?;
+        let key = self.entry_key(values, doc_short_id)?;
         txn.delete(&key).await
     }
 

@@ -111,6 +111,8 @@ defra-core = { path = "../defra-core", features = ["ambient"] }
 edge = { path = "../edge", features = ["testing"] }
 proptest.workspace = true
 futures-lite.workspace = true
+# Counts the store's commit conflicts in the deferred index tests.
+telemetry = { path = "../telemetry" }
 blst = "0.3"
 getrandom = "0.2"
 tempfile = "3"

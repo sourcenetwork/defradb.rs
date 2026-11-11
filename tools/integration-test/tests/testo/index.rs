@@ -18,6 +18,8 @@ mod json_unique_array;
 mod list_actions;
 mod list_collection_name;
 mod merged_field {
+    mod counter;
+    mod fulltext;
     mod json;
     mod text;
 }

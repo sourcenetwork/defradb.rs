@@ -10,11 +10,15 @@ enum EffectiveLinkedDelta {
 }
 
 pub(super) fn indexes_field(collection: &Collection, field: &str) -> bool {
-    collection
-        .schema()
+    let schema = collection.schema();
+    schema
         .indexes
         .iter()
         .any(|index| index.fields.iter().any(|indexed| indexed.name == field))
+        || schema
+            .fulltext_indexes
+            .iter()
+            .any(|index| index.field_name == field)
 }
 
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {

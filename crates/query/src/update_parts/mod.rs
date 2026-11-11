@@ -10,7 +10,8 @@
 //!   it only writes: the race was settled once, and the run merges its write
 //!   on top of the winner;
 //! - every component of an index over a field it writes, since the old index
-//!   entry is found from them;
+//!   entry is found from them, unless the index is deferred: its entries
+//!   follow through a pending log and the write reads nothing for them;
 //! - every source of an embedding over a field it writes, and the embedding
 //!   field itself;
 //! - every field its filter compares.
@@ -137,6 +138,9 @@ impl Run {
             .cloned()
             .collect();
         for index in indexes {
+            if crdt::deferred_index(index, collection, crdts) {
+                continue;
+            }
             if index
                 .fields
                 .iter()

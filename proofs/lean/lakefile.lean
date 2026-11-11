@@ -202,6 +202,9 @@ lean_lib HttpClient where
 lean_lib Arbitration where
 
 @[default_target]
+lean_lib PositionRecord where
+
+@[default_target]
 lean_lib RequestDrain where
 
 @[default_target]

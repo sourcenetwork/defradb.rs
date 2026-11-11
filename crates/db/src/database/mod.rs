@@ -190,6 +190,8 @@ pub struct DB<S: Store> {
     pub(crate) collections: Arc<crate::collection::epoch::EpochedCollections>,
     /// PQ codes of resident-codes DiskANN indexes, shared by every search.
     pub(crate) vector_codes: Arc<crate::index::vector::engine::diskann::CodeCaches>,
+    /// The deferred indexes a commit owes a drain.
+    pub(crate) deferred_drains: crate::index::deferred::DrainRequests,
     document_projector: regolith::sync::OnceCell<Arc<dyn datastore::DocumentMutationProjector>>,
     /// Event bus for subscription notifications.
     event_bus: Option<Arc<dyn Bus>>,
@@ -280,6 +282,7 @@ impl<S: Store> DB<S> {
             migration_generation: AtomicU64::new(0),
             closed: AtomicBool::new(false),
             commit_fences: Arc::default(),
+            deferred_drains: Default::default(),
             collections: Arc::new(crate::collection::epoch::EpochedCollections::new(
                 crate::collection::CollectionMap::default(),
             )),
@@ -352,6 +355,7 @@ impl<S: Store> DB<S> {
             migration_generation: AtomicU64::new(0),
             closed: AtomicBool::new(false),
             commit_fences: Arc::default(),
+            deferred_drains: Default::default(),
             collections: Arc::new(crate::collection::epoch::EpochedCollections::new(
                 crate::collection::CollectionMap::default(),
             )),
@@ -676,6 +680,7 @@ impl<S: Store> DB<S> {
         }
         DbTxn::of_database(basic_txn, self.vector_codes.clone())
             .with_shared_collections(Arc::clone(&self.collections))
+            .with_deferred_drains(self.deferred_drains.clone())
     }
 
     /// Install a trusted host projection before the database serves requests.

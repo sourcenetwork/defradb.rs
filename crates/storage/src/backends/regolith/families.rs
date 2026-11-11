@@ -116,7 +116,7 @@ const fn family(start: &'static [u8], entity: &'static [Part], class: Class) -> 
 /// stable as a key grows: a key still shorter than one of the longer starts
 /// falls to the shorter family, which names no entity in so few bytes (`b`
 /// names none, and `d/` needs six).
-static FAMILIES: [Family; 16] = [
+static FAMILIES: [Family; 18] = [
     // Block merge markers: decision keys, not blocks.
     family(b"bm", &[], Class::Ordinary),
     // Blocks, keyed by the CID of their bytes (`keys::BlockstoreKey`).
@@ -148,6 +148,10 @@ static FAMILIES: [Family; 16] = [
     // The same log on a store with no namespace, where vector index tests and
     // tools write vector keys unprefixed.
     family(b"/vplog/", &[], Class::Log),
+    // A deferred index's pending log: its head and rows
+    // (`keys::index_pending_log`), with and without the namespace.
+    family(b"d/iplog/", &[], Class::Log),
+    family(b"/iplog/", &[], Class::Log),
     // One index's entries (`keys::IndexDataStoreKey`), and one collection's
     // field values of one instance (`keys::DataStoreKey`).
     family(b"d/", &[Part::Uvarint, Part::Uvarint], Class::Ordinary),
