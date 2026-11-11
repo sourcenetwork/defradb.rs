@@ -136,6 +136,10 @@ pub enum Error {
         field: String,
     },
 
+    /// A version whose `@chunk` settings no schema could declare or keep.
+    #[error(transparent)]
+    ChunkSettings(#[from] schema::ChunkSettingsError),
+
     /// A view names a lens transform CID with no committed lens config.
     #[error("lens CID not found: {0}")]
     ViewTransformMissing(String),

@@ -2261,6 +2261,19 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A peer's definition blocks arrive in any order and may be forged.
+        // A first version follows the SDL's rules, a patch keeps its previous
+        // version's settings, and activation refuses settings other than the
+        // first version's, even for a record stored before the merge checked.
+        family: "Text chunking",
+        name: "FirstValid / MergedMatchFirst / ActiveMatchesFirst: a synced version's @chunk settings are ones a schema could declare, and every merged or active version keeps its collection's first version's",
+        axis: Tla,
+        anchor: "crates/db/src/merge/merge_handler/definition.rs process_collection_definition_delta; crates/db/src/merge/merge_handler/definition_chunks.rs chunk_settings_error, chunk_parent_error; crates/schema/src/chunk_rules.rs chunk_settings_errors, ensure_chunk_settings_kept; crates/db/src/chunk/user_writes.rs ensure_keeps_first_chunk_settings; crates/db/src/collection/ops/version.rs set_active_collection_version_as; crates/db/src/txn/registry/collections.rs set_collection_active_in_txn_as",
+        model_ref: "MC_ChunkSettingsSync_{Green,Green_Legacy}.cfg (GREEN) / MC_ChunkSettingsSync_{Red_NoFirstCheck,Red_NoMergeGuard,Red_NoActivateGuard}.cfg (RED)",
+        tiers: &[Contract],
+        bound_by: "crates/db/tests/merge/chunk_definition_guard.rs a_patch_that_changes_max_chars_is_rejected, a_first_version_with_max_chars_below_the_minimum_is_rejected, an_honest_patch_that_keeps_the_chunk_settings_is_accepted, activating_a_version_with_other_chunk_settings_is_refused",
+    },
+    Property {
         // One task serves a pg-compat connection: one deadline read at the
         // accept bounds the peek, the SSL and GSS refusals and the startup;
         // an extended-protocol error skips to the Sync; a fatal error or a

@@ -152,7 +152,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             schema.governance_root.clone_from(&payload.governance_root);
         }
         // Every version's block carries the `@chunk` settings, so this peer
-        // cuts text the same way the author does.
+        // cuts text the same way the author does. A patch must restate the
+        // settings it supersedes, which is checked below.
         schema.chunked_fields = payload
             .chunked_fields
             .iter()
@@ -200,6 +201,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             schema.is_materialized = true;
         }
 
+        if let Some(error) = definition_chunks::chunk_settings_error(previous.as_ref(), &schema) {
+            return Ok(definition_chunks::reject_chunk_settings(&schema, &error));
+        }
+
         // A version this node already holds is not rebuilt. The local record
         // commits to at least what the block carries, and holds what the
         // block cannot: whether it is active, its indexes, its policy. The
@@ -224,6 +229,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let txn = self.db.new_txn(false).await.map_err(MergeError::Database)?;
         {
             let systemstore = txn.systemstore().map_err(MergeError::Database)?;
+            if let Some(error) = self.chunk_parent_error(&systemstore, &schema).await? {
+                return Ok(definition_chunks::reject_chunk_settings(&schema, &error));
+            }
             schema.root_id = crate::collection::ensure_persisted_collection_short_id(
                 &systemstore,
                 &collection_id,
