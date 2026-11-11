@@ -293,48 +293,29 @@ where
         let nac_identity = nac_actor.clone().unwrap_or_else(Did::wildcard);
         let fetcher = txn_ctx.doc_fetcher();
         let permission = permission_for_operation(&parsed);
-        let nac_check = lent_node_permission(
-            fetcher.as_ref(),
-            &nac_identity,
-            permission,
-            require_authority,
-            require_bound_nac,
-        )
-        .await;
+        // Checked in Go's order, so a refused write names the first permission
+        // it lacks, as the same write outside a transaction does.
+        let mut nac_check = Ok(Some(true));
+        let mut denied = permission;
+        for needed in permission.go_order() {
+            nac_check = lent_node_permission(
+                fetcher.as_ref(),
+                &nac_identity,
+                needed,
+                require_authority,
+                require_bound_nac,
+            )
+            .await;
+            if !matches!(nac_check, Ok(Some(true))) {
+                denied = needed;
+                break;
+            }
+        }
         match nac_check {
             Ok(Some(false)) => {
-                // A refused read answers with no data. A refused write fails,
-                // naming the first permission it lacks in Go's order, as the
-                // same write outside a transaction does.
+                // A refused read answers with no data; a refused write fails.
                 if !matches!(parsed, ParsedOperation::Mutation { .. }) {
                     return Ok(Turned::Done(QueryResponse::success(serde_json::json!({}))));
-                }
-                let mut denied = permission;
-                for needed in permission.go_order() {
-                    let allowed = lent_node_permission(
-                        fetcher.as_ref(),
-                        &nac_identity,
-                        needed,
-                        require_authority,
-                        require_bound_nac,
-                    )
-                    .await;
-                    match allowed {
-                        Ok(Some(true)) => {}
-                        Ok(Some(false)) => {
-                            denied = needed;
-                            break;
-                        }
-                        Ok(None) if require_bound_nac || require_authority => {
-                            return Ok(Turned::Done(QueryResponse::error(
-                                "transaction-bound node authorization is unavailable",
-                            )));
-                        }
-                        Ok(None) => break,
-                        Err(error) => {
-                            return Ok(Turned::Done(QueryResponse::error(error.to_string())))
-                        }
-                    }
                 }
                 return Ok(Turned::Done(QueryResponse::error(format!(
                     "not authorized to perform operation. Permission: {}",
