@@ -44,6 +44,8 @@ pub use collection_store::{
 pub use coordinator::IrohSyncCoordinator;
 #[cfg(feature = "libp2p-transport")]
 pub use coordinator::Libp2pSyncCoordinator;
+#[cfg(all(feature = "vinc-transport", not(target_arch = "wasm32")))]
+pub use coordinator::VincSyncCoordinator;
 pub use coordinator::{
     CreateReplicatorResult, FollowedDocuments, HeadHintCarAuthority, HeadHintCarGrant,
     LoadReplicatorsResult, PeerDetails, PendingFetch, PushFailure, PushFailureReceiver,

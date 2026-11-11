@@ -91,6 +91,9 @@ pub mod two_stream;
 #[cfg(feature = "iroh-transport")]
 pub mod iroh;
 
+#[cfg(all(feature = "vinc-transport", not(target_arch = "wasm32")))]
+pub mod vinc;
+
 // Re-export address parsing
 #[cfg(feature = "libp2p-transport")]
 pub use address::{parse_multiaddr_with_peer_id, ParsedMultiaddr};

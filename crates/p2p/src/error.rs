@@ -378,6 +378,14 @@ pub enum Error {
     /// A committed head could not be backed by its durable sender marker.
     #[error("durable head-hint marker error: {0}")]
     DurableHeadMarker(String),
+
+    /// The transport does not carry this operation yet.
+    #[error("{operation} is not supported on the {transport} transport yet: {waits_on}")]
+    NotSupportedOnTransport {
+        operation: &'static str,
+        transport: &'static str,
+        waits_on: &'static str,
+    },
 }
 
 impl Error {
