@@ -84,7 +84,7 @@ pub async fn go_list_encrypted_indexes(
     let indexes = ops
         .list_encrypted_indexes(Some(&collection))
         .await
-        .map_err(HttpError::Internal)?;
+        .map_err(http_error_from_backend_message)?;
 
     Ok(Json(indexes))
 }
