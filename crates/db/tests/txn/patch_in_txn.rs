@@ -191,3 +191,63 @@ fn the_one_to_one_unique_index_a_patch_owes_is_staged_with_the_patch() {
     })
     .unwrap()
 }
+
+#[test]
+fn a_patch_that_also_changes_the_indexed_collection_stages_both() {
+    workers::block_on(async {
+        let (db, registry, runner) = node().await;
+        let ctx = RequestContext::default();
+        db.add_collection(&ctx, "type Author { name: String }")
+            .await
+            .unwrap();
+        db.patch_collections_as(
+            &ctx,
+            r#"[
+                {"op":"add","path":"/Author/Fields/-","value":{"Name":"published","Kind":"Books","RelationName":"author_book","IsPrimary":true}},
+                {"op":"add","path":"/Author/Fields/-","value":{"Name":"_publishedID","Kind":1,"RelationName":"author_book","IsPrimary":true}}
+            ]"#,
+            None,
+        )
+        .await
+        .unwrap();
+        let handle = registry.begin_as(&ctx, false).await.unwrap();
+        let in_txn = |query: String| runner.execute_in_txn(QueryRequest::new(query), &handle);
+
+        // Books' side comes first, so Author owes its unique index before
+        // Author's own change in the same patch is written.
+        registry
+            .patch_collection_in_txn_as(
+                &ctx,
+                handle.as_str(),
+                r#"[
+                    {"op":"add","path":"/Books/Fields/-","value":{"Name":"author","Kind":"Author","RelationName":"author_book"}},
+                    {"op":"add","path":"/Author/Fields/-","value":{"Name":"email","Kind":"String"}}
+                ]"#,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let book = in_txn(r#"mutation { add_Books(input: {title: "Dune"}) { _docID } }"#.into()).await;
+        assert!(!book.has_errors(), "{:?}", book.errors);
+        let book_id = book.data.unwrap()["add_Books"][0]["_docID"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let author = |name: &str| {
+            format!(r#"mutation {{ add_Author(input: {{name: "{name}", email: "{name}@x", published: "{book_id}"}}) {{ name }} }}"#)
+        };
+        let first = in_txn(author("Frank")).await;
+        assert!(!first.has_errors(), "{:?}", first.errors);
+        let second = in_txn(author("Brian")).await;
+        assert!(
+            second
+                .errors
+                .iter()
+                .any(|error| error.message.contains("violates unique index")),
+            "Author's new version must carry the one-to-one unique index: {:?}",
+            second.data
+        );
+    })
+    .unwrap()
+}

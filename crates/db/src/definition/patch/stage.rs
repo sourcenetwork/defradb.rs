@@ -108,22 +108,27 @@ impl<S: Store> crate::database::DB<S> {
 
         let changes: Vec<&PreparedPatch> = prepared.iter().filter(|p| !p.is_deactivation).collect();
         let mut outcomes = Vec::with_capacity(changes.len());
-        let mut indexed = Vec::new();
         for (index, change) in changes.iter().enumerate() {
             let siblings: Vec<CollectionVersion> = changes[index + 1..]
                 .iter()
                 .map(|later| later.new_schema.clone())
                 .collect();
-            let outcome = self
-                .write_prepared(txn, change, &siblings, migration.clone())
-                .await?;
+            outcomes.push(
+                self.write_prepared(txn, change, &siblings, migration.clone())
+                    .await?,
+            );
+        }
+        // Owed indexes rewrite other collections' versions, so they are staged
+        // only after every prepared write: a later write checks that the
+        // version it was prepared from is still the stored one.
+        let mut indexed = Vec::new();
+        for outcome in &outcomes {
             if outcome.is_new_version && outcome.schema.is_active {
                 indexed.extend(
                     self.stage_cross_collection_one_to_one_indexes(txn, &outcome.schema)
                         .await?,
                 );
             }
-            outcomes.push(outcome);
         }
         Ok(StagedPatch {
             versions,

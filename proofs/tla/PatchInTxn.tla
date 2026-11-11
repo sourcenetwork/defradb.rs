@@ -48,7 +48,8 @@
 \*                                             touched names from the catalog)
 \*   crates/db/src/definition/patch/stage.rs  DB::stage_patch (reads through
 \*                                             the txn), DB::stage_groups (stages
-\*                                             the owed one-to-one index),
+\*                                             the owed one-to-one index after
+\*                                             every prepared write),
 \*                                             StagedPatch::touched_names,
 \*                                             DB::finish_staged
 \*   crates/db/src/definition/patch/store.rs  DB::stage_cross_collection_one_to_one_indexes
