@@ -302,3 +302,6 @@ lean_lib IndexEqualKeyOrder where
 
 @[default_target]
 lean_lib KmsChunks where
+
+@[default_target]
+lean_lib SigningOverride where
