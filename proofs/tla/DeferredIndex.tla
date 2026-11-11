@@ -37,6 +37,9 @@
 \* drain aborts the explicit transaction; a drop truncates more than a page
 \* of positions in one transaction.
 \*
+\* When a drain runs (requests, the sweep, a failing index) is modelled in
+\* DeferredDrainTask.tla; here a drain may start whenever something is owed.
+\*
 \* Code it models:
 \*   crates/db/src/index/manager/deferred.rs  IndexManager::owe (the append),
 \*                                            IndexManager::place (a create),
@@ -268,7 +271,7 @@ TxCommit ==
 \* A drain plans on a snapshot: a head P (any, as a cap may stop short) and the docs up to it.
 Plan(r) ==
   /\ dpc[r] = "Idle"                           \* not already draining
-  /\ Owed /= {}                                \* something is owed (a request or the sweep)
+  /\ Owed /= {}                                \* something is owed, so a drain was asked for (DeferredDrainTask.tla)
   /\ \E p \in (trunc + 1)..Len(log) :          \* the planned head
        /\ dP' = [dP EXCEPT ![r] = p]
        /\ dDocs' = [dDocs EXCEPT ![r] = {log[i] : i \in (trunc + 1)..p}]

@@ -2056,6 +2056,18 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // Every write that owes a deferred index asks for its drain; the
+        // drain task keeps a failed index for the sweep, and the sweep runs
+        // on a fixed deadline that requests cannot push back.
+        family: "Index-maintenance consistency",
+        name: "INV_OwedKept — work a deferred index owes is always asked for or being drained",
+        axis: Tla,
+        anchor: "crates/db/src/index/deferred/task.rs",
+        model_ref: "MC_DeferredDrainTask_{Green,Red_StopAtFailure,Red_DropFailed,Red_NoRequeue,Red_SilentPurge,Red_RearmSweep,Red_NoSweep,Red_RequestFirst}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/db/tests/index/deferred_task.rs",
+    },
+    Property {
         // The drain finds a document's old entries only through its position
         // record, so the record must read back as the keys it names.
         family: "Index-maintenance consistency",
