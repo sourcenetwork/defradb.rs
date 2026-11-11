@@ -69,6 +69,18 @@ fn chunk_takes_max_chars_and_overlap() {
 }
 
 #[test]
+fn chunk_fields_are_sorted_whatever_the_sdl_order() {
+    let collections =
+        parse_sdl("type Note { summary: String @chunk body: String @chunk }").unwrap();
+    let names: Vec<&str> = collections[0]
+        .chunked_fields
+        .iter()
+        .map(|field| field.field_name.as_str())
+        .collect();
+    assert_eq!(names, ["body", "summary"]);
+}
+
+#[test]
 fn chunk_ids_are_stable_across_parses() {
     let first = parse_sdl(SDL).unwrap();
     let second = parse_sdl(SDL).unwrap();
