@@ -11,8 +11,113 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 # event to the settled rest (depth = events + 1), and DEADLOCK:<l> stops with
 # event l next (past the end when l = events + 1).
 RUNS=(
+  "MC_UsersetRelationManager_Green.cfg UsersetRelationManager.tla GREEN"
+  "MC_UsersetRelationManager_Red_Owner.cfg UsersetRelationManager.tla RED"
+  "MC_UsersetRelationManager_Red_Direct.cfg UsersetRelationManager.tla RED"
+  "MC_UsersetRelationManager_Red_Wildcard.cfg UsersetRelationManager.tla RED"
+  "MC_UsersetRelationManager_Red_Node.cfg UsersetRelationManager.tla RED"
+  "MC_UsersetRelationManager_Red_NodeOwner.cfg UsersetRelationManager.tla RED"
+  "MC_UsersetRelationManager_Red_NodeAdmin.cfg UsersetRelationManager.tla RED"
+  "MC_UsersetRelationManager_Red_Target.cfg UsersetRelationManager.tla RED"
+  "MC_UsersetRelationManager_Red_Conflict.cfg UsersetRelationManager.tla RED"
+  "MC_ProjectionAccessNotification_Green.cfg ProjectionAccessNotification.tla GREEN"
+  "MC_ProjectionAccessNotification_Red_Grant.cfg ProjectionAccessNotification.tla RED"
+  "MC_ProjectionAccessNotification_Red_Revoke.cfg ProjectionAccessNotification.tla RED"
+  "MC_ProjectionAccessNotification_Red_Abort.cfg ProjectionAccessNotification.tla RED"
+  "MC_ProjectionAccessNotification_Red_Noop.cfg ProjectionAccessNotification.tla RED"
+  "MC_HostMutationProjection_Green.cfg HostMutationProjection.tla GREEN"
+  "MC_HostMutationProjection_Red_Atomic.cfg HostMutationProjection.tla RED"
+  "MC_HostMutationProjection_Red_Raw.cfg HostMutationProjection.tla RED"
+  "MC_HostMutationProjection_Red_Replicated.cfg HostMutationProjection.tla RED"
+  "MC_HostMutationProjection_Red_Schema.cfg HostMutationProjection.tla RED"
+  "MC_HostMutationProjection_Red_Direct.cfg HostMutationProjection.tla RED"
+  "MC_HostMutationProjection_Red_Other.cfg HostMutationProjection.tla RED"
+  "MC_HostMutationProjection_Red_Authority.cfg HostMutationProjection.tla RED"
+  "MC_HostMutationProjection_Red_Owner.cfg HostMutationProjection.tla RED"
+  "MC_ProjectorMutationOrigin_Green.cfg ProjectorMutationOrigin.tla GREEN"
+  "MC_ProjectorMutationOrigin_Red_Actor.cfg ProjectorMutationOrigin.tla RED"
+  "MC_ProjectorMutationOrigin_Red_Revocation.cfg ProjectorMutationOrigin.tla RED"
+  "MC_ProjectorMutationOrigin_Red_Atomic.cfg ProjectorMutationOrigin.tla RED"
+  "MC_HostSourceNoop_Green.cfg HostSourceNoop.tla GREEN"
+  "MC_HostSourceNoop_Red_Authority.cfg HostSourceNoop.tla RED"
+  "MC_HostSourceNoop_Red_Validation.cfg HostSourceNoop.tla RED"
+  "MC_HostNoopProjection_Green.cfg HostNoopProjection.tla GREEN"
+  "MC_HostNoopProjection_Red_Skipped.cfg HostNoopProjection.tla RED"
+  "MC_HostNoopProjection_Red_Authority.cfg HostNoopProjection.tla RED"
+  "MC_HostNoopProjection_Red_Rollback.cfg HostNoopProjection.tla RED"
   "MC_LocalFetchPermit_Green.cfg LocalFetchPermit.tla GREEN"
   "MC_LocalFetchPermit_Red_Hold.cfg LocalFetchPermit.tla RED"
+  "MC_VerifiedClientGraph_Green.cfg VerifiedClientGraph.tla GREEN"
+  "MC_VerifiedClientGraph_Red_SingleMutation.cfg VerifiedClientGraph.tla RED" # a multi-mutation request is accepted (INV_SingleMutation)
+  "MC_VerifiedClientGraph_Red_Unencrypted.cfg VerifiedClientGraph.tla RED" # the request adds encryption outside the approved graph (INV_Unencrypted)
+  "MC_VerifiedClientGraph_Red_Input.cfg VerifiedClientGraph.tla RED" # a different input is accepted (INV_Input)
+  "MC_VerifiedClientGraph_Red_Selection.cfg VerifiedClientGraph.tla RED" # the physical document ID is not selected correctly (INV_Selection)
+  "MC_VerifiedClientGraph_Red_Confirmation.cfg VerifiedClientGraph.tla RED" # an unconfirmed response is accepted (INV_Confirmation)
+  "MC_VerifiedClientGraph_Red_Writable.cfg VerifiedClientGraph.tla RED" # a read-only transaction publishes a mutation (INV_Writable)
+  "MC_VerifiedClientGraph_Red_Canonical.cfg VerifiedClientGraph.tla RED" # typed operation overrides the checked GraphQL (INV_Canonical)
+  "MC_VerifiedClientGraph_Red_Actor.cfg VerifiedClientGraph.tla RED" # effect actor differs from the signer (INV_Actor)
+  "MC_VerifiedClientGraph_Red_Signature.cfg VerifiedClientGraph.tla RED" # an invalid signature is accepted (INV_Signature)
+  "MC_VerifiedClientGraph_Red_Target.cfg VerifiedClientGraph.tla RED" # a different physical target is accepted (INV_Target)
+  "MC_VerifiedClientGraph_Red_Heads.cfg VerifiedClientGraph.tla RED" # a stale update or delete graph is accepted (INV_Heads)
+  "MC_VerifiedClientGraph_Red_HeadConflict.cfg VerifiedClientGraph.tla RED" # a concurrent head change is not validated (INV_HeadConflict)
+  "MC_VerifiedClientGraph_Red_Wave.cfg VerifiedClientGraph.tla RED" # the execution reports success without all signed blocks (INV_Wave)
+  "MC_VerifiedClientGraph_Red_Schema.cfg VerifiedClientGraph.tla RED" # an outside schema supplies the decision (INV_Schema)
+  "MC_VerifiedClientGraph_Red_Bypass.cfg VerifiedClientGraph.tla RED" # the request carries DAC bypass (INV_Bypass)
+  "MC_VerifiedClientGraph_Red_Owner.cfg VerifiedClientGraph.tla RED" # the Node does not own the transaction (INV_Owner)
+  "MC_VerifiedClientGraph_Red_Nac.cfg VerifiedClientGraph.tla RED" # the active NAC permission is ignored (INV_Nac)
+  "MC_VerifiedClientGraph_Red_Dac.cfg VerifiedClientGraph.tla RED" # the active DAC permission is ignored (INV_Dac)
+  "MC_VerifiedClientGraph_Red_NacBound.cfg VerifiedClientGraph.tla RED" # active NAC is not transaction bound (INV_NacBound)
+  "MC_VerifiedClientGraph_Red_DacBound.cfg VerifiedClientGraph.tla RED" # active DAC is not transaction bound (INV_DacBound)
+  "MC_VerifiedClientGraph_Red_RevokeNac.cfg VerifiedClientGraph.tla RED" # NAC revocation is not validated at commit (INV_NacRevocation)
+  "MC_VerifiedClientGraph_Red_RevokeDac.cfg VerifiedClientGraph.tla RED" # DAC revocation is not validated at commit (INV_DacRevocation)
+  "MC_VerifiedClientGraph_Red_Rollback.cfg VerifiedClientGraph.tla RED" # a rejected graph publishes the Agent effect (INV_Atomic)
+  "MC_SourceScopedNac_Green.cfg SourceScopedNac.tla GREEN"
+  "MC_SourceScopedNac_Red_Authority.cfg SourceScopedNac.tla RED"
+  "MC_SourceScopedNac_Red_Owner.cfg SourceScopedNac.tla RED"
+  "MC_SourceScopedNac_Red_Readonly.cfg SourceScopedNac.tla RED"
+  "MC_SourceScopedNac_Red_Store.cfg SourceScopedNac.tla RED"
+  "MC_SourceScopedNac_Red_Expired.cfg SourceScopedNac.tla RED"
+  "MC_SourceScopedNac_Red_InvalidSource.cfg SourceScopedNac.tla RED"
+  "MC_SourceScopedNac_Red_Autocommit.cfg SourceScopedNac.tla RED"
+  "MC_SourceScopedNac_Red_Conflict.cfg SourceScopedNac.tla RED"
+  "MC_SourceScopedNac_Red_Sources.cfg SourceScopedNac.tla RED"
+  "MC_SourceScopedNac_Red_Membership.cfg SourceScopedNac.tla RED"
+  "MC_SourceScopedNac_Red_Unchanged.cfg SourceScopedNac.tla RED"
+  "MC_SourceScopedNac_Red_NoReplay.cfg SourceScopedNac.tla RED"
+  "MC_SourceScopedNac_Red_Partial.cfg SourceScopedNac.tla RED"
+  "MC_SourceScopedNac_Red_BorrowNode.cfg SourceScopedNac.tla RED"
+  "MC_SourceScopedNac_Red_UntrustedReplay.cfg SourceScopedNac.tla RED"
+  "MC_EmbeddedSigner_Green.cfg EmbeddedSigner.tla GREEN"
+  "MC_EmbeddedSigner_Red_Actor.cfg EmbeddedSigner.tla RED"
+  "MC_EmbeddedSigner_Red_Match.cfg EmbeddedSigner.tla RED"
+  "MC_EmbeddedSigner_Red_Key.cfg EmbeddedSigner.tla RED"
+  "MC_EmbeddedSigner_Red_Owner.cfg EmbeddedSigner.tla RED"
+  "MC_EmbeddedSigner_Red_Acp.cfg EmbeddedSigner.tla RED"
+  "MC_EmbeddedSigner_Red_Bypass.cfg EmbeddedSigner.tla RED"
+  "MC_SigningAdmission_Green.cfg SigningAdmission.tla GREEN" # bounded connections release expired slots
+  "MC_SigningAdmission_Red_Capacity.cfg SigningAdmission.tla RED" # admission without a cap (INV_Capacity)
+  "MC_SigningAdmission_Red_Cleanup.cfg SigningAdmission.tla RED" # expiration leaks a slot (LIVE_Reaped)
+  "MC_ClientSignedCreate_ExpiryFinality.cfg ClientSignedCreate.tla RED" # an already-started commit may finish after token expiry (INV_NoCompletionAfterExpiry)
+  "MC_ClientSignedCreate_ReplayBoundary.cfg ClientSignedCreate.tla RED" # ordinary signatures may be reused across sessions (INV_NoReplay)
+  "MC_ClientSignedCreate_Green.cfg ClientSignedCreate.tla GREEN" # the bounded conversation preserves every guard and reaps ended sessions
+  "MC_ClientSignedCreate_Red_Actor.cfg ClientSignedCreate.tla RED" # another caller answers the session (INV_Actor)
+  "MC_ClientSignedCreate_Red_Context.cfg ClientSignedCreate.tla RED" # changed context reuses an answer (INV_Context)
+  "MC_ClientSignedCreate_Red_Signature.cfg ClientSignedCreate.tla RED" # an unverified signature enters the memo (INV_Signature)
+  "MC_ClientSignedCreate_Red_Client.cfg ClientSignedCreate.tla RED" # the signer fails to validate the wave (INV_Client)
+  "MC_ClientSignedCreate_Red_Live.cfg ClientSignedCreate.tla RED" # an ended session consumes an answer (INV_Live)
+  "MC_ClientSignedCreate_Red_Acp.cfg ClientSignedCreate.tla RED" # a revoked actor commits (INV_Acp)
+  "MC_ClientSignedCreate_Red_Inside.cfg ClientSignedCreate.tla RED" # the client is awaited inside an attempt (INV_Outside)
+  "MC_ClientSignedCreate_Red_Reclaim.cfg ClientSignedCreate.tla RED" # expiry leaves its capsule allocated forever (LIVE_Reaped)
+  "MC_ClientSignedUpdate_Green.cfg ClientSignedUpdate.tla GREEN" # fixed intent, relevant field and transactional authorization
+  "MC_ClientSignedUpdate_Disjoint.cfg ClientSignedUpdate.tla RED" # a disjoint write commits beside the signed update
+  "MC_ClientSignedUpdate_Red_CheckIntent.cfg ClientSignedUpdate.tla RED" # a wrong graph receives a signature
+  "MC_ClientSignedUpdate_Red_CheckLive.cfg ClientSignedUpdate.tla RED" # a cancelled conversation receives a signature
+  "MC_ClientSignedUpdate_Red_ValidateField.cfg ClientSignedUpdate.tla RED" # a changed written field commits unseen
+  "MC_ClientSignedUpdate_Red_ValidateAcp.cfg ClientSignedUpdate.tla RED" # a revoked actor commits unseen
+  "MC_SseDelivery_Green.cfg SseDelivery.tla GREEN"
+  "MC_SseDelivery_Red_Overflow.cfg SseDelivery.tla RED"
+  "MC_SseDelivery_Red_Error.cfg SseDelivery.tla RED"
+  "MC_SseDelivery_Red_Wakeup.cfg SseDelivery.tla RED"
   "MC_HttpRouterComposition_Green.cfg HttpRouterComposition.tla GREEN"
   "MC_HttpRouterComposition_Red_Early.cfg HttpRouterComposition.tla RED"
   "MC_HttpRouterComposition_Red_Fallback.cfg HttpRouterComposition.tla RED"
@@ -107,6 +212,21 @@ RUNS=(
   "MC_StorageFailure_Red_LostCause.cfg StorageFailure.tla RED"
   "MC_StorageFailure_Red_Text.cfg StorageFailure.tla RED"
   "MC_StorageFailure_Red_Retry.cfg StorageFailure.tla RED"
+  "MC_UnifiedAccess_Green.cfg OwnerObservation.tla GREEN"
+  "MC_UnifiedAccess_Red_Actor.cfg OwnerObservation.tla RED"
+  "MC_UnifiedAccess_Red_Bound.cfg OwnerObservation.tla RED"
+  "MC_UnifiedAccess_Red_Nacbound.cfg OwnerObservation.tla RED"
+  "MC_UnifiedAccess_Red_Context.cfg OwnerObservation.tla RED"
+  "MC_UnifiedAccess_Red_Principal.cfg OwnerObservation.tla RED"
+  "MC_UnifiedAccess_Red_App.cfg OwnerObservation.tla RED"
+  "MC_UnifiedAccess_Red_Read.cfg OwnerObservation.tla RED"
+  "MC_UnifiedAccess_Red_Member.cfg OwnerObservation.tla RED"
+  "MC_UnifiedAccess_Red_Registered.cfg OwnerObservation.tla RED"
+  "MC_UnifiedAccess_Red_Supported.cfg OwnerObservation.tla RED"
+  "MC_UnifiedAccess_Red_Active.cfg OwnerObservation.tla RED"
+  "MC_UnifiedAccess_Red_Node.cfg OwnerObservation.tla RED"
+  "MC_UnifiedAccess_Red_Permission.cfg OwnerObservation.tla RED"
+  "MC_UnifiedAccess_Red_Atomic.cfg OwnerObservation.tla RED"
   "MC_OwnerObservation_Green.cfg OwnerObservation.tla GREEN"
   "MC_OwnerObservation_Red_Actor.cfg OwnerObservation.tla RED"
   "MC_OwnerObservation_Red_Node.cfg OwnerObservation.tla RED"
@@ -240,6 +360,15 @@ RUNS=(
   "MC_Truncate_Red_Branchable.cfg Truncate.tla RED" # branchable check left out: a filtered truncate splits shared history (INV_FilteredNeverOnBranchable)
   "MC_Truncate_Red_Txn.cfg Truncate.tla RED" # transaction check left out, as before: a filter on the txn view removes an uncommitted match (INV_FilteredRemovesOnlyCommittedMatches)
   "MC_Truncate_Red_Shape.cfg Truncate.tla RED" # filter shape check left out: a non-filter removes everything (INV_BadFilterRemovesNothing)
+  "MC_NacOrder_Green.cfg NacOrder.tla GREEN" # #2680/#2700: a document write checks get-collection then its own permission, in its transaction, and a call with no identity acts as no one
+  "MC_NacOrder_Red_SkipGet.cfg NacOrder.tla RED" # get-collection left out: a caller without it writes (INV_NoEffectWithoutPermission)
+  "MC_NacOrder_Red_OwnFirst.cfg NacOrder.tla RED" # the write's own permission checked first: the refusal names it, not get-collection (INV_RefusalNamesGoFirst)
+  "MC_NacOrder_Red_AnonAsNode.cfg NacOrder.tla RED" # no identity acts as the node: a caller with nothing writes (INV_NoEffectWithoutPermission)
+  "MC_NacOrder_Red_OutsideTxn.cfg NacOrder.tla RED" # permissions read outside the transaction: a revoke that lands first is missed (INV_NoEffectWithoutPermission)
+  "MC_NacDacBypass_Green.cfg NacDacBypass.tla GREEN" # #2681: a read bypasses DAC exactly when NAC is on and grants bypass-dac at its snapshot
+  "MC_NacDacBypass_Red_NacOff.cfg NacDacBypass.tla RED" # a bare permission check: NAC off reads as granted and opens DAC (INV_BypassOnlyWhenGranted)
+  "MC_NacDacBypass_Red_Never.cfg NacDacBypass.tla RED" # no bypass, as before: the node owner reads nothing it does not own (INV_BypassWhenGranted)
+  "MC_NacDacBypass_Red_Live.cfg NacDacBypass.tla RED" # grant read outside the read's transaction: a revoke after the snapshot is missed (INV_BypassOnlyWhenGranted)
   "MC_RelationFilterScan_Green.cfg RelationFilterScan.tla GREEN" # #2099: a relation-filtered delete or update scans validated, so a concurrent change to a related document aborts it
   "MC_RelationFilterScan_Red_Unvalidated.cfg RelationFilterScan.tla RED" # scans left unvalidated: the delete commits on a stale related match (INV_DecisionHoldsAtCommit)
   "MC_DacPolicyAdd_Green.cfg DacPolicyAdd.tla GREEN" # #2321: add DAC policy checks nac, acp, creator, data, valid in Go's order; a remote ACP's policy is kept locally before its ID goes back
@@ -277,6 +406,7 @@ RUNS=(
   "MC_NodeAcpOps_Red_Identity.cfg NodeAcpOps.tla RED" # identity check left out (INV_NoGrantUnlessAllChecksPass)
   "MC_NodeAcpOps_Red_Relation.cfg NodeAcpOps.tla RED" # relation check left out (INV_NoGrantUnlessAllChecksPass)
   "MC_NodeAcpOps_Red_Target.cfg NodeAcpOps.tla RED" # target check left out (INV_NoGrantUnlessAllChecksPass)
+  "MC_NodeAcpOps_Red_Authority.cfg NodeAcpOps.tla RED" # admin-or-delegate authority check left out (INV_NoGrantUnlessAllChecksPass)
   "MC_NodeAcpOps_Red_StartReEnables.cfg NodeAcpOps.tla RED" # a restart re-enables a disabled NAC, as before (INV_RestartKeepsStatus)
   "MC_NodeAcpOps_Red_Order.cfg NodeAcpOps.tla RED" # re-enable checks already-on before the caller (INV_GoOrder)
   "MC_NodeAcpOps_Race_Green.cfg NodeAcpOps.tla GREEN" # #2521: two disables or re-enables race a grant or revocation; one transaction per attempt, re-decided after a lost commit
@@ -384,6 +514,43 @@ RUNS=(
   "MC_CoreDispatch_Green.cfg CoreDispatch.tla GREEN" # schema-evolution ops: NAC before any effect, a named transaction holds the write, a patch in one is refused
   "MC_CoreDispatch_Red_NoNac.cfg CoreDispatch.tla RED" # the core skips NAC (INV_NoEffectWithoutPermission)
   "MC_CoreDispatch_Red_IgnoreTxn.cfg CoreDispatch.tla RED" # the edge drops the transaction (INV_TxnNeverAutocommits)
+  "MC_AdministrativeRelationship_Green.cfg AdministrativeRelationship.tla GREEN"
+  "MC_AdministrativeRelationship_Red_Actor.cfg AdministrativeRelationship.tla RED" # INV_Actor
+  "MC_AdministrativeRelationship_Red_Active.cfg AdministrativeRelationship.tla RED" # INV_Active
+  "MC_AdministrativeRelationship_Red_NacBound.cfg AdministrativeRelationship.tla RED" # INV_NacBound
+  "MC_AdministrativeRelationship_Red_Bypass.cfg AdministrativeRelationship.tla RED" # INV_Bypass
+  "MC_AdministrativeRelationship_Red_Operation.cfg AdministrativeRelationship.tla RED" # INV_Operation
+  "MC_AdministrativeRelationship_Red_DacBound.cfg AdministrativeRelationship.tla RED" # INV_DacBound
+  "MC_AdministrativeRelationship_Red_Registered.cfg AdministrativeRelationship.tla RED" # INV_Registered
+  "MC_AdministrativeRelationship_Red_Relation.cfg AdministrativeRelationship.tla RED" # INV_Relation
+  "MC_AdministrativeRelationship_Red_Revocation.cfg AdministrativeRelationship.tla RED" # INV_Revocation
+  "MC_AdministrativeRelationship_Red_Rollback.cfg AdministrativeRelationship.tla RED" # INV_Rollback
+  "MC_AdministrativeRelationship_Red_Route.cfg AdministrativeRelationship.tla RED" # INV_EmbedderRoute
+  "MC_TransactionalRelationship_Green.cfg TransactionalRelationship.tla GREEN" # a grant and marker share the authorized transaction
+  "MC_DelegatedRelationship_Green.cfg DelegatedRelationship.tla GREEN" # the embedder owns the transaction and the selected actor passes NAC and DAC
+  "MC_DelegatedRelationship_Red_Http.cfg DelegatedRelationship.tla RED" # an HTTP caller reaches the privileged embedding boundary (INV_ActorAuthority)
+  "MC_DelegatedRelationship_Red_Owner.cfg DelegatedRelationship.tla RED" # a transaction owned by another caller is admitted (INV_ActorAuthority)
+  "MC_DelegatedRelationship_Red_Actor.cfg DelegatedRelationship.tla RED" # an unauthenticated actor is accepted (INV_ActorAuthority)
+  "MC_DelegatedRelationship_Red_Nac.cfg DelegatedRelationship.tla RED" # node authority replaces the actor's NAC (INV_ActorAuthority)
+  "MC_DelegatedRelationship_Red_Dac.cfg DelegatedRelationship.tla RED" # node authority replaces the actor's DAC (INV_ActorAuthority)
+  "MC_DelegatedRelationship_Red_Bound.cfg DelegatedRelationship.tla RED" # an unbound provider is accepted (INV_ActorAuthority)
+  "MC_HttpTxnConfiguration_Green.cfg HttpTxnConfiguration.tla GREEN" # HTTP never shares the embedder-only transaction key
+  "MC_HttpTxnConfiguration_Red_Allow.cfg HttpTxnConfiguration.tla RED" # HTTP uses the embedder-only key (INV_HttpOwnerIsolation)
+  "MC_TransactionalRelationship_Red_Owner.cfg TransactionalRelationship.tla RED" # another actor reaches the transaction (INV_Authority)
+  "MC_TransactionalRelationship_Red_Readonly.cfg TransactionalRelationship.tla RED" # a read-only transaction writes (INV_Authority)
+  "MC_TransactionalRelationship_Red_Nac.cfg TransactionalRelationship.tla RED" # the node permission is skipped (INV_Authority)
+  "MC_TransactionalRelationship_Red_Dac.cfg TransactionalRelationship.tla RED" # the document relationship manager check is skipped (INV_Authority)
+  "MC_TransactionalRelationship_Red_Provider.cfg TransactionalRelationship.tla RED" # an external provider is treated as transaction-bound (INV_Authority)
+  "MC_TransactionalRelationship_Red_Expiry.cfg TransactionalRelationship.tla RED" # an expired request starts its transaction turn (INV_Authority)
+  "MC_TransactionalRelationship_Red_Backend.cfg TransactionalRelationship.tla RED" # an unsupported server accepts the request (INV_Authority)
+  "MC_TransactionalRelationship_Red_Autocommit.cfg TransactionalRelationship.tla RED" # the edge drops the transaction (INV_Private)
+  "MC_TransactionalRelationship_Red_Conflict.cfg TransactionalRelationship.tla RED" # the stale marker is not validated (INV_NoRevival)
+  "MC_OwnerSelfObservation_Green.cfg OwnerSelfObservation.tla GREEN" # only a visible document owned by this caller can answer owned
+  "MC_OwnerSelfObservation_Red_Auth.cfg OwnerSelfObservation.tla RED" # an anonymous caller is admitted (INV_NoFalseAuthority)
+  "MC_OwnerSelfObservation_Red_Owner.cfg OwnerSelfObservation.tla RED" # the caller reaches another actor's transaction (INV_NoFalseAuthority)
+  "MC_OwnerSelfObservation_Red_Bound.cfg OwnerSelfObservation.tla RED" # an unbound ACP is treated as a transaction snapshot (INV_NoFalseAuthority)
+  "MC_OwnerSelfObservation_Red_Subject.cfg OwnerSelfObservation.tla RED" # the requester chooses another subject (INV_NoFalseAuthority)
+  "MC_OwnerSelfObservation_Red_Visible.cfg OwnerSelfObservation.tla RED" # an unreadable document is reported owned (INV_NoFalseAuthority)
   "MC_TwoStoreCounter_Red_Split.cfg TwoStoreCounter.tla           RED"   # counter reconcile-from-blob clobbers a concurrent local increment (INV_NoLoss)
   "MC_TwoStoreCounter_Red_DoubleApply.cfg TwoStoreCounter.tla     RED"   # #4935: re-delivered delta merged twice w/o dedup -> double-apply (INV_NoDoubleApply)
   "MC_TwoStoreCounter_Red_LostDeferral.cfg TwoStoreCounter.tla    RED"   # standalone counter block before its document's value claims the applied key unadded (INV_NoLoss)
@@ -392,6 +559,10 @@ RUNS=(
   "MC_MixedFieldMaterialization_Green.cfg MixedFieldMaterialization.tla GREEN" # componentwise field materialization preserves mixed product state
   "MC_IndexReconciliation_Red_SaveOnly.cfg IndexReconciliation.tla RED" # stale index key survives CRDT winner rematerialization
   "MC_IndexReconciliation_Green.cfg IndexReconciliation.tla GREEN" # index keys equal the winning CRDT materialized value
+  "MC_MergedFieldIndex_Green.cfg MergedFieldIndex.tla GREEN" # #2235: a merge moves the index of a merged field from its pre-merge value
+  "MC_MergedFieldIndex_Red_ReadAfterPart.cfg MergedFieldIndex.tla RED" # the index update starts from the value the field merge already wrote (INV_IndexMatchesValue)
+  "MC_MergedFieldIndex_Green_Clear.cfg MergedFieldIndex.tla GREEN" # a field write drops the kept read instead of updating it
+  "MC_MergedFieldIndex_Red_StaleCache.cfg MergedFieldIndex.tla RED" # a field write leaves the kept read stale, so the next block loses an edit (INV_NoLostEdit)
   "MC_DocumentMaterialization_Red_Overwrite.cfg DocumentMaterialization.tla RED" # active rematerialization must not clear delete marker
   "MC_DocumentMaterialization_Green.cfg DocumentMaterialization.tla GREEN" # deletion marker is componentwise/absorbing
   "MC_PushLogAdmission_Green.cfg MC_PushLogAdmission_Common.tla GREEN" # #1088 W1: capacity overflow nacks -> success implies registered-or-merged + all docs merge
@@ -600,7 +771,7 @@ RUNS=(
   "MC_SharedQuantizer_Red_OneSlot.cfg SharedQuantizer.tla RED" # one slot: writers on the two sides of a rebuild evict each other's quantizer
   "MC_HeadSet_Green.cfg            HeadSet.tla                  GREEN" # derived heads: writers only write keys naming themselves, so concurrent appends never conflict and siblings form
   "MC_HeadSet_Red_EagerDelete.cfg  HeadSet.tla                  RED"   # eager delete: both writers delete the same observed head key, so regolith refuses one (INV_NoWriteConflict)
-  "MC_HeadSet_Red_MarkersOnly.cfg  HeadSet.tla                  RED"   # reclamation that drops a head's markers but keeps its head key resurrects a superseded head (INV_HeadsExact)
+  "MC_HeadSet_Red_MarkersOnly.cfg  HeadSet.tla                  RED"   # reclamation that drops a head's markers but keeps its head key resurrects a superseded head (INV_FieldExact)
   "MC_HeadSet_Red_PerKeyScan.cfg   HeadSet.tla                  RED"   # a head scan validated per key: a sweep reclaiming a key the scan yielded aborts an in-flight append (INV_NoWriteConflict)
   "MC_HeadPublication_Green.cfg              HeadPublication.tla GREEN" # the priority index entry records a publication, read validated; a parent held ahead is read by its part of the set
   "MC_HeadPublication_Red_NoRecord.cfg       HeadPublication.tla RED"   # nothing records a publication: a replay of a superseded block makes it a head again (INV_LiveExact)
@@ -703,6 +874,10 @@ RUNS=(
   "MC_NodeShutdown_Red_RequestsDuringP2P.cfg NodeShutdown.tla RED" # requests still admitted while P2P stops commit without a head marker
   "MC_NodeShutdown_Red_CommitNotAdmitted.cfg NodeShutdown.tla RED" # an in-process commit outside the request scope commits after P2P stopped
   "MC_NodeShutdown_Red_OpenTransaction.cfg NodeShutdown.tla RED" # a transaction left open (a commit refused at shutdown) holds regolith's close for its timeout
+  "MC_NodeDrop_Green.cfg NodeDrop.tla GREEN" # a node dropped without shutdown aborts its tasks and releases its pool; the drop waits for none
+  "MC_NodeDrop_Red_SweepOutsideSet.cfg NodeDrop.tla RED" # the sweep in a slot of its own outlives a dropped node and keeps its pool alive
+  "MC_NodeDrop_Red_NoAbortOnDrop.cfg NodeDrop.tla RED" # a shutdown set that does not abort on drop leaves every task holding the database
+  "MC_NodeDrop_Red_DropAwaits.cfg NodeDrop.tla RED" # the dropping thread waits for an aborted task to end
   "MC_NodeStartup_Green.cfg NodeStartup.tla GREEN" # every config starts as asked or fails holding nothing; startup ends
   "MC_NodeStartup_Red_IrohDefaultLadder.cfg NodeStartup.tla RED" # iroh keeps the default retry ladder (INV_OneSchedule)
   "MC_NodeStartup_Red_ListenLeak.cfg NodeStartup.tla RED" # failed listen leaves the host running (INV_FailedHoldsNothing)

@@ -411,6 +411,13 @@ pub trait TransactionContext: MaybeSendSync {
     /// Check if this is a read-only transaction.
     fn is_readonly(&self) -> bool;
 
+    /// Register work which runs only after this transaction commits.
+    fn on_commit(&self, _callback: storage::corekv::OnCommit) -> crate::error::Result<()> {
+        Err(crate::error::QueryError::execution(
+            "transaction callbacks are unavailable",
+        ))
+    }
+
     /// Get a document fetcher scoped to this transaction.
     fn doc_fetcher(&self) -> Arc<dyn DocFetcher>;
 

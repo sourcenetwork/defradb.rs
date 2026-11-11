@@ -533,6 +533,17 @@ impl<S: Store> crate::database::DB<S> {
                 cache
             });
         })))?;
+        if new_schema.is_active {
+            let view = txn.datastore()?;
+            view.project_document(actual_name, "")
+                .await
+                .map_err(Error::Storage)?;
+            if new_schema.name != actual_name {
+                view.project_document(&new_schema.name, "")
+                    .await
+                    .map_err(Error::Storage)?;
+            }
+        }
         txn.commit().await?;
 
         if let Some((transform_id, config)) = committed_migration {

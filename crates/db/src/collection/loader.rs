@@ -158,7 +158,7 @@ pub(crate) async fn load_collection_for_write_attempt(
 ///
 /// Returns `Ok(Some(collection))` if found, `Ok(None)` if not found,
 /// or an error if storage/deserialization fails.
-pub(crate) async fn load_collection_from_systemstore(
+pub async fn load_collection_from_systemstore(
     systemstore: &NamespaceView,
     name: &str,
 ) -> query::error::Result<Option<Collection>> {

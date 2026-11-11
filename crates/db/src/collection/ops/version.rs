@@ -168,6 +168,11 @@ impl<S: Store> crate::database::DB<S> {
             (target_schema, name)
         };
 
+        txn.datastore()?
+            .project_document(&name, "")
+            .await
+            .map_err(Error::Storage)?;
+
         let collection =
             Collection::load_index_actions(target_schema.clone(), &txn.systemstore()?).await?;
         let cache = std::sync::Arc::clone(&self.collections);
@@ -398,6 +403,13 @@ impl<S: Store> crate::database::DB<S> {
                     .await
                     .map_err(Error::Storage)?;
             }
+        }
+
+        if target_schema.is_active {
+            txn.datastore()?
+                .project_document(&name, "")
+                .await
+                .map_err(Error::Storage)?;
         }
 
         // 4. Delete IPLD blocks from blockstore (collection CID + field CIDs)

@@ -226,7 +226,20 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         doc_ids: &[String],
         identity: Option<identity::Did>,
     ) -> Result<Vec<crate::owners::DocumentOwnerObservation>> {
-        self.observe_owners(context, handle, collection, doc_ids, identity)
+        self.observe_owners(context, handle, collection, doc_ids, identity, false)
+            .await
+    }
+
+    async fn observe_document_access_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        collection: &str,
+        doc_ids: &[String],
+        actor: identity::Did,
+        mode: crate::owners::DocumentAccessMode,
+    ) -> Result<Vec<crate::owners::DocumentAccessDecision>> {
+        self.observe_access(context, handle, collection, doc_ids, actor, mode)
             .await
     }
 
@@ -360,6 +373,14 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         self.registry.nac_status_as(context).await
     }
 
+    async fn explain_nac_subject_as(
+        &self,
+        context: &RequestContext,
+        subject: &str,
+    ) -> std::result::Result<Vec<acp::nac::PermissionProvenance>, TransactionError> {
+        self.registry.explain_nac_subject_as(context, subject).await
+    }
+
     async fn disable_nac_as(
         &self,
         context: &RequestContext,
@@ -382,6 +403,16 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
     ) -> std::result::Result<bool, TransactionError> {
         self.registry
             .add_nac_actor_relationship_as(context, relation, target_actor)
+            .await
+    }
+
+    async fn change_nac_source_permission_as(
+        &self,
+        context: &RequestContext,
+        edge: &crate::txn::SourcePermission,
+    ) -> std::result::Result<bool, TransactionError> {
+        self.registry
+            .change_nac_source_permission_as(context, edge)
             .await
     }
 

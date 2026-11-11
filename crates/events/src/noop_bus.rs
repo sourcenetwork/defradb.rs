@@ -37,6 +37,10 @@ impl Bus for NoOpBus {
         }
     }
 
+    fn subscribe_closing_on_overflow(&self, events: &[EventName]) -> Subscription {
+        self.subscribe(events)
+    }
+
     fn unsubscribe(&self, _sub_id: u64) {}
 
     #[cfg(feature = "channel")]

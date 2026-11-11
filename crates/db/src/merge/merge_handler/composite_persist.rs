@@ -172,7 +172,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 // forward history in permanent retry on both replicas (#1111).
                 // Both documents persist; the index converges to the same
                 // winner everywhere.
-                let index_result = match &old_doc {
+                let index_result = match state.indexed_before.as_ref().unwrap_or(&old_doc) {
                     Some(old_doc) => {
                         index_manager
                             .on_document_update_merge(
@@ -274,6 +274,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             );
         }
 
+        datastore
+            .project_document(collection.name(), context.doc_id_str)
+            .await
+            .map_err(|error| MergeError::Database(crate::error::Error::Storage(error)))?;
         Ok(None)
     }
 
@@ -331,6 +335,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let deleted_key = build_deleted_key(collection.collection_id(), context.doc_short_id);
         datastore
             .set(&deleted_key, &[DELETED_MARKER])
+            .await
+            .map_err(|e| MergeError::Database(crate::error::Error::Storage(e)))?;
+
+        datastore
+            .project_document(collection.name(), context.doc_id_str)
             .await
             .map_err(|e| MergeError::Database(crate::error::Error::Storage(e)))?;
 

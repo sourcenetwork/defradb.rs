@@ -115,9 +115,9 @@ pub fn encrypt_ecies(
     options: EciesOptions,
 ) -> Result<Vec<u8>> {
     // 1. Generate or use provided ephemeral key pair
-    let ephemeral_private = options
-        .private_key
-        .unwrap_or_else(|| StaticSecret::random_from_rng(rand::rngs::OsRng));
+    let ephemeral_private = options.private_key.unwrap_or_else(|| {
+        StaticSecret::random_from_rng(&mut rand::rand_core::UnwrapErr(rand::rngs::SysRng))
+    });
     let ephemeral_public = PublicKey::from(&ephemeral_private);
 
     // 2. ECDH: compute shared secret

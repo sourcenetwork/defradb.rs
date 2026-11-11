@@ -42,9 +42,9 @@ crypto = { path = "../crypto" }
 keyring = { path = "../keyring" }
 events = { path = "../events" }
 tempfile = "3"
-vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "523de40514848e9f0349f3bf7d5a0e9d161402c9" }
-vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "523de40514848e9f0349f3bf7d5a0e9d161402c9" }
-vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "523de40514848e9f0349f3bf7d5a0e9d161402c9" }
+vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "0921f0b921cb9a7fc99017246bfa581d1ef70128" }
+vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "0921f0b921cb9a7fc99017246bfa581d1ef70128" }
+vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "0921f0b921cb9a7fc99017246bfa581d1ef70128" }
 commonware-codec = "=2026.10.0"
 
 # Lock-free shared state
@@ -84,11 +84,11 @@ prost.workspace = true
 tonic.workspace = true
 tonic-prost.workspace = true
 # The Cosmos event stream: a WebSocket over a futures-io stream (net::connect).
-async-tungstenite = "0.29.1"
+async-tungstenite = "0.35.0"
 nuclei.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-reqwest = { version = "0.12", default-features = false, features = ["json", "charset", "http2"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "charset", "http2"] }
 n0-future.workspace = true
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]

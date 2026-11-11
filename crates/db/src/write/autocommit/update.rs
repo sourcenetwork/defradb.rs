@@ -334,6 +334,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let datastore = txn.datastore().map_err(|error| {
             query::error::QueryError::execution(format!("failed to get datastore: {error}"))
         })?;
+        let datastore = datastore.with_projection_actor(attempt.context.identity());
         let systemstore = txn.systemstore().map_err(|error| {
             query::error::QueryError::execution(format!("failed to get systemstore: {error}"))
         })?;

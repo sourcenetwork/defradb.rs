@@ -9,8 +9,16 @@
 //! owner writes, one request at a time, so a swap never races another. A
 //! statement savepoint is a snapshot of both, taken and put back while the
 //! transaction is held alone.
+//!
+//! The collection map and the created set each sit behind an `Arc`, so a
+//! clone of the snapshot (a read, a savepoint, the start of a swap) is a
+//! reference. A change copies only the table it changes, whose entries are
+//! shared pointers. A replaced snapshot waits for kovan's deferred
+//! reclamation, so what it holds alone is what a load leaves behind.
 
-use rapidhash::{HashSetExt, RapidHashSet};
+use std::sync::Arc;
+
+use rapidhash::RapidHashSet;
 use regolith::sync::{Atom, SegQueue};
 
 use super::OwedAcpRegistration;
@@ -20,7 +28,7 @@ use crate::collection::Collection;
 #[derive(Clone, Default)]
 struct Collections {
     cache: CollectionCache,
-    created: RapidHashSet<String>,
+    created: Arc<RapidHashSet<String>>,
 }
 
 pub(super) struct Catalog {
@@ -37,10 +45,7 @@ pub(super) struct Snapshot {
 impl Catalog {
     pub(super) fn new() -> Self {
         Self {
-            collections: Atom::new(Collections {
-                cache: CollectionCache::new(),
-                created: RapidHashSet::new(),
-            }),
+            collections: Atom::new(Collections::default()),
             owed: SegQueue::new(),
         }
     }
@@ -85,7 +90,7 @@ impl Catalog {
 
     pub(super) fn mark_created(&self, collection_id: String) {
         self.update(|collections| {
-            collections.created.insert(collection_id.clone());
+            Arc::make_mut(&mut collections.created).insert(collection_id.clone());
         });
     }
 

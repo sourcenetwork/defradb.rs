@@ -31,6 +31,7 @@ pub struct RequestContext(Arc<Fields>);
 struct Fields {
     identity: Option<String>,
     dac_bypass: bool,
+    require_transactional_authority: bool,
     encryption: Option<EncryptionConfig>,
     signing: Option<SigningConfig>,
     batch_session: Option<String>,
@@ -39,9 +40,19 @@ struct Fields {
     /// carries a bearer at all.
     bearer: Option<(Option<String>, Option<String>)>,
     txn: Option<TxnId>,
+    authorization_expiration: Option<u64>,
 }
 
 impl RequestContext {
+    /// Require each active native authority to be bound to the write transaction.
+    pub fn with_transactional_authority_required(mut self) -> Self {
+        Arc::make_mut(&mut self.0).require_transactional_authority = true;
+        self
+    }
+
+    pub fn transactional_authority_required(&self) -> bool {
+        self.0.require_transactional_authority
+    }
     /// The context a call that arrives without one runs in: the default
     /// anonymous context. Built for tests with the `ambient` feature, it
     /// carries what the test set through the thread-local API instead (see
@@ -108,6 +119,31 @@ impl RequestContext {
     /// request.
     pub fn identity(&self) -> Option<&str> {
         self.0.identity.as_deref()
+    }
+
+    /// Restricts dispatch to times before this authenticated request expires.
+    /// A dispatched database attempt retains its normal commit finality.
+    #[must_use]
+    pub fn with_authorization_expiration(mut self, expiration: Option<u64>) -> Self {
+        Arc::make_mut(&mut self.0).authorization_expiration = expiration;
+        self
+    }
+
+    /// Whether a new database attempt may be dispatched now.
+    pub fn authorization_valid_now(&self) -> bool {
+        match self.0.authorization_expiration {
+            None => true,
+            Some(_) => std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .is_ok_and(|now| self.authorization_valid_at(now.as_secs())),
+        }
+    }
+
+    /// Whether a new attempt is authorized at the given Unix second.
+    pub fn authorization_valid_at(&self, now: u64) -> bool {
+        self.0
+            .authorization_expiration
+            .is_none_or(|expiration| now < expiration)
     }
 
     /// This context with the acting identity set to `identity`.

@@ -51,6 +51,9 @@ async fn execute_prepared_request_resolving_inputs(
     mut prepared: Option<Arc<query::prepared::PreparedMutations>>,
 ) -> QueryResponse {
     loop {
+        if !request.context.authorization_valid_now() {
+            return QueryResponse::error("request authorization expired before dispatch");
+        }
         let response = executor
             .execute_prepared(request.clone(), prepared.clone())
             .await;
@@ -192,6 +195,16 @@ mod tests {
         input_on_second: bool,
         input_resolutions: AtomicUsize,
         engine_managed_retry: bool,
+    }
+
+    #[nuclei::test]
+    async fn expired_client_authorization_is_not_dispatched() {
+        let executor = ConflictExecutor::default();
+        let mut request = QueryRequest::new("{ __typename }");
+        request.context = request.context.with_authorization_expiration(Some(0));
+        let response = execute_prepared_with_executor(&executor, request).await;
+        assert!(!response.errors.is_empty());
+        assert_eq!(executor.auto_commit_attempts.load(Ordering::SeqCst), 0);
     }
 
     #[async_trait]
@@ -639,5 +652,39 @@ mod context_tests {
         let context = executor.last().expect("the query ran");
         assert!(!context.dac_bypass());
         assert_eq!(context.identity(), Some("did:key:z6MkSomeoneElse"));
+    }
+}
+
+pub(crate) async fn execute_with_client_signer(
+    state: &AppState,
+    identity: &ExtractIdentity,
+    mut request: QueryRequest,
+    signing: SigningConfig,
+    txn: Option<TransactionHandle>,
+    expiration: u64,
+) -> QueryResponse {
+    request.context = with_signing_and_bypass(
+        identity.context(),
+        Some(signing),
+        resolve_dac_bypass(state, identity).await,
+    );
+    request.context = request
+        .context
+        .with_authorization_expiration(Some(expiration));
+    let context = request.context.clone();
+    match txn {
+        Some(handle) => {
+            context
+                .mirror(state.executor.execute_in_txn(request, &handle))
+                .await
+        }
+        None => {
+            context
+                .mirror(execute_prepared_with_executor(
+                    state.executor.as_ref(),
+                    request,
+                ))
+                .await
+        }
     }
 }

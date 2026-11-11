@@ -6,15 +6,15 @@
 //! folds every operand the transaction has merged into it so far. A walk
 //! that merges a DAG's blocks in one transaction would otherwise pay that
 //! fold for every field of every block. Within a block nothing writes the
-//! head set before `update_heads`, and only a counter merge writes the stored
-//! value before `persist_merged_document` (an LWW field writes keys of its
-//! own), so a read kept here is what a fresh read would return until the
-//! writer that invalidates it. A head write applies its exact operand to the
+//! head set before `update_heads`. Field merges of text, JSON, counter and
+//! custom types write the stored value before `persist_merged_document`, and
+//! each puts the value it wrote into the cached read, so a read kept here is
+//! what a fresh read would return. A head write applies its exact operand to the
 //! decoded snapshot, so subsequent blocks in the same page reuse that state.
 //! Neither cache outlives the engine attempt.
 
 use datastore::NamespaceView;
-use document::{DocID, Document};
+use document::{DocID, Document, NormalValue};
 use storage::merge::head_set::{Set, Write};
 
 use crate::collection::Collection;
@@ -89,6 +89,17 @@ impl BlockReads {
     /// The stored value was written: the next read reads it again.
     pub(crate) fn wrote_document(&mut self) {
         self.document = None;
+    }
+
+    /// A field merge wrote `field`'s part. `value` is what a fresh read would
+    /// decode for it; without one the next read reads the document again.
+    pub(crate) fn wrote_field(&mut self, field: &str, value: Option<&NormalValue>) {
+        match (value, &mut self.document) {
+            (Some(value), Some((_, _, Some(document)))) => {
+                document.load(field.to_owned(), value.clone());
+            }
+            _ => self.document = None,
+        }
     }
 
     /// Keep only this attempt's own head changes; the cache never crosses a commit.
