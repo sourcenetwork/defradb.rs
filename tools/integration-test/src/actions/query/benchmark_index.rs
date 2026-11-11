@@ -82,9 +82,11 @@ impl Benchmark {
         Ok(started.elapsed())
     }
 
-    /// Run `query` once through the test's client.
+    /// Run `query` once through the test's client, as the action's client
+    /// identity on every client, as Go's `benchmarkAction` runs its `Request`.
     fn query_once(&self, state: &State, query: &str) -> Result<(), Failure> {
         let node = self.common.node();
+        let identity = self.common.client_identity(Self::name())?;
         let errors = match state.client_type() {
             ClientType::InProcess => {
                 let request = Request {
@@ -97,7 +99,7 @@ impl Benchmark {
             ClientType::RustHttp | ClientType::GoHttp => {
                 let query = query.to_owned();
                 let response = state
-                    .http_on(node, |client| async move {
+                    .http_as(node, identity, |client| async move {
                         client.graphql(&query, None, None).await
                     })?
                     .map_err(|e| Failure::operation(e.to_string()))?;
