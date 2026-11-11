@@ -3166,6 +3166,27 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/p2p/src/sync/coordinator/broadcast_pool_tests.rs a_write_with_no_peer_connected_is_not_held_for_a_peer_that_joins, a_write_with_no_peer_subscribed_is_not_held_for_a_peer_that_subscribes; crates/db/tests/merge/broadcast_mutator_broadcast.rs a_write_that_finds_no_subscriber_is_not_published_again",
     },
     Property {
+        // The vinc endpoint holds each request's `!Send` stream under the
+        // `Send` id its token carries. A reply or a dropped token takes the
+        // entry; a drop lost to a full queue is caught by the deadline sweep.
+        family: "vinc reply bridge",
+        name: "INV_OneOutcome / INV_Bounded / INV_NoWriteAfterEnd / LIVE_NoLeak / LIVE_DropResets: a stream gets one answer, the table stays bounded and empties for good, a dropped token's stream is reset",
+        axis: Tla,
+        anchor: "crates/p2p/src/vinc/token.rs VincResponseToken; crates/p2p/src/vinc/reply_table.rs ReplyTable::issue, ReplyTable::take, ReplyTable::purge, ReplyTable::sweep; crates/p2p/src/vinc/endpoint.rs Node::handle, Node::sweep_loop, Node::disconnected, REPLY_DEADLINE",
+        model_ref: "MC_VincReplyBridge_{Green,Green_NoLoss,Red_NoTakeOnce,Red_NoDropReset,Red_NoSweep,Red_NoCap}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/p2p/src/vinc/tests/bridge.rs a_reply_after_the_connection_ended_is_an_error_not_a_write, many_dropped_tokens_leave_no_stream_behind; crates/p2p/src/vinc/tests/mux.rs a_reset_stream_does_not_tear_down_the_connection",
+    },
+    Property {
+        family: "vinc reply bridge",
+        name: "full_refuses / issue_bounded / issue_fresh / take_once / take_only / purge_only / sweep_only: the reply table refuses past its bound, never reuses an id, and takes each entry once",
+        axis: Lean,
+        anchor: "crates/p2p/src/vinc/reply_table.rs ReplyTable::issue, ReplyTable::take, ReplyTable::purge, ReplyTable::sweep",
+        model_ref: "VincReplyTable.Table (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/p2p/src/vinc/reply_table.rs a_stream_is_taken_at_most_once, ids_are_never_reused, a_full_table_hands_the_stream_back, purge_takes_only_the_ended_connection, sweep_takes_only_what_is_due",
+    },
+    Property {
         // The first shutdown caller to swap the flag builds the one drain,
         // which owns the only completion sender; a closed edge hands the
         // drain back and the winner runs it in place. The drain waits for

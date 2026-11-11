@@ -1058,6 +1058,12 @@ RUNS=(
   "MC_AnnounceAudience_Red_HoldWhenAlone.cfg AnnounceAudience.tla RED" # a write made alone is held for the window and reaches a peer that joined during it (INV_GoAudience)
   "MC_AnnounceAudience_Red_AloneMeansDisconnected.cfg AnnounceAudience.tla RED" # alone means no peer connected: a write made while the peer is connected but not subscribed waits out the window and reaches it (INV_GoAudience)
   "MC_AnnounceAudience_Red_RetryWhileConnected.cfg AnnounceAudience.tla RED" # an announcement that found no subscriber is published again while a peer is connected, and reaches it once it subscribes (INV_GoAudience)
+  "MC_VincReplyBridge_Green.cfg VincReplyBridge.tla GREEN" # lossy drops, a refused stream, a connection that may end, every deadline reached: one answer per stream, a bounded table that empties for good
+  "MC_VincReplyBridge_Green_NoLoss.cfg VincReplyBridge.tla GREEN" # no lost drop and no deadline in the run: replies, drops and the purge alone empty the table
+  "MC_VincReplyBridge_Red_NoTakeOnce.cfg VincReplyBridge.tla RED" # a reply leaves its entry: the sweep resets a stream that got its reply (INV_OneOutcome)
+  "MC_VincReplyBridge_Red_NoDropReset.cfg VincReplyBridge.tla RED" # a dropped token sends nothing: its stream is held forever (LIVE_NoLeak)
+  "MC_VincReplyBridge_Red_NoSweep.cfg VincReplyBridge.tla RED" # no sweep: a drop lost to a full queue leaks its entry (LIVE_NoLeak)
+  "MC_VincReplyBridge_Red_NoCap.cfg VincReplyBridge.tla RED" # no capacity check: the table outgrows its bound (INV_Bounded)
   "MC_CoordinatorShutdown_Green.cfg CoordinatorShutdown.tla GREEN" # two callers, a late spawn racing the drain, the edge closing and the runtime torn down at any moment: one drain, no task left in the set, every caller returns
   "MC_CoordinatorShutdown_Green_TwoSpawns.cfg CoordinatorShutdown.tla GREEN" # two late spawns whose pruners race the drain and each other: no task left in the set, the caller returns
   "MC_CoordinatorShutdown_Red_DropRefused.cfg CoordinatorShutdown.tla RED" # the old code, a refused drain dropped: the tracked task leaks (INV_NoLeak)
