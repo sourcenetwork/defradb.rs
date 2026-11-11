@@ -9,8 +9,8 @@ use serde_json::{json, Value};
 use testo::prelude::*;
 
 /// How long a wait for a collection action polls the action list.
-pub(crate) const ACTION_TIMEOUT: Duration = Duration::from_secs(10);
-pub(crate) const ACTION_POLL: Duration = Duration::from_millis(20);
+const ACTION_TIMEOUT: Duration = Duration::from_secs(10);
+const ACTION_POLL: Duration = Duration::from_millis(20);
 
 /// Waits a number of milliseconds, or for a queued collection action.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -91,7 +91,7 @@ pub(crate) fn lists(actions: &Value, expected: &ExpectedAction) -> bool {
 }
 
 /// Node `node`'s action list as JSON, through the test's client.
-pub(crate) fn listed_actions(state: &State, node: &str) -> Result<Value, Failure> {
+fn listed_actions(state: &State, node: &str) -> Result<Value, Failure> {
     match state.client_type() {
         ClientType::InProcess => {
             let listed = state
