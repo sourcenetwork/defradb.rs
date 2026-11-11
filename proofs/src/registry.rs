@@ -2034,6 +2034,28 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A reindex clears the entries but keeps the records while drains run,
+        // so the walk removes what the record names before it writes.
+        family: "Index-maintenance consistency",
+        name: "INV_NoOrphanEntry — a reindex walk racing drains leaves no entry that no record names",
+        axis: Tla,
+        anchor: "crates/db/src/index/manager/deferred.rs IndexManager::replace; crates/db/src/index/manager/rebuild.rs IndexManager::reindex_document",
+        model_ref: "MC_DeferredIndex_{Green_Reindex,Red_WalkOverwrite,Red_WalkUnvalidated}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A dropped index's log is truncated in pages from the first entry
+        // left, so no transaction grows with the index's write history.
+        family: "Index-maintenance consistency",
+        name: "INV_CleanupBounded — no drop page truncates more than a page of log positions",
+        axis: Tla,
+        anchor: "crates/db/src/index/deferred/cleanup.rs remove_page; crates/db/src/index/drop.rs DropPage::run",
+        model_ref: "MC_DeferredIndex_{Green_Drop,Red_DropWhole,Red_DropFromOne}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // The drain finds a document's old entries only through its position
         // record, so the record must read back as the keys it names.
         family: "Index-maintenance consistency",

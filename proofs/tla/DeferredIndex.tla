@@ -16,23 +16,37 @@
 \* documents' live values instead. Inside an explicit transaction, the
 \* documents it appended itself count as owed too.
 \*
+\* A reindex (after a lens migration) clears the entries but keeps the
+\* records, then walks the documents one by one and writes each one's entry
+\* again. Drains keep running meanwhile, so the walk reads the document's
+\* record and removes the entry it names before it writes its own.
+\*
+\* A drop of the index removes its entries and records, then truncates what
+\* is left of the log in pages, each its own transaction, each starting at
+\* the first entry still there.
+\*
 \* Who acts: plain increments and deletes (one transaction each), one
-\* explicit transaction that increments and reads, two drains, and a crash
-\* that loses whatever was not committed.
+\* explicit transaction that increments and reads, two drains, a reindex, a
+\* drop, and a crash that loses whatever was not committed.
 \*
 \* What must never happen: a read through the index returns a document whose
 \* value does not match, or misses one that does; the index holds an entry
-\* the position record does not name; work is left in the log forever.
+\* the position record does not name; work is left in the log forever; a
+\* drop truncates more than a page of positions in one transaction.
 \*
 \* Code it models:
 \*   crates/db/src/index/manager/deferred.rs  IndexManager::owe (the append),
-\*                                            IndexManager::place (a create)
+\*                                            IndexManager::place (a create),
+\*                                            IndexManager::replace (the walk's record read)
 \*   crates/db/src/index/deferred/drain.rs    plan (snapshot), apply (position
 \*                                            record, live value), truncate
 \*   crates/db/src/index/manager/read.rs      IndexManager::read_index (owed docs,
 \*                                            own appends included)
 \*   crates/storage/src/index/overlay.rs      the stored keys of owed docs hidden,
 \*                                            their live keys merged in order
+\*   crates/db/src/definition/migration/reindex/page.rs  clear (entries out, records kept)
+\*   crates/db/src/index/manager/rebuild.rs   IndexManager::reindex_document (the walk)
+\*   crates/db/src/index/deferred/cleanup.rs  remove_page (the log truncated in pages)
 EXTENDS Naturals, Integers, Sequences, FiniteSets
 
 CONSTANTS
@@ -42,15 +56,29 @@ CONSTANTS
   Overlay,     \* "On": reads check owed docs live | "Off": reads trust the stored entries
   OwnAppends,  \* "On": a transaction's own appends count as owed in its reads | "Off": they do not
   RecordRead,  \* "Validated": a drain's read of a position record aborts if another drain changed it | "Unvalidated"
-  Truncate     \* "Planned": a drain truncates through its planned head | "Head": through the head at commit
+  Truncate,    \* "Planned": a drain truncates through its planned head | "Head": through the head at commit
+  Reindex,     \* "On": a reindex may run | "Off": it never does
+  WalkRecord,  \* "Delete": the walk removes the entry the record names | "Overwrite": it only writes its own
+  WalkCheck,   \* "Validated": the walk's read of the record aborts if a drain changed it | "Unvalidated"
+  Drop,        \* "On": the index may be dropped | "Off": it never is
+  Cleanup,     \* "Paged": a drop page truncates up to Page entries from the first one left |
+               \* "Whole": all that is left at once | "FromOne": up to Page past the first left, but from position 1
+  Page         \* the most log entries one drop page takes
 
 \* Each switch takes one of its values.
 ASSUME Overlay \in {"On", "Off"}
 ASSUME OwnAppends \in {"On", "Off"}
 ASSUME RecordRead \in {"Validated", "Unvalidated"}
 ASSUME Truncate \in {"Planned", "Head"}
+ASSUME Reindex \in {"On", "Off"}
+ASSUME WalkRecord \in {"Delete", "Overwrite"}
+ASSUME WalkCheck \in {"Validated", "Unvalidated"}
+ASSUME Drop \in {"On", "Off"}
+ASSUME Cleanup \in {"Paged", "Whole", "FromOne"}
 \* At least one write, or nothing happens.
 ASSUME MaxSteps \in Nat \ {0}
+\* A page takes at least one entry, or a drop never finishes.
+ASSUME Page \in Nat \ {0}
 
 \* No value: a deleted document, or a document with no entry.
 None == -1
@@ -75,13 +103,25 @@ VARIABLES
   sIndex,   \* the stored entries in the transaction's snapshot
   sOwed,    \* the owed documents in the transaction's snapshot
   steps,    \* writes so far
-  crashed   \* whether the one crash happened
+  crashed,  \* whether the one crash happened
+  rx,       \* the reindex: "None" (not begun), "Cleared" (entries gone, walk under way) or "Done"
+  walked,   \* the documents the walk has written
+  wpc,      \* the walk's step for each document: "Idle" or "Read" (read its inputs)
+  wRec,     \* the record the walk read for each document
+  wLive,    \* the value the walk read for each document (None for a deleted one)
+  dropped,  \* whether the index was dropped
+  biggest   \* the most log positions one drop page truncated
 
 vars == <<value, alive, index, rec, log, trunc, dpc, dP, dDocs, dRec, dLive,
-          txOpen, txd, txApp, sValue, sAlive, sIndex, sOwed, steps, crashed>>
+          txOpen, txd, txApp, sValue, sAlive, sIndex, sOwed, steps, crashed,
+          rx, walked, wpc, wRec, wLive, dropped, biggest>>
 
 \* The values the check can reach.
 Values == 0..MaxSteps
+
+\* The larger and the smaller of two numbers.
+Max(a, b) == IF a > b THEN a ELSE b
+Min(a, b) == IF a < b THEN a ELSE b
 
 \* The documents still in the log: appended, and not yet truncated.
 Owed == {log[p] : p \in (trunc + 1)..Len(log)}
@@ -111,6 +151,11 @@ TypeOK ==
   /\ dpc \in [Drains -> {"Idle", "Planned", "Read"}]  \* drain steps
   /\ txOpen \in BOOLEAN                               \* the transaction is open or not
   /\ steps \in 0..MaxSteps                            \* bounded exploration
+  /\ rx \in {"None", "Cleared", "Done"}               \* reindex stages
+  /\ walked \subseteq Docs                            \* walked documents
+  /\ wpc \in [Docs -> {"Idle", "Read"}]               \* walk steps
+  /\ dropped \in BOOLEAN                              \* the index is dropped or not
+  /\ biggest \in Nat                                  \* a count of positions
 
 \* Each document exists at 0 with its entry and record; nothing is owed.
 Init ==
@@ -132,20 +177,29 @@ Init ==
   /\ sIndex = index /\ sOwed = {}              \* empty snapshot, unused while closed
   /\ steps = 0                                 \* nothing written
   /\ crashed = FALSE                           \* no crash yet
+  /\ rx = "None" /\ walked = {}                \* no reindex yet
+  /\ wpc = [d \in Docs |-> "Idle"]             \* the walk has read nothing
+  /\ wRec = [d \in Docs |-> None]              \* nothing read
+  /\ wLive = [d \in Docs |-> None]             \* nothing read
+  /\ dropped = FALSE                           \* the index exists
+  /\ biggest = 0                               \* no drop page yet
 
 \* The transaction state, left as is.
 txVars == <<txOpen, txd, txApp, sValue, sAlive, sIndex, sOwed>>
 \* The drains' state, left as is.
 drainVars == <<dpc, dP, dDocs, dRec, dLive>>
+\* The reindex and drop state, left as is.
+lifeVars == <<rx, walked, wpc, wRec, wLive, dropped, biggest>>
 
 \* A plain increment: blind on the counter, blind append to the log.
 Increment(d) ==
   /\ steps < MaxSteps                          \* still exploring
   /\ alive[d]                                  \* only a live document is incremented
   /\ value' = [value EXCEPT ![d] = @ + 1]      \* add without reading
-  /\ log' = Append(log, d)                     \* owe the index an update
+  /\ log' = IF dropped THEN log ELSE Append(log, d)   \* owe the index an update, while it exists
   /\ steps' = steps + 1                        \* one more write
   /\ UNCHANGED <<alive, index, rec, trunc, crashed>> /\ UNCHANGED drainVars /\ UNCHANGED txVars
+  /\ UNCHANGED lifeVars
 
 \* A delete: the document goes, and the index is owed its removal.
 Delete(d) ==
@@ -153,18 +207,22 @@ Delete(d) ==
   /\ alive[d]                                  \* a document is deleted once
   /\ ~(txOpen /\ txd[d] > 0)                   \* a delete of a doc the open txn wrote would abort it; left out
   /\ alive' = [alive EXCEPT ![d] = FALSE]      \* the document is gone
-  /\ log' = Append(log, d)                     \* owe the index the removal
+  /\ log' = IF dropped THEN log ELSE Append(log, d)   \* owe the index the removal, while it exists
   /\ steps' = steps + 1                        \* one more write
   /\ UNCHANGED <<value, index, rec, trunc, crashed>> /\ UNCHANGED drainVars /\ UNCHANGED txVars
+  /\ UNCHANGED lifeVars
 
 \* The explicit transaction opens and takes its snapshot.
 TxBegin ==
   /\ ~txOpen                                   \* one transaction at a time
   /\ steps < MaxSteps                          \* still exploring
+  /\ ~dropped                                  \* a write to a dropped index conflicts with the drop; left out
+  /\ rx /= "Cleared"                           \* reads in the middle of a reindex are not checked here
   /\ txOpen' = TRUE                            \* it is open
   /\ sValue' = value /\ sAlive' = alive        \* the snapshot of the documents
   /\ sIndex' = index /\ sOwed' = Owed          \* the snapshot of the index and the log
   /\ UNCHANGED <<txd, txApp, value, alive, index, rec, log, trunc, steps, crashed>> /\ UNCHANGED drainVars
+  /\ UNCHANGED lifeVars
 
 \* The transaction increments a document it sees.
 TxIncrement(d) ==
@@ -175,7 +233,7 @@ TxIncrement(d) ==
   /\ txApp' = Append(txApp, d)                 \* its own append, without a position yet
   /\ steps' = steps + 1                        \* one more write
   /\ UNCHANGED <<txOpen, sValue, sAlive, sIndex, sOwed, value, alive, index, rec, log, trunc, crashed>>
-  /\ UNCHANGED drainVars
+  /\ UNCHANGED drainVars /\ UNCHANGED lifeVars
 
 \* The transaction commits: its increments land and its appends take positions.
 TxCommit ==
@@ -184,7 +242,7 @@ TxCommit ==
   /\ log' = log \o txApp                       \* its appends take the next positions
   /\ txOpen' = FALSE /\ txd' = [d \in Docs |-> 0] /\ txApp' = <<>>   \* closed
   /\ UNCHANGED <<sValue, sAlive, sIndex, sOwed, alive, index, rec, trunc, steps, crashed>>
-  /\ UNCHANGED drainVars
+  /\ UNCHANGED drainVars /\ UNCHANGED lifeVars
 
 \* A drain plans on a snapshot: a head P (any, as a cap may stop short) and the docs up to it.
 Plan(r) ==
@@ -195,6 +253,7 @@ Plan(r) ==
        /\ dDocs' = [dDocs EXCEPT ![r] = {log[i] : i \in (trunc + 1)..p}]
   /\ dpc' = [dpc EXCEPT ![r] = "Planned"]      \* the apply is next
   /\ UNCHANGED <<dRec, dLive, value, alive, index, rec, log, trunc, steps, crashed>> /\ UNCHANGED txVars
+  /\ UNCHANGED lifeVars
 
 \* The drain's apply transaction reads each planned doc's record and live value.
 Read(r) ==
@@ -203,6 +262,7 @@ Read(r) ==
   /\ dLive' = [dLive EXCEPT ![r] = [d \in Docs |-> IF alive[d] THEN value[d] ELSE None]]   \* live values, unvalidated
   /\ dpc' = [dpc EXCEPT ![r] = "Read"]         \* the commit is next
   /\ UNCHANGED <<dP, dDocs, value, alive, index, rec, log, trunc, steps, crashed>> /\ UNCHANGED txVars
+  /\ UNCHANGED lifeVars
 
 \* The drain's apply transaction commits, or aborts and runs again on a changed record.
 Commit(r) ==
@@ -210,32 +270,99 @@ Commit(r) ==
   /\ IF RecordRead = "Validated" /\ \E d \in dDocs[r] : rec[d] /= dRec[r][d]
      THEN /\ dpc' = [dpc EXCEPT ![r] = "Planned"]   \* another drain moved a record: run the apply again
           /\ UNCHANGED <<index, rec, trunc>>
-     ELSE /\ index' = (index \ {<<d, dRec[r][d]>> : d \in dDocs[r]})          \* old entries out
-                      \cup {<<d, dLive[r][d]>> : d \in {e \in dDocs[r] : dLive[r][e] /= None}}   \* live entries in
-          /\ rec' = [d \in Docs |-> IF d \in dDocs[r] THEN dLive[r][d] ELSE rec[d]]   \* records follow
+     ELSE /\ IF dropped                        \* the index is gone: only the truncate is left
+             THEN UNCHANGED <<index, rec>>
+             ELSE /\ index' = (index \ {<<d, dRec[r][d]>> : d \in dDocs[r]})          \* old entries out
+                              \cup {<<d, dLive[r][d]>> : d \in {e \in dDocs[r] : dLive[r][e] /= None}}   \* live entries in
+                  /\ rec' = [d \in Docs |-> IF d \in dDocs[r] THEN dLive[r][d] ELSE rec[d]]   \* records follow
           /\ trunc' = LET upto == IF Truncate = "Planned" THEN dP[r] ELSE Len(log)    \* how far it truncates
-                      IN IF upto > trunc THEN upto ELSE trunc
+                      IN Max(upto, trunc)
           /\ dpc' = [dpc EXCEPT ![r] = "Idle"]      \* done
   /\ UNCHANGED <<dP, dDocs, dRec, dLive, value, alive, log, steps, crashed>> /\ UNCHANGED txVars
+  /\ UNCHANGED lifeVars
 
 \* A crash: whatever was not committed is lost; the reopened node settles by draining.
 Crash ==
   /\ ~crashed                                  \* one crash is enough to explore
-  /\ crashed' = TRUE
+  /\ crashed' = TRUE                           \* it happened
   /\ dpc' = [r \in Drains |-> "Idle"]          \* drains in flight are gone
   /\ txOpen' = FALSE /\ txd' = [d \in Docs |-> 0] /\ txApp' = <<>>   \* the open transaction is gone
+  /\ wpc' = [d \in Docs |-> "Idle"]            \* a walk in flight is gone; the reindex resumes from what it wrote
   /\ UNCHANGED <<dP, dDocs, dRec, dLive, sValue, sAlive, sIndex, sOwed, value, alive, index, rec, log, trunc, steps>>
+  /\ UNCHANGED <<rx, walked, wRec, wLive, dropped, biggest>>
+
+\* The reindex's clear: every entry goes, the records stay.
+ReindexClear ==
+  /\ Reindex = "On"                            \* a reindex may run
+  /\ rx = "None" /\ ~dropped                   \* once, on a live index
+  /\ ~txOpen                                   \* the transaction's snapshot is wholly before or after it
+  /\ rx' = "Cleared"                           \* the walk is next
+  /\ index' = {}                               \* the entries are gone
+  /\ UNCHANGED <<value, alive, rec, log, trunc, steps, crashed, walked, wpc, wRec, wLive, dropped, biggest>>
+  /\ UNCHANGED drainVars /\ UNCHANGED txVars
+
+\* The walk's transaction for d reads its record and its value.
+WalkRead(d) ==
+  /\ rx = "Cleared" /\ d \notin walked          \* the walk has not written d yet
+  /\ wpc[d] = "Idle"                           \* not already read
+  /\ wRec' = [wRec EXCEPT ![d] = rec[d]]       \* the record
+  /\ wLive' = [wLive EXCEPT ![d] = IF alive[d] THEN value[d] ELSE None]   \* the value, if d lives
+  /\ wpc' = [wpc EXCEPT ![d] = "Read"]         \* the commit is next
+  /\ UNCHANGED <<value, alive, index, rec, log, trunc, steps, crashed, rx, walked, dropped, biggest>>
+  /\ UNCHANGED drainVars /\ UNCHANGED txVars
+
+\* The walk's transaction for d commits, or runs again if a drain moved the record it read.
+WalkCommit(d) ==
+  /\ wpc[d] = "Read"                           \* has read its inputs
+  /\ IF WalkCheck = "Validated" /\ rec[d] /= wRec[d]
+     THEN /\ wpc' = [wpc EXCEPT ![d] = "Idle"]  \* a drain moved the record: read again
+          /\ UNCHANGED <<index, rec, walked, rx>>
+     ELSE /\ walked' = walked \cup {d}          \* d is written
+          /\ rx' = IF walked \cup {d} = Docs THEN "Done" ELSE "Cleared"   \* the last one ends the reindex
+          /\ wpc' = [wpc EXCEPT ![d] = "Idle"]  \* done with d
+          /\ IF wLive[d] = None                 \* the walk skips a deleted document
+             THEN UNCHANGED <<index, rec>>
+             ELSE /\ index' = (IF WalkRecord = "Delete"   \* the entry the record names goes
+                               THEN index \ {<<d, wRec[d]>>}
+                               ELSE index)
+                              \cup {<<d, wLive[d]>>}    \* and the walk's own comes in
+                  /\ rec' = [rec EXCEPT ![d] = wLive[d]]   \* the record names it
+  /\ UNCHANGED <<value, alive, log, trunc, steps, crashed, wRec, wLive, dropped, biggest>>
+  /\ UNCHANGED drainVars /\ UNCHANGED txVars
+
+\* A drop: the definition goes, then its entries and records (their pages are not
+\* modelled here, the log's are).
+DropIndex ==
+  /\ Drop = "On"                               \* the index may be dropped
+  /\ ~dropped /\ ~txOpen /\ rx /= "Cleared"     \* once, with no writer or reindex in its way
+  /\ dropped' = TRUE                           \* no write owes it any more
+  /\ index' = {} /\ rec' = [d \in Docs |-> None]   \* entries and records are gone
+  /\ UNCHANGED <<value, alive, log, trunc, steps, crashed, rx, walked, wpc, wRec, wLive, biggest>>
+  /\ UNCHANGED drainVars /\ UNCHANGED txVars
+
+\* One drop page, its own transaction: it truncates from the first entry left.
+CleanupPage ==
+  /\ dropped /\ trunc < Len(log)               \* something is left of the log
+  /\ LET from == IF Cleanup = "FromOne" THEN 1 ELSE trunc + 1           \* where its range starts
+         upto == IF Cleanup = "Whole" THEN Len(log) ELSE Min(trunc + Page, Len(log))   \* where it ends
+     IN /\ trunc' = upto                        \* the log is truncated through it
+        /\ biggest' = Max(biggest, upto - from + 1)   \* how many positions this one transaction truncated
+  /\ UNCHANGED <<value, alive, index, rec, log, steps, crashed, rx, walked, wpc, wRec, wLive, dropped>>
+  /\ UNCHANGED drainVars /\ UNCHANGED txVars
 
 \* Any one step happens next.
 Next ==
   \/ \E d \in Docs : Increment(d) \/ Delete(d) \/ TxIncrement(d)
   \/ TxBegin \/ TxCommit \/ Crash
   \/ \E r \in Drains : Plan(r) \/ Read(r) \/ Commit(r)
+  \/ ReindexClear \/ DropIndex \/ CleanupPage
+  \/ \E d \in Docs : WalkRead(d) \/ WalkCommit(d)
 
-\* Drains and the transaction keep making progress when they can.
+\* Drains, the transaction and the drop's cleanup keep making progress when they can.
 Fairness ==
   /\ \A r \in Drains : WF_vars(Plan(r)) /\ WF_vars(Read(r)) /\ WF_vars(Commit(r))
   /\ WF_vars(TxCommit)
+  /\ WF_vars(CleanupPage)
 
 \* Start in Init, take any steps, and let drains run.
 Spec == Init /\ [][Next]_vars /\ Fairness
@@ -243,20 +370,29 @@ Spec == Init /\ [][Next]_vars /\ Fairness
 \* Every value stays in its range.
 INV_TypeOK == TypeOK
 
-\* A read through the index finds exactly the documents whose value matches.
-INV_ReadExact == \A q \in Values : Found(q) = {d \in Docs : alive[d] /\ value[d] = q}
+\* A read through the index finds exactly the documents whose value matches,
+\* while the index exists and no reindex is between its clear and its last walk.
+INV_ReadExact ==
+  (rx /= "Cleared" /\ ~dropped) => \A q \in Values : Found(q) = {d \in Docs : alive[d] /\ value[d] = q}
 
 \* A read inside the transaction finds exactly what its snapshot and its own writes say.
 INV_TxReadExact ==
   txOpen => \A q \in Values : TxFound(q) = {d \in Docs : sAlive[d] /\ sValue[d] + txd[d] = q}
 
-\* The index holds an entry for a document only where its position record says.
+\* Before any reindex, the index holds an entry for a document exactly where its position record says.
 INV_RecordMatchesIndex ==
-  \A d \in Docs : {v \in Values : <<d, v>> \in index} = IF rec[d] = None THEN {} ELSE {rec[d]}
+  rx = "None" => \A d \in Docs : {v \in Values : <<d, v>> \in index} = IF rec[d] = None THEN {} ELSE {rec[d]}
 
-\* Once nothing is owed, the stored entries are exactly the live values.
+\* No entry is an orphan: each one is the one its document's record names.
+INV_NoOrphanEntry ==
+  \A d \in Docs : {v \in Values : <<d, v>> \in index} \subseteq IF rec[d] = None THEN {} ELSE {rec[d]}
+
+\* Once nothing is owed, the stored entries are exactly the live values (on a live index, outside a reindex).
 INV_SettledIndexExact ==
-  Owed = {} => index = {<<d, value[d]>> : d \in {e \in Docs : alive[e]}}
+  (Owed = {} /\ rx /= "Cleared" /\ ~dropped) => index = {<<d, value[d]>> : d \in {e \in Docs : alive[e]}}
+
+\* No drop page truncates more than a page of positions in its one transaction.
+INV_CleanupBounded == biggest <= Page
 
 \* Every owed document is eventually drained.
 PROP_Drains == <>[](Owed = {})

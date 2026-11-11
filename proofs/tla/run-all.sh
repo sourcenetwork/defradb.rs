@@ -563,6 +563,12 @@ RUNS=(
   "MC_DeferredIndex_Red_NoOwnAppends.cfg DeferredIndex.tla RED" # a transaction misses its own increments (INV_TxReadExact)
   "MC_DeferredIndex_Red_UnvalidatedRecord.cfg DeferredIndex.tla RED" # two drains leave an entry behind (INV_RecordMatchesIndex)
   "MC_DeferredIndex_Red_TruncateHead.cfg DeferredIndex.tla RED" # a drain drops work appended after its plan (INV_ReadExact)
+  "MC_DeferredIndex_Green_Reindex.cfg DeferredIndex.tla GREEN" # a reindex walk racing drains leaves no orphan entry
+  "MC_DeferredIndex_Red_WalkOverwrite.cfg DeferredIndex.tla RED" # the walk overwrites the record and keeps the drain's entry (INV_NoOrphanEntry)
+  "MC_DeferredIndex_Red_WalkUnvalidated.cfg DeferredIndex.tla RED" # the walk acts on a record a drain moved (INV_NoOrphanEntry)
+  "MC_DeferredIndex_Green_Drop.cfg DeferredIndex.tla GREEN" # a drop truncates the log in pages from the first entry left
+  "MC_DeferredIndex_Red_DropWhole.cfg DeferredIndex.tla RED" # a drop truncates the whole backlog in one transaction (INV_CleanupBounded)
+  "MC_DeferredIndex_Red_DropFromOne.cfg DeferredIndex.tla RED" # each drop page truncates from position 1 (INV_CleanupBounded)
   "MC_DocumentMaterialization_Red_Overwrite.cfg DocumentMaterialization.tla RED" # active rematerialization must not clear delete marker
   "MC_DocumentMaterialization_Green.cfg DocumentMaterialization.tla GREEN" # deletion marker is componentwise/absorbing
   "MC_PushLogAdmission_Green.cfg MC_PushLogAdmission_Common.tla GREEN" # #1088 W1: capacity overflow nacks -> success implies registered-or-merged + all docs merge
