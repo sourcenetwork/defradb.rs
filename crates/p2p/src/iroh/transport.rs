@@ -308,16 +308,14 @@ impl IrohTransport {
                 protocol.max_message
             )));
         }
-        let (send, recv) = self
-            .send_command(|reply| IrohCommand::OpenStream {
-                peer_id: peer_id.clone(),
-                addrs,
-                protocol: *protocol,
-                request,
-                reply,
-            })
-            .await?;
-        Ok((ProtocolSendStream::new(send), ProtocolRecvStream::new(recv)))
+        self.send_command(|reply| IrohCommand::OpenStream {
+            peer_id: peer_id.clone(),
+            addrs,
+            protocol: *protocol,
+            request,
+            reply,
+        })
+        .await
     }
 }
 

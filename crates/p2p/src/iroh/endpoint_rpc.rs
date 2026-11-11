@@ -19,6 +19,7 @@ use super::endpoint_streams::{adopt_new_connection, ConnectionDirection, Connect
 use super::fetch_stats::{selected_path_rtt, FetchOutcome, FetchStats, FetchTimer};
 use super::gossip::GossipHandle;
 use super::peer_map::{parse_endpoint_id, SharedPeerMap};
+use super::protocol_stream::{ProtocolRecvStream, ProtocolSendStream};
 use super::protocols;
 use super::services;
 use super::stream_protocols::StreamProtocol;
@@ -668,6 +669,11 @@ where
 
 /// Open a stream for `protocol` on the peer's shared connection and write
 /// `request` as its first message, leaving the send half open.
+///
+/// The halves are wrapped as soon as the stream opens, so a send half dropped
+/// from here on (a failed write, or an opener that stopped waiting for the
+/// reply) resets the stream rather than finishing it, and the peer never reads
+/// a whole request followed by a clean end.
 pub(super) async fn open_protocol_stream(
     endpoint: &Endpoint,
     peer_id: &PeerId,
@@ -676,9 +682,9 @@ pub(super) async fn open_protocol_stream(
     direct_addr: Option<std::net::SocketAddr>,
     cache: &ConnectionCache,
     admission: &PeerAdmission,
-) -> crate::error::Result<(iroh::endpoint::SendStream, iroh::endpoint::RecvStream)> {
+) -> crate::error::Result<(ProtocolSendStream, ProtocolRecvStream)> {
     let connection = connect_with_cache(endpoint, peer_id, direct_addr, cache, admission).await?;
-    let (mut send, recv) = match open_tagged_stream(&connection, peer_id, protocol.tag).await {
+    let (send, recv) = match open_tagged_stream(&connection, peer_id, protocol.tag).await {
         Ok(streams) => streams,
         Err(error) => {
             evict_if_closed(cache, peer_id, &connection);
@@ -687,13 +693,14 @@ pub(super) async fn open_protocol_stream(
     };
     // Only fails on a stream that is already closed, which the write below reports.
     let _ = send.set_priority(protocol.priority.send_priority());
+    let (mut send, recv) = (ProtocolSendStream::new(send), ProtocolRecvStream::new(recv));
     // Written here rather than with `write_payload`, so a peer that refuses the
     // request (busy, too large) surfaces as `StreamReset` with its code.
     let len = (request.len() as u32).to_be_bytes();
     for part in [&len[..], request] {
         if let Err(error) = send.write_all(part).await {
             evict_if_closed(cache, peer_id, &connection);
-            return Err(super::protocol_stream::write_error(error));
+            return Err(error);
         }
     }
     Ok((send, recv))

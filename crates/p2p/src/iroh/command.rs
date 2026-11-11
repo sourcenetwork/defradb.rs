@@ -2,7 +2,7 @@
 
 use crate::rt::{mpsc, oneshot};
 use cid::Cid;
-use iroh::endpoint::{RecvStream, SendStream};
+use iroh::endpoint::SendStream;
 
 use crate::message::{
     BranchableSyncRequest, DocSyncRequest, ManageQueryReply, ManageQueryRequest, ManageReply,
@@ -13,6 +13,7 @@ use crate::replicator::ReplicatorInfo;
 use crate::transport::{MessageId, PeerAddr, PeerId};
 use crate::QueryId;
 
+use super::protocol_stream::{ProtocolRecvStream, ProtocolSendStream};
 use super::stream_protocols::StreamProtocol;
 
 /// Where the endpoint answers a command.
@@ -179,7 +180,7 @@ pub enum IrohCommand {
         addrs: Vec<PeerAddr>,
         protocol: StreamProtocol,
         request: Vec<u8>,
-        reply: Reply<(SendStream, RecvStream)>,
+        reply: Reply<(ProtocolSendStream, ProtocolRecvStream)>,
     },
     /// Write an encoded reply on its request's stream and finish it.
     ReplyOnStream {

@@ -24,6 +24,7 @@ use super::endpoint_rpc::{
 use super::endpoint_streams::{adopt_new_connection, ConnectionDirection, ConnectionLifecycle};
 use super::gossip::{AddrInfo, EventSender, Network};
 use super::peer_map::{endpoint_id_to_peer_id, parse_endpoint_id};
+use super::protocol_stream::{ProtocolRecvStream, ProtocolSendStream};
 use super::protocols;
 use super::records::Input as RecordsInput;
 use super::stream_protocols::StreamProtocol;
@@ -702,7 +703,7 @@ async fn open_stream(
     addrs: Vec<PeerAddr>,
     protocol: StreamProtocol,
     request: Vec<u8>,
-) -> crate::error::Result<(iroh::endpoint::SendStream, iroh::endpoint::RecvStream)> {
+) -> crate::error::Result<(ProtocolSendStream, ProtocolRecvStream)> {
     // ponytail: two first opens racing may both dial; the peer map counts both
     // connections and the cache keeps one.
     if cached_connection(&ctx.resources.connection_cache, &peer_id)?.is_none() {

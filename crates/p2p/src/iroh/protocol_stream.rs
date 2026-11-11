@@ -77,7 +77,7 @@ impl ProtocolRecvStream {
     }
 }
 
-pub(super) fn write_error(error: WriteError) -> Error {
+fn write_error(error: WriteError) -> Error {
     match error {
         WriteError::Stopped(code) => Error::StreamReset(code.into_inner()),
         WriteError::ConnectionLost(_) => Error::ConnectionClosed,
