@@ -70,8 +70,6 @@ impl TestIndexGate {
         )
     }
 
-    // ponytail: polls every few milliseconds, as the harness's other build
-    // waits do; a notify per entry is the upgrade if a scenario needs it.
     fn wait_for<F>(&self, reached: F, what: &str) -> Result<(), String>
     where
         F: Fn() -> bool,
