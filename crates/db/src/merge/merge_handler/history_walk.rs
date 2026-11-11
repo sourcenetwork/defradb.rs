@@ -58,6 +58,7 @@ where
                     match self
                         .prepare_composite_merge(
                             root,
+                            root,
                             root_block,
                             root_payload,
                             metadata,
@@ -68,10 +69,6 @@ where
                     {
                         CompositeMergePreparation::Ready(_) => {}
                         CompositeMergePreparation::Complete(outcome) => return Ok(outcome),
-                        CompositeMergePreparation::Deferred { outcome, awaiting } => {
-                            self.index_deferred(root, doc, metadata, awaiting);
-                            return Ok(outcome);
-                        }
                     }
                 }
                 write(store, &registry::admission_key(root), &metadata.sender_peer).await?;
@@ -168,6 +165,7 @@ where
                     match self
                         .prepare_composite_merge(
                             root,
+                            root,
                             root_block,
                             root_payload,
                             metadata,
@@ -190,11 +188,6 @@ where
                                     Completion::from_outcome(outcome).unwrap_or(Completion::Restart)
                                 }
                             });
-                            break;
-                        }
-                        CompositeMergePreparation::Deferred { outcome, awaiting } => {
-                            self.index_deferred(root, doc, metadata, awaiting);
-                            progress.outcome = Some(Completion::Deferred(format!("{outcome:?}")));
                             break;
                         }
                     }
@@ -262,6 +255,7 @@ where
                 .ok_or_else(|| storage_error("history has no identity"))?;
             let outcome = match self
                 .prepare_composite_merge(
+                    root,
                     &cid,
                     &block,
                     payload,
@@ -294,10 +288,6 @@ where
                     .await?
                 }
                 CompositeMergePreparation::Complete(outcome) => outcome,
-                CompositeMergePreparation::Deferred { outcome, awaiting } => {
-                    self.index_deferred(root, doc, metadata, awaiting);
-                    outcome
-                }
             };
             if let MergeOutcome::Rejected { reason } = outcome {
                 return Err(MergeError::RetryRejected(reason));

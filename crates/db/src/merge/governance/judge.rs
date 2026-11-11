@@ -9,44 +9,31 @@ use super::awaited::{is_immutable_scalar_field, Awaited, WaitKey};
 use super::validator::MergeCandidate;
 use super::verdict::MergeVerdict;
 use super::view::DbMergeView;
-use crate::merge::merge_handler::{DbMergeHandler, MergeError};
-
-/// One composite frame as dispatch hands it to the judge.
-pub(crate) struct GovernedFrame<'a> {
-    pub cid: &'a Cid,
-    pub block: &'a Block,
-    pub payload: &'a CompositeDeltaPayload,
-    pub doc_id: &'a str,
-    pub collection: &'a CollectionVersion,
-}
-
-pub(crate) enum Judgement {
-    Ungoverned,
-    Accept,
-    Verdict {
-        outcome: MergeOutcome,
-        awaiting: Vec<WaitKey>,
-    },
-}
+use crate::merge::merge_handler::{DbMergeHandler, GovernedFrame, Judgement, MergeError};
 
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
+    /// Whether an app merge validator, not ACP, judges this collection's
+    /// replicated composites.
     pub(crate) fn is_governed(&self, collection: &CollectionVersion) -> bool {
         self.db
             .merge_governance()
             .is_some_and(|governance| governance.governs(collection))
     }
 
-    /// Judge one composite frame of a governed collection. The signature is
-    /// verified here from the block itself, so a frame reached through
-    /// recovery, where dispatch skips verification, is judged the same way.
+    /// Judge one composite frame of a governed collection, filing a deferral
+    /// under the root for re-drive. The signature is verified here from the
+    /// block itself, so a frame reached through recovery, where dispatch
+    /// skips verification, is judged the same way.
     pub(crate) async fn judge_governed(
         &self,
         frame: GovernedFrame<'_>,
     ) -> Result<Judgement, MergeError> {
         let GovernedFrame {
+            root,
             cid,
             block,
             payload,
+            metadata,
             doc_id,
             collection,
         } = frame;
@@ -57,13 +44,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             return Ok(Judgement::Ungoverned);
         }
         let Some(validator) = governance.validator() else {
-            return Ok(Judgement::Verdict {
-                outcome: MergeOutcome::retryable_skip(format!(
-                    "collection {} is governed but no merge validator is installed",
-                    collection.name
-                )),
-                awaiting: Vec::new(),
-            });
+            return Ok(Judgement::Settled(MergeOutcome::retryable_skip(format!(
+                "collection {} is governed but no merge validator is installed",
+                collection.name
+            ))));
         };
 
         let candidate = MergeCandidate {
@@ -83,15 +67,18 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         })?;
         tracing::debug!(%cid, %doc_id, collection = %collection.name, ?verdict, "Governed composite judged");
         if matches!(verdict, MergeVerdict::Reject { .. }) {
-            self.rejected_governed.insert(*cid, ());
+            self.governance.rejected.insert(*cid, ());
         }
 
         Ok(match verdict.into_outcome() {
             (None, _) => Judgement::Accept,
-            (Some(outcome), awaiting) => Judgement::Verdict {
-                outcome,
-                awaiting: self.wait_keys(awaiting)?,
-            },
+            (Some(outcome), awaiting) => {
+                let awaiting = self.wait_keys(awaiting)?;
+                if !awaiting.is_empty() {
+                    self.index_deferred(root, doc_id, metadata, awaiting);
+                }
+                Judgement::Settled(outcome)
+            }
         })
     }
 
@@ -131,9 +118,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     pub(crate) async fn release_merged_composite(&self, cid: &Cid, block: Option<&Block>) {
         // Its own entry first: a judgement that deferred this composite may
         // have filed it after another accepted and merged it.
-        self.deferred.forget(cid);
+        self.governance.deferred.forget(cid);
         let mut keys = vec![WaitKey::Composite(*cid)];
-        if self.deferred.awaits_fields() {
+        if self.governance.deferred.awaits_fields() {
             match self.immutable_field_keys(cid, block).await {
                 Ok(fields) => keys.extend(fields),
                 Err(error) => {
@@ -141,7 +128,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 }
             }
         }
-        self.deferred.release(keys);
+        self.governance.deferred.release(keys);
     }
 
     async fn immutable_field_keys(
@@ -224,14 +211,14 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     /// Index the composite being merged under the CIDs a frame of its DAG is
     /// waiting for, keeping only what re-drive needs from the carrier's
     /// metadata.
-    pub(crate) fn index_deferred(
+    fn index_deferred(
         &self,
         root: &Cid,
         doc_id: &str,
         metadata: &BlockMetadata<'_>,
         awaiting: Vec<WaitKey>,
     ) {
-        self.deferred.defer(
+        self.governance.deferred.defer(
             MergeBlock {
                 cid: *root,
                 block_data: bytes::Bytes::new(),
@@ -328,6 +315,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
 
     /// Deferred composites currently indexed for re-drive.
     pub fn deferred_composites(&self) -> usize {
-        self.deferred.len()
+        self.governance.deferred.len()
     }
 }

@@ -2,7 +2,8 @@ use cid::Cid;
 use defra_core::block::Block;
 use storage::corekv::Store;
 
-use crate::merge::merge_handler::{verify_signature_data, DbMergeHandler, MergeError};
+use crate::merge::merge_handler::signature::verify_signature_data;
+use crate::merge::merge_handler::{DbMergeHandler, MergeError};
 
 /// What a composite's own signature proves, judged from the block and its
 /// signature block alone, never from the metadata that carried it.

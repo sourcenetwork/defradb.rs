@@ -11,7 +11,6 @@ use std::sync::Arc;
 use storage::corekv::{OnCommit, Store};
 
 use crate::error::Result;
-use crate::merge::governance::LocalCommitRelease;
 use crate::txn::DbTxn;
 
 /// Per-mutation broadcast payload, mirroring Go's sendUpdate call.
@@ -43,6 +42,18 @@ pub trait TxnBroadcaster: defra_core::thread_bounds::MaybeSendSync {
     /// write's durable delivery markers are written, or once it is given up:
     /// the committing transaction returns only then.
     fn submit_update(&self, event: TxnBroadcastEvent, done: BroadcastDone);
+}
+
+/// Told about each composite a local write commits. The merge handler installs
+/// one so composites deferred awaiting what the write created are released:
+/// waiters are otherwise released only from the merge path, which a local
+/// write bypasses.
+pub trait LocalCommitRelease: defra_core::thread_bounds::MaybeSendSync {
+    /// `cid` and `block_data` are the composite the write committed.
+    ///
+    /// Called in commit-receipt order from the ordered event dispatch, which
+    /// must not wait, so any work this triggers runs off the caller's task.
+    fn committed(&self, cid: Cid, block_data: Bytes);
 }
 
 /// Tells a committing transaction that its broadcast was handled; set on drop.

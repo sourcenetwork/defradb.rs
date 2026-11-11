@@ -230,6 +230,7 @@ impl Node {
         // index held before this process started.
         // It runs on the database's worker pool and ends with the
         // coordinator's shutdown.
+        #[cfg(feature = "governed-collections")]
         drop(db::merge::governance::start_governance_sweep(
             replication.merge_handler_inner.clone(),
             db::merge::governance::SWEEP_INTERVAL,

@@ -43,22 +43,25 @@ corrupts state.
   `Registered(r)` and the `room` check in `Apply`. `:129` `release` is
   `Released(r, e)`; `:82` `enqueue_ready` is the sweep's entry to the same
   `queued` gate. The index is in memory: `IndexDurable = FALSE` is today.
-- `judge.rs:32` `judge_governed` maps the verdict (`PushLog`, `DrainReleased`);
-  `:194` `index_deferred` files it.
-- `merge_handler/dispatch.rs:121` `redrive_deferred` drains the ready queue
-  through the verifying merge path: `DrainReleased`.
-- `sweep.rs:29-33` `sweep_unmerged_governed` walks `blockstore.get_unmerged()`,
+- `judge.rs:27` `judge_governed` maps the verdict (`PushLog`, `DrainReleased`)
+  and, for a Defer that named something, files it through `:214`
+  `index_deferred` before answering. All of `governance/` compiles only under
+  `db`'s `governed-collections` feature; without it `merge_handler/ungoverned.rs`
+  stands in, and no composite is judged, deferred or re-driven.
+- `redrive.rs:15` `redrive_deferred` drains the ready queue through the
+  verifying merge path: `DrainReleased`.
+- `sweep.rs:40` `sweep_unmerged_governed` walks `blockstore.get_unmerged()`,
   the store's own to-merge index, and re-drives each governed composite through
   `enqueue_ready` and `redrive_deferred`: `Sweep` with `SweepScope = "Unmerged"`.
-  `:124` `SWEEP_INTERVAL` (60 s) and `:129` `run_governance_sweep`, which runs
+  `:140` `SWEEP_INTERVAL` (60 s) and `:147` `run_governance_sweep`, which runs
   one pass at startup (`Crash` followed by `Sweep`) and then on the interval.
   Spawned from `crates/defra-node/src/libp2p_runtime.rs`,
-  `crates/p2p-adapter/src/iroh_peer/peer.rs:278` and
-  `crates/cli/src/commands/start/server_p2p/libp2p.rs:225`.
+  `crates/p2p-adapter/src/iroh_peer/peer.rs:287` and
+  `crates/cli/src/commands/start/server_p2p/libp2p.rs:234`.
 - `crates/p2p/src/sync/replication/handlers.rs:429` — a non-terminal
   `Skipped` is not marked merged, so the composite stays in the unmerged set
   the sweep walks. `Unmerged(r)`.
-- `merge_handler/composite.rs:160` `has_merged_composite`, the in-process
+- `merge_handler/composite.rs:167` `has_merged_composite`, the in-process
   merged set the sweep consults before re-driving: `merged[r]`.
 
 **What is anchored and what is not.** The structure above is read from the
