@@ -32,8 +32,9 @@ impl ProtocolSendStream {
         send.write_all(bytes).await.map_err(write_error)
     }
 
-    /// Ends the stream after what was written.
-    pub fn finish(mut self) -> Result<()> {
+    /// Ends the stream after what was written. Nothing more can be written
+    /// afterwards.
+    pub fn finish(&mut self) -> Result<()> {
         let Some(mut send) = self.0.take() else {
             return Err(Error::ConnectionClosed);
         };

@@ -32,8 +32,8 @@ pub const MAX_STREAM_DEADLINE: Duration = Duration::from_secs(24 * 60 * 60);
 /// allowlist, revocations, the priority's budget and the peer's share of it,
 /// the size limit and the body deadlines), and hands the stream to the
 /// protocol's [`StreamHandler`]. The request's room in the budget goes with it
-/// ([`ProtocolRequest`]) and comes back once the handler drops the request.
-/// What follows on the stream is up to the protocol.
+/// ([`ProtocolRequest`]) and comes back once the handler releases the request
+/// or returns. What follows on the stream is up to the protocol.
 ///
 /// Put a version in the tag (`/myapp/pull/1`): a peer that does not serve a
 /// tag stops the stream with [`RESET_UNKNOWN_SERVICE`], so a new version is a
@@ -117,17 +117,27 @@ impl StreamProtocol {
 }
 
 /// A protocol stream's first message, read and admitted. It holds the
-/// request's room in the peer's inbound budget until it is dropped, so the
-/// budget counts these bytes for exactly as long as the handler keeps them:
-/// parse what you need and drop it before a long wait.
+/// request's room in the peer's inbound budget until it is released or the
+/// handler returns, so the budget counts these bytes for exactly as long as
+/// the handler keeps them: [`release`](Self::release) it before a long wait.
 pub struct ProtocolRequest {
     bytes: Vec<u8>,
-    _room: InboundLease,
+    _room: Option<InboundLease>,
 }
 
 impl ProtocolRequest {
     pub(super) fn new(bytes: Vec<u8>, room: InboundLease) -> Self {
-        Self { bytes, _room: room }
+        Self {
+            bytes,
+            _room: Some(room),
+        }
+    }
+
+    /// Takes the request's bytes and gives its room in the budget back. The
+    /// request reads as empty afterwards.
+    pub fn release(&mut self) -> Vec<u8> {
+        self._room = None;
+        std::mem::take(&mut self.bytes)
     }
 }
 
@@ -157,13 +167,15 @@ pub struct InboundStream {
 
 /// Serves the streams peers open for one [`StreamProtocol`].
 ///
-/// Each stream is served on a task of its own at the network edge. Only its
-/// [`ProtocolRequest`] holds room in the inbound budget, so a handler that
-/// drops the request before waiting holds none. The node drops that task, resetting both
-/// halves of the stream, at the protocol's deadline, when the peer's
-/// connection closes (a revocation with `deny_peer` closes it), or when the
-/// endpoint shuts down. A peer has at most 64 streams open per connection,
-/// Defra's own included.
+/// Each stream is served on a task of its own at the network edge. The
+/// handler borrows the stream rather than owning it, so nothing of it (its
+/// halves, its request, the request's room) can move to another task and
+/// outlive this one. Only the [`ProtocolRequest`] holds room in the inbound
+/// budget, so a handler that releases the request before waiting holds none.
+/// The node drops the task, resetting both halves of the stream and freeing
+/// the room, at the protocol's deadline, when the peer's connection closes (a
+/// revocation with `deny_peer` closes it), or when the endpoint shuts down. A
+/// peer has at most 64 streams open per connection, Defra's own included.
 ///
 /// The handler runs on the network runtime: database work goes through the
 /// node's request path (`defra_node::Node::execute_request`, which runs it on a
@@ -172,8 +184,9 @@ pub struct InboundStream {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait StreamHandler: MaybeSendSync {
-    /// Serves one stream.
-    async fn handle(&self, stream: InboundStream);
+    /// Serves one stream. A send half left unfinished when this returns is
+    /// reset.
+    async fn handle(&self, stream: &mut InboundStream);
 }
 
 /// A protocol and the handler serving it.
@@ -228,7 +241,7 @@ mod tests {
 
     #[async_trait]
     impl StreamHandler for Nothing {
-        async fn handle(&self, _stream: InboundStream) {}
+        async fn handle(&self, _stream: &mut InboundStream) {}
     }
 
     fn protocol(tag: &'static [u8]) -> StreamProtocol {

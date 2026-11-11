@@ -46,7 +46,7 @@ pub enum Handler {
     /// Runs the request as a GraphQL query on its node, through the node's
     /// request path, and replies with the result's data.
     Query,
-    /// Drops its request, writes `started` and never returns.
+    /// Releases its request, writes `started` and never returns.
     Stuck,
     /// Keeps its request, writes `started` and never returns.
     Hold,
@@ -170,47 +170,38 @@ struct TestHandler {
 
 #[async_trait]
 impl StreamHandler for TestHandler {
-    async fn handle(&self, stream: InboundStream) {
-        let InboundStream {
-            peer,
-            request,
-            mut send,
-            recv,
-            ..
-        } = stream;
+    async fn handle(&self, stream: &mut InboundStream) {
         match self.behaviour {
             Handler::Echo => {
+                let request = stream.request.release();
                 let reply = serde_json::json!({
-                    "peer": peer.to_string(),
+                    "peer": stream.peer.to_string(),
                     "request": String::from_utf8_lossy(&request),
-                });
-                drop(request);
-                if send.write_all(reply.to_string().as_bytes()).await.is_ok() {
-                    let _ = send.finish();
+                })
+                .to_string();
+                if stream.send.write_all(reply.as_bytes()).await.is_ok() {
+                    let _ = stream.send.finish();
                 }
             }
             Handler::Query => {
-                // Dropping `send` unfinished resets the stream: the node is gone.
+                // Returning with `send` unfinished resets the stream: the node is gone.
                 let Some(node) = self.node.get().and_then(Weak::upgrade) else {
                     return;
                 };
-                let query = String::from_utf8_lossy(&request).into_owned();
-                drop(request);
+                let query = String::from_utf8_lossy(&stream.request.release()).into_owned();
                 let response = node.execute(&query).await;
                 let reply = serde_json::to_vec(&response.data).unwrap_or_default();
-                if send.write_all(&reply).await.is_ok() {
-                    let _ = send.finish();
+                if stream.send.write_all(&reply).await.is_ok() {
+                    let _ = stream.send.finish();
                 }
             }
             Handler::Stuck => {
-                drop(request);
-                let _ = send.write_all(STARTED).await;
-                let _halves = (send, recv);
+                stream.request.release();
+                let _ = stream.send.write_all(STARTED).await;
                 std::future::pending::<()>().await;
             }
             Handler::Hold => {
-                let _ = send.write_all(STARTED).await;
-                let _held = (request, send, recv);
+                let _ = stream.send.write_all(STARTED).await;
                 std::future::pending::<()>().await;
             }
         }

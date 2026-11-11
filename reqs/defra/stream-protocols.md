@@ -37,14 +37,14 @@ A stream whose tag nobody registered is stopped before its request is read (`str
 - **Parents:** ["defra.stream_protocols"]
 - **Scenarios:** ["net::stream_protocols::a_hung_handler_that_dropped_its_request_holds_no_room", "net::stream_protocols::a_handler_that_keeps_its_request_holds_its_room"]
 
-A request's room in the peer's share of its priority's inbound budget is held by the request handed to the handler and comes back when the handler drops it. Two requests, each the peer's whole share, both reach handlers that dropped their request and hang. While a handler keeps such a request, a second one is refused with `stream reset by the peer with code 4`. A handler can therefore hold no more than the peer's share however many streams it serves, and never longer than its deadline.
+A request's room in the peer's share of its priority's inbound budget is held by the request lent to the handler and comes back when the handler releases it or the handler's task ends. The handler borrows its stream, so neither the stream nor its request can outlive that task. Two requests, each the peer's whole share, both reach handlers that released their request and hang. While a handler keeps such a request, a second one is refused with `stream reset by the peer with code 4`. A handler can therefore hold no more than the peer's share however many streams it serves, and never longer than its deadline.
 
 # `defra.stream_protocols.deadline`: A handler past its deadline is cut
 
 - **Parents:** ["defra.stream_protocols"]
 - **Scenarios:** ["net::stream_protocols::a_handler_past_its_deadline_is_cut_with_code_7"]
 
-A handler still running at its protocol's deadline is dropped, and the opener's read fails with `stream reset by the peer with code 7`. A send half dropped unfinished, by the node or by a handler, resets the stream the same way rather than finishing it.
+A handler still running at its protocol's deadline is dropped, and the opener's read fails with `stream reset by the peer with code 7`. A send half left unfinished, by the node or by a handler that returns, resets the stream the same way rather than finishing it.
 
 # `defra.stream_protocols.revocation`: Revoking a peer cuts its open protocol streams
 

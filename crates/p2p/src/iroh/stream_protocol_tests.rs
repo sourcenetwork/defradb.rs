@@ -34,7 +34,7 @@ const IO_TIMEOUT: Duration = Duration::from_secs(10);
 enum Behaviour {
     /// Replies with the request reversed.
     Echo,
-    /// Drops the request, then never returns.
+    /// Releases the request, then never returns.
     Stuck,
     /// Keeps the request, and never returns.
     Hold,
@@ -79,33 +79,22 @@ impl Drop for OnDrop {
 
 #[async_trait]
 impl StreamHandler for Probe {
-    async fn handle(&self, stream: InboundStream) {
+    async fn handle(&self, stream: &mut InboundStream) {
         let _dropped = OnDrop(self.dropped.clone());
         let peer = stream.peer.clone();
         match self.behaviour {
             Behaviour::Echo => {
                 let _ = self.started.try_send(peer);
-                let InboundStream {
-                    request, mut send, ..
-                } = stream;
-                let reply: Vec<u8> = request.iter().rev().copied().collect();
-                let _ = send.write_all(&reply).await;
-                let _ = send.finish();
+                let reply: Vec<u8> = stream.request.iter().rev().copied().collect();
+                let _ = stream.send.write_all(&reply).await;
+                let _ = stream.send.finish();
             }
             Behaviour::Stuck => {
-                let InboundStream {
-                    request,
-                    send,
-                    recv,
-                    ..
-                } = stream;
-                drop(request);
-                let _halves = (send, recv);
+                stream.request.release();
                 let _ = self.started.try_send(peer);
                 std::future::pending::<()>().await;
             }
             Behaviour::Hold => {
-                let _held = stream;
                 let _ = self.started.try_send(peer);
                 std::future::pending::<()>().await;
             }
@@ -158,7 +147,7 @@ async fn open(
 
 /// Send `ping` on an `ECHO` stream and read the whole reply.
 async fn ping(client: &IrohTransport, server: &IrohTransport) -> Result<Vec<u8>> {
-    let (send, mut recv) = open(client, server, &ECHO, b"ping".to_vec()).await?;
+    let (mut send, mut recv) = open(client, server, &ECHO, b"ping".to_vec()).await?;
     send.finish()?;
     timeout(IO_TIMEOUT, recv.read_to_end(ECHO.max_message))
         .await
@@ -328,7 +317,7 @@ async fn a_handler_that_keeps_its_request_holds_its_room() {
 }
 
 /// Two requests each as large as the peer's whole share of the priority are
-/// both handed to handlers that drop their request and never return: the room
+/// both handed to handlers that release their request and never return: the room
 /// went back with each request, so nothing is held while the handlers run.
 #[nuclei::test(threads = 0)]
 #[mantra_macros::req_test("defra.stream_protocols.budget")]

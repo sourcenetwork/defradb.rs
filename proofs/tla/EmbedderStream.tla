@@ -2,13 +2,15 @@
 \* The story. An application embedding a node registers its own stream
 \* protocols. Peers open streams on the node's connections, each starting
 \* with a tag. The node reads the request under the inbound budget, then
-\* hands the stream to the application's handler, which runs on a task of
-\* its own. The request's room in the budget goes with the request: the
-\* handler gives it back by dropping the request. A handler may finish, may
-\* drop its request and hang, or may keep its request and hang.
+\* lends the stream to the application's handler, which runs on a task of
+\* its own. The handler only borrows the stream, so nothing of it can move
+\* to another task: the stream, its request and the request's room end when
+\* that task does. The request's room in the budget goes with the request:
+\* the handler gives it back by releasing the request. A handler may finish,
+\* may release its request and hang, or may keep its request and hang.
 \*
 \* What can happen: a peer opens streams, some with a tag nobody registered;
-\* handlers finish, drop their request, hang or run out of time; the node
+\* handlers finish, release their request, hang or run out of time; the node
 \* revokes a peer; the node shuts down.
 \*
 \* What must never happen: a stream with an unregistered tag reaches a
@@ -23,7 +25,9 @@
 \*     into the ProtocolRequest), serve_protocol_stream (Return, Deadline,
 \*     Cut);
 \*   crates/p2p/src/iroh/stream_protocols.rs StreamProtocols::get (the tag
-\*     check), ProtocolRequest (DropRequest: dropping it frees the room);
+\*     check), ProtocolRequest::release (DropRequest: releasing it frees the room),
+\*     StreamHandler::handle (it borrows the stream, so Return, Deadline
+\*     and Cut each end the stream with its task);
 \*   crates/p2p/src/iroh/endpoint_commands.rs handle_deny_peer (Revoke);
 \*   crates/p2p/src/iroh/task_registry.rs TaskRegistry::close (Shutdown).
 EXTENDS Naturals, FiniteSets
@@ -36,7 +40,7 @@ CONSTANTS
   Stuck,          \* the streams whose handler never returns
   Share,          \* how many requests one peer may hold room for at once
   TagMode,        \* "Check": unknown tags are reset; "Any": nothing is checked
-  LeaseMode,      \* "WithRequest": room goes back when the handler drops its request; "UntilReturn": it is held until the handler returns
+  LeaseMode,      \* "WithRequest": room goes back when the handler releases its request; "UntilReturn": it is held until the handler returns
   DeadlineMode,   \* "Deadline": every handler has one; "None": a handler may run forever
   RevokeMode,     \* "Close": a revocation closes the peer's connection; "BarOnly": it only stops new ones
   ShutdownMode    \* "Abort": shutdown aborts every stream task; "None": tasks keep running
@@ -131,7 +135,7 @@ Handoff(s) == /\ phase[s] = "reading"
               \* nothing else moves; the room stays with the request
               /\ UNCHANGED <<leased, open, revoked, down>>
 
-\* The handler drops its request, perhaps before hanging. Any handler may.
+\* The handler releases its request, perhaps before hanging. Any handler may.
 DropRequest(s) == /\ phase[s] = "serving"
                   \* it still holds the request
                   /\ kept[s]

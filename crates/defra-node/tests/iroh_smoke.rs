@@ -35,23 +35,17 @@ struct Query {
 
 #[async_trait::async_trait]
 impl StreamHandler for Query {
-    async fn handle(&self, stream: InboundStream) {
-        let InboundStream {
-            peer,
-            request,
-            mut send,
-            ..
-        } = stream;
-        let _ = self.peers.set(peer.to_string());
-        // Dropping `send` unfinished resets the stream: the node is gone.
+    async fn handle(&self, stream: &mut InboundStream) {
+        let _ = self.peers.set(stream.peer.to_string());
+        // Returning with `send` unfinished resets the stream: the node is gone.
         let Some(node) = self.node.get().and_then(Weak::upgrade) else {
             return;
         };
-        let query = String::from_utf8_lossy(&request);
+        let query = String::from_utf8_lossy(&stream.request.release()).into_owned();
         let response = node.execute(&query).await;
         let reply = serde_json::to_vec(&response.data).unwrap_or_default();
-        if send.write_all(&reply).await.is_ok() {
-            let _ = send.finish();
+        if stream.send.write_all(&reply).await.is_ok() {
+            let _ = stream.send.finish();
         }
     }
 }
@@ -201,7 +195,7 @@ fn an_apps_stream_protocol_round_trips_between_embedded_nodes() -> Result<()> {
             let client_p2p = client.p2p_system().cloned().expect("client p2p");
             let server_addr = wait_for_connectable_iroh_addr(&server_p2p).await?;
 
-            let (send, mut recv) = client
+            let (mut send, mut recv) = client
                 .open_p2p_stream(&server_addr, &QUERY, b"{ Book { title } }".to_vec())
                 .await?;
             send.finish().expect("finish the request");

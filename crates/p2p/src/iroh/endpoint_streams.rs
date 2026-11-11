@@ -354,7 +354,7 @@ async fn serve_connection_streams(
             // Replies on this stream go out at the service's priority.
             let _ = send.set_priority(service.priority.send_priority());
             if let Some(registered) = stream_protocols.get(service.tag) {
-                // The room goes with the request: back when the handler drops it.
+                // The room goes with the request: back once it is released or the stream ends.
                 let request = ProtocolRequest::new(payload, lease);
                 serve_protocol_stream(registered, &connection, peer_id, request, send, recv).await;
                 return;
@@ -418,9 +418,10 @@ async fn finish_connection(
 
 /// Serve an admitted stream of an embedder's protocol on this task until its
 /// handler returns, the protocol's deadline passes or the connection closes,
-/// whichever comes first. The last two drop the handler, which resets both
-/// halves and frees the request's room; shutdown aborts the task, with the
-/// same effect.
+/// whichever comes first. The handler only borrows the stream, so whichever
+/// way it ends, the stream is dropped here: an unfinished send half resets and
+/// the request's room comes back. Shutdown aborts the task, with the same
+/// effect.
 async fn serve_protocol_stream(
     registered: &Registered,
     connection: &Connection,
@@ -430,7 +431,7 @@ async fn serve_protocol_stream(
     recv: iroh::endpoint::RecvStream,
 ) {
     let deadline = registered.protocol.deadline;
-    let stream = InboundStream {
+    let mut stream = InboundStream {
         peer: peer.clone(),
         request,
         deadline: web_time::Instant::now() + deadline,
@@ -440,7 +441,7 @@ async fn serve_protocol_stream(
     let closed = std::pin::pin!(connection.closed());
     let served = std::pin::pin!(crate::rt::time::timeout(
         deadline,
-        registered.handler.handle(stream)
+        registered.handler.handle(&mut stream)
     ));
     let tag = String::from_utf8_lossy(registered.protocol.tag);
     match futures::future::select(closed, served).await {
