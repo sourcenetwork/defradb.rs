@@ -2019,6 +2019,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db/src/merge/merge_handler/composite_fields.rs process_linked_field_blocks; crates/db/src/merge/merge_handler/composite_persist.rs persist_merged_document; crates/db/src/merge/merge_handler/block_reads.rs BlockReads::wrote_field; crates/db/src/merge/merge_handler/parked.rs replay_in_txn",
         model_ref: "MC_MergedFieldIndex_{Green,Green_Clear,Red_ReadAfterPart,Red_StaleCache}.cfg",
         tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // A node's shutdown aborts every task it holds and waits for each to
