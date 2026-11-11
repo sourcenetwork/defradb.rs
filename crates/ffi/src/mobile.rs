@@ -739,6 +739,10 @@ pub extern "C" fn defra_mobile_add_replicator(
 }
 
 #[cfg(test)]
+#[path = "mobile_ensure_schema_tests.rs"]
+mod ensure_schema_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::ffi::CStr;
