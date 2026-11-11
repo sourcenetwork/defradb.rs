@@ -1201,7 +1201,7 @@ fn peer_retry_cursor_rotates_bounded_marker_prefix_after_failure() {
         let first = peerstore.get_retry_documents("peer").await.unwrap();
         assert_eq!(first[0].doc_id, "a");
         assert!(peerstore
-            .reschedule_retry_peer("peer", None, 1)
+            .reschedule_retry_peer("peer", None, Some(&first[0]))
             .await
             .unwrap());
 
@@ -1211,7 +1211,69 @@ fn peer_retry_cursor_rotates_bounded_marker_prefix_after_failure() {
             &peerstore.get_retry_info("peer").await.unwrap().unwrap(),
         )
         .unwrap();
-        assert_eq!(schedule.dispatch_cursor, 1);
+        assert_eq!(
+            schedule.dispatch_after,
+            Some((super::super::RetryScope::Document, "a".to_string()))
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn retry_page_resumes_after_the_cursor_in_either_scope() {
+    workers::block_on(async {
+        let peerstore = Peerstore::new(Arc::new(RegolithStore::in_memory().unwrap()));
+        peerstore
+            .create_replicator("peer", b"replicator")
+            .await
+            .unwrap();
+        let initial = super::super::RetryInfo::new_initial().to_bytes().unwrap();
+        for doc_id in ["a", "a0", "b"] {
+            peerstore
+                .record_push_failure("peer", doc_id, "collection", &initial)
+                .await
+                .unwrap();
+        }
+        for collection_id in ["c1", "c2"] {
+            peerstore
+                .record_push_failure("peer", "", collection_id, &initial)
+                .await
+                .unwrap();
+        }
+        let ids = |markers: Vec<super::super::PushRetryMarker>| -> Vec<String> {
+            markers
+                .into_iter()
+                .map(|marker| marker.dispatch_key().1)
+                .collect()
+        };
+        let all = peerstore.get_retry_documents("peer").await.unwrap();
+        assert_eq!(ids(all.clone()), ["a", "a0", "b", "c1", "c2"]);
+
+        peerstore
+            .reschedule_retry_peer("peer", None, Some(&all[0]))
+            .await
+            .unwrap();
+        assert_eq!(
+            ids(peerstore.get_retry_documents("peer").await.unwrap()),
+            ["a0", "b", "c1", "c2", "a"]
+        );
+        assert_eq!(
+            ids(peerstore.get_retry_page("peer", 2).await.unwrap()),
+            ["a0", "b"]
+        );
+
+        peerstore
+            .reschedule_retry_peer("peer", None, Some(&all[3]))
+            .await
+            .unwrap();
+        assert_eq!(
+            ids(peerstore.get_retry_documents("peer").await.unwrap()),
+            ["c2", "a", "a0", "b", "c1"]
+        );
+        assert_eq!(
+            ids(peerstore.get_retry_page("peer", 3).await.unwrap()),
+            ["c2", "a", "a0"]
+        );
     })
     .unwrap()
 }
@@ -1239,8 +1301,13 @@ fn capacity_reschedule_rotates_without_advancing_failure_ladder() {
             .duration_since(web_time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
+        let markers = peerstore.get_retry_documents("peer").await.unwrap();
         assert!(peerstore
-            .reschedule_retry_peer("peer", Some(std::time::Duration::from_secs(2)), 1)
+            .reschedule_retry_peer(
+                "peer",
+                Some(std::time::Duration::from_secs(2)),
+                markers.first()
+            )
             .await
             .unwrap());
 
@@ -1249,7 +1316,11 @@ fn capacity_reschedule_rotates_without_advancing_failure_ladder() {
         )
         .unwrap();
         assert_eq!(after.num_retries, before.num_retries);
-        assert_eq!(after.dispatch_cursor, before.dispatch_cursor + 1);
+        assert_eq!(before.dispatch_after, None);
+        assert_eq!(
+            after.dispatch_after,
+            Some((super::super::RetryScope::Document, "doc".to_string()))
+        );
         assert!(after.next_retry_unix >= now + 2);
     })
     .unwrap()

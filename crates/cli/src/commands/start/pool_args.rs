@@ -1,6 +1,6 @@
-//! `defra start`'s worker pool flags, and the command they ride on.
+//! `defradb start`'s worker pool flags, and the command they ride on.
 //!
-//! [`StartCommand`] is what `defra start` parses: every [`StartArgs`] flag
+//! [`StartCommand`] is what `defradb start` parses: every [`StartArgs`] flag
 //! plus the `--worker-*` flags, which fill the config's `workers` section
 //! (`crate::config::WorkersConfig`). It reads as its [`StartArgs`] through
 //! `Deref`, so code holding the parsed command reaches every start flag
@@ -109,7 +109,7 @@ impl WorkerArgs {
     }
 }
 
-/// `defra start`: its flags and the worker pool's.
+/// `defradb start`: its flags and the worker pool's.
 #[derive(Args, Debug)]
 pub struct StartCommand {
     #[command(flatten)]
@@ -133,7 +133,7 @@ impl StartCommand {
         self.workers.apply_to_config(config)
     }
 
-    /// Runs `defra start`, serving on the network runtime `edge`.
+    /// Runs `defradb start`, serving on the network runtime `edge`.
     pub async fn execute(self, mut config: Config, edge: edge::Edge) -> Result<()> {
         self.workers.apply_to_config(&mut config)?;
         self.args.execute(config, edge).await

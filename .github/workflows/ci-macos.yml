@@ -8,6 +8,7 @@ on:
     branches: [main]
   pull_request:
     branches: ['**']
+    types: [opened, synchronize, reopened, labeled]
   merge_group:
     branches: [main]
 
@@ -21,12 +22,9 @@ concurrency:
 jobs:
   unit-tests:
     name: Unit tests
-    # Mirrors CI's scope: within a stack, only the tip and the lowest pull
-    # request run the full suite.
-    if: >-
-      github.event_name != 'pull_request' || !github.event.pull_request.stack
-      || github.event.pull_request.stack.position == github.event.pull_request.stack.size
-      || github.event.pull_request.stack.base.ref == github.event.pull_request.base.ref
+    # Mirrors CI's heavy scope: the merge queue and main run it, a pull
+    # request does only with ci:macos or ci:full.
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:macos') || contains(github.event.pull_request.labels.*.name, 'ci:full')
     uses: ./.github/workflows/unit-tests.yml
     with:
       os: macos-latest

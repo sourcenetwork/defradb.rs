@@ -34,10 +34,10 @@ impl Op for DeleteWithFilter {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        self.common.plain(Self::name())?;
+        let identity = self.common.client_identity(Self::name())?;
         state
             .block_on(state.node_on(self.common.node())?.delete_with_filter(
-                &state.context(None),
+                &state.context_as(None, identity),
                 &self.collection,
                 &self.filter.to_core(),
             ))
@@ -57,10 +57,10 @@ impl Action for DeleteWithFilter {
 impl HttpRun for DeleteWithFilter {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.common.plain(Self::name())?;
+            let identity = action.common.client_identity(Self::name())?;
             let (collection, filter) = (action.collection.clone(), action.filter.to_core());
             state
-                .http_on(action.common.node(), |client| async move {
+                .http_as(action.common.node(), identity, |client| async move {
                     client.delete_with_filter(None, &collection, &filter).await
                 })?
                 .map(|result| json!({ "count": result.count, "docIDs": result.doc_ids }))
@@ -72,7 +72,7 @@ impl HttpRun for DeleteWithFilter {
 impl CliRun for DeleteWithFilter {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.common.plain(Self::name())?;
+            let identity = action.common.client_identity(Self::name())?;
             let filter = action
                 .filter
                 .to_cli()
@@ -86,7 +86,7 @@ impl CliRun for DeleteWithFilter {
                 &filter,
             ];
             let printed = state
-                .defra_client_on(action.common.node(), None, &args)
+                .defra_client_as(action.common.node(), None, identity, &args)
                 .map_err(Failure::operation)?;
             Ok(json!({ "count": printed["Count"], "docIDs": printed["DocIDs"] }))
         });

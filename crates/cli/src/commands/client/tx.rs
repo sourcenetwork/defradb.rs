@@ -96,30 +96,3 @@ impl TxDiscardArgs {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_tx_new_args_default() {
-        let args = TxNewArgs { read_only: false };
-        assert!(!args.read_only);
-    }
-
-    #[test]
-    fn test_tx_commit_args() {
-        let args = TxCommitArgs {
-            txn_id: "test-txn-123".to_string(),
-        };
-        assert_eq!(args.txn_id, "test-txn-123");
-    }
-
-    #[test]
-    fn test_tx_discard_args() {
-        let args = TxDiscardArgs {
-            txn_id: "test-txn-456".to_string(),
-        };
-        assert_eq!(args.txn_id, "test-txn-456");
-    }
-}

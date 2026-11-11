@@ -5,8 +5,9 @@
 //! the durable current head of each sender scope at
 //! `/p2p/pending_dag_scope/{scope}`; a quarantined root at
 //! `/p2p/quarantined_dag/{root}`; the slots under `/p2p/pending_dag_slot/`
-//! ([`super::slots`]); and the sweep's stamp, which gives a sweep a commit of
-//! its own and so a place in the receipt order.
+//! ([`super::slots`]); each peer's share ([`super::shares`]); and the
+//! sweep's stamp, which gives a sweep a commit of its own and so a place in
+//! the receipt order.
 
 use std::sync::Arc;
 
@@ -22,7 +23,8 @@ use storage::stores::Systemstore;
 
 use super::view::{scope_head, PersistedView};
 use super::{
-    slots, Admission, PendingDagStorage, PersistedPendingDag, PersistedQuarantinedDag, Registration,
+    shares, slots, Admission, PendingDagStorage, PersistedPendingDag, PersistedQuarantinedDag,
+    Registration,
 };
 use crate::error::{Error, Result};
 use crate::sync::head_scope::{HeadVersion, ScopeDecision};
@@ -104,20 +106,28 @@ impl<S: Store + 'static> PendingDagStorage for PendingDagStore<S> {
     ) -> Result<Admission> {
         // The ticket is allocated outside the transaction: an allocation is
         // not undone by an abort, and a re-run reuses it.
-        let ticket = slots::ticket(&self.systemstore)
-            .await
-            .map_err(|e| Error::Storage(e.to_string()))?;
+        let ticket = match registration.capacity {
+            Some(_) => slots::ticket(&self.systemstore)
+                .await
+                .map_err(|e| Error::Storage(e.to_string()))?,
+            None => 0,
+        };
         let root = registration.root;
+        let parents = registration.parents.to_vec();
         let record = registration.record.clone();
-        let capacity = registration.capacity;
+        let capacity = registration.capacity.map(|slots| Capacity {
+            slots,
+            per_peer: registration.peer_capacity,
+            ticket,
+        });
         let view = Arc::clone(view);
         self.transition(move |txn| {
             Box::pin(register(
                 txn,
                 root,
+                parents.clone(),
                 record.clone(),
                 capacity,
-                ticket,
                 Arc::clone(&view),
             ))
         })
@@ -251,25 +261,35 @@ impl<S: Store + 'static> PendingDagStorage for PendingDagStore<S> {
     }
 }
 
-/// Registers `root`: decides against the durable current head of its scope,
-/// retires an older one, takes a slot, and writes the record and the scope's
-/// new head.
+/// What a root new to the store may take: one of `slots` slots, probed from
+/// `ticket`, and one of the `per_peer` records of its peer's share.
+#[derive(Clone, Copy)]
+struct Capacity {
+    slots: usize,
+    per_peer: usize,
+    ticket: u64,
+}
+
+/// Registers `root`, which links `parents`: decides against the durable
+/// current head of its scope, retires it when `root` links it, takes a slot
+/// and a charge to its peer's share, and writes the record and, unless the
+/// scope keeps a newer one, the scope's new head.
 async fn register(
     txn: &mut BasicTxn,
     root: Cid,
+    parents: Vec<Cid>,
     record: PersistedPendingDag,
-    capacity: usize,
-    ticket: u64,
+    capacity: Option<Capacity>,
     view: Arc<PersistedView>,
 ) -> AttemptResult {
     let systemstore = txn.systemstore();
     let head = scope_head(root, &record);
+    let mut current = None;
     let retired = match &head {
         None => None,
         Some((scope, version)) => {
-            let current = read_head(&systemstore, &scope.key(SCOPE_PREFIX)).await?;
-            match ScopeDecision::of(*version, current) {
-                ScopeDecision::CoveredByCurrent => return Ok(Box::new(Admission::Covered)),
+            current = read_head(&systemstore, &scope.key(SCOPE_PREFIX)).await?;
+            match ScopeDecision::of(*version, &parents, current) {
                 ScopeDecision::Supersedes(older) => Some(older),
                 ScopeDecision::Current | ScopeDecision::Independent => None,
             }
@@ -282,41 +302,73 @@ async fn register(
             }
             own.slot
         }
-        None => match retired {
-            Some(older) => match discharge(&systemstore, &older, false).await? {
-                Some(Stored {
-                    slot: Some(slot), ..
-                }) => {
-                    slots::assign(&systemstore, slot, &root).await?;
-                    Some(slot)
+        None => {
+            let taken_over = match retired {
+                Some(older) => discharge(&systemstore, &older, false)
+                    .await?
+                    .map(|stored| (older, stored.slot)),
+                None => None,
+            };
+            match taken_over {
+                Some((older, slot)) => {
+                    if let Some(slot) = slot {
+                        slots::assign(&systemstore, slot, &root).await?;
+                    }
+                    shares::hand_over(&systemstore, &older, &root).await?;
+                    slot
                 }
-                Some(Stored { slot: None, .. }) => None,
-                None => match slots::claim(&systemstore, &root, ticket, capacity).await? {
-                    Some(slot) => Some(slot),
-                    None => return Ok(Box::new(Admission::AtCapacity)),
+                // A deferred gossip head takes no slot and no share: its
+                // bound is the bytes its peer's records take.
+                None => match capacity {
+                    None => None,
+                    Some(capacity) => {
+                        match take_new(&systemstore, &root, &record, capacity).await? {
+                            Ok(slot) => Some(slot),
+                            Err(refused) => return Ok(Box::new(refused)),
+                        }
+                    }
                 },
-            },
-            None => match slots::claim(&systemstore, &root, ticket, capacity).await? {
-                Some(slot) => Some(slot),
-                None => return Ok(Box::new(Admission::AtCapacity)),
-            },
-        },
+            }
+        }
     };
     systemstore
         .set(&record_key(&root), &encode(&record, slot)?)
         .await?;
     if let Some((scope, version)) = &head {
-        systemstore
-            .set(&scope.key(SCOPE_PREFIX), &version.to_bytes())
-            .await?;
+        if retired.is_some() || current.is_none_or(|current| *version >= current) {
+            systemstore
+                .set(&scope.key(SCOPE_PREFIX), &version.to_bytes())
+                .await?;
+        }
     }
     drop(systemstore);
     on_commit(txn, view.registered(root, &record, retired))?;
-    Ok(Box::new(Admission::Registered))
+    Ok(Box::new(Admission::Registered { retired }))
 }
 
-/// Deletes `root`'s record and frees its slot; the value is whether it had a
-/// record.
+/// A free slot and a charge to its peer's share for `root`, new to the store
+/// and retiring none, or the refusal when its peer holds its share or every
+/// slot is held; a refusal writes nothing.
+async fn take_new(
+    systemstore: &NamespaceView,
+    root: &Cid,
+    record: &PersistedPendingDag,
+    capacity: Capacity,
+) -> storage::corekv::Result<std::result::Result<u64, Admission>> {
+    let source_peer = record.source_peer.as_deref();
+    let held = shares::held(systemstore, source_peer).await?;
+    if held >= capacity.per_peer.max(1) as u64 {
+        return Ok(Err(Admission::AtPeerCapacity));
+    }
+    let Some(slot) = slots::claim(systemstore, root, capacity.ticket, capacity.slots).await? else {
+        return Ok(Err(Admission::AtCapacity));
+    };
+    shares::charge(systemstore, root, source_peer, held).await?;
+    Ok(Ok(slot))
+}
+
+/// Deletes `root`'s record, frees its slot and gives its charge back; the
+/// value is whether it had a record.
 async fn remove(txn: &mut BasicTxn, root: Cid, view: Arc<PersistedView>) -> AttemptResult {
     let systemstore = txn.systemstore();
     let discharged = discharge(&systemstore, &root, true).await?;
@@ -328,8 +380,8 @@ async fn remove(txn: &mut BasicTxn, root: Cid, view: Arc<PersistedView>) -> Atte
     Ok(Box::new(had_record))
 }
 
-/// Writes `root`'s quarantine record and deletes its live record and slot;
-/// the value is whether it was quarantined before.
+/// Writes `root`'s quarantine record and deletes its live record, slot and
+/// charge; the value is whether it was quarantined before.
 async fn quarantine(
     txn: &mut BasicTxn,
     root: Cid,
@@ -383,18 +435,22 @@ async fn sweep(txn: &mut BasicTxn, view: Arc<PersistedView>) -> AttemptResult {
 }
 
 /// Deletes `root`'s record, its scope's head when that is `root`, and, with
-/// `free_slot`, its slot. Returns what was stored.
+/// `release`, its slot and its charge, which a root that takes over its
+/// scope from it takes otherwise. Returns what was stored.
 async fn discharge(
     systemstore: &NamespaceView,
     root: &Cid,
-    free_slot: bool,
+    release: bool,
 ) -> storage::corekv::Result<Option<Stored>> {
     let Some(stored) = read_record(systemstore, root).await? else {
         return Ok(None);
     };
     systemstore.delete(&record_key(root)).await?;
-    if let (true, Some(slot)) = (free_slot, stored.slot) {
-        slots::free(systemstore, slot).await?;
+    if release {
+        if let Some(slot) = stored.slot {
+            slots::free(systemstore, slot).await?;
+        }
+        shares::give_back(systemstore, root).await?;
     }
     if let Some((scope, _)) = scope_head(*root, &stored.record) {
         let key = scope.key(SCOPE_PREFIX);
@@ -444,6 +500,16 @@ fn on_commit(
 
 fn record_key(root: &Cid) -> Vec<u8> {
     P2PPendingDagKey::new(root.to_string()).bytes()
+}
+
+/// The bytes `root`'s record writes: its key and value, and its sender
+/// scope's head key and value when it has a scope.
+pub(crate) fn footprint(root: &Cid, record: &PersistedPendingDag) -> u64 {
+    let value = encode(record, None).map_or(0, |value| value.len());
+    let scope = scope_head(*root, record).map_or(0, |(scope, version)| {
+        scope.key(SCOPE_PREFIX).len() + version.to_bytes().len()
+    });
+    (record_key(root).len() + value + scope) as u64
 }
 
 fn encode(record: &PersistedPendingDag, slot: Option<u64>) -> storage::corekv::Result<Vec<u8>> {

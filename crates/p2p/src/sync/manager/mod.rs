@@ -14,6 +14,7 @@
 
 mod config;
 pub(crate) mod diagnostics;
+mod event_lanes;
 mod events;
 pub(crate) mod links;
 pub(crate) mod log_throttle;
@@ -21,7 +22,8 @@ pub(crate) mod pending;
 mod process;
 
 pub use config::{
-    default_rate_limit_backoff, SyncConfig, DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER,
+    default_rate_limit_backoff, SyncConfig, DEFAULT_BROADCAST_PENDING_BYTES,
+    DEFAULT_BROADCAST_WAIT_DEADLINE, DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER,
     DEFAULT_MAX_CONCURRENT_DAG_FETCHES, DEFAULT_MAX_CONCURRENT_PUSH_TASKS,
     DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS, DEFAULT_MAX_PENDING_DAGS,
     DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY, DEFAULT_PUSH_SEND_TIMEOUT,
@@ -32,7 +34,8 @@ pub(crate) use diagnostics::record_gossip_decode_failure_sample;
 pub use diagnostics::{
     GossipDecodeFailureSample, GossipTransport, SyncDiagnostics, SyncDiagnosticsSnapshot,
 };
-pub use events::{SyncEvent, SyncEventReceiver};
+pub use event_lanes::SyncEventReceiver;
+pub use events::{DagFetchPeerPermit, SyncEvent};
 // Coordinator dispatch helper (#1116 stage 2) needs to name this type in its
 // signature; the `pending` module itself stays private.
 pub(crate) use pending::PendingDag;

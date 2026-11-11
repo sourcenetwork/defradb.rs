@@ -385,9 +385,11 @@ impl zanzibar::store::ZanzibarScope for OwnedZanzibarScope {
         std::sync::Arc::new(TransactionZanzibarStore::new(self.0.acpstore()))
     }
     async fn commit(self: Box<Self>) -> Result<()> {
-        self.0
-            .commit()
-            .await
-            .map_err(|error| Error::Serialization(error.to_string()))
+        self.0.commit().await.map_err(|error| match error {
+            datastore::Error::Storage(source) if source.is_txn_conflict() => {
+                Error::TransactionConflict(source.to_string())
+            }
+            other => Error::Serialization(other.to_string()),
+        })
     }
 }

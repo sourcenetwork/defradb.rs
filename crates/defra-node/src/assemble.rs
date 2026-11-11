@@ -27,6 +27,7 @@ pub(crate) struct Extras {
     pub embedding_model: Option<String>,
     pub embedding_api_key: Option<String>,
     pub txn_ownership: db::TxnOwnership,
+    pub document_projector: Option<Arc<dyn db::DocumentMutationProjector>>,
     #[cfg(feature = "http")]
     pub transaction_cleanup: Option<TransactionCleanupConfig>,
     #[cfg(feature = "http")]
@@ -80,6 +81,7 @@ where
         max_txn_retries,
         chunk_size,
         node_acp_enabled,
+        node_acp_owner,
         query_timeout,
         introspection_cache,
         replication_filter,
@@ -101,6 +103,7 @@ where
     // refusal has nothing to close.
     let nac_owner = nac_owner(
         node_acp_enabled,
+        node_acp_owner.as_deref(),
         &node_identity_did,
         node_p2p_identity.is_some(),
     )?;
@@ -174,12 +177,18 @@ where
     let database = Arc::new(database);
 
     // Node access control: always present, off until enabled. At startup it is
-    // enabled only when asked for, and then the node identity owns the
-    // policy, so DB-layer node operations run by the node itself are always
-    // allowed (the node-DID bypass in check_node_access).
+    // enabled only when asked for, and then the configured owner, or else the
+    // node identity, owns the policy (see nac_owner). DB-layer node operations
+    // run by the node itself are always allowed (the node-DID bypass in
+    // check_node_access).
     let nac_manager = close_on_error(
         &database,
-        node_acp::create_nac_manager(store.clone(), nac_owner.as_ref()).await,
+        node_acp::create_nac_manager(
+            store.clone(),
+            nac_owner.as_ref(),
+            database.options().max_txn_retries(),
+        )
+        .await,
     )
     .await?;
     database.set_nac_manager(nac_manager.clone());
@@ -195,7 +204,35 @@ where
         .await,
     )
     .await?;
-    let document_acp = acp_setup.document_acp.clone();
+    database.set_document_acp(acp_setup.document_acp.clone());
+    let document_acp = database
+        .document_acp()
+        .expect("document ACP was just installed")
+        .clone();
+    if let Some(projector) = extras.document_projector {
+        let actor = close_on_error(
+            &database,
+            node_query_identity
+                .clone()
+                .ok_or(Error::DocumentProjectorNeedsIdentity),
+        )
+        .await?;
+        close_on_error(
+            &database,
+            database
+                .set_document_projector(projector, document_acp.clone(), actor)
+                .map_err(Error::DatabaseOpen),
+        )
+        .await?;
+        close_on_error(
+            &database,
+            database
+                .reconcile_document_projector()
+                .await
+                .map_err(Error::DatabaseOpen),
+        )
+        .await?;
+    }
     #[cfg(feature = "vera")]
     let remote_acp = acp_setup.vera_acp.is_some();
     #[cfg(not(feature = "vera"))]
@@ -319,16 +356,6 @@ where
             .unwrap_or_else(|| db::DbTransactionRegistry::new(database.clone()))
             .with_ownership(extras.txn_ownership),
     );
-
-    #[cfg(feature = "http")]
-    let txn_cleanup_task = extras.transaction_cleanup.map(|cleanup| {
-        tracing::info!(
-            max_idle_age_secs = cleanup.max_idle_age.as_secs(),
-            sweep_interval_secs = cleanup.sweep_interval.as_secs(),
-            "Transaction idle cleanup worker enabled"
-        );
-        registry.start_stale_transaction_cleanup(cleanup.max_idle_age, cleanup.sweep_interval)
-    });
 
     #[cfg(feature = "managed-p2p")]
     {
@@ -472,8 +499,10 @@ where
     ));
     let acp_ops: Arc<dyn acp_ops::AcpOps> = Arc::new(acp_ops::DbAcpOps::new(
         database.clone(),
+        registry.clone(),
         document_acp.clone(),
         event_bus.clone(),
+        runner.clone(),
     ));
     // Started last: nothing after this point fails, so a failed build
     // never leaves a task holding the store open. The vector sweep rebuilds
@@ -491,6 +520,20 @@ where
     #[cfg(all(feature = "vera", not(target_arch = "wasm32")))]
     if let Some(start_redrive) = redrive {
         background_tasks.push(start_redrive(database.pool()));
+    }
+    // The sweep holds the registry, and through it the database and its
+    // pool: held anywhere but the shutdown set, a node dropped without
+    // shutdown would keep its pool's threads and the store alive forever.
+    #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+    if let Some(cleanup) = extras.transaction_cleanup {
+        tracing::info!(
+            max_idle_age_secs = cleanup.max_idle_age.as_secs(),
+            sweep_interval_secs = cleanup.sweep_interval.as_secs(),
+            "Transaction idle cleanup worker enabled"
+        );
+        background_tasks.push(
+            registry.start_stale_transaction_cleanup(cleanup.max_idle_age, cleanup.sweep_interval),
+        );
     }
     let block_ops: Arc<dyn BlockOps> = Arc::new(db_impls::DbBlockOps::new(
         database.clone(),
@@ -526,8 +569,6 @@ where
         remote_acp,
         #[cfg(not(target_arch = "wasm32"))]
         transaction_stats,
-        #[cfg(feature = "http")]
-        txn_cleanup_task: crate::single_slot(txn_cleanup_task),
         #[cfg(not(target_arch = "wasm32"))]
         background_tasks,
         #[cfg(feature = "managed-p2p")]
@@ -540,14 +581,23 @@ where
     })
 }
 
-/// The identity that owns node access control when it is enabled at startup.
+/// The identity that owns node access control when it is enabled at startup:
+/// the `explicit` owner, the identity starting the node as Go's `start`
+/// takes it, or else the node identity, which must hold a local key. Not
+/// enabled, there is none, whatever owner was named.
 fn nac_owner(
     enabled: bool,
+    explicit: Option<&str>,
     node_identity_did: &Option<String>,
     has_local_key: bool,
 ) -> Result<Option<identity::Did>> {
     if !enabled {
         return Ok(None);
+    }
+    if let Some(owner) = explicit {
+        return identity::Did::new(owner)
+            .map(Some)
+            .map_err(Error::InvalidNodeAcpIdentity);
     }
     let owner = node_identity_did
         .as_deref()
@@ -574,3 +624,7 @@ where
     }
     result
 }
+
+#[cfg(test)]
+#[path = "nac_owner_tests.rs"]
+mod nac_owner_tests;

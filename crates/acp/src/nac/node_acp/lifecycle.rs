@@ -67,7 +67,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NodeACP<S> {
     /// **This method does NOT perform authorization checks.** Callers MUST verify
     /// the requestor has admin permissions before calling this method.
     ///
-    /// In production code, use `NacManager::disable()` instead, which wraps
+    /// In production code, use `NacManager::disable_as()` instead, which wraps
     /// this method with proper authorization checks.
     #[doc(hidden)]
     pub async fn disable(&self) -> Result<()> {
@@ -113,7 +113,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NodeACP<S> {
     /// **This method does NOT perform authorization checks.** Callers MUST verify
     /// the requestor has admin permissions before calling this method.
     ///
-    /// In production code, use `NacManager::re_enable()` instead, which wraps
+    /// In production code, use `NacManager::re_enable_as()` instead, which wraps
     /// this method with proper authorization checks.
     #[doc(hidden)]
     pub async fn re_enable(&self) -> Result<()> {

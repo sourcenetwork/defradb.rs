@@ -54,10 +54,10 @@ impl Op for AddDoc {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        self.check_arguments()?;
+        let identity = self.check_arguments()?;
         let (node, context, options) = (
             state.node_on(self.common.node())?,
-            state.context(self.txn),
+            state.context_as(self.txn, identity),
             self.options(),
         );
         let failed = |e: defra_node::Error| Failure::operation(e.to_string());
@@ -90,15 +90,15 @@ impl Op for AddDoc {
 
 impl AddDoc {
     /// Fails on the arguments no client supports yet.
-    fn check_arguments(&self) -> Result<(), Failure> {
-        self.common.plain(Self::name())?;
+    fn check_arguments(&self) -> Result<Option<u64>, Failure> {
+        let identity = self.common.client_identity(Self::name())?;
         if self.enable_signing.is_some() {
             return Err(Failure::unsupported(format!(
                 "{} argument enableSigning",
                 Self::name()
             )));
         }
-        Ok(())
+        Ok(identity)
     }
 
     fn options(&self) -> AddOptions {
@@ -131,13 +131,13 @@ impl Action for AddDoc {
 impl HttpRun for AddDoc {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.check_arguments()?;
+            let identity = action.check_arguments()?;
             let (txn, options) = (state.txn_id(action.txn), action.options());
             let collection = action.collection.clone();
             let failed = |e: cli::error::Error| Failure::operation(e.to_string());
             if let Some(docs) = action.docs.clone() {
                 let ids = state
-                    .http_on(action.common.node(), |client| async move {
+                    .http_as(action.common.node(), identity, |client| async move {
                         client
                             .add_docs(txn.as_deref(), &collection, &docs, &options)
                             .await
@@ -150,7 +150,7 @@ impl HttpRun for AddDoc {
                 true => {
                     let doc_id = action.doc_id.as_ref().map(|id| id.as_str().to_owned());
                     state
-                        .http_on(action.common.node(), |client| async move {
+                        .http_as(action.common.node(), identity, |client| async move {
                             client
                                 .save_doc(
                                     txn.as_deref(),
@@ -165,7 +165,7 @@ impl HttpRun for AddDoc {
                 }
                 false => first(
                     state
-                        .http_on(action.common.node(), |client| async move {
+                        .http_as(action.common.node(), identity, |client| async move {
                             client
                                 .add_docs(txn.as_deref(), &collection, &[doc], &options)
                                 .await
@@ -181,7 +181,7 @@ impl HttpRun for AddDoc {
 impl CliRun for AddDoc {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            action.check_arguments()?;
+            let identity = action.check_arguments()?;
             if action.upsert {
                 return Err(Failure::unsupported(format!(
                     "{} upsert: the CLI has no save command",
@@ -208,7 +208,7 @@ impl CliRun for AddDoc {
                 args.extend(["--encrypt-fields", &fields]);
             }
             let printed = state
-                .defra_client_on(action.common.node(), action.txn, &args)
+                .defra_client_as(action.common.node(), action.txn, identity, &args)
                 .map_err(Failure::operation)?;
             let ids: Vec<String> = serde_json::from_value(printed)
                 .map_err(|e| Failure::operation(format!("defra client printed no IDs: {e}")))?;

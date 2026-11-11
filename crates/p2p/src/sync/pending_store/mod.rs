@@ -12,8 +12,9 @@
 //! sweep.
 //!
 //! Every transition is one engine transaction of the [`PendingDagStorage`]:
-//! registering a root, with the retirement of its sender scope's older root
-//! and a slot under the durable cap ([`slots`]); discharging it after a merge;
+//! registering a root, with the retirement of the parent it supersedes as its
+//! sender scope's current head, a slot under the durable cap ([`slots`]) and a
+//! charge to its announcing peer's share ([`shares`]); discharging it after a merge;
 //! quarantining it; and the sweep that reads every record. Concurrent
 //! transitions that touch the same keys settle in the engine, so no lock
 //! orders them. Each one updates the [`PersistedView`], the in-memory view of
@@ -25,6 +26,7 @@
 //! recoverable by re-issuing the pull.
 
 mod pooled;
+mod shares;
 mod slots;
 mod store;
 #[cfg(test)]
@@ -42,6 +44,7 @@ use crate::error::{Error, Result};
 use crate::ExplicitReplayAuthorization;
 
 pub use pooled::pooled_pending_store;
+pub(crate) use store::footprint as record_footprint;
 pub use store::PendingDagStore;
 pub use view::PersistedView;
 
@@ -150,22 +153,32 @@ impl PersistedQuarantinedDag {
 #[derive(Debug, Clone, Copy)]
 pub struct Registration<'a> {
     pub root: Cid,
+    /// The heads `root` links as parents: it retires its scope's durable
+    /// current head only when that head is one of them.
+    pub parents: &'a [Cid],
     pub record: &'a PersistedPendingDag,
-    /// Durable registrations allowed at once: the number of slots.
-    pub capacity: usize,
+    /// Durable registrations allowed at once: the number of slots. `None`
+    /// takes no slot and no share: a deferred gossip head, bounded by bytes
+    /// instead.
+    pub capacity: Option<usize>,
+    /// Durable registrations one announcing peer may hold at once: its share.
+    pub peer_capacity: usize,
 }
 
 /// How a registration ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Admission {
     /// The root holds a record: a new one, one that took over the slot of the
-    /// older root of its sender scope it retired, or its own rewritten.
-    Registered,
-    /// A newer or equal head of the root's sender scope is durable already:
-    /// nothing was written, and that head carries this one forward.
-    Covered,
+    /// parent it retired as its sender scope's current head, or its own
+    /// rewritten.
+    Registered {
+        /// The parent this root retired as its sender scope's current head.
+        retired: Option<Cid>,
+    },
     /// Every slot is held: nothing was written.
     AtCapacity,
+    /// The root's announcing peer holds its share: nothing was written.
+    AtPeerCapacity,
 }
 
 /// The durable registrations. Each method that changes them is one engine
@@ -174,22 +187,23 @@ pub enum Admission {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait PendingDagStorage: MaybeSendSync {
-    /// Registers a root: its record, the retirement of the older durable
-    /// root of its sender scope, and, for a root new to the store that
-    /// retires none, a free slot under the capacity.
+    /// Registers a root: its record, the retirement of its sender scope's
+    /// durable current head when the root links it as a parent, and, for a
+    /// root new to the store that retires none, a free slot under the
+    /// capacity and a charge to its peer's share.
     async fn register(
         &self,
         registration: Registration<'_>,
         view: &Arc<PersistedView>,
     ) -> Result<Admission>;
 
-    /// Deletes a root's record and frees its slot. Returns whether it had a
-    /// record.
+    /// Deletes a root's record, frees its slot and gives its charge back.
+    /// Returns whether it had a record.
     async fn remove(&self, root_cid: &Cid, view: &Arc<PersistedView>) -> Result<bool>;
 
     /// Moves a terminally rejected root to the quarantine keyspace: its
-    /// quarantine record, and the deletion of its live record and slot.
-    /// Returns whether it was quarantined before.
+    /// quarantine record, and the deletion of its live record, slot and
+    /// charge. Returns whether it was quarantined before.
     async fn quarantine(
         &self,
         root_cid: &Cid,

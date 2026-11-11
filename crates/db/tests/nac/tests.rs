@@ -4,7 +4,7 @@ mod unit_tests {
     use identity::Did;
 
     use db::nac::factory::create_memory_nac_manager;
-    use db::nac::NacConfig;
+    use db::nac::{NacCaller, NacConfig};
 
     fn test_did() -> Did {
         Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap()
@@ -98,7 +98,11 @@ mod unit_tests {
             let other = test_did2();
             manager.initialize(Some(&owner)).await.unwrap();
 
-            manager.disable(&owner).await.unwrap();
+            let caller = NacCaller {
+                identity: Some(owner.clone()),
+                node: None,
+            };
+            manager.disable_as(&caller).await.unwrap();
             assert_eq!(manager.status().await, NacStatus::DisabledTemporarily);
 
             assert!(manager
@@ -106,7 +110,7 @@ mod unit_tests {
                 .await
                 .unwrap());
 
-            manager.re_enable(&owner).await.unwrap();
+            manager.re_enable_as(&caller).await.unwrap();
             assert_eq!(manager.status().await, NacStatus::Enabled);
 
             assert!(!manager

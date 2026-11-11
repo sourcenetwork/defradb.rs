@@ -14,6 +14,16 @@ use super::super::p2p_host::P2PHost;
 /// error is only reachable through `source()` — so `to_string()` on a failed
 /// listen erased the "Address already in use" detail that the test harness
 /// keys its fresh-port start retry on (#1501). Surface the io error directly.
+/// `addr` as a full multiaddr of peer `pid`. A dialer stores the address it
+/// dialed, which already ends in `/p2p/<pid>`; identify later replaces it with
+/// a bare listen address. Either way the peer ID appears once.
+fn peer_address(addr: &Multiaddr, pid: &PeerId) -> String {
+    match addr.iter().last() {
+        Some(libp2p::multiaddr::Protocol::P2p(_)) => addr.to_string(),
+        _ => format!("{addr}/p2p/{pid}"),
+    }
+}
+
 fn format_listen_error(error: &libp2p::TransportError<std::io::Error>) -> String {
     match error {
         libp2p::TransportError::MultiaddrNotSupported(addr) => {
@@ -99,11 +109,7 @@ impl<S: Store> P2PHost<S> {
         let connected: RapidHashSet<PeerId> = self.swarm.connected_peers().cloned().collect();
         let addrs: Vec<String> = connected
             .iter()
-            .filter_map(|pid| {
-                self.peer_addrs
-                    .get(pid)
-                    .map(|addr| format!("{}/p2p/{}", addr, pid))
-            })
+            .filter_map(|pid| self.peer_addrs.get(pid).map(|addr| peer_address(addr, pid)))
             .collect();
         if response.send(addrs).is_err() {
             debug!("PeerAddresses command response dropped - caller cancelled");
@@ -113,7 +119,19 @@ impl<S: Store> P2PHost<S> {
 
 #[cfg(test)]
 mod tests {
-    use super::format_listen_error;
+    use super::{format_listen_error, peer_address};
+
+    #[test]
+    fn a_peer_address_names_its_peer_once() {
+        let pid = libp2p::PeerId::random();
+        let bare: libp2p::Multiaddr = "/ip4/127.0.0.1/tcp/4001".parse().unwrap();
+        let dialed: libp2p::Multiaddr = format!("/ip4/127.0.0.1/tcp/4001/p2p/{pid}")
+            .parse()
+            .unwrap();
+        let want = format!("/ip4/127.0.0.1/tcp/4001/p2p/{pid}");
+        assert_eq!(peer_address(&bare, &pid), want);
+        assert_eq!(peer_address(&dialed, &pid), want);
+    }
 
     #[test]
     fn listen_error_surfaces_the_bind_failure() {

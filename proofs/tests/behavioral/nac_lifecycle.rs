@@ -6,7 +6,7 @@ use defra_harness::{generate_identity, TestCluster};
 /// revoked must not leave the actor with residual admin capability.
 ///
 /// The probe is `index new` - a NAC-gated control-plane op (see
-/// crates/.../nac gating; mirrors tools/integration-test/tests/nac/
+/// crates/.../nac gating; mirrors tools/integration-test/tests/legacy/nac/
 /// relation_admin.rs which proves grant→use→revoke→deny end to end).
 ///
 /// Anti-tautology, asserted *before* every negative:

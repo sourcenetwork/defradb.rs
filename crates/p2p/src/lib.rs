@@ -69,6 +69,7 @@ pub mod host;
 pub mod kms;
 pub mod manage_correlator;
 pub mod message;
+pub mod model_trace;
 pub mod network;
 pub mod peer_identity;
 pub mod protocol;
@@ -146,11 +147,13 @@ pub use transport::{
 pub use sync::IrohSyncCoordinator;
 #[cfg(feature = "libp2p-transport")]
 pub use sync::Libp2pSyncCoordinator;
-pub use sync::PENDING_RECOVERY_WORST_CASE_SECS;
 pub use sync::{
     Broadcaster, CreateReplicatorResult, DagSync, DagSyncConfig, DagSyncState,
     LoadReplicatorsResult, NeedsFetchData, PeerHistory, PeerStateTracker, PeerSummary,
     ProcessQueue, SyncConfig, SyncCoordinator, SyncEvent, SyncManager, SyncPlan,
+};
+pub use sync::{
+    BLOCK_SYNC_COMPLETION_WATCHDOG, CLOCK_ATTEMPT_QUANTUM, PENDING_RECOVERY_WORST_CASE_SECS,
 };
 
 // Re-export bitswap types

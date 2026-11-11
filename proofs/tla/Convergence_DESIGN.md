@@ -1,43 +1,39 @@
 # DAG Convergence - Delivery And Local Merge
 
-**Date:** 2026-06-02 - **Branch:** `feat/p2p-tla-convergence`
-
 This slice factors convergence into two proof obligations:
 
-1. **TLA+ delivery:** under partitions, reconnects, bounded synced-CID eviction,
-   and finite restarts, every authorized node eventually receives and merges the
-   causal history of every accepted head.
+1. **TLA+ delivery:** under partitions, reconnects and finite restarts, every node
+   eventually receives and merges the causal history of every head that a retry
+   marker or a durable pending record owes it.
 2. **Lean local state machine:** once those deltas are delivered, local merge/apply
    is order-independent for the modeled CRDT state.
 
 The tools are intentionally complementary. Lean does not model network delivery;
-TLA+ does not prove byte/value merge algebra.
+TLA+ does not prove byte/value merge algebra. Fetch contention (slots, permits, the
+pending map's bound, the dispatch clock) is `P2PDelivery.tla`'s.
 
 ## Source-Grounded Facts
 
 | Fact | Source |
 |---|---|
-| `DagSyncState` tracks in-memory `syncing`, bounded `synced`, and FIFO `synced_order`; default cap is `100_000`. | `crates/p2p/src/sync/dag_sync/state.rs:9`, `state.rs:13` |
-| `synced` is explicitly a bounded hint: `false` may mean never synced or evicted. | `crates/p2p/src/sync/dag_sync/state.rs:87` |
-| `start_sync` refuses CIDs already `syncing` or `synced`; `complete_sync` removes from `syncing`, inserts into `synced`, appends FIFO order, and evicts oldest entries over cap. | `crates/p2p/src/sync/dag_sync/state.rs:100`, `state.rs:115` |
-| Restart creates fresh DAG sync state; `clear` wipes `syncing`, `synced`, and `synced_order`. | `crates/p2p/src/sync/dag_sync/sync.rs:32`, `crates/p2p/src/sync/dag_sync/state.rs:160` |
-| PushLog stores a root as unmerged, walks all missing DAG links, emits merge only when complete, otherwise registers a pending DAG. | `crates/p2p/src/sync/manager/process/pushlog.rs:248`, `pushlog.rs:269`, `pushlog.rs:292`, `pushlog.rs:363` |
-| Missing-link discovery walks the full reachable DAG and short-circuits already merged subtrees. | `crates/p2p/src/sync/manager/links.rs:56`, `links.rs:78` |
-| Fetch tries CAR first, then selective block batches, and emits `DagReady` only when no missing links remain. | `crates/p2p/src/sync/coordinator/dag_fetcher.rs:450` (`fetch_dag_attempt`), `dag_fetcher.rs:483` (rooted CAR), `dag_fetcher.rs:618` (selective batches), `dag_fetcher.rs:690` (`emit_dag_ready`) |
-| Pending DAG entries have TTL/capacity limits, so convergence requires eventual reannouncement/head rediscovery if pending state is dropped. | `crates/p2p/src/sync/manager/pending.rs:11`, `pending.rs:17`, `crates/p2p/src/sync/manager/process/pending_dag.rs:311` |
-| DocSync/BranchableSync discover current heads from providers after reconnect. | `crates/p2p/src/sync/coordinator/event_handler/doc_sync.rs:152`, `branchable_sync.rs:62`, `crates/db/src/merge/head_provider.rs:38`, `head_provider.rs:194` |
-| Composite merge recursively merges parent heads before the current block; durable merged sets skip duplicate replay. | `crates/db/src/merge/merge_handler/composite.rs:140`, `crates/db/src/merge/merge_handler/mod.rs:83` |
+| A sender owes a head to a replicator through a durable retry marker; the retry sweep pushes it and the acknowledgement clears it. | `crates/storage/src/stores/peerstore.rs` `register_scope_marker`, `complete_retry_scope`; `crates/p2p-adapter/src/retry.rs` `run_retry_pass` |
+| A receiver persists its pending record before it acknowledges a PushLog. Without an installed pending store the record is in memory only. | `crates/p2p/src/sync/manager/process/pushlog.rs` `process_block_inner` |
+| The resync sweep brings durable records back into the in-memory map, at startup and on connect. | `crates/p2p/src/sync/manager/process/pending_dag.rs` `resync_persisted_pending_dags` |
+| On connect a node re-drives its own pending records and nothing else: no head rediscovery. | `crates/p2p/src/sync/coordinator/event_handler/mod.rs` `handle_peer_connected` |
+| DocSync and BranchableSync discover heads only when the embedder calls them. | `crates/p2p/src/sync/coordinator/event_handler/doc_sync.rs` `handle_doc_sync_reply`, `branchable_sync.rs` `handle_branchable_sync_reply` |
+| A fetch emits `DagReady` only when no missing links remain; the merge discharges the root's record. | `crates/p2p/src/sync/coordinator/dag_fetcher.rs` `fetch_dag_attempt`; `crates/p2p/src/sync/manager/process/mod.rs` `discharge_merged` |
+| Composite merge merges parent heads before the current block; durable merged sets skip duplicate replay. | `crates/db/src/merge/merge_handler/composite.rs`, `crates/db/src/merge/merge_handler/mod.rs` |
 
 ## TLA+ Abstraction
 
 | Spec symbol | Meaning |
 |---|---|
-| `have[n]` | Durable local blockstore contents. |
-| `merged[n]` | Durable local merge/accepted-state marker. |
-| `wanted[n]` | In-memory roots learned through head discovery and pending fetch. Restart clears it. |
-| `syncing[n]` | In-memory CIDs currently being fetched. |
-| `synced[n]`, `syncedOrder[n]` | Bounded FIFO duplicate-work hint. Eviction never removes `have` or `merged`. |
-| `connected` | Current directed peer reachability relation. |
+| `have[n]` | Durable blockstore contents. |
+| `merged[n]` | Durable merged blocks. |
+| `owed[n]` | The creator's durable retry markers for `n`. |
+| `pendDur[n]` | `n`'s durable pending records. |
+| `wanted[n]` | Roots in `n`'s in-memory pending map. A restart clears it; the resync sweep refills it. |
+| `connected` | Current directed peer reachability. |
 | `Heads` | Accepted heads whose causal history must converge everywhere. |
 
 The key liveness property is:
@@ -46,25 +42,30 @@ The key liveness property is:
 CONV_EventualConnectivity == EventuallyConnected => <>[]AllConverged
 ```
 
-where `EventuallyConnected == <>[]FullyConnected`. The green theorem also assumes
-fair head rediscovery (`HeadRediscovery = TRUE`), representing eventual DocSync or
-BranchableSync after reconnect. The red config turns that off and shows why link
-reconnect alone is insufficient.
+where `EventuallyConnected == <>[]FullyConnected`. Fairness goes to each node's tasks:
+the creator's retry sweep toward it, its resync sweep, its fetches and its merge loop.
+`Replicated = TRUE` gives the creator a retry marker per node for every head. The red
+config turns it off: the heads were only published, so nothing owes them and
+reconnecting does not bring them.
 
 ## TLA+ Properties And Verdicts
 
 | Run | Verdict | Meaning |
 |---|---|---|
-| `MC_Conv_Eventual.cfg` | GREEN | With fair head rediscovery, a node that starts partitioned eventually receives and merges every accepted head history. |
-| `MC_Conv_RestartEviction.cfg` | GREEN | Same property with `MaxSynced = 1` and one arbitrary restart per node. FIFO eviction and restart clear only hints, not durable merge state. |
-| `MC_Conv_NoHeadRediscovery.cfg` | RED | Counterexample: peers reconnect, but the empty node never learns missed heads, so convergence fails. |
+| `MC_Conv_Eventual.cfg` | GREEN | With retry markers owing the heads, a node that starts partitioned eventually receives and merges every accepted head history. |
+| `MC_Conv_RestartEviction.cfg` | GREEN | Same property with one restart per node. A restart evicts the in-memory map; durable records and markers bring the roots back. |
+| `MC_Conv_NoHeadRediscovery.cfg` | RED | Counterexample: peers reconnect, but nothing owes the heads and nothing rediscovers them on connect, so convergence fails. |
 
-Safety invariants:
+Safety invariant:
 
-- `INV_SyncedFifo`: the FIFO order exactly matches the bounded `synced` hint and
-  never exceeds `MaxSynced`.
-- `INV_DurableMerge`: `synced` and `merged` are subsets of durable `have`; hint
-  eviction does not delete blockstore or merged state.
+- `INV_DurableMerge`: `merged` is a subset of durable `have`.
+
+## Conformance
+
+Boundary. `replication.rs` converges under a configured replicator; `partition.rs`
+converges after an explicit replicator re-set. A head nobody owes (a gossip drop, a
+publish while offline) returns only through an explicit `sync_documents`,
+BranchableSync or a replicator re-set, which the embedder owns.
 
 ## Lean Local Model
 
@@ -88,6 +89,6 @@ addition is not generally associative.
 
 ## Result
 
-Convergence holds under eventual connectivity **plus fair head rediscovery** and
-bounded synced-CID eviction (TLA+), given the local merge state machine is
+Convergence holds under eventual connectivity for every head a retry marker or a
+durable pending record owes (TLA+), given the local merge state machine is
 order-independent for the modeled CRDT components (Lean).

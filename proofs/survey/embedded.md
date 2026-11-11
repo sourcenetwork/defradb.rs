@@ -19,7 +19,7 @@ the spawn/shutdown lifecycle.
 - **Event fan-out** (`spawn_*_event_handler`): routes `TransportEvent`s, special-casing
   SE artifact push / SE query request/reply, else dispatches to the coordinator under a
   32-permit semaphore with inline-ordering for ordered events. Pure dispatch.
-- **Recovery** (`node_recovery.rs`): on boot, re-subscribe restored replicators/docs
+- **Recovery** (`libp2p_recovery.rs`, `iroh_restore.rs`): on boot, re-subscribe restored replicators/docs
   from the peerstore. Idempotent replay of persisted state.
 
 ## Candidates
@@ -36,4 +36,4 @@ path, management auth, block integrity, CRDT merge laws) is delegated to crates
 already covered by existing TLA+/Lean slices (Replicator, Convergence, Kms, Commits,
 Auth, Integrity, Acp, CRDT-laws). The crate's own contribution is `Arc`-graph wiring,
 teardown ordering, and idempotent recovery replay — covered by integration tests
-(`tests/shutdown.rs`, `iroh_smoke.rs`, `se_owner.rs`, `bm25_smoke.rs`). No new model.
+(`tests/shutdown.rs`, `iroh_smoke.rs`, `se_owner.rs`, and the testo `query::bm25` scenarios). No new model.

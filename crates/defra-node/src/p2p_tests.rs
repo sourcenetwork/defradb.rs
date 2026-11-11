@@ -2169,10 +2169,27 @@ fn assert_refused_dial(result: defra_p2p_adapter::P2PResult<()>) {
             matches!(&error, defra_p2p_adapter::P2PError::Transport(reason)
                 if reason.contains("timeout")
                     || reason.contains("timed out")
-                    || reason.contains("not authorized")),
+                    || reason.contains("not authorized"))
+                || matches!(&error, defra_p2p_adapter::P2PError::Unauthorized(reason)
+                    if reason == "peer refused the connection: not authorized"),
             "refused dial failed before reaching the allowlist: {error}"
         );
     }
+}
+
+#[test]
+fn refused_dial_accepts_typed_allowlist_refusal() {
+    assert_refused_dial(Err(defra_p2p_adapter::P2PError::Unauthorized(
+        "peer refused the connection: not authorized".into(),
+    )));
+}
+
+#[test]
+#[should_panic(expected = "refused dial failed before reaching the allowlist")]
+fn refused_dial_rejects_unrelated_authorization_error() {
+    assert_refused_dial(Err(defra_p2p_adapter::P2PError::Unauthorized(
+        "local permission denied".into(),
+    )));
 }
 
 /// `Node::allow_p2p_peer` is the only reachable way to widen an
@@ -2350,4 +2367,239 @@ fn deny_p2p_peer_revokes_an_already_connected_peer() {
         .unwrap()
 }
 
+/// A write admitted around shutdown either is refused before it commits or
+/// commits while P2P still records its durable head marker. HTTP writes run
+/// on one kept-alive connection, which outlives the accept loop, while the
+/// sender of a live replicator shuts down; none may answer "committed batch
+/// has undurable P2P head markers".
+#[cfg(feature = "http")]
+#[test]
+fn shutdown_refuses_or_marks_every_write_admitted_around_it() {
+    let runtime = edge::EdgeRuntime::start(edge::EdgeConfig {
+        threads: std::num::NonZeroUsize::new(4),
+        thread_name: "defra-node-shutdown-writes".to_string(),
+        ..edge::EdgeConfig::default()
+    })
+    .expect("start the test network runtime");
+    let network = runtime.edge().clone();
+    network
+        .block_on(async {
+            init_tracing();
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind HTTP");
+            let address = listener.local_addr().expect("HTTP address");
+            let sender = std::sync::Arc::new(
+                Node::builder()
+                    .with_edge(network.clone())
+                    .with_p2p(test_p2p_config())
+                    .with_http(crate::HttpConfig::with_listener(listener).expect("HTTP config"))
+                    .build()
+                    .await
+                    .expect("build sender"),
+            );
+            let receiver = Node::builder()
+                .with_p2p(test_p2p_config())
+                .build()
+                .await
+                .expect("build receiver");
+            for node in [&*sender, &receiver] {
+                node.add_collection("type Note { text: String }")
+                    .await
+                    .expect("add schema");
+            }
+            install_one_way_replicator(&sender, &receiver, &["Note"]).await;
+
+            let client = net::http::Client::builder(network.clone())
+                .pool_max_idle_per_host(1)
+                .build()
+                .expect("HTTP client");
+            let url = format!("http://{address}/api/v0/graphql");
+            let write = move |n: usize| {
+                let client = client.clone();
+                let url = url.clone();
+                async move {
+                    let body = serde_json::json!({
+                        "query": format!(r#"mutation {{ add_Note(input: {{text: "w{n}"}}) {{ _docID }} }}"#)
+                    });
+                    match client.post(&url).json(&body).send().await {
+                        Ok(response) => Some((response.status(), response.text().await.unwrap_or_default())),
+                        Err(_) => None,
+                    }
+                }
+            };
+            let (status, body) = write(0).await.expect("a write before shutdown");
+            assert!(status.is_success() && !body.contains("errors"), "{status} {body}");
+
+            let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let writer = network.spawn({
+                let stop = std::sync::Arc::clone(&stop);
+                async move {
+                    let (mut committed, mut refused, mut undurable) = (0usize, 0usize, Vec::new());
+                    let mut n = 1;
+                    while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+                        match write(n).await {
+                            Some((status, body)) if body.contains("undurable") => {
+                                undurable.push(format!("{status} {body}"))
+                            }
+                            Some((status, body)) if status.is_success() && !body.contains("errors") => {
+                                committed += 1
+                            }
+                            _ => refused += 1,
+                        }
+                        n += 1;
+                    }
+                    (committed, refused, undurable)
+                }
+            });
+
+            sender.shutdown().await.unwrap();
+            stop.store(true, std::sync::atomic::Ordering::SeqCst);
+            let (committed, refused, undurable) = writer.await.expect("writer task");
+
+            assert!(
+                undurable.is_empty(),
+                "writes committed without a durable head marker (committed {committed}, refused {refused}): {undurable:?}"
+            );
+            assert!(refused > 0, "no write was refused after shutdown stopped admitting requests");
+            receiver.shutdown().await.unwrap();
+        })
+        .unwrap();
+    runtime.shutdown().expect("stop the test network runtime");
+}
+
 mod acknowledgment;
+
+struct ReplicatedDocumentProjector;
+
+async fn wait_for_projector_peer(node: &Node, context: &defra_core::RequestContext) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if !node
+            .active_peers_as(context)
+            .await
+            .expect("active peers")
+            .is_empty()
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "node never reported a connected peer"
+        );
+        edge::testing::edge()
+            .sleep(Duration::from_millis(100))
+            .await;
+    }
+}
+
+#[async_trait::async_trait]
+impl db::DocumentMutationProjector for ReplicatedDocumentProjector {
+    async fn reconcile(
+        &self,
+        _context: &db::DocumentMutationContext<'_>,
+    ) -> storage::corekv::Result<()> {
+        Ok(())
+    }
+
+    async fn project(
+        &self,
+        context: &db::DocumentMutationContext<'_>,
+        collection: &str,
+        doc_id: &str,
+    ) -> storage::corekv::Result<()> {
+        if collection == "ProjectedPeerDoc" && !doc_id.is_empty() {
+            let system = context
+                .view
+                .sibling(storage::namespace::Namespace::Systemstore);
+            let collection =
+                db::collection::loader::load_collection_from_systemstore(&system, collection)
+                    .await
+                    .map_err(|e| storage::corekv::Error::Other(e.to_string()))?
+                    .ok_or_else(|| storage::corekv::Error::Other("missing collection".into()))?;
+            let policy = collection
+                .schema()
+                .policy
+                .as_ref()
+                .ok_or_else(|| storage::corekv::Error::Other("missing policy".into()))?;
+            let acp_view = context
+                .view
+                .sibling(storage::namespace::Namespace::Acpstore);
+            let scoped = context
+                .document_acp
+                .bind_transaction(acp_view.clone())
+                .ok_or_else(|| storage::corekv::Error::Other("ACP cannot bind".into()))?;
+            let owner = scoped
+                .get_doc_owner(&policy.id, &policy.resource_name, doc_id)
+                .await
+                .map_err(|e| storage::corekv::Error::Other(e.to_string()))?
+                .ok_or_else(|| {
+                    storage::corekv::Error::Other("verified creator not registered".into())
+                })?;
+            if &owner == context.node_did {
+                return Err(storage::corekv::Error::Other(
+                    "expected foreign creator".into(),
+                ));
+            }
+            context
+                .document_acp
+                .change_node_admin_relationship(
+                    acp_view,
+                    context.node_did,
+                    acp::Subject::wildcard(),
+                    &policy.id,
+                    &policy.resource_name,
+                    doc_id,
+                    "reader",
+                    false,
+                )
+                .await
+                .map_err(|e| storage::corekv::Error::Other(e.to_string()))?;
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn accepted_replicated_document_runs_transactional_projector() {
+    edge::testing::edge().block_on(async {
+        let node0 = Node::builder().enable_signing().with_node_acp_enabled().with_p2p(test_p2p_config()).build().await.unwrap();
+        let node1 = Node::builder().enable_signing().with_node_acp_enabled().with_p2p(test_p2p_config())
+            .with_document_projector(std::sync::Arc::new(ReplicatedDocumentProjector))
+            .build().await.unwrap();
+        let context0 = defra_core::RequestContext::default().with_identity(Some(node0.node_identity_did().unwrap().to_owned()));
+        let context1 = defra_core::RequestContext::default().with_identity(Some(node1.node_identity_did().unwrap().to_owned()));
+        let yaml = "name: P2P projection\nresources:\n  - name: records\n    relations:\n      - name: reader\n        types: [actor]\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n";
+        let policy = node0.add_dac_policy_with_counter_as(&context0, yaml, 1).await.unwrap();
+        let policy1 = node1.add_dac_policy_with_counter_as(&context1, yaml, 1).await.unwrap();
+        assert_eq!(policy, policy1);
+        let schema = format!("type ProjectedPeerDoc @policy(id: \"{policy}\", resource: \"records\") {{ name: String, age: Int }}");
+        node0.add_collection_as(&context0, &schema).await.unwrap();
+        node1.add_collection_as(&context1, &schema).await.unwrap();
+        let addr0 = wait_for_listen_addr(&node0).await;
+        let addr1 = wait_for_listen_addr(&node1).await;
+        node0.connect_as(&context0, std::slice::from_ref(&addr1)).await.unwrap();
+        wait_for_projector_peer(&node0, &context0).await;
+        wait_for_projector_peer(&node1, &context1).await;
+        let collections = vec!["ProjectedPeerDoc".to_owned()];
+        node0.add_p2p_collections_as(&context0, &collections).await.unwrap();
+        node1.add_p2p_collections_as(&context1, &collections).await.unwrap();
+        node1.add_replicator_as(&context1, std::slice::from_ref(&addr0), &collections, Default::default()).await.unwrap();
+        node0.add_replicator_as(&context0, std::slice::from_ref(&addr1), &collections, Default::default()).await.unwrap();
+        let response = node0.execute("mutation { add_ProjectedPeerDoc(input: {name:\"one\", age:37}) { _docID } }").await;
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        let id = extract_created_doc_id(&response, "add_ProjectedPeerDoc");
+        wait_for_collection_len(&node1, "ProjectedPeerDoc", 1).await;
+        let replicated = node1.execute("query { ProjectedPeerDoc { _docID name age } }").await;
+        assert!(replicated.errors.is_empty(), "{:?}", replicated.errors);
+        let data = replicated.data.unwrap();
+        let rows = data["ProjectedPeerDoc"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["_docID"].as_str(), Some(id.as_str()));
+        assert_eq!(rows[0]["name"].as_str(), Some("one"));
+        assert_eq!(rows[0]["age"].as_i64(), Some(37));
+        let owner = node1.document_acp().get_doc_owner(&policy, "records", &id).await.unwrap();
+        assert_eq!(owner.as_ref().map(identity::Did::as_str), node0.node_identity_did());
+        assert!(node1.document_acp().check_named_permission(&identity::Did::new("did:key:reader").unwrap(), "read", &policy, "records", &id).await.unwrap());
+        node0.shutdown().await.unwrap();
+        node1.shutdown().await.unwrap();
+    }).unwrap();
+}

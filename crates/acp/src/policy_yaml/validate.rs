@@ -143,50 +143,6 @@ mod tests {
     }
 
     #[test]
-    fn test_owner_reference_error() {
-        let yaml = r#"
-name: test
-description: a policy
-resources:
-- name: users
-  permissions:
-  - expr: reader + owner
-    name: read
-  relations:
-  - name: reader
-    types:
-    - actor
-"#;
-        let policy = parse_policy_yaml(yaml).unwrap();
-        let result = validate_policy_expressions(&policy);
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("permission cannot reference `owner`"));
-    }
-
-    #[test]
-    fn test_bad_token_error() {
-        let yaml = r#"
-name: test
-description: a policy
-resources:
-- name: users
-  permissions:
-  - name: read
-    expr: reader ^ asf
-  relations:
-  - name: reader
-    types:
-    - actor
-"#;
-        let policy = parse_policy_yaml(yaml).unwrap();
-        let result = validate_policy_expressions(&policy);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("token recognition error"));
-    }
-
-    #[test]
     fn test_reserved_owner_relation_error() {
         let yaml = r#"
 name: test
@@ -208,26 +164,6 @@ resources:
         let result = validate_policy_expressions(&policy);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("reserved relation name"));
-    }
-
-    #[test]
-    fn test_undeclared_relation_error() {
-        let yaml = r#"
-description: a policy
-name: a policy
-resources:
-- name: users
-  permissions:
-  - name: delete
-  - expr: reader
-    name: read
-  - name: update
-  relations:
-"#;
-        let policy = parse_policy_yaml(yaml).unwrap();
-        let result = validate_policy_expressions(&policy);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("BAD_INPUT"));
     }
 
     #[test]

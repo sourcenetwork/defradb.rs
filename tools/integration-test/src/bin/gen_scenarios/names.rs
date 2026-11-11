@@ -1,8 +1,5 @@
 use super::corpus::Loaded;
 
-/// Corpus areas whose name a hand-written test binary already uses.
-const COLLIDING: &[&str] = &["acp", "backup", "encryption", "query"];
-
 const KEYWORDS: &[&str] = &[
     "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern",
     "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub",
@@ -28,14 +25,6 @@ pub fn snake(text: &str) -> String {
         out.push('_');
     }
     out
-}
-
-/// The test binary for a corpus area.
-pub fn binary(top: &str) -> String {
-    match COLLIDING.contains(&top) {
-        true => format!("{top}_scenarios"),
-        false => top.to_owned(),
-    }
 }
 
 /// The file stem for a source file: `simple_test.go` becomes `simple`.

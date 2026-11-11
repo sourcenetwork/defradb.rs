@@ -27,6 +27,10 @@ pub const RATE_LIMITED_MESSAGE: &str = "rate limited: too many requests, retry l
 /// older peers.
 pub const AT_CAPACITY_MESSAGE: &str = "at capacity: receiver is saturated, back off";
 
+/// Publish error when a coalesced broadcast waited past its deadline for a
+/// publish slot and was dropped (#2489); the caller reports its root.
+pub const BROADCAST_SLOT_ELAPSED: &str = "publish slot wait deadline passed";
+
 /// Message prefix for a replay whose transport went away mid-push.
 ///
 /// The replay path already classifies the typed transport error
@@ -231,6 +235,21 @@ pub enum Error {
         collection_id: String,
     },
 
+    /// A peer's event was refused because the peer is over its admission
+    /// rate. Backpressure, not a denial: the refusal is answered or kept.
+    #[error("rate limited: peer {peer_id} is over its admission rate")]
+    RateLimited {
+        /// The peer whose event was refused
+        peer_id: String,
+    },
+
+    /// A peer's event was refused because the request workers are saturated.
+    #[error("request workers saturated: refused an event from peer {peer_id}")]
+    RequestWorkersSaturated {
+        /// The peer whose event was refused
+        peer_id: String,
+    },
+
     /// The pending-DAG map or the source peer's share is at capacity, so an
     /// incoming push with missing links could not be registered. Reply seams
     /// map this to the byte-exact at-capacity nack so the pusher retries
@@ -239,6 +258,17 @@ pub enum Error {
     PendingDagCapacity {
         /// The configured global pending-DAG capacity.
         max: usize,
+    },
+
+    /// A gossip head refused at admission could not be kept durably and was
+    /// dropped; the node reported it with a `p2p-gossip-head-dropped` event
+    /// (#2489).
+    #[error("gossip head {cid} dropped: {reason}")]
+    GossipHeadDropped {
+        /// The dropped root.
+        cid: String,
+        /// Why it could not be kept.
+        reason: &'static str,
     },
 
     /// Another receive task owns this CID and has not established recovery state yet.
@@ -400,12 +430,18 @@ impl Error {
 
     /// Returns true if this is the coordinator's synthetic rate-limit rejection.
     pub fn is_rate_limited(&self) -> bool {
+        matches!(self, Error::RateLimited { .. })
+    }
+
+    /// Returns true for an admission refusal under load (rate, saturated
+    /// workers, a gossip head dropped past its budget): each is counted and
+    /// answered, kept or reported where it happens, so it is not a fault.
+    pub fn is_admission_refusal(&self) -> bool {
         matches!(
             self,
-            Error::AccessDenied {
-                collection_id,
-                ..
-            } if collection_id == "rate-limited"
+            Error::RateLimited { .. }
+                | Error::RequestWorkersSaturated { .. }
+                | Error::GossipHeadDropped { .. }
         )
     }
 
@@ -538,9 +574,8 @@ mod tests {
 
     #[test]
     fn rate_limited_detection_is_typed() {
-        let rate_limited = Error::AccessDenied {
+        let rate_limited = Error::RateLimited {
             peer_id: "peer-1".into(),
-            collection_id: "rate-limited".into(),
         };
         let ordinary_denial = Error::AccessDenied {
             peer_id: "peer-1".into(),
@@ -549,6 +584,16 @@ mod tests {
 
         assert!(rate_limited.is_rate_limited());
         assert!(!ordinary_denial.is_rate_limited());
+        assert_eq!(
+            rate_limited.to_string(),
+            "rate limited: peer peer-1 is over its admission rate"
+        );
+        assert!(rate_limited.is_admission_refusal());
+        assert!(Error::RequestWorkersSaturated {
+            peer_id: "peer-1".into()
+        }
+        .is_admission_refusal());
+        assert!(!ordinary_denial.is_admission_refusal());
     }
 
     #[test]
@@ -581,9 +626,8 @@ mod tests {
             Some(RATE_LIMITED_MESSAGE)
         );
 
-        let rate_limited = Error::AccessDenied {
+        let rate_limited = Error::RateLimited {
             peer_id: "peer-1".into(),
-            collection_id: "rate-limited".into(),
         };
         assert_eq!(
             rate_limited.backpressure_reply_message(),

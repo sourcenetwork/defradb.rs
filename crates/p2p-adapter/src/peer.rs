@@ -250,6 +250,36 @@ where
         .collect())
 }
 
+/// Go's `SyncDocuments`: fetch the heads of `doc_ids` from connected peers.
+pub async fn sync_documents<P>(p2p: &P, collection: &str, doc_ids: &[String]) -> Result<()>
+where
+    P: P2POperations + ?Sized,
+{
+    p2p.sync_documents(collection, doc_ids.to_vec(), None)
+        .await
+        .map_err(refused)
+}
+
+/// Go's `SyncCollectionVersions`: fetch collection versions from connected peers.
+pub async fn sync_collection_versions<P>(p2p: &P, version_ids: &[String]) -> Result<()>
+where
+    P: P2POperations + ?Sized,
+{
+    p2p.sync_collection_versions(version_ids.to_vec())
+        .await
+        .map_err(refused)
+}
+
+/// Go's `SyncBranchableCollection`: fetch a branchable collection's history.
+pub async fn sync_branchable_collection<P>(p2p: &P, collection_id: &str) -> Result<()>
+where
+    P: P2POperations + ?Sized,
+{
+    p2p.sync_branchable_collection(collection_id)
+        .await
+        .map_err(refused)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

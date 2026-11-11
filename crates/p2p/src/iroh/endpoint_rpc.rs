@@ -442,6 +442,10 @@ async fn connect_with_cache(
     }
 
     cache.gossip.connected(endpoint_id, &connection);
+    crate::model_trace!(Reconnect {
+        peer: peer_id.to_string(),
+        mode: crate::model_trace::ConnMode::Dialer,
+    });
     Ok(connection)
 }
 

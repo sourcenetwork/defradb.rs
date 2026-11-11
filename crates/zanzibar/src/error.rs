@@ -67,6 +67,19 @@ pub enum Error {
 
     #[error("invalid subject encoding: {0}")]
     InvalidSubjectEncoding(String),
+
+    /// A scope's commit lost to a transaction that committed first and
+    /// changed something the scope read; a fresh run decides again.
+    #[error("transaction conflict: {0}")]
+    TransactionConflict(String),
+}
+
+impl Error {
+    /// Whether a scope's commit lost to another commit, so a fresh run may
+    /// succeed.
+    pub fn is_conflict(&self) -> bool {
+        matches!(self, Error::TransactionConflict(_))
+    }
 }
 
 #[cfg(test)]

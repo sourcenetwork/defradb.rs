@@ -126,6 +126,31 @@ pub enum MergeErrorDisposition {
 }
 
 impl MergeOutcome {
+    /// Terminal skip reason: this node already holds the document head.
+    pub const ALREADY_MERGED: &'static str = "already merged";
+    /// Terminal skip reason: this node already holds the collection head.
+    pub const COLLECTION_ALREADY_MERGED: &'static str = "collection already merged";
+    /// Terminal skip reason: an earlier block of the same batch merged the
+    /// collection head.
+    pub const COLLECTION_ALREADY_MERGED_IN_BATCH: &'static str =
+        "collection already merged in batch";
+    /// Terminal skip reason: the collection head is recorded and this node
+    /// already holds every document head it links.
+    pub const NO_LINKED_COMPOSITES_NEEDED_MERGING: &'static str =
+        "no linked composites needed merging";
+
+    /// Whether a terminal skip for `reason` means this node already holds the
+    /// block's content, as opposed to refusing or deferring it.
+    pub fn skip_reason_is_applied(reason: &str) -> bool {
+        matches!(
+            reason,
+            Self::ALREADY_MERGED
+                | Self::COLLECTION_ALREADY_MERGED
+                | Self::COLLECTION_ALREADY_MERGED_IN_BATCH
+                | Self::NO_LINKED_COMPOSITES_NEEDED_MERGING
+        )
+    }
+
     /// Create a terminal skipped outcome with the given reason.
     pub fn terminal_skip(reason: impl Into<String>) -> Self {
         Self::Skipped {
@@ -471,6 +496,11 @@ mod tests {
         let retryable = MergeOutcome::retryable_skip("pending ACP");
         assert!(retryable.is_skipped());
         assert!(!retryable.is_terminal_skip());
+
+        assert!(MergeOutcome::skip_reason_is_applied(
+            MergeOutcome::ALREADY_MERGED
+        ));
+        assert!(!MergeOutcome::skip_reason_is_applied("rejected by CRDT"));
     }
 
     #[test]

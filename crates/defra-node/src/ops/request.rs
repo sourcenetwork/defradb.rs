@@ -8,7 +8,7 @@ use identity::Did;
 use query::{QueryRequest, QueryResponse, TransactionError, TransactionHandle};
 use schema::CollectionVersion;
 
-use crate::{Error, Node, Result};
+use crate::{refused_transaction, Error, Node, Result};
 
 impl Node {
     /// Parse `sdl`, check it and create every collection it defines, or none,
@@ -61,39 +61,70 @@ impl Node {
     }
 
     /// Begin an explicit transaction for the caller `context` names. Requests
-    /// whose context carries the returned ID run in it.
+    /// whose context carries the returned ID run in it. Begun as a request,
+    /// as [`Node::begin_transaction`] is.
     pub async fn txn_begin(&self, context: &RequestContext, read_only: bool) -> Result<TxnId> {
-        let handle = self
-            .runner()
-            .begin_txn_as(&self.caller(context), read_only)
+        let owned = self
+            .begin_owned_transaction(self.txn_owner(context), read_only)
             .await
             .map_err(transaction_error)?;
-        handle.parse().map_err(|_| {
+        let handle = owned.handle().map_err(transaction_error)?;
+        let id = handle.parse().map_err(|_| {
             Error::Transaction(TransactionError::Operation(format!(
                 "transaction ID '{handle}' is not a number"
             )))
-        })
+        })?;
+        owned.into_handle().map_err(transaction_error)?;
+        Ok(id)
     }
 
-    /// Make the writes of transaction `id` durable and end it.
+    /// Make the writes of transaction `id` durable and end it, admitted as
+    /// [`Node::commit_transaction`] admits it.
     pub async fn txn_commit(&self, context: &RequestContext, id: TxnId) -> Result<()> {
-        self.runner()
-            .commit_txn_as(&self.caller(context), &handle(id))
+        let (runner, caller) = (Arc::clone(self.runner()), self.txn_owner(context));
+        self.as_request(async move { runner.commit_txn_as(&caller, &handle(id)).await })
             .await
+            .unwrap_or_else(|error| Err(refused_transaction(error, "committed")))
             .map_err(transaction_error)
     }
 
     /// Drop the writes of transaction `id` and end it.
     pub async fn txn_discard(&self, context: &RequestContext, id: TxnId) -> Result<()> {
         self.runner()
-            .discard_txn_as(&self.caller(context), &handle(id))
+            .discard_txn_as(&self.txn_owner(context), &handle(id))
             .await
             .map_err(transaction_error)
     }
 
-    /// `context` acting as the node when it names no identity of its own, as
-    /// [`Node::begin_transaction`] does.
+    /// Node access control for `permission`, for the operations that check
+    /// one before the work they hand on, as Go's do.
+    #[cfg(feature = "managed-p2p")]
+    pub(crate) async fn check_access(
+        &self,
+        context: &RequestContext,
+        permission: acp::nac::NodePermission,
+    ) -> Result<()> {
+        let (database, context) = (Arc::clone(self.database()), self.caller(context));
+        self.on_pool(move || async move {
+            Ok(database.check_node_access_as(&context, permission).await?)
+        })
+        .await
+    }
+
+    /// The caller `context` names. Outside a transaction a call that names no
+    /// identity acts as no one, as Go's in-process client does; inside one it
+    /// acts as the transaction's owner, [`Self::txn_owner`].
     pub(crate) fn caller(&self, context: &RequestContext) -> RequestContext {
+        match context.txn() {
+            Some(_) => self.txn_owner(context),
+            None => context.clone(),
+        }
+    }
+
+    /// Who owns the transaction `context` begins or ends: the identity it
+    /// names, or the node, as a request that names none runs as the node
+    /// inside a transaction ([`Node::execute_request_in_txn`]).
+    fn txn_owner(&self, context: &RequestContext) -> RequestContext {
         match context.identity() {
             Some(_) => context.clone(),
             None => self.node_context().with_txn(context.txn()),

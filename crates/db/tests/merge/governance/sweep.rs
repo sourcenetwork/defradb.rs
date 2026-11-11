@@ -73,6 +73,53 @@ fn a_deferred_composite_merges_after_a_restart() {
     .unwrap()
 }
 
+/// A re-driven merge stays unmarked until its forward succeeds, so a forward
+/// that failed leaves a composite the database holds but no mark covers.
+/// After a restart the sweep finds it again, and its "already merged" skip
+/// still owes that forward.
+#[test]
+fn an_applied_unmarked_composite_is_forwarded_after_a_restart() {
+    workers::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node");
+        let writer = signer();
+        let grant = genesis("col-grants", "writer", &writer.did, &writer);
+        let note = genesis("col-notes", "grant", "anything", &writer);
+
+        {
+            let validator = Arc::new(AwaitNamed(Atom::new(grant.cid)));
+            let node = Node::open(
+                RegolithStore::open(&path).unwrap(),
+                MergeGovernance::new(["Notes"]).with_validator(validator),
+                true,
+            )
+            .await;
+            assert_eq!(
+                note.merge(&node, &writer.did).await,
+                MergeOutcome::retryable_skip("awaited composite not held")
+            );
+            assert_eq!(grant.merge(&node, &writer.did).await, MergeOutcome::Merged);
+            assert_eq!(node.forwarded(), vec![note.cid]);
+            // The recording sink marks nothing, as a failed forward leaves it.
+            assert!(!node.blockstore.is_merged(&note.cid).await.unwrap());
+            node.db.close().await.unwrap();
+        }
+
+        let validator = Arc::new(AwaitNamed(Atom::new(grant.cid)));
+        let node = Node::open(
+            RegolithStore::open(&path).unwrap(),
+            MergeGovernance::new(["Notes"]).with_validator(validator),
+            false,
+        )
+        .await;
+        node.handler.sweep_unmerged_governed().await;
+
+        assert_eq!(node.doc_ids("Notes").await, vec![note.doc_id.clone()]);
+        assert_eq!(node.forwarded(), vec![note.cid]);
+    })
+    .unwrap()
+}
+
 /// P2. Beyond the index's capacity a deferral is not indexed at all, so the
 /// awaited input's arrival releases nothing.
 #[test]

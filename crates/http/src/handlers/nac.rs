@@ -1,20 +1,15 @@
 //! NAC (Node Access Control) handlers.
 //!
-//! These handlers provide HTTP endpoints for managing NAC, including:
-//! - Getting NAC status
-//! - Adding/removing admin relationships
-//!
-//! All endpoints enforce NAC permissions when NAC is enabled.
+//! Go's routes read the request and call the core, which checks the caller's
+//! node permissions and owns every error: status, disable, re-enable, and the
+//! actor relationships. `enable` and the batch relationship route are Rust
+//! only.
 
-use axum::{extract::State, response::IntoResponse, Json};
+use axum::{extract::State, http::HeaderMap, response::IntoResponse, Json};
 
-use acp::nac::is_valid_nac_relation;
-
-use crate::auth_error::normalize_auth_error;
 use crate::error::{http_error_from_backend_message, HttpError};
 use crate::identity_extractor::ExtractIdentity;
-use crate::nac_guard::require_permission;
-use crate::router::{AppState, NacStatusInfo, NodePermission};
+use crate::router::AppState;
 
 /// Request body for Go-compatible NAC relationship operations.
 /// Go DefraDB uses: `{"Relation": "admin", "TargetActor": "did:key:..."}`
@@ -29,38 +24,49 @@ pub struct GoNacRelationshipRequest {
 }
 
 #[derive(Debug, serde::Serialize)]
-pub struct GoNacRelationshipResponse {
-    pub added: bool,
+pub struct SourcePermissionResponse {
+    pub changed: bool,
 }
 
-fn validate_add_relationship(body: &GoNacRelationshipRequest) -> Result<identity::Did, HttpError> {
-    if !is_valid_nac_relation(&body.relation) || body.relation == "owner" {
-        return Err(HttpError::BadRequest(
-            "relation not in resource".to_string(),
-        ));
+/// Source grants are always staged in the caller's existing transaction.
+pub async fn change_source_permission(
+    State(state): State<AppState>,
+    identity: ExtractIdentity,
+    headers: HeaderMap,
+    Json(body): Json<query::txn::SourcePermission>,
+) -> Result<Json<SourcePermissionResponse>, HttpError> {
+    let context = super::txn_header::txn_context(&identity, &headers)?
+        .ok_or_else(|| HttpError::BadRequest("x-defradb-tx is required".into()))?
+        .with_dac_bypass(false);
+    if identity.did().is_none() || !context.authorization_valid_now() {
+        return Err(HttpError::Unauthorized("authentication required".into()));
     }
-    if body.target_actor.is_empty() {
-        return Err(HttpError::BadRequest("actor must be a valid did".into()));
-    }
-    identity::Did::new(&body.target_actor)
-        .map_err(|e| HttpError::BadRequest(format!("invalid TargetActor DID: {}", e)))
+    let changed = state
+        .executor
+        .change_nac_source_permission_as(&context, &body)
+        .await?;
+    Ok(Json(SourcePermissionResponse { changed }))
 }
 
-async fn apply_add_relationship(
-    nac: &dyn crate::router::NodeAcpOperations,
-    requestor: &identity::Did,
-    target: &identity::Did,
-    relation: &str,
-) -> Result<GoNacRelationshipResponse, HttpError> {
-    let added = nac
-        .add_relationship(requestor, target, relation)
-        .await
-        .map_err(|e| {
-            let normalized = normalize_auth_error(e, "add-nac-relation");
-            tracing::warn!(error = %normalized, "NAC add_relationship operation failed");
-            http_error_from_backend_message(normalized)
-        })?;
-    Ok(GoNacRelationshipResponse { added })
+/// Go's `client.AddActorRelationshipResult`.
+#[derive(Debug, serde::Serialize)]
+pub struct AddActorRelationshipResult {
+    #[serde(rename = "ExistedAlready")]
+    pub existed_already: bool,
+}
+
+/// Go's `client.DeleteActorRelationshipResult`.
+#[derive(Debug, serde::Serialize)]
+pub struct DeleteActorRelationshipResult {
+    #[serde(rename = "RecordFound")]
+    pub record_found: bool,
+}
+
+/// Go's `client.NACStatusResult`.
+#[derive(Debug, serde::Serialize)]
+pub struct NacStatusResult {
+    #[serde(rename = "Status")]
+    pub status: String,
 }
 
 /// Request body for enabling NAC (Go-compatible format).
@@ -111,195 +117,131 @@ pub async fn enable(
 
     Ok(axum::http::StatusCode::OK.into_response())
 }
-
-/// GET /api/v0/acp/node/status
-///
-/// Get the current NAC status including whether it's enabled and who the owner is.
-///
-/// Requires `NacStatus` permission when NAC is enabled.
+/// GET /api/v0/acp/node/status. Go's `acpHandler.GetNACStatus`.
 pub async fn get_status(
     State(state): State<AppState>,
     identity: ExtractIdentity,
-) -> Result<impl IntoResponse, HttpError> {
-    require_permission(&state, &identity, NodePermission::NacStatus).await?;
-
-    match &state.nac {
-        Some(nac) => {
-            let info = nac.info().await;
-            Ok(Json(info).into_response())
-        }
-        None => {
-            let info = NacStatusInfo {
-                status: "not configured".to_string(),
-                configured_enabled: false,
-                dev_mode: false,
-                owner: None,
-            };
-            Ok(Json(info).into_response())
-        }
-    }
+) -> Result<Json<NacStatusResult>, HttpError> {
+    let status = state.executor.nac_status_as(&identity.context()).await?;
+    Ok(Json(NacStatusResult {
+        status: status.to_string(),
+    }))
 }
 
-// ============================================================================
-// NAC relationship endpoints
-// ============================================================================
+/// Query for GET /api/v0/acp/node/explain.
+#[derive(Debug, serde::Deserialize)]
+pub struct ExplainQuery {
+    pub subject: String,
+}
 
-/// POST /api/v0/acp/node/relationship (Go-compatible)
-///
-/// Add a NAC relationship. Go DefraDB format:
-/// `{"Relation": "admin", "TargetActor": "did:key:..."}`
-///
-/// Requires `NacRelationAdd` permission when NAC is enabled.
+/// GET /api/v0/acp/node/explain?subject=<did>: every way the subject holds
+/// each node permission. The core allows the subject itself, an admin, or a
+/// caller holding `NacStatus`, as the embedded `Node::explain_nac_subject_as`.
+pub async fn explain_subject(
+    State(state): State<AppState>,
+    identity: ExtractIdentity,
+    axum::extract::Query(query): axum::extract::Query<ExplainQuery>,
+) -> Result<Json<Vec<acp::nac::PermissionProvenance>>, HttpError> {
+    Ok(Json(
+        state
+            .executor
+            .explain_nac_subject_as(&identity.context(), &query.subject)
+            .await?,
+    ))
+}
+
+/// POST /api/v0/acp/node/relationship. Go's
+/// `acpHandler.AddNACActorRelationship`.
 pub async fn go_add_relationship(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     Json(body): Json<GoNacRelationshipRequest>,
-) -> Result<impl IntoResponse, HttpError> {
-    require_permission(&state, &identity, NodePermission::NacRelationAdd).await?;
-
-    let nac = state.require_nac()?;
-
-    // Require authenticated identity
-    let requestor = identity.did().cloned().ok_or_else(|| {
-        HttpError::Forbidden("authentication required to add relationship".into())
-    })?;
-
-    let target = validate_add_relationship(&body)?;
-    let result = apply_add_relationship(nac.as_ref(), &requestor, &target, &body.relation).await?;
-
-    Ok(Json(result).into_response())
+) -> Result<Json<AddActorRelationshipResult>, HttpError> {
+    Ok(Json(add_relationship(&state, &identity, &body).await?))
 }
 
 /// POST /api/v0/acp/node/relationships
 ///
-/// Add multiple NAC relationships in one request. The response array matches
-/// request order, and every entry is validated before writes begin. A backend
-/// error stops processing without rolling back earlier entries.
+/// Add several NAC relationships in one request, in order. Every entry is
+/// validated before any write runs; a later backend error stops the request
+/// without undoing the entries before it.
 pub async fn go_add_relationships(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     Json(bodies): Json<Vec<GoNacRelationshipRequest>>,
-) -> Result<Json<Vec<GoNacRelationshipResponse>>, HttpError> {
-    require_permission(&state, &identity, NodePermission::NacRelationAdd).await?;
-
-    let nac = state.require_nac()?;
-    let requestor = identity.did().cloned().ok_or_else(|| {
-        HttpError::Forbidden("authentication required to add relationship".into())
-    })?;
-
-    let targets = bodies
-        .iter()
-        .map(validate_add_relationship)
-        .collect::<Result<Vec<_>, _>>()?;
-
+) -> Result<Json<Vec<AddActorRelationshipResult>>, HttpError> {
+    bodies.iter().try_for_each(validate_add_relationship)?;
     let mut results = Vec::with_capacity(bodies.len());
-    for (body, target) in bodies.iter().zip(&targets) {
-        results
-            .push(apply_add_relationship(nac.as_ref(), &requestor, target, &body.relation).await?);
+    for body in &bodies {
+        results.push(add_relationship(&state, &identity, body).await?);
     }
     Ok(Json(results))
 }
 
-/// DELETE /api/v0/acp/node/relationship (Go-compatible)
-///
-/// Remove a NAC relationship. Go DefraDB format:
-/// `{"Relation": "admin", "TargetActor": "did:key:..."}`
-///
-/// Requires `NacRelationDelete` permission when NAC is enabled.
-pub async fn go_remove_relationship(
-    State(state): State<AppState>,
-    identity: ExtractIdentity,
-    Json(body): Json<GoNacRelationshipRequest>,
-) -> Result<impl IntoResponse, HttpError> {
-    require_permission(&state, &identity, NodePermission::NacRelationDelete).await?;
-
-    let nac = state.require_nac()?;
-
-    // Require authenticated identity
-    let requestor = identity.did().cloned().ok_or_else(|| {
-        HttpError::Forbidden("authentication required to remove relationship".into())
-    })?;
-
-    // Validate relation name against NAC policy (matches FFI ordering: after auth, before target)
-    if !is_valid_nac_relation(&body.relation) || body.relation == "owner" {
+/// Validate one add-relationship entry as the single route's core does: the
+/// relation must be a NAC relation other than "owner", and the target a DID
+/// or `*`.
+fn validate_add_relationship(body: &GoNacRelationshipRequest) -> Result<(), HttpError> {
+    if !acp::is_valid_nac_relation(&body.relation) || body.relation == "owner" {
         return Err(HttpError::BadRequest(
             "relation not in resource".to_string(),
         ));
     }
-
-    if body.target_actor.is_empty() {
-        return Ok(Json(serde_json::json!({"deleted": false})).into_response());
+    if body.target_actor == "*" || identity::Did::new(&body.target_actor).is_ok() {
+        return Ok(());
     }
-
-    // Parse target DID
-    let target = identity::Did::new(&body.target_actor)
-        .map_err(|e| HttpError::BadRequest(format!("invalid TargetActor DID: {}", e)))?;
-
-    let removed = nac
-        .remove_relationship(&requestor, &target, &body.relation)
-        .await
-        .map_err(|e| {
-            let normalized = normalize_auth_error(e, "delete-nac-relation");
-            tracing::warn!(error = %normalized, "NAC remove_relationship operation failed");
-            http_error_from_backend_message(normalized)
-        })?;
-
-    Ok(Json(serde_json::json!({"deleted": removed})).into_response())
+    Err(HttpError::BadRequest("actor must be a valid did".into()))
 }
 
-/// POST /api/v0/acp/node/disable
-///
-/// Temporarily disable NAC on this node.
-/// The requestor must be an admin.
+async fn add_relationship(
+    state: &AppState,
+    identity: &ExtractIdentity,
+    body: &GoNacRelationshipRequest,
+) -> Result<AddActorRelationshipResult, HttpError> {
+    let existed_already = state
+        .executor
+        .add_nac_actor_relationship_as(&identity.context(), &body.relation, &body.target_actor)
+        .await?;
+    Ok(AddActorRelationshipResult { existed_already })
+}
+
+/// DELETE /api/v0/acp/node/relationship. Go's
+/// `acpHandler.DeleteNACActorRelationship`.
+pub async fn go_remove_relationship(
+    State(state): State<AppState>,
+    identity: ExtractIdentity,
+    Json(body): Json<GoNacRelationshipRequest>,
+) -> Result<Json<DeleteActorRelationshipResult>, HttpError> {
+    let record_found = state
+        .executor
+        .delete_nac_actor_relationship_as(&identity.context(), &body.relation, &body.target_actor)
+        .await?;
+    Ok(Json(DeleteActorRelationshipResult { record_found }))
+}
+
+/// POST /api/v0/acp/node/disable. Go's `acpHandler.DisableNAC`.
 pub async fn disable(
     State(state): State<AppState>,
     identity: ExtractIdentity,
 ) -> Result<Json<()>, HttpError> {
-    let nac = state.require_nac()?;
-
-    let requestor = identity
-        .did()
-        .cloned()
-        .ok_or_else(|| HttpError::Forbidden("authentication required to disable NAC".into()))?;
-
-    nac.disable(&requestor).await.map_err(|e| {
-        let normalized = normalize_auth_error(e, "disable-nac");
-        tracing::warn!(error = %normalized, "NAC disable operation failed");
-        http_error_from_backend_message(normalized)
-    })?;
-
+    state.executor.disable_nac_as(&identity.context()).await?;
     Ok(Json(()))
 }
 
-/// POST /api/v0/acp/node/re-enable
-///
-/// Re-enable NAC on this node after it was disabled.
-/// The requestor must be an admin.
+/// POST /api/v0/acp/node/re-enable. Go's `acpHandler.ReEnableNAC`.
 pub async fn re_enable(
     State(state): State<AppState>,
     identity: ExtractIdentity,
 ) -> Result<Json<()>, HttpError> {
-    let nac = state.require_nac()?;
-
-    let requestor = identity
-        .did()
-        .cloned()
-        .ok_or_else(|| HttpError::Forbidden("authentication required to re-enable NAC".into()))?;
-
-    nac.re_enable(&requestor).await.map_err(|e| {
-        let normalized = normalize_auth_error(e, "re-enable-nac");
-        tracing::warn!(error = %normalized, "NAC re-enable operation failed");
-        http_error_from_backend_message(normalized)
-    })?;
-
+    state.executor.re_enable_nac_as(&identity.context()).await?;
     Ok(Json(()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mock::{MockNodeAcpOperations, MockQueryExecutor};
-    use crate::router::{AppStateBuilder, NodeAcpOperations};
+    use crate::mock::MockQueryExecutor;
+    use crate::router::AppStateBuilder;
     use query::executor::QueryExecutor;
     use std::sync::Arc;
 
@@ -314,12 +256,11 @@ mod tests {
     async fn add_relationships_prevalidates_and_returns_ordered_results() {
         let requestor = identity::Did::new("did:key:requestor").unwrap();
         let target = identity::Did::new("did:key:target").unwrap();
-        let nac = Arc::new(MockNodeAcpOperations::enabled_with_owner(requestor.clone()));
+        let executor = Arc::new(MockQueryExecutor::new());
         let state = AppStateBuilder::new(
-            Arc::new(MockQueryExecutor::new()) as Arc<dyn QueryExecutor>,
+            Arc::clone(&executor) as Arc<dyn QueryExecutor>,
             edge::testing::edge(),
         )
-        .with_nac(Arc::clone(&nac) as Arc<dyn NodeAcpOperations>)
         .build();
         let identity = ExtractIdentity::from_did(Some(requestor));
 
@@ -334,7 +275,7 @@ mod tests {
         .await;
 
         assert!(matches!(result, Err(HttpError::BadRequest(_))));
-        assert!(!nac.is_admin(&target).await.unwrap());
+        assert!(executor.nac_relationships().is_empty());
 
         let Json(results) = go_add_relationships(
             State(state),
@@ -350,9 +291,9 @@ mod tests {
         assert_eq!(
             results
                 .iter()
-                .map(|result| result.added)
+                .map(|result| result.existed_already)
                 .collect::<Vec<_>>(),
-            vec![true, false]
+            vec![false, true]
         );
     }
 }
