@@ -811,8 +811,9 @@ fn backfill_batch_aborts_when_a_document_it_read_changes() {
 }
 
 /// The definition, its in-progress action and one committed batch survive
-/// the process; opening the store again finishes the backfill from the
-/// batch after the durable one and clears the action.
+/// the process; opening the store again returns with the backfill still
+/// unfinished, and resuming it finishes it from the batch after the durable
+/// one and clears the action.
 #[test]
 fn index_backfill_resumes_after_a_restart() {
     workers::block_on(async {
@@ -920,6 +921,8 @@ fn index_backfill_resumes_after_a_restart() {
         drop(db);
 
         let db = DB::open_from_arc(store).await.unwrap();
+        assert_eq!(index_entries(&db, "Resumed", index.id).await, first_batch);
+        db.resume_index_backfills().await.unwrap();
         assert_eq!(index_entries(&db, "Resumed", index.id).await, total);
         assert_eq!(entries_for(&db, "Resumed", "user-0").await, 1);
         assert_eq!(entries_for(&db, "Resumed", "user-299").await, 1);

@@ -407,6 +407,10 @@ impl<S: Store> DB<S> {
     }
 
     /// Open a database from an Arc-wrapped store with options and load existing collections.
+    ///
+    /// Index backfills a restart interrupted are not resumed here: a node
+    /// resumes them with [`Self::start_resumed_index_backfills`] once it has
+    /// the database.
     pub async fn open_from_arc_with_options(store: Arc<S>, options: DbOptions) -> Result<Self>
     where
         S: 'static,
@@ -434,7 +438,9 @@ impl<S: Store> DB<S> {
         self.maybe_migrate_counter_accumulators().await?;
         self.migrate_index_format().await?;
         self.resume_index_drops().await?;
-        self.resume_index_backfills().await?;
+        // Interrupted backfills resume once the database is up
+        // (DB::start_resumed_index_backfills): an open that waited for them
+        // would wait on a build held at a gate only its caller can open.
         // Reindexes owed by schema changes a crash or a failure left unsettled.
         self.settle_owed_reindexes_after_commit().await;
         Ok(())

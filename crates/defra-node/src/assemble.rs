@@ -547,6 +547,10 @@ where
         node_query_identity.clone(),
     ));
 
+    // Started once nothing else can fail, as the background tasks are: a
+    // resumed build holds the database until it stops.
+    database.start_resumed_index_backfills();
+
     #[cfg(any(feature = "p2p", feature = "libp2p"))]
     let p2p = p2p_setup.map(|setup| setup.system);
     #[cfg(all(feature = "managed-p2p", not(any(feature = "p2p", feature = "libp2p"))))]

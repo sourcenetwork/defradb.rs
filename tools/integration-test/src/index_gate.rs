@@ -48,7 +48,7 @@ impl TestIndexGate {
         match self.overheld.load(Ordering::Acquire) {
             true => Err(format!(
                 "a build waited at the gate past {HOLD_LIMIT:?} and was let through: \
-                 the node did not run while the gate held it (#2760)"
+                 the node did not run while the gate held it"
             )),
             false => Ok(()),
         }
@@ -101,9 +101,10 @@ impl IndexBuildGate for TestIndexGate {
                 return;
             }
             self.held.fetch_add(1, Ordering::AcqRel);
-            // A build the scenario never opens the gate for (the node's open
-            // waits for a resumed backfill, #2760) is let through after the
-            // limit and reported, so the scenario fails instead of hanging.
+            // A build the scenario never opens the gate for (a node that
+            // waits for it before the scenario's next step) is let through
+            // after the limit and reported, so the scenario fails instead of
+            // hanging.
             if workers::timeout(HOLD_LIMIT, self.open.wait())
                 .await
                 .is_err()

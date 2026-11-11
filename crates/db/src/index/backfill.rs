@@ -24,6 +24,7 @@ use storage::keys::systemstore::ActionProgressKey;
 
 use crate::collection::Collection;
 use crate::database::action::{action_executions, stage_action_failure, ActionExecutionLease};
+use crate::database::spawn::spawn_task;
 use crate::definition::lens::build_collection_history;
 use crate::definition::loader::get_collections_by_collection_id;
 use crate::definition::migration::helpers::{
@@ -170,9 +171,35 @@ impl<S: Store> DB<S> {
         }
     }
 
-    /// Resume every backfill a restart interrupted, before the database
-    /// takes any write; nothing runs alongside, so open waits for them.
-    pub(crate) async fn resume_index_backfills(&self) -> Result<()> {
+    /// Resume, as a job of its own, every backfill a restart interrupted, as
+    /// Go's index build worker does: the open starts its drain and returns
+    /// without waiting for it. Writers keep a resumed index current for their
+    /// own documents, as during a fresh build, so the build runs alongside
+    /// them. A close stops it at its next gate or batch with its record still
+    /// in progress, and the next open resumes it again.
+    pub fn start_resumed_index_backfills(self: &Arc<Self>)
+    where
+        S: 'static,
+    {
+        let db = Arc::clone(self);
+        spawn_task(self.pool(), "db::index_backfill_resume", async move {
+            match db.resume_index_backfills().await {
+                Ok(()) => {}
+                Err(Error::DatabaseClosed) => {
+                    tracing::info!("index backfill resume stopped by the database closing")
+                }
+                Err(error) => {
+                    tracing::error!(%error, "interrupted index backfills could not be resumed")
+                }
+            }
+        });
+    }
+
+    /// Resume every backfill a restart interrupted, one after another, and
+    /// return once each has run to its end or stopped.
+    /// [`Self::start_resumed_index_backfills`] runs this once the database
+    /// is open.
+    pub async fn resume_index_backfills(&self) -> Result<()> {
         let txn = self.new_txn(true).await?;
         let mut pending = Vec::new();
         {
