@@ -187,6 +187,9 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                             continue;
                         };
                         crate::chunk::ensure_admin_changeable(&other)?;
+                        crate::chunk::user_writes::ensure_keeps_first_chunk_settings(
+                            &target, &other,
+                        )?;
                         if other.is_active {
                             other.is_active = false;
                             systemstore

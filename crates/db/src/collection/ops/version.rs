@@ -120,7 +120,14 @@ impl<S: Store> crate::database::DB<S> {
                             .await
                             .map_err(Error::Storage)?
                         {
-                            match serde_json::from_slice::<CollectionVersion>(&other_bytes) {
+                            let other = serde_json::from_slice::<CollectionVersion>(&other_bytes);
+                            if let Ok(other_schema) = &other {
+                                crate::chunk::user_writes::ensure_keeps_first_chunk_settings(
+                                    &target_schema,
+                                    other_schema,
+                                )?;
+                            }
+                            match other {
                                 Ok(other_schema) if other_schema.is_generated() => {
                                     crate::chunk::ensure_admin_changeable(&other_schema)?;
                                 }

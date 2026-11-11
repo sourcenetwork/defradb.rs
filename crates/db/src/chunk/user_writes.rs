@@ -31,6 +31,18 @@ pub fn ensure_admin_changeable(collection: &CollectionVersion) -> crate::error::
     }
 }
 
+/// Refuses activating `target` unless it keeps the `@chunk` settings of its
+/// collection's first version. `other` is any other version of that collection.
+pub(crate) fn ensure_keeps_first_chunk_settings(
+    target: &CollectionVersion,
+    other: &CollectionVersion,
+) -> crate::error::Result<()> {
+    if other.previous_version.is_some() || other.is_placeholder {
+        return Ok(());
+    }
+    Ok(schema::ensure_chunk_settings_kept(other, target)?)
+}
+
 /// Refuses deleting a chunk collection while a version of its parent stays.
 /// `is_deleted` tells which of `versions` this delete removes.
 pub(crate) fn ensure_removed_with_parent<F>(
