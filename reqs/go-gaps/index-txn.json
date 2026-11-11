@@ -88,11 +88,9 @@
   },
   {
     "id": "go.index.definition.one-to-one-patch",
-    "verdict": "partial",
-    "rust_tests": [
-      "crates/db/tests/definition/patch.rs::patch_relation_version_switching_preserves_go_canonical_versions"
-    ],
-    "evidence": "patch.rs:636-647 asserts after a one-to-one patch the index exists only on the active version (empty on v1, one index 'Author__publishedID_ASC' on v2)",
+    "verdict": "none",
+    "rust_tests": [],
+    "evidence": "",
     "note": "Uniqueness of the added index and its index IDs are not asserted; several one-to-one relations in one patch and a one-to-many patch adding no index are not tested."
   },
   {
