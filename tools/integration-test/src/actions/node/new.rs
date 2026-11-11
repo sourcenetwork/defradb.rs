@@ -55,6 +55,9 @@ pub struct NewNode {
     pub client_type: Option<NodeClient>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub index_gate: Option<IndexGate>,
+    /// Kept so corpus scenarios that set it still parse. It changes nothing:
+    /// every node gets Go's `NodeIdentity(i)` and runs identity-only unless
+    /// it signs.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub with_identity: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
