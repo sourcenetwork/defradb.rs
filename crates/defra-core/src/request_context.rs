@@ -214,8 +214,9 @@ impl RequestContext {
     }
 
     /// This context with the per-operation signing choice `signing_override`.
-    // ponytail: `Some(true)` signs only when the request carries a key; Go
-    // also turns signing on for a node configured not to sign.
+    /// The edge that resolves the request's key reads the choice first, so
+    /// `Some(true)` resolves one on a node configured not to sign, as Go
+    /// does; here `Some(false)` hides whatever key the request carries.
     #[must_use]
     pub fn with_signing_override(mut self, signing_override: Option<bool>) -> Self {
         Arc::make_mut(&mut self.0).signing_override = signing_override;

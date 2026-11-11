@@ -121,18 +121,27 @@ pub async fn execute_with_resolved_context(
 
 /// The context of the request `identity` acts in, with the signing config,
 /// batch session and DAC bypass it resolves to, and `request`'s own signing
-/// choice.
+/// choice. That choice decides whether the request signs, over the node's
+/// setting either way, as Go's `EnableSigning` option does: `Some(true)` on a
+/// node started with `--no-signing` signs with the request's key or the
+/// node's.
 async fn request_context(
     state: &AppState,
     identity: &ExtractIdentity,
     request: &QueryRequest,
 ) -> defra_core::RequestContext {
+    let signing_override = request.context.signing_override();
+    let signing_config = defra_core::signing::resolve_signing_config_with_flag(
+        identity.did().map(|d| d.as_str()),
+        state.node_identity_did.as_deref(),
+        signing_override.unwrap_or(state.signing_enabled),
+    );
     with_signing_and_bypass(
         identity.context(),
-        resolve_signing_config(state, identity),
+        signing_config,
         resolve_dac_bypass(state, identity).await,
     )
-    .with_signing_override(request.context.signing_override())
+    .with_signing_override(signing_override)
 }
 
 /// `context` signing with `signing_config`, collecting into its batch session,
@@ -655,6 +664,41 @@ mod context_tests {
         let context = executor.last().expect("the query ran");
         assert!(!context.dac_bypass());
         assert_eq!(context.identity(), Some("did:key:z6MkSomeoneElse"));
+    }
+
+    /// The signer a request runs with on a node that holds a key, signing as
+    /// `node_signs` says, when the request makes the choice `choice`.
+    async fn signer_with(node_signs: bool, choice: Option<bool>) -> Option<SigningConfig> {
+        const NODE_DID: &str = "did:key:z6MkPerOperationSigningNode";
+        defra_core::signing::store_identity(
+            NODE_DID,
+            SigningConfig {
+                key_type: defra_core::signing::SigningKeyType::Ed25519,
+                private_key_bytes: vec![0xAB; 32],
+                public_key_bytes: Vec::new(),
+                public_key_hex: "per-operation-signing-node".to_string(),
+                remote_signer: None,
+                signing_authorization: None,
+            },
+        )
+        .expect("the store takes the identity");
+        let executor = Arc::new(ContextRecorder::default());
+        let state = AppStateBuilder::new(executor.clone(), edge::testing::edge())
+            .with_node_identity_did(NODE_DID.to_string())
+            .with_signing_enabled(node_signs)
+            .build();
+        let mut request = QueryRequest::new("{ __typename }");
+        request.context = request.context.with_signing_override(choice);
+        execute_with_context(&state, &ExtractIdentity::anonymous(), request).await;
+        executor.last().expect("the query ran").signing().cloned()
+    }
+
+    #[nuclei::test]
+    async fn enable_signing_overrides_the_node_either_way() {
+        assert!(signer_with(false, Some(true)).await.is_some());
+        assert!(signer_with(false, None).await.is_none());
+        assert!(signer_with(true, Some(false)).await.is_none());
+        assert!(signer_with(true, None).await.is_some());
     }
 }
 
