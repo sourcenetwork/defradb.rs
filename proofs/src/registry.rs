@@ -2475,11 +2475,13 @@ pub const PROPERTIES: &[Property] = &[
         // Closing the database while an index build waits at its build
         // gate: the wait also ends on the close, so the pool, which waits
         // for the build task, stops; the stopped build keeps its record in
-        // progress, as after a crash, and the next open resumes it.
+        // progress, as after a crash, and the next open resumes it and
+        // waits for it. The build finishes unless that open waits on a
+        // resumed build held at a shut gate (#2760).
         family: "Index build gate and close",
         name: "INV_BuiltOnlyWhenIndexed / LIVE_CloseFinishes / LIVE_BuildFinishes",
         axis: Tla,
-        anchor: "crates/db/src/index/backfill.rs DB::backfill_batches, DB::backfill_index, DB::resume_index_backfills; crates/db/src/database/mod.rs DB::close, DB::closing; crates/db/src/index/build_gate.rs IndexBuildGate::enter",
+        anchor: "crates/db/src/index/backfill.rs DB::backfill_batches, DB::backfill_index, DB::resume_index_backfills; crates/db/src/database/mod.rs DB::close, DB::closing, DB::finish_open; crates/db/src/index/build_gate.rs IndexBuildGate::enter",
         model_ref: "MC_IndexBuildGateClose_{Green,Red_NoRace,Red_FailOnClose,Red_Forget}.cfg",
         tiers: &[Boundary],
         bound_by: "",

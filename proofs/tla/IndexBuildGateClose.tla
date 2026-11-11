@@ -9,7 +9,9 @@
 \* while the database is open), and the database (starting to close,
 \* finishing the close once its worker pool has stopped, and opening again).
 \* The pool stops only when no build task is still running: it waits for
-\* the task, it never kills it.
+\* the task, it never kills it. Opening again runs a resumed build to its end
+\* before the open returns, so the database is not open while that build
+\* runs.
 \*
 \* What must never happen:
 \*   - a close that never finishes, because the build waits at a gate that
@@ -17,13 +19,20 @@
 \*   - a build that is never finished, because the close marked it failed or
 \*     the next open forgot to start it again.
 \*
+\* The known gap (#2760): the test opens the gate only once the database is
+\* open, and the open waits for the resumed build, which waits at the shut
+\* gate. Then the open never returns and the build never finishes. Go resumes
+\* the build in the background, so its open returns. This model checks that
+\* the build finishes unless it is stuck in exactly that state.
+\*
 \* Code it models:
 \*   crates/db/src/index/backfill.rs  DB::backfill_batches (the gate wait
 \*       raced with DB::closing; a close ends it with DatabaseClosed),
 \*       DB::backfill_index (DatabaseClosed leaves the record in progress),
-\*       DB::resume_index_backfills (the next open resumes it)
+\*       DB::resume_index_backfills (the next open resumes it and awaits it)
 \*   crates/db/src/database/mod.rs  DB::close (sets closing, then stops the
-\*       pool, which waits for the build task)
+\*       pool, which waits for the build task), DB::finish_open (awaits
+\*       DB::resume_index_backfills before the open returns)
 \*   crates/db/src/index/build_gate.rs  IndexBuildGate::enter
 \* Crashes and drops during a build are in IndexDropBackfill.tla; a close
 \* here leaves the build in the same state a crash does.
@@ -47,7 +56,7 @@ ASSUME ResumeMode \in {"Resume", "Forget"}
 MaxCloses == 2
 
 VARIABLES
-  db,      \* the database: "Open", "Closing" (pool stopping) or "Closed"
+  db,      \* the database: "Open", "Closing" (pool stopping), "Closed" or "Opening" (running resumed builds)
   gate,    \* the test's gate: "Shut" holds every build, "Open" lets them through
   bf,      \* the build task (see BfStates)
   left,    \* documents the build has not indexed yet
@@ -67,7 +76,7 @@ Running == bf \in {"Run", "Gated", "Batch"}
 
 \* Every variable stays in its range.
 TypeOK ==
-  /\ db \in {"Open", "Closing", "Closed"}          \* the three database states
+  /\ db \in {"Open", "Closing", "Closed", "Opening"} \* the four database states
   /\ gate \in {"Shut", "Open"}                     \* the gate is shut or open
   /\ bf \in BfStates                               \* a known build step
   /\ left \in 0..Docs                              \* work left is a count of documents
@@ -126,7 +135,8 @@ BfBatch ==
 \* ------------------------------------------------------------------- test
 
 \* The test opens the gate, but only while the database is open: the
-\* scenario that closes the database releases the gate after it reopens.
+\* scenario that closes the database releases the gate after the reopen
+\* returns, and a reopen still running a resumed build has not returned.
 Release ==
   /\ db = "Open"                                  \* the node is up
   /\ gate = "Shut"                                \* the gate is still shut
@@ -150,27 +160,36 @@ PoolStop ==
   /\ db' = "Closed"                               \* the close is done
   /\ UNCHANGED <<gate, bf, left, record, closes>>
 
-\* The database opens again. "Resume" starts a build whose record is still
-\* in progress, as DB::resume_index_backfills does; "Forget" starts none.
+\* The database starts to open again. "Resume" starts a build whose record
+\* is still in progress, as DB::resume_index_backfills does; "Forget" starts
+\* none. The open has not returned yet.
 Reopen ==
   /\ db = "Closed"                                                \* it was closed
-  /\ db' = "Open"                                                 \* now it is up
+  /\ db' = "Opening"                                              \* the open is under way
   /\ bf' = IF ResumeMode = "Resume" /\ record = "InProgress"      \* an unfinished build, resumed
            THEN "Run"                                             \* starts again from its watermark
            ELSE IF bf = "Done" THEN "Done" ELSE "Idle"            \* otherwise nothing runs
   /\ UNCHANGED <<gate, left, record, closes>>
 
+\* The open returns once no resumed build runs: DB::finish_open awaits
+\* DB::resume_index_backfills, which awaits each resumed build.
+Opened ==
+  /\ db = "Opening"                               \* the open is under way
+  /\ ~Running                                     \* every resumed build has ended
+  /\ db' = "Open"                                 \* now it is up
+  /\ UNCHANGED <<gate, bf, left, record, closes>>
+
 \* Any one step happens next.
 Next ==
   \/ BfEnter \/ BfPass \/ BfStop \/ BfBatch
   \/ Release
-  \/ Close \/ PoolStop \/ Reopen
+  \/ Close \/ PoolStop \/ Reopen \/ Opened
 
 \* Every step that can keep going eventually does. A close may happen but
 \* never has to.
 Fairness ==
   /\ WF_vars(BfEnter) /\ WF_vars(BfPass) /\ WF_vars(BfStop) /\ WF_vars(BfBatch)
-  /\ WF_vars(Release) /\ WF_vars(PoolStop) /\ WF_vars(Reopen)
+  /\ WF_vars(Release) /\ WF_vars(PoolStop) /\ WF_vars(Reopen) /\ WF_vars(Opened)
 
 \* Start in Init and take any steps, fairly.
 Spec == Init /\ [][Next]_vars /\ Fairness
@@ -186,6 +205,15 @@ INV_BuiltOnlyWhenIndexed == record = "None" => left = 0
 \* gate.
 LIVE_CloseFinishes == (db = "Closing") ~> (db = "Closed")
 
-\* The build always finishes, across a close while it waits at the gate.
-LIVE_BuildFinishes == <>(record = "None")
+\* The #2760 state: the open waits for a resumed build, the build waits at
+\* the shut gate, and the test opens the gate only once the open returns.
+OpenWaitsOnGate ==
+  /\ db = "Opening"                               \* the open has not returned
+  /\ bf = "Gated"                                 \* its resumed build waits at the gate
+  /\ gate = "Shut"                                \* which nobody opens before the open returns
+
+\* The build always finishes, across a close while it waits at the gate,
+\* unless it ends stuck in the #2760 state. Go's open does not wait for the
+\* resumed build, so there the build always finishes.
+LIVE_BuildFinishes == <>(record = "None") \/ <>[]OpenWaitsOnGate
 ====
