@@ -1,7 +1,7 @@
 //! Validators for `@chunk` settings and generated chunk collections.
 
 use super::DefinitionState;
-use crate::CollectionVersion;
+use crate::{chunk_settings_change, chunk_settings_errors, ChunkSettingsError, CollectionVersion};
 
 fn previous<'a>(
     old_state: &'a DefinitionState,
@@ -38,8 +38,7 @@ pub(super) fn validate_chunks_not_modified(
             }
             continue;
         };
-        if new_col.chunked_fields != old_col.chunked_fields || new_col.chunk_of != old_col.chunk_of
-        {
+        if chunk_settings_change(old_col, new_col).is_some() {
             errs.push(format!(
                 "collection chunk settings cannot be mutated. Collection: {}",
                 new_col.name
@@ -72,11 +71,24 @@ pub(super) fn chunks_in_views(collections: &[CollectionVersion]) -> Vec<String> 
         .filter(|col| col.query.is_some() || col.downsample_source.is_some())
         .flat_map(|col| {
             col.chunked_fields.iter().map(move |chunked| {
-                format!(
-                    "@chunk is not allowed in a view. Field: {}.{}",
-                    col.name, chunked.field_name
-                )
+                ChunkSettingsError::InView {
+                    field: format!("{}.{}", col.name, chunked.field_name),
+                }
+                .to_string()
             })
         })
+        .collect()
+}
+
+/// New collections follow the `@chunk` rules the SDL enforces, however they were built.
+pub(super) fn validate_chunk_settings(
+    new_state: &DefinitionState,
+    _old_state: &DefinitionState,
+) -> Vec<String> {
+    new_state
+        .collections
+        .iter()
+        .flat_map(chunk_settings_errors)
+        .map(|error| error.to_string())
         .collect()
 }

@@ -138,6 +138,7 @@ pub fn validate_new_collections(new_collections: &[CollectionVersion]) -> Result
         validate_embedding_provider_and_model,
         validate_index_fields_not_counter,
         validate_relation_name_unique,
+        validate_chunk_settings,
     ];
 
     let mut errors = Vec::new();

@@ -18,8 +18,6 @@ use super::directives::{
 use super::parser::{ParsedField, ParsedType, ParsedTypeDef, ParsedTypeDirectives, SdlParser};
 
 const DEFAULT_CHUNK_MAX_CHARS: u32 = 1600;
-/// Smaller chunks carry too little text to embed or rank well.
-const MIN_CHUNK_MAX_CHARS: u32 = 64;
 
 /// One `@chunk` field found while parsing.
 struct ChunkSpec {
@@ -59,11 +57,8 @@ pub(super) fn parse_chunk_directive(
             .unwrap_or(Ok(default))
     };
     let max_chars = read("maxChars", DEFAULT_CHUNK_MAX_CHARS)?;
-    if max_chars < MIN_CHUNK_MAX_CHARS {
-        return Err(QueryError::parse(format!(
-            "@chunk maxChars must be at least {MIN_CHUNK_MAX_CHARS}, got {max_chars}. Field: {owner}"
-        )));
-    }
+    schema::ensure_chunk_max_chars(owner, max_chars)
+        .map_err(|error| QueryError::parse(error.to_string()))?;
     Ok(ChunkDirective {
         max_chars,
         overlap: read("overlap", 0)?,
