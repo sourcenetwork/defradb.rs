@@ -100,8 +100,9 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
     /// Go's `PatchCollection` inside an existing transaction: the patch reads
     /// and writes through that transaction alone, so the transaction sees it
     /// at once and others only once it commits. A conflict comes back to the
-    /// caller when it commits; nothing here retries. The work a patch owes
-    /// after commit (migrations, owed indexes) runs once the commit is durable.
+    /// caller when it commits; nothing here retries. NAC is decided in the
+    /// same transaction. The work a patch owes after commit (migrations, owed
+    /// indexes) runs once the commit is durable.
     pub async fn patch_collection_in_txn_as(
         &self,
         context: &RequestContext,
@@ -109,15 +110,23 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         patch: &str,
         migration: Option<lens::LensConfig>,
     ) -> Result<()> {
-        self.db
-            .check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
-            .await?;
-        let ops = crate::definition::patch::parse_patch(patch)?;
+        let patch = patch.to_owned();
         let db = self.db.clone();
+        let acting = context.clone();
         self.in_txn(context, txn_id, move |owned| {
             Box::pin(async move {
                 let caches = owned.caches();
                 let txn = owned.alone()?;
+                // Decided in the transaction it authorizes: a revocation that
+                // commits first aborts the patch, and one staged earlier in
+                // this transaction counts.
+                db.check_node_access_in_txn(
+                    &acting,
+                    txn.acpstore()?,
+                    acp::nac::NodePermission::CollectionPatch,
+                )
+                .await?;
+                let ops = crate::definition::patch::parse_patch(&patch)?;
                 // A patch that fails part way leaves none of its writes, nor
                 // the commit hooks they registered, in the caller's transaction.
                 txn.set_statement_savepoint()?;

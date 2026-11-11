@@ -1609,10 +1609,10 @@ pub const PROPERTIES: &[Property] = &[
     Property {
         // Collection patch, set-active, set-migration, add/list lens and get
         // collections each have one core function every edge calls: it
-        // checks NAC before any effect, runs in the transaction the context
-        // carries or else autocommits, and refuses a patch inside one.
+        // checks NAC before any effect, and runs in the transaction the
+        // context carries, a patch included, or else autocommits.
         family: "Schema-evolution operations in the core",
-        name: "INV_NoEffectWithoutPermission / INV_TxnNeverAutocommits / INV_PatchInTxnChangesNothing",
+        name: "INV_NoEffectWithoutPermission / INV_TxnNeverAutocommits",
         axis: Tla,
         anchor: "crates/db/src/txn/registry/lifecycle.rs get_collections_as, patch_collection_as, set_active_collection_version_as, set_migration_as, add_lens_as, list_lenses_as; crates/defra-node/src/ops/collection.rs; crates/http/src/handlers/{collections,lens}.rs",
         model_ref: "MC_CoreDispatch_{Green,Red_NoNac,Red_IgnoreTxn}.cfg",
@@ -2494,7 +2494,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Collection patch",
-        name: "INV_IsolatedUntilCommit / INV_FinishOnlyAfterCommit / INV_ConflictReachesCaller / INV_SeesOwnWrites / INV_FailedPatchLeavesNothing / INV_SeesOwnPatch",
+        name: "INV_IsolatedUntilCommit / INV_FinishOnlyAfterCommit / INV_ConflictReachesCaller / INV_SeesOwnWrites / INV_FailedPatchLeavesNothing / INV_SeesOwnPatch / INV_RevocationDeniesPatch",
         axis: Tla,
         anchor: "crates/db/src/txn/registry/lifecycle.rs patch_collection_as; schemas.rs DbTransactionRegistry::patch_collection_in_txn_as, stage_patch_in_txn; crates/db/src/definition/patch/stage.rs DB::stage_patch, StagedPatch::touched_names, DB::finish_staged; crates/db/src/collection/ops/version.rs DB::collection_has_data",
         model_ref: "MC_PatchInTxn_{Green,Red_*}.cfg",

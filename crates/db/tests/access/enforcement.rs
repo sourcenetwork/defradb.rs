@@ -362,6 +362,48 @@ fn add_collection_in_txn_allowed_for_owner() {
 }
 
 #[test]
+fn patch_collection_in_txn_denied_for_non_owner() {
+    workers::block_on(async {
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        db.add_collection(&defra_core::RequestContext::default(), WIDGET_SDL)
+            .await
+            .unwrap();
+        db.set_nac_manager(enabled_manager().await);
+        let registry = DbTransactionRegistry::new(db.clone());
+        let before = db
+            .get_collection("Widget")
+            .unwrap()
+            .unwrap()
+            .schema()
+            .clone();
+
+        let stranger =
+            defra_core::RequestContext::default().with_identity(Some(STRANGER_DID.to_string()));
+        let txn_id = registry.begin_as(&stranger, false).await.unwrap();
+        let err = registry
+            .patch_collection_in_txn_as(
+                &stranger,
+                txn_id.as_str(),
+                r#"[{"op":"add","path":"/Widget/Fields/-","value":{"Name":"size","Kind":"Int"}}]"#,
+                None,
+            )
+            .await
+            .expect_err("non-owner must be denied a patch inside a transaction");
+        assert!(
+            matches!(err, db::error::Error::NotAuthorized { .. }),
+            "expected NotAuthorized from patch_collection_in_txn_as, got: {err:?}"
+        );
+        registry.commit_as(&stranger, &txn_id).await.unwrap();
+        assert_eq!(
+            db.get_collection("Widget").unwrap().unwrap().schema(),
+            &before,
+            "a denied patch must not change the collection"
+        );
+    })
+    .unwrap()
+}
+
+#[test]
 fn set_active_collection_version_denied_for_non_owner() {
     workers::block_on(async {
         // The other raw schema-mutation method is also gated.

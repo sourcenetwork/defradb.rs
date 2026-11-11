@@ -14,6 +14,10 @@
 \* after it lands (registering migrations, building owed indexes) runs only
 \* once the commit is durable, and never for a discarded transaction.
 \*
+\* The node-access (NAC) check that lets the client patch is read in the same
+\* transaction, so an administrator who revokes that permission and commits
+\* before the client does makes the client's commit fail with a conflict.
+\*
 \* A patch can fail part way (a later collection may not be removed). It runs
 \* as one statement behind a savepoint, so a failure puts the transaction back
 \* as it was before the patch. A patch that succeeds drops every definition it
@@ -25,12 +29,14 @@
 \* hidden from the client by a silent retry; a patch deciding on a view that
 \* misses the client's own earlier write in the same transaction; half of a
 \* failed patch left in the transaction; a later request in the transaction
-\* using the definition from before the patch.
+\* using the definition from before the patch; a patch landing after the
+\* permission that allowed it was revoked.
 \*
 \* Code it models:
 \*   crates/db/src/txn/registry/lifecycle.rs  patch_collection_as (routes a
 \*                                             request that carries a txn)
 \*   crates/db/src/txn/registry/schemas.rs    patch_collection_in_txn_as (the
+\*                                             NAC check in the txn, the
 \*                                             statement savepoint),
 \*                                             stage_patch_in_txn (drops the
 \*                                             touched names from the catalog)
@@ -47,12 +53,13 @@ CONSTANTS
   FinishOnCommit,  \* post-commit work waits for the commit to be durable
   RetryHides,      \* a conflict is retried silently instead of reported
   Savepoint,       \* the patch runs behind a statement savepoint
-  RefreshCatalog   \* a staged patch drops what it changed from the txn's cache
+  RefreshCatalog,  \* a staged patch drops what it changed from the txn's cache
+  NacInTxn         \* the NAC check reads the permission in the client's txn
 
 \* Each switch is on or off.
 ASSUME WriteThroughTxn \in BOOLEAN
 ASSUME ReadThroughTxn \in BOOLEAN /\ FinishOnCommit \in BOOLEAN /\ RetryHides \in BOOLEAN
-ASSUME Savepoint \in BOOLEAN /\ RefreshCatalog \in BOOLEAN
+ASSUME Savepoint \in BOOLEAN /\ RefreshCatalog \in BOOLEAN /\ NacInTxn \in BOOLEAN
 
 VARIABLES
   earlier,    \* the client wrote something earlier in its transaction
@@ -65,10 +72,12 @@ VARIABLES
   cached,     \* the transaction cached the patched collection's old definition
   stale,      \* that cached old definition is still what the txn resolves
   failed,     \* a patch attempt failed part way
-  partial     \* the transaction still holds writes of the failed attempt
+  partial,    \* the transaction still holds writes of the failed attempt
+  revoked     \* an administrator revoked the patch permission and committed
 
+\* Every variable, so a step can say which ones it leaves alone.
 vars == <<earlier, sawEarlier, staged, rival, outcome, visible, finished,
-          cached, stale, failed, partial>>
+          cached, stale, failed, partial, revoked>>
 
 \* Every variable holds a value of the shape it should.
 TypeOK ==
@@ -76,7 +85,7 @@ TypeOK ==
   /\ earlier \in BOOLEAN /\ sawEarlier \in BOOLEAN /\ staged \in BOOLEAN
   /\ rival \in BOOLEAN /\ visible \in BOOLEAN /\ finished \in BOOLEAN
   /\ cached \in BOOLEAN /\ stale \in BOOLEAN
-  /\ failed \in BOOLEAN /\ partial \in BOOLEAN
+  /\ failed \in BOOLEAN /\ partial \in BOOLEAN /\ revoked \in BOOLEAN
   \* the transaction ends one of three ways, or is still open
   /\ outcome \in {"open", "committed", "conflict", "discarded"}
 
@@ -85,6 +94,7 @@ Init ==
   /\ earlier = FALSE /\ sawEarlier = FALSE /\ staged = FALSE
   /\ rival = FALSE /\ outcome = "open" /\ visible = FALSE /\ finished = FALSE
   /\ cached = FALSE /\ stale = FALSE /\ failed = FALSE /\ partial = FALSE
+  /\ revoked = FALSE
 
 \* The client writes something in its transaction before the patch.
 WriteEarlier ==
@@ -92,7 +102,7 @@ WriteEarlier ==
   /\ outcome = "open" /\ ~staged /\ ~earlier
   /\ earlier' = TRUE
   /\ UNCHANGED <<sawEarlier, staged, rival, outcome, visible, finished,
-                 cached, stale, failed, partial>>
+                 cached, stale, failed, partial, revoked>>
 
 \* The client reads the collection before the patch, so the transaction
 \* caches its definition as it is now.
@@ -101,7 +111,7 @@ ReadEarlier ==
   /\ outcome = "open" /\ ~staged /\ ~cached
   /\ cached' = TRUE
   /\ UNCHANGED <<earlier, sawEarlier, staged, rival, outcome, visible,
-                 finished, stale, failed, partial>>
+                 finished, stale, failed, partial, revoked>>
 
 \* A patch attempt fails part way, after writing some of its collections.
 \* Behind a savepoint those writes are undone; without one (the RED) they
@@ -113,7 +123,7 @@ StageFails ==
   \* the bug a RED plants: the earlier collections' writes are kept
   /\ partial' = (~Savepoint)
   /\ UNCHANGED <<earlier, sawEarlier, staged, rival, outcome, visible,
-                 finished, cached, stale>>
+                 finished, cached, stale, revoked>>
 
 \* The patch is staged. Reading through the transaction it sees the earlier
 \* write; reading outside it, it does not. If post-commit work does not wait
@@ -130,7 +140,7 @@ Stage ==
   /\ visible' = (~WriteThroughTxn)
   \* the bug a RED plants: the old cached definition is left in place
   /\ stale' = (cached /\ ~RefreshCatalog)
-  /\ UNCHANGED <<earlier, rival, outcome, cached, failed, partial>>
+  /\ UNCHANGED <<earlier, rival, outcome, cached, failed, partial, revoked>>
 
 \* Another client commits a change to the definitions the patch read.
 RivalCommits ==
@@ -138,20 +148,34 @@ RivalCommits ==
   /\ outcome = "open" /\ staged /\ ~rival
   /\ rival' = TRUE
   /\ UNCHANGED <<earlier, sawEarlier, staged, outcome, visible, finished,
-                 cached, stale, failed, partial>>
+                 cached, stale, failed, partial, revoked>>
 
-\* The client commits. A rival commit on what the patch read fails it with a
-\* conflict, unless a silent retry (the RED) lands it anyway.
+\* An administrator revokes the client's patch permission and commits, after
+\* the patch's NAC check passed but before the client commits.
+RevokeCommits ==
+  \* only after the patch was checked, while the client's transaction is open
+  /\ outcome = "open" /\ staged /\ ~revoked
+  /\ revoked' = TRUE
+  /\ UNCHANGED <<earlier, sawEarlier, staged, rival, outcome, visible,
+                 finished, cached, stale, failed, partial>>
+
+\* A commit that the client's transaction read is overtaken by: a rival
+\* change to the definitions, or a revocation when NAC was read in the
+\* transaction. A check read outside it (the RED) never notices a revocation.
+Overtaken == rival \/ (revoked /\ NacInTxn)
+
+\* The client commits. A commit that overtook what the patch read fails it
+\* with a conflict, unless a silent retry (the RED) lands it anyway.
 Commit ==
   \* only an open transaction holding the patch
   /\ outcome = "open" /\ staged
-  /\ IF rival /\ ~RetryHides
+  /\ IF Overtaken /\ ~RetryHides
        \* the conflict goes back to the client, and nothing lands
        THEN /\ outcome' = "conflict" /\ UNCHANGED <<visible, finished>>
        \* the patch lands, everyone can see it, and the follow-up work runs
        ELSE /\ outcome' = "committed" /\ visible' = TRUE /\ finished' = TRUE
   /\ UNCHANGED <<earlier, sawEarlier, staged, rival, cached, stale, failed,
-                 partial>>
+                 partial, revoked>>
 
 \* The client discards its transaction: nothing lands.
 Discard ==
@@ -159,11 +183,11 @@ Discard ==
   /\ outcome = "open"
   /\ outcome' = "discarded"
   /\ UNCHANGED <<earlier, sawEarlier, staged, rival, visible, finished,
-                 cached, stale, failed, partial>>
+                 cached, stale, failed, partial, revoked>>
 
 \* Any of the steps can happen next.
 Next == WriteEarlier \/ ReadEarlier \/ StageFails \/ Stage \/ RivalCommits
-        \/ Commit \/ Discard
+        \/ RevokeCommits \/ Commit \/ Discard
 
 \* A finished transaction stays finished.
 Done == outcome # "open" /\ UNCHANGED vars
@@ -190,4 +214,8 @@ INV_FailedPatchLeavesNothing == ~partial
 \* Once the patch is staged, the transaction resolves the patched collection
 \* to its new definition, not the one it cached before.
 INV_SeesOwnPatch == staged => ~stale
+
+\* A patch never lands once the permission that allowed it was revoked by a
+\* commit before the client's.
+INV_RevocationDeniesPatch == (revoked /\ staged) => outcome # "committed"
 ====
