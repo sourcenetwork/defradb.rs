@@ -388,12 +388,7 @@ pub(crate) async fn action_executions(
                 key.collection_id
             ))
         })?;
-        let reason = systemstore
-            .get(&ActionReasonKey::new(&key.collection_id, key.action, &key.subject).bytes())
-            .await
-            .map_err(Error::Storage)?
-            .map(|value| String::from_utf8_lossy(&value).into_owned())
-            .unwrap_or_default();
+        let reason = action_reason(systemstore, &key).await?;
         executions.push(ActionExecution {
             collection_id: key.collection_id,
             action: key.action,
@@ -403,6 +398,22 @@ pub(crate) async fn action_executions(
         });
     }
     Ok(executions)
+}
+
+/// The reason recorded on the action `key` names, or empty. It is shown and
+/// never decided on, so it is read unvalidated: an action that records a
+/// reason while a transaction lists it does not abort that transaction.
+async fn action_reason(
+    systemstore: &datastore::NamespaceView,
+    key: &ActionStatusKey,
+) -> Result<String> {
+    let reason_key = ActionReasonKey::new(&key.collection_id, key.action, &key.subject).bytes();
+    Ok(systemstore
+        .get_parts(&reason_key, &[])
+        .await
+        .map_err(Error::Storage)?
+        .map(|value| String::from_utf8_lossy(&value).into_owned())
+        .unwrap_or_default())
 }
 
 pub(crate) async fn index_action_statuses(
@@ -441,12 +452,7 @@ pub(crate) async fn index_action_executions(
         let Ok(index_id) = key.subject.parse() else {
             continue;
         };
-        let reason = systemstore
-            .get(&ActionReasonKey::new(&key.collection_id, key.action, &key.subject).bytes())
-            .await
-            .map_err(Error::Storage)?
-            .map(|value| String::from_utf8_lossy(&value).into_owned())
-            .unwrap_or_default();
+        let reason = action_reason(systemstore, &key).await?;
         executions.insert(
             index_id,
             ActionExecution {
