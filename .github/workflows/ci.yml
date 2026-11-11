@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: ['**']
+    # labeled: adding a ci:* label runs the jobs it names.
+    types: [opened, synchronize, reopened, labeled]
   merge_group:
     branches: [main]
 
@@ -57,13 +59,22 @@ jobs:
       testo_matrix: ${{ steps.decide.outputs.testo_matrix }}
       integration_matrix: ${{ steps.decide.outputs.integration_matrix }}
       io_variants: ${{ steps.decide.outputs.io_variants }}
+      run: ${{ steps.decide.outputs.run }}
     steps:
       - id: decide
         uses: actions/github-script@v9
         with:
           script: |
+            const pr = context.eventName === 'pull_request';
+            // A ci:<job> label on a pull request also runs that merge-queue job,
+            // and ci:full runs all of them. queue-failure-labels.yml adds the
+            // label of each job that ejected the pull request from the queue.
+            const labels = pr ? context.payload.pull_request.labels.map((l) => l.name) : [];
+            const heavy = !pr || labels.includes('ci:full');
+            const want = (job) => heavy || labels.includes(`ci:${job}`);
             let full = true;
-            if (context.eventName === 'pull_request') {
+            // A labelled pull request runs its jobs wherever it sits in a stack.
+            if (pr && !labels.some((l) => l.startsWith('ci:'))) {
               const stack = context.payload.pull_request && context.payload.pull_request.stack;
               if (stack) {
                 const isTip = stack.position === stack.size;
@@ -76,13 +87,21 @@ jobs:
             // A pull request runs the fast checks (lint, dependency checks, unit
             // tests, in-process testo). The merge queue and main run everything else, once per batch
             // instead of once per push.
-            core.setOutput('heavy', context.eventName === 'pull_request' ? 'false' : 'true');
+            core.setOutput('heavy', heavy ? 'true' : 'false');
+            core.setOutput('run', JSON.stringify({
+              feature_checks: want('feature-checks'),
+              feature_tests: want('feature-tests'),
+              wasm: want('wasm'),
+              lean: want('lean'),
+              conformance: want('conformance'),
+              integration: want('integration'),
+              p2p: want('p2p'),
+            }));
 
             // A pull request runs testo through the in-process client only, so a
             // green pull request has run the scenarios; the queue runs every client.
-            const testoClients = context.eventName === 'pull_request'
-              ? ['in-process']
-              : ['in-process', 'rust-http', 'go-http', 'cli', 'legacy'];
+            const testoClients = ['in-process', ...['rust-http', 'go-http', 'cli', 'legacy']
+              .filter((client) => want(`testo-${client}`))];
             core.setOutput('testo_clients', testoClients.join(','));
             core.setOutput('testo_matrix', JSON.stringify({ include: testoClients.map((client) => ({ client, shard: 1 })) }));
 
@@ -93,14 +112,14 @@ jobs:
               // The same data path on a pool of one worker.
               { suite: 'one-worker', needs_go: false },
             ];
-            if (context.eventName !== 'pull_request') {
+            if (want('integration')) {
               suites.push({ suite: 'rust', needs_go: false });
             }
             core.setOutput('integration_matrix', JSON.stringify({ include: suites }));
 
             // The other nuclei io backends run in the merge queue and on main.
             const ioVariants = [{ name: '', suffix: '', backend: '', recv: '' }];
-            if (context.eventName !== 'pull_request') {
+            if (want('io-variants')) {
               ioVariants.push({ name: ' (epoll)', suffix: '-epoll', backend: 'epoll', recv: '' });
               ioVariants.push({ name: ' (no receive buffers)', suffix: '-no-recv-buffers', backend: '', recv: '0' });
             }
@@ -141,7 +160,7 @@ jobs:
   feature-checks:
     name: Feature checks (${{ matrix.group }})
     needs: ci-scope
-    if: needs.ci-scope.outputs.heavy == 'true'
+    if: fromJson(needs.ci-scope.outputs.run).feature_checks
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     strategy:
       fail-fast: false
@@ -212,15 +231,15 @@ jobs:
     steps:
       - name: Check lint results
         env:
-          HEAVY: ${{ needs.ci-scope.outputs.heavy }}
+          RUN_FEATURES: ${{ fromJson(needs.ci-scope.outputs.run || '{}').feature_checks }}
           DEFAULT: ${{ needs.lint-default.result }}
           FEATURES: ${{ needs.feature-checks.result }}
           DEPENDENCIES: ${{ needs.dependency-checks.result }}
         run: |
           test "$DEFAULT" = success
-          # Skipped on a pull request; the merge queue runs them. Only then: a
-          # failed scope job also skips them, and leaves HEAVY empty.
-          test "$FEATURES" = success || { test "$FEATURES" = skipped && test "$HEAVY" = false; }
+          # Skipped on a pull request without its ci: label; the merge queue runs them. Only then: a
+          # failed scope job also skips them, and leaves RUN_FEATURES empty.
+          test "$FEATURES" = success || { test "$FEATURES" = skipped && test "$RUN_FEATURES" = false; }
           test "$DEPENDENCIES" = success
 
   unit-tests:
@@ -383,20 +402,20 @@ jobs:
     steps:
       - name: Check build results
         env:
-          HEAVY: ${{ needs.ci-scope.outputs.heavy }}
+          RUN_FEATURE_TESTS: ${{ fromJson(needs.ci-scope.outputs.run || '{}').feature_tests }}
           UNIT_TESTS: ${{ needs.unit-tests.result }}
           BINARIES: ${{ needs.build-binaries.result }}
           FEATURE_TESTS: ${{ needs.feature-tests.result }}
         run: |
           test "$UNIT_TESTS" = success
           test "$BINARIES" = success
-          # Skipped on a pull request; the merge queue runs them.
-          test "$FEATURE_TESTS" = success || { test "$FEATURE_TESTS" = skipped && test "$HEAVY" = false; }
+          # Skipped on a pull request without its ci: label; the merge queue runs them.
+          test "$FEATURE_TESTS" = success || { test "$FEATURE_TESTS" = skipped && test "$RUN_FEATURE_TESTS" = false; }
 
   feature-tests:
     name: Feature tests
     needs: ci-scope
-    if: needs.ci-scope.outputs.heavy == 'true'
+    if: fromJson(needs.ci-scope.outputs.run).feature_tests
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
@@ -419,7 +438,7 @@ jobs:
   wasm-check:
     name: WASM Build Check
     needs: ci-scope
-    if: needs.ci-scope.outputs.heavy == 'true'
+    if: fromJson(needs.ci-scope.outputs.run).wasm
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     steps:
       - uses: runs-on/action@v2
@@ -472,7 +491,7 @@ jobs:
   lean-conformance:
     name: Lean Conformance
     needs: ci-scope
-    if: needs.ci-scope.outputs.heavy == 'true'
+    if: fromJson(needs.ci-scope.outputs.run).lean
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 20
     env:
@@ -536,7 +555,7 @@ jobs:
       matrix:
         io: ${{ fromJson(needs.ci-scope.outputs.io_variants) }}
     needs: [ci-scope, build-binaries]
-    if: needs.ci-scope.outputs.heavy == 'true'
+    if: fromJson(needs.ci-scope.outputs.run).conformance
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 45
     env:
@@ -592,7 +611,7 @@ jobs:
   integration:
     name: Integration (${{ matrix.suite }})
     needs: [ci-scope, build-binaries, go-defradb]
-    if: needs.ci-scope.outputs.heavy == 'true'
+    if: fromJson(needs.ci-scope.outputs.run).integration
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 90
     strategy:
@@ -743,7 +762,7 @@ jobs:
       matrix:
         io: ${{ fromJson(needs.ci-scope.outputs.io_variants) }}
     needs: [ci-scope, build-binaries]
-    if: needs.ci-scope.outputs.heavy == 'true'
+    if: fromJson(needs.ci-scope.outputs.run).p2p
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
     timeout-minutes: 90
     env:
@@ -1023,7 +1042,7 @@ jobs:
               ? Number(/\/pr-(\d+)-/.exec(context.payload.merge_group.head_ref)[1])
               : context.payload.pull_request.number;
             const sha = queue ? context.payload.merge_group.head_sha : context.payload.pull_request.head.sha;
-            const source = queue ? 'the merge queue run' : 'this pull request run (in-process only; the merge queue runs every client)';
+            const source = queue ? 'the merge queue run' : 'this pull request run (${{ needs.ci-scope.outputs.testo_clients }}; the merge queue runs every client)';
             const body = `${marker}\n# Testo summary\n\nFrom [${source}](${run}) on \`${sha.slice(0, 9)}\`.\n\n${table}`;
             const { owner, repo } = context.repo;
             const existing = (await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number }))
