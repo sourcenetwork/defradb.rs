@@ -334,14 +334,17 @@ impl<S: Store + 'static> LensedDocFetcher<S> {
             ))
         })?;
 
-        cache_migrated_document_with_indexes(datastore, &systemstore, collection, migrated_doc)
-            .await
-            .map_err(|e| {
-                query::error::QueryError::execution(format!(
-                    "failed to cache migrated document: {}",
-                    e
-                ))
-            })?;
+        cache_migrated_document_with_indexes(
+            datastore,
+            &systemstore,
+            collection,
+            migrated_doc,
+            txn.deferred_drains(),
+        )
+        .await
+        .map_err(|e| {
+            query::error::QueryError::execution(format!("failed to cache migrated document: {}", e))
+        })?;
 
         Ok(())
     }

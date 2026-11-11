@@ -290,6 +290,7 @@ pub(crate) async fn cache_migrated_document_with_indexes(
     systemstore: &NamespaceView,
     collection: &Collection,
     doc: &Document,
+    drains: Option<&crate::index::deferred::DrainRequests>,
 ) -> Result<bool> {
     let Some(doc_id) = doc.id() else {
         return Ok(false);
@@ -337,7 +338,8 @@ pub(crate) async fn cache_migrated_document_with_indexes(
             collection.schema(),
             collection.write_indexes(),
             collection.crdts(),
-        )?;
+        )?
+        .with_drains(drains);
         index_manager
             .on_document_update(datastore, &old_doc, doc, doc_short_id, collection.schema())
             .await?;

@@ -103,7 +103,8 @@ where
             collection.write_indexes(),
             collection.crdts(),
         )?
-        .with_vector_caches(self.vector_codes());
+        .with_vector_caches(self.vector_codes())
+        .with_drains(Some(&self.deferred_drains));
         let mut seen = RapidHashSet::new();
         let mut targets = Vec::with_capacity(doc_ids.len());
         let mut aliases_to_delete = RapidHashSet::new();
