@@ -19,8 +19,9 @@ config block with no links), where the old code had none.
 Rust owner: crates/defra-core/src/lens_block.rs `build_lens_ipld_blocks`,
 `build_module_blocks`; crates/db/src/definition/migration/committed_lenses.rs
 `PreparedLens::new`, `module_arguments`; crates/defra-core/src/lens_argument.rs
-`encode_lens_argument` (each value's JSON, keeping the number as written, as
-Go's `UseNumber` decode does). The Rust checks are
+`encode_lens_argument` (each value's JSON, keeping every integer digit, as
+Go's `UseNumber` decode does; a non-canonical spelling such as `30.00` or
+`1e21` is respelled by serde_json, where Go keeps it). The Rust checks are
 crates/defra-core/tests/lens_block_id.rs, crates/defra-core/tests/lens_argument.rs
 and the testo scenarios
 collection_version::patch_migration_numeric_fidelity and

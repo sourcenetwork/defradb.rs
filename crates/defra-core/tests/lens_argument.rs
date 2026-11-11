@@ -13,12 +13,14 @@ fn numbers_keep_the_value_go_decodes_with_use_number() {
     assert_eq!(encoded("30.0"), "30.0");
 }
 
-/// Go writes an exponent as it arrived; serde_json respells it. The spelling
-/// is part of the lens ID, so a formatter change must show up here.
+/// Go writes a number as it arrived; serde_json respells a non-canonical one.
+/// The spelling is part of the lens ID, so a formatter change must show up here.
 #[test]
-fn an_exponent_takes_serde_jsons_spelling() {
+fn a_non_canonical_number_takes_serde_jsons_spelling() {
     assert_eq!(encoded("1e21"), "1e+21");
+    assert_eq!(encoded("1E21"), "1e+21");
     assert_eq!(encoded("1e+21"), "1e+21");
+    assert_eq!(encoded("30.00"), "30.0");
 }
 
 #[test]
