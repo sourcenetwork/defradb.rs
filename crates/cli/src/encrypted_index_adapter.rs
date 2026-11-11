@@ -53,6 +53,7 @@ impl<S: Store + 'static> EncryptedIndexOperations for EncryptedIndexAdapter<S> {
             .ok_or_else(|| format!("collection '{}' not found", collection))?;
 
         let schema = col.schema();
+        db::chunk::ensure_admin_changeable(schema).map_err(|e| e.to_string())?;
 
         let field_exists = schema.fields.iter().any(|f| f.name == field_name);
         if !field_exists {

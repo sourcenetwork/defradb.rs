@@ -213,6 +213,7 @@ where
         .get_collection(collection)
         .map_err(Error::CollectionLookupFailed)?
         .ok_or_else(|| Error::CollectionMissing(collection.to_owned()))?;
+    db::chunk::ensure_admin_changeable(col.schema())?;
     let mut updated = col.schema().clone();
     change(&mut updated)?;
 
