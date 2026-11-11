@@ -24,7 +24,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             ))
         })?;
 
-        collection
+        let active_version = collection
             .validate_write_definition(datastore, false)
             .await
             .map_err(MergeError::Database)?;
@@ -259,10 +259,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 );
             }
         }
-        if let Some(active_version) = self
-            .indexed_active_version_off(collection)
-            .filter(|_| !doc_is_tombstoned)
-        {
+        if !doc_is_tombstoned && active_version != collection.version_id() {
             // Boxed so the rare path does not grow every merge's future.
             Box::pin(self.owe_reindex_off_active_version(systemstore, collection, &active_version))
                 .await?;

@@ -408,14 +408,15 @@ impl Collection {
         self.def.indexes.iter().find(|idx| idx.name == name)
     }
 
-    /// Record the definition and active-name mapping in the writer's read set.
-    /// Historical merge inputs may name an older version, but still validate
-    /// both that definition and the current mapping against concurrent DDL.
+    /// Record the definition and active-name mapping in the writer's read set,
+    /// and return the active version ID that mapping names. Historical merge
+    /// inputs may name an older version, but still validate both that
+    /// definition and the current mapping against concurrent DDL.
     pub(crate) async fn validate_write_definition(
         &self,
         datastore: &NamespaceView,
         require_current: bool,
-    ) -> Result<()> {
+    ) -> Result<String> {
         use storage::corekv::Key;
         use storage::keys::systemstore::{CollectionKey, CollectionNameKey};
         let system = datastore.sibling(storage::namespace::Namespace::Systemstore);
@@ -437,7 +438,8 @@ impl Collection {
         {
             return Err(Error::CollectionNotFound(self.name().to_string()));
         }
-        Ok(())
+        String::from_utf8(active.into())
+            .map_err(|_| Error::CollectionNotFound(self.name().to_string()))
     }
 
     /// Generate the storage key for a document blob.

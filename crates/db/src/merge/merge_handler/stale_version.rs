@@ -11,36 +11,31 @@
 
 use super::*;
 use crate::definition::lens::build_collection_history;
-use crate::definition::loader::get_collections_by_collection_id;
+use crate::definition::loader::{get_collection_by_version_id, get_collections_by_collection_id};
 use crate::definition::migration::owe_reindex;
 
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
-    /// The active version of `collection`'s collection, when it is not
-    /// `collection`'s version and has indexes: the only case a merge at
-    /// `collection`'s version can leave entries that reads do not see.
-    pub(super) fn indexed_active_version_off(&self, collection: &Collection) -> Option<String> {
-        self.db.collections.peek(|cache| {
-            cache
-                .get(collection.name())
-                .filter(|active| {
-                    active.version_id() != collection.version_id()
-                        && !active.get_indexes().is_empty()
-                })
-                .map(|active| active.version_id().to_string())
-        })
-    }
-
     /// Owes `collection`'s collection a reindex, in the merge's transaction,
-    /// when the active version `active_version` reads documents stored at
-    /// `collection`'s version through a lens. It owes a full rebuild every
-    /// time, so a rebuild already running when the document arrived does not
-    /// clear the record without indexing it.
+    /// when the active version `active_version` has indexes and reads
+    /// documents stored at `collection`'s version through a lens. The active
+    /// version is the one the merge's validated name read returned, and every
+    /// definition is read in the same transaction, so a schema change that
+    /// commits first aborts the merge and the re-run decides again. It owes a
+    /// full rebuild every time, so a rebuild already running when the
+    /// document arrived does not clear the record without indexing it.
     pub(super) async fn owe_reindex_off_active_version(
         &self,
         systemstore: &NamespaceView,
         collection: &Collection,
         active_version: &str,
     ) -> std::result::Result<(), MergeError> {
+        let indexed = get_collection_by_version_id(systemstore, active_version)
+            .await
+            .map_err(MergeError::Database)?
+            .is_some_and(|active| !active.indexes.is_empty());
+        if !indexed {
+            return Ok(());
+        }
         let collection_id = collection.collection_id();
         let versions = get_collections_by_collection_id(systemstore, collection_id)
             .await
