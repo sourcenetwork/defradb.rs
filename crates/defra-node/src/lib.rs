@@ -1073,6 +1073,12 @@ impl Node {
     }
 
     /// The node access control manager: off until enabled.
+    ///
+    /// The embedded HTTP server decides when the node is built whether its
+    /// edge routes check node ACP, as `defradb start` does at startup: they do
+    /// once node ACP was enabled through the builder or by an earlier run on
+    /// the same store. Enabling it here on a node built without it guards the
+    /// database now and the edge routes from the next build.
     pub fn nac_manager(&self) -> &Arc<dyn db::NacManagerApi> {
         &self.nac_manager
     }

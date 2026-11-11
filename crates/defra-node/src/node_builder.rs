@@ -635,7 +635,7 @@ impl NodeBuilder {
                 Arc::clone(node.database()),
             ));
             // With node ACP configured, the routes that check permissions at
-            // the edge (events, P2P, transactions) check them, as `defradb
+            // the edge (events, P2P, `/node/*`) check them, as `defradb
             // start` does. Configured covers a store a previous run enabled
             // node ACP in: the adapter then follows its status, disabled and
             // re-enabled included. A node never configured gets no adapter,
