@@ -50,12 +50,17 @@ impl HttpClient {
             .await?)
     }
 
-    /// Every collection's encrypted indexes, by collection name.
+    /// Every collection's encrypted indexes, by collection name, in
+    /// transaction `txn` when given.
     pub async fn encrypted_index_list_all(
         &self,
+        txn: Option<&str>,
     ) -> Result<std::collections::BTreeMap<String, Vec<EncryptedIndexInfo>>> {
-        let url = format!("{}/api/v0/encrypted-indexes", self.base_url);
-        self.request_json("GET", &url, None).await
+        Ok(self
+            .send(Method::GET, "encrypted-indexes", &[], None, txn)
+            .await?
+            .json()
+            .await?)
     }
 
     /// Delete an encrypted index from a collection field, in transaction

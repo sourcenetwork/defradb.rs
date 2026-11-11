@@ -59,6 +59,27 @@ where
         }
         Ok(())
     }
+
+    /// Every collection's encrypted index fields outside a transaction, read
+    /// in a read-only transaction of its own, after the `list-all` check.
+    async fn all_committed(&self) -> Result<Vec<(String, Vec<String>)>, String> {
+        self.database
+            .check_node_access_as(&self.context(), NodePermission::EncryptedIndexListAll)
+            .await
+            .map_err(|e| e.to_string())?;
+        let txn = self
+            .database
+            .new_txn(true)
+            .await
+            .map_err(|e| e.to_string())?;
+        let all = self
+            .database
+            .all_encrypted_indexes_in(&txn)
+            .await
+            .map_err(|e| e.to_string());
+        let _ = txn.discard();
+        all
+    }
 }
 
 fn equality(collection: &str, field_name: &str) -> EncryptedIndexInfo {
@@ -133,25 +154,20 @@ where
                     .collect())
             }
             None => {
-                self.database
-                    .check_node_access_as(&self.context(), NodePermission::EncryptedIndexListAll)
-                    .await
-                    .map_err(|e| format!("{}", e))?;
-
-                let names = self
-                    .database
-                    .list_collections()
-                    .map_err(|e| format!("{}", e))?;
-
-                let mut result = Vec::new();
-                for name in names {
-                    if let Ok(Some(col)) = self.database.get_collection(&name) {
-                        for ei in &col.schema().encrypted_indexes {
-                            result.push(equality(&name, &ei.field_name));
-                        }
-                    }
-                }
-                Ok(result)
+                let all = match self.in_txn() {
+                    Some(context) => self
+                        .runner
+                        .all_encrypted_indexes_in_txn_as(&context)
+                        .await
+                        .map_err(|e| e.to_string())?,
+                    None => self.all_committed().await?,
+                };
+                Ok(all
+                    .iter()
+                    .flat_map(|(name, fields)| {
+                        fields.iter().map(move |field| equality(name, field))
+                    })
+                    .collect())
             }
         }
     }

@@ -37,17 +37,33 @@ fn an_encrypted_index_added_in_a_transaction_lands_on_its_commit() {
         let in_txn = context
             .clone()
             .with_txn(Some(handle.as_str().parse::<TxnId>().unwrap()));
-        let adapter = EncryptedIndexAdapter::new_arc(Arc::clone(&db), runner)
-            .bind_request(&in_txn)
-            .unwrap();
+        let outside = EncryptedIndexAdapter::new_arc(Arc::clone(&db), runner);
+        let adapter = outside.bind_request(&in_txn).unwrap();
 
         adapter.add_encrypted_index("User", "name").await.unwrap();
         assert_eq!(encrypted_on_user(&db), 0, "not committed yet");
         let listed = adapter.list_encrypted_indexes(Some("User")).await.unwrap();
         assert_eq!(listed.len(), 1, "the transaction sees its own index");
+        let all = adapter.list_encrypted_indexes(None).await.unwrap();
+        assert_eq!(
+            all.len(),
+            1,
+            "listing every index sees it in the transaction"
+        );
+        assert_eq!(
+            (all[0].collection.as_str(), all[0].field_name.as_str()),
+            ("User", "name")
+        );
+        let committed = outside.list_encrypted_indexes(None).await.unwrap();
+        assert!(
+            committed.is_empty(),
+            "nobody else sees it before the commit"
+        );
 
         registry.commit(&handle).await.unwrap();
         assert_eq!(encrypted_on_user(&db), 1, "the commit lands it");
+        let all = outside.list_encrypted_indexes(None).await.unwrap();
+        assert_eq!(all.len(), 1, "everyone sees it once committed");
     })
     .unwrap();
 }
