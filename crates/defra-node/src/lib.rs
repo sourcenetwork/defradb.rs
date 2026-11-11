@@ -675,7 +675,10 @@ impl Node {
     /// identity, or on an identity-only node, it is [`RequestContext::ambient`]
     /// and NAC checks the node's own operations as anonymous, as Go's node
     /// checks a call that names no identity.
-    fn node_context(&self) -> RequestContext {
+    ///
+    /// An embedder reads node-ACP-gated P2P information as the node with
+    /// `node.p2p_system()?.ops_for(&node.node_context())`.
+    pub fn node_context(&self) -> RequestContext {
         let context = RequestContext::ambient();
         match self.node_principal() {
             Some(did) => context.with_identity(Some(did)),
