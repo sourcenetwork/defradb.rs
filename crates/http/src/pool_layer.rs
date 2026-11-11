@@ -33,7 +33,7 @@ use crate::error::pool_failure;
 
 /// The route prefixes, under each API prefix (`go_paths::API_PREFIXES`),
 /// whose requests run on the pool.
-pub const ON_POOL: [&str; 9] = [
+pub const ON_POOL: [&str; 10] = [
     "/collections",
     "/backup",
     "/views",
@@ -43,6 +43,7 @@ pub const ON_POOL: [&str; 9] = [
     "/acp/node",
     "/actions",
     "/debug",
+    "/purge",
 ];
 
 /// Whether the route `path` (as matched) runs on the pool.
@@ -182,6 +183,7 @@ mod tests {
             "/api/v0/view/refresh",
             "/api/v0/acp/node/status",
             "/api/v0/schema",
+            "/api/v0/purge",
             "/api/v1/collections",
             "/api/collections",
         ] {
