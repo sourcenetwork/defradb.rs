@@ -352,6 +352,9 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
             },
         ));
     }
+    if spec.network && crate::transport_choice::TransportChoice::from_env().is_vinc() {
+        builder = vinc_transport(builder, spec, listen);
+    }
     if let Some(config) = http {
         builder = builder.with_http(config);
     } else if let Some((ttl, tick)) = spec.txn_ttl {
@@ -387,6 +390,46 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
         })?;
     }
     Ok(node)
+}
+
+/// Run `builder`'s node over vinc on loopback, `DEFRA_TRANSPORT=vinc`. A node
+/// restarted on its old address binds the port that address names; its key
+/// lives in its store, so a restart keeps its peer id.
+#[cfg(feature = "vinc")]
+fn vinc_transport(
+    builder: defra_node::NodeBuilder,
+    spec: &NodeSpec,
+    listen: &str,
+) -> defra_node::NodeBuilder {
+    let bind = listen
+        .split_once('@')
+        .and_then(|(_, addrs)| addrs.split(',').next())
+        .and_then(|addr| addr.parse().ok())
+        .unwrap_or_else(|| std::net::SocketAddr::from(([127, 0, 0, 1], 0)));
+    let mut config = defra_node::VincConfig {
+        bind,
+        peer_key: defra_node::PeerKeySource::Store,
+        max_connections: 16,
+        ..Default::default()
+    };
+    if let Some(limits) = &spec.admission {
+        config.sync.max_pending_dags = limits.max_pending_dags;
+        config.sync.rate_limit_burst = limits.rate_limit_burst;
+        config.sync.rate_limit_rate = limits.rate_limit_rate;
+        if let Some(bytes) = limits.deferral_peer_bytes {
+            config.sync.gossip_deferral_peer_bytes = bytes;
+        }
+    }
+    builder.with_vinc(config)
+}
+
+#[cfg(not(feature = "vinc"))]
+fn vinc_transport(
+    _builder: defra_node::NodeBuilder,
+    _spec: &NodeSpec,
+    _listen: &str,
+) -> defra_node::NodeBuilder {
+    panic!("DEFRA_TRANSPORT=vinc needs integration-test built with --features vinc")
 }
 
 /// The key a node signs with: its node identity's, or, for a node that only

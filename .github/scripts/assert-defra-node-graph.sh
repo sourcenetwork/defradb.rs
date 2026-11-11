@@ -99,6 +99,13 @@ LEAN_IROH=(--no-default-features --features native,p2p)
 assert_no_libp2p defra-node "${LEAN_IROH[@]}"
 assert_present defra-node iroh "${LEAN_IROH[@]}"
 
+# vinc is opt-in: absent from the default node, the iroh node and the CLI,
+# present only with the vinc feature.
+assert_absent defra-node vinc
+assert_absent defra-node vinc "${LEAN_IROH[@]}"
+assert_absent cli vinc
+assert_present defra-node vinc --no-default-features --features native,vinc
+
 # p2p crate feature line (the ^p2p v package, not p2p-*). Default cargo tree
 # omits features; --format '{p} {f}' prints them so this can fail.
 assert_p2p_crate_iroh_only() {

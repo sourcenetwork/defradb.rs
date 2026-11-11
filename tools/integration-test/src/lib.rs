@@ -15,6 +15,7 @@ mod reserved_port;
 pub mod scenario;
 mod stub_embedder;
 pub mod test_case;
+pub mod transport_choice;
 
 pub use client_type::ClientType;
 pub use scenario::m;
