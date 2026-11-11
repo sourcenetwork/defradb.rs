@@ -301,12 +301,11 @@ impl IrohTransport {
     ) -> Result<(ProtocolSendStream, ProtocolRecvStream)> {
         protocol.validate()?;
         if request.len() > protocol.max_message {
-            return Err(Error::InvalidConfig(format!(
-                "a request of {} bytes is larger than stream protocol {:?} accepts ({} bytes)",
-                request.len(),
-                String::from_utf8_lossy(protocol.tag),
-                protocol.max_message
-            )));
+            return Err(Error::RequestTooLarge {
+                tag: String::from_utf8_lossy(protocol.tag).into_owned(),
+                len: request.len(),
+                max: protocol.max_message,
+            });
         }
         self.send_command(|reply| IrohCommand::OpenStream {
             peer_id: peer_id.clone(),

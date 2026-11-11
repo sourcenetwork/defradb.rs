@@ -457,7 +457,11 @@ async fn opening_a_reserved_tag_or_an_oversized_request_fails_locally() {
     let opened = open(&client, &server, &reserved, Vec::new()).await;
     assert!(matches!(opened, Err(Error::InvalidConfig(_))));
     let oversized = open(&client, &server, &ECHO, vec![0; ECHO.max_message + 1]).await;
-    assert!(matches!(oversized, Err(Error::InvalidConfig(_))));
+    assert!(matches!(
+        oversized,
+        Err(Error::RequestTooLarge { len, max, .. })
+            if len == ECHO.max_message + 1 && max == ECHO.max_message
+    ));
 
     shutdown_all(client, server, client_task, server_task).await;
 }
