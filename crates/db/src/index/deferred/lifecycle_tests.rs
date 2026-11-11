@@ -1,10 +1,10 @@
-//! A reindex walk racing the drain.
+//! A reindex walk racing the drain, and a drop cleanup in pages.
 
 use datastore::BasicTxn;
 use document::{Document, NormalValue};
 use rapidhash::RapidHashMap;
 use storage::corekv::IterOptions;
-use storage::keys::{index_position_prefix, IndexDataStoreKey, IndexedField};
+use storage::keys::{index_pending_log, index_position_prefix, IndexDataStoreKey, IndexedField};
 use storage::RegolithStore;
 
 use super::drain::drain_index;
@@ -138,6 +138,48 @@ fn a_walk_that_read_a_moved_record_does_not_commit() {
         drain(&db, index_id).await;
 
         assert!(walking.commit().await.is_err());
+    })
+    .unwrap();
+}
+
+/// Each drop page truncates at most its limit of log entries and the next
+/// one carries on after it.
+#[test]
+fn a_drop_page_truncates_at_most_its_limit() {
+    workers::block_on(async {
+        let (db, short_id, index_id) = indexed().await;
+        let id = create(&db, 0).await;
+        for _ in 0..3 {
+            increment(&db, &id).await;
+        }
+        drain(&db, index_id).await;
+        for _ in 0..5 {
+            increment(&db, &id).await;
+        }
+        let log = index_pending_log(short_id, index_id)
+            .entry_prefix()
+            .to_vec();
+
+        let mut after = None;
+        let mut left = Vec::new();
+        loop {
+            let txn = BasicTxn::new(db.store().as_ref(), 0, false).await.unwrap();
+            let (removed, last) =
+                super::remove_page(&txn.datastore(), short_id, index_id, after.as_deref(), 2)
+                    .await
+                    .unwrap();
+            txn.commit().await.unwrap();
+            left.push(keys(&db, log.clone()).await.len());
+            if removed < 2 {
+                break;
+            }
+            after = last;
+        }
+
+        assert_eq!(left, [3, 1, 0]);
+        assert!(keys(&db, index_position_prefix(short_id, index_id))
+            .await
+            .is_empty());
     })
     .unwrap();
 }

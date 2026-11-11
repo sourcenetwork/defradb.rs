@@ -16,6 +16,7 @@ use storage::corekv::{IterOptions, Iterator as _};
 use storage::keys::{IndexDataStoreKey, IndexedField};
 use storage::RegolithStore;
 
+mod drop_history;
 mod upgrade;
 
 const COLLECTION: &str = "Tallies";

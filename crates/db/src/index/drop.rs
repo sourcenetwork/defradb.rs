@@ -375,11 +375,11 @@ impl Page for DropPage {
             self.progress.index.clone(),
         )?;
         let (short_id, index_id) = (self.progress.collection_short_id, self.progress.index.id);
-        let records = storage::keys::index_position_prefix(short_id, index_id);
         let after = self.progress.after.as_deref();
-        let in_records = after.is_some_and(|after| after.starts_with(&records));
+        let past = after
+            .is_some_and(|after| crate::index::deferred::past_entries(short_id, index_id, after));
         let (mut removed, mut last) = (0, None);
-        if !in_records {
+        if !past {
             (removed, last) = index
                 .remove_page(&mut txn.datastore(), after, size)
                 .await
@@ -391,7 +391,7 @@ impl Page for DropPage {
                 &txn.datastore(),
                 short_id,
                 index_id,
-                after.filter(|_| in_records),
+                after.filter(|_| past),
                 size,
             )
             .await?;
