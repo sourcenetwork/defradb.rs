@@ -199,7 +199,10 @@ async fn run(
         next_connection: Cell::new(1),
     });
     let _ = ready.send(Ok(node.ep.local_addr()));
-    node.serve(command_rx, running).await;
+    let reply = node.serve(command_rx, running).await;
+    if let Some(reply) = reply {
+        let _ = reply.send(Ok(()));
+    }
 }
 
 /// One live connection to a peer.
@@ -255,7 +258,7 @@ impl<H: Hosted + 'static> Node<H> {
         self: Rc<Self>,
         mut command_rx: mpsc::Receiver<Command>,
         running: oneshot::Sender<()>,
-    ) {
+    ) -> Option<Reply<()>> {
         let runner = Rc::clone(&self);
         self.spawn(async move {
             if let Err(error) = runner.ep.run().await {
@@ -303,12 +306,13 @@ impl<H: Hosted + 'static> Node<H> {
         for (_, sync) in self.syncs.borrow_mut().drain() {
             sync.abort();
         }
-        self.tasks.borrow_mut().abort_all();
+        // Every task holds the node; they end first, so the socket closes with
+        // the node when this returns, before the caller hears the shutdown.
+        let mut tasks = std::mem::replace(&mut *self.tasks.borrow_mut(), JoinSet::new());
+        tasks.shutdown().await;
         self.ep.close().await;
         debug!(peer_id = %local, "vinc endpoint stopped");
-        if let Some(reply) = shutdown_reply {
-            let _ = reply.send(Ok(()));
-        }
+        shutdown_reply
     }
 
     async fn accept_loop(self: Rc<Self>) {
