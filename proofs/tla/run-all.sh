@@ -358,6 +358,8 @@ RUNS=(
   "MC_PatchInTxn_Red_WriteOutside.cfg PatchInTxn.tla RED" # writes in a txn of their own are seen before commit (INV_IsolatedUntilCommit)
   "MC_PatchInTxn_Red_EarlyFinish.cfg PatchInTxn.tla RED" # post-commit work run at staging (INV_FinishOnlyAfterCommit)
   "MC_PatchInTxn_Red_SilentRetry.cfg PatchInTxn.tla RED" # a conflict retried silently (INV_ConflictReachesCaller)
+  "MC_PatchInTxn_Red_NoSavepoint.cfg PatchInTxn.tla RED" # a failed patch leaves its earlier writes in the txn (INV_FailedPatchLeavesNothing)
+  "MC_PatchInTxn_Red_StaleCatalog.cfg PatchInTxn.tla RED" # the txn keeps the pre-patch definition cached (INV_SeesOwnPatch)
   "MC_Truncate_Green.cfg Truncate.tla GREEN" # #2321: truncate checks nac, then for a filter branchable, txn and shape, before a delete that is durable at once
   "MC_Truncate_Red_Nac.cfg Truncate.tla RED" # permission check left out: a caller without CollectionTruncate removes documents (INV_NoRemovalWithoutPermission)
   "MC_Truncate_Red_Branchable.cfg Truncate.tla RED" # branchable check left out: a filtered truncate splits shared history (INV_FilteredNeverOnBranchable)

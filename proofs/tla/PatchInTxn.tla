@@ -1,8 +1,9 @@
 ---- MODULE PatchInTxn ----
 \* The story: a client opens an explicit transaction, may write in it first
-\* (add a document, add a collection), then sends a collection patch in that
-\* transaction, and finally commits or discards it. Meanwhile another client
-\* may change the same collection definitions and commit first.
+\* (add a document, add a collection) or read a collection (which caches that
+\* collection's definition in the transaction), then sends a collection patch
+\* in that transaction, and finally commits or discards it. Meanwhile another
+\* client may change the same collection definitions and commit first.
 \*
 \* The patch is staged inside the client's transaction: it reads the
 \* definitions and documents through that transaction, so it sees the
@@ -13,17 +14,29 @@
 \* after it lands (registering migrations, building owed indexes) runs only
 \* once the commit is durable, and never for a discarded transaction.
 \*
+\* A patch can fail part way (a later collection may not be removed). It runs
+\* as one statement behind a savepoint, so a failure puts the transaction back
+\* as it was before the patch. A patch that succeeds drops every definition it
+\* changed from the transaction's own cache, so the client's later requests in
+\* the transaction see the patched definition.
+\*
 \* What must never happen: another client seeing the patch before the commit;
 \* the post-commit work running for a patch that never landed; a conflict
 \* hidden from the client by a silent retry; a patch deciding on a view that
-\* misses the client's own earlier write in the same transaction.
+\* misses the client's own earlier write in the same transaction; half of a
+\* failed patch left in the transaction; a later request in the transaction
+\* using the definition from before the patch.
 \*
 \* Code it models:
 \*   crates/db/src/txn/registry/lifecycle.rs  patch_collection_as (routes a
 \*                                             request that carries a txn)
-\*   crates/db/src/txn/registry/schemas.rs    patch_collection_in_txn_as
+\*   crates/db/src/txn/registry/schemas.rs    patch_collection_in_txn_as (the
+\*                                             statement savepoint),
+\*                                             stage_patch_in_txn (drops the
+\*                                             touched names from the catalog)
 \*   crates/db/src/definition/patch/stage.rs  DB::stage_patch (reads through
-\*                                             the txn), DB::finish_staged
+\*                                             the txn), StagedPatch::touched_names,
+\*                                             DB::finish_staged
 \*   crates/db/src/collection/ops/version.rs  DB::collection_has_data (a
 \*                                             validated scan in the txn)
 EXTENDS Naturals
@@ -32,11 +45,14 @@ CONSTANTS
   ReadThroughTxn,  \* the patch reads through the client's transaction
   WriteThroughTxn, \* the patch writes into the client's transaction
   FinishOnCommit,  \* post-commit work waits for the commit to be durable
-  RetryHides       \* a conflict is retried silently instead of reported
+  RetryHides,      \* a conflict is retried silently instead of reported
+  Savepoint,       \* the patch runs behind a statement savepoint
+  RefreshCatalog   \* a staged patch drops what it changed from the txn's cache
 
 \* Each switch is on or off.
 ASSUME WriteThroughTxn \in BOOLEAN
 ASSUME ReadThroughTxn \in BOOLEAN /\ FinishOnCommit \in BOOLEAN /\ RetryHides \in BOOLEAN
+ASSUME Savepoint \in BOOLEAN /\ RefreshCatalog \in BOOLEAN
 
 VARIABLES
   earlier,    \* the client wrote something earlier in its transaction
@@ -45,29 +61,59 @@ VARIABLES
   rival,      \* another client committed a change to what the patch read
   outcome,    \* "open", "committed", "conflict" or "discarded"
   visible,    \* other clients can see the patch
-  finished    \* the post-commit work has run
+  finished,   \* the post-commit work has run
+  cached,     \* the transaction cached the patched collection's old definition
+  stale,      \* that cached old definition is still what the txn resolves
+  failed,     \* a patch attempt failed part way
+  partial     \* the transaction still holds writes of the failed attempt
 
-vars == <<earlier, sawEarlier, staged, rival, outcome, visible, finished>>
+vars == <<earlier, sawEarlier, staged, rival, outcome, visible, finished,
+          cached, stale, failed, partial>>
 
 \* Every variable holds a value of the shape it should.
 TypeOK ==
   \* the flags are true or false
   /\ earlier \in BOOLEAN /\ sawEarlier \in BOOLEAN /\ staged \in BOOLEAN
   /\ rival \in BOOLEAN /\ visible \in BOOLEAN /\ finished \in BOOLEAN
+  /\ cached \in BOOLEAN /\ stale \in BOOLEAN
+  /\ failed \in BOOLEAN /\ partial \in BOOLEAN
   \* the transaction ends one of three ways, or is still open
   /\ outcome \in {"open", "committed", "conflict", "discarded"}
 
-\* A fresh transaction: nothing written, nothing staged, nobody else moved.
+\* A fresh transaction: nothing written, cached or staged, nobody else moved.
 Init ==
   /\ earlier = FALSE /\ sawEarlier = FALSE /\ staged = FALSE
   /\ rival = FALSE /\ outcome = "open" /\ visible = FALSE /\ finished = FALSE
+  /\ cached = FALSE /\ stale = FALSE /\ failed = FALSE /\ partial = FALSE
 
 \* The client writes something in its transaction before the patch.
 WriteEarlier ==
   \* only while the transaction is open and before the patch
   /\ outcome = "open" /\ ~staged /\ ~earlier
   /\ earlier' = TRUE
-  /\ UNCHANGED <<sawEarlier, staged, rival, outcome, visible, finished>>
+  /\ UNCHANGED <<sawEarlier, staged, rival, outcome, visible, finished,
+                 cached, stale, failed, partial>>
+
+\* The client reads the collection before the patch, so the transaction
+\* caches its definition as it is now.
+ReadEarlier ==
+  \* only while the transaction is open and before the patch
+  /\ outcome = "open" /\ ~staged /\ ~cached
+  /\ cached' = TRUE
+  /\ UNCHANGED <<earlier, sawEarlier, staged, rival, outcome, visible,
+                 finished, stale, failed, partial>>
+
+\* A patch attempt fails part way, after writing some of its collections.
+\* Behind a savepoint those writes are undone; without one (the RED) they
+\* stay in the transaction.
+StageFails ==
+  \* once, while the transaction is open and before any patch is staged
+  /\ outcome = "open" /\ ~staged /\ ~failed
+  /\ failed' = TRUE
+  \* the bug a RED plants: the earlier collections' writes are kept
+  /\ partial' = (~Savepoint)
+  /\ UNCHANGED <<earlier, sawEarlier, staged, rival, outcome, visible,
+                 finished, cached, stale>>
 
 \* The patch is staged. Reading through the transaction it sees the earlier
 \* write; reading outside it, it does not. If post-commit work does not wait
@@ -82,14 +128,17 @@ Stage ==
   /\ finished' = (~FinishOnCommit)
   \* the bug a RED plants: the definition write lands outside the transaction
   /\ visible' = (~WriteThroughTxn)
-  /\ UNCHANGED <<earlier, rival, outcome>>
+  \* the bug a RED plants: the old cached definition is left in place
+  /\ stale' = (cached /\ ~RefreshCatalog)
+  /\ UNCHANGED <<earlier, rival, outcome, cached, failed, partial>>
 
 \* Another client commits a change to the definitions the patch read.
 RivalCommits ==
   \* only after the patch read, while the client's transaction is still open
   /\ outcome = "open" /\ staged /\ ~rival
   /\ rival' = TRUE
-  /\ UNCHANGED <<earlier, sawEarlier, staged, outcome, visible, finished>>
+  /\ UNCHANGED <<earlier, sawEarlier, staged, outcome, visible, finished,
+                 cached, stale, failed, partial>>
 
 \* The client commits. A rival commit on what the patch read fails it with a
 \* conflict, unless a silent retry (the RED) lands it anyway.
@@ -101,17 +150,20 @@ Commit ==
        THEN /\ outcome' = "conflict" /\ UNCHANGED <<visible, finished>>
        \* the patch lands, everyone can see it, and the follow-up work runs
        ELSE /\ outcome' = "committed" /\ visible' = TRUE /\ finished' = TRUE
-  /\ UNCHANGED <<earlier, sawEarlier, staged, rival>>
+  /\ UNCHANGED <<earlier, sawEarlier, staged, rival, cached, stale, failed,
+                 partial>>
 
 \* The client discards its transaction: nothing lands.
 Discard ==
   \* only an open transaction
   /\ outcome = "open"
   /\ outcome' = "discarded"
-  /\ UNCHANGED <<earlier, sawEarlier, staged, rival, visible, finished>>
+  /\ UNCHANGED <<earlier, sawEarlier, staged, rival, visible, finished,
+                 cached, stale, failed, partial>>
 
 \* Any of the steps can happen next.
-Next == WriteEarlier \/ Stage \/ RivalCommits \/ Commit \/ Discard
+Next == WriteEarlier \/ ReadEarlier \/ StageFails \/ Stage \/ RivalCommits
+        \/ Commit \/ Discard
 
 \* A finished transaction stays finished.
 Done == outcome # "open" /\ UNCHANGED vars
@@ -131,4 +183,11 @@ INV_ConflictReachesCaller == (rival /\ staged) => outcome # "committed"
 
 \* The patch decides on a view that holds the client's own earlier write.
 INV_SeesOwnWrites == (staged /\ earlier) => sawEarlier
+
+\* A patch that failed leaves none of its writes in the transaction.
+INV_FailedPatchLeavesNothing == ~partial
+
+\* Once the patch is staged, the transaction resolves the patched collection
+\* to its new definition, not the one it cached before.
+INV_SeesOwnPatch == staged => ~stale
 ====

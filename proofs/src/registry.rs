@@ -2494,9 +2494,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Collection patch",
-        name: "INV_IsolatedUntilCommit / INV_FinishOnlyAfterCommit / INV_ConflictReachesCaller / INV_SeesOwnWrites",
+        name: "INV_IsolatedUntilCommit / INV_FinishOnlyAfterCommit / INV_ConflictReachesCaller / INV_SeesOwnWrites / INV_FailedPatchLeavesNothing / INV_SeesOwnPatch",
         axis: Tla,
-        anchor: "crates/db/src/txn/registry/lifecycle.rs patch_collection_as; schemas.rs DbTransactionRegistry::patch_collection_in_txn_as; crates/db/src/definition/patch/stage.rs DB::stage_patch, DB::finish_staged; crates/db/src/collection/ops/version.rs DB::collection_has_data",
+        anchor: "crates/db/src/txn/registry/lifecycle.rs patch_collection_as; schemas.rs DbTransactionRegistry::patch_collection_in_txn_as, stage_patch_in_txn; crates/db/src/definition/patch/stage.rs DB::stage_patch, StagedPatch::touched_names, DB::finish_staged; crates/db/src/collection/ops/version.rs DB::collection_has_data",
         model_ref: "MC_PatchInTxn_{Green,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",

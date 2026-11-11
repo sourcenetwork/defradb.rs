@@ -116,15 +116,21 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         let db = self.db.clone();
         self.in_txn(context, txn_id, move |owned| {
             Box::pin(async move {
+                let caches = owned.caches();
                 let txn = owned.alone()?;
-                let staged = db.stage_patch(txn, ops, migration).await?;
-                txn.on_commit(OnCommit::Async(Box::new(move || {
-                    Box::pin(async move {
-                        if let Err(error) = db.finish_staged(staged).await {
-                            tracing::warn!(%error, "post-commit work of a patch failed");
-                        }
-                    })
-                })))?;
+                // A patch that fails part way leaves none of its writes, nor
+                // the commit hooks they registered, in the caller's transaction.
+                txn.set_statement_savepoint()?;
+                match stage_patch_in_txn(db, txn, ops, migration).await {
+                    Ok(()) => txn.release_statement_savepoint()?,
+                    Err(error) => {
+                        txn.rollback_statement_savepoint()?;
+                        return Err(error);
+                    }
+                }
+                // The patch changed what this transaction's fetchers derived
+                // from its schema.
+                caches.invalidate();
                 Ok(())
             })
         })
@@ -224,4 +230,30 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         })
         .await
     }
+}
+
+/// Stages a patch on `txn` and registers what it owes after commit. The
+/// transaction's own catalog drops every name the patch touched, so its
+/// later requests load the patched definitions rather than the cached ones.
+async fn stage_patch_in_txn<S>(
+    db: Arc<DB<S>>,
+    txn: &mut crate::txn::DbTxn<S>,
+    ops: serde_json::Value,
+    migration: Option<lens::LensConfig>,
+) -> Result<()>
+where
+    S: Store + 'static,
+{
+    let staged = db.stage_patch(txn, ops, migration).await?;
+    for name in staged.touched_names() {
+        txn.uncache_collection(&name);
+    }
+    txn.on_commit(OnCommit::Async(Box::new(move || {
+        Box::pin(async move {
+            if let Err(error) = db.finish_staged(staged).await {
+                tracing::warn!(%error, "post-commit work of a patch failed");
+            }
+        })
+    })))?;
+    Ok(())
 }

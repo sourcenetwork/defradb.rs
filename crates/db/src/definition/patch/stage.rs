@@ -13,6 +13,34 @@ pub(crate) struct StagedPatch {
     unchanged: Vec<CollectionVersion>,
 }
 
+impl StagedPatch {
+    /// Every collection name the patch may have changed what resolves to:
+    /// the names it removed or wrote, and the earlier names of each
+    /// collection it wrote, so a rename leaves no stale entry behind.
+    pub(crate) fn touched_names(&self) -> rapidhash::RapidHashSet<String> {
+        let written: rapidhash::RapidHashSet<&str> = self
+            .outcomes
+            .iter()
+            .map(|outcome| outcome.schema.collection_id.as_str())
+            .collect();
+        self.removed
+            .iter()
+            .map(|version| version.name.clone())
+            .chain(
+                self.outcomes
+                    .iter()
+                    .map(|outcome| outcome.schema.name.clone()),
+            )
+            .chain(
+                self.versions
+                    .iter()
+                    .filter(|version| written.contains(version.collection_id.as_str()))
+                    .map(|version| version.name.clone()),
+            )
+            .collect()
+    }
+}
+
 impl<S: Store> crate::database::DB<S> {
     /// Stage `ops` on `txn`: Go's `PatchCollection` over every collection its
     /// paths name, read and written through `txn` alone, so an explicit
