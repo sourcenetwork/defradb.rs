@@ -885,23 +885,11 @@ fn embedded_events_require_node_permission() {
         .block_on(async {
             let _serial = crate::tests::SIGNING_STORE_GUARD.lock().await;
             let owner = identity();
-            let owner_did = owner.did().unwrap();
-            let public = owner.public_key_bytes();
-            defra_core::signing::store_identity(
-                owner_did.as_str(),
-                SigningConfig {
-                    key_type: SigningKeyType::Ed25519,
-                    private_key_bytes: owner.private_key_bytes(),
-                    public_key_bytes: public.clone(),
-                    public_key_hex: hex::encode(public),
-                    remote_signer: None,
-                    signing_authorization: None,
-                },
-            );
+            let owner_did = store_signing_identity(&owner);
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let address = listener.local_addr().unwrap();
             let node = Node::builder()
-                .with_node_identity_did(owner_did.as_str())
+                .with_node_identity_did(&owner_did)
                 .with_node_acp_enabled()
                 .with_http(HttpConfig::with_listener(listener).unwrap())
                 .build()
@@ -910,11 +898,7 @@ fn embedded_events_require_node_permission() {
             node.add_collection("type Note { text: String }")
                 .await
                 .unwrap();
-            let client = net::http::Client::builder(edge::testing::edge())
-                .no_proxy()
-                .timeout(Duration::from_secs(5))
-                .build()
-                .unwrap();
+            let client = http_client();
             let events = format!("http://{address}/api/v0/events?event=update");
             let anonymous = client.get(&events).send().await.unwrap();
             assert_refused(anonymous, "read-document").await;
@@ -929,12 +913,14 @@ fn embedded_events_require_node_permission() {
                 200,
                 "the owner could not stream updates"
             );
+            drop(owner_stream);
             let peer_info = client
                 .get(format!("http://{address}/api/v0/p2p/info"))
                 .send()
                 .await
                 .unwrap();
             assert_refused(peer_info, "get-p2p-peer-info").await;
+            node.shutdown().await.unwrap();
         })
         .unwrap();
 }
@@ -1009,6 +995,51 @@ fn embedded_edge_stays_checked_after_restart_without_the_flag() {
                 .unwrap();
             assert_refused(response, "get-p2p-peer-info").await;
             reopened.shutdown().await.unwrap();
+        })
+        .unwrap();
+}
+
+/// The encrypted index list route leaves its own permission to the operation,
+/// after `get-collection`: a caller holding only `get-collection` is refused
+/// with 401 naming `list-encrypted-index`, as the add and delete routes are.
+#[test]
+fn embedded_encrypted_index_list_refusal_is_unauthorized() {
+    edge::testing::edge()
+        .block_on(async {
+            let _serial = crate::tests::SIGNING_STORE_GUARD.lock().await;
+            let owner_did = store_signing_identity(&identity());
+            let reader = identity();
+            let reader_did = reader.did().unwrap();
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let node = Node::builder()
+                .with_node_identity_did(&owner_did)
+                .with_node_acp_enabled()
+                .with_http(HttpConfig::with_listener(listener).unwrap())
+                .build()
+                .await
+                .unwrap();
+            let owner = defra_core::RequestContext::default().with_identity(Some(owner_did));
+            node.add_collection_as(&owner, "type Note { text: String }")
+                .await
+                .unwrap();
+            node.add_nac_actor_relationship_as(
+                &owner,
+                acp::nac::NodePermission::CollectionGet.as_str(),
+                reader_did.as_str(),
+            )
+            .await
+            .unwrap();
+            let response = http_client()
+                .get(format!(
+                    "http://{address}/api/v0/collections/Note/encrypted-indexes"
+                ))
+                .header("Authorization", bearer(&reader, &address.to_string()))
+                .send()
+                .await
+                .unwrap();
+            assert_refused(response, "list-encrypted-index").await;
+            node.shutdown().await.unwrap();
         })
         .unwrap();
 }
