@@ -54,8 +54,8 @@ No `ROADMAP.md`, `DEVELOPMENT.md`, `docs/` directories, or planning documents.
 crates/
 ├── acp/                # Access Control Policy
 ├── bitswap/            # Bitswap block exchange, wire-compatible with Go
-├── chunk-split/        # @chunk splitter and the parent's chunk list
 ├── blockstore/         # IPLD block storage
+├── chunk-split/        # @chunk splitter and the parent's chunk list
 ├── cli/                # Command-line interface
 ├── crdt/               # CRDT implementations
 ├── crypto/             # Cryptographic operations
