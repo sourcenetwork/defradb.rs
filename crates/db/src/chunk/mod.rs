@@ -6,5 +6,7 @@
 
 pub use chunk_split::{list, split};
 
+pub use user_writes::ensure_admin_changeable;
+
 pub(crate) mod user_writes;
 pub mod window;

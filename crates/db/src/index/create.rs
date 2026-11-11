@@ -167,6 +167,7 @@ impl<S: Store> DB<S> {
         fields: Vec<IndexedFieldDescription>,
         kind: IndexKind,
     ) -> Result<(IndexDescription, ActionExecutionLease)> {
+        crate::chunk::ensure_admin_changeable(collection.schema())?;
         let collection_id = collection.collection_id().to_string();
         let (index, lease, committed_schema) = {
             let datastore = txn.datastore()?;

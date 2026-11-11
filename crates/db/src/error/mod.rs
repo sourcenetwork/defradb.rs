@@ -126,6 +126,16 @@ pub enum Error {
     #[error("{0}")]
     Other(String),
 
+    /// An admin change to a chunk collection, which follows its parent.
+    #[error(
+        "{collection} holds the chunks of {parent}.{field} and is changed only through {parent}"
+    )]
+    ChunkCollection {
+        collection: String,
+        parent: String,
+        field: String,
+    },
+
     /// A view names a lens transform CID with no committed lens config.
     #[error("lens CID not found: {0}")]
     ViewTransformMissing(String),
