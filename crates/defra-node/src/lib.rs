@@ -76,6 +76,8 @@ mod transaction;
 #[cfg(feature = "vera")]
 mod vera_rs_config;
 pub mod version;
+#[cfg(feature = "vinc")]
+mod vinc_runtime;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -106,6 +108,8 @@ pub use config::Libp2pConfig;
 pub use config::SyncTuning;
 #[cfg(feature = "vera")]
 pub use config::VeraConfig;
+#[cfg(feature = "vinc")]
+pub use config::VincConfig;
 pub use config::{
     DocumentAcpConfig, IndexBuildGateHandle, NodeConfig, NodeSigning, Persistence,
     ReplicationFilterHandle, SigningKey, TransportConfig,

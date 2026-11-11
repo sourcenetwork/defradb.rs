@@ -18,6 +18,10 @@ pub(super) enum P2PTasks {
         #[cfg(feature = "iroh-relay-server")]
         relay_server: Option<p2p::iroh::IrohRelayServer>,
     },
+    #[cfg(feature = "vinc")]
+    Vinc {
+        peer: defra_p2p_adapter::VincPeerShutdown,
+    },
 }
 
 pub(super) struct Libp2pTasks {
