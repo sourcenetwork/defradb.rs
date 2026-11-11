@@ -50,7 +50,7 @@ impl<S: Store> crate::database::DB<S> {
     /// - `CollectionNotFound` if the collection doesn't exist
     /// - `InvalidPatch` if the patch is invalid or cannot be applied
     /// - `Schema` if the resulting schema is invalid
-    #[instrument(skip(self, context, patch, migration), name = "db.patch_collection")]
+    #[instrument(skip(self, context, patch, migration), name = "db.patch_collection", fields(collection = tracing::field::Empty))]
     pub async fn patch_collection(
         &self,
         context: &defra_core::RequestContext,
@@ -65,6 +65,8 @@ impl<S: Store> crate::database::DB<S> {
         let ops: serde_json::Value =
             serde_json::from_str(patch).map_err(|e| Error::InvalidPatch(e.to_string()))?;
         let collection_name = patch_target(&ops)?;
+
+        tracing::Span::current().record("collection", collection_name.as_str());
 
         // Parse the patch early - needed for both collection lookup fallbacks and processing
         let patch_ops: serde_json::Value =
