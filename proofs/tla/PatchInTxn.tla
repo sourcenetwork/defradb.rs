@@ -18,6 +18,11 @@
 \* transaction, so an administrator who revokes that permission and commits
 \* before the client does makes the client's commit fail with a conflict.
 \*
+\* A patch that turns another collection's relation into a one-to-one owes that
+\* collection a unique index. The index is staged in the same transaction as
+\* the patch, so it lands with the patch or not at all; there is no second
+\* commit after the patch that could leave it visible without its index.
+\*
 \* A patch can fail part way (a later collection may not be removed). It runs
 \* as one statement behind a savepoint, so a failure puts the transaction back
 \* as it was before the patch. A patch that succeeds drops every definition it
@@ -30,7 +35,8 @@
 \* misses the client's own earlier write in the same transaction; half of a
 \* failed patch left in the transaction; a later request in the transaction
 \* using the definition from before the patch; a patch landing after the
-\* permission that allowed it was revoked.
+\* permission that allowed it was revoked; a landed patch without the
+\* one-to-one unique index it owes.
 \*
 \* Code it models:
 \*   crates/db/src/txn/registry/lifecycle.rs  patch_collection_as (routes a
@@ -41,8 +47,12 @@
 \*                                             stage_patch_in_txn (drops the
 \*                                             touched names from the catalog)
 \*   crates/db/src/definition/patch/stage.rs  DB::stage_patch (reads through
-\*                                             the txn), StagedPatch::touched_names,
+\*                                             the txn), DB::stage_groups (stages
+\*                                             the owed one-to-one index),
+\*                                             StagedPatch::touched_names,
 \*                                             DB::finish_staged
+\*   crates/db/src/definition/patch/store.rs  DB::stage_cross_collection_one_to_one_indexes
+\*                                             (the index, on the patch's txn)
 \*   crates/db/src/collection/ops/version.rs  DB::collection_has_data (a
 \*                                             validated scan in the txn)
 EXTENDS Naturals
@@ -54,12 +64,14 @@ CONSTANTS
   RetryHides,      \* a conflict is retried silently instead of reported
   Savepoint,       \* the patch runs behind a statement savepoint
   RefreshCatalog,  \* a staged patch drops what it changed from the txn's cache
-  NacInTxn         \* the NAC check reads the permission in the client's txn
+  NacInTxn,        \* the NAC check reads the permission in the client's txn
+  IndexInTxn       \* the owed one-to-one unique index is staged in the patch's txn
 
 \* Each switch is on or off.
 ASSUME WriteThroughTxn \in BOOLEAN
 ASSUME ReadThroughTxn \in BOOLEAN /\ FinishOnCommit \in BOOLEAN /\ RetryHides \in BOOLEAN
 ASSUME Savepoint \in BOOLEAN /\ RefreshCatalog \in BOOLEAN /\ NacInTxn \in BOOLEAN
+ASSUME IndexInTxn \in BOOLEAN
 
 VARIABLES
   earlier,    \* the client wrote something earlier in its transaction
@@ -73,11 +85,12 @@ VARIABLES
   stale,      \* that cached old definition is still what the txn resolves
   failed,     \* a patch attempt failed part way
   partial,    \* the transaction still holds writes of the failed attempt
-  revoked     \* an administrator revoked the patch permission and committed
+  revoked,    \* an administrator revoked the patch permission and committed
+  indexed     \* the one-to-one unique index the patch owes is durable
 
 \* Every variable, so a step can say which ones it leaves alone.
 vars == <<earlier, sawEarlier, staged, rival, outcome, visible, finished,
-          cached, stale, failed, partial, revoked>>
+          cached, stale, failed, partial, revoked, indexed>>
 
 \* Every variable holds a value of the shape it should.
 TypeOK ==
@@ -86,6 +99,7 @@ TypeOK ==
   /\ rival \in BOOLEAN /\ visible \in BOOLEAN /\ finished \in BOOLEAN
   /\ cached \in BOOLEAN /\ stale \in BOOLEAN
   /\ failed \in BOOLEAN /\ partial \in BOOLEAN /\ revoked \in BOOLEAN
+  /\ indexed \in BOOLEAN
   \* the transaction ends one of three ways, or is still open
   /\ outcome \in {"open", "committed", "conflict", "discarded"}
 
@@ -94,7 +108,7 @@ Init ==
   /\ earlier = FALSE /\ sawEarlier = FALSE /\ staged = FALSE
   /\ rival = FALSE /\ outcome = "open" /\ visible = FALSE /\ finished = FALSE
   /\ cached = FALSE /\ stale = FALSE /\ failed = FALSE /\ partial = FALSE
-  /\ revoked = FALSE
+  /\ revoked = FALSE /\ indexed = FALSE
 
 \* The client writes something in its transaction before the patch.
 WriteEarlier ==
@@ -102,7 +116,7 @@ WriteEarlier ==
   /\ outcome = "open" /\ ~staged /\ ~earlier
   /\ earlier' = TRUE
   /\ UNCHANGED <<sawEarlier, staged, rival, outcome, visible, finished,
-                 cached, stale, failed, partial, revoked>>
+                 cached, stale, failed, partial, revoked, indexed>>
 
 \* The client reads the collection before the patch, so the transaction
 \* caches its definition as it is now.
@@ -111,7 +125,7 @@ ReadEarlier ==
   /\ outcome = "open" /\ ~staged /\ ~cached
   /\ cached' = TRUE
   /\ UNCHANGED <<earlier, sawEarlier, staged, rival, outcome, visible,
-                 finished, stale, failed, partial, revoked>>
+                 finished, stale, failed, partial, revoked, indexed>>
 
 \* A patch attempt fails part way, after writing some of its collections.
 \* Behind a savepoint those writes are undone; without one (the RED) they
@@ -123,7 +137,7 @@ StageFails ==
   \* the bug a RED plants: the earlier collections' writes are kept
   /\ partial' = (~Savepoint)
   /\ UNCHANGED <<earlier, sawEarlier, staged, rival, outcome, visible,
-                 finished, cached, stale, revoked>>
+                 finished, cached, stale, revoked, indexed>>
 
 \* The patch is staged. Reading through the transaction it sees the earlier
 \* write; reading outside it, it does not. If post-commit work does not wait
@@ -140,7 +154,8 @@ Stage ==
   /\ visible' = (~WriteThroughTxn)
   \* the bug a RED plants: the old cached definition is left in place
   /\ stale' = (cached /\ ~RefreshCatalog)
-  /\ UNCHANGED <<earlier, rival, outcome, cached, failed, partial, revoked>>
+  /\ UNCHANGED <<earlier, rival, outcome, cached, failed, partial, revoked,
+                 indexed>>
 
 \* Another client commits a change to the definitions the patch read.
 RivalCommits ==
@@ -148,7 +163,7 @@ RivalCommits ==
   /\ outcome = "open" /\ staged /\ ~rival
   /\ rival' = TRUE
   /\ UNCHANGED <<earlier, sawEarlier, staged, outcome, visible, finished,
-                 cached, stale, failed, partial, revoked>>
+                 cached, stale, failed, partial, revoked, indexed>>
 
 \* An administrator revokes the client's patch permission and commits, after
 \* the patch's NAC check passed but before the client commits.
@@ -157,7 +172,7 @@ RevokeCommits ==
   /\ outcome = "open" /\ staged /\ ~revoked
   /\ revoked' = TRUE
   /\ UNCHANGED <<earlier, sawEarlier, staged, rival, outcome, visible,
-                 finished, cached, stale, failed, partial>>
+                 finished, cached, stale, failed, partial, indexed>>
 
 \* A commit that the client's transaction read is overtaken by: a rival
 \* change to the definitions, or a revocation when NAC was read in the
@@ -171,11 +186,24 @@ Commit ==
   /\ outcome = "open" /\ staged
   /\ IF Overtaken /\ ~RetryHides
        \* the conflict goes back to the client, and nothing lands
-       THEN /\ outcome' = "conflict" /\ UNCHANGED <<visible, finished>>
+       THEN /\ outcome' = "conflict" /\ UNCHANGED <<visible, finished, indexed>>
        \* the patch lands, everyone can see it, and the follow-up work runs
        ELSE /\ outcome' = "committed" /\ visible' = TRUE /\ finished' = TRUE
+            \* the owed index lands with the patch only if it was staged with
+            \* it; the bug a RED plants leaves it to a second commit
+            /\ indexed' = IndexInTxn
   /\ UNCHANGED <<earlier, sawEarlier, staged, rival, cached, stale, failed,
                  partial, revoked>>
+
+\* The bug a RED plants: the owed index is built by a second transaction
+\* after the patch committed. Until it commits (and forever, if it fails),
+\* everyone sees the patch without the index.
+IndexLater ==
+  \* only after the patch landed without its index
+  /\ outcome = "committed" /\ ~indexed /\ ~IndexInTxn
+  /\ indexed' = TRUE
+  /\ UNCHANGED <<earlier, sawEarlier, staged, rival, outcome, visible,
+                 finished, cached, stale, failed, partial, revoked>>
 
 \* The client discards its transaction: nothing lands.
 Discard ==
@@ -183,11 +211,11 @@ Discard ==
   /\ outcome = "open"
   /\ outcome' = "discarded"
   /\ UNCHANGED <<earlier, sawEarlier, staged, rival, visible, finished,
-                 cached, stale, failed, partial, revoked>>
+                 cached, stale, failed, partial, revoked, indexed>>
 
 \* Any of the steps can happen next.
 Next == WriteEarlier \/ ReadEarlier \/ StageFails \/ Stage \/ RivalCommits
-        \/ RevokeCommits \/ Commit \/ Discard
+        \/ RevokeCommits \/ Commit \/ Discard \/ IndexLater
 
 \* A finished transaction stays finished.
 Done == outcome # "open" /\ UNCHANGED vars
@@ -218,4 +246,8 @@ INV_SeesOwnPatch == staged => ~stale
 \* A patch never lands once the permission that allowed it was revoked by a
 \* commit before the client's.
 INV_RevocationDeniesPatch == (revoked /\ staged) => outcome # "committed"
+
+\* The one-to-one unique index a patch owes is durable exactly when the patch
+\* is: no one ever sees the patch without it, nor the index without the patch.
+INV_IndexLandsWithPatch == indexed <=> outcome = "committed"
 ====

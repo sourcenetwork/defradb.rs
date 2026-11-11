@@ -125,3 +125,69 @@ fn requests_after_a_patch_in_the_transaction_use_the_patched_collection() {
     })
     .unwrap()
 }
+
+#[test]
+fn the_one_to_one_unique_index_a_patch_owes_is_staged_with_the_patch() {
+    workers::block_on(async {
+        let (db, registry, runner) = node().await;
+        let ctx = RequestContext::default();
+        db.add_collection(&ctx, "type Author { name: String }")
+            .await
+            .unwrap();
+        db.patch_collections_as(
+            &ctx,
+            r#"[
+                {"op":"add","path":"/Author/Fields/-","value":{"Name":"published","Kind":"Books","RelationName":"author_book","IsPrimary":true}},
+                {"op":"add","path":"/Author/Fields/-","value":{"Name":"_publishedID","Kind":1,"RelationName":"author_book","IsPrimary":true}}
+            ]"#,
+            None,
+        )
+        .await
+        .unwrap();
+        let handle = registry.begin_as(&ctx, false).await.unwrap();
+        let in_txn = |query: String| runner.execute_in_txn(QueryRequest::new(query), &handle);
+
+        // Author's primary side, patched earlier, only becomes one-to-one once
+        // Books gains its side here, so the unique index on Author comes from
+        // the cross-collection step of this patch.
+        registry
+            .patch_collection_in_txn_as(
+                &ctx,
+                handle.as_str(),
+                r#"[{"op":"add","path":"/Books/Fields/-","value":{"Name":"author","Kind":"Author","RelationName":"author_book"}}]"#,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let book = in_txn(r#"mutation { add_Books(input: {title: "Dune"}) { _docID } }"#.into()).await;
+        assert!(!book.has_errors(), "{:?}", book.errors);
+        let book_id = book.data.unwrap()["add_Books"][0]["_docID"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let author = |name: &str| {
+            format!(r#"mutation {{ add_Author(input: {{name: "{name}", published: "{book_id}"}}) {{ name }} }}"#)
+        };
+        let first = in_txn(author("Frank")).await;
+        assert!(!first.has_errors(), "{:?}", first.errors);
+        let second = in_txn(author("Brian")).await;
+        assert!(
+            second
+                .errors
+                .iter()
+                .any(|error| error.message.contains("violates unique index")),
+            "the transaction holding the patch must already enforce the one-to-one unique index: {:?}",
+            second.data
+        );
+
+        registry.discard_as(&ctx, &handle).await.unwrap();
+        let committed = db.get_collection("Author").unwrap().unwrap();
+        assert!(
+            committed.schema().indexes.iter().all(|index| !index.unique),
+            "a discarded patch leaves no unique index behind: {:?}",
+            committed.schema().indexes
+        );
+    })
+    .unwrap()
+}

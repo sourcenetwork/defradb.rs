@@ -361,6 +361,7 @@ RUNS=(
   "MC_PatchInTxn_Red_NoSavepoint.cfg PatchInTxn.tla RED" # a failed patch leaves its earlier writes in the txn (INV_FailedPatchLeavesNothing)
   "MC_PatchInTxn_Red_StaleCatalog.cfg PatchInTxn.tla RED" # the txn keeps the pre-patch definition cached (INV_SeesOwnPatch)
   "MC_PatchInTxn_Red_NacOutside.cfg PatchInTxn.tla RED" # NAC read outside the txn misses a revocation (INV_RevocationDeniesPatch)
+  "MC_PatchInTxn_Red_IndexLater.cfg PatchInTxn.tla RED" # the owed one-to-one index built by a second commit (INV_IndexLandsWithPatch)
   "MC_Truncate_Green.cfg Truncate.tla GREEN" # #2321: truncate checks nac, then for a filter branchable, txn and shape, before a delete that is durable at once
   "MC_Truncate_Red_Nac.cfg Truncate.tla RED" # permission check left out: a caller without CollectionTruncate removes documents (INV_NoRemovalWithoutPermission)
   "MC_Truncate_Red_Branchable.cfg Truncate.tla RED" # branchable check left out: a filtered truncate splits shared history (INV_FilteredNeverOnBranchable)

@@ -554,18 +554,6 @@ impl<S: Store> crate::database::DB<S> {
         // Clean up any pending migration that was linked to this version
         self.pending_migrations.remove(&new_schema.version_id);
 
-        // Cross-collection one-to-one index creation.
-        // When collections are patched sequentially (e.g., Author then Book), the
-        // primary side (Author) may not get its unique index during its own patch
-        // because the other side (Book) didn't have the relation field yet. Now that
-        // this collection is stored, check if any OTHER collection has a primary
-        // non-array relation that targets this collection and now forms a one-to-one,
-        // and add the missing unique index.
-        if new_schema.is_active {
-            self.create_cross_collection_one_to_one_indexes(&new_schema)
-                .await?;
-        }
-
         // After switching active versions, rebuild the indexes the switch owes.
         if new_schema.is_active {
             self.settle_owed_reindexes_after_commit().await;
@@ -574,23 +562,27 @@ impl<S: Store> crate::database::DB<S> {
         Ok(new_schema)
     }
 
-    /// Check other active collections for primary relation fields that target
-    /// `just_patched` and now form one-to-one relations needing unique indexes.
-    async fn create_cross_collection_one_to_one_indexes(
+    /// Stage on `txn` the unique index each other active collection owes once
+    /// `just_patched` turns one of its primary relations into a one-to-one,
+    /// so the index commits with the patch. When a patch changes several
+    /// collections (Author, then Book), Author's side only becomes one-to-one
+    /// once Book is written. Returns the names of the collections it rewrote.
+    pub(crate) async fn stage_cross_collection_one_to_one_indexes(
         &self,
+        txn: &mut DbTxn<S>,
         just_patched: &CollectionVersion,
-    ) -> Result<()> {
-        // Collect candidates from the cache: other collections with primary non-array
-        // relation fields pointing at just_patched.
-        let candidates: Vec<(String, CollectionVersion)> = self.collections.peek(|cache| {
-            cache
-                .iter()
-                .filter(|(_, col)| col.name() != just_patched.name)
-                .map(|(name, col)| (name.clone(), col.schema().clone()))
-                .collect()
-        });
+    ) -> Result<Vec<String>> {
+        let mut seen = rapidhash::RapidHashSet::default();
+        let candidates: Vec<CollectionVersion> = self
+            .get_all_collection_versions_with_txn(txn)
+            .await?
+            .into_iter()
+            .filter(|version| version.is_active && version.name != just_patched.name)
+            .filter(|version| seen.insert(version.name.clone()))
+            .collect();
 
-        for (coll_name, other_schema) in &candidates {
+        let mut rewritten = Vec::new();
+        for other_schema in &candidates {
             let mut one_to_one = Vec::new();
             for field in &other_schema.fields {
                 if !field.kind.is_relation() || field.kind.is_array() || !field.is_primary {
@@ -622,7 +614,6 @@ impl<S: Store> crate::database::DB<S> {
 
             let mut needs_update = false;
             let mut updated_schema = other_schema.clone();
-            let txn = self.new_txn(false).await?;
             let max_index_id = updated_schema
                 .indexes
                 .iter()
@@ -674,7 +665,7 @@ impl<S: Store> crate::database::DB<S> {
                     Collection::load_index_actions(updated_schema.clone(), &txn.systemstore()?)
                         .await?;
                 let collections = std::sync::Arc::clone(&self.collections);
-                let registered_name = coll_name.to_string();
+                let registered_name = other_schema.name.clone();
                 txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
                     collections.rcu(|old| {
                         let mut cache = old.clone();
@@ -682,10 +673,10 @@ impl<S: Store> crate::database::DB<S> {
                         cache
                     });
                 })))?;
-                txn.commit().await?;
+                rewritten.push(other_schema.name.clone());
             }
         }
 
-        Ok(())
+        Ok(rewritten)
     }
 }

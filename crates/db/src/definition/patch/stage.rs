@@ -11,6 +11,8 @@ pub(crate) struct StagedPatch {
     outcomes: Vec<PatchOutcome>,
     /// Versions a collection-level move left as they were.
     unchanged: Vec<CollectionVersion>,
+    /// Other collections given a one-to-one unique index by the patch.
+    indexed: Vec<String>,
 }
 
 impl StagedPatch {
@@ -37,6 +39,7 @@ impl StagedPatch {
                     .filter(|version| written.contains(version.collection_id.as_str()))
                     .map(|version| version.name.clone()),
             )
+            .chain(self.indexed.iter().cloned())
             .collect()
     }
 }
@@ -105,28 +108,36 @@ impl<S: Store> crate::database::DB<S> {
 
         let changes: Vec<&PreparedPatch> = prepared.iter().filter(|p| !p.is_deactivation).collect();
         let mut outcomes = Vec::with_capacity(changes.len());
+        let mut indexed = Vec::new();
         for (index, change) in changes.iter().enumerate() {
             let siblings: Vec<CollectionVersion> = changes[index + 1..]
                 .iter()
                 .map(|later| later.new_schema.clone())
                 .collect();
-            outcomes.push(
-                self.write_prepared(txn, change, &siblings, migration.clone())
-                    .await?,
-            );
+            let outcome = self
+                .write_prepared(txn, change, &siblings, migration.clone())
+                .await?;
+            if outcome.is_new_version && outcome.schema.is_active {
+                indexed.extend(
+                    self.stage_cross_collection_one_to_one_indexes(txn, &outcome.schema)
+                        .await?,
+                );
+            }
+            outcomes.push(outcome);
         }
         Ok(StagedPatch {
             versions,
             removed,
             outcomes,
             unchanged,
+            indexed,
         })
     }
 
     /// The work `staged` owes once its transaction has committed: forbid the
-    /// IDs of collections it removed whole, register its migrations, and build
-    /// the indexes its new versions owe. Every version it touched, removed ones
-    /// marked inactive.
+    /// IDs of collections it removed whole, register its migrations, and
+    /// rebuild the indexes its new versions owe. None of it can fail the
+    /// committed patch. Every version it touched, removed ones marked inactive.
     pub(crate) async fn finish_staged(
         &self,
         staged: StagedPatch,
@@ -136,6 +147,7 @@ impl<S: Store> crate::database::DB<S> {
             removed,
             outcomes,
             unchanged,
+            indexed: _,
         } = staged;
         let deleting: rapidhash::RapidHashSet<&str> =
             removed.iter().map(|v| v.version_id.as_str()).collect();
