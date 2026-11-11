@@ -7,6 +7,7 @@ use integration_test::actions::{
 use integration_test::m;
 use integration_test::scenario::{captures, Common, Eventually, Text};
 use integration_test::test_case::TestCase;
+use integration_test::ClientType;
 use serde_json::json;
 
 #[test]
@@ -147,6 +148,7 @@ fn a_json_index_follows_merged_edits() {
             }
             .into(),
         ],
+        client_types: Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]),
         ..Default::default()
     }
     .execute();
