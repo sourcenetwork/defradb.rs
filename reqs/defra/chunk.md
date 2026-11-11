@@ -99,3 +99,10 @@ The `ArticleMutationInputArg` type has the input field `body` and no `_body_chun
 - **Scenarios:** ["chunk::protect_api_writes::the_collection_api_cannot_write_chunks_or_the_chunk_list"]
 
 Adding a document to `Article__body_chunk` fails with `Article__body_chunk holds the chunks of Article.body and is written only by writes to Article`. Adding an `Article` with `_body_chunks`, or updating one to set it, fails with `Article._body_chunks is read-only: it is set from body by every write that changes it`. After these failures `Article__body_chunk` is still empty and the article's `_body_chunks` is `null`.
+
+# `defra.chunk.protect.admin_ops`: Admin operations cannot change the chunk collection
+
+- **Parents:** ["defra.chunk.protect"]
+- **Scenarios:** ["chunk::protect_admin_ops::index_changes_to_the_chunk_collection_are_refused", "chunk::protect_admin_ops::collection_changes_to_the_chunk_collection_are_refused"]
+
+Creating an index or an encrypted index on `Article__body_chunk`, or dropping its generated index, fails with `Article__body_chunk holds the chunks of Article.body and is changed only through Article`, and the generated index is still listed. Truncating `Article__body_chunk`, making its version active, and setting a migration from it fail with the same error. An index on `Article` is still created and `Article` can still be truncated.
