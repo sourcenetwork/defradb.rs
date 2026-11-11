@@ -874,12 +874,17 @@ jobs:
       DEFRA_E2E_KEEP: '1'
       # A failing scenario shows its in-process nodes' P2P trace.
       DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,warn
-      # Two scenarios flip between runs (#2712), so a known-failure entry would
-      # fail the runs they pass; they stay out until #2712 is fixed.
+      # These scenarios flip between runs (#2712, #2773, #2774), so a
+      # known-failure entry would fail the runs they pass; each stays out until
+      # its issue is fixed (#2811).
       TESTO_FILTER: >-
         binary(testo)
         & not test(=encryption::peer_sec_index::doc_encryption_peer_if_encrypted_doc_has_indexed_field_should_index_after_decryption)
         & not test(=net::sync::branchable_collection::complex_network::branchable_collection_sync_with_multiple_docs_in_complex_linked_network_should_sync_all)
+        & not test(=net::sync::branchable_collection::complex_network::branchable_collection_sync_with_documents_from_peers_should_have_identical_dag)
+        & not test(=net::sync::branchable_collection::complex_network::branchable_collection_sync_with_documents_from_peers_and_new_head_after_sync_should_have_identical_dag)
+        & not test(=query::commits::branchables::peer_update::query_commits_branchables_handles_concurrent_updates_across_peer_connection)
+        & not test(=net::info::connect_peers::net_info_connect_peers)
       # Not run anywhere: p2p_interop_bench, whose one test is an ignored
       # benchmark that prints latencies, and verars, whose cluster needs the
       # verad validator binary from vera.rs, which CI does not build.
