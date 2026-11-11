@@ -194,6 +194,44 @@ pub enum TransportConfig {
     Libp2p(Libp2pConfig),
     #[cfg(feature = "p2p")]
     Iroh(P2PConfig),
+    #[cfg(feature = "vinc")]
+    Vinc(VincConfig),
+}
+
+/// The vinc transport's configuration: direct connections only, no gossip.
+#[cfg(feature = "vinc")]
+#[derive(Debug, Clone, PartialEq)]
+pub struct VincConfig {
+    /// The UDP address the endpoint binds; port 0 picks one.
+    pub bind: std::net::SocketAddr,
+    /// Who may connect in. Defaults to every peer.
+    pub allowlist: p2p::vinc::VincAllowlistConfig,
+    /// Path of a key file, read as [`P2PConfig::secret_key_path`] is, so a
+    /// node keeps the peer id it has on iroh.
+    pub secret_key_path: Option<std::path::PathBuf>,
+    /// Where the secret key lives.
+    pub peer_key: PeerKeySource,
+    /// The most sessions at once; vinc reserves its tables for all of them.
+    pub max_connections: usize,
+    /// Reload collection subscriptions persisted in the local store.
+    pub load_persisted_collections: bool,
+    /// Sync limits and the replicator retry ladder.
+    pub sync: SyncTuning,
+}
+
+#[cfg(feature = "vinc")]
+impl Default for VincConfig {
+    fn default() -> Self {
+        Self {
+            bind: std::net::SocketAddr::from(([0, 0, 0, 0], 0)),
+            allowlist: p2p::vinc::VincAllowlistConfig::default(),
+            secret_key_path: None,
+            peer_key: PeerKeySource::default(),
+            max_connections: p2p::vinc::VincEndpointConfig::DEFAULT_MAX_CONNECTIONS,
+            load_persisted_collections: true,
+            sync: SyncTuning::default(),
+        }
+    }
 }
 
 /// libp2p transport configuration.

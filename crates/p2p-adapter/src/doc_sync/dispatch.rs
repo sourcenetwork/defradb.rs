@@ -70,6 +70,35 @@ impl DocSyncDispatch for p2p::iroh::IrohTransport {
     }
 }
 
+#[cfg(all(feature = "vinc", not(target_arch = "wasm32")))]
+#[async_trait]
+impl DocSyncDispatch for p2p::vinc::VincTransport {
+    type Peer = p2p::transport::PeerId;
+
+    const SEND_CONFIRMS_REPLY: bool = true;
+
+    async fn connected_peers(&self) -> P2PResult<Vec<Self::Peer>> {
+        p2p::P2PTransport::connected_peers(self)
+            .await
+            .map_err(|error| P2PError::transport(format!("failed to get connected peers: {error}")))
+    }
+
+    fn sign_request(&self, request: &mut DocSyncRequest) -> P2PResult<()> {
+        p2p::signing::sign_with_transport(self, request)
+            .map_err(|error| P2PError::internal(format!("failed to sign DocSync request: {error}")))
+    }
+
+    async fn send_doc_sync_request(
+        &self,
+        peer: &Self::Peer,
+        request: DocSyncRequest,
+    ) -> P2PResult<()> {
+        p2p::P2PTransport::send_doc_sync_request(self, peer, request)
+            .await
+            .map_err(|error| P2PError::transport(error.to_string()))
+    }
+}
+
 #[cfg(feature = "libp2p")]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]

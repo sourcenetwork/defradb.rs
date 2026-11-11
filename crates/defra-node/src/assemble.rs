@@ -128,6 +128,8 @@ where
         TransportConfig::Libp2p(libp2p) => drop(libp2p.sync.retry_schedule()?),
         #[cfg(feature = "p2p")]
         TransportConfig::Iroh(iroh) => drop(iroh.sync.retry_schedule()?),
+        #[cfg(feature = "vinc")]
+        TransportConfig::Vinc(vinc) => drop(vinc.sync.retry_schedule()?),
         TransportConfig::None => {}
     }
 
@@ -305,6 +307,20 @@ where
                 start_peer_key.as_ref(),
                 network.sibling(),
                 extras.stream_protocols,
+            )
+            .await
+            .map(Some),
+            #[cfg(feature = "vinc")]
+            (TransportConfig::Vinc(vinc), Some(network)) => crate::vinc_runtime::setup_vinc(
+                store.clone(),
+                database.clone(),
+                event_bus.clone(),
+                vinc,
+                node_p2p_identity.clone(),
+                document_acp.clone(),
+                strict_replicated_doc_access,
+                peer_keyring.as_ref(),
+                network.sibling(),
             )
             .await
             .map(Some),
