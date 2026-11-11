@@ -319,9 +319,21 @@ where
                         require_bound_nac,
                     )
                     .await;
-                    if !matches!(allowed, Ok(Some(true))) {
-                        denied = needed;
-                        break;
+                    match allowed {
+                        Ok(Some(true)) => {}
+                        Ok(Some(false)) => {
+                            denied = needed;
+                            break;
+                        }
+                        Ok(None) if require_bound_nac || require_authority => {
+                            return Ok(Turned::Done(QueryResponse::error(
+                                "transaction-bound node authorization is unavailable",
+                            )));
+                        }
+                        Ok(None) => break,
+                        Err(error) => {
+                            return Ok(Turned::Done(QueryResponse::error(error.to_string())))
+                        }
                     }
                 }
                 return Ok(Turned::Done(QueryResponse::error(format!(

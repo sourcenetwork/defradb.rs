@@ -210,9 +210,11 @@ fn an_identity_only_node_is_checked_as_its_caller_under_nac() {
                 .data
                 .as_ref()
                 .and_then(|data| data.get("add_Widget"))
-                .is_none(),
-            "an anonymous create must be denied: {:?}",
-            anonymous.data
+                .is_none()
+                && anonymous.errors.iter().any(|error| error
+                    .message
+                    .contains("not authorized to perform operation")),
+            "an anonymous create must be denied: {anonymous:?}"
         );
 
         let handle = node.begin_transaction(false).await.unwrap();
@@ -228,9 +230,11 @@ fn an_identity_only_node_is_checked_as_its_caller_under_nac() {
                 .data
                 .as_ref()
                 .and_then(|data| data.get("add_Widget"))
-                .is_none(),
-            "an anonymous create in the transaction must be denied: {:?}",
-            anonymous.data
+                .is_none()
+                && anonymous.errors.iter().any(|error| error
+                    .message
+                    .contains("not authorized to perform operation")),
+            "an anonymous create in the transaction must be denied: {anonymous:?}"
         );
         node.commit_transaction(&handle).await.unwrap();
 
