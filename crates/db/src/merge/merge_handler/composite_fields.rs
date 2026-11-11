@@ -9,6 +9,14 @@ enum EffectiveLinkedDelta {
     SkipField,
 }
 
+pub(super) fn indexes_field(collection: &Collection, field: &str) -> bool {
+    collection
+        .schema()
+        .indexes
+        .iter()
+        .any(|index| index.fields.iter().any(|indexed| indexed.name == field))
+}
+
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     pub(crate) async fn process_linked_field_blocks(
         &self,
@@ -221,6 +229,27 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
         }
 
+        // Read the document before merging fields. Some merges save the new
+        // value right away, and the index needs the old one to drop its entry.
+        if let Some(collection) = context.collection.as_ref().filter(|collection| {
+            pending.iter().any(|(_, _, deltas)| {
+                deltas.iter().any(|effective| {
+                    effective
+                        .field()
+                        .is_some_and(|delta| indexes_field(collection, delta.field_name))
+                })
+            })
+        }) {
+            let doc_id = DocID::from_string(context.doc_id_str)
+                .map_err(|e| MergeError::MergeFailed(format!("invalid doc_id: {e}")))?;
+            let before = state
+                .reads
+                .document(collection, datastore, context.doc_short_id, &doc_id)
+                .await
+                .map_err(MergeError::Database)?;
+            state.indexed_before = Some(before);
+        }
+
         // Phase 2: persist the decoded deltas.
         for (link_cid, parents, deltas) in pending {
             let mut parked = false;
@@ -280,7 +309,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         state.field_priorities.insert(field_name.clone(), order);
                     }
                     // An operation is an operand on the stored value.
-                    None => state.reads.wrote_document(),
+                    None => state.reads.wrote_field(
+                        &field_name,
+                        result.value.as_ref().filter(|_| result.op.is_none()),
+                    ),
                 }
                 if result.applied {
                     state.any_field_applied = true;

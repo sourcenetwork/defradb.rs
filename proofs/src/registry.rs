@@ -2010,6 +2010,18 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "proofs/tests/behavioral/index.rs index_reconciles_lww_merge_after_restart",
     },
     Property {
+        // A text, JSON or custom field's merge writes its merged value into
+        // the document before the composite updates the index, so the
+        // update starts from a read taken before the field merges.
+        family: "Index-maintenance consistency",
+        name: "INV_IndexMatchesValue / INV_NoLostEdit — after a merge the index holds exactly the merged value, and every edit counts",
+        axis: Tla,
+        anchor: "crates/db/src/merge/merge_handler/composite_fields.rs process_linked_field_blocks; crates/db/src/merge/merge_handler/composite_persist.rs persist_merged_document; crates/db/src/merge/merge_handler/block_reads.rs BlockReads::wrote_field; crates/db/src/merge/merge_handler/parked.rs replay_in_txn",
+        model_ref: "MC_MergedFieldIndex_{Green,Green_Clear,Red_ReadAfterPart,Red_StaleCache}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // A node's shutdown aborts every task it holds and waits for each to
         // let go of storage before the pool stops and regolith closes; the
         // drain gives up at its deadline; a refused telemetry flush moves to
