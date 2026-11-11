@@ -24,6 +24,41 @@ use p2p::P2PTransport;
 
 const DOC_SYNC_DISPATCH_PARALLELISM: usize = 16;
 
+/// Wait for `collection_id`'s merges until none came for `idle_timeout`, or
+/// `overall_timeout` from `start` passed. A copy of libp2p's wait.
+async fn wait_for_branchable_merges(
+    sub: &mut events::Subscription,
+    collection_id: &str,
+    start: web_time::Instant,
+    overall_timeout: std::time::Duration,
+    idle_timeout: std::time::Duration,
+) {
+    let mut saw_merge = false;
+    let mut last_activity = web_time::Instant::now();
+    while start.elapsed() < overall_timeout {
+        if last_activity.elapsed() > idle_timeout {
+            break;
+        }
+        match p2p::rt::time::timeout(std::time::Duration::from_millis(100), sub.recv()).await {
+            Ok(Some(msg)) => {
+                if msg
+                    .as_merge_complete()
+                    .is_some_and(|data| data.collection_id == collection_id)
+                {
+                    saw_merge = true;
+                    last_activity = web_time::Instant::now();
+                }
+            }
+            Ok(None) => break,
+            Err(_) => {
+                if !saw_merge && start.elapsed() > idle_timeout {
+                    break;
+                }
+            }
+        }
+    }
+}
+
 /// P2P operations implementation for the vinc transport.
 pub struct VincP2PAdapter<B: Blockstore + 'static> {
     transport: VincTransport,
@@ -372,7 +407,19 @@ impl<B: Blockstore + 'static> P2POperations for VincP2PAdapter<B> {
                 result.push(addr);
                 continue;
             }
-            result.push(peer_str);
+            // A peer that dialed in: vinc sends from the socket it listens on,
+            // so the address it was seen at is the one to list.
+            let seen_at = self
+                .transport
+                .peer_connection(peer)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|connection| connection.remote_address);
+            match seen_at {
+                Some(remote) => result.push(format!("{peer_str}@{remote}")),
+                None => result.push(peer_str),
+            }
         }
         Ok(result)
     }
@@ -1054,20 +1101,35 @@ impl<B: Blockstore + 'static> P2POperations for VincP2PAdapter<B> {
             P2PError::internal(format!("failed to sign BranchableSync request: {error}"))
         })?;
 
+        // As on libp2p, the call returns once the merges the replies started
+        // have gone quiet, so a read right after it sees the synced documents.
+        let mut merges = self.event_bus.as_ref().map(|bus| {
+            (
+                Arc::clone(bus),
+                bus.subscribe(&[events::EventName::MergeComplete]),
+            )
+        });
+        let start = web_time::Instant::now();
         for peer in &connected_peers {
-            let request_clone = request.clone();
-            let transport = self.transport.clone();
-            let peer = peer.clone();
-            self.network.spawn(async move {
-                if let Err(error) = transport
-                    .send_branchable_sync_request(&peer, request_clone)
-                    .await
-                {
-                    tracing::warn!(peer_id = %peer, error = %error, "failed to send BranchableSyncRequest");
-                }
-            });
+            if let Err(error) = self
+                .transport
+                .send_branchable_sync_request(peer, request.clone())
+                .await
+            {
+                tracing::warn!(peer_id = %peer, error = %error, "failed to send BranchableSyncRequest");
+            }
         }
-
+        if let Some((bus, sub)) = merges.as_mut() {
+            wait_for_branchable_merges(
+                sub,
+                collection_id,
+                start,
+                std::time::Duration::from_secs(30),
+                std::time::Duration::from_secs(3),
+            )
+            .await;
+            bus.unsubscribe(sub.id());
+        }
         Ok(())
     }
 
@@ -1092,15 +1154,9 @@ impl<B: Blockstore + 'static> P2POperations for VincP2PAdapter<B> {
         let syncer = self
             .version_syncer
             .as_ref()
-            .ok_or_else(|| P2PError::unsupported("version syncer required"))?
-            .clone();
-        self.network.spawn(async move {
-            if let Err(error) = syncer.sync_versions(version_ids, connected_peers).await {
-                tracing::warn!(error = %error, "version sync failed");
-            }
-        });
-
-        Ok(())
+            .ok_or_else(|| P2PError::unsupported("version syncer required"))?;
+        // The call returns once the versions are synced, as libp2p's and Go's do.
+        syncer.sync_versions(version_ids, connected_peers).await
     }
 
     async fn push_documents_to_peer(
