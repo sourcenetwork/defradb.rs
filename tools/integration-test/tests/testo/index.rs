@@ -49,6 +49,7 @@ mod query_with_unique_composite_index_filter;
 mod query_with_unique_index_on_relation_filter;
 mod query_with_unique_index_only_filter;
 mod range_filter;
+mod resume_after_open;
 mod status;
 mod unique_writer;
 mod update_unique;
