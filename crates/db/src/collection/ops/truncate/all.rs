@@ -17,6 +17,7 @@ impl<S: Store> crate::database::DB<S> {
         for chunk in doc_ids.chunks(CHUNK_SIZE) {
             self.truncate_chunk(collection, chunk).await?;
         }
+        self.truncate_deferred_indexes(collection).await?;
         self.truncate_collection_metadata(
             collection.collection_id(),
             collection.resolved_root_id(),

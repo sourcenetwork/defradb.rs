@@ -2,6 +2,7 @@
 //! every edge calls.
 
 mod all;
+mod deferred;
 mod error;
 mod filtered;
 

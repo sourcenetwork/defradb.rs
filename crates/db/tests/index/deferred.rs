@@ -463,3 +463,38 @@ fn a_drain_does_not_abort_a_transaction_that_read_through_the_index() {
     })
     .unwrap();
 }
+
+#[test]
+fn a_truncate_leaves_no_record_and_no_log() {
+    workers::block_on(async {
+        let node = Node::open().await;
+        let a = node.create("a", 1).await;
+        node.create("b", 2).await;
+        node.increment(&a, 4).await;
+        let short_id = node
+            .db
+            .require_collection(COLLECTION)
+            .unwrap()
+            .schema()
+            .resolved_root_id();
+        let records = storage::keys::index_position_prefix(short_id, node.index_id);
+        let log = storage::keys::index_pending_log(short_id, node.index_id);
+        assert_eq!(count_keys(&node.db, records.clone()).await, 2);
+        assert_eq!(count_keys(&node.db, log.entry_prefix().to_vec()).await, 1);
+
+        node.db
+            .truncate_collection_as(&defra_core::RequestContext::ambient(), COLLECTION, None)
+            .await
+            .unwrap();
+
+        assert_eq!(count_keys(&node.db, records).await, 0);
+        assert_eq!(count_keys(&node.db, log.entry_prefix().to_vec()).await, 0);
+        let c = node.create("c", 3).await;
+        node.increment(&c, 2).await;
+        assert_eq!(node.names("{count: {_eq: 5}}", "{count: ASC}").await, ["c"]);
+        node.drain().await;
+        assert_eq!((node.stored_at(3).await, node.stored_at(5).await), (0, 1));
+        assert_eq!(node.names("{count: {_gt: 0}}", "{count: ASC}").await, ["c"]);
+    })
+    .unwrap();
+}
