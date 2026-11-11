@@ -18,8 +18,9 @@ use crate::error::{Error, Result};
 use crate::DB;
 
 /// Bumped whenever an index key encoding changes. Version 1 is the original
-/// single-varint DateTime encoding; version 2 splits seconds from nanos.
-pub const CURRENT_INDEX_FORMAT: u32 = 2;
+/// single-varint DateTime encoding; version 2 splits seconds from nanos;
+/// version 3 gives each deferred index entry its position record.
+pub const CURRENT_INDEX_FORMAT: u32 = 3;
 
 /// Systemstore key holding the format the indexes on disk were written with.
 pub use storage::keys::systemstore::INDEX_FORMAT_KEY;

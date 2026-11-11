@@ -16,6 +16,8 @@ use storage::corekv::{IterOptions, Iterator as _};
 use storage::keys::{IndexDataStoreKey, IndexedField};
 use storage::RegolithStore;
 
+mod upgrade;
+
 const COLLECTION: &str = "Tallies";
 
 fn collection() -> CollectionVersion {
