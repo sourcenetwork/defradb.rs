@@ -19,6 +19,12 @@
 \* its signer is fixed: a hold that brings another signer is refused, and a
 \* pin may replace the signer only when nothing holds the DID.
 \*
+\* Two holders may also bring the same signer: two registrations naming one
+\* host context (the same handle and callback). The host keeps that context
+\* valid until every handle naming it is gone, so the second is not another
+\* signer and must be taken, not refused: a signer is compared by the context
+\* it calls, not by which registration made it.
+\*
 \* The store keeps one slot per DID. A slot is made the first time its DID is
 \* named and stays in the map from then on. A slot holds four things that
 \* change together in one atomic swap (an rcu): whether the DID is pinned, how
@@ -56,7 +62,10 @@
 \*      - INV_KeyMatchesHolders;
 \*   4. a holder's DID signs through a signer other than the one the holder
 \*      signs with (it was re-routed, maybe to a context already freed)
-\*      - INV_OwnSigner.
+\*      - INV_OwnSigner;
+\*   5. a hold that brings the very signer the DID already has is refused
+\*      (a valid second handle for one host context turned away)
+\*      - INV_AcceptSame.
 \*
 \* Each guard the code relies on has a RED configuration that removes it:
 \*   * AtomicSwap: the count and key change in one swap (Red_SplitSwap);
@@ -70,7 +79,9 @@
 \*   * RefuseOther: a hold with another signer is refused, not stored over
 \*     the held one (Red_ReplaceOnHold);
 \*   * PinRefusesHeld: a pin never replaces a held DID's signer
-\*     (Red_PinReplacesHeld).
+\*     (Red_PinReplacesHeld);
+\*   * SameByContext: two signers are the same when they call the same host
+\*     context (Red_RefuseSameContext).
 \*
 \* Rust: crates/defra-core/src/signing/identity_store.rs: slot, same_signer,
 \* store_identity, hold_identity, IdentityHold::new, IdentityHold::drop,
@@ -78,12 +89,15 @@
 \* Holders: crates/ffi/src/state/identity.rs IdentityState::register,
 \* NodeIdentity::hold, NodeIdentity::release; crates/ffi/src/remote_signer/
 \* register.rs store; crates/defra-node/src/node_identity.rs
-\* create_node_identity.
+\* create_node_identity. Signer equality: crates/defra-core/src/signing.rs
+\* RemoteSigner::host_context; crates/ffi/src/remote_signer/mod.rs
+\* FfiRemoteSigner::host_context.
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS
-  Holders,          \* the holders that use the one DID modeled; each brings
-                    \* its own signer, named after it
+  Holders,          \* the holders that use the one DID modeled
+  Contexts,         \* the host contexts a hold may bring as its signer; two
+                    \* holds bringing one context bring the same signer
   PinSig,           \* the signer the process pins with
   NoSigner,         \* stands for "no key, so no signer"
   MaxSlots,         \* how many slots the map may make in a run (bounds TLC)
@@ -93,12 +107,13 @@ CONSTANTS
   ClearKeepsHeld,   \* TRUE: clear keeps a key that something holds
   RetainNeedsKey,   \* TRUE: retain adds a hold only when the key is there
   RefuseOther,      \* TRUE: a hold with another signer is refused
-  PinRefusesHeld    \* TRUE: a pin never replaces a held DID's signer
+  PinRefusesHeld,   \* TRUE: a pin never replaces a held DID's signer
+  SameByContext     \* TRUE: signers are compared by the context they call
 
 \* The slot ids the map can make; 0 means the map has no entry for the DID.
 Slots == 1..MaxSlots
-\* Every signer: each holder's own, and the process's.
-Signers == Holders \cup {PinSig}
+\* Every signer: each host context, and the process's.
+Signers == Contexts \cup {PinSig}
 \* What a slot or holder can name as its signer.
 SignerOrNone == Signers \cup {NoSigner}
 \* The fields a slot holds.
@@ -112,9 +127,11 @@ VARIABLES
   at,     \* the slot each holder looked up for its current operation
   snap,   \* what a holder read, when a swap is split into read then write
   mine,   \* the signer each holder signs through while it holds
+  brings, \* the signer each holder brings to its current hold
+  turnedAway, \* TRUE once a hold bringing the DID's own signer was refused
   admin   \* where the process is in a pin
 
-vars == <<entry, slots, made, pc, at, snap, mine, admin>>
+vars == <<entry, slots, made, pc, at, snap, mine, brings, turnedAway, admin>>
 
 \* An empty slot: not pinned, no holds, no key.
 Empty == [pinned |-> FALSE, holds |-> 0, key |-> FALSE, signer |-> NoSigner]
@@ -144,6 +161,8 @@ TypeOK ==
   /\ at \in [Holders -> 0..MaxSlots]
   /\ snap \in [Holders -> SlotRec]
   /\ mine \in [Holders -> SignerOrNone]
+  /\ brings \in [Holders -> SignerOrNone]
+  /\ turnedAway \in BOOLEAN
   /\ admin \in {"idle", "pin"}
 
 \* At start the map is empty, nothing is made, and nobody holds anything.
@@ -155,6 +174,8 @@ Init ==
   /\ at = [h \in Holders |-> 0]
   /\ snap = [h \in Holders |-> Empty]
   /\ mine = [h \in Holders |-> NoSigner]
+  /\ brings = [h \in Holders |-> NoSigner]
+  /\ turnedAway = FALSE
   /\ admin = "idle"
 
 \* slot(): the DID's slot, made and put in the map if the map has none. Only
@@ -170,8 +191,14 @@ FindMade == made' = IF entry # 0 THEN made ELSE made + 1
 \* ---- what each swap writes, from what it read ----
 
 \* hold_identity refuses when the slot's key has another signer (same_signer
-\* is false). With RefuseOther off it never refuses.
-HoldRefused(v, g) == RefuseOther /\ v.key /\ v.signer # g
+\* is false). With RefuseOther off it never refuses. With SameByContext off,
+\* signers are compared by which registration made them, as an Arc pointer:
+\* every new hold brings a new one, so any key already there refuses it.
+HoldRefused(v, g) == RefuseOther /\ v.key /\ (v.signer # g \/ ~SameByContext)
+
+\* A refusal of a hold that brought the slot's very signer: a valid hold
+\* turned away.
+WronglyRefused(v, g) == HoldRefused(v, g) /\ v.signer = g
 
 \* hold_identity's swap with signer g: one more hold, and the key stored with
 \* g if the slot had none (it keeps its own otherwise, which is g unless
@@ -216,25 +243,31 @@ AfterClear(v) ==
 
 \* ---- holders ----
 
-\* An idle holder starts a hold: looks the slot up, making it if missing.
+\* An idle holder starts a hold with a signer: any host context, perhaps
+\* the one another holder already brought. It looks the slot up, making it
+\* if missing.
 StartHold(h) ==
   /\ pc[h] = "idle" /\ CanFind
   /\ FindEntry /\ FindMade
+  /\ \E c \in Contexts : brings' = [brings EXCEPT ![h] = c]
   /\ pc' = [pc EXCEPT ![h] = "hold"]
   /\ at' = [at EXCEPT ![h] = Found]
-  /\ UNCHANGED <<slots, snap, mine, admin>>
+  /\ UNCHANGED <<slots, snap, mine, turnedAway, admin>>
 
-\* The hold's swap, in one step: the holder now holds and signs through its
-\* own signer, or was refused and holds nothing.
+\* The hold's swap, in one step: the holder now holds and signs through the
+\* signer it brought, or was refused and holds nothing.
 SwapHold(h) ==
   /\ pc[h] = "hold" /\ AtomicSwap
-  /\ IF HoldRefused(slots[at[h]], h)
+  /\ IF HoldRefused(slots[at[h]], brings[h])
      THEN /\ pc' = [pc EXCEPT ![h] = "idle"]
+          \* Remember a refusal of the very signer the slot has.
+          /\ turnedAway' = (turnedAway \/ WronglyRefused(slots[at[h]], brings[h]))
           /\ UNCHANGED <<slots, mine>>
-     ELSE /\ slots' = [slots EXCEPT ![at[h]] = AfterHold(slots[at[h]], h)]
+     ELSE /\ slots' = [slots EXCEPT ![at[h]] = AfterHold(slots[at[h]], brings[h])]
           /\ pc' = [pc EXCEPT ![h] = "holding"]
-          /\ mine' = [mine EXCEPT ![h] = h]
-  /\ UNCHANGED <<entry, made, at, snap, admin>>
+          /\ mine' = [mine EXCEPT ![h] = brings[h]]
+          /\ UNCHANGED turnedAway
+  /\ UNCHANGED <<entry, made, at, snap, brings, admin>>
 
 \* An idle holder starts a retain: retain_identity only looks the slot up and
 \* answers false at once when the map has none.
@@ -242,7 +275,7 @@ StartRetain(h) ==
   /\ pc[h] = "idle" /\ entry # 0
   /\ pc' = [pc EXCEPT ![h] = "retain"]
   /\ at' = [at EXCEPT ![h] = entry]
-  /\ UNCHANGED <<entry, slots, made, snap, mine, admin>>
+  /\ UNCHANGED <<entry, slots, made, snap, mine, admin, brings, turnedAway>>
 
 \* The retain's swap, in one step: a hold through the slot's signer when it
 \* retained, idle otherwise.
@@ -251,7 +284,7 @@ SwapRetain(h) ==
   /\ slots' = [slots EXCEPT ![at[h]] = AfterRetain(slots[at[h]])]
   /\ pc' = [pc EXCEPT ![h] = IF Retains(slots[at[h]]) THEN "holding" ELSE "idle"]
   /\ mine' = [mine EXCEPT ![h] = slots[at[h]].signer]
-  /\ UNCHANGED <<entry, made, at, snap, admin>>
+  /\ UNCHANGED <<entry, made, at, snap, admin, brings, turnedAway>>
 
 \* A holder gives its hold back: release_identity looks the slot up by DID
 \* again. When the map has none, nothing is given back and the hold is lost.
@@ -262,14 +295,14 @@ StartRelease(h) ==
           /\ at' = [at EXCEPT ![h] = entry]
      ELSE /\ pc' = [pc EXCEPT ![h] = "idle"]
           /\ UNCHANGED at
-  /\ UNCHANGED <<entry, slots, made, snap, mine, admin>>
+  /\ UNCHANGED <<entry, slots, made, snap, mine, admin, brings, turnedAway>>
 
 \* The release's swap, in one step: the holder has no hold any more.
 SwapRelease(h) ==
   /\ pc[h] = "release" /\ AtomicSwap
   /\ slots' = [slots EXCEPT ![at[h]] = AfterRelease(slots[at[h]])]
   /\ pc' = [pc EXCEPT ![h] = "idle"]
-  /\ UNCHANGED <<entry, made, at, snap, mine, admin>>
+  /\ UNCHANGED <<entry, made, at, snap, mine, admin, brings, turnedAway>>
 
 \* ---- the split swap (AtomicSwap off): read now, write what it read later ----
 
@@ -280,16 +313,16 @@ ReadSlot(h) ==
   /\ pc' = [pc EXCEPT ![h] = IF pc[h] = "hold" THEN "holdW"
                              ELSE IF pc[h] = "retain" THEN "retainW"
                              ELSE "releaseW"]
-  /\ UNCHANGED <<entry, slots, made, at, mine, admin>>
+  /\ UNCHANGED <<entry, slots, made, at, mine, admin, brings, turnedAway>>
 
 \* The holder writes what its read said, over whatever is there now.
 WriteSlot(h) ==
   /\ pc[h] \in {"holdW", "retainW", "releaseW"}
   /\ LET v == snap[h]
-         refused == pc[h] = "holdW" /\ HoldRefused(v, h)
+         refused == pc[h] = "holdW" /\ HoldRefused(v, brings[h])
      IN /\ slots' = IF refused THEN slots
                     ELSE [slots EXCEPT ![at[h]] =
-                            IF pc[h] = "holdW" THEN AfterHold(v, h)
+                            IF pc[h] = "holdW" THEN AfterHold(v, brings[h])
                             ELSE IF pc[h] = "retainW" THEN AfterRetain(v)
                             ELSE AfterRelease(v)]
         /\ pc' = [pc EXCEPT ![h] =
@@ -298,10 +331,13 @@ WriteSlot(h) ==
                          THEN IF Retains(v) THEN "holding" ELSE "idle"
                     ELSE "idle"]
         /\ mine' = [mine EXCEPT ![h] =
-                      IF pc[h] = "holdW" THEN h
+                      IF pc[h] = "holdW" THEN brings[h]
                       ELSE IF pc[h] = "retainW" THEN v.signer
                       ELSE mine[h]]
-  /\ UNCHANGED <<entry, made, at, snap, admin>>
+        \* Remember a refusal of the very signer the slot had.
+        /\ turnedAway' = (turnedAway \/
+                          (pc[h] = "holdW" /\ WronglyRefused(v, brings[h])))
+  /\ UNCHANGED <<entry, made, at, snap, brings, admin>>
 
 \* ---- the process ----
 
@@ -310,7 +346,7 @@ StartPin ==
   /\ admin = "idle" /\ CanFind
   /\ FindEntry /\ FindMade
   /\ admin' = "pin"
-  /\ UNCHANGED <<slots, pc, at, snap, mine>>
+  /\ UNCHANGED <<slots, pc, at, snap, mine, brings, turnedAway>>
 
 \* The pin's swap, or its refusal. The slot it found is still the map's in
 \* GREEN; with ClearKeepsSlots off a clear may have removed it, and the pin
@@ -321,7 +357,7 @@ SwapPin ==
               THEN [slots EXCEPT ![entry] = AfterPin(slots[entry])]
               ELSE slots
   /\ admin' = "idle"
-  /\ UNCHANGED <<entry, made, pc, at, snap, mine>>
+  /\ UNCHANGED <<entry, made, pc, at, snap, mine, brings, turnedAway>>
 
 \* clear_identity_store: every slot in the map is unpinned and loses the key
 \* nothing holds. With ClearKeepsSlots off, the map's entry is removed
@@ -333,7 +369,7 @@ Clear ==
           /\ UNCHANGED entry
      ELSE /\ entry' = 0
           /\ UNCHANGED slots
-  /\ UNCHANGED <<made, pc, at, snap, mine, admin>>
+  /\ UNCHANGED <<made, pc, at, snap, mine, admin, brings, turnedAway>>
 
 Next ==
   \/ \E h \in Holders :
@@ -367,4 +403,9 @@ INV_KeyMatchesHolders ==
 \* no hold or pin re-routed it to another.
 INV_OwnSigner ==
   \A h \in Holding : entry # 0 /\ slots[entry].signer = mine[h]
+
+\* A hold that brings the very signer the DID already has is never refused:
+\* a second handle for one host context is taken, as nothing valid is
+\* rejected.
+INV_AcceptSame == ~turnedAway
 ====

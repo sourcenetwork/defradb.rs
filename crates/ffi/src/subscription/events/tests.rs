@@ -3,7 +3,7 @@
 
 use std::ffi::CString;
 use std::ptr;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -11,7 +11,7 @@ use super::{defra_event_subscribe, parse_names};
 use crate::identities::{defra_identity_free, defra_identity_new};
 use crate::subscription::{defra_subscription_close, defra_subscription_poll};
 use crate::test_support::{
-    add_collection, close, cstr, err, local_options, node, node_with, ok, query, take,
+    add_collection, close, cstr, err, local_options, node, node_with, ok, query, take, wait_for,
 };
 use crate::types::NodeInitOptions;
 
@@ -25,16 +25,13 @@ fn subscribe(node: usize, names: &str, identity: usize) -> CString {
 
 /// Polls until an event arrives, or fails after 10 seconds.
 fn next(id: &CString) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
+    wait_for(Duration::from_secs(10), || {
         match take(unsafe { defra_subscription_poll(id.as_ptr()) }) {
-            (0, Ok(json)) => return serde_json::from_str(&json).expect("an event is JSON"),
-            (2, _) => {}
+            (0, Ok(json)) => Ok(serde_json::from_str(&json).expect("an event is JSON")),
+            (2, _) => Err("no event arrived".to_string()),
             (status, outcome) => panic!("poll failed with status {status}: {outcome:?}"),
         }
-        assert!(Instant::now() < deadline, "no event arrived");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    })
 }
 
 fn identity() -> usize {

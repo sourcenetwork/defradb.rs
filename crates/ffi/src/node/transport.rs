@@ -1,6 +1,6 @@
 //! The P2P transport a C caller's [`NodeInitOptions`] ask for.
 
-#[cfg(feature = "iroh")]
+#[cfg(any(feature = "libp2p", feature = "iroh"))]
 use crate::target::non_empty;
 use crate::target::{go_string, split_comma_separated};
 use crate::types::NodeInitOptions;
@@ -100,13 +100,17 @@ fn sync_tuning(
     tuning
 }
 
+/// # Safety
+///
+/// As for [`read`].
 #[cfg(feature = "libp2p")]
-fn libp2p(
+unsafe fn libp2p(
     options: &NodeInitOptions,
     listen_addrs: Vec<String>,
     peers: Vec<String>,
     retry_intervals: Option<Vec<u64>>,
 ) -> Result<defra_node::TransportConfig, String> {
+    reject_iroh_only(options)?;
     Ok(defra_node::TransportConfig::Libp2p(
         defra_node::Libp2pConfig {
             listen_addrs: if listen_addrs.is_empty() {
@@ -133,8 +137,57 @@ fn libp2p(
     ))
 }
 
+/// iroh options a libp2p node has no counterpart for: set, they fail the
+/// call rather than leave the caller believing they took effect.
+///
+/// # Safety
+///
+/// As for [`read`].
+#[cfg(feature = "libp2p")]
+unsafe fn reject_iroh_only(options: &NodeInitOptions) -> Result<(), String> {
+    let iroh_only = [
+        (
+            non_empty(options.iroh_relay_url).is_some(),
+            "iroh_relay_url",
+        ),
+        (
+            non_empty(options.iroh_relay_mode).is_some(),
+            "iroh_relay_mode",
+        ),
+        (
+            non_empty(options.iroh_relay_urls_json).is_some(),
+            "iroh_relay_urls_json",
+        ),
+        (
+            non_empty(options.iroh_bind_addr).is_some(),
+            "iroh_bind_addr",
+        ),
+        (options.iroh_bind_port != 0, "iroh_bind_port"),
+        (
+            options.iroh_disable_discovery != 0,
+            "iroh_disable_discovery",
+        ),
+        (
+            non_empty(options.iroh_discovery_origin_domain).is_some(),
+            "iroh_discovery_origin_domain",
+        ),
+        (
+            non_empty(options.iroh_pkarr_relay_url).is_some(),
+            "iroh_pkarr_relay_url",
+        ),
+        (non_empty(options.iroh_key_path).is_some(), "iroh_key_path"),
+    ];
+    match iroh_only.iter().find(|(set, _)| *set) {
+        Some((_, what)) => Err(format!(
+            "{} is an iroh option; the libp2p transport does not use it",
+            what
+        )),
+        None => Ok(()),
+    }
+}
+
 #[cfg(not(feature = "libp2p"))]
-fn libp2p(
+unsafe fn libp2p(
     _options: &NodeInitOptions,
     _listen_addrs: Vec<String>,
     _peers: Vec<String>,
@@ -169,6 +222,16 @@ unsafe fn iroh(
 ) -> Result<defra_node::TransportConfig, String> {
     if !peers.is_empty() {
         return Err("not supported yet: peers with the iroh transport".to_string());
+    }
+    reject_libp2p_only(options)?;
+    if !listen_addrs.is_empty()
+        && (non_empty(options.iroh_bind_addr).is_some() || options.iroh_bind_port != 0)
+    {
+        return Err(
+            "listening_addresses and iroh_bind_addr/iroh_bind_port both set where the iroh \
+             transport listens; set one"
+                .to_string(),
+        );
     }
     // The node keeps one peer key in its store, for either transport; an iroh
     // key file only seeds it.
@@ -258,6 +321,129 @@ unsafe fn iroh(
     Ok(defra_node::TransportConfig::Iroh(config))
 }
 
+/// libp2p options an iroh node has no counterpart for: set, they fail the
+/// call rather than leave the caller believing they took effect.
+#[cfg(feature = "iroh")]
+fn reject_libp2p_only(options: &NodeInitOptions) -> Result<(), String> {
+    let libp2p_only = [
+        (options.enable_pub_sub != 0, "enable_pub_sub"),
+        (options.enable_relay != 0, "enable_relay"),
+        (
+            options.p2p_block_sync_timeout_ms != 0,
+            "p2p_block_sync_timeout_ms",
+        ),
+        (
+            options.p2p_resource_memory_mib != 0,
+            "p2p_resource_memory_mib",
+        ),
+        (
+            options.p2p_resource_file_descriptors != 0,
+            "p2p_resource_file_descriptors",
+        ),
+        (
+            options.p2p_max_streams_per_peer != 0,
+            "p2p_max_streams_per_peer",
+        ),
+    ];
+    match libp2p_only.iter().find(|(set, _)| *set) {
+        Some((_, what)) => Err(format!(
+            "{} is a libp2p option; the iroh transport does not use it",
+            what
+        )),
+        None => Ok(()),
+    }
+}
+
+#[cfg(all(test, feature = "iroh"))]
+mod iroh_tests {
+    use std::ffi::CString;
+
+    use super::*;
+
+    /// `read` of iroh options with `set` applied.
+    fn read_iroh<S>(set: S) -> Result<defra_node::TransportConfig, String>
+    where
+        S: FnOnce(&mut NodeInitOptions),
+    {
+        let iroh = CString::new("iroh").unwrap();
+        let mut options = NodeInitOptions {
+            p2p_transport: iroh.as_ptr(),
+            ..NodeInitOptions::default()
+        };
+        set(&mut options);
+        unsafe { read(&options) }
+    }
+
+    fn refused<S>(set: S) -> String
+    where
+        S: FnOnce(&mut NodeInitOptions),
+    {
+        match read_iroh(set) {
+            Err(error) => error,
+            Ok(_) => panic!("the options were accepted"),
+        }
+    }
+
+    /// Sets one option on `options`.
+    type SetOption = fn(&mut NodeInitOptions);
+
+    #[test]
+    fn libp2p_only_options_are_refused_under_iroh() {
+        let cases: [(SetOption, &str); 6] = [
+            (|o| o.enable_pub_sub = 1, "enable_pub_sub"),
+            (|o| o.enable_relay = 1, "enable_relay"),
+            (
+                |o| o.p2p_block_sync_timeout_ms = 5000,
+                "p2p_block_sync_timeout_ms",
+            ),
+            (
+                |o| o.p2p_resource_memory_mib = 256,
+                "p2p_resource_memory_mib",
+            ),
+            (
+                |o| o.p2p_resource_file_descriptors = 512,
+                "p2p_resource_file_descriptors",
+            ),
+            (
+                |o| o.p2p_max_streams_per_peer = 64,
+                "p2p_max_streams_per_peer",
+            ),
+        ];
+        for (set, name) in cases {
+            let error = refused(set);
+            assert!(error.contains(name), "{error}");
+        }
+    }
+
+    #[test]
+    fn listening_addresses_and_iroh_bind_together_are_refused() {
+        let listen = CString::new("127.0.0.1:0").unwrap();
+        let bind_addr = CString::new("127.0.0.1").unwrap();
+        let error = refused(|o| {
+            o.listening_addresses = listen.as_ptr();
+            o.iroh_bind_port = 4000;
+        });
+        assert!(error.contains("listening_addresses"), "{error}");
+        let error = refused(|o| {
+            o.listening_addresses = listen.as_ptr();
+            o.iroh_bind_addr = bind_addr.as_ptr();
+        });
+        assert!(error.contains("listening_addresses"), "{error}");
+    }
+
+    #[test]
+    fn listening_addresses_alone_sets_the_iroh_bind() {
+        let listen = CString::new("127.0.0.1:4000").unwrap();
+        match read_iroh(|o| o.listening_addresses = listen.as_ptr()).unwrap() {
+            defra_node::TransportConfig::Iroh(config) => {
+                assert_eq!(config.bind_addr, Some([127, 0, 0, 1].into()));
+                assert_eq!(config.port, Some(4000));
+            }
+            _ => panic!("not an iroh transport"),
+        }
+    }
+}
+
 #[cfg(all(test, feature = "libp2p"))]
 mod tests {
     use super::*;
@@ -286,5 +472,39 @@ mod tests {
     fn zero_resource_limits_keep_the_host_defaults() {
         let config = libp2p_config(&NodeInitOptions::default());
         assert_eq!(config.resource_limits, p2p::ResourceLimits::default());
+    }
+
+    /// Sets one option on `options`, to `value` when it is a string.
+    type SetOption = fn(&mut NodeInitOptions, *const std::ffi::c_char);
+
+    #[test]
+    fn iroh_only_options_are_refused_under_libp2p() {
+        let value = std::ffi::CString::new("127.0.0.1").unwrap();
+        let cases: [(SetOption, &str); 9] = [
+            (|o, v| o.iroh_relay_url = v, "iroh_relay_url"),
+            (|o, v| o.iroh_relay_mode = v, "iroh_relay_mode"),
+            (|o, v| o.iroh_relay_urls_json = v, "iroh_relay_urls_json"),
+            (|o, v| o.iroh_bind_addr = v, "iroh_bind_addr"),
+            (|o, _| o.iroh_bind_port = 4000, "iroh_bind_port"),
+            (
+                |o, _| o.iroh_disable_discovery = 1,
+                "iroh_disable_discovery",
+            ),
+            (
+                |o, v| o.iroh_discovery_origin_domain = v,
+                "iroh_discovery_origin_domain",
+            ),
+            (|o, v| o.iroh_pkarr_relay_url = v, "iroh_pkarr_relay_url"),
+            (|o, v| o.iroh_key_path = v, "iroh_key_path"),
+        ];
+        for (set, name) in cases {
+            let mut options = NodeInitOptions::default();
+            set(&mut options, value.as_ptr());
+            let error = match unsafe { read(&options) } {
+                Err(error) => error,
+                Ok(_) => panic!("{name} was accepted"),
+            };
+            assert!(error.contains(name), "{error}");
+        }
     }
 }

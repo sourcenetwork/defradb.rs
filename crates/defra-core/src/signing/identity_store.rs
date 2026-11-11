@@ -11,7 +11,9 @@
 //! While a DID has a key its signer is fixed: a hold that brings another
 //! signer for the DID is refused, as is a pin over a held DID, so no holder
 //! is re-routed to a signer it did not bring, and none keeps signing through
-//! a signer whose owner already gave it up.
+//! a signer whose owner already gave it up. Remote signers are compared by
+//! the host context they call ([`RemoteSigner::host_context`](super::RemoteSigner::host_context)), so a second
+//! registration of one context joins the hold rather than being refused.
 //!
 //! Modeled by `proofs/tla/IdentityStore.tla` and `proofs/lean/IdentityStore.lean`.
 
@@ -58,7 +60,11 @@ fn same_signer(a: &SigningConfig, b: &SigningConfig) -> bool {
         && a.private_key_bytes == b.private_key_bytes
         && match (&a.remote_signer, &b.remote_signer) {
             (None, None) => true,
-            (Some(a), Some(b)) => std::ptr::addr_eq(Arc::as_ptr(a), Arc::as_ptr(b)),
+            (Some(a), Some(b)) => {
+                std::ptr::addr_eq(Arc::as_ptr(a), Arc::as_ptr(b))
+                    || a.host_context()
+                        .is_some_and(|context| b.host_context() == Some(context))
+            }
             _ => false,
         }
 }
@@ -235,3 +241,7 @@ pub fn clear_identity_store() {
         });
     }
 }
+
+#[cfg(test)]
+#[path = "identity_store_tests.rs"]
+mod tests;

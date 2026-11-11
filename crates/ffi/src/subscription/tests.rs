@@ -5,13 +5,15 @@ use std::ffi::CString;
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::Value;
 
 use super::{defra_subscription_close, defra_subscription_poll};
 use crate::query::defra_query_execute;
-use crate::test_support::{add_collection, close, cstr, err, node, ok, query, take};
+use crate::test_support::{
+    add_collection, close, cstr, err, node, ok, query, take, wait_for, Deadline,
+};
 
 /// Starts the subscription `request` on `node` and answers with its ID.
 fn subscribe(node: usize, request: &str) -> CString {
@@ -33,14 +35,9 @@ fn poll(id: &CString) -> Option<Value> {
 
 /// Polls until a result arrives, or fails after 10 seconds.
 fn next(id: &CString) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if let Some(result) = poll(id) {
-            return result;
-        }
-        assert!(Instant::now() < deadline, "no result arrived");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    wait_for(Duration::from_secs(10), || {
+        poll(id).ok_or_else(|| "no result arrived".to_string())
+    })
 }
 
 #[test]
@@ -120,9 +117,9 @@ fn concurrent_polls_of_one_subscription_deliver_each_result_once() {
             let id = Arc::clone(&id);
             let received = Arc::clone(&received);
             std::thread::spawn(move || {
-                let deadline = Instant::now() + Duration::from_secs(20);
+                let mut deadline = Deadline::after(Duration::from_secs(20));
                 let mut values = Vec::new();
-                while received.load(Ordering::SeqCst) < WRITES && Instant::now() < deadline {
+                while received.load(Ordering::SeqCst) < WRITES {
                     match poll(&id) {
                         Some(result) => {
                             received.fetch_add(1, Ordering::SeqCst);
@@ -132,7 +129,8 @@ fn concurrent_polls_of_one_subscription_deliver_each_result_once() {
                                     .unwrap_or_else(|| panic!("no value in {result}")),
                             );
                         }
-                        None => std::thread::sleep(Duration::from_millis(5)),
+                        None if deadline.pause() => {}
+                        None => break,
                     }
                 }
                 values

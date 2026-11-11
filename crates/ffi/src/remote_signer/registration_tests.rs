@@ -197,6 +197,31 @@ fn a_second_registration_of_a_held_did_is_refused_until_the_first_is_freed() {
     defra_identity_free(second);
 }
 
+/// Registering one DID twice with the same host context gives two handles
+/// for one signer: the host keeps that context valid until both are freed,
+/// so freeing one leaves the DID signing through it, and freeing the other
+/// removes it.
+#[test]
+fn a_second_registration_with_the_same_context_shares_the_signer() {
+    let key = HostKey::new();
+    let first = register_hex(key);
+    let second = register_hex(key);
+
+    defra_identity_free(first);
+    sign_with_stored(key);
+    assert_eq!(
+        key.signed.load(Ordering::SeqCst),
+        1,
+        "the shared context still signs"
+    );
+
+    defra_identity_free(second);
+    assert!(
+        defra_core::signing::get_identity(&key.did).is_none(),
+        "no handle holds the DID"
+    );
+}
+
 #[test]
 fn a_bytes_registration_stores_the_public_key() {
     let key = HostKey::new();

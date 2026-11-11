@@ -29,7 +29,7 @@ use std::ffi::CString;
 use std::future::Future;
 use std::sync::Arc;
 
-use defra_core::signing::{RemoteSigner, SignFailure, SigningAuthorization};
+use defra_core::signing::{HostContext, RemoteSigner, SignFailure, SigningAuthorization};
 use defra_core::thread_bounds::MaybeBoxFuture;
 
 pub use callback::{DefraRemoteSignAsyncCallback, DefraRemoteSignCallback, DEFRA_SIGN_RETRYABLE};
@@ -147,6 +147,20 @@ impl Host {
 }
 
 impl RemoteSigner for FfiRemoteSigner {
+    /// The host's `signer_handle` and callback: two registrations naming
+    /// both are one signer, since the host keeps that context valid until
+    /// every identity handle naming it is freed.
+    fn host_context(&self) -> Option<HostContext> {
+        let callback = match self.host.callback {
+            HostCallback::Sync(callback) => callback as usize,
+            HostCallback::Async(callback) => callback as usize,
+        };
+        Some(HostContext {
+            handle: self.host.signer_handle,
+            callback,
+        })
+    }
+
     /// Signs `data` on the calling thread: the synchronous callback at once;
     /// the asynchronous one waiting for its result, at most the network
     /// runtime's deadline.

@@ -49,7 +49,8 @@ async fn exercise_http_relationships() -> Vec<Value> {
             remote_signer: None,
             signing_authorization: None,
         },
-    );
+    )
+    .expect("the store takes the identity");
     let stranger = identity();
     let stranger_did = stranger.did().unwrap();
     let target = identity();

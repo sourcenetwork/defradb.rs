@@ -163,17 +163,14 @@ fn a_subscription_answers_with_an_id_and_yields_updates() {
         node,
         r#"mutation { add_User(input: {name: "A"}) { _docID } }"#,
     );
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    let update = loop {
-        let (status, value) = crate::test_support::take(unsafe {
+    let update = crate::test_support::wait_for(std::time::Duration::from_secs(10), || {
+        match crate::test_support::take(unsafe {
             crate::subscription::defra_subscription_poll(id.as_ptr())
-        });
-        if status == 0 {
-            break value.unwrap();
+        }) {
+            (0, value) => Ok(value.unwrap()),
+            (status, value) => Err(format!("no update arrived: {status} {value:?}")),
         }
-        assert!(std::time::Instant::now() < deadline, "no update arrived");
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    };
+    });
     let update: Value = serde_json::from_str(&update).unwrap();
     assert_eq!(update["data"]["User"][0]["name"], "A", "{update}");
 

@@ -4,7 +4,9 @@
 The story, in plain words. The process keeps every signing key in one store,
 one slot per DID. Holders (an FFI identity handle, a node) each take one hold
 on a DID and give it back when they go. A key comes with its signer: the key
-bytes, or a host's callback and context. A slot remembers three things that
+bytes, or a host's callback and context. Two remote signers with the same
+host handle and callback are one signer: the host keeps that context valid
+while either is held, so they share a slot. A slot remembers three things that
 change together in one swap: whether the DID is pinned for the life of the
 process, how many holds it has, and its key, named by its signer (or none).
 
@@ -26,6 +28,8 @@ has its key (`held_has_key`) and a key never outlives its last holder unless
 pinned (`free_has_no_key`). And while a DID has a key, a hold never changes
 its signer (`hold_keeps_signer`), nor does a pin while it is held
 (`pin_keeps_held_signer`): no holder is re-routed to a signer it did not bring.
+A hold that brings the slot's own signer is always taken
+(`hold_accepts_same`): a second handle for one host context is not refused.
 
 What must never happen: a hold is lost or counted twice, a held DID answers
 no key, a private key stays after its last holder went, or a holder's signer
@@ -43,7 +47,8 @@ Rust anchors (`crates/defra-core/src/signing/identity_store.rs`): `Holders`,
 namespace IdentityStore
 
 -- One DID's slot, as the Rust `Holders`. A signer is named by a number; two
--- configs with the same number are `same_signer`.
+-- configs with the same number are `same_signer`: the same key bytes, or the
+-- same host context (`RemoteSigner::host_context`) for a remote signer.
 structure Slot where
   -- Pinned for the life of the process (`store_identity`).
   pinned : Bool
@@ -133,6 +138,13 @@ theorem hold_keeps_signer (s : Slot) (g k : Nat) (hs : s.key = some k) :
     (hold s g).1.key = some k := by
   -- Split on whether `g` is the slot's signer.
   by_cases hg : k = g <;> simp [hold, hs, hg]
+
+-- A hold that brings the slot's own signer is taken: one more hold, the
+-- same key, and the answer yes. Nothing valid is refused.
+theorem hold_accepts_same (s : Slot) (k : Nat) (hs : s.key = some k) :
+    hold s k = ({ s with holds := s.holds + 1 }, true) := by
+  -- The slot's signer is `k`, so the hold joins it.
+  simp [hold, hs]
 
 -- A hold answers no exactly when the slot's key has another signer.
 theorem hold_refuses_other (s : Slot) (g k : Nat) (hs : s.key = some k) (hg : k ≠ g) :

@@ -74,13 +74,13 @@ fn a_bad_timeout_fails_before_syncing() {
 /// feature does not have.
 #[cfg(feature = "libp2p")]
 mod libp2p {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use serde_json::{json, Value};
 
     use super::super::*;
     use crate::test_support::{
-        add_collection, close, cstr, err, local_options, node_with, ok, ok_json, query,
+        add_collection, close, cstr, err, local_options, node_with, ok, ok_json, query, wait_for,
     };
     use crate::types::NodeInitOptions;
 
@@ -97,32 +97,29 @@ mod libp2p {
 
     /// The first address other peers reach `node` at.
     fn address(node: usize) -> String {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
+        wait_for(Duration::from_secs(10), || {
             let info = ok_json(defra_p2p_info(node, 0));
-            if let Some(address) = info
-                .as_array()
+            info.as_array()
                 .and_then(|a| a.first())
                 .and_then(Value::as_str)
-            {
-                return address.to_string();
-            }
-            assert!(Instant::now() < deadline, "the node never listened: {info}");
-            std::thread::sleep(Duration::from_millis(50));
-        }
+                .map(str::to_string)
+                .ok_or_else(|| format!("the node never listened: {info}"))
+        })
     }
 
     /// Polls `read` until it answers `want`, or fails after 20 seconds.
-    fn eventually(want: Value, read: impl Fn() -> Value) {
-        let deadline = Instant::now() + Duration::from_secs(20);
-        loop {
+    fn eventually<R>(want: Value, read: R)
+    where
+        R: Fn() -> Value,
+    {
+        wait_for(Duration::from_secs(20), || {
             let got = read();
             if got == want {
-                return;
+                Ok(())
+            } else {
+                Err(format!("wanted {want}, still {got}"))
             }
-            assert!(Instant::now() < deadline, "wanted {want}, still {got}");
-            std::thread::sleep(Duration::from_millis(100));
-        }
+        })
     }
 
     #[test]

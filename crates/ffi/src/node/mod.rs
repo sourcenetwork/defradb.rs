@@ -187,7 +187,7 @@ pub extern "C" fn defra_node_close(node_ptr: usize) -> DefraResult {
         });
         if let Some(identity) = &*state.node_identity.swap(None) {
             identity.release();
-        }        
+        }
         drop(state);
 
         match result {

@@ -3,10 +3,58 @@
 
 use std::ffi::{CStr, CString};
 use std::ptr;
+use std::time::{Duration, Instant};
 
 use crate::types::{
     defra_new_node_result_free, defra_result_free, CollectionOptions, DefraResult, NodeInitOptions,
 };
+
+/// The longest pause between two tries.
+const MAX_PAUSE: Duration = Duration::from_millis(50);
+
+/// A point in time a test stops waiting at, pausing between tries as a C
+/// caller polling the API would: briefly at first, so a ready answer is seen
+/// at once, then longer, up to [`MAX_PAUSE`].
+pub(crate) struct Deadline {
+    end: Instant,
+    pause: Duration,
+}
+
+impl Deadline {
+    /// A deadline `timeout` from now.
+    pub(crate) fn after(timeout: Duration) -> Self {
+        Self {
+            end: Instant::now() + timeout,
+            pause: Duration::from_millis(1),
+        }
+    }
+
+    /// Pauses before the next try, never past the deadline; `false` once it
+    /// has passed.
+    pub(crate) fn pause(&mut self) -> bool {
+        let Some(left) = self.end.checked_duration_since(Instant::now()) else {
+            return false;
+        };
+        std::thread::sleep(self.pause.min(left));
+        self.pause = (self.pause * 2).min(MAX_PAUSE);
+        true
+    }
+}
+
+/// Tries `attempt` until it answers `Ok`, failing with its last `Err` once
+/// `timeout` has passed.
+pub(crate) fn wait_for<T, A>(timeout: Duration, mut attempt: A) -> T
+where
+    A: FnMut() -> Result<T, String>,
+{
+    let mut deadline = Deadline::after(timeout);
+    loop {
+        match attempt() {
+            Ok(value) => return value,
+            Err(why) => assert!(deadline.pause(), "gave up after {timeout:?}: {why}"),
+        }
+    }
+}
 
 /// A C string for `value`.
 pub(crate) fn cstr(value: &str) -> CString {

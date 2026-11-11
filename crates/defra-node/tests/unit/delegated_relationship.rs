@@ -27,7 +27,8 @@ async fn fixture() -> (Node, String, String) {
             remote_signer: None,
             signing_authorization: None,
         },
-    );
+    )
+    .expect("the store takes the identity");
     let node = Node::builder()
         .with_node_identity_did(&node_did)
         .build()

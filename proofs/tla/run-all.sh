@@ -613,9 +613,10 @@ RUNS=(
   "MC_CpuLedger_Red_RunOutsideHold.cfg CpuLedger.tla RED" # caller runs a thread on a CPU its hold does not cover (INV_AloneRunsAlone)
   "MC_CpuLedger_Red_DoubleRelease.cfg CpuLedger.tla RED" # caller gives its hold back twice: a counter drops below its holders (INV_CountExact)
   "MC_CpuLedger_Red_ForgetHold.cfg CpuLedger.tla RED" # caller never gives its hold back: CPUs stay held after every pool is gone (INV_DoneLeavesNothing)
-  "MC_IdentityStore_Green.cfg IdentityStore.tla GREEN" # holders hold, retain and release one DID while it is pinned and cleared: count exact, held keys found, no key outlives its holders, no holder re-routed to another signer
+  "MC_IdentityStore_Green.cfg IdentityStore.tla GREEN" # holders hold, retain and release one DID while it is pinned and cleared: count exact, held keys found, no key outlives its holders, no holder re-routed to another signer, a hold with the held host context never refused
   "MC_IdentityStore_Red_ReplaceOnHold.cfg IdentityStore.tla RED" # a second hold with another signer replaces the first's (INV_OwnSigner)
   "MC_IdentityStore_Red_PinReplacesHeld.cfg IdentityStore.tla RED" # a pin replaces a held DID's signer (INV_OwnSigner)
+  "MC_IdentityStore_Red_RefuseSameContext.cfg IdentityStore.tla RED" # signers compared by registration, not host context: a second handle for one context is refused (INV_AcceptSame)
   "MC_IdentityStore_Red_SplitSwap.cfg IdentityStore.tla RED" # swap split into read then write: two holds counted once (INV_CountExact)
   "MC_IdentityStore_Red_DropCount.cfg IdentityStore.tla RED" # slot says held, not how many: one release drops the other's key (INV_KeyWhileHeld)
   "MC_IdentityStore_Red_ClearRemoves.cfg IdentityStore.tla RED" # clear removes the slot from the map: a held DID answers no key (INV_KeyWhileHeld)

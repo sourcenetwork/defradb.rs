@@ -29,8 +29,10 @@ const RUST_FFI_CLIENT_ENV: &str = "DEFRA_CLIENT_RUST_FFI";
 /// production: it needs `DEFRA_ALLOW_DETERMINISTIC_TEST_CRYPTO=1` and a
 /// process that is Go's test suite.
 fn init_process() {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
+    static INIT: OnceCell<()> = OnceCell::new();
+    // Racing callers may each run this; it only switches flags on, so every
+    // caller returns with them on, as with a `Once`.
+    INIT.get_or_init_racy(|| {
         if should_use_deterministic_test_crypto_for_process() {
             crypto::encryption::nonce::set_deterministic_nonce(true);
             defra_core::encryption::set_deterministic_encryption_key(true);

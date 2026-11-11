@@ -27,10 +27,11 @@ use super::{DefraRemoteSignAsyncCallback, DefraRemoteSignCallback, FfiRemoteSign
 ///
 /// While a DID has live identity handles, its signer is fixed: registering
 /// the DID again with another `signer_handle` or callback fails until every
-/// handle for it is freed. `signer_handle` must stay valid, and `callback`
-/// callable, until the identity's handle is freed and every node started
-/// with it (or given it as its identity) is closed: a node keeps signing
-/// through them after the handle is freed.
+/// handle for it is freed; with the same `signer_handle` and callback it
+/// gives another handle for the same signer. `signer_handle` must stay
+/// valid, and `callback` callable, until every identity handle naming them
+/// is freed and every node started with one (or given one as its identity)
+/// is closed: a node keeps signing through them after the handle is freed.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[no_mangle]
 pub extern "C" fn defra_identity_new_remote(
