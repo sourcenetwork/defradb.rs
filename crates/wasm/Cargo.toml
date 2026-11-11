@@ -20,6 +20,8 @@ bytes = { workspace = true }
 # WASM bindings
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
+# The deferred index drain sweeps on a browser timer.
+gloo-timers = { version = "0.4", features = ["futures"] }
 js-sys = "0.3"
 web-sys = { version = "0.3", features = ["console"] }
 
@@ -79,10 +81,8 @@ sha2 = { workspace = true, features = ["asm"] }
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
-# The relay end-to-end test drives a native node's HTTP API with fetch and
-# waits on replication with browser timers.
+# The relay end-to-end test drives a native node's HTTP API with fetch.
 web-sys = { version = "0.3", features = ["Headers", "Request", "RequestInit", "Response", "Window"] }
-gloo-timers = { version = "0.4", features = ["futures"] }
 # The browser benchmark reports through the same contract the native suite
 # does, so the two describe a measurement identically.
 defra-perf = { path = "../../tools/perf" }

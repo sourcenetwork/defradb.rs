@@ -165,7 +165,8 @@ impl From<crate::index::Error> for Error {
             crate::index::Error::InvalidDocument(msg) => Error::InvalidDocument(msg),
             other @ (crate::index::Error::VectorEntryPointNotFound { .. }
             | crate::index::Error::DiskAnnCodeLength { .. }
-            | crate::index::Error::DiskAnnCodeSlots { .. }) => Error::Other(other.to_string()),
+            | crate::index::Error::DiskAnnCodeSlots { .. }
+            | crate::index::Error::DeferredDrain { .. }) => Error::Other(other.to_string()),
             other @ crate::index::Error::VectorDimensionMismatch { .. } => {
                 Error::InvalidDocument(other.to_string())
             }

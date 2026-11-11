@@ -306,7 +306,11 @@ impl DefraClient {
         let db = Arc::new(db);
         let (deferred_drain, registration) = futures::future::AbortHandle::new_pair();
         wasm_bindgen_futures::spawn_local({
-            let drain = DB::run_deferred_index_drain(Arc::downgrade(&db));
+            let drain = DB::run_deferred_index_drain(Arc::downgrade(&db), |every| {
+                gloo_timers::future::TimeoutFuture::new(
+                    u32::try_from(every.as_millis()).unwrap_or(u32::MAX),
+                )
+            });
             async move {
                 let _ = futures::future::Abortable::new(drain, registration).await;
             }

@@ -24,6 +24,11 @@ impl DrainRequests {
         self.0.wake.notify_one();
     }
 
+    /// Keeps `index` for a later pass without waking the drain.
+    pub(crate) fn defer(&self, index: IndexRef) {
+        self.0.queue.push(index);
+    }
+
     /// Waits until a drain is asked for.
     pub(crate) async fn requested(&self) {
         self.0.wake.notified().await;

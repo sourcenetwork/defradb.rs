@@ -55,6 +55,8 @@ pub struct DbOptions {
     /// The embedder's check on replicated documents before their commits
     /// store anything. `None` keeps every document.
     pub replication_filter: Option<Arc<dyn crate::replication_filter::ReplicationFilter>>,
+    /// How often the deferred index drain sweeps every index. `None` is five seconds.
+    pub deferred_index_sweep: Option<std::time::Duration>,
 }
 
 impl std::fmt::Debug for DbOptions {
@@ -78,6 +80,7 @@ impl std::fmt::Debug for DbOptions {
             )
             .field("pool", &self.pool)
             .field("replication_filter", &self.replication_filter.is_some())
+            .field("deferred_index_sweep", &self.deferred_index_sweep)
             .finish()
     }
 }
@@ -109,6 +112,18 @@ impl DbOptions {
     /// Returns the maximum number of transaction retries.
     pub fn max_txn_retries(&self) -> u32 {
         self.max_txn_retries.unwrap_or(DEFAULT_MAX_TXN_RETRIES)
+    }
+
+    /// Sets how often the deferred index drain sweeps every index.
+    pub fn with_deferred_index_sweep(mut self, every: std::time::Duration) -> Self {
+        self.deferred_index_sweep = Some(every);
+        self
+    }
+
+    /// How often the deferred index drain sweeps every index.
+    pub fn deferred_index_sweep(&self) -> std::time::Duration {
+        self.deferred_index_sweep
+            .unwrap_or(std::time::Duration::from_secs(5))
     }
 
     /// Asks `filter` whether to keep each replicated document.
