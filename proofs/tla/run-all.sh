@@ -364,10 +364,11 @@ RUNS=(
   "MC_IndexDropBackfill_Red_SameTxn.cfg IndexDropBackfill.tla RED" # entries deleted from an unvalidated scan in the drop commit (INV_NoOrphanEntries)
   "MC_IndexDropBackfill_Red_Forget.cfg IndexDropBackfill.tla RED" # a restart ignores an unfinished drop (LIVE_DropFinishes)
   "MC_IndexDropBackfill_Red_ReuseId.cfg IndexDropBackfill.tla RED" # a new index gets the dropped id and the drop deletes its entries (INV_NewIndexIntact)
-  "MC_IndexBuildGateClose_Green.cfg IndexBuildGateClose.tla GREEN" # a close while a build waits at its gate finishes, and the reopen resumes the build and waits for it (finished unless held at the gate inside that open, #2760)
+  "MC_IndexBuildGateClose_Green.cfg IndexBuildGateClose.tla GREEN" # a close while a build waits at its gate finishes, and the reopen returns before the node resumes the build, which is then built
   "MC_IndexBuildGateClose_Red_NoRace.cfg IndexBuildGateClose.tla RED" # the gate wait ignores the close and the close hangs (LIVE_CloseFinishes)
   "MC_IndexBuildGateClose_Red_FailOnClose.cfg IndexBuildGateClose.tla RED" # the close marks the build failed and it is never built (LIVE_BuildFinishes)
   "MC_IndexBuildGateClose_Red_Forget.cfg IndexBuildGateClose.tla RED" # the reopen forgets the stopped build (LIVE_BuildFinishes)
+  "MC_IndexBuildGateClose_Red_OpenAwaits.cfg IndexBuildGateClose.tla RED" # the reopen waits for the resumed build held at the shut gate, so it is never built (LIVE_BuildFinishes)
   "MC_WritePipeline_Green.cfg WritePipeline.tla GREEN" # #1890: creates and updates store blocks once the composite exists, one short ID and one key mint per field across attempts
   "MC_WritePipeline_Red_AsComputed.cfg WritePipeline.tla RED" # each block stored as made (INV_NoStoreBeforeComposite)
   "MC_WritePipeline_Red_PerAttempt.cfg WritePipeline.tla RED" # fresh short ID per attempt: a key minted twice (INV_OneKeyPerField)
