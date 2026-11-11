@@ -183,7 +183,7 @@ impl<S: Store + 'static> ViewOperations for ViewAdapter<S> {
         if let Some(txn) = &txn {
             let materialized = view_collections
                 .iter()
-                .filter(|col| col.query.is_some() && col.is_materialized && !col.is_embedded_only)
+                .filter(|col| db::is_refreshable_view(col))
                 .map(|col| col.name.clone())
                 .collect();
             let downsample = view_collections
@@ -218,7 +218,7 @@ impl<S: Store + 'static> ViewOperations for ViewAdapter<S> {
 
         let materialized_names: Vec<String> = created_versions
             .iter()
-            .filter(|col| col.query.is_some() && col.is_materialized && !col.is_embedded_only)
+            .filter(|col| db::is_refreshable_view(col))
             .map(|col| col.name.clone())
             .collect();
         let downsample_names: Vec<String> = created_versions

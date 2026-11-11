@@ -226,10 +226,7 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
                 collection.query = Some(query_source.clone());
             }
 
-            if collection.query.is_some()
-                && collection.is_materialized
-                && !collection.is_embedded_only
-            {
+            if db::is_refreshable_view(collection) {
                 materialized_names.push(collection.name.clone());
             }
 

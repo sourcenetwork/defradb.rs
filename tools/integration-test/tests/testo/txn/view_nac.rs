@@ -117,6 +117,47 @@ fn txn_add_view_needs_only_add_view_as_outside_a_txn() {
     .execute();
 }
 
+#[test]
+#[mantra_macros::req_test("go.acp.nac.gates.views")]
+fn txn_view_ops_without_their_permission_are_refused() {
+    let mut actions = nac_node();
+    let more: Vec<Actions> = vec![
+        TxnBegin {
+            common: as_identity(2),
+            ..Default::default()
+        }
+        .into(),
+        AddView {
+            txn: Some(0),
+            query: QUERY.into(),
+            sdl: TXN_SDL.into(),
+            expected_error: Some(
+                "not authorized to perform operation. Permission: add-view".into(),
+            ),
+            common: as_identity(2),
+            ..Default::default()
+        }
+        .into(),
+        RefreshViews {
+            txn: Some(0),
+            expected_error: Some(
+                "not authorized to perform operation. Permission: refresh-view".into(),
+            ),
+            common: as_identity(2),
+            ..Default::default()
+        }
+        .into(),
+    ];
+    actions.extend(more);
+    TestCase {
+        id: integration_test::scenario_id!(),
+        actions: actions.into_iter().map(Into::into).collect(),
+        client_types: Some(&[ClientType::InProcess, ClientType::RustHttp, ClientType::Cli]),
+        ..Default::default()
+    }
+    .execute();
+}
+
 // An embedded call that names no identity: only the in-process client makes
 // one, and runs as the node in the node's transaction.
 #[test]
