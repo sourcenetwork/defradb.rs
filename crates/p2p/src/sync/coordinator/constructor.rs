@@ -23,7 +23,7 @@ use crate::sync::broadcaster::Broadcaster;
 use crate::sync::collection_store::{MemoryCollectionStorage, P2PCollectionStorage};
 use crate::sync::head_provider::{DocumentHeadProvider, NoOpHeadProvider};
 use crate::sync::manager::{
-    SyncConfig, SyncEvent, SyncManager, DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
+    SyncConfig, SyncEventReceiver, SyncManager, DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
     DEFAULT_PUSH_SEND_TIMEOUT,
 };
 use crate::sync::peer_state::PeerStateTracker;
@@ -39,7 +39,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         blockstore: Arc<B>,
         network: Network,
         config: SyncConfig,
-    ) -> Result<(Self, mpsc::Receiver<SyncEvent>)> {
+    ) -> Result<(Self, SyncEventReceiver)> {
         Self::with_access_control(
             transport,
             blockstore,
@@ -63,7 +63,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         config: SyncConfig,
         access_mode: AccessMode,
         collection_store: Arc<dyn P2PCollectionStorage>,
-    ) -> Result<(Self, mpsc::Receiver<SyncEvent>)> {
+    ) -> Result<(Self, SyncEventReceiver)> {
         Self::with_access_control(
             transport,
             blockstore,
@@ -90,7 +90,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         replicators: Arc<ReplicatorRegistry>,
         collection_store: Arc<dyn P2PCollectionStorage>,
         filter_matcher: Arc<dyn ReplicationFilterMatcher>,
-    ) -> Result<(Self, mpsc::Receiver<SyncEvent>)> {
+    ) -> Result<(Self, SyncEventReceiver)> {
         Self::with_access_control_and_serve_gate(
             transport,
             blockstore,
@@ -120,7 +120,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         filter_matcher: Arc<dyn ReplicationFilterMatcher>,
         classifier: Arc<dyn BlockClassifier>,
         serve_acp: Arc<LateBoundServeAcp>,
-    ) -> Result<(Self, mpsc::Receiver<SyncEvent>)> {
+    ) -> Result<(Self, SyncEventReceiver)> {
         Self::with_head_provider_and_serve_gate(
             transport,
             blockstore,
@@ -151,7 +151,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         collection_store: Arc<dyn P2PCollectionStorage>,
         head_provider: Arc<dyn DocumentHeadProvider>,
         filter_matcher: Arc<dyn ReplicationFilterMatcher>,
-    ) -> Result<(Self, mpsc::Receiver<SyncEvent>)> {
+    ) -> Result<(Self, SyncEventReceiver)> {
         Self::with_head_provider_and_serve_gate(
             transport,
             blockstore,
@@ -183,7 +183,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         filter_matcher: Arc<dyn ReplicationFilterMatcher>,
         classifier: Arc<dyn BlockClassifier>,
         serve_acp: Arc<LateBoundServeAcp>,
-    ) -> Result<(Self, mpsc::Receiver<SyncEvent>)> {
+    ) -> Result<(Self, SyncEventReceiver)> {
         let local_peer_id = transport.local_peer_id().to_string();
         let broadcaster = Broadcaster::new(transport.clone());
         let peer_state = Arc::new(PeerStateTracker::new());
@@ -211,6 +211,11 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         } else {
             config.push_send_timeout.max(Duration::from_millis(1))
         };
+        let broadcast_wait_deadline = config.broadcast_wait_deadline;
+        #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+        let broadcast_room = Arc::new(super::broadcast_room::BroadcastRoom::new(
+            config.broadcast_pending_bytes,
+        ));
         let (manager, events) =
             SyncManager::new(Arc::clone(&blockstore), peer_state.clone(), config);
         manager
@@ -247,9 +252,13 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 failure_tx: Arc::clone(&failure_tx),
                 send_timeout: push_send_timeout,
                 peer_state: Arc::clone(&peer_state),
+                head_provider: Arc::clone(&head_provider),
             }),
             &shutdown,
         );
+        // The gossip lane is a fixed coordinator task like the push workers,
+        // so it is running before the first write, not started by it.
+        broadcast_room.start(&shutdown);
 
         Ok((
             Self {
@@ -271,6 +280,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                         rate_limit_rate,
                     )),
                     max_doc_sync_request_doc_ids,
+                    broadcast_wait_deadline,
+                    broadcast_room,
                     shutdown,
                     dispatch_diagnostics: Arc::new(crate::sync::DispatchDiagnostics::default()),
                     filter_matcher,

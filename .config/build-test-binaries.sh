@@ -16,7 +16,7 @@ build() {
     shift 2
     [[ -n "${!var:-}" ]] && return
     cargo build -q -p cli --profile super-dev "$@"
-    cp "$target/super-dev/defra" "$out/$name"
+    cp "$target/super-dev/defradb" "$out/$name"
     echo "$var=$(cd "$out" && pwd)/$name" >> "$NEXTEST_ENV"
 }
 
@@ -28,9 +28,10 @@ case "${1:-}" in
     vera)
         build DEFRA_VERA_BINARY defra-vera --features vera
         ;;
-    # Conformance would otherwise launch `target/debug/defra`, which nextest never rebuilds.
+    # Conformance would otherwise launch `target/debug/defradb`, which nextest never rebuilds.
     conformance)
         build DEFRA_CONFORMANCE_BINARY defra
+        build DEFRA_CONFORMANCE_IROH_BINARY defra-iroh --features iroh
         ;;
     *)
         echo "usage: $0 integration|vera|conformance" >&2

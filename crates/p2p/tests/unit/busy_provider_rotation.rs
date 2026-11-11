@@ -313,18 +313,10 @@ async fn a_shed_attempt_that_delivered_first_still_counts_its_progress() {
     let context = f.lone_context();
     let mut providers = ProviderRotation::new(context.providers());
     let mut state = ProviderFetchState::new(&mut providers, None, f.diagnostics.as_ref());
-    let (event_tx, _events) = mpsc::channel(1);
     let started = Instant::now();
 
-    let outcome = fetch_dag_attempt(
-        &f.transport,
-        &f.blockstore,
-        &event_tx,
-        f.root,
-        &context,
-        &mut state,
-    )
-    .await;
+    let outcome =
+        fetch_dag_attempt(&f.transport, &f.blockstore, f.root, &context, &mut state).await;
 
     assert_eq!(outcome, FetchAttemptOutcome::ProviderBusy);
     assert!(f.blockstore.has(&f.root).await.unwrap());

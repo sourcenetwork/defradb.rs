@@ -28,7 +28,7 @@
 //! ```
 //!
 //! The go-compat CI matrix exercises the same pathway via the Rust
-//! integration-test harness (`tools/integration-test/tests/p2p/sync.rs`)
+//! integration-test harness (`tools/integration-test/tests/legacy/p2p/sync.rs`)
 //! which launches both nodes under test; this file is the bare-metal
 //! variant useful for ad-hoc diagnosis.
 

@@ -844,20 +844,6 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
 ) -> Result<(), String> {
     let network = db.network().map_err(|error| error.to_string())?;
     let local_peer_id = transport.local_peer_id().to_string();
-    let resolved_collection;
-    let collection_id = if collection_id.is_empty() {
-        resolved_collection =
-            crate::merge::push_docs_common::resolve_collection_id_for_doc(db, doc_id)
-                .await?
-                .ok_or_else(|| format!("collection for document '{doc_id}' not found"))?;
-        resolved_collection.as_str()
-    } else {
-        collection_id
-    };
-    let collection = db
-        .find_collection_by_id(collection_id)
-        .map_err(|e| format!("failed to get collection: {}", e))?
-        .ok_or_else(|| format!("collection '{}' not found", collection_id))?;
     let doc_short_id = {
         let txn = db
             .new_txn(true)
@@ -883,6 +869,20 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
             }
         }
     };
+    let resolved_collection;
+    let collection_id = if collection_id.is_empty() {
+        resolved_collection =
+            crate::merge::push_docs_common::resolve_collection_id_for_doc(db, doc_id)
+                .await?
+                .ok_or_else(|| format!("collection for document '{doc_id}' not found"))?;
+        resolved_collection.as_str()
+    } else {
+        collection_id
+    };
+    let collection = db
+        .find_collection_by_id(collection_id)
+        .map_err(|e| format!("failed to get collection: {}", e))?
+        .ok_or_else(|| format!("collection '{}' not found", collection_id))?;
     if let Some(filter) = filters.get(collection_id) {
         let peerstore = db.peerstore();
         let txn = db
@@ -971,6 +971,11 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
                 }
                 Ok(_) => {
                     successful_blocks += 1;
+                    p2p::model_trace!(Ack {
+                        doc: doc_id,
+                        receiver: peer_id.as_str(),
+                        head: head_cid.to_string(),
+                    });
                 }
                 Err(error) => {
                     let prefix = if error.is_connection_like() {

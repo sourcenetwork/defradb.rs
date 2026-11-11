@@ -186,7 +186,7 @@ fn create_test_coordinator(
     peer_state: Arc<PeerStateTracker>,
 ) -> (
     SyncCoordinator<TestBlockstore, NoopTransport>,
-    crate::rt::mpsc::Receiver<crate::sync::manager::SyncEvent>,
+    crate::sync::SyncEventReceiver,
 ) {
     create_test_coordinator_with_rate_limiter(
         access_mode,
@@ -203,7 +203,7 @@ fn create_test_coordinator_with_rate_limiter(
     rate_limiter: Arc<PeerRateLimiter>,
 ) -> (
     SyncCoordinator<TestBlockstore, NoopTransport>,
-    crate::rt::mpsc::Receiver<crate::sync::manager::SyncEvent>,
+    crate::sync::SyncEventReceiver,
 ) {
     create_test_coordinator_with_options(
         access_mode,
@@ -221,7 +221,7 @@ fn create_test_coordinator_with_sync_config(
     sync_config: SyncConfig,
 ) -> (
     SyncCoordinator<TestBlockstore, NoopTransport>,
-    crate::rt::mpsc::Receiver<crate::sync::manager::SyncEvent>,
+    crate::sync::SyncEventReceiver,
 ) {
     create_test_coordinator_with_options(
         access_mode,
@@ -240,7 +240,7 @@ fn create_test_coordinator_with_options(
     sync_config: SyncConfig,
 ) -> (
     SyncCoordinator<TestBlockstore, NoopTransport>,
-    crate::rt::mpsc::Receiver<crate::sync::manager::SyncEvent>,
+    crate::sync::SyncEventReceiver,
 ) {
     // Most limiter tests exercise one path at a time; share the injected
     // limiter across gossip and request intake so either path sees it.
@@ -263,7 +263,7 @@ fn create_test_coordinator_with_split_limiters(
     request_rate_limiter: Arc<PeerRateLimiter>,
 ) -> (
     SyncCoordinator<TestBlockstore, NoopTransport>,
-    crate::rt::mpsc::Receiver<crate::sync::manager::SyncEvent>,
+    crate::sync::SyncEventReceiver,
 ) {
     create_test_coordinator_full(
         access_mode,
@@ -284,7 +284,7 @@ fn create_test_coordinator_full(
     sync_config: SyncConfig,
 ) -> (
     SyncCoordinator<TestBlockstore, NoopTransport>,
-    crate::rt::mpsc::Receiver<crate::sync::manager::SyncEvent>,
+    crate::sync::SyncEventReceiver,
 ) {
     let transport = NoopTransport::new();
     let local_peer_id = transport.local_peer_id().to_string();
@@ -325,7 +325,7 @@ fn create_test_coordinator_with_blockstore<B: Blockstore + 'static>(
     params: TestCoordinatorParams<B>,
 ) -> (
     SyncCoordinator<B, NoopTransport>,
-    crate::rt::mpsc::Receiver<crate::sync::manager::SyncEvent>,
+    crate::sync::SyncEventReceiver,
 ) {
     create_test_coordinator_with_blockstore_and_head_provider(params, Arc::new(NoOpHeadProvider))
 }
@@ -335,7 +335,7 @@ fn create_test_coordinator_with_blockstore_and_head_provider<B: Blockstore + 'st
     head_provider: Arc<dyn DocumentHeadProvider>,
 ) -> (
     SyncCoordinator<B, NoopTransport>,
-    crate::rt::mpsc::Receiver<crate::sync::manager::SyncEvent>,
+    crate::sync::SyncEventReceiver,
 ) {
     let TestCoordinatorParams {
         sync_config,
@@ -385,6 +385,10 @@ fn create_test_coordinator_with_blockstore_and_head_provider<B: Blockstore + 'st
             rate_limiter,
             request_rate_limiter,
             max_doc_sync_request_doc_ids: DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
+            broadcast_wait_deadline: crate::sync::DEFAULT_BROADCAST_WAIT_DEADLINE,
+            broadcast_room: Arc::new(super::broadcast_room::BroadcastRoom::new(
+                crate::sync::DEFAULT_BROADCAST_PENDING_BYTES,
+            )),
             shutdown: shutdown.clone(),
             dispatch_diagnostics: Arc::new(crate::sync::DispatchDiagnostics::default()),
             filter_matcher: Arc::new(crate::replicator::EqOnlyFilterMatcher),
@@ -1201,7 +1205,7 @@ fn two_stream_event(
 }
 
 async fn recv_block_received(
-    events: &mut crate::rt::mpsc::Receiver<SyncEvent>,
+    events: &mut crate::sync::SyncEventReceiver,
 ) -> crate::sync::manager::SyncEvent {
     timeout(Duration::from_secs(1), events.recv())
         .await
@@ -1229,7 +1233,7 @@ async fn dispatch_complete_pending<B: Blockstore + 'static, T: P2PTransport>(
 
 async fn recv_complete_pushlog<B: Blockstore + 'static, T: P2PTransport>(
     coordinator: &SyncCoordinator<B, T>,
-    events: &mut crate::rt::mpsc::Receiver<SyncEvent>,
+    events: &mut crate::sync::SyncEventReceiver,
 ) -> SyncEvent {
     dispatch_complete_pending(coordinator).await;
     recv_block_received(events).await
@@ -1915,6 +1919,89 @@ async fn committed_head_admission_does_not_wait_for_a_batching_timer() {
     }
     coordinator.shutdown().await;
     markers.abort();
+}
+
+/// The live acknowledgement of one head clears its scope's marker, and the
+/// marker stands for every head registered under it. A hub that merged two
+/// concurrent heads of a document holds both; the ack of either leaves the
+/// other undelivered, so only an ack of the document's whole frontier may
+/// clear the marker. The retry ladder delivers the rest. An ack that may not
+/// clear the marker is not reported: without its generation the recorder
+/// would write the acked heads unfenced, over the frontier the ladder records.
+/// No heads at all is no frontier: `NoOpHeadProvider`, which the default
+/// constructors install, finds none.
+#[nuclei::test]
+async fn live_ack_of_a_sibling_head_does_not_clear_the_scope_marker() {
+    use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink};
+
+    let composite = |priority: u64, field: &str, parents: Vec<Cid>| {
+        let block = Block::new(
+            CrdtDelta::Composite(CompositeDeltaPayload {
+                collection_version_id: "version1".to_string(),
+                priority,
+                status: 1,
+            }),
+            parents,
+            vec![DAGLink::new(field, cid_for(field.as_bytes()))],
+        );
+        (block.generate_cid().unwrap(), block.to_dag_cbor().unwrap())
+    };
+    let (base, _) = composite(1, "base", vec![]);
+    let (left, _) = composite(2, "left", vec![base]);
+    let (right, right_data) = composite(2, "right", vec![base]);
+
+    for (heads, clears) in [
+        (vec![left, right], false),
+        (vec![], false),
+        (vec![right], true),
+    ] {
+        let transport = NoopTransport::new();
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(DefraBlockstore::new(store, true));
+        let (mut coordinator, _events) = SyncCoordinator::with_head_provider(
+            transport.clone(),
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+            AccessMode::Open,
+            Arc::new(ReplicatorRegistry::new()),
+            Arc::new(MemoryCollectionStorage::default()),
+            Arc::new(StaticHeadProvider { heads }),
+            Arc::new(crate::replicator::EqOnlyFilterMatcher),
+        )
+        .await
+        .unwrap();
+        let (failure_tx, mut failure_rx) = crate::rt::mpsc::channel::<super::PushFailure>(16);
+        coordinator.set_failure_channel(failure_tx);
+        transport
+            .create_replicator(&random_peer_id(), vec!["collection1".to_string()])
+            .await
+            .unwrap();
+
+        let (acks_tx, mut acks) = crate::rt::mpsc::unbounded_channel();
+        let recorder = crate::rt::spawn(async move {
+            while let Some(mut event) = failure_rx.recv().await {
+                if event.acknowledged {
+                    let _ = acks_tx.send(event.marker_generation);
+                }
+                if let Some(reply) = event.durable_tx.take() {
+                    let _ = reply.send(Some(event.marker_generation.unwrap_or(7)));
+                }
+            }
+        });
+        coordinator
+            .push_to_replicators(&right, &right_data, "doc1", "collection1")
+            .await
+            .unwrap();
+        let ack = timeout(Duration::from_secs(2), acks.recv()).await.ok();
+        assert_eq!(
+            ack,
+            clears.then_some(Some(Some(7))),
+            "only an ack of the whole frontier is reported, with its marker generation"
+        );
+        coordinator.shutdown().await;
+        recorder.abort();
+    }
 }
 
 #[nuclei::test(start_paused = true)]
@@ -3509,7 +3596,7 @@ async fn gossip_remains_rate_limited_when_bucket_is_empty() {
         .await;
 
     assert!(
-        matches!(&result, Err(Error::AccessDenied { .. })),
+        matches!(&result, Err(Error::RateLimited { .. })),
         "gossip should still be rate limited, got {:?}",
         result
     );

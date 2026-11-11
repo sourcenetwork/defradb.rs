@@ -536,3 +536,40 @@ fn test_variable_default_cannot_reference_other_variable() {
         result
     );
 }
+
+/// An optional variable the request leaves out drops the input field it
+/// fills, as Go does, instead of failing or becoming `null` (#2104).
+#[test]
+fn test_unset_optional_variable_omits_its_field() {
+    let query = r#"
+        query ($plot: String, $minRating: Float64) {
+            Book(filter: {plot: {_like: $plot}, rating: {_geq: $minRating}}) {
+                title
+            }
+        }
+    "#;
+
+    let variables = RapidHashMap::from_iter([("minRating".to_string(), json!(4.2))]);
+    let result = parse_request_with_variables(query, Some(&variables), None).unwrap();
+    let ParsedOperation::Query { selects, .. } = result else {
+        panic!("Expected query");
+    };
+    let conditions = selects[0].filter.as_ref().unwrap().conditions();
+    assert_eq!(
+        conditions.get("rating").unwrap().get("_geq"),
+        Some(&json!(4.2))
+    );
+    assert_eq!(conditions.get("plot").unwrap().get("_like"), None);
+
+    let variables = RapidHashMap::from_iter([("plot".to_string(), JsonValue::Null)]);
+    let result = parse_request_with_variables(query, Some(&variables), None).unwrap();
+    let ParsedOperation::Query { selects, .. } = result else {
+        panic!("Expected query");
+    };
+    let conditions = selects[0].filter.as_ref().unwrap().conditions();
+    assert_eq!(
+        conditions.get("plot").unwrap().get("_like"),
+        Some(&JsonValue::Null),
+        "an explicit null is kept"
+    );
+}

@@ -260,6 +260,95 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
         ))
     }
 
+    /// The node's NAC status, for the caller `context` names. Go's
+    /// `GetNACStatus`.
+    async fn nac_status_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<acp::nac::NacStatus, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "node access control is not supported in this configuration",
+        ))
+    }
+
+    /// Every way `subject` holds each node permission, for a caller who is
+    /// `subject`, an admin, or holds `NacStatus`.
+    async fn explain_nac_subject_as(
+        &self,
+        context: &RequestContext,
+        subject: &str,
+    ) -> std::result::Result<Vec<acp::nac::PermissionProvenance>, TransactionError> {
+        let _ = (context, subject);
+        Err(TransactionError::not_supported(
+            "node access control is not supported in this configuration",
+        ))
+    }
+
+    /// Turn NAC off for the caller `context` names. Go's `DisableNAC`.
+    async fn disable_nac_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "node access control is not supported in this configuration",
+        ))
+    }
+
+    /// Turn NAC back on for the caller `context` names. Go's `ReEnableNAC`.
+    async fn re_enable_nac_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "node access control is not supported in this configuration",
+        ))
+    }
+
+    /// Give `target_actor` `relation` on the node, the caller `context`
+    /// names asking; whether it existed already. Go's
+    /// `AddNACActorRelationship`.
+    async fn add_nac_actor_relationship_as(
+        &self,
+        context: &RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        let _ = (context, relation, target_actor);
+        Err(TransactionError::not_supported(
+            "node access control is not supported in this configuration",
+        ))
+    }
+
+    /// Stage a source-specific node permission in the explicit transaction.
+    async fn change_nac_source_permission_as(
+        &self,
+        context: &RequestContext,
+        edge: &crate::txn::SourcePermission,
+    ) -> std::result::Result<bool, TransactionError> {
+        let _ = (context, edge);
+        Err(TransactionError::not_supported(
+            "transactional node source permissions are unavailable",
+        ))
+    }
+
+    /// Take `relation` on the node from `target_actor`, the caller `context`
+    /// names asking; whether it was there. Go's
+    /// `DeleteNACActorRelationship`.
+    async fn delete_nac_actor_relationship_as(
+        &self,
+        context: &RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        let _ = (context, relation, target_actor);
+        Err(TransactionError::not_supported(
+            "node access control is not supported in this configuration",
+        ))
+    }
+
     /// Register the lens migration `config` (JSON) in the transaction
     /// `context` carries, if any; the transform ID.
     async fn set_migration_as(

@@ -17,14 +17,23 @@ use storage::RegolithStore;
 use super::replicated::{log, logs, merge, stored, Handler};
 
 /// Keeps a Log only above `cutoff`, and every Log with no `blockNumber`; it
-/// remembers the last fields it was given.
+/// remembers the last collection and fields it was given.
 struct Cutoff {
     cutoff: AtomicI64,
     seen: Atom<Option<FieldValues>>,
+    collection: Atom<Option<(String, String)>>,
 }
 
 impl ReplicationFilter for Cutoff {
-    fn allow_replication(&self, _collection_id: &str, _doc_id: &str, fields: &FieldValues) -> bool {
+    fn allow_replication(
+        &self,
+        collection_id: &str,
+        collection_name: &str,
+        _doc_id: &str,
+        fields: &FieldValues,
+    ) -> bool {
+        self.collection
+            .store(Some((collection_id.to_owned(), collection_name.to_owned())));
         self.seen.store(Some(fields.clone()));
         match fields
             .get("blockNumber")
@@ -43,6 +52,7 @@ async fn node(
     let filter = Arc::new(Cutoff {
         cutoff: AtomicI64::new(cutoff),
         seen: Atom::new(None),
+        collection: Atom::new(None),
     });
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let options = DbOptions::new().with_replication_filter(filter.clone());
@@ -77,6 +87,11 @@ fn the_filter_is_given_the_values_the_commit_writes() {
             ciborium::Value::Integer(25951718u64.into())
         );
         assert_eq!(seen["address"], ciborium::Value::Text("0xabc".into()));
+        assert_eq!(
+            (*filter.collection.load()).clone(),
+            Some(("col-log".to_owned(), "Log".to_owned())),
+            "the filter is given the collection's ID and the name a Go filter keys on"
+        );
     })
     .unwrap()
 }

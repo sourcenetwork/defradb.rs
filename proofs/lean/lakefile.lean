@@ -4,6 +4,57 @@ open Lake DSL
 package defraConvergence where
 
 @[default_target]
+lean_lib LocalFetchPermit where
+
+@[default_target]
+lean_lib HostMutationProjection where
+
+@[default_target]
+lean_lib ProjectionAccessNotification where
+
+@[default_target]
+lean_lib EmbeddedSigner where
+
+@[default_target]
+lean_lib DelegatedRelationship where
+
+@[default_target]
+lean_lib TransactionalRelationship where
+
+@[default_target]
+lean_lib UsersetRelationManager where
+
+@[default_target]
+lean_lib SourceScopedNac where
+
+@[default_target]
+lean_lib NodeAcpDelegation where
+
+@[default_target]
+lean_lib EmbeddedHttpAcp where
+
+@[default_target]
+lean_lib HttpOwnerRegistration where
+
+@[default_target]
+lean_lib SseDelivery where
+
+@[default_target]
+lean_lib ClientSigningAdmission where
+
+@[default_target]
+lean_lib ClientCreateSchema where
+
+@[default_target]
+lean_lib ClientCreateIntent where
+
+@[default_target]
+lean_lib ClientCreateGraph where
+
+@[default_target]
+lean_lib ClientSignedCreate where
+
+@[default_target]
 lean_lib HttpRouterComposition where
 
 @[default_target]
@@ -152,3 +203,54 @@ lean_lib Arbitration where
 
 @[default_target]
 lean_lib PositionRecord where
+
+@[default_target]
+lean_lib RequestDrain where
+
+@[default_target]
+lean_lib ClientSignedUpdateFilter where
+
+@[default_target]
+lean_lib ClientSignedUpdate where
+
+@[default_target]
+lean_lib ClientSignedDelete where
+
+@[default_target]
+lean_lib ClientSignedDeleteFilter where
+
+@[default_target]
+lean_lib VerifiedCreateHandoff where
+
+@[default_target]
+lean_lib VerifiedMutationHandoff where
+
+@[default_target]
+lean_lib AdministrativeRelationship where
+
+@[default_target]
+lean_lib CommitConflictReceipt where
+
+@[default_target]
+lean_lib NacToggle where
+
+@[default_target]
+lean_lib NacOrder where
+
+@[default_target]
+lean_lib DocumentSave where
+
+@[default_target]
+lean_lib Rfc3339Nano where
+
+@[default_target]
+lean_lib DocIdText where
+
+@[default_target]
+lean_lib SecondaryRelation where
+
+@[default_target]
+lean_lib CursorToken where
+
+@[default_target]
+lean_lib ViewQuerySource where

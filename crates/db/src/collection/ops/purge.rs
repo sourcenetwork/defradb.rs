@@ -190,6 +190,11 @@ where
                 .await?;
             }
 
+            datastore
+                .project_document(collection.name(), &canonical_doc_id.to_string())
+                .await
+                .map_err(Error::Storage)?;
+
             let heads = crate::block::heads::document::load(&headstore, doc_short_id)
                 .await
                 .map_err(Error::Storage)?;

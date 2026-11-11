@@ -148,20 +148,25 @@ where
 }
 
 /// The node's NAC manager. With `owner`, NAC is enabled at startup and owned
-/// by it; without, NAC stays off until enabled at runtime.
+/// by it; without, NAC stays off until enabled at runtime. A status change
+/// that loses its commit re-runs up to `max_txn_retries` times, as the
+/// database's transactions do.
 pub(crate) async fn create_nac_manager<S>(
     store: Arc<S>,
     owner: Option<&identity::Did>,
+    max_txn_retries: u32,
 ) -> Result<Arc<dyn db::NacManagerApi>>
 where
     S: storage::corekv::Store + 'static,
 {
     let nac_store = Arc::new(acp::PersistentZanzibarStore::from_store(store));
-    let mut nac_config = db::NacConfig::new().with_dev_mode();
+    let mut nac_config = db::NacConfig::new()
+        .with_dev_mode()
+        .with_max_txn_retries(max_txn_retries);
     if owner.is_some() {
         nac_config = nac_config.with_enabled();
     }
-    let manager = Arc::new(db::NacManager::new(nac_store, nac_config));
+    let manager = Arc::new(db::NacManager::new_bound(nac_store, nac_config));
     manager.initialize(owner).await.map_err(Error::NacInit)?;
     Ok(manager)
 }

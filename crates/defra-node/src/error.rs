@@ -37,6 +37,9 @@ pub enum Error {
     /// A transaction operation failed.
     #[error(transparent)]
     Transaction(#[from] query::TransactionError),
+    /// A transaction-scoped query operation failed.
+    #[error(transparent)]
+    Query(#[from] query::QueryError),
     /// The transaction does not exist, is finished, or belongs to another
     /// caller. Go's text for all three.
     #[error("transaction not found")]
@@ -44,6 +47,9 @@ pub enum Error {
     /// The commit lost a write conflict. Go's text.
     #[error("transaction conflict. Please retry")]
     TransactionConflict,
+    /// An HTTP server cannot expose transactions keyed only by embedder.
+    #[error("HTTP requires identity-owned transactions; embedder-only ownership is local")]
+    HttpEmbedderTransactionOwnership,
     /// A custom CRDT type could not be registered.
     #[error(transparent)]
     CustomCrdt(#[from] crdt::RegistryError),
@@ -89,6 +95,12 @@ pub enum Error {
     /// The source query of a view selects nothing.
     #[error("invalid view query: no selections found")]
     ViewQueryEmpty,
+    /// A view's lens transform CID is empty, which Go's `cid.Decode` refuses.
+    #[error("cid too short")]
+    ViewTransformCidEmpty,
+    /// A view names a lens transform CID the node does not hold.
+    #[error("lens CID not found: {0}")]
+    ViewTransformMissing(String),
     /// A downsample definition is invalid.
     #[error("invalid downsample definition: {0}")]
     InvalidDownsample(#[source] db::Error),
@@ -98,6 +110,9 @@ pub enum Error {
     /// Refreshing materialized views failed.
     #[error("refresh materialized views error: {0}")]
     MaterializedViewRefresh(#[source] db::Error),
+    /// A backup export or import failed; the backup code reports it as text.
+    #[error("{0}")]
+    Backup(String),
     /// Bootstrapping downsample collections failed.
     #[error("bootstrap downsample collections error: {0}")]
     DownsampleBootstrap(#[source] db::Error),
@@ -119,6 +134,22 @@ pub enum Error {
     /// The collection has no policy to manage relationships on.
     #[error("operation requires ACP, but collection has no policy")]
     CollectionWithoutPolicy,
+    /// A relationship change named no collection.
+    #[error("collection name can't be empty")]
+    CollectionNameEmpty,
+    /// A relationship change is missing its identity, document, relation or
+    /// target (Go: `ErrMissingReqArgToAddRelationship` and its delete twin).
+    #[error("missing a required argument needed to {0} doc actor relationship.")]
+    RelationshipArgumentMissing(&'static str),
+    /// The policy side of a relationship change failed.
+    #[error("failed to {verb} document actor relationship with acp: {source}")]
+    RelationshipAcp {
+        /// `add` or `delete`.
+        verb: &'static str,
+        /// What failed.
+        #[source]
+        source: Box<Error>,
+    },
     /// A relationship target did not parse.
     #[error("invalid target: {0}")]
     InvalidTarget(#[source] acp::Error),
@@ -210,8 +241,11 @@ pub enum Error {
     #[error("invalid node identity DID: {0}")]
     InvalidNodeIdentityDid(#[source] identity::Error),
     /// Node ACP needs a node identity.
-    #[error("node ACP requires a node identity; set one with with_node_identity_did()")]
+    #[error("can not start nac without identity")]
     NodeAcpNeedsIdentity,
+    /// A trusted document projector needs the node's actual DID.
+    #[error("document projector requires a node identity DID")]
+    DocumentProjectorNeedsIdentity,
     /// The node identity given for node ACP is invalid.
     #[error("invalid node identity DID for node ACP: {0}")]
     InvalidNodeAcpIdentity(#[source] identity::Error),
@@ -462,11 +496,17 @@ pub enum Error {
     #[error(transparent)]
     SeedLength(#[from] SeedLength),
     /// The encrypted index names a field the collection lacks.
-    #[error("encrypted index on non-existent field: {0}")]
+    #[error("encrypted index on non-existent field. Field: {0}")]
     EncryptedIndexFieldMissing(String),
     /// The field already has an encrypted index.
-    #[error("encrypted index already exists on field: {0}")]
+    #[error("encrypted index already exists on this field. Field: {0}")]
     EncryptedIndexExists(String),
+    /// No index has the name (Go: `NewErrIndexWithNameDoesNotExists`).
+    #[error("index with name doesn't exists. Name: {0}")]
+    IndexNameMissing(String),
+    /// No encrypted index is on the field (Go: `ErrEncryptedIndexNotFound`).
+    #[error("encrypted index does not exist on this field. Field: {0}")]
+    EncryptedIndexMissing(String),
     /// The collection's schema did not serialize.
     #[error("failed to serialize schema: {0}")]
     SchemaSerialize(#[source] serde_json::Error),

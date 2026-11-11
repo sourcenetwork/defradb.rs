@@ -157,8 +157,12 @@ impl IndexListArgs {
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
-        let indexes = client.index_list(self.collection.as_deref()).await?;
-        println!("{}", serde_json::to_string_pretty(&indexes)?);
+        // A collection's indexes print as Go's do, with each one's build state.
+        let printed = match &self.collection {
+            Some(collection) => client.index_listing(collection).await?,
+            None => serde_json::to_value(client.index_list(None).await?)?,
+        };
+        println!("{}", serde_json::to_string_pretty(&printed)?);
         Ok(())
     }
 }

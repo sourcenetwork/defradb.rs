@@ -184,80 +184,11 @@ pub trait NodeAcpOperations: defra_core::thread_bounds::MaybeSendSync {
     /// Get the current NAC status.
     async fn get_status(&self) -> NacStatus;
 
-    /// Get the owner identity.
-    async fn owner(&self) -> Option<identity::Did>;
-
-    /// Check if an identity is an admin.
-    async fn is_admin(&self, identity: &identity::Did) -> Result<bool, String>;
-
-    /// Add an admin relationship.
-    async fn add_admin(
-        &self,
-        requestor: &identity::Did,
-        target: &identity::Did,
-    ) -> Result<bool, String>;
-
-    /// Remove an admin relationship.
-    async fn remove_admin(
-        &self,
-        requestor: &identity::Did,
-        target: &identity::Did,
-    ) -> Result<bool, String>;
-
-    /// Temporarily disable NAC on this node.
-    ///
-    /// The requestor must be an admin.
-    async fn disable(&self, requestor: &identity::Did) -> Result<(), String>;
-
-    /// Re-enable NAC after it was temporarily disabled.
-    ///
-    /// The requestor must be an admin (uses persisted check).
-    async fn re_enable(&self, requestor: &identity::Did) -> Result<(), String>;
-
     /// Enable NAC with the given owner identity.
     ///
     /// Initializes NAC and sets the owner. Can only be called when NAC
     /// is not already configured.
     async fn enable(&self, owner: &identity::Did) -> Result<(), String>;
-
-    /// Add a NAC relationship (admin or permission grant).
-    ///
-    /// Routes to the appropriate operation based on the relation name:
-    /// - "admin" → add admin
-    /// - valid permission name → add permission grant
-    /// - "owner" or invalid → error
-    async fn add_relationship(
-        &self,
-        requestor: &identity::Did,
-        target: &identity::Did,
-        relation: &str,
-    ) -> Result<bool, String>;
-
-    /// Remove a NAC relationship (admin or permission grant).
-    ///
-    /// Routes to the appropriate operation based on the relation name:
-    /// - "admin" → remove admin
-    /// - valid permission name → remove permission grant
-    /// - "owner" or invalid → error
-    async fn remove_relationship(
-        &self,
-        requestor: &identity::Did,
-        target: &identity::Did,
-        relation: &str,
-    ) -> Result<bool, String>;
-
-    /// Get full NAC status info including all FFI-compatible fields.
-    async fn info(&self) -> NacStatusInfo;
-}
-
-/// NAC status information for HTTP responses.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct NacStatusInfo {
-    pub status: String,
-    pub configured_enabled: bool,
-    pub dev_mode: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub owner: Option<String>,
 }
 
 /// Trait for schema operations.
@@ -335,6 +266,13 @@ pub trait CollectionManagementOperations: defra_core::thread_bounds::MaybeSendSy
 pub trait DocumentAcpOperations: defra_core::thread_bounds::MaybeSendSync {
     bind_request!(DocumentAcpOperations);
 
+    /// Whether a bound request stages relationship changes in its named
+    /// transaction. Backends must refuse the request if they cannot bind its
+    /// authorization provider to that transaction.
+    fn supports_transactional_relationships(&self) -> bool {
+        false
+    }
+
     /// Check whether an actor has a document permission.
     ///
     /// This is a read-only preview of the current document ACP decision and
@@ -356,12 +294,24 @@ pub trait DocumentAcpOperations: defra_core::thread_bounds::MaybeSendSync {
     /// Returns `true` if a new relationship was created, `false` if it already existed.
     async fn add_doc_relationship(
         &self,
-        requestor: &identity::Did,
+        requestor: Option<&identity::Did>,
         target_actor: &str,
         collection: &str,
         doc_id: &str,
         relation: &str,
     ) -> Result<bool, String>;
+
+    /// Every relationship on a document, for its owner or a requester holding
+    /// a relation that manages one on that resource.
+    async fn list_doc_relationships(
+        &self,
+        requestor: &identity::Did,
+        collection: &str,
+        doc_id: &str,
+    ) -> Result<Vec<acp::DocumentRelationship>, String> {
+        let _ = (requestor, collection, doc_id);
+        Err(acp::Error::UnsupportedRelationshipListing.to_string())
+    }
 
     /// Delete an actor relationship from a document.
     ///
@@ -371,7 +321,7 @@ pub trait DocumentAcpOperations: defra_core::thread_bounds::MaybeSendSync {
     /// Returns `true` if the relationship was removed, `false` if it didn't exist.
     async fn delete_doc_relationship(
         &self,
-        requestor: &identity::Did,
+        requestor: Option<&identity::Did>,
         target_actor: &str,
         collection: &str,
         doc_id: &str,

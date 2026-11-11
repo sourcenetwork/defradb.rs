@@ -12,6 +12,14 @@ use crate::error::{Error, Result};
 use crate::identity::Identity;
 use crate::permission::DocumentPermission;
 
+/// One relationship stored on a document: its relation and its subject, as
+/// a DID, `*`, or `resource:object#relation`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DocumentRelationship {
+    pub relation: String,
+    pub subject: String,
+}
+
 /// Document ACP interface (matches Go acp/dac/dac.go)
 ///
 /// This trait provides document-level access control operations:
@@ -22,6 +30,23 @@ use crate::permission::DocumentPermission;
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait DocumentACP: MaybeSendSync {
+    /// Manage a document relation as the actual native NAC administrator.
+    /// Implementations must evaluate active NAC and perform DAC writes through
+    /// this same view. This is unavailable for unbound or remote providers.
+    async fn change_node_admin_relationship(
+        &self,
+        _view: datastore::NamespaceView,
+        _actor: &Did,
+        _target: Subject,
+        _policy_id: &str,
+        _resource: &str,
+        _doc_id: &str,
+        _relation: &str,
+        _delete: bool,
+    ) -> Result<bool> {
+        Err(Error::UnsupportedAdministrativeRelationship)
+    }
+
     /// Whether local reads and writes must share the authorized transaction.
     fn supports_transactions(&self) -> bool {
         false
@@ -159,6 +184,33 @@ pub trait DocumentACP: MaybeSendSync {
         resource_name: &str,
         doc_id: &str,
     ) -> Result<bool>;
+
+    /// Evaluate a named permission for an explicit actor. Backends that cannot
+    /// evaluate named permissions must fail rather than infer a grant.
+    async fn check_named_permission(
+        &self,
+        _subject: &Did,
+        _permission: &str,
+        _policy_id: &str,
+        _resource_name: &str,
+        _doc_id: &str,
+    ) -> Result<bool> {
+        Err(Error::UnsupportedNamedPermission)
+    }
+
+    /// Every relationship stored on one document, for its owner or for a
+    /// requester holding a relation that manages some relation on that
+    /// resource. Refusal is [`Error::NotManager`]; backends that cannot list
+    /// fail with [`Error::UnsupportedRelationshipListing`].
+    async fn list_relationships(
+        &self,
+        _requestor: &Did,
+        _policy_id: &str,
+        _resource_name: &str,
+        _doc_id: &str,
+    ) -> Result<Vec<DocumentRelationship>> {
+        Err(Error::UnsupportedRelationshipListing)
+    }
 
     /// Create a persisted access decision for a caller/object/permission check.
     ///

@@ -435,6 +435,13 @@ pub struct NetConfig {
     /// at most one quarter of this capacity. Default: 1000.
     #[serde(default = "default_max_pending_dags")]
     pub p2p_max_pending_dags: usize,
+    /// Max concurrent DAG fetches across all peers. Default: 4.
+    #[serde(default = "default_max_concurrent_dag_fetches")]
+    pub p2p_max_concurrent_dag_fetches: usize,
+    /// Seconds an unacknowledged pending-DAG entry lives before eviction; an
+    /// acknowledged entry does not expire. Default: 300.
+    #[serde(default = "default_pending_dag_ttl_secs")]
+    pub p2p_pending_dag_ttl_secs: u64,
     /// Re-announce blocks merged from peers on their gossip topics, so
     /// subscribers with no transport route to the author still receive them
     /// through whichever peer merged them. Signatures are verified on merge,
@@ -490,6 +497,12 @@ fn default_max_doc_sync_request_doc_ids() -> usize {
 fn default_max_pending_dags() -> usize {
     p2p::sync::DEFAULT_MAX_PENDING_DAGS
 }
+fn default_max_concurrent_dag_fetches() -> usize {
+    p2p::sync::DEFAULT_MAX_CONCURRENT_DAG_FETCHES
+}
+fn default_pending_dag_ttl_secs() -> u64 {
+    p2p::sync::PENDING_DAG_TTL.as_secs()
+}
 fn default_push_queue_capacity() -> usize {
     p2p::sync::DEFAULT_PUSH_QUEUE_CAPACITY
 }
@@ -543,6 +556,8 @@ impl Default for NetConfig {
             p2p_rate_limit_rate: default_rate_limit_rate(),
             p2p_max_doc_sync_request_doc_ids: default_max_doc_sync_request_doc_ids(),
             p2p_max_pending_dags: default_max_pending_dags(),
+            p2p_max_concurrent_dag_fetches: default_max_concurrent_dag_fetches(),
+            p2p_pending_dag_ttl_secs: default_pending_dag_ttl_secs(),
             p2p_rebroadcast_on_merge: false,
             p2p_push_queue_capacity: default_push_queue_capacity(),
             p2p_push_queue_byte_capacity: default_push_queue_byte_capacity(),

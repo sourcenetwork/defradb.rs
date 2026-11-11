@@ -90,7 +90,7 @@ pub async fn go_list_encrypted_indexes(
 pub async fn go_list_all_encrypted_indexes(
     State(state): State<AppState>,
     identity: ExtractIdentity,
-) -> Result<Json<Vec<EncryptedIndexInfo>>, HttpError> {
+) -> Result<Json<std::collections::BTreeMap<String, Vec<EncryptedIndexInfo>>>, HttpError> {
     require_permission(&state, &identity, NodePermission::EncryptedIndexListAll).await?;
 
     let ops = bound(state.require_encrypted_index()?, &identity.context());
@@ -100,7 +100,15 @@ pub async fn go_list_all_encrypted_indexes(
         .await
         .map_err(HttpError::Internal)?;
 
-    Ok(Json(indexes))
+    // Go answers with the indexes by collection name.
+    let mut by_collection = std::collections::BTreeMap::<String, Vec<EncryptedIndexInfo>>::new();
+    for index in indexes {
+        by_collection
+            .entry(index.collection.clone())
+            .or_default()
+            .push(index);
+    }
+    Ok(Json(by_collection))
 }
 
 /// Delete an encrypted index (Go-compatible route).

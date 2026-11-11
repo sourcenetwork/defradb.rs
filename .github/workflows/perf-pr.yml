@@ -24,8 +24,60 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: '0'
+  # The same bucket and fallback as ci.yml.
+  SCCACHE_BUCKET: defradb.rs.sscache-575155546886-us-east-2-an
+  SCCACHE_REGION: us-east-2
+  SCCACHE_S3_KEY_PREFIX: ci/
+  SCCACHE_IGNORE_SERVER_IO_ERROR: '1'
+  SCCACHE_IDLE_TIMEOUT: '0'
 
 jobs:
+  # A stack is measured once, at its tip, against where the stack leaves main:
+  # the PR below the tip would hide every lower change from the comparison.
+  # Whether to run is decided on that whole diff, not the tip's own, so a tip
+  # that only touches CI still measures the code below it. The full sweep on
+  # main still measures each merge; dependabot bumps are measured there too.
+  scope:
+    name: Benchmark scope
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+      base: ${{ steps.decide.outputs.base }}
+    steps:
+      - id: decide
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const stack = pr.stack;
+            const tip = !stack || stack.position === stack.size;
+            let run = pr.user.login !== 'dependabot[bot]' && tip;
+            let base = pr.base.sha;
+            if (run) {
+              const from = stack ? pr.base.repo.default_branch : pr.base.sha;
+              let data = { files: [] };
+              try {
+                ({ data } = await github.rest.repos.compareCommitsWithBasehead({
+                  ...context.repo, basehead: `${from}...${pr.head.sha}`, per_page: 300,
+                }));
+                if (stack) base = data.merge_base_commit.sha;
+              } catch (e) {
+                // Measure rather than skip when the diff cannot be read.
+                core.warning(`compare failed, measuring anyway: ${e.message}`);
+                data.files = null;
+              }
+              // Changes no benchmark can see; .github only counts for what this job runs.
+              const ci = /^\.github\/(workflows\/perf(-pr)?\.yml|scripts\/(install-linux-ci-deps|apt-update-without-nodesource)\.sh)$/;
+              const blind = (p) => p.endsWith('.md') || p.startsWith('proofs/')
+                || p.startsWith('tools/integration-test/') || (p.startsWith('.github/') && !ci.test(p));
+              const files = data.files;
+              // A listing that hit the cap may have dropped the file that matters.
+              run = !files || files.length >= 300 || files.some((f) => !blind(f.filename));
+            }
+            core.info(`stack=${stack ? `#${stack.number} ${stack.position}/${stack.size}` : 'none'} base=${base} run=${run}`);
+            core.setOutput('run', run ? 'true' : 'false');
+            core.setOutput('base', base);
+
   # Every pull request, no ceremony. A few families on Linux, measured against
   # this PR's own merge base, and posted back as a comment.
   #
@@ -54,6 +106,8 @@ jobs:
   # on our RunsOn instances, which can reach the team's AWS resources.
   quick:
     name: Quick benchmark
+    needs: scope
+    if: needs.scope.outputs.run == 'true'
     runs-on: ${{ github.event.pull_request.head.repo.full_name == github.repository && format('runs-on={0}-{1}/spot=false/family=c7i.4xlarge/env=v3/extras=s3-cache', github.run_id, github.run_attempt) || 'ubuntu-latest' }}
     timeout-minutes: 60
     permissions:
@@ -74,18 +128,18 @@ jobs:
     steps:
       - if: github.event.pull_request.head.repo.full_name == github.repository
         uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: head
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ needs.scope.outputs.base }}
           path: base
       - uses: extractions/setup-just@v4
       # Its own interpreter rather than the system one: a PEP 668 image refuses
       # to let pip touch the system environment, and this gate must not be the
       # thing that fails before it has checked anything.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       # A bench target the matrix does not name measures nothing, and nothing
@@ -100,12 +154,11 @@ jobs:
       # Each side builds into its own target directory: cargo names a path
       # crate's artifacts by its path inside the workspace, so in one shared
       # directory a crate of one side is taken for the other's.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: perf-quick
-          workspaces: |
-            head -> target
-            base -> target
+      # sccache rather than rust-cache: a cache saved from every pull request
+      # evicted main's (see ci.yml). On a fork's hosted runner the bucket is
+      # unreachable, sccache does not start, and the build compiles locally.
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
 
       - name: Record how quiet the host is
         run: python3 head/tools/perf-site/loadguard.py --out loadguard.json
@@ -159,7 +212,7 @@ jobs:
       - name: Assemble the four documents
         env:
           PERF_HEAD: ${{ github.event.pull_request.head.sha }}
-          PERF_BASE: ${{ github.event.pull_request.base.sha }}
+          PERF_BASE: ${{ needs.scope.outputs.base }}
           PERF_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
@@ -216,7 +269,7 @@ jobs:
               await github.rest.issues.createComment({ owner, repo, issue_number, body: payload });
             }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: perf-quick

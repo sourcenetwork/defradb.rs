@@ -23,16 +23,21 @@ transitive head history has parent-guarded merged at the target.
 
 ## Source-Grounded Facts
 
+The model sends each document's full block history. The code no longer does:
+replay and live pushes send each latest head as a hint under a CAR capability,
+and the target pulls the DAG. Rows marked *retired* describe the full-history
+push the model was written against.
+
 | Fact | Source |
 |---|---|
-| `ReplicatorInfo` is the persisted peer/collection configuration; `ReplicatorStatus` is active/inactive. | `crates/p2p/src/replicator.rs` `struct ReplicatorInfo` (`:135`), `enum ReplicatorStatus` (`:43`) |
-| Existing-doc replay waits for the target connection before it begins. | `crates/db/src/merge/push_docs_transport.rs:49` |
-| Backfill enumerates local document ids from the datastore, then loads the latest composite heads. | `crates/db/src/merge/push_docs_transport.rs:109`, `crates/db/src/merge/push_docs_transport.rs:157` |
-| Backfill expands each head into an ordered transitive DAG block list. | `crates/db/src/merge/push_docs_transport.rs:167`, `crates/db/src/merge/push_docs_common.rs:8` |
-| Existing-doc replay sends blocks sequentially per document and stops that document on peer rejection or connection-like send failure. | `crates/db/src/merge/push_docs_transport.rs:199`, `crates/db/src/merge/push_docs_transport.rs:222` |
-| Retry recomputes a single document's latest heads and DAG blocks from storage rather than trusting a stale in-memory queue. | `crates/db/src/merge/push_docs_transport.rs:374`, `crates/db/src/merge/push_docs_transport.rs:416` |
-| Live writes push the full document DAG to every matching replicator. | `crates/p2p/src/sync/coordinator/broadcast.rs:149`, `crates/p2p/src/sync/coordinator/broadcast.rs:179` |
-| Ordered live pushes stop on timeout or connection-like transport error and report a per-doc failure for retry. | `crates/p2p/src/sync/coordinator/broadcast.rs:436`, `crates/p2p/src/sync/coordinator/broadcast.rs:453`, `crates/p2p/src/sync/coordinator/broadcast.rs:238` |
+| `ReplicatorInfo` is the persisted peer/collection configuration; `ReplicatorStatus` is active/inactive. | `crates/p2p/src/replicator.rs` `struct ReplicatorInfo`, `enum ReplicatorStatus` |
+| Existing-doc replay waits for the target connection before it begins. | `crates/db/src/merge/push_docs.rs` `push_existing_docs_with_config_and_allowlist`, `crates/db/src/merge/push_docs_network.rs` `wait_for_peer` |
+| Backfill enumerates local document ids from the datastore, then loads the latest composite heads. | `crates/db/src/merge/push_docs.rs` `push_existing_docs_with_config_and_allowlist`, `crates/db/src/merge/push_docs_common.rs` `load_latest_composite_head_cids` |
+| *Retired:* backfill expands each head into an ordered transitive DAG block list. | replaced by the head hint and the target's pull |
+| *Retired:* existing-doc replay sends blocks sequentially per document and stops that document on peer rejection or connection-like send failure. | replaced by the head hint and the target's pull |
+| Retry recomputes a single document's latest heads from storage rather than trusting a stale in-memory queue. | `crates/db/src/merge/push_docs.rs` `retry_doc` |
+| *Retired:* live writes push the full document DAG to every matching replicator. | `crates/p2p/src/sync/coordinator/broadcast.rs` `push_jobs` now queues one head hint per matching replicator |
+| A live push that times out or fails is reported for retry. | `crates/p2p/src/sync/coordinator/push_worker.rs` `run_push_job` |
 
 ## TLA+ Abstraction
 

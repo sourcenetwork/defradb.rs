@@ -1,51 +1,138 @@
 ---- MODULE PushLogAdmission ----
-\* PushLog admission at the hub's sync manager (#1088 slice 1 / W1), abstracting
-\* crates/p2p/src/sync/manager/process/pushlog.rs (process_pushlog + insert_pending_dag)
-\* and the reply seams in crates/p2p/src/sync/coordinator/event_handler/pushlog.rs.
+\* PushLog admission at the hub's sync manager (#1088 slice 1 / W1, and F1 sibling
+\* heads), abstracting crates/p2p/src/sync/manager/process/pushlog.rs
+\* (process_block_inner, assert_pushlog_left_durable_state), the scope rule in
+\* crates/p2p/src/sync/head_scope.rs (ScopeDecision::of), the in-memory registry in
+\* crates/p2p/src/sync/manager/process/pending_dag.rs (try_insert_pending_dag), the
+\* durable one in crates/p2p/src/sync/pending_store/store.rs (register), the hub's view
+\* of it in crates/p2p/src/sync/pending_store/view.rs (PersistedView), the Processed
+\* outcome of process_block_inner, the peer's share in
+\* crates/p2p/src/sync/pending_store/shares.rs, and the reply seams in
+\* crates/p2p/src/sync/coordinator/event_handler/pushlog.rs.
+\* Rust tests: crates/p2p/tests/unit/durable_only_ack.rs, crates/p2p/tests/unit/durable_share.rs
+\* poison_peer_cannot_fill_durable_cap, pending_store/tests.rs
+\* a_registration_beside_another_of_its_peer_is_refused_at_the_share.
 \*
-\* THE MECHANISM: a pushed head block whose DAG has missing links must be REGISTERED in
-\* the hub's bounded pending-DAG map (capacity = SyncConfig::max_pending_dags, Go-era
-\* MAX_PENDING_DAGS) before the hub can complete it via Bitswap and merge. The pusher
-\* drives its persisted retry ladder off the PushLogReply: a success clears the durable
-\* scope marker only after ownership was honestly transferred.
+\* THE STORY: a pusher sends the hub one head block at a time. The hub either merges
+\* the head, registers it as pending (it owns fetching the rest of its DAG), or nacks
+\* it. A success reply makes the pusher delete its retry record, so after a success
+\* the hub alone owns the head. Heads form a DAG: a head links its parents, and
+\* fetching a head fetches every ancestor. Two heads of one document written on two
+\* different peers are siblings: neither links the other.
 \*
-\* THE BUG (fa4a84f7 regression of #592): when the pending map is at capacity the hub
-\* drops the registration and returns Ok(()) — which both reply seams turn into
-\* PushLogReply::success. The pusher's retry record is destroyed while the hub holds
-\* neither a merge nor a registration: silent, permanent divergence (issue #1088 M1).
+\* THE MECHANISM: the hub remembers one current head per sender scope (the announcing
+\* peer, the collection and the document). A new head of that scope may retire the
+\* current one (it "supersedes" it), and the current head may make a new head need no
+\* registration at all (it "covers" it).
 \*
-\* THE INVARIANT (heart of the fix): a success PushLogReply implies the pushed block is
-\* either MERGED or REGISTERED AS PENDING on the hub. No code path may reply success
-\* after discarding state. On capacity overflow the hub must nack (RATE_LIMITED_MESSAGE),
-\* which the sender hands to its persisted scope-marker ladder — so the scope stays
-\* dirty, rederives its current head, and eventually merges.
+\* THE BUGS:
+\*   - #1088 M1 (ReplyMode = "SuccessOnFull"): at capacity the hub drops the
+\*     registration but replies success. The pusher deletes its retry record and
+\*     the hub holds nothing.
+\*   - F1 (CoverRule = "Priority"): the hub decided cover and supersede by
+\*     (priority, CID), as if a newer head always carried the older one. A sibling
+\*     with a lower version was acked as covered and never registered; one with a
+\*     higher version retired the earlier sibling's registration. Neither sibling
+\*     links the other, so fetching the survivor never fetches the lost one.
 \*
-\* One knob:
-\*   ReplyMode = "NackOnFull"    - capacity overflow replies RATE_LIMITED_MESSAGE; the
-\*                                 pusher keeps its retry record and re-pushes. [GREEN]
-\*             = "SuccessOnFull" - historical regression: drop registration, reply
-\*                                 success; the pusher clears its marker. [RED]
+\* THE ACK GUARD (assert_pushlog_left_durable_state): before a success reply the hub checks
+\* that the push left the head merged or registered. A head the full in-memory map has no
+\* entry for is registered on its durable record alone (process_block_inner, resident false),
+\* and the hub's view of its durable records (PersistedView, pending_store/view.rs) learns of
+\* a commit only when the store's receipt-ordered events go out (OnCommit::Ordered,
+\* pending_store/store.rs on_commit). An earlier commit's hook on the same store, such as a
+\* merge's, holds those events back past the reply. A guard that reads only the view then
+\* nacks a head whose record is durable; the reply seams map that nack to RATE_LIMITED, and
+\* the sender parks the hub for it.
 \*
-\* Abstractions: pusher identity is irrelevant to the invariant (any fan-in of pushers
-\* contends for the same global capacity), so docs are the unit and "the pusher" is the
-\* per-doc ack/retry record. HOW a push comes to have missing links (single-head-block
-\* live update, M3 send-timeout truncation) is likewise abstracted: HubComplete models an
-\* arrival whose DAG is already complete, HubAdmit/HubOverflow* model one that is not.
-\* TTL eviction of an admitted entry is deliberately NOT modeled: it is the residual
-\* divergence window of the pending map itself (issue #844 / #1088 W2-W3 follow-ups),
-\* orthogonal to the reply decision this slice fixes.
+\* THE PEER'S SHARE: the store holds at most Quota durable records of one announcing peer
+\* (max_persisted_pending_per_peer), in either tier, and nacks a head past it
+\* (PendingDagCapacity) while the sender keeps its marker. A head that links the scope's
+\* current head takes over its record and needs no more of the share. The store counts the
+\* peer's records in the registration's own transaction (shares.rs: a validated read of the
+\* peer's count), so the check and the record are one step. A check that reads the view's
+\* count (PersistedView::source_count) and leaves the store to write the record passes every
+\* registration of the peer that commits while the view lags, and the peer holds more than
+\* its share: its records that never resolve then fill the store.
+\*
+\* THE INVARIANT: every head the pusher was told succeeded is reachable from what the
+\* hub holds: a pending head or a merged one, or an ancestor of one.
+\*
+\* Four knobs:
+\*   ReplyMode = "NackOnFull"    - capacity overflow nacks; the pusher retries. [GREEN]
+\*             = "SuccessOnFull" - overflow drops the head and acks success. [RED]
+\*   CoverRule = "Parent"        - a head retires the current head only when it links
+\*                                 it as a parent, and nothing is covered: every
+\*                                 other head registers on its own. [GREEN, the code]
+\*             = "Priority"      - (priority, CID) order covers and supersedes. [RED]
+\*   GuardMode = "Committed"     - the guard accepts the durable record the store committed
+\*                                 for this push (Processed::DurablyRegistered). [GREEN]
+\*             = "View"          - the guard reads only the view, which may not show that
+\*                                 record yet: a head the hub owns is nacked. [RED]
+\*   QuotaMode = "Store"         - the share is checked against the durable records, in the
+\*                                 registration's transaction (shares.rs held). [GREEN]
+\*             = "View"          - the share is checked against the view before the store
+\*                                 writes the record: registrations past it pass. [RED]
+\*
+\* Abstractions: the heads are one announcing peer's pushes, which its share and the
+\* global capacity both bound; other peers' pushes contend only for the global capacity,
+\* so they are left out. The pusher is one per-head ack/retry record; heads of different
+\* scopes are independent. HOW a push comes to have missing links is abstracted:
+\* HubComplete models an arrival whose DAG is already complete, HubAdmit/HubOverflow*
+\* one that is not. Merging a head merges its whole DAG, so its ancestors' pending
+\* records go with it (in the code the clock or the resync sweep finds them merged
+\* and discharges them). TTL eviction is not modeled (see PendingDagRestart). The view
+\* learns of a removal at once here: a merged head is acked by its merge, and a retired
+\* one by the head that links it, so the lag of a removal never decides a reply.
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS
-  Docs,        \* pushed documents (each = one head push contending for admission)
-  Cap,         \* pending-DAG capacity (SyncConfig::max_pending_dags)
-  ReplyMode    \* "NackOnFull" | "SuccessOnFull"
+  Heads,       \* the pushed heads, as numbers: their order is the CID tie-break
+  Parent,      \* [Heads -> SUBSET Heads]: the heads each head links as parents
+  Prio,        \* [Heads -> Nat]: each head's priority
+  ScopeOf,     \* [Heads -> scopes]: each head's sender scope
+  Cap,         \* admission capacity: SyncConfig::max_pending_dags with no durable store; with one, the
+               \* durable tier (a full map admits on the record alone, MC_SyncOwnership_Memory)
+  Quota,       \* durable records the pushing peer may hold: max_persisted_pending_per_peer
+  ReplyMode,   \* "NackOnFull" | "SuccessOnFull"
+  CoverRule,   \* "Parent" | "Priority"
+  GuardMode,   \* "Committed" | "View"
+  QuotaMode    \* "Store" | "View"
 
-ASSUME Docs # {}
+\* NoHead stands for "the scope has no current head"; it is never a real head.
+NoHead == 0
+
+ASSUME Heads # {} /\ Heads \subseteq Nat /\ NoHead \notin Heads
+ASSUME Parent \in [Heads -> SUBSET Heads]
+ASSUME Prio \in [Heads -> Nat]
 ASSUME Cap \in Nat /\ Cap >= 1
+\* The peer may hold at least one record and at most every slot.
+ASSUME Quota \in 1..Cap
 ASSUME ReplyMode \in {"NackOnFull", "SuccessOnFull"}
+ASSUME CoverRule \in {"Parent", "Priority"}
+\* The guard knob takes one of its named values.
+ASSUME GuardMode \in {"Committed", "View"}
+\* The share knob takes one of its named values.
+ASSUME QuotaMode \in {"Store", "View"}
 
-\* Pusher-side per-doc record:
+\* The sender scopes that any head belongs to.
+Scopes == {ScopeOf[h] : h \in Heads}
+
+\* Every ancestor of h: its parents, their parents, and so on.
+RECURSIVE AncOf(_)
+AncOf(h) == Parent[h] \cup UNION {AncOf(p) : p \in Parent[h]}
+
+\* A parent always has a lower priority than its child, and no head is its own
+\* ancestor: the parent relation is a DAG.
+ASSUME \A h \in Heads : \A p \in Parent[h] : Prio[p] < Prio[h]
+
+\* The heads S holds, with every ancestor of them: what fetching S fetches.
+Reach(S) == S \cup UNION {AncOf(h) : h \in S}
+
+\* The code's version order, (priority, CID): a before b.
+Before(a, b) == Prio[a] < Prio[b] \/ (Prio[a] = Prio[b] /\ a < b)
+
+\* Pusher-side per-head record:
 \*   unsent       - not yet pushed
 \*   inflight     - push sent, awaiting PushLogReply
 \*   ackedSuccess - success reply consumed; retry record DELETED (terminal on the pusher)
@@ -53,116 +140,326 @@ ASSUME ReplyMode \in {"NackOnFull", "SuccessOnFull"}
 PusherStates == {"unsent", "inflight", "ackedSuccess", "retryQueued"}
 
 VARIABLES
-  pending,   \* SUBSET Docs - hub pending-DAG registrations awaiting missing links
-  merged,    \* SUBSET Docs - merged on the hub
-  pusher     \* [Docs -> PusherStates]
+  pending,   \* SUBSET Heads - hub pending-DAG registrations awaiting missing links
+  merged,    \* SUBSET Heads - merged on the hub
+  cur,       \* [Scopes -> Heads \cup {NoHead}] - each scope's current head
+  pusher,    \* [Heads -> PusherStates]
+  view       \* SUBSET Heads - the registrations the hub's view of its durable records shows
 
-vars == <<pending, merged, pusher>>
+vars == <<pending, merged, cur, pusher, view>>
 
 TypeOK ==
-  /\ pending \subseteq Docs
-  /\ merged \subseteq Docs
+  /\ pending \subseteq Heads
+  /\ merged \subseteq Heads
   /\ pending \cap merged = {}
   /\ Cardinality(pending) <= Cap
-  /\ pusher \in [Docs -> PusherStates]
+  /\ cur \in [Scopes -> Heads \cup {NoHead}]
+  /\ pusher \in [Heads -> PusherStates]
+  \* The view shows only registrations the store holds.
+  /\ view \subseteq pending
 
 Init ==
   /\ pending = {}
   /\ merged = {}
-  /\ pusher = [d \in Docs |-> "unsent"]
+  /\ cur = [s \in Scopes |-> NoHead]
+  /\ pusher = [h \in Heads |-> "unsent"]
+  \* The view shows nothing yet.
+  /\ view = {}
 
-\* Pusher sends (or re-sends from its persisted retry ladder) the doc's head push.
-Send(d) ==
-  /\ pusher[d] \in {"unsent", "retryQueued"}
-  /\ pusher' = [pusher EXCEPT ![d] = "inflight"]
-  /\ UNCHANGED <<pending, merged>>
+\* The current head of h's scope (ScopeDecision::of reads it).
+CurOf(h) == cur[ScopeOf[h]]
 
-\* The pushed DAG is complete on arrival (all links present or already merged):
-\* the hub merges and replies success. Success here is honest - state is kept.
-HubComplete(d) ==
-  /\ pusher[d] = "inflight"
-  /\ merged' = merged \cup {d}
-  /\ pending' = pending \ {d}
-  /\ pusher' = [pusher EXCEPT ![d] = "ackedSuccess"]
-  /\ UNCHANGED <<>>
+\* Whether the current head makes h need no registration (ScopeDecision
+\* CoveredByCurrent). Under "Priority" a lower version is covered whether or not the
+\* current head links it; under "Parent" nothing is covered.
+Covered(h) ==
+  /\ CoverRule = "Priority"
+  \* only the old rule covers anything;
+  /\ CurOf(h) # NoHead
+  \* the scope has a current head;
+  /\ CurOf(h) # h
+  \* that is another head;
+  /\ Before(h, CurOf(h))
+  \* and h has the lower version, linked or not.
 
-\* Missing links and a free slot (or an existing registration for the same root -
-\* insert_pending_dag replaces in place at capacity): register pending, reply success.
-\* Success here is honest - the registration guarantees Bitswap completion is tracked.
-HubAdmit(d) ==
-  /\ pusher[d] = "inflight"
-  /\ d \notin merged
-  /\ (Cardinality(pending) < Cap \/ d \in pending)
-  /\ pending' = pending \cup {d}
-  /\ pusher' = [pusher EXCEPT ![d] = "ackedSuccess"]
+\* The current head h retires, or NoHead (ScopeDecision Supersedes). Under "Parent"
+\* only a current head that h links as a parent; under "Priority" any lower version.
+Retires(h) ==
+  LET c == CurOf(h) IN
+  \* c is the scope's current head;
+  IF c = NoHead \/ c = h THEN NoHead
+  \* no current head, or h itself: nothing to retire;
+  ELSE IF CoverRule = "Parent" THEN (IF c \in Parent[h] THEN c ELSE NoHead)
+  \* the code: retire c only when h links it, so fetching h fetches c;
+  ELSE IF Before(c, h) THEN c ELSE NoHead
+  \* the old rule: retire any lower version.
+
+\* The scope's current head after h registers: h, unless the scope keeps a newer
+\* current head (a sibling registered on its own leaves a newer one in place).
+NextCur(h) ==
+  LET c == CurOf(h) IN
+  \* c is the scope's current head before h registers;
+  IF c = NoHead \/ Retires(h) # NoHead \/ ~Before(h, c) THEN h ELSE c
+  \* h takes over when there is none, when h retires it, or when h is newer.
+
+\* The peer's records the share is checked against: the durable records the registration's
+\* transaction reads (Store), or the view (View).
+Counted == IF QuotaMode = "Store" THEN pending ELSE view
+
+\* The peer may take a record for h: h takes over the record of the head it retires, or
+\* the peer holds fewer records than its share, as the check counts them.
+ShareRoom(h) == Retires(h) # NoHead \/ Cardinality(Counted) < Quota
+
+\* Scopes whose current head is in gone lose it.
+ClearCur(gone) == [s \in Scopes |-> IF cur[s] \in gone THEN NoHead ELSE cur[s]]
+
+\* Pusher sends (or re-sends from its persisted retry ladder) the head's push.
+Send(h) ==
+  /\ pusher[h] \in {"unsent", "retryQueued"}
+  /\ pusher' = [pusher EXCEPT ![h] = "inflight"]
+  /\ UNCHANGED <<pending, merged, cur, view>>
+
+\* A covered head is acked with no state change (pushlog.rs: the in-memory and
+\* durable CoveredByCurrent paths return Ok without registering).
+HubCovered(h) ==
+  /\ pusher[h] = "inflight"
+  \* the push is on the wire;
+  /\ h \notin merged
+  \* the hub has not merged it;
+  /\ h \notin pending
+  \* nor registered it;
+  /\ Covered(h)
+  \* but the current head covers it;
+  /\ pusher' = [pusher EXCEPT ![h] = "ackedSuccess"]
+  \* so the hub acks it, and the pusher forgets it;
+  /\ UNCHANGED <<pending, merged, cur, view>>
+  \* while the hub records nothing.
+
+\* A head the hub already registered is acked again (extend_registered_root).
+HubReack(h) ==
+  /\ pusher[h] = "inflight"
+  \* the push is on the wire;
+  /\ h \in pending
+  \* the hub already owns h;
+  /\ pusher' = [pusher EXCEPT ![h] = "ackedSuccess"]
+  \* so it acks it;
+  /\ UNCHANGED <<pending, merged, cur, view>>
+  \* and nothing else changes.
+
+\* The pushed DAG is complete on arrival, or already merged: the hub merges it, and
+\* so its ancestors, and replies success. Success here is honest.
+HubComplete(h) ==
+  /\ pusher[h] = "inflight"
+  \* the push is on the wire;
+  /\ ~Covered(h)
+  \* a covered head is answered before anything is merged;
+  /\ merged' = merged \cup Reach({h})
+  \* h and its whole DAG merge;
+  /\ pending' = pending \ Reach({h})
+  \* records of anything that merged are discharged;
+  /\ cur' = ClearCur(Reach({h}))
+  \* scopes whose current head merged have none;
+  /\ view' = view \ Reach({h})
+  \* the view no longer shows a registration the merge discharged;
+  /\ pusher' = [pusher EXCEPT ![h] = "ackedSuccess"]
+  \* and the hub acks h.
+
+\* Where h may register: a slot is free, or h takes the slot of the head it retires.
+\* Both tiers share this rule; which tier holds h decides only what the guard finds.
+Admissible(h) ==
+  /\ pusher[h] = "inflight"
+  \* the push is on the wire;
+  /\ h \notin merged
+  \* the hub has not merged h;
+  /\ h \notin pending
+  \* nor registered it;
+  /\ ~Covered(h)
+  \* nor treats it as covered;
+  /\ (Cardinality(pending) < Cap \/ Retires(h) # NoHead)
+  \* a slot is free, or h retires a head and takes its slot;
+  /\ ShareRoom(h)
+  \* and the peer is within its share, as the check counts it.
+
+\* The registration of h: the retired head's record goes, h's arrives, and the scope's
+\* current head moves on. The view drops the retired record; it learns of h's later
+\* (Publish).
+Register(h) ==
+  /\ pending' = (pending \ {Retires(h)}) \cup {h}
+  \* the retired head's record goes and h's arrives;
+  /\ cur' = [cur EXCEPT ![ScopeOf[h]] = NextCur(h)]
+  \* the scope's current head moves on;
+  /\ view' = view \ {Retires(h)}
+  \* and the view no longer shows the retired record.
+
+\* Missing links and a free slot, or a current head h retires (the retiree's slot
+\* passes to h): register pending with an in-memory entry, which the guard finds,
+\* become the scope's current head unless a newer one is kept, reply success.
+HubAdmit(h) ==
+  /\ Admissible(h)
+  \* h may register;
+  /\ Register(h)
+  \* h registers;
+  /\ pusher' = [pusher EXCEPT ![h] = "ackedSuccess"]
+  \* the hub acks h;
   /\ UNCHANGED merged
+  \* and nothing merges yet.
 
-\* Capacity overflow, current-main behavior (process/pushlog.rs WARN + Ok(()) ->
-\* PushLogReply::success): the registration is DROPPED but the pusher is told success,
-\* so it deletes its retry record. The laundering step. [RED path]
-HubOverflowSuccess(d) ==
+\* Missing links, a free durable slot and a full in-memory map: h is registered on its
+\* durable record alone (process_block_inner, resident false), so the guard finds no
+\* entry. Committed: the guard accepts the record the store committed for this push.
+\* View: the guard reads only the view, and a view that does not show the record yet
+\* makes it nack a head whose record is durable; the pusher keeps its retry record.
+HubAdmitDurableOnly(h) ==
+  /\ Admissible(h)
+  \* h may register;
+  /\ Register(h)
+  \* the store commits its record;
+  /\ pusher' = [pusher EXCEPT ![h] =
+                  IF GuardMode = "Committed" \/ h \in view
+                  THEN "ackedSuccess"
+                  ELSE "retryQueued"]
+  \* the guard's reply: success, unless it reads a view that does not show the record;
+  /\ UNCHANGED merged
+  \* and nothing merges yet.
+
+\* The store's receipt-ordered events go out (storage/backends/regolith/event_order.rs):
+\* the view learns of a registration (PersistedView::registered).
+Publish(h) ==
+  /\ h \in pending
+  \* a registration
+  /\ h \notin view
+  \* the view does not show yet;
+  /\ view' = view \cup {h}
+  \* shows now;
+  /\ UNCHANGED <<pending, merged, cur, pusher>>
+  \* and nothing else changes.
+
+\* The head would need a new slot and none is free.
+Overflows(h) ==
+  /\ pusher[h] = "inflight"
+  \* the push is on the wire;
+  /\ h \notin merged
+  \* the hub has not merged h;
+  /\ h \notin pending
+  \* nor registered it;
+  /\ ~Covered(h)
+  \* nor treats it as covered;
+  /\ Retires(h) = NoHead
+  \* h frees no slot by retiring a head;
+  /\ Cardinality(pending) >= Cap
+  \* and every slot is taken.
+
+\* Capacity overflow, historical regression: the registration is DROPPED but the
+\* pusher is told success, so it deletes its retry record. [RED path]
+HubOverflowSuccess(h) ==
   /\ ReplyMode = "SuccessOnFull"
-  /\ pusher[d] = "inflight"
-  /\ d \notin merged
-  /\ d \notin pending
-  /\ Cardinality(pending) >= Cap
-  /\ pusher' = [pusher EXCEPT ![d] = "ackedSuccess"]
-  /\ UNCHANGED <<pending, merged>>
+  /\ Overflows(h)
+  /\ pusher' = [pusher EXCEPT ![h] = "ackedSuccess"]
+  /\ UNCHANGED <<pending, merged, cur, view>>
 
-\* Capacity overflow, fixed behavior: reply RATE_LIMITED_MESSAGE. The pusher's
-\* backoff consumer keeps the doc queued for retry. [GREEN path]
-HubOverflowNack(d) ==
+\* Capacity overflow, fixed behavior: nack (AT_CAPACITY). The pusher keeps its retry
+\* record and re-pushes. [GREEN path]
+HubOverflowNack(h) ==
   /\ ReplyMode = "NackOnFull"
-  /\ pusher[d] = "inflight"
-  /\ d \notin merged
-  /\ d \notin pending
-  /\ Cardinality(pending) >= Cap
-  /\ pusher' = [pusher EXCEPT ![d] = "retryQueued"]
-  /\ UNCHANGED <<pending, merged>>
+  /\ Overflows(h)
+  /\ pusher' = [pusher EXCEPT ![h] = "retryQueued"]
+  /\ UNCHANGED <<pending, merged, cur, view>>
 
-\* Bitswap completes a registered DAG (retry_pending_dag -> DagReady -> merge).
-Resolve(d) ==
-  /\ d \in pending
-  /\ pending' = pending \ {d}
-  /\ merged' = merged \cup {d}
+\* The peer holds its share, as the check counts it: the hub nacks (PendingDagCapacity) and
+\* registers nothing; the pusher keeps its retry record and re-pushes.
+HubShareNack(h) ==
+  /\ pusher[h] = "inflight"
+  \* the push is on the wire;
+  /\ h \notin merged
+  \* the hub has not merged h;
+  /\ h \notin pending
+  \* nor registered it;
+  /\ ~Covered(h)
+  \* nor treats it as covered;
+  /\ ~ShareRoom(h)
+  \* and the peer holds its share;
+  /\ pusher' = [pusher EXCEPT ![h] = "retryQueued"]
+  \* so the hub nacks h;
+  /\ UNCHANGED <<pending, merged, cur, view>>
+  \* and records nothing.
+
+\* The fetch completes a registered DAG and it merges, with every ancestor
+\* (retry_pending_dag -> DagReady -> merge); records of merged ancestors go too.
+Resolve(h) ==
+  /\ h \in pending
+  \* the hub owns h;
+  /\ merged' = merged \cup Reach({h})
+  \* h and its whole DAG merge;
+  /\ pending' = pending \ Reach({h})
+  \* records of anything that merged are discharged;
+  /\ cur' = ClearCur(Reach({h}))
+  \* scopes whose current head merged have none;
+  /\ view' = view \ Reach({h})
+  \* the view no longer shows a registration the merge discharged;
   /\ UNCHANGED pusher
+  \* and the pusher is not involved.
+
+\* Every reply the hub can give to the push of h.
+HubReply(h) ==
+  \/ HubCovered(h)
+  \/ HubReack(h)
+  \/ HubComplete(h)
+  \/ HubAdmit(h)
+  \/ HubAdmitDurableOnly(h)
+  \/ HubOverflowSuccess(h)
+  \/ HubOverflowNack(h)
+  \/ HubShareNack(h)
 
 Next ==
-  \E d \in Docs :
-    \/ Send(d)
-    \/ HubComplete(d)
-    \/ HubAdmit(d)
-    \/ HubOverflowSuccess(d)
-    \/ HubOverflowNack(d)
-    \/ Resolve(d)
+  \E h \in Heads :
+    \/ Send(h)
+    \/ HubReply(h)
+    \/ Publish(h)
+    \/ Resolve(h)
 
-\* All docs merged: stutter so TLC does not flag deadlock on a finished schedule.
-\* (Under SuccessOnFull a schedule can also WEDGE with merged # Docs - every pusher
-\* record acked, nothing pending, nothing re-pushable. That dead end is the bug's
-\* operational signature, but the invariant below catches it earlier and crisper.)
-Done == merged = Docs
+\* All heads merged: stutter so TLC does not flag deadlock on a finished schedule.
+Done == merged = Heads
 Terminating == Done /\ UNCHANGED vars
 
 Spec == Init /\ [][Next \/ Terminating]_vars
 
-\* Weak fairness per doc: retries keep getting sent, registered DAGs keep resolving,
-\* and an admissible inflight push is eventually admitted or completed.
+\* Scheduler-level fairness only: the pusher keeps sending something, the hub keeps
+\* answering something, the fetch pool keeps completing something, and the store's
+\* events keep going out (a hook that holds them ends). No head is promised a turn of
+\* its own; per-head progress has to follow from these.
 FairSpec ==
-  Spec /\ \A d \in Docs :
-    /\ WF_vars(Send(d))
-    /\ WF_vars(Resolve(d))
-    /\ WF_vars(HubAdmit(d))
-    /\ WF_vars(HubComplete(d))
+  /\ Spec
+  /\ WF_vars(\E h \in Heads : Send(h))
+  /\ WF_vars(\E h \in Heads : HubReply(h))
+  /\ WF_vars(\E h \in Heads : Resolve(h))
+  /\ WF_vars(\E h \in Heads : Publish(h))
 
 INV_TypeOK == TypeOK
 
-\* THE #1088 M1 INVARIANT: a success reply implies the hub kept state for the doc -
-\* it is merged or registered as pending. SuccessOnFull violates this at the
-\* overflow step; NackOnFull preserves it in every reachable state.
+\* THE #1088 M1 INVARIANT: a success reply implies the hub kept the very head: it is
+\* merged or registered as pending. It holds only when no head retires another, so it
+\* is checked on configurations whose heads have no parents.
 INV_SuccessImpliesRegisteredOrMerged ==
-  \A d \in Docs : pusher[d] = "ackedSuccess" => d \in pending \cup merged
+  \A h \in Heads : pusher[h] = "ackedSuccess" => h \in pending \cup merged
 
-\* Liveness (GREEN, under FairSpec): with overflow nacked and retries fair, every
-\* pushed doc eventually merges - the loop has a fixed point.
-EventuallyAllMerged == <>(merged = Docs)
+\* THE F1 INVARIANT: a success reply implies the hub can still reach the head: it is
+\* pending or merged, or an ancestor of a head that is. A retired parent passes; a
+\* covered or retired sibling does not.
+INV_AckedHeadReachable ==
+  \A h \in Heads : pusher[h] = "ackedSuccess" => h \in Reach(pending \cup merged)
+
+\* A nack implies the hub holds no registration for the head. The sender parks the hub on
+\* a nack (RATE_LIMITED) and demotes its queued pushes, so a nack of a head the hub
+\* already owns costs the sender for nothing. View violates this: the guard nacks a head
+\* registered on its durable record alone before the view shows that record.
+INV_NackImpliesUnregistered ==
+  \A h \in Heads : pusher[h] = "retryQueued" => h \notin pending
+
+\* The peer never holds more durable records than its share. View violates this: two pushes
+\* of the peer both pass a check against a view that shows neither record yet.
+INV_PeerQuota == Cardinality(pending) <= Quota
+
+\* Liveness (GREEN, under FairSpec): with overflow nacked and every acked head
+\* reachable, every pushed head eventually merges.
+EventuallyAllMerged == <>(merged = Heads)
 ====

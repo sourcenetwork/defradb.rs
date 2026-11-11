@@ -20,7 +20,7 @@
 
 use std::sync::Arc;
 
-use crate::rt::mpsc;
+use crate::rt::mpsc::error::TryRecvError;
 use blockstore::Blockstore;
 
 use super::config::ReplicationConfig;
@@ -30,7 +30,7 @@ use super::handlers::{
 };
 use super::result::ReplicationResult;
 use crate::sync::coordinator::SyncCoordinator;
-use crate::sync::manager::SyncEvent;
+use crate::sync::manager::SyncEventReceiver;
 use crate::sync::merge::MergeHandler;
 use crate::transport::P2PTransport;
 
@@ -59,7 +59,7 @@ impl ReplicationLoop {
     /// shared transactions, reducing fsync overhead during P2P catch-up.
     pub async fn run<B, T, H, F>(
         coordinator: Arc<SyncCoordinator<B, T>>,
-        mut events: mpsc::Receiver<SyncEvent>,
+        mut events: SyncEventReceiver,
         handler: Arc<H>,
         config: ReplicationConfig,
         on_result: F,
@@ -126,6 +126,8 @@ impl ReplicationLoop {
                             "Block quarantined: merge deterministically rejected, will not be re-driven locally"
                         );
                     }
+                    // Logged at WARN where it was dropped; the bus carries the report.
+                    ReplicationResult::GossipHeadDropped { .. } => {}
                     ReplicationResult::Failed { cid, error } => {
                         tracing::error!(cid = %cid, error = %error, "Block merge failed");
                         if !config.continue_on_error {
@@ -176,7 +178,7 @@ impl ReplicationLoop {
     /// MergeComplete events) after each successful merge.
     pub async fn process_next<B, T, H>(
         coordinator: &SyncCoordinator<B, T>,
-        events: &mut mpsc::Receiver<SyncEvent>,
+        events: &mut SyncEventReceiver,
         handler: &H,
         config: &ReplicationConfig,
     ) -> ReplicationResult
@@ -201,7 +203,7 @@ impl ReplicationLoop {
     /// other events (errors, already-merged, Bitswap) are processed individually.
     pub async fn process_next_batch<B, T, H>(
         coordinator: &SyncCoordinator<B, T>,
-        events: &mut mpsc::Receiver<SyncEvent>,
+        events: &mut SyncEventReceiver,
         handler: &H,
         config: &ReplicationConfig,
     ) -> Vec<ReplicationResult>
@@ -268,7 +270,7 @@ impl ReplicationLoop {
     /// Useful for draining events during shutdown or testing.
     pub async fn drain<B, T, H>(
         coordinator: Arc<SyncCoordinator<B, T>>,
-        events: &mut mpsc::Receiver<SyncEvent>,
+        events: &mut SyncEventReceiver,
         handler: Arc<H>,
         config: ReplicationConfig,
     ) -> Vec<ReplicationResult>
@@ -286,8 +288,8 @@ impl ReplicationLoop {
                         process_one_event(&coordinator, event, handler.as_ref(), &config).await;
                     results.push(result);
                 }
-                Err(mpsc::error::TryRecvError::Empty) => break,
-                Err(mpsc::error::TryRecvError::Disconnected) => break,
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => break,
             }
         }
 

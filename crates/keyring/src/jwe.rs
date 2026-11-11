@@ -5,11 +5,11 @@
 //! file keyring uses.
 
 use aes::Aes256;
-use aes_gcm::aead::AeadInPlace;
+use aes_gcm::aead::AeadInOut;
 use aes_gcm::{Aes256Gcm, KeyInit};
 use aes_kw::Kek;
 use base64::Engine;
-use rand::RngCore;
+use rand::Rng;
 use sha2::Sha512;
 use zeroize::Zeroizing;
 
@@ -66,7 +66,7 @@ fn derive_kek(password: &[u8], p2s: &[u8], p2c: u32) -> Zeroizing<[u8; DERIVED_K
 /// Encrypts `plaintext` into a JWE compact serialization.
 pub fn encrypt(password: &[u8], plaintext: &[u8]) -> Result<String> {
     let p2c = PBKDF2_ITER_COUNT;
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     let mut p2s = vec![0u8; PBKDF2_SALT_LEN];
     rng.fill_bytes(&mut p2s);
@@ -99,7 +99,7 @@ pub fn encrypt(password: &[u8], plaintext: &[u8]) -> Result<String> {
         .map_err(|e| Error::Encryption(format!("invalid content key: {e}")))?;
     let mut buf = plaintext.to_vec();
     let tag = cipher
-        .encrypt_in_place_detached(&iv.into(), protected.as_bytes(), &mut buf)
+        .encrypt_inout_detached(&iv.into(), protected.as_bytes(), buf.as_mut_slice().into())
         .map_err(|e| Error::Encryption(format!("failed to encrypt: {e}")))?;
 
     Ok([
@@ -216,11 +216,15 @@ pub fn decrypt(password: &[u8], token: &str) -> Result<Vec<u8>> {
         .map_err(|e| Error::Decryption(format!("invalid content key: {e}")))?;
     let mut buf = ciphertext;
     cipher
-        .decrypt_in_place_detached(
-            iv.as_slice().into(),
+        .decrypt_inout_detached(
+            iv.as_slice()
+                .try_into()
+                .map_err(|_| Error::Decryption("unexpected iv length".into()))?,
             parts[0].as_bytes(),
-            &mut buf,
-            tag.as_slice().into(),
+            buf.as_mut_slice().into(),
+            tag.as_slice()
+                .try_into()
+                .map_err(|_| Error::Decryption("unexpected tag length".into()))?,
         )
         .map_err(|_| Error::Decryption("failed to decrypt".into()))?;
 

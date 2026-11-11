@@ -1,6 +1,7 @@
 //! Pending DAG registration and retry logic.
 
-use rapidhash::{HashSetExt, RapidHashSet};
+use crate::rt::mpsc::error::TrySendError;
+use rapidhash::{HashSetExt, RapidHashMap, RapidHashSet};
 use std::sync::Arc;
 use web_time::Instant;
 
@@ -75,9 +76,10 @@ impl PendingDagLease {
     /// gives its in-memory entry up when it holds a contended place (the map
     /// is full, or its source peer is at its quota) while a durable root has
     /// no entry. Its record stays, and the resync sweep, which resumes after
-    /// the root it admitted last, brings it back once the others had a turn:
-    /// durable roots past the cap take turns instead of the first ones in key
-    /// order holding the map for good.
+    /// the place it admitted at last and gives a peer's places to that peer's
+    /// roots in turn, brings it back once the others had a turn: durable
+    /// roots past the cap take turns instead of the first ones in key order
+    /// holding the map for good.
     ///
     /// `sample` feeds the root's estimates and nothing else: the re-arm is the
     /// same whatever it says.
@@ -160,7 +162,6 @@ pub(super) enum PendingDagAdmission {
     Admitted {
         superseded: Box<Option<(Cid, PendingDag)>>,
     },
-    CoveredByCurrent,
     GlobalCapacity,
     PeerQuota {
         max_per_peer: usize,
@@ -179,10 +180,11 @@ pub struct PendingDagFetchFailure {
 fn evict_expired_pending_dags(
     pending: &mut crate::sync::manager::pending::PendingDagRegistry,
     now: Instant,
+    ttl: std::time::Duration,
 ) -> Vec<(Cid, PendingDag)> {
     let expired: Vec<_> = pending
         .iter()
-        .filter(|(_, dag)| dag.is_expired(now))
+        .filter(|(_, dag)| dag.is_expired(now, ttl))
         .map(|(cid, dag)| (*cid, PendingDag::clone(dag)))
         .collect();
 
@@ -210,6 +212,69 @@ impl<B: Blockstore + 'static> SyncManager<B> {
 
     pub(super) fn max_pending_dags_per_peer(&self) -> usize {
         (self.max_pending_dags / PENDING_DAG_PEER_CAPACITY_DIVISOR).max(1)
+    }
+
+    /// A peer's share of the durable cap, as `max_pending_dags_per_peer` is
+    /// its share of the map: the durable registrations it may hold at once.
+    pub fn max_persisted_pending_per_peer(&self) -> usize {
+        (self.persisted_pending_capacity() / PENDING_DAG_PEER_CAPACITY_DIVISOR).max(1)
+    }
+
+    /// Whether registering this head durably keeps its peer within its
+    /// durable share: the head is its scope's durable current head or links
+    /// it as a parent, taking over its record, or the peer holds fewer records
+    /// than its share. The count is the view's, so registrations of one peer
+    /// that run at once can pass it together; the store's registration counts
+    /// them in its own transaction and refuses those past the share.
+    pub(super) fn durable_share_admits(
+        &self,
+        root_cid: Cid,
+        parents: &[Cid],
+        source_peer: Option<&str>,
+        collection_id: &str,
+        doc_id: &str,
+        head_priority: Option<u64>,
+    ) -> bool {
+        self.persisted.refreshes_or_supersedes(
+            root_cid,
+            parents,
+            source_peer,
+            collection_id,
+            doc_id,
+            head_priority,
+        ) || self.persisted.source_count(source_peer) < self.max_persisted_pending_per_peer()
+    }
+
+    /// Whether a head the map has no place for can be acknowledged on a
+    /// durable record alone: a store is installed, has a free slot or the
+    /// head takes over its scope's, and the head's peer is within its share.
+    pub(super) fn admits_durable_only(
+        &self,
+        root_cid: Cid,
+        parents: &[Cid],
+        source_peer: Option<&str>,
+        collection_id: &str,
+        doc_id: &str,
+        head_priority: Option<u64>,
+    ) -> bool {
+        self.pending_store().is_some()
+            && (self.persisted.len() < self.persisted_pending_capacity()
+                || self.persisted.refreshes_or_supersedes(
+                    root_cid,
+                    parents,
+                    source_peer,
+                    collection_id,
+                    doc_id,
+                    head_priority,
+                ))
+            && self.durable_share_admits(
+                root_cid,
+                parents,
+                source_peer,
+                collection_id,
+                doc_id,
+                head_priority,
+            )
     }
 
     /// Whether this side owns the root's recovery for a sender: its pushed or
@@ -280,14 +345,29 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// Drop every entry past its TTL, counting each in the diagnostics.
     fn evict_expired(&self) {
         let now = Instant::now();
-        if !self.pending_dags.read(|pending| pending.has_expired(now)) {
+        let ttl = self.pending_dag_ttl;
+        if !self
+            .pending_dags
+            .read(|pending| pending.has_expired(now, ttl))
+        {
             return;
         }
         let expired = self
             .pending_dags
-            .update(|pending| evict_expired_pending_dags(pending, now).len());
-        for _ in 0..expired {
+            .update(|pending| evict_expired_pending_dags(pending, now, ttl));
+        self.trace_expired(expired.iter().map(|(root, _)| root));
+        for _ in &expired {
             self.diagnostics.record_pending_dag_expired();
+        }
+    }
+
+    /// Records the TTL's eviction of each of `roots` from memory.
+    fn trace_expired<'a>(&self, roots: impl IntoIterator<Item = &'a Cid>) {
+        for root in roots {
+            crate::model_trace!(Expire {
+                head: root.to_string(),
+                removed: self.pending_store().is_none(),
+            });
         }
     }
 
@@ -458,35 +538,36 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// at most one quarter of the global map so one noisy pusher cannot starve
     /// every other peer (#1088 W2).
     /// An acknowledged entry never expires: the ack ended the sender's retry
-    /// marker, so it stays until merge, quarantine or a newer scope head, and
-    /// counts against the cap meanwhile.
+    /// marker, so it stays until merge, quarantine or a scope head that links
+    /// it, and counts against the cap meanwhile.
     /// Admit a registration into the in-memory map, reporting `true` on
     /// success. Callers that need to distinguish the failing limit (to nack
     /// with the right number) use [`Self::try_insert_pending_dag`].
     #[cfg(test)]
     pub(super) fn insert_pending_dag(&self, root_cid: Cid, dag: PendingDag) -> bool {
         matches!(
-            self.try_insert_pending_dag(root_cid, dag),
-            PendingDagAdmission::Admitted { .. } | PendingDagAdmission::CoveredByCurrent
+            self.try_insert_pending_dag(root_cid, &[], dag),
+            PendingDagAdmission::Admitted { .. }
         )
     }
 
+    /// `parents` are the heads `root_cid` links: it retires its scope's
+    /// current head only when that head is one of them.
     pub(super) fn try_insert_pending_dag(
         &self,
         root_cid: Cid,
+        parents: &[Cid],
         dag: PendingDag,
     ) -> PendingDagAdmission {
         use crate::sync::head_scope::ScopeDecision;
 
         let max_per_peer = self.max_pending_dags_per_peer();
         let registered = dag.is_recovery_registered;
-        let (admission, depth) = self.pending_dags.update(|pending| {
-            evict_expired_pending_dags(pending, Instant::now());
+        let ttl = self.pending_dag_ttl;
+        let (admission, depth, expired) = self.pending_dags.update(|pending| {
+            let expired = evict_expired_pending_dags(pending, Instant::now(), ttl);
 
-            let scope_decision = pending.scope_head_decision(root_cid, &dag);
-            if matches!(scope_decision, ScopeDecision::CoveredByCurrent) {
-                return (PendingDagAdmission::CoveredByCurrent, None);
-            }
+            let scope_decision = pending.scope_head_decision(root_cid, parents, &dag);
             let superseded_root = match scope_decision {
                 ScopeDecision::Supersedes(root) => Some(root),
                 _ => None,
@@ -496,7 +577,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 && !pending.contains_key(&root_cid)
                 && superseded_root.is_none()
             {
-                return (PendingDagAdmission::GlobalCapacity, None);
+                return (PendingDagAdmission::GlobalCapacity, None, expired);
             }
 
             if let Some(source_peer) = dag.source_peer.as_deref() {
@@ -507,7 +588,11 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     && pending.source_count(source_peer) >= max_per_peer
                     && superseded_root.is_none()
                 {
-                    return (PendingDagAdmission::PeerQuota { max_per_peer }, None);
+                    return (
+                        PendingDagAdmission::PeerQuota { max_per_peer },
+                        None,
+                        expired,
+                    );
                 }
             }
 
@@ -519,8 +604,10 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     superseded: Box::new(superseded),
                 },
                 Some(pending.len()),
+                expired,
             )
         });
+        self.trace_expired(expired.iter().map(|(root, _)| root));
         if let Some(depth) = depth {
             self.diagnostics.observe_pending_dag_depth(depth);
             if registered {
@@ -788,6 +875,11 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// This is called when BitswapComplete is received, indicating all requested
     /// blocks have arrived. We re-check the DAG for any remaining missing links
     /// (recursively, at all depths) and process it if complete.
+    ///
+    /// Transport handlers call this in their lane slot, so a complete DAG
+    /// never waits for room in the merge loop's channel: while it is full the
+    /// root is made due at once for the receiver clock, and this returns
+    /// `false`.
     pub async fn retry_pending_dag(&self, root_cid: &Cid) -> Result<bool> {
         enum PendingDagRetryEntry {
             Current(PendingDag),
@@ -797,17 +889,19 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         // Record the attempt (and capture the incremented value) in the same
         // update so concurrent retries observe monotonic attempt counts.
         let now = Instant::now();
-        let pending_info = self.pending_dags.update(|pending| {
-            let expired = evict_expired_pending_dags(pending, now);
-            if let Some((_, dag)) = expired.into_iter().find(|(cid, _)| cid == root_cid) {
-                Some(PendingDagRetryEntry::Expired(dag))
-            } else {
-                pending.get_mut(root_cid).map(|dag| {
+        let ttl = self.pending_dag_ttl;
+        let (pending_info, expired) = self.pending_dags.update(|pending| {
+            let mut expired = evict_expired_pending_dags(pending, now, ttl);
+            let entry = match expired.iter().position(|(cid, _)| cid == root_cid) {
+                Some(own) => Some(PendingDagRetryEntry::Expired(expired.swap_remove(own).1)),
+                None => pending.get_mut(root_cid).map(|dag| {
                     dag.attempts = dag.attempts.saturating_add(1);
                     PendingDagRetryEntry::Current(dag.clone())
-                })
-            }
+                }),
+            };
+            (entry, expired)
         });
+        self.trace_expired(expired.iter().map(|(root, _)| root));
 
         let Some(info) = pending_info else {
             tracing::debug!(
@@ -820,6 +914,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         let info = match info {
             PendingDagRetryEntry::Current(info) => info,
             PendingDagRetryEntry::Expired(info) => {
+                self.trace_expired([root_cid]);
                 self.diagnostics.record_pending_dag_expired();
                 tracing::warn!(
                     root_cid = %root_cid,
@@ -924,27 +1019,31 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             "DAG complete, emitting DagReady"
         );
 
-        // Emit event that DAG is ready for merge
-        if self
-            .event_tx
-            .clone()
-            .send(SyncEvent::DagReady {
-                root_cid: *root_cid,
-                doc_id: info.doc_id.clone(),
-                collection_id: info.collection_id.clone(),
-                creator: info.creator.clone(),
-                sender_peer: info.source_peer.clone(),
-                is_explicit_replicator: info.is_explicit_replicator,
-                explicit_replay_authorization: info.explicit_replay_authorization.clone(),
-            })
-            .await
-            .is_err()
-        {
-            tracing::error!(
-                root_cid = %root_cid,
-                "Failed to emit DagReady for completed DAG"
-            );
-            return Err(Error::ChannelSend);
+        match self.event_tx.try_send(SyncEvent::DagReady {
+            root_cid: *root_cid,
+            doc_id: info.doc_id.clone(),
+            collection_id: info.collection_id.clone(),
+            creator: info.creator.clone(),
+            sender_peer: info.source_peer.clone(),
+            is_explicit_replicator: info.is_explicit_replicator,
+            explicit_replay_authorization: info.explicit_replay_authorization.clone(),
+        }) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => {
+                tracing::debug!(
+                    root_cid = %root_cid,
+                    "Merge loop channel full; the receiver clock dispatches the complete DAG"
+                );
+                self.expedite_pending_dag_retry(root_cid);
+                return Ok(false);
+            }
+            Err(TrySendError::Closed(_)) => {
+                tracing::error!(
+                    root_cid = %root_cid,
+                    "Failed to emit DagReady for completed DAG"
+                );
+                return Err(Error::ChannelSend);
+            }
         }
 
         self.diagnostics.record_pending_dag_resolved();
@@ -957,9 +1056,10 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// (restore), periodically and as the single-flight sweep behind peer
     /// connects, so a registration whose in-memory entry gave its slot up
     /// (`PendingDagLease::finish_attempt`) is recovered without a restart.
-    /// Roots that no longer fit under `max_pending_dags` keep their record
-    /// for the next sweep, which resumes after the root this one admitted
-    /// last. Returns the count re-driven.
+    /// Roots that no longer fit under `max_pending_dags` or their peer's quota
+    /// keep their record for the next sweep, which resumes after the place
+    /// this one admitted at last and gives each peer's places to its roots in
+    /// turn after the one it admitted last. Returns the count re-driven.
     pub async fn resync_persisted_pending_dags(&self) -> usize {
         let Some(store) = self.pending_store() else {
             return 0;
@@ -978,11 +1078,14 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         if !forced {
             let roots: Vec<Cid> = self.persisted.roots();
             let now = Instant::now();
+            let ttl = self.pending_dag_ttl;
             let all_live = !roots.is_empty()
                 && self.pending_dags.read(|pending| {
-                    roots
-                        .iter()
-                        .all(|root| pending.get(root).is_some_and(|dag| !dag.is_expired(now)))
+                    roots.iter().all(|root| {
+                        pending
+                            .get(root)
+                            .is_some_and(|dag| !dag.is_expired(now, ttl))
+                    })
                 });
             if all_live {
                 return 0;
@@ -1024,15 +1127,18 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         if records.is_empty() {
             return 0;
         }
-        let records = self.records_after_resync_cursor(records);
+        let mut peer_cursors = self.pending_resync_peer_cursors.load_clone();
+        let records = self.records_after_resync_cursor(records, &mut peer_cursors);
 
         let mut restored = 0usize;
+        let mut waiting = 0usize;
         let mut last_admitted = None;
-        for (root_cid, mut record) in records {
+        let ttl = self.pending_dag_ttl;
+        for (place, root_cid, mut record) in records {
             let now = Instant::now();
             let live = self
                 .pending_dags
-                .read(|pending| pending.get(&root_cid).map(|dag| !dag.is_expired(now)));
+                .read(|pending| pending.get(&root_cid).map(|dag| !dag.is_expired(now, ttl)));
             match live {
                 Some(true) => continue,
                 Some(false) => {
@@ -1042,7 +1148,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     self.pending_dags.update(|pending| {
                         if pending
                             .get(&root_cid)
-                            .is_some_and(|dag| dag.is_expired(now))
+                            .is_some_and(|dag| dag.is_expired(now, ttl))
                         {
                             pending.remove(&root_cid);
                         }
@@ -1068,19 +1174,40 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 continue;
             }
 
-            let (missing, decoded_head_priority): (Vec<Cid>, Option<u64>) =
-                match self.blockstore.get(&root_cid).await {
-                    Ok(Some(data)) => {
-                        let priority = defra_core::Block::from_dag_cbor(&data)
-                            .ok()
-                            .map(|block| block.delta.priority());
-                        let missing = find_all_missing_links(self.blockstore.as_ref(), &data)
-                            .await
-                            .unwrap_or_else(|_| vec![root_cid]);
-                        (missing, priority)
-                    }
-                    _ => (vec![root_cid], None),
-                };
+            // A root the map has no place for keeps its record for a later
+            // sweep without its block being read or its DAG walked: past the
+            // cap such roots are routine (heads acknowledged on their durable
+            // record alone). Only a root whose scope has an in-memory head it
+            // may replace is read, for the heads it links.
+            if !self.restored_root_may_fit(root_cid, &record) {
+                waiting += 1;
+                continue;
+            }
+
+            // The root block names the heads it links, which decide whether it
+            // takes over its scope's in-memory head.
+            let data = match self.blockstore.get(&root_cid).await {
+                Ok(Some(data)) => Some(data),
+                _ => None,
+            };
+            let block = data
+                .as_deref()
+                .and_then(|data| defra_core::Block::from_dag_cbor(data).ok());
+            let decoded_head_priority = block.as_ref().map(|block| block.delta.priority());
+            let parents = block.and_then(|block| block.heads).unwrap_or_default();
+
+            // A root that does not link that head waits too, its DAG unwalked.
+            if !self.restored_root_fits(root_cid, &parents, &record) {
+                waiting += 1;
+                continue;
+            }
+
+            let missing = match &data {
+                Some(data) => find_all_missing_links(self.blockstore.as_ref(), data)
+                    .await
+                    .unwrap_or_else(|_| vec![root_cid]),
+                None => vec![root_cid],
+            };
             let head_priority = decoded_head_priority.or(record.head_priority);
 
             // One-way upgrade for records written before scope-current
@@ -1091,8 +1218,10 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 record.head_priority = head_priority;
                 let upgrade = Registration {
                     root: root_cid,
+                    parents: &[],
                     record: &record,
-                    capacity: self.persisted_pending_capacity(),
+                    capacity: Some(self.persisted_pending_capacity()),
+                    peer_capacity: self.max_persisted_pending_per_peer(),
                 };
                 if let Err(error) = store.register(upgrade, &self.persisted).await {
                     tracing::warn!(
@@ -1135,12 +1264,8 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 estimates: crate::sync::arbitration::RootEstimates::default(),
             };
 
-            let superseded = match self.try_insert_pending_dag(root_cid, dag.clone()) {
+            let superseded = match self.try_insert_pending_dag(root_cid, &parents, dag.clone()) {
                 PendingDagAdmission::Admitted { superseded } => *superseded,
-                PendingDagAdmission::CoveredByCurrent => {
-                    self.remove_persisted_pending(&root_cid).await;
-                    continue;
-                }
                 PendingDagAdmission::GlobalCapacity | PendingDagAdmission::PeerQuota { .. } => {
                     tracing::warn!(
                         root_cid = %root_cid,
@@ -1153,6 +1278,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     continue;
                 }
             };
+            crate::model_trace!(Resync {
+                head: root_cid.to_string(),
+            });
             if let Some((old_root, _)) = superseded {
                 // Both records survived the restart, so deleting the older
                 // one after the newer one is live cannot create an ownership
@@ -1180,31 +1308,128 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 );
             }
             restored += 1;
-            last_admitted = Some(root_cid);
+            last_admitted = Some(place);
+            if let Some(peer) = &record.source_peer {
+                peer_cursors.insert(peer.clone(), root_cid);
+            }
         }
         if last_admitted.is_some() {
             self.pending_resync_cursor.store(last_admitted);
         }
+        self.pending_resync_peer_cursors.store(peer_cursors);
 
+        if waiting > 0 {
+            tracing::debug!(
+                waiting,
+                max = self.max_pending_dags,
+                "Durable pending DAG roots wait for an in-memory entry"
+            );
+        }
         if restored > 0 {
             tracing::info!(restored, "restored persisted pending DAG registrations");
         }
         restored
     }
 
-    /// The records in key order (the store's), starting after the root the
-    /// previous sweep admitted last and wrapping around.
+    /// Whether the map could take a durable root that has no entry, before its
+    /// block is read: `restored_root_fits` with no parents, or the root's
+    /// scope has an in-memory head, which the root replaces if it links it.
+    pub(super) fn restored_root_may_fit(
+        &self,
+        root_cid: Cid,
+        record: &PersistedPendingDag,
+    ) -> bool {
+        self.restored_root_fits(root_cid, &[], record)
+            || self.pending_dags.read(|pending| {
+                pending.has_scope_head(
+                    root_cid,
+                    record.source_peer.as_deref(),
+                    &record.collection_id,
+                    &record.doc_id,
+                    record.head_priority,
+                )
+            })
+    }
+
+    /// Whether the map could take a durable root that has no entry: it has a
+    /// place and the root's peer is within its quota, or the root links the
+    /// in-memory head of its scope as a parent and replaces it. A record
+    /// written without a priority may replace one only once its block is
+    /// read, so it is let through.
+    fn restored_root_fits(
+        &self,
+        root_cid: Cid,
+        parents: &[Cid],
+        record: &PersistedPendingDag,
+    ) -> bool {
+        record.head_priority.is_none()
+            || self.pending_dags.read(|pending| {
+                (pending.len() < self.max_pending_dags
+                    && record.source_peer.as_deref().is_none_or(|peer| {
+                        pending.source_count(peer) < self.max_pending_dags_per_peer()
+                    }))
+                    || pending.scope_head_is_refresh_or_newer(
+                        root_cid,
+                        parents,
+                        record.source_peer.as_deref(),
+                        &record.collection_id,
+                        &record.doc_id,
+                        record.head_priority,
+                    )
+            })
+    }
+
+    /// The records in the order the sweep offers them places, each after the
+    /// key of the place it takes. The places run in key order (the store's),
+    /// starting after the previous sweep's cursor and wrapping around, and a
+    /// source peer's places go to that peer's roots in key order after the
+    /// one in `peer_cursors`. Peers left with no record leave `peer_cursors`.
     fn records_after_resync_cursor(
         &self,
         mut records: Vec<(Cid, PersistedPendingDag)>,
-    ) -> Vec<(Cid, PersistedPendingDag)> {
+        peer_cursors: &mut RapidHashMap<String, Cid>,
+    ) -> Vec<(Cid, Cid, PersistedPendingDag)> {
         records.sort_by_cached_key(|(root, _)| root.to_string());
         if let Some(cursor) = self.pending_resync_cursor.load_clone() {
             let cursor = cursor.to_string();
             let start = records.partition_point(|(root, _)| root.to_string() <= cursor);
             records.rotate_left(start);
         }
-        records
+        let mut peer_places: RapidHashMap<&str, Vec<(usize, String)>> = RapidHashMap::default();
+        for (index, (root, record)) in records.iter().enumerate() {
+            if let Some(peer) = record.source_peer.as_deref() {
+                peer_places
+                    .entry(peer)
+                    .or_default()
+                    .push((index, root.to_string()));
+            }
+        }
+        peer_cursors.retain(|peer, _| peer_places.contains_key(peer.as_str()));
+        let mut order: Vec<usize> = (0..records.len()).collect();
+        for (peer, places) in &peer_places {
+            let Some(cursor) = peer_cursors.get(*peer).map(Cid::to_string) else {
+                continue;
+            };
+            let mut turns: Vec<_> = places.iter().collect();
+            turns.sort_unstable_by(|(_, a), (_, b)| a.cmp(b));
+            let start = turns.partition_point(|(_, key)| *key <= cursor);
+            turns.rotate_left(start);
+            for ((place, _), (turn, _)) in places.iter().zip(turns) {
+                if let Some(slot) = order.get_mut(*place) {
+                    *slot = *turn;
+                }
+            }
+        }
+        let places: Vec<Cid> = records.iter().map(|(root, _)| *root).collect();
+        let mut records: Vec<_> = records.into_iter().map(Some).collect();
+        places
+            .into_iter()
+            .zip(order)
+            .filter_map(|(place, index)| {
+                let (root, record) = records.get_mut(index)?.take()?;
+                Some((place, root, record))
+            })
+            .collect()
     }
 
     /// Quarantine a terminally-rejected pending-DAG root (#1128).

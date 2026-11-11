@@ -111,6 +111,10 @@ impl<S: Store> crate::database::DB<S> {
                         "document short ID {doc_short_id} has no canonical DocID"
                     ))
                 })?;
+            datastore
+                .project_document(collection.name(), &doc_id)
+                .await
+                .map_err(Error::Storage)?;
             crate::block::cleanup::delete_owned_dag(
                 &blockstore,
                 &systemstore,

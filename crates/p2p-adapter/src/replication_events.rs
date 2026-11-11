@@ -1,6 +1,6 @@
 //! What a replication loop tells the event bus about the blocks it handled.
 
-use p2p::sync::ReplicationResult;
+use p2p::sync::{MergeOutcome, ReplicationResult};
 
 /// Publish merge completion and quarantine, so subscribers learn that a
 /// replicated write landed or was deterministically refused.
@@ -46,14 +46,7 @@ pub fn publish_replication_result(
             reason,
             terminal,
         } => {
-            let document_terminal = !doc_id.is_empty()
-                && matches!(
-                    reason.as_str(),
-                    "already applied" | "nonce already applied" | "already merged"
-                );
-            let collection_terminal =
-                doc_id.is_empty() && reason == "no linked composites needed merging";
-            if *terminal && (document_terminal || collection_terminal) {
+            if *terminal && MergeOutcome::skip_reason_is_applied(reason) {
                 event_bus.publish(events::Message::merge_complete(events::MergeCompleteData {
                     doc_id: doc_id.clone(),
                     subject_doc_id: None,
@@ -83,6 +76,21 @@ pub fn publish_replication_result(
                     doc_id: doc_id.clone(),
                     collection_id: collection_id.clone(),
                     reason: reason.clone(),
+                },
+            ));
+        }
+        ReplicationResult::GossipHeadDropped {
+            cid,
+            doc_id,
+            collection_id,
+            peer_id,
+        } => {
+            event_bus.publish(events::Message::p2p_gossip_head_dropped(
+                events::P2PGossipHeadDroppedData {
+                    peer_id: peer_id.clone(),
+                    cid: *cid,
+                    doc_id: doc_id.clone(),
+                    collection_id: collection_id.clone(),
                 },
             ));
         }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Counts testo scenario outcomes per binary for one client, and checks the
+// Counts testo scenario outcomes per area for one client, and checks the
 // known-failure lists.
 //
 //     bun testo-report.ts shard <junit.xml> <list.json> <client> <shard>/<shards> <known-failures.txt> <out.json>
@@ -127,16 +127,28 @@ const bump = (counts: Counts, name: string, by = 1) => {
   counts[name] = (counts[name] ?? 0) + by;
 };
 
-function writeTable(binaries: Record<string, Counts>) {
-  write(`| binary | ${COLUMNS.join(" | ")} |\n`);
-  write(`|---|${"---:|".repeat(COLUMNS.length)}\n`);
+function totals(binaries: Record<string, Counts>): Counts {
   const total: Counts = {};
+  for (const row of Object.values(binaries)) for (const [name, count] of Object.entries(row)) bump(total, name, count);
+  return total;
+}
+
+function writeTable(binaries: Record<string, Counts>) {
+  write(`| area | ${COLUMNS.join(" | ")} |\n`);
+  write(`|---|${"---:|".repeat(COLUMNS.length)}\n`);
   for (const binary of Object.keys(binaries).sort()) {
     const row = binaries[binary];
-    for (const [name, count] of Object.entries(row)) bump(total, name, count);
     write(`| ${binary} | ${COLUMNS.map((c) => row[c] ?? 0).join(" | ")} |\n`);
   }
+  const total = totals(binaries);
   write(`| **total** | ${COLUMNS.map((c) => `**${total[c] ?? 0}**`).join(" | ")} |\n`);
+}
+
+/// A collapsed section; GitHub needs the blank line after `<summary>` to render the markdown inside.
+function writeDetails(title: string, open: boolean, body: () => void) {
+  write(`<details${open ? " open" : ""}><summary>${title}</summary>\n\n`);
+  body();
+  write("\n</details>\n\n");
 }
 
 function shard(
@@ -172,8 +184,9 @@ function shard(
     } else if (listed && result === "pass") {
       fixed.push(`${id} #${known.get(id)}`);
     }
-    binaries[binary] ??= {};
-    bump(binaries[binary], result);
+    const area = `${binary === "testo" ? "" : `${binary} `}${testCase.name.split("::")[0]}`;
+    binaries[area] ??= {};
+    bump(binaries[area], result);
   }
   const selectedKnown = [...known.keys()].filter((id) => selected.has(id));
   const missing = selectedKnown.filter((id) => !reported.has(id)).map((id) => `${id} #${known.get(id)}`);
@@ -244,11 +257,19 @@ function pullRequest(): string {
   return match ? `#${match[1]}` : process.env.GITHUB_REF_NAME ?? "this change";
 }
 
-function checkLists(knownDir: string): number {
+interface Lists {
+  errors: number;
+  /// Per client: entries in its list here and on the base branch.
+  sizes: Map<string, { entries: number; base: number }>;
+  notes: string[];
+  ref: string;
+}
+
+function checkLists(knownDir: string): Lists {
   let errors = 0;
   const notes: string[] = [];
+  const sizes = new Map<string, { entries: number; base: number }>();
   let ref = "main";
-  write("## Known-failure lists\n\n| list | entries | base | change |\n|---|---:|---:|---:|\n");
   for (const client of CLIENTS) {
     const path = join(knownDir, `${client}.txt`);
     const { known, bad } = readKnown(path);
@@ -266,8 +287,7 @@ function checkLists(knownDir: string): number {
     }
     const base = baseKnown(path);
     ref = base.ref;
-    const change = known.size - base.known.size;
-    write(`| ${client} | ${known.size} | ${base.known.size} | ${change >= 0 ? "+" : ""}${change} |\n`);
+    sizes.set(client, { entries: known.size, base: base.known.size });
     for (const [id, issue] of entries) {
       if (!base.known.has(id)) {
         const note = `${pullRequest()} adds ${id} #${issue} to ${path}`;
@@ -276,12 +296,7 @@ function checkLists(knownDir: string): number {
       }
     }
   }
-  if (notes.length) {
-    write(`\n**Added against ${ref}** (${notes.length})\n\n`);
-    for (const note of notes.slice(0, 300)) write(`- ${note}\n`);
-  }
-  write("\n");
-  return errors;
+  return { errors, sizes, notes, ref };
 }
 
 function* jsonFiles(directory: string): Generator<string> {
@@ -341,34 +356,50 @@ function summary(directory: string, knownDir: string): number {
     }
     for (const [op, count] of Object.entries(report.unsupported_ops)) bump(merged.ops, op, count);
   }
-  let errors = checkLists(knownDir) + checkMissing(clients, knownDir);
-  write("## Outcomes per client\n\n");
+  const lists = checkLists(knownDir);
+  let errors = lists.errors + checkMissing(clients, knownDir);
   write(
     "`fail` is unexpected, `known` is listed in `.github/testo/known-failures/<client>.txt`, " +
-      "`unsupported` stopped at an action the client does not implement.\n\n",
+      "`unsupported` stopped at an action the client does not implement; `list` is that file's size " +
+      `and its change against \`${lists.ref}\`.\n\n`,
   );
+  write(`| client | ${COLUMNS.join(" | ")} | list |\n|---|${"---:|".repeat(COLUMNS.length + 1)}\n`);
+  // A pull request runs only some clients; a client it did not run is left out.
+  const expected = process.env.TESTO_CLIENTS ? process.env.TESTO_CLIENTS.split(",") : CLIENTS;
   for (const client of CLIENTS) {
+    if (!expected.includes(client) && !clients.has(client)) continue;
+    const size = lists.sizes.get(client);
+    const change = size ? size.entries - size.base : 0;
+    const list = size ? `${size.entries} (${change >= 0 ? "+" : ""}${change})` : "—";
     const merged = clients.get(client);
-    if (!merged) {
-      write(`### ${client}\n\nno report\n\n`);
-      errors++;
-      continue;
-    }
-    const partial = incomplete(merged);
+    const partial = merged ? incomplete(merged) : "no report";
     if (partial) {
       console.log(`::error::${client}: ${partial}`);
       errors++;
     }
-    write(`### ${client}${partial ? ` (${partial})` : ""}\n\n`);
-    writeTable(merged.binaries);
-    const ops = Object.entries(merged.ops)
-      .sort(([, a], [, b]) => b - a)
-      .slice(0, 15);
-    if (ops.length) {
-      write("\nMost common unsupported actions:\n\n");
-      for (const [op, count] of ops) write(`- ${count} × \`${op}\`\n`);
-    }
-    write("\n");
+    const total = merged ? totals(merged.binaries) : {};
+    const cells = COLUMNS.map((c) => (c === "fail" && total[c] ? `**${total[c]}**` : (total[c] ?? 0)));
+    write(`| ${client}${partial ? ` ⚠️ ${partial}` : ""} | ${cells.join(" | ")} | ${list} |\n`);
+  }
+  write("\n");
+  if (lists.notes.length) {
+    writeDetails(`Added to the lists against <code>${lists.ref}</code> (${lists.notes.length})`, false, () => {
+      for (const note of lists.notes.slice(0, 300)) write(`- ${note}\n`);
+    });
+  }
+  for (const client of CLIENTS) {
+    const merged = clients.get(client);
+    if (!merged) continue;
+    writeDetails(`${client}: per area`, (totals(merged.binaries).fail ?? 0) > 0, () => {
+      writeTable(merged.binaries);
+      const ops = Object.entries(merged.ops)
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 15);
+      if (ops.length) {
+        write("\nMost common unsupported actions:\n\n");
+        for (const [op, count] of ops) write(`- ${count} × \`${op}\`\n`);
+      }
+    });
   }
   flushSummary();
   return errors ? 1 : 0;

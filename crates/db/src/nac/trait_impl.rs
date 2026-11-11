@@ -7,7 +7,7 @@ use identity::Did;
 
 use crate::nac::error::Result;
 
-use super::{NacInfo, NacManager, NacManagerApi};
+use super::{NacCaller, NacInfo, NacManager, NacManagerApi, NacRelationshipRequest};
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -49,6 +49,92 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
             .await
             .map_err(|error| super::error::Error::Other(error.to_string()))
     }
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+    async fn check_bound_permission_in_txn(
+        &self,
+        view: datastore::NamespaceView,
+        identity: &Did,
+        permission: NodePermission,
+        require_active: bool,
+    ) -> Result<Option<bool>> {
+        if !self.nac.supports_transactions() {
+            return Ok(None);
+        }
+        let scoped = self.nac.scoped(std::sync::Arc::new(
+            acp::zanzibar::store::TransactionZanzibarStore::new(view),
+        ));
+        scoped
+            .load()
+            .await
+            .map_err(|error| super::error::Error::Other(error.to_string()))?;
+        if require_active && scoped.status().await != NacStatus::Enabled {
+            return Ok(None);
+        }
+        scoped
+            .check_permission(identity, permission)
+            .await
+            .map(Some)
+            .map_err(|error| super::error::Error::Other(error.to_string()))
+    }
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+    async fn change_source_permission_in_txn(
+        &self,
+        view: datastore::NamespaceView,
+        requestor: &Did,
+        change: &super::SourcePermissionChange<'_>,
+    ) -> Result<Option<bool>> {
+        if !self.transaction_store_bound || !self.nac.supports_transactions() {
+            return Ok(None);
+        }
+        let scoped = self.nac.scoped(std::sync::Arc::new(
+            acp::zanzibar::store::TransactionZanzibarStore::new(view),
+        ));
+        scoped
+            .load()
+            .await
+            .map_err(|error| super::error::Error::Other(error.to_string()))?;
+        scoped
+            .change_source_permission(
+                requestor,
+                change.permission,
+                change.parent_source,
+                change.subject_kind,
+                change.subject,
+                change.delete,
+            )
+            .await
+            .map(Some)
+            .map_err(|error| match error {
+                acp::error::Error::NotOwner { .. } | acp::error::Error::PermissionDenied(_) => {
+                    super::error::Error::PermissionDenied
+                }
+                other => super::error::Error::Other(other.to_string()),
+            })
+    }
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+    async fn source_permission_matches_in_txn(
+        &self,
+        view: datastore::NamespaceView,
+        change: &super::SourcePermissionChange<'_>,
+    ) -> Result<Option<bool>> {
+        if !self.transaction_store_bound || !self.nac.supports_transactions() {
+            return Ok(None);
+        }
+        let scoped = self.nac.scoped(std::sync::Arc::new(
+            acp::zanzibar::store::TransactionZanzibarStore::new(view),
+        ));
+        scoped
+            .source_permission_matches(
+                change.permission,
+                change.parent_source,
+                change.subject_kind,
+                change.subject,
+                change.delete,
+            )
+            .await
+            .map(Some)
+            .map_err(|error| super::error::Error::Other(error.to_string()))
+    }
     async fn is_admin(&self, identity: &Did) -> Result<bool> {
         NacManager::is_admin(self, identity).await
     }
@@ -61,11 +147,18 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
     async fn enable(&self, owner: &Did) -> Result<()> {
         NacManager::enable(self, owner).await
     }
-    async fn disable(&self, requestor: &Did) -> Result<()> {
-        NacManager::disable(self, requestor).await
+    async fn disable_as(&self, caller: &NacCaller) -> Result<()> {
+        NacManager::disable_as(self, caller).await
     }
-    async fn re_enable(&self, requestor: &Did) -> Result<()> {
-        NacManager::re_enable(self, requestor).await
+    async fn re_enable_as(&self, caller: &NacCaller) -> Result<()> {
+        NacManager::re_enable_as(self, caller).await
+    }
+    async fn change_relationship_as(
+        &self,
+        caller: &NacCaller,
+        request: &NacRelationshipRequest,
+    ) -> Result<bool> {
+        NacManager::change_relationship_as(self, caller, request).await
     }
     async fn purge(&self, requestor: &Did) -> Result<()> {
         NacManager::purge(self, requestor).await
@@ -94,5 +187,12 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
     }
     async fn info(&self) -> NacInfo {
         NacManager::info(self).await
+    }
+    async fn explain_subject(
+        &self,
+        requestor: &Did,
+        subject: &Did,
+    ) -> Result<Vec<acp::nac::PermissionProvenance>> {
+        NacManager::explain_subject(self, requestor, subject).await
     }
 }

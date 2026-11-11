@@ -28,7 +28,7 @@ filter = "package(integration-test)"
 setup = "integration-binaries"
 
 [[profile.default.scripts]]
-filter = "package(integration-test) & (binary(vera) | binary(verars))"
+filter = "package(integration-test) & ((binary(legacy) & test(/^vera::/)) | binary(verars))"
 setup = "vera-binary"
 
 [[profile.default.scripts]]

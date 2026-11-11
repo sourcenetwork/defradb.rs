@@ -417,7 +417,7 @@ that is correct but slower is not done.
 - **Rust** (1.99+): `rustup`
 - **protoc**: `brew install protobuf` — required by `crates/orbis`, whose `build.rs` compiles `proto/orbis.proto` via `tonic-prost-build`
 - **cbindgen**: `cargo install cbindgen` — generates C headers for FFI
-- **cargo-nextest**: `cargo install cargo-nextest --locked` — runs the tests; `.config/nextest.toml` builds the `defra` binaries node tests launch once per run, then runs those tests in parallel
+- **cargo-nextest**: `cargo install cargo-nextest --locked` — runs the tests; `.config/nextest.toml` builds the `defradb` binaries node tests launch once per run, then runs those tests in parallel
 - **Go** (1.26+): Required for FFI compatibility tests, and to build the pinned `GO_COMPAT_COMMIT`, which declares `go 1.26.10`
 
 ## Common Commands
@@ -428,53 +428,59 @@ that is correct but slower is not done.
 # Run all integration tests
 cargo nextest run -p integration-test
 
-# Run a specific area
-cargo nextest run -p integration-test --test acp
-cargo nextest run -p integration-test --test p2p
-cargo nextest run -p integration-test --test basic
+# A testo area through one client (the node client while developing)
+DEFRA_CLIENT=in-process cargo nextest run -p integration-test --test testo -E 'test(/^query::/)'
+DEFRA_CLIENT=in-process cargo nextest run -p integration-test --test testo -- mutation::update::
 
-# Run a specific submodule within an area
-cargo nextest run -p integration-test --test acp -- negative::
-
-# Run a specific test
-cargo nextest run -p integration-test --test acp -- basic::rust_acp_basic
+# A legacy area, module or test
+cargo nextest run -p integration-test --test legacy -E 'test(/^p2p::/)'
+cargo nextest run -p integration-test --test legacy -- acp::negative::
+cargo nextest run -p integration-test --test legacy -- acp::basic::rust_acp_basic
 ```
 
-Integration tests live in `tools/integration-test/tests/` and exercise the full
-Rust node via CLI + HTTP API. Each area is a `[[test]]` binary with submodules:
+Integration tests live in `tools/integration-test/tests/` and build into three
+test binaries: `testo`, `legacy` and `verars`. Each top-level module is an area, so a
+test's name starts with its area (`query::simple::…`), and `just
+integration-suite <area>` runs one area in both binaries.
 
-| Area | Binary | Modules |
+| Binary | Folder | What |
+|--------|--------|------|
+| `testo` | `tests/testo/` | testo scenarios (`TestCase` + actions), run under every client by `DEFRA_CLIENT` (in-process, rust-http, go-http, cli). Most are generated from the Go corpus by `scripts/generate_scenarios.sh`. Every new integration test goes here. Areas: `acp`, `backup`, `collection`, `collection_version`, `cursor`, `encryption`, `explain`, `index`, `issues`, `mutation`, `net`, `node`, `query`, `searchable_encryption`, `signature`, `subscription`, `txn`, `view`, plus the framework self-tests `matchers` and `export`. |
+| `legacy` | `tests/legacy/` | hand-written `TestCluster`/`DefraClient` tests, deleted as testo covers them. Areas below. |
+| `verars` | `tests/verars/` | vera.rs native ACP tests (compartments, native_worker, p2p_acp, policy_generations, policy_lifecycle, smoke, verified_records). Its own binary so the Native consumer workflow builds only these in release; run with `--test verars`. |
+
+Legacy areas with submodules:
+
+| Area | Filter | Modules |
 |------|--------|---------|
-| Basic | `--test basic` | batch_mutations, collection_delete_4657, crdt_input_ops, collection_management, document_lifecycle, regolith_crash_reopen, multi_collection, patch_secondary_relation_4709, self_ref_relations_4712, smoke, transactions, truncate_parallel |
-| Query | `--test query` | commits_aggregate, commits_collection_id, commits_height_filter, continuous_rollup, datetime_index_range, default_values_v1, downsample, downsample_gc, exhaustive_orphans_4454, explain_nested, gql_list_args, index_fallback_4633, index_management, lens_persistence, lens_reindex_secondary_index_979, limits, multi_cid_vectors, planner_4656, planner_4684, sdl_generate, subscription_docid, subscription_root_shape, view |
-| ACP | `--test acp` | audit, basic, cross_object, custom_policy, events_sse, index, link_collection, multi_identity, multi_role, negative, negative_p2p, node_access, p2p, p2p_lifecycle, policy_validation, register_ops, relation_queries, relationship, revoke_lifecycle, secp256k1_round_trip, transaction_rollback, xarchive_access_matrix |
-| P2P Iroh | `--test p2p_iroh` | acp, connection, peer, replication, schema, sync |
-| NAC | `--test nac` | core_operations, cross_compartment_isolation, dac_access_matrix, document_acp, multi_doc_create, operations, p2p_management, policy_evolution, relation_admin |
-| P2P | `--test p2p` | connection_manager, document, feature_binaries, filtered_replication, idempotent_replay, long_history, manage_relay, management, quarantine, receiver_pull, replication, replication_advanced, resilience, sync, text_crdt, transports, trust_boundary, write_contention |
-| FTS | `--test fts` | basic, edge_cases, lifecycle, relation_paths, scoring |
-| Vector | `--test vector` | CLI/HTTP Flat, HNSW, IVF-PQ and SSG routing, updates, deletes, and restart persistence |
-| Encryption | `--test encryption` | acp, block_verify, cross_runtime_p2p, index, key_management, se_cross_runtime |
-| Identity | `--test identity` | keyring_dev_mode, keyring_lifecycle, lifecycle, negative, node_identity, types |
-| Backup | `--test backup` | dev_mode, dump, purge, restore |
-| Cursor | `--test cursor` | composite_index, error_paths, reindex_datetime_visibility, smoke |
-| Vera | `--test vera` | acp_tuning, compartments, encryption_acp, p2p_acp, policy_lifecycle, resilience, smoke |
-| Vera.rs | `--test verars` | compartments, p2p_acp, policy_lifecycle, smoke |
+| Basic | `basic::` | batch_mutations, collection_delete_4657, crdt_input_ops, collection_management, document_lifecycle, regolith_crash_reopen, multi_collection, patch_secondary_relation_4709, self_ref_relations_4712, smoke, transactions, truncate_parallel |
+| Query | `query::` | commits_aggregate, commits_collection_id, continuous_rollup, datetime_index_range, default_values_v1, downsample, downsample_gc, exhaustive_orphans_4454, explain_nested, gql_list_args, index_fallback_4633, index_management, lens_persistence, lens_reindex_secondary_index_979, limits, multi_cid_vectors, planner_4656, planner_4684, sdl_generate, subscription_docid, subscription_root_shape, view |
+| ACP | `acp::` | audit, basic, cross_object, custom_policy, events_sse, index, link_collection, multi_identity, multi_role, negative, negative_p2p, node_access, p2p, p2p_lifecycle, policy_validation, register_ops, relation_queries, relationship, revoke_lifecycle, secp256k1_round_trip, transaction_rollback, xarchive_access_matrix |
+| P2P Iroh | `p2p_iroh::` | acp, connection, peer, replication, schema, sync |
+| NAC | `nac::` | core_operations, cross_compartment_isolation, dac_access_matrix, document_acp, multi_doc_create, operations, p2p_management, policy_evolution, relation_admin |
+| P2P | `p2p::` | connection_manager, document, feature_binaries, filtered_replication, idempotent_replay, long_history, manage_relay, management, quarantine, receiver_pull, replication, replication_advanced, resilience, sync, transports, trust_boundary, write_contention |
+| FTS | `fts::` | edge_cases, lifecycle, scoring |
+| Vector | `vector::` | CLI/HTTP Flat, HNSW, IVF-PQ and SSG routing, updates, deletes, and restart persistence |
+| Encryption | `encryption::` | acp, block_verify, cross_runtime_p2p, index, key_management, se_cross_runtime |
+| Identity | `identity::` | keyring_dev_mode, keyring_lifecycle, lifecycle, negative, node_identity, types |
+| Backup | `backup::` | dev_mode, dump, purge, restore |
+| Vera | `vera::` | acp_tuning, compartments, encryption_acp, p2p_acp, policy_lifecycle, resilience, smoke |
 
-Single-purpose binaries, each its own `[[test]]` with no submodules:
+Single-purpose legacy areas, one file each:
 
-| Binary | Covers |
+| Module | Covers |
 |--------|--------|
-| `--test p2p_admission` | replicator fan-in against a tiny pending-DAG cap (injects `DEFRA_P2P_MAX_PENDING_DAGS`) |
-| `--test p2p_admission_restart` | hub restart must not lose success-acked pending-DAG registrations |
-| `--test p2p_admission_fairness` | per-source-peer pending-DAG quotas under a noisy pusher |
-| `--test p2p_backlog` | outbound push-backlog bounds and overload observability |
-| `--test p2p_push_storm` | outbound push-storm reproduction and profiling harness |
-| `--test p2p_deep_catchup` | deep full-DAG push under intake rate limiting |
-| `--test p2p_interop_bench` | cross-runtime P2P replication cost |
-| `--test issue1154_repro` | at-scale merge of every success-acked document after hub restart |
-| `--test issue1194_repro` | concurrent updates to distinct documents must not conflict |
-| `--test issue1211_repro` | same, through a branchable collection's head set |
-| `--test issue1294_bytes_json` | Blob-as-Bytes create+query must return lowercase hex |
+| `p2p_admission::` | replicator fan-in against a tiny pending-DAG cap (injects `DEFRA_P2P_MAX_PENDING_DAGS`) |
+| `p2p_admission_restart::` | hub restart must not lose success-acked pending-DAG registrations |
+| `p2p_admission_fairness::` | per-source-peer pending-DAG quotas under a noisy pusher |
+| `p2p_backlog::` | outbound push-backlog bounds and overload observability |
+| `p2p_push_storm::` | outbound push-storm reproduction and profiling harness |
+| `p2p_deep_catchup::` | deep full-DAG push under intake rate limiting |
+| `p2p_interop_bench::` | cross-runtime P2P replication cost |
+| `issue1154_repro::` | at-scale merge of every success-acked document after hub restart |
+| `issue1194_repro::` | concurrent updates to distinct documents must not conflict |
+| `issue1211_repro::` | same, through a branchable collection's head set |
+| `issue1294_bytes_json::` | Blob-as-Bytes create+query must return lowercase hex |
 
 ### Rust Commands
 
@@ -531,7 +537,7 @@ The Go repo has two remotes:
 accepts `--go-path <PATH>` to override it. Integration tests that consume Go
 build artifacts resolve them at compile time under
 `$HOME/go/src/github.com/sourcenetwork/defradb` — see `COPY_WASM_PATH` in
-`tools/integration-test/tests/p2p_iroh/sync/version.rs`. A checkout elsewhere
+`tools/integration-test/tests/legacy/p2p_iroh/sync/version.rs`. A checkout elsewhere
 needs a symlink at that path, or the `p2p_iroh` lens tests fail on a missing
 WASM binary.
 

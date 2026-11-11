@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use tracing::{error, info, warn};
 
-use super::super::node::{Node, P2PTasks};
+use super::super::node::{Libp2pTasks, Node, P2PTasks};
 use super::P2PSetup;
 use crate::config::Config;
 use crate::error::{Error, Result};
@@ -163,7 +163,7 @@ impl Node {
         // Feed the keyring-loaded searchable-encryption key into the same SE
         // path the FFI uses (BroadcastMutator::set_se_options for live writes,
         // DbMergeHandler::set_se_enc_key for merged/replicated docs). This lets
-        // a `defra start` node produce and verify SE artifacts.
+        // a `defradb start` node produce and verify SE artifacts.
         if let Some(key) = se_key {
             if let Err(e) =
                 replication
@@ -298,7 +298,7 @@ impl Node {
                 // Intercept SE events: the CLI must store inbound artifacts and
                 // serve/route SE queries itself (the coordinator does not). #976.
                 let transport_event = p2p::convert_host_event(event);
-                if admission == p2p::sync::DispatchAdmission::Saturated {
+                if admission != p2p::sync::DispatchAdmission::Admitted {
                     if let Err(error) = coordinator_for_events
                         .handle_transport_event_with_admission(transport_event, admission)
                         .await
@@ -527,14 +527,14 @@ impl Node {
 
         Ok(P2PSetup {
             host_handle: Some(handle),
-            p2p_tasks: Some(P2PTasks::Libp2p {
+            p2p_tasks: Some(P2PTasks::Libp2p(Box::new(Libp2pTasks {
                 coordinator: coordinator.shutdown_handle(),
                 host_task,
                 replication_task,
                 event_handler_task,
                 failure_recorder_task,
                 retry_loop_task,
-            }),
+            }))),
             mutator: broadcast_mutator,
             http_adapter: Some(manage_controller.clone()),
             wire_merge_acp: Some(Box::new(move |acp| {

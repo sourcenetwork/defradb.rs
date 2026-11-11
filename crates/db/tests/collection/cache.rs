@@ -102,6 +102,25 @@ fn test_cache_populate() {
 }
 
 #[test]
+fn a_clone_is_a_snapshot_the_original_no_longer_changes() {
+    let mut cache = CollectionCache::new();
+    cache.populate(vec![test_collection("Users"), test_collection("Posts")]);
+    let snapshot = cache.clone();
+
+    cache.add(test_collection("Orders"));
+    cache.remove("Users");
+
+    let mut names = snapshot.names();
+    names.sort();
+    assert_eq!(names, ["Posts", "Users"]);
+    assert!(snapshot.is_fully_populated());
+    let mut names = cache.names();
+    names.sort();
+    assert_eq!(names, ["Orders", "Posts"]);
+    assert!(!cache.is_fully_populated());
+}
+
+#[test]
 fn active_collection_versions_exclude_inactive_cache_entries() {
     workers::block_on(async {
         let db = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())

@@ -1,7 +1,8 @@
 ---------------------- MODULE SelectedCarAuthority ----------------------
 \* An explicit send commits exact peer/root permission before its hint.
 \* Cache loss, offline time and subscription removal cannot revoke it.
-\* An operator can revoke that scope; only a new explicit grant restores it.
+\* revoke_selected_car_root revokes that scope, though no production path
+\* calls it; only a new explicit grant restores a revoked scope.
 \* Rust: peerstore/selected_car.rs; push_docs.rs; event_handler/car.rs.
 EXTENDS Naturals
 \* Negative controls remove one safety requirement at a time.

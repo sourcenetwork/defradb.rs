@@ -1,15 +1,17 @@
 //! What this node holds durably, as the commits that changed it say.
 //!
-//! The view keeps the roots with a durable record and, for each sender
-//! scope, its durable current head, so admission and the resync sweep decide
-//! without reading the store. Nothing writes it but a commit of the store:
+//! The view keeps the roots with a durable record, how many of them and how
+//! many bytes each announcing peer holds and, for each sender scope, its
+//! durable current head, so admission and the resync sweep decide without
+//! reading the store.
+//! Nothing writes it but a commit of the store:
 //! each transition registers one of the callbacks below on its transaction,
 //! and the store dispatches them in commit-receipt order. Two transitions of
 //! one root therefore land in the order they committed, and a sweep, which
 //! rebuilds the view from the records it read, lands between the commits
 //! before it and those after it.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use cid::Cid;
@@ -21,18 +23,43 @@ use storage::corekv::TxnCallback;
 use super::PersistedPendingDag;
 use crate::sync::head_scope::{HeadVersion, Scope, ScopeDecision};
 
-/// The roots with a durable record and the durable current head of each
-/// sender scope.
+/// The roots with a durable record, the peer that announced each, the
+/// durable current head of each sender scope, and the bytes the records take
+/// per source peer and in all.
 pub struct PersistedView {
-    roots: HopscotchMap<Cid, (), RandomState>,
+    roots: HopscotchMap<Cid, Footprint, RandomState>,
+    /// The roots each announcing peer holds a record for. Only the commits'
+    /// callbacks change it, and the store runs those one at a time.
+    sources: HopscotchMap<Option<String>, usize, RandomState>,
+    source_bytes: HopscotchMap<String, Arc<AtomicU64>, RandomState>,
+    total_bytes: AtomicU64,
     scope_heads: HopscotchMap<Scope, HeadVersion, RandomState>,
     quarantined: AtomicUsize,
+}
+
+/// What one durable record takes, charged to its source peer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Footprint {
+    source: Option<String>,
+    bytes: u64,
+}
+
+impl Footprint {
+    fn of(root: &Cid, record: &PersistedPendingDag) -> Self {
+        Self {
+            source: record.source_peer.clone(),
+            bytes: super::store::footprint(root, record),
+        }
+    }
 }
 
 impl Default for PersistedView {
     fn default() -> Self {
         Self {
             roots: HopscotchMap::with_hasher(RandomState::default()),
+            sources: HopscotchMap::with_hasher(RandomState::default()),
+            source_bytes: HopscotchMap::with_hasher(RandomState::default()),
+            total_bytes: AtomicU64::new(0),
             scope_heads: HopscotchMap::with_hasher(RandomState::default()),
             quarantined: AtomicUsize::new(0),
         }
@@ -60,6 +87,25 @@ impl PersistedView {
         self.roots.keys().collect()
     }
 
+    /// How many roots with a durable record `source_peer` announced.
+    pub fn source_count(&self, source_peer: Option<&str>) -> usize {
+        self.sources
+            .get(&source_peer.map(str::to_owned))
+            .unwrap_or_default()
+    }
+
+    /// Bytes the durable records of `source_peer` take.
+    pub fn source_bytes(&self, source_peer: &str) -> u64 {
+        self.source_bytes
+            .get(source_peer)
+            .map_or(0, |bytes| bytes.load(Ordering::Relaxed))
+    }
+
+    /// Bytes every durable record takes.
+    pub fn total_bytes(&self) -> u64 {
+        self.total_bytes.load(Ordering::Relaxed)
+    }
+
     /// How many roots are quarantined.
     pub fn quarantined(&self) -> usize {
         self.quarantined.load(Ordering::Relaxed)
@@ -74,25 +120,11 @@ impl PersistedView {
         self.quarantined.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// What a head is to the durable current head of its scope.
-    pub(crate) fn scope_decision(
-        &self,
-        root: Cid,
-        source_peer: Option<&str>,
-        collection_id: &str,
-        doc_id: &str,
-        head_priority: Option<u64>,
-    ) -> ScopeDecision {
-        match Scope::of(root, source_peer, collection_id, doc_id, head_priority) {
-            None => ScopeDecision::Independent,
-            Some((scope, version)) => ScopeDecision::of(version, self.scope_heads.get(&scope)),
-        }
-    }
-
-    /// Whether the head is its scope's durable current head, or newer.
+    /// Whether the head is its scope's durable current head, or links it.
     pub(crate) fn refreshes_or_supersedes(
         &self,
         root: Cid,
+        parents: &[Cid],
         source_peer: Option<&str>,
         collection_id: &str,
         doc_id: &str,
@@ -100,7 +132,11 @@ impl PersistedView {
     ) -> bool {
         Scope::of(root, source_peer, collection_id, doc_id, head_priority).is_some_and(
             |(scope, version)| {
-                ScopeDecision::refreshes_or_supersedes(version, self.scope_heads.get(&scope))
+                ScopeDecision::refreshes_or_supersedes(
+                    version,
+                    parents,
+                    self.scope_heads.get(&scope),
+                )
             },
         )
     }
@@ -114,12 +150,13 @@ impl PersistedView {
     ) -> TxnCallback {
         let view = Arc::clone(self);
         let head = scope_head(root, record);
+        let footprint = Footprint::of(&root, record);
         Box::new(move || {
             // The retired root shares the scope, whose head this one takes.
             if let Some(retired) = retired {
-                view.roots.remove(&retired);
+                view.release(&retired);
             }
-            view.roots.insert(root, ());
+            view.hold(root, footprint.clone());
             if let Some((scope, version)) = head.clone() {
                 view.remember(scope, version);
             }
@@ -139,7 +176,7 @@ impl PersistedView {
             .and_then(|record| scope_head(root, record))
             .map(|(scope, _)| scope);
         Box::new(move || {
-            view.roots.remove(&root);
+            view.release(&root);
             if let Some(scope) = &scope {
                 if view
                     .scope_heads
@@ -159,6 +196,10 @@ impl PersistedView {
     pub(super) fn swept(self: &Arc<Self>, records: &[(Cid, PersistedPendingDag)]) -> TxnCallback {
         let view = Arc::clone(self);
         let roots: RapidHashSet<Cid> = records.iter().map(|(root, _)| *root).collect();
+        let footprints: Vec<(Cid, Footprint)> = records
+            .iter()
+            .map(|(root, record)| (*root, Footprint::of(root, record)))
+            .collect();
         let heads: Vec<(Scope, HeadVersion)> = records
             .iter()
             .filter_map(|(root, record)| scope_head(*root, record))
@@ -170,10 +211,10 @@ impl PersistedView {
                 .filter(|root| !roots.contains(root))
                 .collect();
             for root in stale_roots {
-                view.roots.remove(&root);
+                view.release(&root);
             }
-            for root in &roots {
-                view.roots.insert(*root, ());
+            for (root, footprint) in &footprints {
+                view.hold(*root, footprint.clone());
             }
             let stale_scopes: Vec<Scope> = view
                 .scope_heads
@@ -188,6 +229,66 @@ impl PersistedView {
                 view.remember(scope.clone(), *version);
             }
         })
+    }
+
+    /// Gives `root` a record that takes `footprint`.
+    fn hold(&self, root: Cid, footprint: Footprint) {
+        self.charge(&footprint, true);
+        match self.roots.insert(root, footprint.clone()) {
+            Some(previous) => {
+                self.charge(&previous, false);
+                if previous.source != footprint.source {
+                    self.uncount(&previous.source);
+                    self.count(footprint.source);
+                }
+            }
+            None => self.count(footprint.source),
+        }
+    }
+
+    /// Takes `root`'s record away.
+    fn release(&self, root: &Cid) {
+        if let Some(previous) = self.roots.remove(root) {
+            self.charge(&previous, false);
+            self.uncount(&previous.source);
+        }
+    }
+
+    fn count(&self, source_peer: Option<String>) {
+        let held = self.sources.get(&source_peer).unwrap_or_default();
+        self.sources.insert(source_peer, held + 1);
+    }
+
+    fn charge(&self, footprint: &Footprint, add: bool) {
+        let apply = |counter: &AtomicU64| {
+            if add {
+                counter.fetch_add(footprint.bytes, Ordering::Relaxed);
+            } else {
+                counter.fetch_sub(footprint.bytes, Ordering::Relaxed);
+            }
+        };
+        apply(&self.total_bytes);
+        if let Some(source) = &footprint.source {
+            let counter = match self.source_bytes.get(source.as_str()) {
+                Some(counter) => counter,
+                None => self
+                    .source_bytes
+                    .get_or_insert(source.clone(), Arc::new(AtomicU64::new(0))),
+            };
+            apply(&counter);
+        }
+    }
+
+    fn uncount(&self, source_peer: &Option<String>) {
+        match self.sources.get(source_peer) {
+            Some(held) if held > 1 => {
+                self.sources.insert(source_peer.clone(), held - 1);
+            }
+            Some(_) => {
+                self.sources.remove(source_peer);
+            }
+            None => {}
+        }
     }
 
     /// Keeps `version` as its scope's head unless a newer one is kept.

@@ -164,7 +164,7 @@ impl Node {
         server = server.with_collection_mgmt_arc(collection_mgmt_adapter);
         info!("Collection management HTTP endpoints enabled");
 
-        let index_adapter = crate::index_adapter::IndexAdapter::new_arc(database.clone());
+        let index_adapter = defra_http::index_adapter::IndexAdapter::new_arc(database.clone());
         server = server.with_index_arc(index_adapter);
         info!("Index HTTP endpoints enabled");
 

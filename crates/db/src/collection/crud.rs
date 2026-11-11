@@ -360,8 +360,23 @@ impl Collection {
         systemstore: &NamespaceView,
         show_deleted: bool,
     ) -> Result<Vec<(u64, Document, bool)>> {
-        self.scan_documents(datastore, systemstore, show_deleted, None)
+        self.scan_documents(datastore, systemstore, show_deleted, None, false)
             .await
+    }
+
+    /// Read every live document and validate the scanned range, including
+    /// concurrent inserts, before a transaction commits a decision based on it.
+    pub async fn get_all_with_datastore_validated(
+        &self,
+        datastore: &NamespaceView,
+        systemstore: &NamespaceView,
+    ) -> Result<Vec<Document>> {
+        Ok(self
+            .scan_documents(datastore, systemstore, false, None, true)
+            .await?
+            .into_iter()
+            .map(|(_, doc, _)| doc)
+            .collect())
     }
 
     /// Every live document, for an update whose decision rests only on
@@ -383,6 +398,7 @@ impl Collection {
                 systemstore,
                 false,
                 parts.map(Vec::into_boxed_slice),
+                false,
             )
             .await?;
         Ok(entries.into_iter().map(|(_, doc, _)| doc).collect())
@@ -394,10 +410,14 @@ impl Collection {
         systemstore: &NamespaceView,
         show_deleted: bool,
         parts: Option<Box<[u32]>>,
+        validated: bool,
     ) -> Result<Vec<(u64, Document, bool)>> {
         let prefix = self.collection_key_prefix();
         let prefix_len = prefix.len();
-        let opts = IterOptions::new().with_prefix(prefix).with_parts(parts);
+        let opts = IterOptions::new()
+            .with_prefix(prefix)
+            .with_parts(parts)
+            .with_validation(validated);
 
         let mut iter = datastore.iterator(opts).await.map_err(Error::Storage)?;
 
@@ -527,6 +547,11 @@ impl Collection {
         // Store schema version
         self.store_version(datastore, doc_short_id).await?;
 
+        datastore
+            .project_document(self.name(), &doc_id.to_string())
+            .await
+            .map_err(Error::Storage)?;
+
         Ok(doc_id)
     }
 
@@ -572,6 +597,11 @@ impl Collection {
         // Update schema version to current collection version
         self.store_version(datastore, doc_short_id).await?;
 
+        datastore
+            .project_document(self.name(), &doc_id.to_string())
+            .await
+            .map_err(Error::Storage)?;
+
         Ok(())
     }
 
@@ -592,6 +622,17 @@ impl Collection {
             return Ok(false);
         }
 
+        let projected_id = if datastore.has_document_projector() {
+            let systemstore = datastore.sibling(storage::namespace::Namespace::Systemstore);
+            Some(
+                crate::docid::map::get_doc_id(&systemstore, doc_short_id)
+                    .await?
+                    .ok_or_else(|| Error::Other("projected document has no public ID".into()))?,
+            )
+        } else {
+            None
+        };
+
         if self.def.downsample_source.is_some() {
             let systemstore = datastore.sibling(storage::namespace::Namespace::Systemstore);
             if let Some(doc_id) = crate::docid::map::get_doc_id(&systemstore, doc_short_id).await? {
@@ -610,6 +651,13 @@ impl Collection {
 
         // Delete schema version
         self.delete_version(datastore, doc_short_id).await?;
+
+        if let Some(doc_id) = projected_id {
+            datastore
+                .project_document(self.name(), &doc_id)
+                .await
+                .map_err(Error::Storage)?;
+        }
 
         Ok(true)
     }
@@ -660,8 +708,14 @@ impl Collection {
         doc: &Document,
         doc_short_id: u64,
     ) -> Result<DocID> {
-        self.save_with_datastore_priorities(datastore, doc, doc_short_id, None)
+        let doc_id = self
+            .save_with_datastore_priorities(datastore, doc, doc_short_id, None)
+            .await?;
+        datastore
+            .project_document(self.name(), &doc_id.to_string())
             .await
+            .map_err(Error::Storage)?;
+        Ok(doc_id)
     }
 
     pub(crate) async fn save_with_datastore_priorities(

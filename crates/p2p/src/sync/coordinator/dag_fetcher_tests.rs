@@ -8,6 +8,8 @@ mod car_size_retry;
 mod dag_fetch_depth;
 #[path = "../../../tests/unit/dag_fetch_logs.rs"]
 mod dag_fetch_logs;
+#[path = "../../../tests/unit/dispatch_merge_fifo.rs"]
+mod dispatch_merge_fifo;
 #[path = "../../../tests/unit/durable_overflow_rotation.rs"]
 mod durable_overflow_rotation;
 #[path = "../../../tests/unit/productive_quantum.rs"]
@@ -1884,7 +1886,7 @@ async fn poll_fetch_dag_releases_limiter_permit_during_backoff() {
     // if the permit spanned all attempts this would only resolve after
     // the fetch task finished.
     let permits = limiter
-        .acquire(&PeerId::new("other-peer".to_string()))
+        .acquire(&PeerId::new("other-peer".to_string()), None)
         .await
         .expect("limiter must grant a permit while the fetch is backing off");
     assert!(
@@ -2058,4 +2060,61 @@ async fn late_success_completion_keeps_the_full_landing_grace() {
         "a Success in the watchdog's last moments must still wait out the landing grace"
     );
     assert!(matches!(blockstore.has(&child_cid).await, Ok(true)));
+}
+
+#[nuclei::test]
+async fn local_complete_fetch_releases_peer_permit_before_waiting_to_send() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let root_data = encode_ipld(ipld!({ "value": 1 }));
+    let root_cid = make_cid(&root_data);
+    blockstore.put(&root_cid, &root_data).await.unwrap();
+    let transport = TestTransport::new(
+        blockstore.clone(),
+        root_cid,
+        root_data,
+        RapidHashMap::new(),
+        RapidHashMap::new(),
+    );
+    let (event_tx, mut event_rx) = mpsc::channel(1);
+    event_tx
+        .try_send(SyncEvent::SyncError {
+            cid: root_cid,
+            error: "occupy the channel".to_string(),
+        })
+        .unwrap();
+    let peer = PeerId::new("remote-peer".to_string());
+    let limiter = DagFetchLimiter::new(1);
+    let reserved = limiter.try_reserve_peer(peer.as_str()).unwrap();
+    let context = DagFetchContext::new(
+        "doc".to_string(),
+        "collection".to_string(),
+        "creator".to_string(),
+        peer.clone(),
+    )
+    .with_peer_permit(crate::sync::DagFetchPeerPermit::new(reserved));
+
+    let fetch = crate::rt::spawn(poll_fetch_dag(
+        transport,
+        blockstore,
+        event_tx,
+        root_cid,
+        context,
+        limiter.clone(),
+        diagnostics(),
+    ));
+    let another = crate::rt::time::timeout(Duration::from_secs(5), limiter.acquire(&peer, None))
+        .await
+        .expect("a locally complete fetch must return its peer permit before the channel drains")
+        .expect("limiter remains open");
+    drop(another);
+    assert!(matches!(
+        event_rx.recv().await,
+        Some(SyncEvent::SyncError { .. })
+    ));
+    assert!(matches!(
+        event_rx.recv().await,
+        Some(SyncEvent::DagReady { root_cid: ready, .. }) if ready == root_cid
+    ));
+    fetch.join().await.unwrap();
 }

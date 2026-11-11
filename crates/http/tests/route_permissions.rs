@@ -430,11 +430,21 @@ fn all_registered_routes_return_expected_permission() {
             Method::POST,
             RoutePermission::Required(NodePermission::DacRelationAdd),
         ),
+        (
+            "/api/v0/acp/document/relationships",
+            Method::GET,
+            RoutePermission::Dynamic,
+        ),
         // ACP Node
         (
             "/api/v0/acp/node/status",
             Method::GET,
             RoutePermission::Required(NodePermission::NacStatus),
+        ),
+        (
+            "/api/v0/acp/node/explain",
+            Method::GET,
+            RoutePermission::Dynamic,
         ),
         (
             "/api/v0/acp/node/enable",
