@@ -3,7 +3,7 @@
 use clap::{Args, Subcommand};
 
 use super::{validate_identifier, ClientContext};
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 /// Manage encrypted indexes
 #[derive(Args, Debug)]
@@ -52,7 +52,8 @@ pub struct EncryptedIndexDeleteArgs {
 #[derive(Args, Debug)]
 pub struct EncryptedIndexListArgs {
     /// Collection name; without one, every collection's encrypted indexes
-    /// are listed, as Go's CLI lists them.
+    /// are listed, as Go's CLI lists them. That listing reads the committed
+    /// state, so it is refused with `--tx`.
     #[arg(long, short = 'c')]
     pub collection: Option<String>,
 }
@@ -114,6 +115,11 @@ impl EncryptedIndexListArgs {
                         .encrypted_index_list(txn.as_deref(), collection)
                         .await?,
                 )?
+            }
+            None if txn.is_some() => {
+                return Err(Error::MissingInput(
+                    "--collection: listing every collection's encrypted indexes does not run in a transaction".into(),
+                ))
             }
             None => serde_json::to_string_pretty(&client.encrypted_index_list_all().await?)?,
         };
