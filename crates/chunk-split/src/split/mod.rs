@@ -4,8 +4,9 @@
 //! the paragraph under it), and groups units into segments of about
 //! `SEGMENT_CHUNKS` times `max_chars` on average. Each segment is packed into
 //! chunks of at most `max_chars` characters, and a heading starts a new chunk
-//! once the current one is half full. A chunk can repeat the last sentences of
-//! the chunk before it. Lengths count characters, not bytes.
+//! once the current one is half full. A chunk can repeat the last whole
+//! sentences of the chunk before it. Lengths count characters, not bytes, and
+//! every cut falls between graphemes unless one grapheme is longer than a chunk.
 //!
 //! The Lean proof `proofs/lean/ChunkSplit` shows that the chunks cover the text
 //! with no gaps, that no chunk is too long, and that an edit which keeps its
@@ -19,6 +20,7 @@ mod paragraphs;
 mod segments;
 
 pub use atoms::{cut_sentences, cut_words};
+pub use overlap::REPEAT_SHARE;
 pub use paragraphs::{paragraphs, Para};
 pub use segments::{fence_before, segments, units, Unit, SEGMENT_CHUNKS};
 
@@ -29,7 +31,8 @@ use crate::list::text_hash;
 pub struct ChunkConfig {
     /// The most characters a chunk may hold, overlap included.
     pub max_chars: usize,
-    /// How many sentences a chunk repeats from the end of the chunk before it.
+    /// How many sentences a chunk repeats from the end of the chunk before it, up
+    /// to [`REPEAT_SHARE`] of `max_chars` and never more than its own text.
     pub overlap: usize,
 }
 

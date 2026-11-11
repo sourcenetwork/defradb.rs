@@ -171,6 +171,7 @@ ipld-core = { version = "0.4", features = ["codec", "serde"] }
 
 # Full-text search
 bm25 = "2.3"
+unicode-segmentation = "1.13"
 
 # GraphQL
 graphql-parser = "0.4"

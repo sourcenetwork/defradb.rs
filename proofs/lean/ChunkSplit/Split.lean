@@ -19,26 +19,30 @@ How the cutter works, in four steps:
    small chance to start a segment. Fences cut the units into segments. A fence
    decision looks only at its own unit; that is what keeps edits local.
 3. Inside a segment, each paragraph becomes atoms: a short paragraph is one atom,
-   a too-long one is cut into sentences, then words, then single characters,
-   until every piece fits. Atoms are then packed greedily into chunks that fit. A
+   a too-long one is cut into sentences, then words, then graphemes (what a
+   reader sees as one character), then single characters, until every piece fits. Atoms are then packed greedily into chunks that fit. A
    heading starts a new chunk once the current one is half full, or when the
    heading and the text under it would not fit next to it.
 4. Optionally, a chunk starts with a few sentences copied from the end of the
-   chunk before it in the same segment (the overlap), but only if they still fit.
+   chunk before it in the same segment (the overlap), but only if they still fit,
+   take at most a quarter of the limit, and are no longer than the chunk's own
+   text. So a chunk is never mostly a repeat.
 
 This file holds the definitions. The promises are in `Covers.lean`,
 `Bounded.lean` and `Local.lean`.
 
 What this model trusts. Two things happen in Rust before this model starts: the
 text is read as paragraphs with their heading flags and weights, and the hash
-of a unit's words is computed (`rollOf`, any function here). The sentence and word cutters are modeled as any functions that
-cut a string into pieces which join back to it (`LevelsJoin` in `Covers.lean`); Rust unit tests
-check that law for the real cutters.
+of a unit's words is computed (`rollOf`, any function here). The sentence, word and grapheme
+cutters are modeled as any functions that cut a string into pieces which join back to it
+(`LevelsJoin` in `Covers.lean`); Rust unit tests check that law for the real cutters. The
+overlap candidates (`cands`) are any function too: in Rust they are the whole sentences at
+the end of the previous core, never its first one; Rust property tests check that.
 
 Rust anchors: `split` in `crates/chunk-split/src/split/mod.rs`; `units`,
 `fence_before` and `segments` in `crates/chunk-split/src/split/segments.rs`; `atoms` in
 `crates/chunk-split/src/split/atoms.rs`; `pack` in
-`crates/chunk-split/src/split/pack.rs`; `with_overlap` in
+`crates/chunk-split/src/split/pack.rs`; `with_overlap`, `borrow` and `REPEAT_SHARE` in
 `crates/chunk-split/src/split/overlap.rs`.
 -/
 
@@ -63,9 +67,9 @@ def rollRange : Nat := 2 ^ 64
 structure Config where
   -- The largest number of characters a chunk may have (`maxChars`).
   max : Nat
-  -- The cutters for a too-long paragraph, finest last: sentences, then words.
+  -- The cutters for a too-long paragraph, finest last: sentences, words, graphemes.
   levels : List (List Char → List (List Char))
-  -- For the overlap: given the previous chunk, the prefixes it may lend, longest first.
+  -- For the overlap: given the previous core, the endings it may lend, longest first.
   cands : List Char → List (List Char)
   -- The roll of a unit: the first 8 bytes of the hash of its words, as a number.
   rollOf : List Para → Nat
@@ -204,10 +208,22 @@ def pack (max : Nat) (as : List Atom) : List (List Char) :=
   -- Start with nothing in the core, and no heading before it.
   packFrom max [] false as
 
--- The overlap prefix for `core`: the longest offered prefix of `prev` that still fits.
+-- A repeat takes at most one part in this many of the limit (`REPEAT_SHARE` in Rust).
+def repeatShare : Nat := 4
+
+-- May `c` be repeated in front of `core`?
+def preOk (cfg : Config) (core c : List Char) : Bool :=
+  -- The chunk stays within the limit,
+  decide (c.length + core.length ≤ cfg.max)
+    -- the repeat is at most a quarter of the limit,
+    && decide (repeatShare * c.length ≤ cfg.max)
+    -- and it is no longer than the chunk's own text.
+    && decide (c.length ≤ core.length)
+
+-- The overlap prefix for `core`: the longest offered ending of `prev` that is allowed.
 def pickPre (cfg : Config) (prev core : List Char) : List Char :=
-  -- Take the first candidate that keeps the chunk within `max`, or nothing.
-  ((cfg.cands prev).find? (fun c => decide (c.length + core.length ≤ cfg.max))).getD []
+  -- Take the first allowed candidate, or nothing.
+  ((cfg.cands prev).find? (preOk cfg core)).getD []
 
 -- Give each core of one segment its overlap prefix; `prev` is the core before it.
 def overlapFrom (cfg : Config) (prev : Option (List Char)) : List (List Char) → List Chunk
