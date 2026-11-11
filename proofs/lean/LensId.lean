@@ -18,8 +18,11 @@ config block with no links), where the old code had none.
 
 Rust owner: crates/defra-core/src/lens_block.rs `build_lens_ipld_blocks`,
 `build_module_blocks`; crates/db/src/definition/migration/committed_lenses.rs
-`PreparedLens::new`, `module_arguments`. The Rust checks are
-crates/defra-core/tests/lens_block_id.rs and the testo scenarios
+`PreparedLens::new`, `module_arguments`; crates/defra-core/src/lens_argument.rs
+`encode_lens_argument` (each value's JSON, keeping the number as written, as
+Go's `UseNumber` decode does). The Rust checks are
+crates/defra-core/tests/lens_block_id.rs, crates/defra-core/tests/lens_argument.rs
+and the testo scenarios
 collection_version::patch_migration_numeric_fidelity and
 collection_version::patch_migration_presence.
 -/

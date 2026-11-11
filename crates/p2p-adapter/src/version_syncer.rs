@@ -184,8 +184,7 @@ async fn sync_lens<S: storage::corekv::Store + 'static, B: Blockstore>(
                 .map(|entry| {
                     (
                         entry.key.clone(),
-                        serde_json::from_str(&entry.value)
-                            .unwrap_or_else(|_| serde_json::Value::String(entry.value.clone())),
+                        defra_core::decode_lens_argument(&entry.value),
                     )
                 })
                 .collect();

@@ -201,7 +201,7 @@ impl PreparedLens {
         for module in &config.lenses {
             modules.push((
                 module_wasm_bytes(module, pool).await?,
-                module_arguments(module)?,
+                module_arguments(module),
             ));
         }
         let parts: Vec<_> = config
@@ -283,38 +283,16 @@ async fn module_wasm_bytes(
 
 /// A module's arguments as Go's lens store records them: sorted by key, each
 /// value JSON-encoded as Go's `json.Marshal` writes it.
-fn module_arguments(module: &lens::LensModule) -> Result<Vec<(String, String)>> {
+fn module_arguments(module: &lens::LensModule) -> Vec<(String, String)> {
     let Some(arguments) = module.arguments.as_ref().and_then(|v| v.as_object()) else {
-        return Ok(Vec::new());
+        return Vec::new();
     };
-    let mut encoded = arguments
+    let mut encoded: Vec<_> = arguments
         .iter()
-        .map(|(key, value)| {
-            serde_json::to_string(value)
-                .map(|json| (key.clone(), go_json_escape(&json)))
-                .map_err(|e| Error::lens_config_json("failed to encode a lens argument", e))
-        })
-        .collect::<Result<Vec<_>>>()?;
+        .map(|(key, value)| (key.clone(), defra_core::encode_lens_argument(value)))
+        .collect();
     encoded.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(encoded)
-}
-
-/// `json` with the characters Go's `json.Marshal` escapes and serde_json
-/// does not (`<`, `>`, `&`, U+2028, U+2029), so the blocks hash as Go's do.
-/// They appear in JSON only inside strings, where the escape means the same.
-fn go_json_escape(json: &str) -> String {
-    let mut out = String::with_capacity(json.len());
-    for c in json.chars() {
-        match c {
-            '<' => out.push_str("\\u003c"),
-            '>' => out.push_str("\\u003e"),
-            '&' => out.push_str("\\u0026"),
-            '\u{2028}' => out.push_str("\\u2028"),
-            '\u{2029}' => out.push_str("\\u2029"),
-            c => out.push(c),
-        }
-    }
-    out
+    encoded
 }
 
 /// Persists a lens config under its transform ID in the caller's transaction:

@@ -27,6 +27,7 @@ pub mod encryption;
 pub mod error;
 pub mod ipld;
 pub mod json_crdt;
+pub mod lens_argument;
 pub mod lens_block;
 pub mod merge;
 pub mod request_context;
@@ -52,6 +53,7 @@ pub use collection::collection_short_id;
 pub use encryption::EncryptionKey;
 pub use error::{Error, Result};
 pub use ipld::{collect_block_links, extract_links, walk_ipld, IpldVisitor};
+pub use lens_argument::{decode_lens_argument, encode_lens_argument};
 pub use lens_block::{
     build_lens_ipld_blocks, is_lens_block, CidBlock, LensConfigBlock, LensKeyValue,
     LensModuleBlock, LensModuleParts, LensWasmBlock,

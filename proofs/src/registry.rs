@@ -1736,7 +1736,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Schema-evolution operations in the core",
         name: "LensId.configBlock_injective / new_numbers_differ / new_keeps_later_modules / empty_lens_has_block",
         axis: Lean,
-        anchor: "crates/defra-core/src/lens_block.rs build_lens_ipld_blocks, build_module_blocks; crates/db/src/definition/migration/committed_lenses.rs PreparedLens::new, module_arguments",
+        anchor: "crates/defra-core/src/lens_block.rs build_lens_ipld_blocks, build_module_blocks; crates/db/src/definition/migration/committed_lenses.rs PreparedLens::new, module_arguments; crates/defra-core/src/lens_argument.rs encode_lens_argument",
         model_ref: "LensId (lake build)",
         tiers: &[Boundary],
         bound_by: "crates/defra-core/tests/lens_block_id.rs every_module_and_argument_value_counts, an_empty_lens_has_gos_config_block_cid",
