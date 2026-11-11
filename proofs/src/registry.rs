@@ -1789,7 +1789,7 @@ pub const PROPERTIES: &[Property] = &[
         // collection; a placeholder (often in the orphan collection) is
         // treated as unknown, so the value stays under the owning collection.
         family: "Schema-evolution operations in the core",
-        name: "DocStoreTarget.stored_under_owner / old_stores_under_orphan",
+        name: "DocStoreTarget.stored_under_owner / placeholder_never_lays_out / old_stores_under_orphan",
         axis: Lean,
         anchor: "crates/db/src/collection/crud.rs Collection::save_with_datastore_priorities",
         model_ref: "DocStoreTarget (lake build)",

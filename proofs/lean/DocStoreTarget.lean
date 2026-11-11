@@ -14,13 +14,18 @@ the document was stored under the orphan's key, and a query of the collection
 it belongs to never saw it (issue #2517). The save now uses the version only
 when it is a real definition of the same collection; otherwise it stores the
 document as for an unknown version, under its own collection's key. This file
-proves the stored key always names the owning collection, and shows the old
+proves the stored key always names the owning collection, that a placeholder
+never lays the document out (even one in the same collection, which a
+migration makes when its source is known: it has no fields), and shows the old
 choice did not.
 
 Rust owner: crates/db/src/collection/crud.rs
-`Collection::save_with_datastore_priorities`. The Rust check is the testo
-scenario collection_version::migrations::query::with_p2p::
-collection_migration_query_with_p2_p_replicated_doc_at_much_newer_schema_version_with_schema_history_gap.
+`Collection::save_with_datastore_priorities`. The Rust checks are the testo
+scenarios collection_version::migrations::query::with_p2p::
+collection_migration_query_with_p2_p_replicated_doc_at_much_newer_schema_version_with_schema_history_gap
+(an orphan placeholder) and
+collection_migration_query_with_p2_p_replicated_doc_at_newer_schema_version (a
+placeholder in the same collection).
 -/
 
 namespace DocStoreTarget
@@ -60,6 +65,13 @@ theorem stored_under_owner (self : Version) (found : Option Version) :
         simp [usable] at h
         exact h.2
       · rfl
+
+-- A placeholder never lays the document out: the save stores it through its
+-- own version, whatever collection the placeholder names.
+theorem placeholder_never_lays_out (self found : Version)
+    (h : found.placeholder = true) : storeVia self (some found) = self := by
+  -- A placeholder is not usable, so the save keeps its own version.
+  simp [storeVia, usable, h]
 
 -- The old choice: any found version.
 def oldStoredUnder (self : Version) (found : Option Version) : String :=
