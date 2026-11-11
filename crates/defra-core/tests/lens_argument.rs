@@ -11,7 +11,14 @@ fn numbers_keep_the_value_go_decodes_with_use_number() {
     assert_eq!(encoded("9007199254740992"), "9007199254740992");
     assert_eq!(encoded("-42"), "-42");
     assert_eq!(encoded("30.0"), "30.0");
-    assert_eq!(encoded("1e21"), "1e21");
+}
+
+/// Go writes an exponent as it arrived; serde_json respells it. The spelling
+/// is part of the lens ID, so a formatter change must show up here.
+#[test]
+fn an_exponent_takes_serde_jsons_spelling() {
+    assert_eq!(encoded("1e21"), "1e+21");
+    assert_eq!(encoded("1e+21"), "1e+21");
 }
 
 #[test]
