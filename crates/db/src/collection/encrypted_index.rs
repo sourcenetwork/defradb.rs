@@ -1,5 +1,6 @@
 //! Encrypted (searchable-encryption) indexes as Go's `AddEncryptedIndex`,
-//! `ListEncryptedIndexes` and `DeleteEncryptedIndex` keep them: on the
+//! `ListEncryptedIndexes`, `ListAllEncryptedIndexes` and
+//! `DeleteEncryptedIndex` keep them: on the
 //! collection's definition. Each reads and writes the definition through the
 //! transaction it is given, so in an explicit transaction the change is
 //! visible to it at once and to others once it commits.
@@ -7,7 +8,7 @@
 use std::sync::Arc;
 
 use schema::{CollectionVersion, EncryptedIndexDescription};
-use storage::corekv::{Key, OnCommit, Store};
+use storage::corekv::{IterOptions, Key, OnCommit, Store};
 use storage::keys::systemstore::{CollectionKey, CollectionNameKey};
 
 use crate::collection::loader::load_collection_from_systemstore;
@@ -120,6 +121,35 @@ where
             .collect())
     }
 
+    /// Every collection's encrypted index fields as `txn` sees the
+    /// definitions, its own uncommitted changes included, by collection name
+    /// in name order. A collection without one is left out, as Go's
+    /// `ListAllEncryptedIndexes` leaves it out.
+    pub async fn all_encrypted_indexes_in(
+        &self,
+        txn: &DbTxn<S>,
+    ) -> Result<Vec<(String, Vec<String>)>> {
+        let mut all = Vec::new();
+        for name in collection_names_in(txn).await? {
+            let found = definition_in(txn, &name).await?;
+            if self.is_collection_forbidden(found.collection_id())?
+                && !txn.was_collection_created(found.collection_id())
+            {
+                continue;
+            }
+            let fields: Vec<String> = found
+                .schema()
+                .encrypted_indexes
+                .iter()
+                .map(|index| index.field_name.clone())
+                .collect();
+            if !fields.is_empty() {
+                all.push((name, fields));
+            }
+        }
+        Ok(all)
+    }
+
     /// Change `collection`'s active definition with `change` and stage it on
     /// `txn`. The rest of `txn` reads the new definition, and the shared
     /// cache takes it once `txn` commits.
@@ -163,6 +193,33 @@ where
         })))?;
         Ok(())
     }
+}
+
+/// The names of the collections `txn` stores an active definition for.
+async fn collection_names_in<S>(txn: &DbTxn<S>) -> Result<Vec<String>>
+where
+    S: Store,
+{
+    let prefix = CollectionNameKey::name_prefix();
+    let systemstore = txn.systemstore()?;
+    let mut iter = systemstore
+        .iterator(IterOptions::new().with_prefix(prefix.clone()))
+        .await
+        .map_err(Error::Storage)?;
+    let mut names = Vec::new();
+    while let Some(pair) = iter.next().await.map_err(Error::Storage)? {
+        let name = pair
+            .key
+            .strip_prefix(prefix.as_slice())
+            .unwrap_or(pair.key.as_slice());
+        names.push(
+            String::from_utf8(name.to_vec()).map_err(|error| {
+                Error::text_decode("collection key contains invalid UTF-8", error)
+            })?,
+        );
+    }
+    iter.close().await.map_err(Error::Storage)?;
+    Ok(names)
 }
 
 /// `collection`'s active definition as `txn` stores it.

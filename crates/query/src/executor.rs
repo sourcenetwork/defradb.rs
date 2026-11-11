@@ -742,6 +742,18 @@ pub trait QueryExecutor: MaybeSendSync {
         ))
     }
 
+    /// Every collection's encrypted index fields, by collection name, as the
+    /// transaction `context` carries sees them.
+    async fn all_encrypted_indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<(String, Vec<String>)>, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "this encrypted index operation is not supported by this executor",
+        ))
+    }
+
     /// [`TransactionRegistry::set_active_collection_version_as`](crate::txn::TransactionRegistry::set_active_collection_version_as).
     async fn set_active_collection_version_as(
         &self,

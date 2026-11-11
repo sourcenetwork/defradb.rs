@@ -159,6 +159,32 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         })
         .await
     }
+
+    /// Go's `ListAllEncryptedIndexes` in transaction `txn_id`: every
+    /// collection's encrypted index fields, by collection name, its own
+    /// uncommitted changes included. Node access is checked there, for
+    /// `list-all-encrypted-index` alone, as Go checks it.
+    pub async fn all_encrypted_indexes_in_txn(
+        &self,
+        context: &RequestContext,
+        txn_id: &str,
+    ) -> Result<Vec<(String, Vec<String>)>> {
+        let db = self.db.clone();
+        let acting = context.clone();
+        self.in_txn(context, txn_id, move |owned| {
+            Box::pin(async move {
+                let txn = owned.alone()?;
+                db.check_node_access_in_txn(
+                    &acting,
+                    txn.acpstore()?,
+                    NodePermission::EncryptedIndexListAll,
+                )
+                .await?;
+                db.all_encrypted_indexes_in(txn).await
+            })
+        })
+        .await
+    }
 }
 
 /// Node access for an operation on a collection, read in `txn`:

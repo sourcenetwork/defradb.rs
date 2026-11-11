@@ -343,6 +343,16 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .map_err(operation_error)
     }
 
+    async fn all_encrypted_indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<(String, Vec<String>)>, TransactionError> {
+        let id = context_txn(context)?;
+        self.all_encrypted_indexes_in_txn(context, &id)
+            .await
+            .map_err(operation_error)
+    }
+
     async fn truncate_collection_as(
         &self,
         context: &RequestContext,

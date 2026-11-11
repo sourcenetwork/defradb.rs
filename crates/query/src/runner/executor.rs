@@ -385,6 +385,13 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
             .await
     }
 
+    async fn all_encrypted_indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<(String, Vec<String>)>, TransactionError> {
+        self.registry.all_encrypted_indexes_in_txn_as(context).await
+    }
+
     async fn set_active_collection_version_as(
         &self,
         context: &RequestContext,
