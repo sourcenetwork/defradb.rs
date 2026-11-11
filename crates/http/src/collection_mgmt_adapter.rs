@@ -12,13 +12,19 @@ use crate::router::CollectionManagementOperations;
 use storage::corekv::Store;
 
 /// Adapter that implements CollectionManagementOperations using the database.
-pub struct CollectionManagementAdapter<S: Store> {
+pub struct CollectionManagementAdapter<S>
+where
+    S: Store,
+{
     database: Arc<db::DB<S>>,
     /// The request this adapter serves, for one bound to it.
     context: Option<RequestContext>,
 }
 
-impl<S: Store + 'static> CollectionManagementAdapter<S> {
+impl<S> CollectionManagementAdapter<S>
+where
+    S: Store + 'static,
+{
     /// Create a new adapter wrapping the given database.
     pub fn new(database: Arc<db::DB<S>>) -> Self {
         Self {
@@ -38,7 +44,10 @@ impl<S: Store + 'static> CollectionManagementAdapter<S> {
 }
 
 #[async_trait]
-impl<S: Store + 'static> CollectionManagementOperations for CollectionManagementAdapter<S> {
+impl<S> CollectionManagementOperations for CollectionManagementAdapter<S>
+where
+    S: Store + 'static,
+{
     fn bind_request(
         &self,
         context: &RequestContext,
