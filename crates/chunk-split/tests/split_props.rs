@@ -1,32 +1,52 @@
 //! Property tests mirroring the Lean theorems in `proofs/lean/ChunkSplit`.
 
 use chunk_split::split::{
-    cut_sentences, cut_words, paragraphs, segments, split, units, ChunkConfig, SEGMENT_CHUNKS,
+    cut_sentences, cut_words, paragraphs, segments, split, units, Chunk, ChunkConfig, REPEAT_SHARE,
+    SEGMENT_CHUNKS,
 };
 use proptest::prelude::*;
+use unicode_segmentation::UnicodeSegmentation;
 
 fn word() -> impl Strategy<Value = String> {
     prop_oneof![
-        "[a-z]{1,9}",
-        "[A-Z][a-z]{0,6}",
-        Just("é".to_string()),
-        Just("日本".to_string()),
-        Just("x".repeat(70)),
+        8 => "[a-z]{1,9}",
+        3 => "[A-Z][a-z]{0,6}",
+        1 => prop::sample::select(vec![
+            "é", "e\u{301}", "a\u{301}\u{302}", "日本", "漢字かな", "क्षि", "👍🏽",
+            "👨\u{200D}👩\u{200D}👧", "🇯🇵", "v1.2", "(x)", "a,b", "「引用」", "e.g", "x\u{FE0F}",
+        ])
+        .prop_map(str::to_string),
+        1 => Just("x".repeat(70)),
     ]
+}
+
+// What goes between words: Chinese and Japanese often have no space at all.
+fn gap() -> impl Strategy<Value = &'static str> {
+    prop_oneof![6 => Just(" "), 2 => Just(""), 1 => Just("\n"), 1 => Just("  "), 1 => Just("\u{3000}")]
 }
 
 fn sentence() -> impl Strategy<Value = String> {
     (
-        prop::collection::vec(word(), 1..12),
-        prop_oneof![Just("."), Just("!"), Just("?"), Just("")],
+        word(),
+        prop::collection::vec((gap(), word()), 0..11),
+        prop::sample::select(vec![
+            ".", "!", "?", "", "。", "！", "？", "．", "｡", "...", ".\"", "。」", "?)",
+        ]),
+        prop_oneof![Just(" "), Just("")],
     )
-        .prop_map(|(words, end)| format!("{}{end}", words.join(" ")))
+        .prop_map(|(first, rest, end, after)| {
+            let words: String = rest
+                .into_iter()
+                .map(|(gap, word)| format!("{gap}{word}"))
+                .collect();
+            format!("{first}{words}{end}{after}")
+        })
 }
 
 fn paragraph() -> impl Strategy<Value = String> {
     prop_oneof![
         1 => prop::collection::vec(word(), 1..4).prop_map(|w| format!("# {}", w.join(" "))),
-        6 => prop::collection::vec(sentence(), 1..8).prop_map(|s| s.join(" ")),
+        6 => prop::collection::vec(sentence(), 1..8).prop_map(|s| s.concat()),
     ]
 }
 
@@ -88,6 +108,54 @@ proptest! {
         }
     }
 
+    // No cut falls inside a grapheme, unless the grapheme is longer than a chunk.
+    #[test]
+    fn graphemes_stay_whole(text in text(), config in config()) {
+        let graphemes = grapheme_spans(&text);
+        for chunk in split(&text, &config) {
+            let pre = pre_chars(&chunk);
+            for cut in [chunk.start - pre, chunk.end] {
+                let inside = graphemes.iter().find(|&&(at, len)| at < cut && cut < at + len);
+                prop_assert!(
+                    inside.is_none_or(|&(_, len)| len > config.max_chars.max(1)),
+                    "cut at {} splits a grapheme: {:?}", cut, chunk
+                );
+            }
+        }
+    }
+
+    // Mirrors `pickPre_capped`: the repeat is at most a share of `max_chars` and
+    // never longer than the chunk's own text.
+    #[test]
+    fn overlap_is_capped(text in text(), config in config()) {
+        for chunk in split(&text, &config) {
+            let pre = pre_chars(&chunk);
+            prop_assert!(pre * REPEAT_SHARE <= config.max_chars, "{pre} repeated in {chunk:?}");
+            prop_assert!(pre <= chunk.end - chunk.start, "{chunk:?}");
+        }
+    }
+
+    // The repeat is whole sentences from the end of the chunk before, never all of it.
+    #[test]
+    fn overlap_is_whole_sentences(text in text(), config in config()) {
+        let chars: Vec<char> = text.chars().collect();
+        let chunks = split(&text, &config);
+        for (i, chunk) in chunks.iter().enumerate() {
+            let pre = pre_chars(chunk);
+            if pre == 0 {
+                continue;
+            }
+            let prev = &chunks[i - 1];
+            let from = chunk.start - pre;
+            prop_assert!(prev.start < from, "{chunk:?} repeats all of {prev:?}");
+            let repeated: String = chars[from..chunk.start].iter().collect();
+            let before: String = chars[prev.start..from].iter().collect();
+            prop_assert!(chunk.text.starts_with(&repeated));
+            prop_assert!(ends_sentence(&repeated), "{repeated:?} is no sentence");
+            prop_assert!(ends_sentence(&before), "{repeated:?} starts mid sentence");
+        }
+    }
+
     // Mirrors `units_edit`: an edit that keeps a paragraph a heading or text keeps
     // every unit's paragraphs.
     #[test]
@@ -110,7 +178,7 @@ proptest! {
         let text = bodies
             .iter()
             .enumerate()
-            .map(|(i, body)| format!("## Section {i}\n\n{}", body.join(" ")))
+            .map(|(i, body)| format!("## Section {i}\n\n{}", body.concat()))
             .collect::<Vec<_>>()
             .join("\n\n");
         let paras = paragraphs(&text);
@@ -170,4 +238,38 @@ fn append_word(text: &str, pick: prop::sample::Index, insert: &str) -> Option<St
             .zip(&paras)
             .all(|(a, b)| a.heading == b.heading);
     same.then_some(edited)
+}
+
+fn pre_chars(chunk: &Chunk) -> usize {
+    chunk.text.chars().count() - (chunk.end - chunk.start)
+}
+
+// Each grapheme of `text` as its start and length, in characters.
+fn grapheme_spans(text: &str) -> Vec<(usize, usize)> {
+    let mut at = 0;
+    text.graphemes(true)
+        .map(|g| {
+            let len = g.chars().count();
+            at += len;
+            (at - len, len)
+        })
+        .collect()
+}
+
+// Read from the end: spaces, closing quotes or brackets, then a terminator. An
+// ASCII terminator needs a space after it, a full-width one does not.
+fn ends_sentence(s: &str) -> bool {
+    const CLOSERS: &str = "\"')]\u{201D}\u{2019}\u{00BB}」』）］】》〉＂";
+    let lead = |g: &str| g.chars().next().unwrap_or_default();
+    let mut graphemes = s.graphemes(true).rev().peekable();
+    let mut saw_space = false;
+    while graphemes.next_if(|g| lead(g).is_whitespace()).is_some() {
+        saw_space = true;
+    }
+    while graphemes.next_if(|g| CLOSERS.contains(lead(g))).is_some() {}
+    match graphemes.next().map(lead) {
+        Some(c) if "。！？．｡".contains(c) => true,
+        Some(c) if ".!?".contains(c) => saw_space,
+        _ => false,
+    }
 }
