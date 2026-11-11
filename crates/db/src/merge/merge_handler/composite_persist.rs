@@ -24,8 +24,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             ))
         })?;
 
-        let active_version = collection
-            .validate_write_definition(datastore, false)
+        let (active_version, stored_definition) = collection
+            .validate_write_definition_read(datastore, false)
             .await
             .map_err(MergeError::Database)?;
         if self
@@ -263,8 +263,13 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // through the cache to the active collection) may not name.
         if !doc_is_tombstoned && active_version != context.payload.collection_version_id {
             // Boxed so the rare path does not grow every merge's future.
-            Box::pin(self.owe_reindex_off_active_version(systemstore, collection, &active_version))
-                .await?;
+            Box::pin(self.owe_reindex_off_active_version(
+                systemstore,
+                collection,
+                &active_version,
+                &stored_definition,
+            ))
+            .await?;
         }
 
         if let Some(enc_key) = self.se_enc_key() {

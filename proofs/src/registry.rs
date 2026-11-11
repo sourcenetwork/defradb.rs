@@ -1750,7 +1750,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Schema-evolution operations in the core",
         name: "INV_IndexMatchesReads / INV_SettledIndexAnswers",
         axis: Tla,
-        anchor: "crates/db/src/definition/migration/reindex/owed.rs owe_reindex, clear_owed_reindex; crates/db/src/collection/mod.rs queryable, Collection::validate_write_definition; crates/db/src/merge/merge_handler/stale_version.rs DbMergeHandler::owe_reindex_off_active_version; crates/query/src/planner/builder/index_methods.rs try_select_index",
+        anchor: "crates/db/src/definition/migration/reindex/owed.rs owe_reindex, clear_owed_reindex; crates/db/src/collection/mod.rs queryable, Collection::validate_write_definition_read; crates/db/src/merge/merge_handler/stale_version.rs DbMergeHandler::owe_reindex_off_active_version; crates/query/src/planner/builder/index_methods.rs try_select_index",
         model_ref: "MC_LensIndexAnswer_{Green,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",
