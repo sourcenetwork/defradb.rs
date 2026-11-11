@@ -102,6 +102,13 @@ async fn fixture(count: usize) -> impl QueryExecutor {
     )
     .await
     .expect("the migration to register");
+    assert!(
+        db.owed_reindexes()
+            .await
+            .expect("the owed reindexes to read")
+            .is_empty(),
+        "the migration's reindex must settle, or the bench times a scan"
+    );
 
     QueryRunner::with_provider(
         db::LensedAutoCommitFetcher::new(db.clone()),

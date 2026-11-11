@@ -16,8 +16,8 @@ use crate::definition::migration::owe_reindex;
 
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     /// Owes `collection`'s collection a reindex, in the merge's transaction,
-    /// when the active version `active_version` has indexes and reads
-    /// documents stored at `collection`'s version through a lens. The active
+    /// when the active version `active_version` has indexes and reads the
+    /// document, stored at another version of it, through a lens. The active
     /// version is the one the merge's validated name read returned, and every
     /// definition is read in the same transaction, so a schema change that
     /// commits first aborts the merge and the re-run decides again. It owes a

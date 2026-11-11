@@ -31,31 +31,44 @@ namespace LensId
 
 -- An argument's value: a string, a number or a flag, as JSON carries them.
 inductive Arg where
+  -- A text value, such as a field name.
   | str (s : String)
+  -- A whole number, kept exactly as written.
   | num (n : Nat)
+  -- A true-or-false value.
   | flag (b : Bool)
+  -- Lean can check whether two arguments are equal.
   deriving DecidableEq
 
 -- A module: its WASM bytes, whether its inverse runs, and its arguments.
 structure Module where
+  -- The module's code, as a list of bytes.
   wasm : List Nat
+  -- Whether the module runs backwards (its inverse).
   inverse : Bool
+  -- Its named arguments: each a name and a value.
   args : List (String × Arg)
+  -- Lean can check whether two modules are equal.
   deriving DecidableEq
 
 -- The module block the node writes: every part of the module. Each argument
 -- value goes in JSON-encoded, which keeps the whole value; we model that
 -- encoding as keeping the value itself.
 structure ModuleBlock where
+  -- The block keeps the module's code.
   wasm : List Nat
+  -- It keeps the inverse flag.
   inverse : Bool
+  -- It keeps every argument, its name and its whole value.
   args : List (String × Arg)
+  -- Lean can check whether two blocks are equal.
   deriving DecidableEq
 
--- Build a module's block.
+-- Build a module's block: copy each of its three parts in.
 def moduleBlock (m : Module) : ModuleBlock := ⟨m.wasm, m.inverse, m.args⟩
 
--- The config block: one module block per module, in order.
+-- The config block: one module block per module, in order (`map` builds the
+-- block of each module and keeps the list's order).
 def configBlock (lens : List Module) : List ModuleBlock := lens.map moduleBlock
 
 -- Two modules with the same block are the same module.
@@ -63,8 +76,11 @@ theorem moduleBlock_injective (a b : Module) (h : moduleBlock a = moduleBlock b)
     a = b := by
   -- Take both modules apart and compare their parts.
   cases a; cases b
+  -- Equal blocks means equal code, equal flag and equal arguments.
   simp only [moduleBlock, ModuleBlock.mk.injEq] at h
+  -- Name those three equalities.
   obtain ⟨h1, h2, h3⟩ := h
+  -- Put one module's parts in place of the other's: the two are now the same.
   subst h1; subst h2; subst h3; rfl
 
 -- Two lenses with the same config block are the same lens: the blocks lose
@@ -78,8 +94,12 @@ theorem configBlock_injective :
   | _ :: _, [], h => by simp [configBlock] at h
   -- Compare the first modules, then the rest.
   | x :: xs, y :: ys, h => by
+      -- Equal lists of blocks means equal first blocks and equal rests.
       simp only [configBlock, List.map_cons, List.cons.injEq] at h
+      -- Name those two equalities.
       obtain ⟨hx, hxs⟩ := h
+      -- The first modules are equal (the theorem above), and so are the rests
+      -- (this theorem again, on the shorter lists).
       rw [moduleBlock_injective x y hx, configBlock_injective xs ys hxs]
 
 -- An empty lens has a config block (with no module links).
@@ -87,11 +107,14 @@ theorem empty_lens_has_block : configBlock [] = [] := rfl
 
 -- The old blocks: only the first module, and every non-string argument as "".
 def asStr : Arg → String
+  -- A string was kept as it was.
   | .str s => s
+  -- Anything else became the empty string.
   | _ => ""
 
 -- What the old code hashed; `none` (no first module) was an error.
 def oldBlock (lens : List Module) : Option (List Nat × Bool × List (String × String)) :=
+  -- Take the first module, if there is one, with its code, flag and arguments as strings.
   lens.head?.map fun m => (m.wasm, m.inverse, m.args.map fun (k, v) => (k, asStr v))
 
 -- Two lenses that differ only in a large number.
@@ -103,6 +126,7 @@ theorem old_numbers_collide : oldBlock [bigger] = oldBlock [smaller] := rfl
 
 -- The new blocks can.
 theorem new_numbers_differ : configBlock [bigger] ≠ configBlock [smaller] := by
+  -- Lean compares the two blocks itself and finds the numbers differ.
   decide
 
 -- The old blocks ignored every module after the first.
@@ -112,6 +136,7 @@ theorem old_ignores_later_modules (m1 m2 : Module) :
 -- The new blocks keep them.
 theorem new_keeps_later_modules (m1 m2 : Module) :
     configBlock [m1, m2] ≠ configBlock [m1] := by
+  -- One list holds two blocks and the other holds one, so they differ.
   simp [configBlock]
 
 -- The old code had no block at all for an empty lens.

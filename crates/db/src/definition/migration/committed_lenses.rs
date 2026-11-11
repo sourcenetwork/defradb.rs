@@ -201,7 +201,7 @@ impl PreparedLens {
         for module in &config.lenses {
             modules.push((
                 module_wasm_bytes(module, pool).await?,
-                module_arguments(module),
+                module_arguments(module)?,
             ));
         }
         let parts: Vec<_> = config
@@ -243,16 +243,18 @@ impl PreparedLens {
     }
 }
 
-/// A module's WASM bytes, from the module or read from its path.
+/// A module's WASM bytes, read from its path, else its bytes: the source the
+/// lens runtime (`WasmTransformStore::load_module`) loads, so the ID names the
+/// code that runs.
 async fn module_wasm_bytes(
     module: &lens::LensModule,
     pool: Option<&workers::Pool>,
 ) -> Result<Vec<u8>> {
-    if let Some(ref bytes) = module.module {
-        return Ok(bytes.clone());
-    }
     let Some(ref path) = module.path else {
-        return Err(Error::Lens("lens module has neither path nor bytes".into()));
+        return module
+            .module
+            .clone()
+            .ok_or_else(|| Error::Lens("lens module has neither path nor bytes".into()));
     };
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -282,17 +284,25 @@ async fn module_wasm_bytes(
 }
 
 /// A module's arguments as Go's lens store records them: sorted by key, each
-/// value JSON-encoded as Go's `json.Marshal` writes it.
-fn module_arguments(module: &lens::LensModule) -> Vec<(String, String)> {
-    let Some(arguments) = module.arguments.as_ref().and_then(|v| v.as_object()) else {
-        return Vec::new();
+/// value JSON-encoded as Go's `json.Marshal` writes it. Arguments are an
+/// object, as Go's `map[string]any`: any other value would reach the module's
+/// `set_param` while leaving no trace in the ID, so it is refused.
+fn module_arguments(module: &lens::LensModule) -> Result<Vec<(String, String)>> {
+    let arguments = match &module.arguments {
+        None => return Ok(Vec::new()),
+        Some(serde_json::Value::Object(arguments)) => arguments,
+        Some(other) => {
+            return Err(Error::Lens(format!(
+                "lens module arguments must be a JSON object of named arguments, got {other}"
+            )));
+        }
     };
     let mut encoded: Vec<_> = arguments
         .iter()
         .map(|(key, value)| (key.clone(), defra_core::encode_lens_argument(value)))
         .collect();
     encoded.sort_by(|a, b| a.0.cmp(&b.0));
-    encoded
+    Ok(encoded)
 }
 
 /// Persists a lens config under its transform ID in the caller's transaction:

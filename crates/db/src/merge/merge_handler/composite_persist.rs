@@ -259,7 +259,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 );
             }
         }
-        if !doc_is_tombstoned && active_version != collection.version_id() {
+        // The version the document is stored at, which `collection` (resolved
+        // through the cache to the active collection) may not name.
+        if !doc_is_tombstoned && active_version != context.payload.collection_version_id {
             // Boxed so the rare path does not grow every merge's future.
             Box::pin(self.owe_reindex_off_active_version(systemstore, collection, &active_version))
                 .await?;
