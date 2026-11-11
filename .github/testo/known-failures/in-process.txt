@@ -36,7 +36,6 @@ testo collection_version::updates::remove::collections::col_version_update_remov
 testo cursor::reindex::a_datetime_index_stays_cursor_visible_after_a_lens_reindex #2420
 testo encryption::field::doc_encryption_field_if_attempt_to_encrypt_builtin_field_return_error #2515
 testo encryption::field::doc_encryption_field_if_field_does_not_exist_return_error #2515
-testo index::async_backfill::async_backfill_restart_mid_build_resumes_to_ready #2760
 testo index::async_backfill_migration::async_backfill_restart_after_non_zero_watermark_resumes_to_ready #2757
 testo index::json_composite::json_array_composite_index_json_array_with_array_field_should_fetch_using_index_non_unique_combination #2411
 testo index::patch_relation::patch_relation_multiple_one_to_one_adds_unique_indexes_with_correct_i_ds #2375
