@@ -88,12 +88,10 @@ impl NodeOps {
             let database = self.database.clone();
             let (collection, field) = (collection.to_owned(), field_name.to_owned());
             self.on_pool(move || async move {
-                let txn = database.new_txn(false).await.map_err(Error::TxnCreate)?;
                 database
-                    .add_encrypted_index_in(&txn, &collection, &field)
+                    .add_encrypted_index(&collection, &field)
                     .await
-                    .map_err(definition_error)?;
-                txn.commit().await.map_err(Error::Commit)
+                    .map_err(definition_error)
             })
             .await?;
         }
@@ -172,12 +170,10 @@ impl NodeOps {
         let database = self.database.clone();
         let (collection, field) = (collection.to_owned(), field_name.to_owned());
         self.on_pool(move || async move {
-            let txn = database.new_txn(false).await.map_err(Error::TxnCreate)?;
             database
-                .delete_encrypted_index_in(&txn, &collection, &field)
+                .delete_encrypted_index(&collection, &field)
                 .await
-                .map_err(definition_error)?;
-            txn.commit().await.map_err(Error::Commit)
+                .map_err(definition_error)
         })
         .await
     }

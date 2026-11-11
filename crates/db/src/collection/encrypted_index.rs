@@ -4,6 +4,8 @@
 //! transaction it is given, so in an explicit transaction the change is
 //! visible to it at once and to others once it commits.
 
+use std::sync::Arc;
+
 use schema::{CollectionVersion, EncryptedIndexDescription};
 use storage::corekv::{Key, OnCommit, Store};
 use storage::keys::systemstore::{CollectionKey, CollectionNameKey};
@@ -14,7 +16,47 @@ use crate::error::{Error, Result};
 use crate::txn::DbTxn;
 use crate::DB;
 
-impl<S: Store> DB<S> {
+impl<S> DB<S>
+where
+    S: Store + 'static,
+{
+    /// Add an equality encrypted index on `field` of `collection` in a
+    /// transaction of its own. A definition that changes before it commits
+    /// runs it again against the new one, under the node's retry policy.
+    pub async fn add_encrypted_index(
+        self: &Arc<Self>,
+        collection: &str,
+        field: &str,
+    ) -> Result<()> {
+        let (db, collection, field) = (Arc::clone(self), collection.to_owned(), field.to_owned());
+        self.transact_db(move |txn| {
+            let (db, collection, field) = (Arc::clone(&db), collection.clone(), field.clone());
+            Box::pin(async move { db.add_encrypted_index_in(txn, &collection, &field).await })
+        })
+        .await
+    }
+
+    /// Delete the encrypted index on `field` of `collection` in a
+    /// transaction of its own, retried as
+    /// [`add_encrypted_index`](Self::add_encrypted_index) is.
+    pub async fn delete_encrypted_index(
+        self: &Arc<Self>,
+        collection: &str,
+        field: &str,
+    ) -> Result<()> {
+        let (db, collection, field) = (Arc::clone(self), collection.to_owned(), field.to_owned());
+        self.transact_db(move |txn| {
+            let (db, collection, field) = (Arc::clone(&db), collection.clone(), field.clone());
+            Box::pin(async move { db.delete_encrypted_index_in(txn, &collection, &field).await })
+        })
+        .await
+    }
+}
+
+impl<S> DB<S>
+where
+    S: Store,
+{
     /// Add an equality encrypted index on `field` of `collection`, in `txn`.
     pub async fn add_encrypted_index_in(
         &self,
@@ -111,7 +153,7 @@ impl<S: Store> DB<S> {
             .await?;
         let cached = Collection::load_index_actions(updated, &systemstore).await?;
         txn.uncache_collection(collection);
-        let cache = std::sync::Arc::clone(&self.collections);
+        let cache = Arc::clone(&self.collections);
         txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
             cache.rcu(|old| {
                 let mut cache = old.clone();
@@ -129,7 +171,6 @@ where
     S: Store,
 {
     load_collection_from_systemstore(&txn.systemstore()?, collection)
-        .await
-        .map_err(|error| Error::Other(error.to_string()))?
+        .await?
         .ok_or_else(|| Error::CollectionNotFound(collection.to_owned()))
 }
