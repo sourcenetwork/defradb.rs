@@ -61,14 +61,14 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     /// it decides on, so a schema change that commits first aborts the merge
     /// and the re-run decides again. It owes a full rebuild every time, so a
     /// rebuild already running when the document arrived does not clear the
-    /// record without indexing it.
+    /// record without indexing it, and returns whether it owed one.
     pub(super) async fn owe_reindex_off_active_version(
         &self,
         systemstore: &NamespaceView,
         collection: &Collection,
         active_version: &str,
         stored_definition: &[u8],
-    ) -> std::result::Result<(), MergeError> {
+    ) -> std::result::Result<bool, MergeError> {
         let active_definition: Cow<'_, [u8]> = if collection.version_id() == active_version {
             Cow::Borrowed(stored_definition)
         } else {
@@ -78,7 +78,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 .map_err(|e| MergeError::Database(crate::error::Error::Storage(e)))?
             {
                 Some(json) => Cow::Owned(json.to_vec()),
-                None => return Ok(()),
+                None => return Ok(false),
             }
         };
         // `collection`'s decoded definition, when the stored one is
@@ -93,7 +93,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 .is_some_and(|indexes| !indexes.is_empty()),
         };
         if !indexed {
-            return Ok(());
+            return Ok(false);
         }
         let collection_id = collection.collection_id();
         // The active version's own link is in every history built toward it,
@@ -125,11 +125,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 .is_some_and(|history| history.values().any(|link| link.transform.is_some()))
         };
         if !across_lens {
-            return Ok(());
+            return Ok(false);
         }
         owe_reindex(systemstore, &self.db.collections, collection_id, None)
             .await
-            .map_err(MergeError::Database)
+            .map_err(MergeError::Database)?;
+        Ok(true)
     }
 
     /// Every version of `collection_id`, with only what its history link
