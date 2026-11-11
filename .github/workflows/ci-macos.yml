@@ -8,6 +8,7 @@ on:
     branches: [main]
   pull_request:
     branches: ['**']
+    types: [opened, synchronize, reopened, labeled]
   merge_group:
     branches: [main]
 
@@ -22,8 +23,8 @@ jobs:
   unit-tests:
     name: Unit tests
     # Mirrors CI's heavy scope: the merge queue and main run it, a pull
-    # request does not.
-    if: github.event_name != 'pull_request'
+    # request does only with ci:macos or ci:full.
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:macos') || contains(github.event.pull_request.labels.*.name, 'ci:full')
     uses: ./.github/workflows/unit-tests.yml
     with:
       os: macos-latest
