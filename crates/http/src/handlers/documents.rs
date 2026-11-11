@@ -152,21 +152,23 @@ pub struct SigningParams {
     enable_signing: Option<String>,
 }
 
-/// `enableSigning` as a choice; absent follows the node.
-// ponytail: `true` and `false` only; Go's ParseBool also takes `1`, `t`,
-// `F`… and refuses anything else.
-fn signing_choice(value: Option<&str>) -> Option<bool> {
+/// `enableSigning` as a choice; absent follows the node. Parsed as Go's
+/// `strconv.ParseBool` parses it, refusing what that refuses.
+fn signing_choice(value: Option<&str>) -> Result<Option<bool>, HttpError> {
     match value {
-        Some("true") => Some(true),
-        Some("false") => Some(false),
-        _ => None,
+        None => Ok(None),
+        Some("1" | "t" | "T" | "TRUE" | "true" | "True") => Ok(Some(true)),
+        Some("0" | "f" | "F" | "FALSE" | "false" | "False") => Ok(Some(false)),
+        Some(other) => Err(HttpError::BadRequest(format!(
+            "strconv.ParseBool: parsing {other:?}: invalid syntax"
+        ))),
     }
 }
 
 impl AddParams {
-    fn options(&self) -> AddOptions {
-        AddOptions {
-            enable_signing: signing_choice(self.enable_signing.as_deref()),
+    fn options(&self) -> Result<AddOptions, HttpError> {
+        Ok(AddOptions {
+            enable_signing: signing_choice(self.enable_signing.as_deref())?,
             encrypt_doc: self.encrypt.as_deref() == Some("true"),
             encrypted_fields: self
                 .encrypt_fields
@@ -174,7 +176,7 @@ impl AddParams {
                 .filter(|fields| !fields.is_empty())
                 .map(|fields| fields.split(',').map(str::to_owned).collect())
                 .unwrap_or_default(),
-        }
+        })
     }
 }
 
@@ -191,20 +193,16 @@ pub async fn add_document(
     Query(params): Query<AddParams>,
     body: Bytes,
 ) -> Result<Json<Vec<String>>, HttpError> {
+    let options = params.options()?;
     let docs = match json_body(&body)? {
         JsonValue::Array(docs) => docs,
         doc => vec![doc],
     };
     let server = Server::new(state, identity, &headers)?;
-    documents::add(
-        |r| server.run_request(r),
-        &collection,
-        &docs,
-        &params.options(),
-    )
-    .await
-    .map(Json)
-    .map_err(refused)
+    documents::add(|r| server.run_request(r), &collection, &docs, &options)
+        .await
+        .map(Json)
+        .map_err(refused)
 }
 
 /// Update a single document.
@@ -220,9 +218,9 @@ pub async fn update_document(
     Query(params): Query<SigningParams>,
     body: Bytes,
 ) -> Result<StatusCode, HttpError> {
+    let enable_signing = signing_choice(params.enable_signing.as_deref())?;
     let patch = json_body(&body)?;
     let server = Server::new(state, identity, &headers)?;
-    let enable_signing = signing_choice(params.enable_signing.as_deref());
     let run = |mutation| {
         let mut request = QueryRequest::new(mutation);
         request.context = request.context.with_signing_override(enable_signing);
@@ -326,4 +324,32 @@ pub async fn update_documents_with_filter(
     .await
     .map(Json)
     .map_err(refused)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{signing_choice, HttpError};
+
+    #[test]
+    fn enable_signing_parses_as_go_parse_bool() {
+        for yes in ["1", "t", "T", "TRUE", "true", "True"] {
+            assert_eq!(signing_choice(Some(yes)).unwrap(), Some(true), "{yes}");
+        }
+        for no in ["0", "f", "F", "FALSE", "false", "False"] {
+            assert_eq!(signing_choice(Some(no)).unwrap(), Some(false), "{no}");
+        }
+        assert_eq!(signing_choice(None).unwrap(), None);
+    }
+
+    #[test]
+    fn enable_signing_refuses_what_go_parse_bool_refuses() {
+        for bad in ["", "nope", "yes", "tRUE", "2"] {
+            match signing_choice(Some(bad)) {
+                Err(HttpError::BadRequest(message)) => {
+                    assert!(message.contains("invalid syntax"), "{message}")
+                }
+                other => panic!("{bad:?} gave {other:?}"),
+            }
+        }
+    }
 }
