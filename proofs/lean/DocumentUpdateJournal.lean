@@ -7,7 +7,7 @@ in order, and sees only rows of documents that are alive and that it is
 authorized to read.
 
 Rust owners: crates/db/src/event/updates.rs (record, read, rows, once_key),
-crates/db/src/event/updates/gate.rs (Gate::admits), and the document update
+crates/db/src/event/updates/gate.rs (Gate::decide), and the document update
 and merge writers that append the journal entry in the document transaction.
 -/
 

@@ -275,7 +275,7 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
         options: &query::fetcher::DocumentUpdateOptions,
         reader: &query::fetcher::DocumentReader<'_>,
     ) -> query::error::Result<query::fetcher::DocumentUpdatePage> {
-        crate::event::updates::read_bound(&*self.shared_txn()?, options, reader)
+        crate::event::updates::read(None, &*self.shared_txn()?, options, reader)
             .await
             .map_err(crate::event::updates::query_error)
     }

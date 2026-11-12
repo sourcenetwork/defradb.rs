@@ -44,6 +44,8 @@ struct PeerUpdate {
     cid: Cid,
     block: Block,
     payload: CompositeDeltaPayload,
+    field_cid: Cid,
+    field: CrdtDelta,
 }
 
 impl PeerUpdate {
@@ -55,16 +57,13 @@ impl PeerUpdate {
     ) -> Self {
         let mut value = Vec::new();
         ciborium::into_writer(&NormalValue::String(name.into()), &mut value).unwrap();
-        let field = Block::new(
-            CrdtDelta::Lww(LwwDeltaPayload {
-                field_name: "name".into(),
-                collection_version_id: "v1".into(),
-                priority,
-                data: value,
-            }),
-            created.field_cids.clone(),
-            vec![],
-        );
+        let delta = CrdtDelta::Lww(LwwDeltaPayload {
+            field_name: "name".into(),
+            collection_version_id: "v1".into(),
+            priority,
+            data: value,
+        });
+        let field = Block::new(delta.clone(), created.field_cids.clone(), vec![]);
         let field_cid = field.generate_cid().unwrap();
         blockstore
             .put(&field_cid, &field.to_dag_cbor().unwrap())
@@ -89,6 +88,8 @@ impl PeerUpdate {
             cid,
             block,
             payload,
+            field_cid,
+            field: delta,
         }
     }
 
@@ -162,6 +163,46 @@ fn a_block_merged_again_by_another_handler_adds_no_second_row() {
         let page = journal(handler.db()).await;
         assert_eq!(page.head, 1, "{:?}", page.entries);
         assert_eq!(page.entries.len(), 1);
+        assert_eq!(page.entries[0].cid, update.cid.to_string());
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_block_whose_field_was_merged_on_its_own_first_still_gets_its_row() {
+    workers::block_on(async {
+        let (handler, blockstore, _) = make_handler_with_schema_and_bus().await;
+        let (id, created) = document(&handler).await;
+        let update = PeerUpdate::store(&blockstore, &created, "after", 2).await;
+
+        // The field block arrives before the block that links it.
+        let txn = handler.db().new_txn(false).await.unwrap();
+        let doc_short_id = db::docid::map::get_doc_ref(&txn.systemstore().unwrap(), &id)
+            .await
+            .unwrap()
+            .unwrap()
+            .doc_short_id;
+        let merged = handler
+            .merge_field_in_txn(
+                &mut txn.datastore().unwrap(),
+                &txn.headstore().unwrap(),
+                &update.field_cid,
+                &update.field,
+                Some("col-users"),
+                &id,
+                doc_short_id,
+            )
+            .await
+            .unwrap();
+        assert!(merged.applied());
+        txn.force_commit().await.unwrap();
+        assert_eq!(journal(handler.db()).await.head, 0);
+
+        // Its field now only repeats the stored state, and the block is still
+        // the update.
+        update.merge(&handler, &id).await;
+        let page = journal(handler.db()).await;
+        assert_eq!(page.head, 1, "{:?}", page.entries);
         assert_eq!(page.entries[0].cid, update.cid.to_string());
     })
     .unwrap();

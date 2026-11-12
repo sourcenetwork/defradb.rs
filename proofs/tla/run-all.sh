@@ -12,6 +12,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 # event l next (past the end when l = events + 1).
 RUNS=(
   "MC_DocumentUpdateJournal_Green.cfg DocumentUpdateJournal.tla GREEN"
+  "MC_DocumentUpdateJournal_Green_Outside.cfg DocumentUpdateJournal.tla GREEN"
   "MC_DocumentUpdateJournal_Red_Detached.cfg DocumentUpdateJournal.tla RED"
   "MC_DocumentUpdateJournal_Red_Duplicate.cfg DocumentUpdateJournal.tla RED"
   "MC_DocumentUpdateJournal_Red_Superseded.cfg DocumentUpdateJournal.tla RED"
