@@ -126,6 +126,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/defra-node/tests/unit/delegated_nac.rs delegation_matches_executed_lean_model, delegate_grants_and_revokes_only_held_non_admin_permissions, delegate_source_edges_follow_the_same_rule",
     },
     Property {
+        family: "vera.rs actor spelling",
+        name: "defra_idempotent / spellings_meet / other_unchanged / defra_same_actor / one_spelling_per_actor / issuer_canonical_iff / compressed_issuer_refused",
+        axis: Lean,
+        anchor: "crates/vera/src/vera_rs/did_spelling.rs defra, issuer_spelling",
+        model_ref: "VeraActorSpelling (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Explicit embedded signing",
         name: "admitted_binds",
         axis: Lean,

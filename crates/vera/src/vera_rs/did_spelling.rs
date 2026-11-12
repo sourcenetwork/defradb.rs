@@ -28,13 +28,17 @@ pub(crate) fn defra(did: &str) -> Cow<'_, str> {
     }
 }
 
-/// Whether a delegation token names its issuer as this provider names actors.
+/// The issuer a delegation token names and the spelling it should have used,
+/// when the two differ.
 ///
 /// A token signed elsewhere cannot be respelled. Under the compressed spelling
 /// of a secp256k1 issuer, vera.rs would record a second actor that the grants
 /// and checks sent through this provider never name. A token that does not
 /// decode is left for vera.rs to reject.
-pub(crate) fn issuer_is_canonical(token: &str) -> bool {
+///
+/// The refusal goes once vera.rs records one spelling per secp256k1 actor
+/// (sourcenetwork/vera.rs#265).
+pub(crate) fn issuer_spelling(token: &str) -> Result<(), (String, String)> {
     use base64::Engine as _;
 
     #[derive(serde::Deserialize)]
@@ -47,7 +51,10 @@ pub(crate) fn issuer_is_canonical(token: &str) -> bool {
             .ok()?;
         serde_json::from_slice::<Claims>(&bytes).ok()
     });
-    claims.is_none_or(|claims| matches!(defra(&claims.iss), Cow::Borrowed(_)))
+    match claims.map(|claims| (defra(&claims.iss).into_owned(), claims.iss)) {
+        Some((expected, issuer)) if expected != issuer => Err((issuer, expected)),
+        _ => Ok(()),
+    }
 }
 
 #[cfg(test)]
@@ -103,11 +110,17 @@ mod tests {
             format!("header.{payload}.signature")
         };
         let (compressed, uncompressed) = spellings();
-        assert!(issuer_is_canonical(&token(&uncompressed)));
-        assert!(!issuer_is_canonical(&token(&compressed)));
-        assert!(issuer_is_canonical(&token(
-            "did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp"
-        )));
-        assert!(issuer_is_canonical("device.jwt.token"));
+        assert_eq!(issuer_spelling(&token(&uncompressed)), Ok(()));
+        assert_eq!(
+            issuer_spelling(&token(&compressed)),
+            Err((compressed, uncompressed))
+        );
+        assert_eq!(
+            issuer_spelling(&token(
+                "did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp"
+            )),
+            Ok(())
+        );
+        assert_eq!(issuer_spelling("device.jwt.token"), Ok(()));
     }
 }

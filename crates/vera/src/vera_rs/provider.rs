@@ -675,9 +675,9 @@ mod tests {
         let compressed = token(&bearer::did_from_signing_key(&key, true));
         defra_core::signing::set_request_bearer_token(&did, compressed);
         let refused = resolve_registered_or_passthrough_bearer_token(&did, "did:key:w", 9001);
-        assert!(
-            matches!(refused, Err(ProviderError::Config(ref message)) if message.contains("uncompressed-key"))
-        );
+        assert!(matches!(refused, Err(ProviderError::Config(ref message))
+                if message.contains(&bearer::did_from_signing_key(&key, true))
+                    && message.contains(&format!("records that key as {did}"))));
 
         defra_core::signing::set_request_bearer_token(&did, token(&did));
         let accepted = resolve_registered_or_passthrough_bearer_token(&did, "did:key:w", 9001)
