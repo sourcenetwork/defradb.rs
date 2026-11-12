@@ -1,7 +1,7 @@
 //! A partial `_in` over a composite index scans a prefix, so one `_in` value
 //! covers several distinct full index keys. Index order across those keys is
-//! the secondary field's order; the public-DocID tie-break (#1602) applies
-//! only within one full key.
+//! the secondary field's order, and within one full key it is the order the
+//! documents were created in (their short IDs), as in Go.
 
 use db::database::DB;
 use db::DbDocFetcher;
@@ -25,7 +25,7 @@ const INDEX: &str = "by_category_rank";
 const CATEGORY: &str = "a";
 
 /// Ranks repeat so one scan covers both the across-key order and the
-/// within-key tie-break.
+/// within-key creation order.
 const SEED: [(&str, i64); 5] = [("p0", 1), ("p1", 1), ("p2", 2), ("p3", 2), ("p4", 3)];
 
 fn schema() -> CollectionVersion {
@@ -104,10 +104,10 @@ async fn populated() -> (Arc<DB<RegolithStore>>, Vec<(i64, String)>) {
     (db, seeded)
 }
 
-/// Index order: rank ascending, public DocID ascending within one rank.
+/// Index order: rank ascending, creation order within one rank.
 fn index_order(seeded: &[(i64, String)]) -> Vec<String> {
     let mut ordered = seeded.to_vec();
-    ordered.sort();
+    ordered.sort_by_key(|(rank, _)| *rank);
     ordered.into_iter().map(|(_, id)| id).collect()
 }
 
@@ -150,7 +150,7 @@ fn partial_in_over_a_composite_index_keeps_secondary_field_order() {
 
         assert_eq!(
             got, expected,
-            "a partial `_in` must return index order (rank, then DocID), not a \
+            "a partial `_in` must return index order (rank, then creation), not a \
          DocID sort spanning distinct ranks"
         );
     })
