@@ -3,6 +3,10 @@
 \* admits keys, and its admissions reach the nodes over time. Admission is
 \* the cost of an identity: the admin admits at most Budget keys for the
 \* cheater, however many keys the cheater makes (making a key is free).
+\* In DefraDB a key is a did:key DID, so admitting a key means adding that
+\* instance's DID to the ACP group that may write the resource (for gents,
+\* the agent's group of instance DIDs); a restore mints a new DID that the
+\* group has to add again.
 \*
 \* A signed fork is revocation. A node that holds two signed blocks by one key
 \* at one height treats that key as no longer a member, with no admin step:
