@@ -20,7 +20,7 @@ use axum::{
 use defra_core::RequestContext;
 
 use crate::identity_extractor::{parse_identity_from_headers, ExtractIdentity, MiddlewareIdentity};
-use crate::nac_guard::require_permission;
+use crate::nac_guard::require_permissions;
 use crate::route_permissions::{self, route_permission, RoutePermission};
 use crate::router::{AppState, NodePermission};
 
@@ -91,17 +91,21 @@ pub async fn auth_middleware(
     request.extensions_mut().insert(context.clone());
     let execution = async move {
         let identity = ExtractIdentity::from_did(acting_did);
-        if reads_collection_first {
-            if let Err(err) =
-                require_permission(&state, &identity, NodePermission::CollectionGet).await
-            {
-                return err.into_response();
+        // `get-collection` first on the collection handler routes, then the
+        // route's own permission, decided in one call so the edge crosses
+        // onto the pool once.
+        let both;
+        let checks: &[NodePermission] = match (reads_collection_first, &permission) {
+            (true, RoutePermission::Required(own)) => {
+                both = [NodePermission::CollectionGet, *own];
+                &both
             }
-        }
-        if let RoutePermission::Required(perm) = permission {
-            if let Err(err) = require_permission(&state, &identity, perm).await {
-                return err.into_response();
-            }
+            (true, _) => &[NodePermission::CollectionGet],
+            (false, RoutePermission::Required(own)) => std::slice::from_ref(own),
+            (false, _) => &[],
+        };
+        if let Err(err) = require_permissions(&state, &identity, checks).await {
+            return err.into_response();
         }
         next.run(request).await
     };

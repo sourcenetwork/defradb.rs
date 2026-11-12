@@ -13,7 +13,7 @@ use identity::Did;
 
 use crate::error::HttpError;
 use crate::identity_extractor::ExtractIdentity;
-use crate::router::{AppState, NodePermission};
+use crate::router::{AppState, NodePermission, PermissionCheck};
 
 /// Check if an identity has a specific NAC permission.
 ///
@@ -38,40 +38,46 @@ pub async fn require_permission(
     identity: &ExtractIdentity,
     permission: NodePermission,
 ) -> Result<(), HttpError> {
+    require_permissions(state, identity, &[permission]).await
+}
+
+/// [`require_permission`] for each of `permissions` in order, decided in one
+/// [`check_permissions`](crate::router::NodeAcpOperations::check_permissions)
+/// call: the first one missing is the refusal, as checking them one after
+/// another would answer.
+pub async fn require_permissions(
+    state: &AppState,
+    identity: &ExtractIdentity,
+    permissions: &[NodePermission],
+) -> Result<(), HttpError> {
     // If NAC is not configured, allow all operations
     let Some(nac) = &state.nac else {
         return Ok(());
     };
-
-    let did = match identity.did() {
-        Some(d) => d.clone(),
-        None => {
-            // Anonymous request: check if wildcard DID has the permission.
-            // Matches FFI nac_check.rs behavior where empty/null identity
-            // checks Did::wildcard() before rejecting.
-            let wildcard = Did::wildcard();
-            let wildcard_allowed = nac
-                .check_permission(&wildcard, permission)
-                .await
-                .unwrap_or(false);
-            if wildcard_allowed {
-                return Ok(());
-            }
-            return Err(HttpError::Unauthorized(not_authorized(permission)));
-        }
-    };
-
-    // Check the permission for the explicit identity
-    let allowed = nac.check_permission(&did, permission).await.map_err(|e| {
-        tracing::error!(error = %e, ?permission, "NAC permission check failed");
-        HttpError::Internal("permission check failed".into())
-    })?;
-
-    if !allowed {
-        return Err(HttpError::Unauthorized(not_authorized(permission)));
+    if permissions.is_empty() {
+        return Ok(());
     }
 
-    Ok(())
+    // Anonymous request: check if wildcard DID has the permission.
+    // Matches FFI nac_check.rs behavior where empty/null identity
+    // checks Did::wildcard() before rejecting.
+    let anonymous = identity.did().is_none();
+    let did = identity.did().cloned().unwrap_or_else(Did::wildcard);
+
+    match nac.check_permissions(&did, permissions).await {
+        PermissionCheck::Granted => Ok(()),
+        PermissionCheck::Denied(permission) => {
+            Err(HttpError::Unauthorized(not_authorized(permission)))
+        }
+        // A wildcard check that fails refuses the anonymous caller.
+        PermissionCheck::Failed(permission, _) if anonymous => {
+            Err(HttpError::Unauthorized(not_authorized(permission)))
+        }
+        PermissionCheck::Failed(permission, e) => {
+            tracing::error!(error = %e, ?permission, "NAC permission check failed");
+            Err(HttpError::Internal("permission check failed".into()))
+        }
+    }
 }
 
 /// Go's `ErrNotAuthorizedToPerformOperation`, which names the permission.

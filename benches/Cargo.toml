@@ -59,6 +59,11 @@ events = { path = "../crates/events", features = ["channel"] }
 identity = { path = "../crates/identity" }
 x25519-dalek = "3"
 
+# An embedded node behind its HTTP server, for http_nac_create.
+defra-node = { path = "../crates/defra-node", default-features = false, features = ["http", "native"] }
+hex.workspace = true
+net = { path = "../crates/net" }
+
 # The process allocator of every bench, the one the defra binaries ship with.
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 mimalloc.workspace = true
@@ -133,6 +138,10 @@ harness = false
 
 [[bench]]
 name = "events"
+harness = false
+
+[[bench]]
+name = "http_nac_create"
 harness = false
 
 [[bench]]

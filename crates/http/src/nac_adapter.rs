@@ -1,11 +1,12 @@
 //! Adapter to bridge NacManager to HTTP's NodeAcpOperations trait.
 
+use std::convert::Infallible;
 use std::future::Future;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::router::NodeAcpOperations;
+use crate::router::{NodeAcpOperations, PermissionCheck};
 use acp::nac::{NacStatus, NodePermission};
 use db::NacManagerApi;
 use identity::Did;
@@ -63,6 +64,22 @@ impl NacAdapter {
     }
 }
 
+/// The first of `permissions` `identity` does not hold, checked in order.
+async fn first_missing(
+    nac: &dyn NacManagerApi,
+    identity: &Did,
+    permissions: &[NodePermission],
+) -> PermissionCheck {
+    for &permission in permissions {
+        match nac.check_permission(identity, permission).await {
+            Ok(true) => {}
+            Ok(false) => return PermissionCheck::Denied(permission),
+            Err(error) => return PermissionCheck::Failed(permission, error.to_string()),
+        }
+    }
+    PermissionCheck::Granted
+}
+
 #[async_trait]
 impl NodeAcpOperations for NacAdapter {
     async fn check_permission(
@@ -81,6 +98,28 @@ impl NodeAcpOperations for NacAdapter {
         let identity = identity.clone();
         self.on_pool(move |nac| async move { nac.check_permission(&identity, permission).await })
             .await
+    }
+
+    async fn check_permissions(
+        &self,
+        identity: &Did,
+        permissions: &[NodePermission],
+    ) -> PermissionCheck {
+        let Some(&first) = permissions.first() else {
+            return PermissionCheck::Granted;
+        };
+        if self.pool.is_none() || workers::on_worker() {
+            return first_missing(self.nac.as_ref(), identity, permissions).await;
+        }
+        // One placed call decides them all: the edge crosses onto the pool
+        // once per request, not once per permission.
+        let identity = identity.clone();
+        let permissions = permissions.to_vec();
+        self.on_pool(move |nac| async move {
+            Ok::<_, Infallible>(first_missing(nac.as_ref(), &identity, &permissions).await)
+        })
+        .await
+        .unwrap_or_else(|error| PermissionCheck::Failed(first, error))
     }
 
     async fn get_status(&self) -> NacStatus {

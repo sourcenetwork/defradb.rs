@@ -2953,7 +2953,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Node access control operations",
         name: "INV_NoEffectWithoutPermission / INV_RefusalNamesGoFirst",
         axis: Tla,
-        anchor: "crates/acp/src/nac/permission.rs NodePermission::go_order; crates/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/db/src/write/autocommit/batch.rs check_attempt_node_access; crates/db/src/txn/registry/indexes.rs check_access_in; crates/query/src/runner/turn.rs lent, lent_node_permission; crates/defra-node/src/ops/request.rs caller, txn_owner; crates/http/src/auth_middleware.rs auth_middleware; crates/http/src/route_permissions.rs reads_collection_first, route_permission; crates/http/src/nac_guard.rs require_permission; crates/defra-node/src/node_builder.rs NodeBuilder::build",
+        anchor: "crates/acp/src/nac/permission.rs NodePermission::go_order; crates/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/db/src/write/autocommit/batch.rs check_attempt_node_access; crates/db/src/txn/registry/indexes.rs check_access_in; crates/query/src/runner/turn.rs lent, lent_node_permission; crates/defra-node/src/ops/request.rs caller, txn_owner; crates/http/src/auth_middleware.rs auth_middleware; crates/http/src/route_permissions.rs reads_collection_first, route_permission; crates/http/src/nac_guard.rs require_permissions; crates/http/src/nac_adapter.rs NacAdapter::check_permissions; crates/defra-node/src/node_builder.rs NodeBuilder::build",
         model_ref: "MC_NacOrder_{Green,Red_SkipGet,Red_OwnFirst,Red_AnonAsNode,Red_OutsideTxn,Red_EdgeOwnOnly}.cfg",
         tiers: &[Boundary],
         bound_by: "",

@@ -166,6 +166,18 @@ pub struct ImportResult {
 /// Re-export NAC types from the acp crate for convenience.
 pub use acp::nac::{NacStatus, NodePermission};
 
+/// The outcome of [`NodeAcpOperations::check_permissions`]: every permission
+/// held, or the first one that was not and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PermissionCheck {
+    /// The identity holds every permission asked for.
+    Granted,
+    /// The identity does not hold this permission.
+    Denied(NodePermission),
+    /// Checking this permission failed with this error.
+    Failed(NodePermission, String),
+}
+
 /// Trait for Node Access Control (NAC) operations.
 ///
 /// NAC provides node-level access control using the Zanzibar permission model.
@@ -183,6 +195,27 @@ pub trait NodeAcpOperations: defra_core::thread_bounds::MaybeSendSync {
         identity: &identity::Did,
         permission: NodePermission,
     ) -> Result<bool, String>;
+
+    /// Checks `permissions` in order and stops at the first one `identity`
+    /// does not hold, as [`Self::check_permission`] would one at a time.
+    ///
+    /// The HTTP edge decides all of a route's permissions in this one call,
+    /// so an implementation that reaches its store on a worker pool crosses
+    /// onto it once per request instead of once per permission.
+    async fn check_permissions(
+        &self,
+        identity: &identity::Did,
+        permissions: &[NodePermission],
+    ) -> PermissionCheck {
+        for &permission in permissions {
+            match self.check_permission(identity, permission).await {
+                Ok(true) => {}
+                Ok(false) => return PermissionCheck::Denied(permission),
+                Err(error) => return PermissionCheck::Failed(permission, error),
+            }
+        }
+        PermissionCheck::Granted
+    }
 
     /// Get the current NAC status.
     async fn get_status(&self) -> NacStatus;
