@@ -774,6 +774,10 @@ impl P2PTransport for IrohTransport {
 #[path = "../../tests/iroh/transport_poll.rs"]
 mod poll_tests;
 
+#[cfg(test)]
+#[path = "../../tests/iroh/relayed_raw_request.rs"]
+mod relayed_raw_request_tests;
+
 /// Iroh writes every one of these replies on its request's stream, which
 /// every request carries; a reply without one has nowhere to go.
 fn no_reply_stream(kind: &str) -> crate::error::Error {

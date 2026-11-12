@@ -2734,7 +2734,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/p2p/src/host/p2p_host/protocols.rs handle_gossipsub_event; crates/p2p/src/sync/coordinator/event_handler/pubsub_raw.rs handle_gossip_raw_message; crates/p2p/src/pubsub_rpc/topic_handler.rs TopicHandler::deliver_gossip_message; crates/p2p/src/sync/coordinator/pubsub_client.rs pubsub_sync_branchable_collection; crates/p2p/src/iroh/gossip/delivery.rs raw_publisher",
         model_ref: "MC_PubsubRpcReply_{Green,Red_AnswerRelay,Red_DeadlineCutsOff}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/p2p/tests/pubsub_rpc_relayed_request.rs a_relayed_request_names_its_publisher; crates/p2p/src/sync/coordinator/event_handler/mod.rs relayed_kms_request_reaches_the_handler_as_its_publisher; crates/p2p/src/iroh/gossip/delivery.rs a_sealed_raw_message_names_its_publisher_not_the_relay",
+        bound_by: "crates/p2p/src/sync/coordinator/event_handler/mod.rs relayed_pubsub_rpc_request_is_answered_on_its_publishers_topic, relayed_kms_request_reaches_the_handler_as_its_publisher; crates/p2p/tests/pubsub_rpc_relayed_request.rs a_relayed_request_names_its_publisher; crates/p2p/tests/iroh/relayed_raw_request.rs a_relayed_raw_request_names_its_publisher; crates/p2p/src/iroh/gossip/delivery.rs a_sealed_raw_message_names_its_publisher_not_the_relay",
     },
     Property {
         family: "Pubsub RPC reply addressing",

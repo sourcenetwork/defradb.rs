@@ -43,7 +43,9 @@
 \*   |                   | (crates/p2p/src/host/p2p_host/protocols.rs                  |
 \*   |                   | handle_gossipsub_event)                                     |
 \*   | via[p]            | that event's propagation_source: the asker when "direct",   |
-\*   |                   | the relay when "relayed"                                    |
+\*   |                   | the relay when "relayed"; on iroh, iroh-gossip's            |
+\*   |                   | delivered_from (Delivery::received in crates/p2p/src/       |
+\*   |                   | iroh/gossip/delivery.rs), which also names only the hop     |
 \*   | Answer(p)         | TopicHandler::deliver_gossip_message (crates/p2p/src/       |
 \*   |                   | pubsub_rpc/topic_handler.rs): the reply goes to             |
 \*   |                   | response_topic(base, from)                                  |

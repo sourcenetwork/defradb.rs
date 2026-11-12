@@ -757,13 +757,19 @@ mod tests {
     pub(super) struct TestTransport {
         peer_id: PeerId,
         pubkey: Vec<u8>,
+        published_raw: Arc<kovan_queue::seg_queue::SegQueue<String>>,
     }
 
     impl TestTransport {
         pub(super) fn new() -> Self {
+            Self::with_peer_id(PeerId::new("local-peer".to_string()))
+        }
+
+        fn with_peer_id(peer_id: PeerId) -> Self {
             Self {
-                peer_id: PeerId::new("local-peer".to_string()),
+                peer_id,
                 pubkey: vec![1, 2, 3],
+                published_raw: Arc::new(kovan_queue::seg_queue::SegQueue::new()),
             }
         }
     }
@@ -829,7 +835,8 @@ mod tests {
             Ok(true)
         }
 
-        async fn publish_raw(&self, _topic: String, _data: Vec<u8>) -> P2PResult<MessageId> {
+        async fn publish_raw(&self, topic: String, _data: Vec<u8>) -> P2PResult<MessageId> {
+            self.published_raw.push(topic);
             Ok(MessageId::new("noop".to_string()))
         }
 
@@ -1626,11 +1633,61 @@ mod tests {
         ));
         assert!(events.try_recv().is_err());
     }
+
+    /// A sync-branchable request a neighbour relayed is answered on its
+    /// publisher's `_response` topic (`source`), never the relay's
+    /// (`propagation_source`): the relay asked nothing and drops it (#2773).
+    #[cfg(feature = "libp2p-transport")]
+    #[test]
+    fn relayed_pubsub_rpc_request_is_answered_on_its_publishers_topic() {
+        workers::block_on(async {
+            let local = PeerId::new(libp2p::PeerId::random().to_string());
+            let asker = PeerId::new(libp2p::PeerId::random().to_string());
+            let relay = PeerId::new(libp2p::PeerId::random().to_string());
+            let transport = TestTransport::with_peer_id(local);
+            let published = Arc::clone(&transport.published_raw);
+            let store = Arc::new(RegolithStore::in_memory().unwrap());
+            let blockstore = Arc::new(DefraBlockstore::new(store, true));
+            let (coordinator, _events) = SyncCoordinator::new(
+                transport,
+                blockstore,
+                crate::network::test_network(),
+                SyncConfig::default(),
+            )
+            .await
+            .expect("coordinator");
+
+            let request = crate::message::pubsub::BranchableSyncRequest::new("c1".to_string());
+            coordinator
+                .handle_transport_event(TransportEvent::GossipRawMessage {
+                    propagation_source: relay,
+                    source: asker.clone(),
+                    message_id: MessageId::new("m".to_string()),
+                    topic: "sync-branchable".to_string(),
+                    data: defra_core::cbor::to_vec(&request).unwrap(),
+                })
+                .await
+                .expect("handled");
+
+            assert_eq!(
+                published.pop(),
+                Some(format!("sync-branchable/{asker}/_response"))
+            );
+            assert_eq!(published.pop(), None);
+        })
+        .unwrap();
+    }
+
     /// A KMS request a neighbour relayed is authorized and answered as its
     /// publisher (`source`), never as the relay (`propagation_source`), #2773.
     #[cfg(feature = "kms")]
-    #[nuclei::test(threads = 0)]
-    async fn relayed_kms_request_reaches_the_handler_as_its_publisher() {
+    #[test]
+    fn relayed_kms_request_reaches_the_handler_as_its_publisher() {
+        workers::block_on(relayed_kms_request()).unwrap();
+    }
+
+    #[cfg(feature = "kms")]
+    async fn relayed_kms_request() {
         use kms::{
             FetchEncryptionKeyReply, FetchEncryptionKeyRequest, IncomingHandler, KeyTransport,
         };
