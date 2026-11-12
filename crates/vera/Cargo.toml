@@ -97,6 +97,9 @@ sha2 = { workspace = true, features = ["asm"] }
 [dev-dependencies]
 edge = { path = "../edge", features = ["testing"] }
 kovan-queue.workspace = true
+# The error type in acp-light-client's `AcpTransport`, which a test transport
+# has to name to implement the trait.
+eyre = "0.6"
 
 [lints]
 workspace = true

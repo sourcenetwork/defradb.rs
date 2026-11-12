@@ -6,7 +6,7 @@ use crate::provider::{
     AcpLightClientStatus, ProviderError, ProviderPolicyInfo, SubjectRef, VeraProvider,
 };
 use crate::tuning::AcpTuning;
-use acp_light_client::AcpLightClient;
+use acp_light_client::{AcpLightClient, AcpTransport, FreshnessPolicy, HttpWsTransport};
 use alloy_primitives::{Bytes, FixedBytes};
 use alloy_sol_types::{SolCall, SolEvent};
 use async_trait::async_trait;
@@ -18,7 +18,7 @@ use vera_modules::acp::types::PolicyRecord;
 
 use super::abi::{IAcp, ACP_ADDRESS};
 use super::bearer;
-use super::client::VeraRsClient;
+use super::client::{HttpTransport, VeraRsClient};
 use super::did_spelling;
 #[cfg(test)]
 use super::provider_commands::resolve_registered_or_passthrough_bearer_token;
@@ -26,9 +26,12 @@ use super::provider_commands::{
     encode_archive_object_cmd, encode_delete_relationship_cmd, encode_register_object_cmd,
     encode_set_relationship_cmd, resolve_registered_or_passthrough_bearer_token_as,
 };
+use super::transport::RpcTransport;
 use super::worker::NativeWorker;
 
 mod submission;
+#[cfg(test)]
+mod transport_tests;
 mod verified;
 
 use verified::verified;
@@ -54,9 +57,17 @@ fn derive_ws_url(rpc_url: &str) -> String {
         .replacen("https://", "wss://", 1)
 }
 
+fn trusted_key(encoded: &str) -> Result<ConsensusPublicKey, ProviderError> {
+    let encoded = hex::decode(encoded.strip_prefix("0x").unwrap_or(encoded))
+        .map_err(|e| ProviderError::Config(format!("invalid trusted consensus key: {e}")))?;
+    ConsensusPublicKey::decode(encoded)
+        .map_err(|e| ProviderError::Config(format!("invalid trusted consensus key: {e}")))
+}
+
 impl VeraRsProvider {
-    /// A provider whose connections, light client observer and worker calls
-    /// run on `edge`.
+    /// A provider of the node at `rpc_url`, reached over HTTP and, for
+    /// finalized headers, the WebSocket at the same address. Its connections,
+    /// light client observer and worker calls run on `edge`.
     pub async fn new(
         rpc_url: String,
         trusted_consensus_key: &str,
@@ -66,20 +77,50 @@ impl VeraRsProvider {
         event_bus: Option<Arc<dyn Bus>>,
         edge: &edge::Edge,
     ) -> Result<Self, ProviderError> {
-        let encoded = hex::decode(
-            trusted_consensus_key
-                .strip_prefix("0x")
-                .unwrap_or(trusted_consensus_key),
+        // A bad key is reported before either client is built.
+        trusted_key(trusted_consensus_key)?;
+        let acp = HttpWsTransport::new(&rpc_url, &derive_ws_url(&rpc_url))
+            .map_err(|e| ProviderError::Config(format!("light client: {e}")))?;
+        let rpc = HttpTransport::new(rpc_url, tuning.request_timeout, edge)
+            .map_err(|e| ProviderError::Config(format!("HTTP client: {e}")))?;
+        Self::with_transport(
+            Arc::new(rpc),
+            Arc::new(acp),
+            trusted_consensus_key,
+            private_key,
+            worker,
+            tuning,
+            event_bus,
+            edge,
         )
-        .map_err(|e| ProviderError::Config(format!("invalid trusted consensus key: {e}")))?;
-        let trusted = ConsensusPublicKey::decode(encoded)
-            .map_err(|e| ProviderError::Config(format!("invalid trusted consensus key: {e}")))?;
-        let ws_url = derive_ws_url(&rpc_url);
+        .await
+    }
+
+    /// A provider that reaches the node through the transports it is given:
+    /// `rpc` carries submissions and receipt reads, `acp` the light client's
+    /// proof reads and finalized headers. Neither is trusted: every receipt,
+    /// proof and header is checked against `trusted_consensus_key`.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn with_transport(
+        rpc: Arc<dyn RpcTransport>,
+        acp: Arc<dyn AcpTransport>,
+        trusted_consensus_key: &str,
+        private_key: &[u8],
+        worker: NativeWorker,
+        tuning: &AcpTuning,
+        event_bus: Option<Arc<dyn Bus>>,
+        edge: &edge::Edge,
+    ) -> Result<Self, ProviderError> {
+        let trusted = trusted_key(trusted_consensus_key)?;
         let light_client = edge::compat(async {
             let light_client = Arc::new(
-                AcpLightClient::new(&rpc_url, &ws_url, trusted_consensus_key, 10)
-                    .await
-                    .map_err(|e| ProviderError::Config(format!("light client: {}", e)))?,
+                AcpLightClient::with_transport(
+                    acp,
+                    trusted_consensus_key,
+                    10,
+                    FreshnessPolicy::default(),
+                )
+                .map_err(|e| ProviderError::Config(format!("light client: {}", e)))?,
             );
             light_client
                 .wait_for_height(1, tuning.receipt_timeout)
@@ -90,8 +131,7 @@ impl VeraRsProvider {
         .await?;
         let light_client_observability = Arc::new(AtomicU64::new(0));
 
-        let client = VeraRsClient::new(rpc_url, tuning.request_timeout, edge)
-            .map_err(|e| ProviderError::Config(format!("HTTP client: {e}")))?;
+        let client = VeraRsClient::with_transport(rpc);
         let signing_key = SigningKey::from_slice(private_key)
             .map_err(|e| ProviderError::Config(format!("actor key: {e}")))?;
         let actor_did = bearer::did_from_signing_key(&signing_key, false);

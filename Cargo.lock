@@ -13726,6 +13726,7 @@ dependencies = [
  "defra-core",
  "edge",
  "events",
+ "eyre",
  "futures",
  "hex",
  "identity",
