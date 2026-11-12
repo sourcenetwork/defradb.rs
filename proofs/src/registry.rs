@@ -2201,9 +2201,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Secondary index equal-key order",
-        name: "IndexEqualKeyOrder.exactMatch_ascending / exactMatch_creation_order / later_create_larger / docIdOrder_can_reverse_creation: equal index keys come back in short-ID (creation) order, as Go returns them, paged without a reorder",
+        name: "IndexEqualKeyOrder.exactMatch_ascending / exactMatch_creation_order / later_create_larger / docIdOrder_can_reverse_creation / inScan_scan_order_without_repeats: equal index keys come back in this node's short-ID order, which follows when each document was first stored on this node (created, or first received from a peer) rather than when its source created it, as Go returns them, paged without a reorder; an InScan lists each document once, at its first encounter",
         axis: Lean,
-        anchor: "crates/db/src/read/index_order.rs apply_exact_match_page, extend_unique; crates/db/src/read/doc.rs, read/lensed/fetcher/scan.rs, read/lensed/autocommit/scan.rs get_by_index_scan; crates/db/src/docid/map.rs DocShortIdAllocator::next",
+        anchor: "crates/db/src/read/index_order.rs apply_exact_match_page, extend_unique; crates/db/src/read/doc.rs get_by_index_scan; crates/db/src/read/lensed/fetcher/scan.rs get_by_index_scan_inner; crates/db/src/read/lensed/autocommit/scan.rs get_by_index_scan_inner; crates/db/src/docid/map.rs DocShortIdAllocator::next",
         model_ref: "IndexEqualKeyOrder (lake build)",
         tiers: &[Boundary],
         bound_by: "crates/db/tests/read/index_composite_in_order.rs partial_in_over_a_composite_index_keeps_secondary_field_order; tools/integration-test/tests/testo/encryption/peer_sec_index.rs doc_encryption_peer_if_encrypted_doc_has_indexed_field_should_index_after_decryption",

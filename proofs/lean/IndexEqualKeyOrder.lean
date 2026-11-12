@@ -1,5 +1,5 @@
 /-!
-# IndexEqualKeyOrder: equal index keys come back in creation order
+# IndexEqualKeyOrder: equal index keys come back in short-ID order
 
 The story, in plain words. A secondary index stores one entry per document:
 the indexed value, then the document's short ID. A node hands out short IDs
@@ -10,7 +10,8 @@ entries of one value in scan order, then skips `offset` of them and keeps at
 most `limit`.
 
 What must hold: the documents an exact match returns are in increasing
-short-ID order, which is the order this node created them in. Go keys its
+short-ID order, which is the order this node first stored them in: created
+here, or first received from a peer, so two replicas can differ. Go keys its
 index the same way (`getDocumentsIndexKey` in `internal/db/index.go`) and
 returns the same order.
 
@@ -21,8 +22,9 @@ replaces) puts the same documents in a different order from run to run
 
 Rust anchors: `crates/db/src/read/index_order.rs` `apply_exact_match_page`
 and `extend_unique`; the ExactMatch and InScan arms of `get_by_index_scan` in
-`crates/db/src/read/doc.rs`, `read/lensed/fetcher/scan.rs` and
-`read/lensed/autocommit/scan.rs`; `crates/db/src/docid/map.rs`
+`crates/db/src/read/doc.rs` and of `get_by_index_scan_inner` in
+`read/lensed/fetcher/scan.rs` and `read/lensed/autocommit/scan.rs`;
+`crates/db/src/docid/map.rs`
 `DocShortIdAllocator::next`; `crates/storage/src/keys/datastore/index_key.rs`
 `IndexDataStoreKey` (the short ID is the key's last, order-preserving part).
 -/
@@ -125,6 +127,153 @@ def docIdFirst (a b : Nat × Nat) : List Nat :=
 theorem docIdOrder_can_reverse_creation :
     docIdFirst (1, 0xb31d) (2, 0x88ac) ≠ exactMatch [⟨21, 1⟩, ⟨21, 2⟩] 21 0 none := by
   -- the DocID order is [2, 1]; the index order is [1, 2].
+  decide
+
+/-!
+## InScan: several values, each in scan order, repeats dropped
+
+An `_in` query scans each listed value in turn. `extend_unique` appends each
+value's short IDs, in scan order, to what the earlier values gave, and skips a
+short ID it has already listed (one document can match two values of a
+composite prefix only once). The Rust code keeps a `seen` set beside the list;
+here the list itself is the set, since both hold the same IDs.
+
+What must hold: the result lists every matched document once, in the order of
+its first encounter, and nothing a later value adds moves an earlier one.
+-/
+
+-- One value's short IDs appended to `all`: a listed ID is skipped, a new one
+-- goes on the end.
+def extendUnique : List Nat → List Nat → List Nat
+  -- nothing left to append: the list stands;
+  | all, [] => all
+  -- the next ID is skipped if listed, and appended otherwise.
+  | all, x :: rest =>
+    if x ∈ all then extendUnique all rest else extendUnique (all ++ [x]) rest
+
+-- An InScan: each value's scan, appended in the `_in` list's order.
+def inScan (scans : List (List Nat)) : List Nat := scans.foldl extendUnique []
+
+-- Promise: appending never moves what is already listed; it only adds at
+-- the end. So an ID keeps the position it got on its first encounter.
+theorem extendUnique_prefix (all es : List Nat) : all <+: extendUnique all es := by
+  induction es generalizing all with
+  -- nothing appended: the list is its own prefix;
+  | nil => exact List.prefix_refl all
+  | cons x rest ih =>
+    unfold extendUnique
+    split
+    -- a skipped ID leaves the list as it was;
+    · exact ih all
+    -- a new ID extends it, and the rest extends that.
+    · exact (List.prefix_append all [x]).trans (ih (all ++ [x]))
+
+-- Promise: a repeat changes nothing.
+theorem extendUnique_seen (all rest : List Nat) (x : Nat) (h : x ∈ all) :
+    extendUnique all (x :: rest) = extendUnique all rest := by
+  -- the listed branch is taken.
+  simp [extendUnique, h]
+
+-- Promise: the result keeps scan order: it is the listed IDs, then the scan,
+-- with some entries left out and none reordered.
+theorem extendUnique_sublist (all es : List Nat) :
+    (extendUnique all es).Sublist (all ++ es) := by
+  induction es generalizing all with
+  -- nothing appended: the list itself;
+  | nil => simp [extendUnique]
+  | cons x rest ih =>
+    unfold extendUnique
+    split
+    -- a skipped ID is one entry left out;
+    · exact (ih all).trans (List.Sublist.append_left (List.sublist_cons_self x rest) all)
+    -- a kept ID moves from the scan to the list, in the same place.
+    · simpa using ih (all ++ [x])
+
+-- Promise: a document is listed at most once.
+theorem extendUnique_nodup (all es : List Nat) (h : all.Nodup) :
+    (extendUnique all es).Nodup := by
+  induction es generalizing all with
+  -- nothing appended: the list was already repeat-free;
+  | nil => simpa [extendUnique] using h
+  | cons x rest ih =>
+    unfold extendUnique
+    split
+    -- a skipped ID adds nothing;
+    · exact ih all h
+    -- a new ID is not yet listed, so appending it keeps the list repeat-free.
+    · rename_i hx
+      apply ih
+      rw [List.Nodup, List.pairwise_append]
+      refine ⟨h, List.pairwise_singleton _ x, ?_⟩
+      -- every listed ID differs from `x`, which was not listed.
+      intro a ha b hb
+      simp only [List.mem_singleton] at hb
+      subst hb
+      intro hab
+      subst hab
+      exact hx ha
+
+-- Promise: every scanned document is listed, and nothing else is.
+theorem mem_extendUnique (all es : List Nat) (y : Nat) :
+    y ∈ extendUnique all es ↔ y ∈ all ∨ y ∈ es := by
+  induction es generalizing all with
+  -- nothing appended: membership is the list's;
+  | nil => simp [extendUnique]
+  | cons x rest ih =>
+    unfold extendUnique
+    split
+    -- a skipped ID was already listed, so it is still covered;
+    · rename_i hx
+      rw [ih all]
+      constructor
+      · rintro (h | h)
+        · exact Or.inl h
+        · exact Or.inr (List.mem_cons_of_mem x h)
+      · rintro (h | h)
+        · exact Or.inl h
+        · rcases List.mem_cons.mp h with rfl | h
+          · exact Or.inl hx
+          · exact Or.inr h
+    -- a new ID moves from the scan to the list.
+    · rw [ih (all ++ [x])]
+      simp [or_assoc]
+
+-- The same four promises over a whole InScan, from any starting list.
+theorem foldl_extendUnique (acc : List Nat) (scans : List (List Nat)) :
+    acc <+: scans.foldl extendUnique acc ∧
+    (scans.foldl extendUnique acc).Sublist (acc ++ scans.flatten) ∧
+    (acc.Nodup → (scans.foldl extendUnique acc).Nodup) ∧
+    (∀ y, y ∈ scans.foldl extendUnique acc ↔ y ∈ acc ∨ y ∈ scans.flatten) := by
+  induction scans generalizing acc with
+  -- no values: the starting list;
+  | nil => simp
+  | cons s rest ih =>
+    -- one value's scan, then the rest from there.
+    obtain ⟨hp, hs, hn, hm⟩ := ih (extendUnique acc s)
+    refine ⟨(extendUnique_prefix acc s).trans hp, ?_, ?_, ?_⟩
+    -- scan order: the first value's sublist, then the rest's;
+    · have := List.Sublist.append_right (extendUnique_sublist acc s) rest.flatten
+      simpa [List.append_assoc] using hs.trans this
+    -- no repeats: the first value keeps the list repeat-free, the rest too;
+    · exact fun h => hn (extendUnique_nodup acc s h)
+    -- coverage: what the first value listed, plus what the rest did.
+    · intro y
+      rw [List.foldl_cons, hm y, mem_extendUnique]
+      simp [List.mem_flatten, or_assoc]
+
+-- Promise: an InScan lists each matched document once, in scan order across
+-- the `_in` values, each at its first encounter.
+theorem inScan_scan_order_without_repeats (scans : List (List Nat)) :
+    (inScan scans).Sublist scans.flatten ∧ (inScan scans).Nodup ∧
+    (∀ y, y ∈ inScan scans ↔ y ∈ scans.flatten) := by
+  -- the general promises, from an empty start.
+  obtain ⟨_, hs, hn, hm⟩ := foldl_extendUnique [] scans
+  exact ⟨by simpa using hs, hn List.nodup_nil, fun y => by simpa using hm y⟩
+
+-- Promise, on the Rust unit test's input: values scanning [3, 1] and [1, 2]
+-- give [3, 1, 2], the repeated 1 kept where it first appeared.
+theorem inScan_example : inScan [[3, 1], [1, 2]] = [3, 1, 2] := by
+  -- run the definition.
   decide
 
 end IndexEqualKeyOrder

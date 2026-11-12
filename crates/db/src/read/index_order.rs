@@ -1,8 +1,10 @@
 //! Equal index keys come back in index order, as Go returns them (#2712).
 //!
 //! An index key ends with the document's node-local short ID, so the entries
-//! of one indexed value scan in the order their documents were created on
-//! this node. Go keys its index the same way (`getDocumentsIndexKey`,
+//! of one indexed value scan in the order their documents were first stored
+//! on this node: created here, or first received from a peer. Two replicas
+//! that received the same documents in a different order list them
+//! differently. Go keys its index the same way (`getDocumentsIndexKey`,
 //! `internal/db/index.go`) and returns that order.
 
 use rapidhash::RapidHashSet;
