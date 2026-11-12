@@ -67,3 +67,51 @@ async fn edge_routes_check_permissions_on_the_pool() {
     );
     pool.shutdown_blocking().unwrap();
 }
+
+/// The edge's batched check over the real NAC manager names the first
+/// permission missing, in order, as checking them one at a time does.
+#[test]
+fn batched_check_names_the_first_missing_permission() {
+    use acp::nac::NodePermission::{CollectionGet, DocumentUpdate};
+    use defra_http::router::{NodeAcpOperations, PermissionCheck};
+
+    let pool = workers::Pool::start(storage::with_worker_io(workers::Config::unplaced(1))).unwrap();
+    let options = storage::RegolithStoreOptions::memory().placed_on(&pool);
+    let store =
+        Arc::new(storage::RegolithStore::open_with_options("regolith-memory", options).unwrap());
+    let nac: Arc<dyn db::NacManagerApi> = Arc::new(db::NacManager::new(
+        Arc::new(acp::PersistentZanzibarStore::from_store(Arc::clone(&store))),
+        db::NacConfig::new().with_enabled(),
+    ));
+    let owner = identity::Did::new(OWNER).unwrap();
+    let reader = identity::Did::wildcard();
+    let adapter = NacAdapter::new(Arc::clone(&nac)).placed_on(Some(&pool));
+    workers::block_on(async {
+        nac.initialize(Some(&owner)).await.unwrap();
+        let both = [CollectionGet, DocumentUpdate];
+        assert_eq!(
+            adapter.check_permissions(&owner, &both).await,
+            PermissionCheck::Granted
+        );
+        assert_eq!(
+            adapter.check_permissions(&reader, &both).await,
+            PermissionCheck::Denied(CollectionGet)
+        );
+        nac.add_permission_grant(&owner, &reader, CollectionGet)
+            .await
+            .unwrap();
+        assert_eq!(
+            adapter.check_permissions(&reader, &both).await,
+            PermissionCheck::Denied(DocumentUpdate)
+        );
+        nac.add_permission_grant(&owner, &reader, DocumentUpdate)
+            .await
+            .unwrap();
+        assert_eq!(
+            adapter.check_permissions(&reader, &both).await,
+            PermissionCheck::Granted
+        );
+    })
+    .unwrap();
+    pool.shutdown_blocking().unwrap();
+}

@@ -96,6 +96,25 @@ pub trait NacManagerApi: defra_core::thread_bounds::MaybeSendSync {
     async fn owner(&self) -> Option<Did>;
     async fn is_enabled(&self) -> bool;
     async fn check_permission(&self, identity: &Did, permission: NodePermission) -> Result<bool>;
+    /// [`Self::check_permission`] for each of `permissions` in order, up to
+    /// and including the first that is not granted: one outcome per
+    /// permission checked. A provider may read them all at one snapshot.
+    async fn check_permissions(
+        &self,
+        identity: &Did,
+        permissions: &[NodePermission],
+    ) -> Vec<Result<bool>> {
+        let mut outcomes = Vec::with_capacity(permissions.len());
+        for &permission in permissions {
+            let outcome = self.check_permission(identity, permission).await;
+            let granted = matches!(outcome, Ok(true));
+            outcomes.push(outcome);
+            if !granted {
+                break;
+            }
+        }
+        outcomes
+    }
     async fn check_permission_in_txn(
         &self,
         _view: datastore::NamespaceView,
@@ -176,6 +195,25 @@ pub trait NacManagerApi: defra_core::thread_bounds::MaybeSendSync {
             "node permission explanations are unsupported by this provider".into(),
         ))
     }
+}
+
+/// `nac`'s check of each of `permissions` in order, up to and including the
+/// first that is not granted.
+async fn first_refusal(
+    nac: &dyn NacManagerApi,
+    identity: &Did,
+    permissions: &[NodePermission],
+) -> Vec<Result<bool>> {
+    let mut outcomes = Vec::with_capacity(permissions.len());
+    for &permission in permissions {
+        let outcome = nac.check_permission(identity, permission).await;
+        let granted = matches!(outcome, Ok(true));
+        outcomes.push(outcome);
+        if !granted {
+            break;
+        }
+    }
+    outcomes
 }
 
 /// NAC manager that provides config-aware NAC operations.
@@ -345,6 +383,35 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
             .check_permission(identity, permission)
             .await
             .map_err(|e| Error::Acp(format!("permission check failed: {}", e)))
+    }
+
+    /// [`Self::check_permission`] for each of `permissions` in order, read in
+    /// one scope, up to and including the first that is not granted.
+    pub async fn check_permissions(
+        &self,
+        identity: &Did,
+        permissions: &[NodePermission],
+    ) -> Vec<Result<bool>> {
+        let scope = match self.nac.begin_scope(true).await {
+            Ok(scope) => scope,
+            Err(error) => return vec![Err(Error::Acp(error.to_string()))],
+        };
+        let Some(scope) = scope else {
+            return first_refusal(self, identity, permissions).await;
+        };
+        let scoped = self.scoped(scope.store());
+        if let Err(error) = scoped.nac.load().await {
+            return vec![Err(Error::Acp(error.to_string()))];
+        }
+        let scoped: Box<dyn NacManagerApi> = Box::new(scoped);
+        let outcomes = first_refusal(scoped.as_ref(), identity, permissions).await;
+        drop(scoped);
+        // A scope that fails to commit fails the first check, as it does
+        // when each permission is read in a scope of its own.
+        if let Err(error) = scope.commit().await {
+            return vec![Err(Error::Acp(error.to_string()))];
+        }
+        outcomes
     }
 
     /// Check if an identity is an admin.

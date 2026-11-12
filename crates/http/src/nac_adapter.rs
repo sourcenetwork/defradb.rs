@@ -64,14 +64,16 @@ impl NacAdapter {
     }
 }
 
-/// The first of `permissions` `identity` does not hold, checked in order.
+/// The first of `permissions` `identity` does not hold, checked in order in
+/// one [`NacManagerApi::check_permissions`] call.
 async fn first_missing(
     nac: &dyn NacManagerApi,
     identity: &Did,
     permissions: &[NodePermission],
 ) -> PermissionCheck {
-    for &permission in permissions {
-        match nac.check_permission(identity, permission).await {
+    let outcomes = nac.check_permissions(identity, permissions).await;
+    for (&permission, outcome) in permissions.iter().zip(outcomes) {
+        match outcome {
             Ok(true) => {}
             Ok(false) => return PermissionCheck::Denied(permission),
             Err(error) => return PermissionCheck::Failed(permission, error.to_string()),

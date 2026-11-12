@@ -16,7 +16,8 @@
 \* through its `CollectionMiddleware`, `get-collection` first, then the
 \* route's own permission. The edge only adds refusals, so its refusal has to
 \* name Go's first missing permission too. The edge decides both permissions
-\* in one call onto the database's workers, so its check is one step here.
+\* in one call onto the database's workers, read at one snapshot of the
+\* node's grants, so its check is one step here.
 \*
 \* While a request runs, the node owner may revoke a permission. defradb.rs
 \* reads both permissions inside the write's transaction, and regolith
@@ -47,7 +48,8 @@
 \*   - the HTTP edge's checks            crates/http/src/auth_middleware.rs auth_middleware;
 \*                                       crates/http/src/route_permissions.rs reads_collection_first,
 \*                                       route_permission; crates/http/src/nac_guard.rs require_permissions;
-\*                                       crates/http/src/nac_adapter.rs NacAdapter::check_permissions
+\*                                       crates/http/src/nac_adapter.rs NacAdapter::check_permissions;
+\*                                       crates/db/src/nac/mod.rs NacManager::check_permissions
 EXTENDS Naturals, Sequences, TLC
 
 CONSTANTS
