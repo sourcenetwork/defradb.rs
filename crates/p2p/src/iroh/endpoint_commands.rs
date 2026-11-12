@@ -14,6 +14,7 @@ use crate::QueryId;
 
 use super::addr::{endpoint_addr_from_parts, endpoint_ticket_string};
 use super::command::IrohCommand;
+use super::direct_push;
 use super::endpoint::{peer_direct_addr, spawn_task, ActiveSync, EndpointResources, RawTopics};
 use super::endpoint_rpc::{
     cached_connection, close_peer_connections, connect_mux, handle_block_sync,
@@ -219,14 +220,26 @@ pub(super) async fn handle_command(
             let _ = reply.send(Ok(left));
         }
         IrohCommand::Publish { topic, msg, reply } => {
-            let result = match msg.encode_gossip_payload() {
-                Ok(payload) => {
-                    gossip.publish(topic.to_string(), Bytes::from(payload), false);
-                    Ok(MessageId::new(uuid::Uuid::new_v4().to_string()))
-                }
+            let topic = topic.to_string();
+            let published = match msg.encode_gossip_payload() {
+                Ok(payload) => gossip.publish(topic.clone(), Bytes::from(payload), false),
                 Err(error) => Err(crate::error::Error::CborSerialization(error.to_string())),
             };
-            let _ = reply.send(result);
+            match published {
+                Ok(()) => {
+                    let _ = reply.send(Ok(MessageId::new(uuid::Uuid::new_v4().to_string())));
+                }
+                Err(crate::error::Error::GossipTooLarge { .. }) => {
+                    let peers = direct_push::peers(gossip, &topic, &msg);
+                    let resources = resources.clone();
+                    let _ = spawn_task(spawned_tasks, async move {
+                        let _ = reply.send(direct_push::push(&resources, peers, &msg).await);
+                    });
+                }
+                Err(error) => {
+                    let _ = reply.send(Err(error));
+                }
+            }
         }
         IrohCommand::RegisterRawTopic { topic, reply } => {
             raw_topics.insert_if_absent(topic, ());
@@ -239,8 +252,10 @@ pub(super) async fn handle_command(
         }
         IrohCommand::PublishRaw { topic, data, reply } => {
             // A KMS reply: a broadcast before any neighbour joins is lost (#976).
-            gossip.publish(topic, Bytes::from(data), true);
-            let _ = reply.send(Ok(MessageId::new(uuid::Uuid::new_v4().to_string())));
+            let result = gossip
+                .publish(topic, Bytes::from(data), true)
+                .map(|()| MessageId::new(uuid::Uuid::new_v4().to_string()));
+            let _ = reply.send(result);
         }
         IrohCommand::TopicPeers { topic, reply } => {
             let _ = reply.send(Ok(gossip.topic_peers(&topic.to_string())));

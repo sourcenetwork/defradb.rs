@@ -30,6 +30,7 @@ use delivery::Delivery;
 pub(super) use delivery::EventSender;
 use driver::Driver;
 use frame::ProtoMessage;
+pub(super) use frame::MAX_BROADCAST;
 use inbox::Inbox;
 
 /// Messages from peers the driver may hold before more are dropped.
@@ -188,13 +189,28 @@ impl GossipHandle {
     /// Broadcasts on `topic`, joining it for the broadcast if we are not
     /// subscribed. `wait_for_neighbor` holds such a broadcast until a
     /// neighbour joins (briefly), for a reply that must not reach nobody.
-    pub(super) fn publish(&self, topic: String, payload: Bytes, wait_for_neighbor: bool) {
+    ///
+    /// A payload the protocol would drop is refused here, before it is
+    /// queued, so the caller can send it another way.
+    pub(super) fn publish(
+        &self,
+        topic: String,
+        payload: Bytes,
+        wait_for_neighbor: bool,
+    ) -> crate::error::Result<()> {
+        if payload.len() > MAX_BROADCAST {
+            return Err(crate::error::Error::GossipTooLarge {
+                size: payload.len(),
+                limit: MAX_BROADCAST,
+            });
+        }
         let input = Input::Publish {
             topic,
             payload,
             wait_for_neighbor,
         };
         self.inbox.push(input);
+        Ok(())
     }
 
     pub(super) fn topic_peers(&self, topic: &str) -> Vec<PeerId> {

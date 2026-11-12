@@ -182,6 +182,15 @@ pub enum Error {
     #[error("gossipsub subscription error: {0}")]
     GossipSubSubscription(String),
 
+    /// A broadcast too large for gossip: the protocol would drop it.
+    #[error("gossip broadcast of {size} bytes is over the {limit} byte limit")]
+    GossipTooLarge {
+        /// The broadcast's size.
+        size: usize,
+        /// The largest broadcast gossip carries.
+        limit: usize,
+    },
+
     /// GossipSub publish error.
     #[error("gossipsub publish error: {0}")]
     GossipSubPublish(String),
