@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use acp_light_client::{AcpTransport, HeaderStream};
+use acp_light_client::{AcpTransport, HeaderStream, TransportError};
 use futures::future::BoxFuture;
 use futures::FutureExt as _;
 use serde_json::Value;
@@ -31,14 +31,19 @@ impl AcpTransport for Silent {
         method: &'static str,
         _params: Value,
         _max_bytes: usize,
-    ) -> BoxFuture<'_, eyre::Result<Value>> {
+    ) -> BoxFuture<'_, Result<Value, TransportError>> {
         self.calls.fetch_add(1, Ordering::Relaxed);
-        async move { Err(eyre::eyre!("{method}: node is not serving requests")) }.boxed()
+        async move {
+            Err(TransportError::other(format!(
+                "{method}: node is not serving requests"
+            )))
+        }
+        .boxed()
     }
 
-    fn subscribe_headers(&self) -> BoxFuture<'_, eyre::Result<HeaderStream>> {
+    fn subscribe_headers(&self) -> BoxFuture<'_, Result<HeaderStream, TransportError>> {
         self.subscriptions.fetch_add(1, Ordering::Relaxed);
-        async { Err(eyre::eyre!("node is not serving headers")) }.boxed()
+        async { Err(TransportError::other("node is not serving headers")) }.boxed()
     }
 }
 
