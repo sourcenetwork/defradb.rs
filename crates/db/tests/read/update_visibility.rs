@@ -3,6 +3,7 @@
 //! the transaction that read the page.
 
 mod decisions;
+mod transaction_fetcher;
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -60,6 +61,24 @@ impl Node {
         )));
         db.set_document_acp(acp.clone());
         Self { db, acp }
+    }
+
+    /// A policy-backed store with no provider of its own, so its mutator
+    /// writes unchecked, and a local provider that stands outside every
+    /// transaction and reads an unregistered document as public.
+    async fn outside() -> Self {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(DB::from_arc(store).unwrap());
+        for mut schema in query::parse_sdl("type Users { name: String }").unwrap() {
+            schema.policy = Some(PolicyDescription::new(POLICY, RESOURCE));
+            db.create_collection(schema).await.unwrap();
+        }
+        Self {
+            db,
+            acp: Arc::new(acp::LocalDocumentACP::new(Arc::new(
+                acp::MemoryAcpStore::new(),
+            ))),
+        }
     }
 
     fn runner(&self, path: Path, acp: Arc<dyn DocumentACP>) -> Box<dyn QueryExecutor> {
@@ -342,20 +361,7 @@ fn a_page_in_a_writing_transaction_does_not_fail_it_when_its_document_is_purged(
 fn a_delete_during_the_page_hides_the_row_from_a_provider_outside_its_transaction() {
     workers::block_on(async {
         for path in [Path::Registry, Path::AutoCommit] {
-            // No provider on the store: the mutator writes unchecked, and the
-            // provider below stands outside every transaction.
-            let store = Arc::new(RegolithStore::in_memory().unwrap());
-            let db = Arc::new(DB::from_arc(store).unwrap());
-            for mut schema in query::parse_sdl("type Users { name: String }").unwrap() {
-                schema.policy = Some(PolicyDescription::new(POLICY, RESOURCE));
-                db.create_collection(schema).await.unwrap();
-            }
-            let node = Node {
-                db: db.clone(),
-                acp: Arc::new(acp::LocalDocumentACP::new(Arc::new(
-                    acp::MemoryAcpStore::new(),
-                ))),
-            };
+            let node = Node::outside().await;
             let removed = node.updated_document("removed").await;
             let kept = node.updated_document("kept").await;
             for id in [&removed, &kept] {
@@ -367,7 +373,7 @@ fn a_delete_during_the_page_hides_the_row_from_a_provider_outside_its_transactio
             }
             let racing: Arc<dyn DocumentACP> = Arc::new(decisions::DeletesMidPage::new(
                 node.acp.clone(),
-                db,
+                node.db.clone(),
                 removed.clone(),
             ));
 
@@ -381,6 +387,50 @@ fn a_delete_during_the_page_hides_the_row_from_a_provider_outside_its_transactio
             let (_, entries) = node.page(path, Some(owner())).await;
             assert_eq!(entries, [kept], "{path:?}");
         }
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_transaction_fetcher_pages_for_a_provider_outside_its_transaction() {
+    use query::fetcher::{DocFetcher, DocumentReader, DocumentUpdateOptions};
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(DB::from_arc(store).unwrap());
+        for mut schema in query::parse_sdl("type Users { name: String }").unwrap() {
+            schema.policy = Some(PolicyDescription::new(POLICY, RESOURCE));
+            db.create_collection(schema).await.unwrap();
+        }
+        let node = Node {
+            db: db.clone(),
+            acp: Arc::new(acp::LocalDocumentACP::new(Arc::new(
+                acp::MemoryAcpStore::new(),
+            ))),
+        };
+        let kept = node.updated_document("kept").await;
+
+        let page = db::DbDocFetcher::new(db.new_txn(true).await.unwrap())
+            .get_document_updates(
+                &DocumentUpdateOptions {
+                    collection: "Users".into(),
+                    after: 0,
+                    limit: 10,
+                },
+                &DocumentReader {
+                    context: &defra_core::RequestContext::default(),
+                    acp: node.acp.as_ref(),
+                    projection: None,
+                    identity: &acp::Identity::Authenticated(owner()),
+                },
+            )
+            .await;
+        let docs: Vec<String> = page
+            .expect("a page its owner may read")
+            .entries
+            .into_iter()
+            .map(|entry| entry.doc_id)
+            .collect();
+        assert_eq!(docs, [kept]);
     })
     .unwrap();
 }

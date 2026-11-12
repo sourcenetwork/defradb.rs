@@ -646,7 +646,7 @@ impl<S: Store> DB<S> {
         let basic_txn = BasicTxn::new(&*self.store, id, readonly)
             .await
             .map_err(Error::Storage)?;
-        Ok(self.new_db_txn(basic_txn))
+        Ok(self.new_db_txn(basic_txn).on_store(Arc::clone(&self.store)))
     }
 
     /// Runs `read` against a read-only transaction lent to it, then discards

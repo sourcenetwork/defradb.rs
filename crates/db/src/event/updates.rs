@@ -61,7 +61,8 @@ pub(crate) async fn record(
 /// `txn` reads the rows and their documents' deletion state. The reader's
 /// provider is bound to `txn`, so it decides on what `txn` reads. A provider
 /// that cannot be bound decides outside `txn`, on live state; what it admits
-/// is then confirmed alive in a snapshot of `db` taken after it decided.
+/// is then confirmed alive in a snapshot taken after it decided, of `db` or
+/// of the store `txn` was begun on.
 pub(crate) async fn read<S>(
     db: Option<&crate::database::DB<S>>,
     txn: &crate::txn::DbTxn<S>,
@@ -106,7 +107,7 @@ where
         gate.decide(&row.doc_id).await?;
     }
     if bound.is_none() {
-        gate.confirm(db).await?;
+        gate.confirm(db, txn).await?;
     }
     let entries = rows
         .into_iter()

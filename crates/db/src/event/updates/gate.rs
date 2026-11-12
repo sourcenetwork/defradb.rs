@@ -6,8 +6,7 @@ use crate::error::{Error, Result};
 use datastore::NamespaceView;
 use query::fetcher::DocumentReader;
 use rapidhash::{HashMapExt, RapidHashMap};
-use storage::corekv::{Key, Store};
-use storage::keys::doc_id_index::{DocIDToDocRefKey, DocRef};
+use storage::corekv::Store;
 
 pub(super) struct Gate<'page> {
     collection: &'page Collection,
@@ -66,10 +65,19 @@ impl<'page> Gate<'page> {
 
     /// Hide what a provider outside the page's transaction admitted and a
     /// delete has since removed. Such a provider loses a document's
-    /// registration only after the delete commits, and may then read the
-    /// document as public: a snapshot taken after it decided holds every
-    /// delete it could have seen.
-    pub(super) async fn confirm<S>(&mut self, db: Option<&crate::database::DB<S>>) -> Result<()>
+    /// registration to a delete on this node only after that delete commits
+    /// here, and may then read the document as public: a snapshot taken after
+    /// it decided holds every such delete. A registration a peer took from a
+    /// provider the nodes share is not this node's delete: the document is
+    /// still alive here, for this page as for every other query.
+    ///
+    /// The snapshot is `db`'s when the fetcher has its database, and
+    /// otherwise one on the store `page` was begun on.
+    pub(super) async fn confirm<S>(
+        &mut self,
+        db: Option<&crate::database::DB<S>>,
+        page: &crate::txn::DbTxn<S>,
+    ) -> Result<()>
     where
         S: Store,
     {
@@ -78,14 +86,17 @@ impl<'page> Gate<'page> {
         {
             return Ok(());
         }
-        let db = db.ok_or_else(|| {
-            Error::Acp(
-                "a document access provider outside this transaction cannot decide \
-                 `_documentUpdates` here: read it outside the transaction"
-                    .into(),
-            )
-        })?;
-        let later = db.new_txn(true).await?;
+        let later = match db {
+            Some(db) => db.new_txn(true).await?,
+            None => page.later().await?.ok_or_else(|| {
+                Error::Acp(
+                    "no database began this transaction, so what a document access provider \
+                     outside it admitted cannot be confirmed: read `_documentUpdates` in a \
+                     transaction from `DB::new_txn`"
+                        .into(),
+                )
+            })?,
+        };
         let confirmed = self.still_alive(&later).await;
         let discarded = later.discard();
         confirmed?;
@@ -123,18 +134,14 @@ async fn alive(
     systemstore: &NamespaceView,
     doc_id: &str,
 ) -> Result<bool> {
-    let Some(mapping) = systemstore
-        .get_parts(&DocIDToDocRefKey::new(doc_id).bytes(), &[])
-        .await?
+    let Some(short_id) =
+        crate::docid::map::peek_doc_short_id(systemstore, collection.resolved_root_id(), doc_id)
+            .await?
     else {
         return Ok(false);
     };
-    let document = DocRef::decode(&mapping)?;
-    if document.collection_short_id != collection.resolved_root_id() {
-        return Ok(false);
-    }
     Ok(datastore
-        .get_parts(&collection.deleted_key(document.doc_short_id), &[])
+        .get_parts(&collection.deleted_key(short_id), &[])
         .await?
         .is_none())
 }
