@@ -33,6 +33,10 @@ pub struct VincEndpointConfig {
     /// session slot when it starts, so this is sized to the node, not left at
     /// vinc's default of 1024.
     pub max_connections: usize,
+    /// The hubs topic broadcast runs through, as `<peer id>@<udp address>`,
+    /// at most four. vinc topics travel through a hub: with none, a node's
+    /// subscriptions and publishes reach no one.
+    pub hubs: Vec<String>,
 }
 
 impl VincEndpointConfig {
@@ -46,6 +50,7 @@ impl VincEndpointConfig {
             allowlist: VincAllowlistConfig::AcceptAll,
             node_identity: None,
             max_connections: Self::DEFAULT_MAX_CONNECTIONS,
+            hubs: Vec::new(),
         }
     }
 }
@@ -56,6 +61,7 @@ impl std::fmt::Debug for VincEndpointConfig {
             .field("bind", &self.bind)
             .field("allowlist", &self.allowlist)
             .field("max_connections", &self.max_connections)
+            .field("hubs", &self.hubs)
             .finish_non_exhaustive()
     }
 }

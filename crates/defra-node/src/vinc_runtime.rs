@@ -51,6 +51,7 @@ where
     endpoint.allowlist = config.allowlist.clone();
     endpoint.node_identity = node_identity;
     endpoint.max_connections = config.max_connections;
+    endpoint.hubs = config.hubs.clone();
     let mut peer_config = VincPeerConfig::new(endpoint, document_acp, scope.edge().clone());
     peer_config.strict_replicated_doc_access = strict_replicated_doc_access;
     peer_config.sync = config.sync.sync_config();

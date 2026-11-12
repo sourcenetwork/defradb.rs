@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use futures::FutureExt;
 use nuclei::task::JoinSet;
-use rapidhash::{HashMapExt, RapidHashMap};
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use tracing::{debug, warn};
 use vinc::{Connection, Hosted, NodeAddr, NodeId};
 
@@ -29,6 +29,7 @@ use super::admission::Allowlist;
 use super::command::{Command, Reply};
 use super::config::VincEndpointConfig;
 use super::directory::PeerDirectory;
+use super::hub::{hubs, limits};
 use super::inbound_budget::InboundBudget;
 use super::reply_table::ReplyTable;
 use super::services::{self, ALPN_MUX};
@@ -155,16 +156,14 @@ async fn run(
             .map_err(|error| Error::Transport(format!("vinc socket has no address: {error}")))?;
         let allowlist = Allowlist::from_config(&config.allowlist)?;
         let directory = PeerDirectory::default();
-        let limits = vinc::Limits {
-            connections: config.max_connections,
-            ..vinc::Limits::default()
-        };
+        let hubs = hubs(&config.hubs)?;
         let ep = vinc::Vinc::builder()
             .seed(&config.seed)
             .map_err(|error| vinc_error("vinc identity", error))?
             .alpn(ALPN_MUX)
             .local_addr(local)
-            .limits(limits)
+            .limits(limits(config.max_connections))
+            .relays(hubs)
             .discovery(vinc::Records::new(directory.clone()))
             .acp(allowlist.clone())
             .build_io(NucleiIo {
@@ -195,6 +194,8 @@ async fn run(
         tasks: RefCell::new(JoinSet::new()),
         waiters: RefCell::new(Vec::new()),
         syncs: RefCell::new(RapidHashMap::new()),
+        raw_topics: RefCell::new(RapidHashSet::new()),
+        subscribed: RefCell::new(RapidHashSet::new()),
         next_query: Cell::new(1),
         next_connection: Cell::new(1),
     });
@@ -227,6 +228,10 @@ pub(super) struct Node<H: Hosted + 'static> {
     tasks: RefCell<JoinSet<()>>,
     waiters: RefCell<Vec<(NodeId, Reply<()>)>>,
     pub(super) syncs: RefCell<RapidHashMap<u64, nuclei::task::AbortHandle>>,
+    /// Topics whose messages are handed on as raw bytes, never decoded.
+    pub(super) raw_topics: RefCell<RapidHashSet<String>>,
+    /// The topics the engine subscribed to: the only ones it hears of.
+    pub(super) subscribed: RefCell<RapidHashSet<String>>,
     pub(super) next_query: Cell<u64>,
     next_connection: Cell<u64>,
 }
@@ -269,6 +274,8 @@ impl<H: Hosted + 'static> Node<H> {
         self.spawn(async move { acceptor.accept_loop().await });
         let sweeper = Rc::clone(&self);
         self.spawn(async move { sweeper.sweep_loop().await });
+        let topics = Rc::clone(&self);
+        self.spawn(async move { topics.topic_events().await });
 
         let local = node_to_peer_id(&self.ep.id());
         let listening = PeerAddr::new(self.ep.addr().ticket());
@@ -663,6 +670,21 @@ impl<H: Hosted + 'static> Node<H> {
                     .remove(&query_id.0)
                     .inspect(|sync| sync.abort());
                 let _ = reply.send(Ok(cancelled.is_some()));
+            }
+            Command::Subscribe { topic, raw, reply } => self.subscribe(topic, raw, reply).await,
+            Command::Unsubscribe { topic, reply } => self.unsubscribe(&topic, reply).await,
+            Command::RegisterRawTopic { topic, reply } => {
+                self.register_raw_topic(topic);
+                let _ = reply.send(Ok(()));
+            }
+            Command::Publish {
+                topic,
+                payload,
+                wait,
+                reply,
+            } => self.publish(topic, payload, wait, reply).await,
+            Command::TopicPeers { topic, reply } => {
+                let _ = reply.send(Ok(self.topic_peers(&topic)));
             }
             Command::Shutdown { reply } => {
                 let _ = reply.send(Ok(()));

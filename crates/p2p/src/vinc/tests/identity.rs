@@ -1,11 +1,8 @@
-//! Identity from the shared seed, records, dial by id, and what the
-//! transport does not carry yet.
+//! Identity from the shared seed, records, and dial by id.
 
 use std::time::Duration;
 
 use super::{connect, loopback, run, seed, TestNode, IO_TIMEOUT};
-use crate::error::Error;
-use crate::topics::DefraTopic;
 use crate::transport::{P2PTransport, PeerId};
 use crate::vinc::{VincEndpointConfig, SERVICE_POINTER_LEN};
 
@@ -36,37 +33,6 @@ fn the_same_seed_is_the_same_peer_id_on_iroh() {
             .to_bytes(),
     );
     assert_eq!(iroh_id, vinc_id);
-}
-
-#[test]
-fn gossip_and_raw_topics_are_refused_with_a_typed_error() {
-    run(async {
-        let node = TestNode::spawn().await;
-        let refused = |result: Result<(), Error>| {
-            assert!(
-                matches!(
-                    result,
-                    Err(Error::NotSupportedOnTransport {
-                        transport: "vinc",
-                        ..
-                    })
-                ),
-                "{result:?}"
-            );
-        };
-        let t = &node.transport;
-        refused(t.subscribe(DefraTopic::Encryption).await.map(drop));
-        refused(t.unsubscribe(DefraTopic::Encryption).await.map(drop));
-        refused(t.topic_peers(DefraTopic::Encryption).await.map(drop));
-        refused(
-            t.publish_raw("encryption".into(), Vec::new())
-                .await
-                .map(drop),
-        );
-        refused(t.subscribe_raw("encryption".into()).await.map(drop));
-        refused(t.register_pubsub_rpc_topic("encryption".into()).await);
-        node.shutdown().await;
-    });
 }
 
 #[test]
