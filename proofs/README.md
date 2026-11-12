@@ -63,6 +63,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Index-maintenance consistency | Lean + TLA+ | db-index, db-merge |
 | Concurrent collection-head transitions | TLA+ & Lean | db-block-builder, storage |
 | Commit-ordered document arrivals | TLA+ | db, storage (pinned regolith) |
+| Committed document update discovery | TLA+ & Lean | db, db-merge, query |
 | DiskANN pending cache | TLA+ & Lean | db-index (vector), storage |
 | DiskANN shared quantizer | TLA+ & Lean | db-index (vector), db-write |
 | RobustPrune blocked covered checks | Lean | db-index (vector), defra-core |

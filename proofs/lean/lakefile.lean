@@ -67,6 +67,9 @@ lean_lib EndpointBind where
 lean_lib DocKeyScopes where
 
 @[default_target]
+lean_lib DocumentUpdateJournal where
+
+@[default_target]
 lean_lib DefraConvergence where
 
 @[default_target]

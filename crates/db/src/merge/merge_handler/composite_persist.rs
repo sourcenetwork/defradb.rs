@@ -162,6 +162,23 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .map_err(MergeError::Database)?;
         }
 
+        if !doc_is_tombstoned
+            && context
+                .block
+                .heads
+                .as_deref()
+                .is_some_and(|heads| !heads.is_empty())
+        {
+            crate::event::updates::record(
+                systemstore,
+                collection.resolved_root_id(),
+                context.doc_id_str,
+                &context.cid.to_string(),
+            )
+            .await
+            .map_err(MergeError::Database)?;
+        }
+
         let short_id = collection.resolved_root_id();
         match IndexManager::from_collection(short_id, collection.schema()) {
             Ok(index_manager) if !doc_is_tombstoned => {

@@ -117,7 +117,10 @@ where
                 .map_err(Error::VeraProvider)?,
             );
             // Access decisions are verified per request against current evidence, not cached.
-            let vera_acp = Arc::new(vera::VeraDocumentACP::without_access_cache(provider));
+            let vera_acp = Arc::new(
+                vera::VeraDocumentACP::without_access_cache(provider)
+                    .on_network(&edge, config.tuning.request_timeout),
+            );
             let dac_policies = vera_policies(&vera_acp, &store);
             let (document_acp, redrive) = gate_external_acp(vera_acp.clone(), store);
             Ok(DocumentAcpSetup {
