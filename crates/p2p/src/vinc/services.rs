@@ -15,6 +15,8 @@ pub const STREAM_PUSHLOG: &[u8] = b"/defra-vinc/pushlog/0.1";
 pub const STREAM_TWOSTREAM: &[u8] = b"/defra-vinc/twostream/0.1";
 pub const STREAM_SE: &[u8] = b"/defra-vinc/se/0.1";
 pub const STREAM_RECORD: &[u8] = b"/defra-vinc/record/0.1";
+/// The records of a node's other peers, which the receiver dials.
+pub const STREAM_PEERS: &[u8] = b"/defra-vinc/peers/0.1";
 pub const STREAM_DOCSYNC: &[u8] = b"/defra-vinc/docsync/0.1";
 pub const STREAM_BRANCHABLE: &[u8] = b"/defra-vinc/branchable/0.1";
 pub const STREAM_SE_QUERY: &[u8] = b"/defra-vinc/se-query/0.1";
@@ -30,6 +32,9 @@ pub const MAX_MANAGE_MSG_SIZE: usize = 4 * 1024 * 1024;
 const MAX_IDENTITY_MSG_SIZE: usize = 64 * 1024;
 /// A signed vinc node record.
 const MAX_RECORD_MSG_SIZE: usize = 4 * 1024;
+/// The records one peer exchange carries, at most.
+pub const MAX_SHARED_PEERS: usize = 16;
+const MAX_PEERS_MSG_SIZE: usize = MAX_SHARED_PEERS * 2 * MAX_RECORD_MSG_SIZE;
 
 /// The length of the service-record pointer a node publishes in its record's
 /// hints, the same 38 bytes iroh carries in pkarr.
@@ -109,6 +114,7 @@ pub const SERVICES: &[Service] = &[
     service(STREAM_TWOSTREAM, Priority::Replication, MAX_MESSAGE_SIZE),
     service(STREAM_SE, Priority::Replication, MAX_MESSAGE_SIZE),
     service(STREAM_RECORD, Priority::Sync, MAX_RECORD_MSG_SIZE),
+    service(STREAM_PEERS, Priority::Sync, MAX_PEERS_MSG_SIZE),
     service(STREAM_DOCSYNC, Priority::Sync, MAX_MESSAGE_SIZE),
     service(STREAM_BRANCHABLE, Priority::Sync, MAX_MESSAGE_SIZE),
     service(STREAM_SE_QUERY, Priority::Sync, MAX_MESSAGE_SIZE),

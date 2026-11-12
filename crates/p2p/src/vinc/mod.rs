@@ -6,6 +6,7 @@
 //! address or by a peer id seen before, every request service with its reply
 //! on the request's own stream, CAR sync, urgency by service class, admission
 //! and revocation, the service-record pointer, path info, `network_change`,
+//! peer exchange (peers of a peer connect, as on libp2p and iroh),
 //! and topic pubsub (gossip head hints and the raw topics KMS uses) through
 //! the hubs the node names.
 //!
@@ -33,6 +34,7 @@ mod command;
 mod config;
 mod directory;
 mod endpoint;
+mod exchange;
 mod hub;
 mod inbound_budget;
 mod reply_table;

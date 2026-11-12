@@ -7,6 +7,7 @@
 mod allowlist;
 mod bench;
 mod bridge;
+mod exchange;
 mod identity;
 mod inbound_admission;
 mod mux;
