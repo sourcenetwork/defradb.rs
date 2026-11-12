@@ -106,10 +106,10 @@ setup-rust:
         # shellcheck disable=SC1090
         source "${CARGO_HOME:-$HOME/.cargo}/env"
     fi
-    rustup toolchain install stable --profile minimal --no-self-update
-    # ci.yml runs fmt (:64) and 10 clippy invocations; :122 needs the wasm target.
-    rustup component add --toolchain stable rustfmt clippy
-    rustup target add --toolchain stable wasm32-unknown-unknown
+    # rust-toolchain.toml names the toolchain, its components and the wasm32 target. rustup 1.28+
+    # installs it with a bare `toolchain install`; 1.27 needs a toolchain argument there, but its
+    # cargo proxy installs the pinned toolchain on first use.
+    rustup toolchain install --no-self-update 2>/dev/null || cargo --version
     echo "rust: $(rustc --version)"
 
 # jq is required by setup-cargo-tools (lockfile-matched wasm-bindgen) and by

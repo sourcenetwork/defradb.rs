@@ -414,7 +414,7 @@ that is correct but slower is not done.
 
 ## Build Dependencies
 
-- **Rust** (1.99+): `rustup`
+- **Rust**: `rustup`, which installs the version pinned in `rust-toolchain.toml`. Bumping that pin is a deliberate change of its own, never automatic.
 - **protoc**: `brew install protobuf` — required by `crates/orbis`, whose `build.rs` compiles `proto/orbis.proto` via `tonic-prost-build`
 - **cbindgen**: `cargo install cbindgen` — generates C headers for FFI
 - **cargo-nextest**: `cargo install cargo-nextest --locked` — runs the tests; `.config/nextest.toml` builds the `defradb` binaries node tests launch once per run, then runs those tests in parallel
