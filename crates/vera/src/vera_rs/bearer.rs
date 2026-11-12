@@ -26,8 +26,7 @@ pub(super) async fn create_bearer_token(
 
 /// A delegation for one scope, issued under the spelling `issuer` gives.
 ///
-/// vera.rs records the issuer as written, so the caller chooses the one
-/// spelling its actor is known by.
+/// vera.rs takes either spelling of a secp256k1 issuer as the same actor.
 pub(super) async fn create_scoped_bearer_token(
     signer: &dyn DelegationSigner,
     issuer: &str,

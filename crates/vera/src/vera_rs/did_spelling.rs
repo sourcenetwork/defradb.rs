@@ -1,14 +1,15 @@
-//! One spelling per secp256k1 actor at the vera.rs boundary.
+//! One spelling per secp256k1 actor on this side of the vera.rs boundary.
 //!
 //! A secp256k1 `did:key` can be written from the compressed or the uncompressed
-//! public key. Both name the same key, but vera.rs records an actor under the
-//! spelling it was given and compares policy owners and relationship subjects
-//! as strings, so an actor that reached it under both would be two subjects.
+//! public key. Both name the same key. vera.rs treats every spelling a request
+//! uses as one actor and records and returns that actor under the compressed
+//! one. DefraDB derives the uncompressed one, as Go does, and compares actors
+//! as strings.
 //!
-//! DefraDB derives the uncompressed spelling, as Go does, and documents are
-//! owned on vera.rs under it. Every actor DID this provider sends or returns
-//! is therefore that spelling, including its own. Other key types have a
-//! single spelling and pass through unchanged.
+//! Every actor DID this provider sends or returns is therefore DefraDB's
+//! spelling, including its own, and a DID read from vera.rs is compared with
+//! [`same_actor`]. Other key types have a single spelling and pass through
+//! unchanged.
 
 use std::borrow::Cow;
 
@@ -28,33 +29,9 @@ pub(crate) fn defra(did: &str) -> Cow<'_, str> {
     }
 }
 
-/// The issuer a delegation token names and the spelling it should have used,
-/// when the two differ.
-///
-/// A token signed elsewhere cannot be respelled. Under the compressed spelling
-/// of a secp256k1 issuer, vera.rs would record a second actor that the grants
-/// and checks sent through this provider never name. A token that does not
-/// decode is left for vera.rs to reject.
-///
-/// The refusal goes once vera.rs records one spelling per secp256k1 actor
-/// (sourcenetwork/vera.rs#265).
-pub(crate) fn issuer_spelling(token: &str) -> Result<(), (String, String)> {
-    use base64::Engine as _;
-
-    #[derive(serde::Deserialize)]
-    struct Claims {
-        iss: String,
-    }
-    let claims = token.split('.').nth(1).and_then(|payload| {
-        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(payload)
-            .ok()?;
-        serde_json::from_slice::<Claims>(&bytes).ok()
-    });
-    match claims.map(|claims| (defra(&claims.iss).into_owned(), claims.iss)) {
-        Some((expected, issuer)) if expected != issuer => Err((issuer, expected)),
-        _ => Ok(()),
-    }
+/// Whether `a` and `b` name one actor, whichever spelling each uses.
+pub(crate) fn same_actor(a: &str, b: &str) -> bool {
+    defra(a) == defra(b)
 }
 
 #[cfg(test)]
@@ -102,25 +79,22 @@ mod tests {
     }
 
     #[test]
-    fn a_token_must_name_its_secp256k1_issuer_in_the_uncompressed_spelling() {
-        use base64::Engine as _;
-        let token = |issuer: &str| {
-            let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
-                .encode(serde_json::json!({ "iss": issuer }).to_string());
-            format!("header.{payload}.signature")
-        };
+    fn an_actor_vera_rs_names_in_the_compressed_spelling_is_the_same_actor() {
         let (compressed, uncompressed) = spellings();
-        assert_eq!(issuer_spelling(&token(&uncompressed)), Ok(()));
-        assert_eq!(
-            issuer_spelling(&token(&compressed)),
-            Err((compressed, uncompressed))
-        );
-        assert_eq!(
-            issuer_spelling(&token(
-                "did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp"
-            )),
-            Ok(())
-        );
-        assert_eq!(issuer_spelling("device.jwt.token"), Ok(()));
+        assert!(same_actor(&compressed, &uncompressed));
+        assert!(same_actor(&uncompressed, &compressed));
+        assert!(same_actor(&uncompressed, &uncompressed));
+
+        let other = vera_client::Secp256k1SigningKey::from_slice(&[43; 32]).expect("valid key");
+        for compressed_other in [true, false] {
+            let other = crate::vera_rs::bearer::did_from_signing_key(&other, compressed_other);
+            assert!(!same_actor(&compressed, &other));
+            assert!(!same_actor(&uncompressed, &other));
+        }
+
+        let ed25519 = "did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp";
+        assert!(same_actor(ed25519, ed25519));
+        assert!(!same_actor(ed25519, &compressed));
+        assert!(!same_actor("did:key:zNotAKey", "did:key:zAnother"));
     }
 }

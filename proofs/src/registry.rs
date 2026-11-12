@@ -127,9 +127,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "vera.rs actor spelling",
-        name: "defra_idempotent / spellings_meet / other_unchanged / defra_same_actor / one_spelling_per_actor / issuer_canonical_iff / compressed_issuer_refused",
+        name: "defra_idempotent / spellings_meet / other_unchanged / defra_same_actor / one_spelling_per_actor",
         axis: Lean,
-        anchor: "crates/vera/src/vera_rs/did_spelling.rs defra, issuer_spelling",
+        anchor: "crates/vera/src/vera_rs/did_spelling.rs defra, same_actor",
         model_ref: "VeraActorSpelling (lake build)",
         tiers: &[Boundary],
         bound_by: "",

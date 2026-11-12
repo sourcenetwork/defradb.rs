@@ -427,7 +427,7 @@ impl VeraProvider for VeraRsProvider {
             &log.data.data,
         )
         .map_err(|e| ProviderError::Query(format!("creation event: {e}")))?;
-        if events.next().is_some() || event.creator != self.actor_did {
+        if events.next().is_some() || !did_spelling::same_actor(&event.creator, &self.actor_did) {
             return Err(ProviderError::Query(
                 "creation event does not match the actor".into(),
             ));
@@ -445,7 +445,7 @@ impl VeraProvider for VeraRsProvider {
         .map_err(|e| ProviderError::Query(format!("created policy record: {e}")))?;
         if record.policy.id != id
             || record.raw_policy != policy_yaml
-            || record.metadata.owner_did != self.actor_did
+            || !did_spelling::same_actor(&record.metadata.owner_did, &self.actor_did)
             || record.metadata.tx_signer != self.worker_did
             || record.metadata.tx_hash != confirmed.receipt.tx_hash.as_slice()
             || record.metadata.creation_ts.block_height != confirmed.revision
@@ -780,7 +780,7 @@ mod tests {
     }
 
     #[nuclei::test]
-    async fn a_request_token_under_the_compressed_issuer_spelling_is_refused() {
+    async fn a_request_token_under_either_issuer_spelling_is_passed_through() {
         use base64::Engine;
         let key = SigningKey::from_slice(&[42; 32]).expect("valid key");
         let did = bearer::did_from_signing_key(&key, false);
@@ -791,18 +791,14 @@ mod tests {
         };
         store_remote_secp256r1_identity(&did);
 
-        let compressed = token(&bearer::did_from_signing_key(&key, true));
-        defra_core::signing::set_request_bearer_token(&did, compressed);
-        let refused = resolve_registered_or_passthrough_bearer_token(&did, "did:key:w", 9001).await;
-        assert!(matches!(refused, Err(ProviderError::Config(ref message))
-                if message.contains(&bearer::did_from_signing_key(&key, true))
-                    && message.contains(&format!("records that key as {did}"))));
-
-        defra_core::signing::set_request_bearer_token(&did, token(&did));
-        let accepted = resolve_registered_or_passthrough_bearer_token(&did, "did:key:w", 9001)
-            .await
-            .expect("resolution should succeed");
-        assert_eq!(accepted, Some(token(&did)));
+        for compressed in [true, false] {
+            let carried = token(&bearer::did_from_signing_key(&key, compressed));
+            defra_core::signing::set_request_bearer_token(&did, carried.clone());
+            let passed = resolve_registered_or_passthrough_bearer_token(&did, "did:key:w", 9001)
+                .await
+                .expect("resolution should succeed");
+            assert_eq!(passed, Some(carried));
+        }
 
         defra_core::signing::clear_request_bearer_token(&did);
     }
