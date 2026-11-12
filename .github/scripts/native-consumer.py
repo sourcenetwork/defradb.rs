@@ -34,6 +34,8 @@ UNIT_NAMES = (
     "provider::tests::resolve_registered_or_passthrough_bearer_token_builds_local_secp256k1_token",
     "provider::tests::resolve_registered_or_passthrough_bearer_token_uses_request_token_for_remote_identity",
     "provider::tests::trusted_consensus_key_is_required_before_connecting",
+    "provider::transport_tests::a_node_that_serves_no_header_fails_as_an_unreachable_url_does",
+    "provider::transport_tests::an_invalid_trusted_key_is_refused_before_a_transport_is_used",
     "provider::verified::tests::a_decision_the_chain_overtook_is_asked_again",
     "provider::verified::tests::a_read_overtaken_at_every_ask_returns_the_refusal_after_the_last",
     "provider::verified::tests::a_read_the_chain_overtook_is_asked_again_until_answered",

@@ -22,7 +22,7 @@ path = "tests/verars/main.rs"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "419cdb4af02843af28cd76899b7dd5ad5e0bb2c3" }
 commonware-codec = "=2026.10.0"
-defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "e8fc9b75fbadba355d08120c527f27ca9429ed57" }
+defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "b48d74e816a729831bf37ea657439a4c49297176" }
 crypto = { path = "../../crates/crypto" }
 document = { path = "../../crates/document" }
 edge = { path = "../../crates/edge", features = ["testing"] }

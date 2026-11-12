@@ -17,7 +17,7 @@ const ATTEMPTS: usize = 4;
 /// How the light client's refusal of an overtaken answer starts, both from
 /// `HeaderChain::accept_response` and from
 /// `AcpLightClient::verify_access_decision` (acp-light-client at backbone
-/// 2720b61, whose errors carry no type to match). A bump of the light client
+/// b48d74e, whose errors carry no type to match). A bump of the light client
 /// rechecks this wording.
 const OVERTAKEN: &str = "ACP state changed during";
 

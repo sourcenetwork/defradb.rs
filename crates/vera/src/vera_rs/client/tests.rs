@@ -136,16 +136,16 @@ async fn stalled_transport_times_out_and_transient_rpc_errors_are_retryable() {
 }
 
 /// A well-formed consensus key that signed nothing these tests return.
-const TRUSTED_KEY: &str = "92b050b6fbe80695b5d56835e978918e37c8707a7fad09a01ae782d4c3170c9baa4c2c196b36eac6b78ceb210b287aeb0727ef1c60e48042142f7bcc8b6382305cd50c5a4542c44ec72a4de6640c194f8ef36bea1dbed168ab6fd8681d910d55";
+pub(in crate::vera_rs) const TRUSTED_KEY: &str = "92b050b6fbe80695b5d56835e978918e37c8707a7fad09a01ae782d4c3170c9baa4c2c196b36eac6b78ceb210b287aeb0727ef1c60e48042142f7bcc8b6382305cd50c5a4542c44ec72a4de6640c194f8ef36bea1dbed168ab6fd8681d910d55";
 
 /// Answers every call with a fixed result and records what it was asked.
-struct Recorded {
+pub(in crate::vera_rs) struct Recorded {
     result: Result<Value, (bool, &'static str)>,
-    calls: regolith::sync::SegQueue<(String, Value, usize)>,
+    pub(in crate::vera_rs) calls: regolith::sync::SegQueue<(String, Value, usize)>,
 }
 
 impl Recorded {
-    fn answering(result: Result<Value, (bool, &'static str)>) -> Arc<Self> {
+    pub(in crate::vera_rs) fn answering(result: Result<Value, (bool, &'static str)>) -> Arc<Self> {
         Arc::new(Self {
             result,
             calls: regolith::sync::SegQueue::new(),

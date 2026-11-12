@@ -19,14 +19,18 @@ pub struct VeraRsClient {
 }
 
 /// JSON-RPC over HTTP to the node at `url`.
-struct HttpTransport {
+pub(super) struct HttpTransport {
     url: String,
     http: http_client::Client,
     next_id: AtomicU64,
 }
 
 impl HttpTransport {
-    fn new(url: String, request_timeout: Duration, edge: &edge::Edge) -> Result<Self, ClientError> {
+    pub(super) fn new(
+        url: String,
+        request_timeout: Duration,
+        edge: &edge::Edge,
+    ) -> Result<Self, ClientError> {
         #[cfg(not(target_arch = "wasm32"))]
         let http = http_client::Client::builder(edge.clone());
         #[cfg(target_arch = "wasm32")]
@@ -211,4 +215,4 @@ impl ClientError {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
