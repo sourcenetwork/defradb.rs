@@ -790,3 +790,86 @@ fn a_backfill_stopped_deferred_resumes_inline() {
     ))
     .unwrap()
 }
+
+/// Leaves the store as a crash part way through a rebuild of the index on an
+/// inline start does: the clear took the entries and records, the walk put back
+/// the first document's entry, and its progress names no index as deferred.
+async fn stop_inline_rebuild_after_first(
+    node: &Node,
+    first: &document::DocID,
+    second: &document::DocID,
+) {
+    let (short_id, [first, second]) = short_ids(node, [first, second]).await;
+    let index_id = node.index_id;
+    let records = keys_of(
+        &node.db,
+        storage::keys::index_position_prefix(short_id, index_id),
+    )
+    .await;
+    assert_eq!(records.len(), 2, "kept deferred before the crash");
+    let at_two = IndexDataStoreKey::new(
+        short_id,
+        index_id,
+        vec![IndexedField::ascending(NormalValue::Int(2))],
+    )
+    .try_bytes()
+    .unwrap();
+    let entries = keys_of(&node.db, at_two).await;
+    let txn = node.db.new_txn(false).await.unwrap();
+    let datastore = txn.datastore().unwrap();
+    for key in records.iter().chain(&entries) {
+        datastore.delete(key).await.unwrap();
+    }
+    let systemstore = txn.systemstore().unwrap();
+    let owed =
+        serde_json::json!({ "token": 7, "migration_destination": null, "indexes": [index_id] });
+    let progress = serde_json::json!({
+        "token": 7,
+        "stage": { "Walk": { "fence": second + 1, "last": first } },
+        "deferred": [],
+    });
+    for (prefix, value) in [("/reindex/owed/", owed), ("/reindex/progress/", progress)] {
+        systemstore
+            .set(
+                format!("{prefix}{COLLECTION_ID}").as_bytes(),
+                &serde_json::to_vec(&value).unwrap(),
+            )
+            .await
+            .unwrap();
+    }
+    drop((datastore, systemstore));
+    txn.commit().await.unwrap();
+}
+
+/// A rebuild a crash stopped on an inline start resumes on a deferred one. Its
+/// progress was saved under the other way, so it starts over and every
+/// document gets its record, not only those after the crash.
+#[test]
+fn a_rebuild_stopped_inline_starts_over_deferred() {
+    workers::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = {
+            let node = Node::on_disk(dir.path(), Some(with_type()), true).await;
+            let (a, b) = (node.create(1).await, node.create(2).await);
+            stop_inline_rebuild_after_first(&node, &a, &b).await;
+            node.db.close().await.unwrap();
+            (a, b)
+        };
+
+        let node = Node::on_disk(dir.path(), Some(with_type()), false).await;
+        assert_eq!(
+            node.deferred_state().await,
+            (2, 0),
+            "every document has its record"
+        );
+        node.increment(&a, 4).await;
+        node.increment(&b, 4).await;
+        assert_eq!(
+            node.entries([1, 2, 5, 6]).await,
+            (2, [(1, 0), (2, 0), (5, 1), (6, 1)]),
+            "one entry per document, at its value"
+        );
+        node.db.close().await.unwrap();
+    })
+    .unwrap()
+}
