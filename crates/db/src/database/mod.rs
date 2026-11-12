@@ -433,6 +433,8 @@ impl<S: Store> DB<S> {
         // Counters move into their document part, so they need the part IDs the step above gives
         // collections written before part IDs existed.
         self.maybe_migrate_counter_accumulators().await?;
+        // Before the backfills resume, so one a crash stopped under the other way of
+        // keeping its index is rebuilt whole (`proofs/tla/DeferredIndexMode.tla`).
         self.migrate_index_format().await?;
         self.resume_index_drops().await?;
         self.resume_index_backfills().await?;

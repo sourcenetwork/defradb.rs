@@ -19,8 +19,12 @@
 \* other way again: the progress names the way it was written under, and a
 \* rebuild resumed under the other way starts over.
 \*
+\* An index backfill (a new index over existing documents) can also be stopped
+\* part way and resume at the next open. The check runs before it resumes, so the
+\* documents a backfill indexed the old way are found and rebuilt with the rest.
+\*
 \* Who acts: the node's starts (each one picks a way), writes and drains while it
-\* is open, the open-time check and the rebuild's pages.
+\* is open, the open-time check, the rebuild's pages and a resumed backfill.
 \*
 \* What must never happen: an open node whose index holds an entry the way it is
 \* kept does not account for, so that a later write or drain leaves it behind.
@@ -31,6 +35,8 @@
 \*   crates/db/src/definition/migration/reindex/page.rs  clear (an inline index's records and log go too)
 \*   crates/db/src/definition/migration/reindex/progress.rs  read (progress under another way starts over)
 \*   crates/db/src/index/manager/rebuild.rs        IndexManager::reindex_document (the walk)
+\*   crates/db/src/database/mod.rs                 DB::finish_open (the check before the backfills resume)
+\*   crates/db/src/index/backfill.rs               DB::resume_index_backfills (a stopped backfill)
 EXTENDS Integers, FiniteSets
 
 CONSTANTS
@@ -40,13 +46,15 @@ CONSTANTS
   StartModes,    \* the ways the store may have been kept before the first start
   Check,         \* "Both": the open check looks both ways | "ToDeferred": only for a deferred index | "Off"
   ClearRecords,  \* "On": a rebuild of an inline index removes its records and log | "Off": it keeps them
-  ProgressReset  \* "On": progress written under the other way starts over | "Off": it resumes as is
+  ProgressReset, \* "On": progress written under the other way starts over | "Off": it resumes as is
+  CheckFirst     \* "On": the check runs before a stopped backfill resumes | "Off": after it
 
 \* Each switch takes one of its values.
 ASSUME StartModes \subseteq {"Inline", "Deferred"} /\ StartModes /= {}
 ASSUME Check \in {"Both", "ToDeferred", "Off"}
 ASSUME ClearRecords \in {"On", "Off"}
 ASSUME ProgressReset \in {"On", "Off"}
+ASSUME CheckFirst \in {"On", "Off"}
 \* A counter can grow at least once, or nothing happens.
 ASSUME MaxValue \in Nat \ {0}
 \* A count of starts.
@@ -63,7 +71,8 @@ Values == 0..MaxValue
 
 VARIABLES
   mode,      \* the way this start keeps the index
-  phase,     \* "Check" (just started), "Rebuild" (opening, a rebuild owed) or "Open" (taking writes)
+  phase,     \* "Check" (the check is next), "Rebuild" (a rebuild owed), "Backfill" (a stopped
+             \* backfill resumes) or "Open" (taking writes)
   value,     \* each document's counter
   index,     \* the stored entries: pairs of a document and a value
   rec,       \* each document's position record: the value its entry is at, or None
@@ -72,9 +81,15 @@ VARIABLES
   progress,  \* the rebuild's saved stage: "Start" (clear next) or "Cleared" (walking)
   walked,    \* the documents the saved progress says were walked
   progMode,  \* the way the saved progress was written under
-  restarts   \* starts so far after the first
+  restarts,  \* starts so far after the first
+  unfilled   \* the documents a stopped backfill has not indexed yet
 
-vars == <<mode, phase, value, index, rec, owed, rebuild, progress, walked, progMode, restarts>>
+vars == <<mode, phase, value, index, rec, owed, rebuild, progress, walked, progMode, restarts, unfilled>>
+
+\* Where a start goes first, after the check and its rebuild, and after the backfill.
+First == IF CheckFirst = "On" THEN "Check" ELSE "Backfill"
+AfterCheck == IF CheckFirst = "On" THEN "Backfill" ELSE "Open"
+AfterBackfill == IF CheckFirst = "On" THEN "Open" ELSE "Check"
 
 \* The values a document's entries are at.
 Entries(d) == {v \in Values : <<d, v>> \in index}
@@ -92,7 +107,7 @@ Looks == \/ Check = "Both"
 \* Every variable stays in its range.
 TypeOK ==
   /\ mode \in Modes                                  \* a way
-  /\ phase \in {"Check", "Rebuild", "Open"}           \* a phase
+  /\ phase \in {"Check", "Rebuild", "Backfill", "Open"}   \* a phase
   /\ value \in [Docs -> Values]                      \* counters
   /\ index \subseteq Docs \X Values                  \* entries
   /\ rec \in [Docs -> Values \cup {None}]            \* records
@@ -102,15 +117,18 @@ TypeOK ==
   /\ walked \subseteq Docs                           \* walked documents
   /\ progMode \in Modes                              \* a way
   /\ restarts \in 0..MaxRestarts                     \* bounded starts
+  /\ unfilled \subseteq Docs                         \* documents a backfill still owes
 
-\* The store as the way before the first start left it, settled, and the node just started.
+\* The store as the way before the first start left it, with a backfill a crash may
+\* have stopped part way, and the node just started.
 Init ==
   /\ mode \in Modes                                  \* the first start picks either way
-  /\ phase = "Check"                                 \* it checks before it opens
+  /\ phase = First                                   \* the check, or the backfill, goes first
   /\ value = [d \in Docs |-> 0]                      \* every counter at 0
-  /\ index = {<<d, 0>> : d \in Docs}                 \* each document indexed at 0
+  /\ unfilled \in SUBSET Docs                        \* the documents the backfill has not reached
+  /\ index = {<<d, 0>> : d \in Docs \ unfilled}      \* the others indexed at 0
   /\ \E before \in StartModes :                      \* the way the store was kept so far
-       /\ rec = [d \in Docs |-> IF before = "Deferred" THEN 0 ELSE None]   \* records only if kept deferred
+       /\ rec = [d \in Docs |-> IF before = "Deferred" /\ d \notin unfilled THEN 0 ELSE None]   \* records only if kept deferred
        /\ progMode = before                          \* unused until a rebuild saves progress
   /\ owed = {}                                       \* nothing owed
   /\ rebuild = FALSE                                 \* no rebuild owed
@@ -123,8 +141,8 @@ CheckAtOpen ==
   /\ phase = "Check"                                 \* just started
   /\ LET owe == rebuild \/ (Looks /\ OtherWay)       \* what is owed after the check
      IN /\ rebuild' = owe                            \* the owed record is written
-        /\ phase' = IF owe THEN "Rebuild" ELSE "Open"   \* rebuild first, or open
-  /\ UNCHANGED <<mode, value, index, rec, owed, progress, walked, progMode, restarts>>
+        /\ phase' = IF owe THEN "Rebuild" ELSE AfterCheck   \* rebuild first, or go on
+  /\ UNCHANGED <<mode, value, index, rec, owed, progress, walked, progMode, restarts, unfilled>>
 
 \* The progress a page reads: what was saved, or the start if it was saved under the other way.
 Stale == ProgressReset = "On" /\ progMode /= mode
@@ -138,10 +156,10 @@ RebuildClear ==
   /\ owed' = IF mode = "Inline" /\ ClearRecords = "On" THEN {} ELSE owed   \* inline: the log goes
   /\ progress' = "Cleared" /\ walked' = {}           \* the walk is next
   /\ progMode' = mode                                \* saved under this start's way
-  /\ UNCHANGED <<mode, phase, value, rebuild, restarts>>
+  /\ UNCHANGED <<mode, phase, value, rebuild, restarts, unfilled>>
 
 \* A walk page for d: its entry again, and its record if the index is deferred.
-\* The page that walks the last document clears the owed rebuild, and the node opens.
+\* The page that walks the last document clears the owed rebuild, and the start goes on.
 RebuildWalk(d) ==
   /\ phase = "Rebuild"                               \* opening, a rebuild owed
   /\ progress = "Cleared" /\ ~Stale                  \* walking, under this start's way
@@ -149,11 +167,32 @@ RebuildWalk(d) ==
   /\ index' = index \cup {<<d, value[d]>>}           \* its entry at its value
   /\ rec' = IF mode = "Deferred" THEN [rec EXCEPT ![d] = value[d]] ELSE rec   \* deferred: the record names it
   /\ IF walked \cup {d} = Docs                       \* the last document
-     THEN /\ rebuild' = FALSE /\ phase' = "Open"     \* the rebuild is done; the node opens
+     THEN /\ rebuild' = FALSE /\ phase' = AfterCheck   \* the rebuild is done
           /\ progress' = "Start" /\ walked' = {}     \* the progress goes with the owed record
      ELSE /\ walked' = walked \cup {d}               \* saved with the page
           /\ UNCHANGED <<rebuild, phase, progress>>
-  /\ UNCHANGED <<mode, value, owed, progMode, restarts>>
+  /\ UNCHANGED <<mode, value, owed, progMode, restarts, unfilled>>
+
+\* A page of the resumed backfill for d: deferred, it places d's entry and record
+\* unless d already has a record; inline, it puts d's entry.
+BackfillPage(d) ==
+  /\ phase = "Backfill"                              \* the backfill resumes
+  /\ d \in unfilled                                  \* not reached yet
+  /\ IF mode = "Deferred"
+     THEN IF rec[d] = None                           \* nobody placed it yet
+          THEN /\ index' = index \cup {<<d, value[d]>>}   \* its entry
+               /\ rec' = [rec EXCEPT ![d] = value[d]]    \* and its record
+          ELSE UNCHANGED <<index, rec>>              \* a record says it is placed
+     ELSE /\ index' = index \cup {<<d, value[d]>>}   \* its entry
+          /\ UNCHANGED rec
+  /\ unfilled' = unfilled \ {d}                      \* saved with the page
+  /\ UNCHANGED <<mode, phase, value, owed, rebuild, progress, walked, progMode, restarts>>
+
+\* The backfill has reached every document: the start goes on.
+BackfillDone ==
+  /\ phase = "Backfill" /\ unfilled = {}             \* nothing left to index
+  /\ phase' = AfterBackfill                          \* the check, or the open, is next
+  /\ UNCHANGED <<mode, value, index, rec, owed, rebuild, progress, walked, progMode, restarts, unfilled>>
 
 \* A write while open: inline, it moves the entry from the old value to the new one;
 \* deferred, it only adds the document to the log.
@@ -166,7 +205,7 @@ Write(d) ==
           /\ UNCHANGED owed
      ELSE /\ owed' = owed \cup {d}                   \* the index is owed the move
           /\ UNCHANGED index
-  /\ UNCHANGED <<mode, phase, rec, rebuild, progress, walked, progMode, restarts>>
+  /\ UNCHANGED <<mode, phase, rec, rebuild, progress, walked, progMode, restarts, unfilled>>
 
 \* A drain while open, of a deferred index: the entry the record names goes and one
 \* at the live value comes in.
@@ -176,21 +215,21 @@ Drain(d) ==
   /\ index' = (index \ {<<d, rec[d]>>}) \cup {<<d, value[d]>>}   \* old entry out, live one in
   /\ rec' = [rec EXCEPT ![d] = value[d]]             \* the record follows
   /\ owed' = owed \ {d}                              \* the log is truncated for d
-  /\ UNCHANGED <<mode, phase, value, rebuild, progress, walked, progMode, restarts>>
+  /\ UNCHANGED <<mode, phase, value, rebuild, progress, walked, progMode, restarts, unfilled>>
 
 \* A crash or a stop, then a start that may keep the index the other way. What
-\* was durable stays: the store, the owed rebuild and its saved progress.
+\* was durable stays: the store, the owed rebuild, the backfill and their progress.
 Restart(m) ==
   /\ restarts < MaxRestarts                          \* bounded starts
   /\ restarts' = restarts + 1                        \* one more start
   /\ mode' = m                                       \* this start's way
-  /\ phase' = "Check"                                \* it checks before it opens
-  /\ UNCHANGED <<value, index, rec, owed, rebuild, progress, walked, progMode>>
+  /\ phase' = First                                  \* the check, or the backfill, goes first
+  /\ UNCHANGED <<value, index, rec, owed, rebuild, progress, walked, progMode, unfilled>>
 
 \* Any one step happens next.
 Next ==
-  \/ CheckAtOpen \/ RebuildClear
-  \/ \E d \in Docs : RebuildWalk(d) \/ Write(d) \/ Drain(d)
+  \/ CheckAtOpen \/ RebuildClear \/ BackfillDone
+  \/ \E d \in Docs : RebuildWalk(d) \/ BackfillPage(d) \/ Write(d) \/ Drain(d)
   \/ \E m \in Modes : Restart(m)
 
 \* Start in Init and take any steps.

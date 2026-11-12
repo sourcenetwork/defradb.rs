@@ -576,6 +576,7 @@ RUNS=(
   "MC_DeferredIndexMode_Red_OneWay.cfg DeferredIndexMode.tla RED" # the check misses a deferred index that opens inline (INV_OpenMatchesMode)
   "MC_DeferredIndexMode_Red_KeepRecords.cfg DeferredIndexMode.tla RED" # an inline rebuild keeps stale records that hide the next change (INV_OpenMatchesMode)
   "MC_DeferredIndexMode_Red_NoProgressReset.cfg DeferredIndexMode.tla RED" # a rebuild resumed under the other way mixes both (INV_OpenMatchesMode)
+  "MC_DeferredIndexMode_Red_BackfillFirst.cfg DeferredIndexMode.tla RED" # a stopped backfill resumes before the check, which then misses it (INV_OpenMatchesMode)
   "MC_DeferredDrainTask_Green.cfg DeferredDrainTask.tla GREEN" # owed work is always asked for, and a quiet index settles under steady traffic
   "MC_DeferredDrainTask_Red_StopAtFailure.cfg DeferredDrainTask.tla RED" # a failing index ends the pass and the rest is forgotten (INV_OwedKept)
   "MC_DeferredDrainTask_Red_DropFailed.cfg DeferredDrainTask.tla RED" # a failed drain drops its request (INV_OwedKept)

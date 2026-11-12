@@ -21,6 +21,7 @@ use schema::{
     CType, CollectionVersion, CrdtName, FieldDescription, FieldKind, IndexKind,
     IndexedFieldDescription, OrderedIndexDescription,
 };
+use storage::corekv::Key as _;
 use storage::keys::datastore::{IndexDataStoreKey, IndexedField};
 use storage::{RegolithStore, RegolithStoreOptions};
 
@@ -639,5 +640,153 @@ fn an_index_that_becomes_inline_is_rebuilt_at_open() {
         );
         node.db.close().await.unwrap();
     })
+    .unwrap()
+}
+
+/// The collection's short id and the short ids of `docs`.
+async fn short_ids<const N: usize>(node: &Node, docs: [&document::DocID; N]) -> (u32, [u64; N]) {
+    let short_id = node
+        .db
+        .require_collection(COLLECTION)
+        .unwrap()
+        .resolved_root_id();
+    let txn = node.db.new_txn(true).await.unwrap();
+    let systemstore = txn.systemstore().unwrap();
+    let mut ids = [0; N];
+    for (id, doc) in ids.iter_mut().zip(docs) {
+        *id = db::docid::map::get_doc_short_id(&systemstore, short_id, &doc.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    (short_id, ids)
+}
+
+/// Every key under `prefix`.
+async fn keys_of(db: &DB<RegolithStore>, prefix: Vec<u8>) -> Vec<Vec<u8>> {
+    let txn = db.new_txn(true).await.unwrap();
+    let datastore = txn.datastore().unwrap();
+    let mut iter = storage::corekv::Reader::iterator(
+        &datastore,
+        storage::corekv::IterOptions::new()
+            .with_prefix(prefix)
+            .with_keys_only(true),
+    )
+    .await
+    .unwrap();
+    let mut keys = Vec::new();
+    while let Some(pair) = storage::corekv::Iterator::next(&mut iter).await.unwrap() {
+        keys.push(pair.key);
+    }
+    keys
+}
+
+/// Leaves the store as a crash part way through the index's backfill does:
+/// the first document indexed, the second (at 2) not yet, and the progress saved.
+async fn stop_backfill_after_first(node: &Node, first: &document::DocID, second: &document::DocID) {
+    let (short_id, [first, second]) = short_ids(node, [first, second]).await;
+    let index_id = node.index_id;
+    let at_two = IndexDataStoreKey::new(
+        short_id,
+        index_id,
+        vec![IndexedField::ascending(NormalValue::Int(2))],
+    )
+    .try_bytes()
+    .unwrap();
+    let entries = keys_of(&node.db, at_two).await;
+    assert_eq!(entries.len(), 1, "the second document had an entry");
+    let txn = node.db.new_txn(false).await.unwrap();
+    let datastore = txn.datastore().unwrap();
+    for key in entries {
+        datastore.delete(&key).await.unwrap();
+    }
+    datastore
+        .delete(&storage::keys::index_position_key(
+            short_id, index_id, second,
+        ))
+        .await
+        .unwrap();
+    let systemstore = txn.systemstore().unwrap();
+    let subject = index_id.to_string();
+    systemstore
+        .set(
+            &storage::keys::systemstore::ActionStatusKey::with_subject(
+                COLLECTION_ID,
+                defra_core::Action::BACKFILL_INDEX,
+                subject.clone(),
+            )
+            .bytes(),
+            &db::database::action::encode_status(defra_core::ActionStatus::IN_PROGRESS),
+        )
+        .await
+        .unwrap();
+    systemstore
+        .set(
+            &storage::keys::systemstore::ActionProgressKey::new(
+                COLLECTION_ID,
+                defra_core::Action::BACKFILL_INDEX,
+                subject,
+            )
+            .bytes(),
+            &db::index::backfill::encode_progress(second + 1, first),
+        )
+        .await
+        .unwrap();
+    drop((datastore, systemstore));
+    txn.commit().await.unwrap();
+}
+
+/// A backfill a crash stopped part way on a start that kept the index one
+/// way resumes on a start that keeps it the other way. The check at open
+/// runs first, so the documents indexed before the crash are rebuilt too.
+async fn a_stopped_backfill_resumes_the_other_way(before: Crdts, after: Crdts, deferred: bool) {
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = {
+        let node = Node::on_disk(dir.path(), Some(before), true).await;
+        let (a, b) = (node.create(1).await, node.create(2).await);
+        stop_backfill_after_first(&node, &a, &b).await;
+        node.db.close().await.unwrap();
+        (a, b)
+    };
+
+    let node = Node::on_disk(dir.path(), Some(after), false).await;
+    assert_eq!(
+        node.deferred_state().await,
+        (if deferred { 2 } else { 0 }, 0),
+        "a record for every document exactly when kept deferred"
+    );
+    if deferred {
+        node.increment(&a, 4).await;
+        node.increment(&b, 4).await;
+    }
+    let (at_a, at_b) = if deferred { (5, 6) } else { (1, 2) };
+    assert_eq!(
+        node.entries([1, 2, 5, 6]).await,
+        (
+            2,
+            [1, 2, 5, 6].map(|value| (value, usize::from(value == at_a || value == at_b)))
+        ),
+        "one entry per document, at its value"
+    );
+    node.db.close().await.unwrap();
+}
+
+#[test]
+fn a_backfill_stopped_inline_resumes_deferred() {
+    workers::block_on(a_stopped_backfill_resumes_the_other_way(
+        with_inline_type(),
+        with_type(),
+        true,
+    ))
+    .unwrap()
+}
+
+#[test]
+fn a_backfill_stopped_deferred_resumes_inline() {
+    workers::block_on(a_stopped_backfill_resumes_the_other_way(
+        with_type(),
+        with_inline_type(),
+        false,
+    ))
     .unwrap()
 }
