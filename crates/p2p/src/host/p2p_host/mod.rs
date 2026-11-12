@@ -306,6 +306,13 @@ pub struct P2PHost<S: Store> {
     /// `ActivePeers` after `Disconnect` no longer lists it, as in Go.
     pub(super) pending_disconnects:
         RapidHashMap<PeerId, Vec<crate::rt::oneshot::Sender<Result<()>>>>,
+    /// Peers that dialed us and have not identified yet: their address is
+    /// still the connection's source port, which nothing listens on.
+    pub(super) unidentified: RapidHashSet<PeerId>,
+    /// `ActivePeers` replies held until every connected peer has identified
+    /// (or failed to), so each lists the peer's listen address, as Go's
+    /// does from its first moment.
+    pub(super) pending_peer_addresses: Vec<crate::rt::oneshot::Sender<Vec<String>>>,
     /// Optional local DEFRA identity used for Go-compatible identity exchange.
     pub(super) node_identity: Option<Arc<identity::RawIdentity>>,
     /// Tracks established connections and actively prunes them after the
@@ -619,6 +626,8 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
             )),
             peer_addrs: RapidHashMap::new(),
             pending_disconnects: RapidHashMap::new(),
+            unidentified: RapidHashSet::new(),
+            pending_peer_addresses: Vec::new(),
             node_identity,
             connection_manager: ActiveConnectionManager::new(
                 config.connection_manager_low_water,

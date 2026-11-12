@@ -2854,6 +2854,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/p2p/tests/iroh/gossip_raw_origin.rs sealed_payload_opens_to_its_origin, a_truncated_seal_is_refused_not_passed_through, an_unsealed_cbor_payload_passes_through",
     },
     Property {
+        family: "ActivePeers listen addresses",
+        name: "INV_ListenAddress / LIVE_Answered: ActivePeers never lists a peer that dialed in at its source port while its Identify may still come, and every call is answered",
+        axis: Tla,
+        anchor: "crates/p2p/src/host/command_handler/network.rs handle_peer_addresses, answer_peer_addresses; crates/p2p/src/host/p2p_host/swarm.rs handle_swarm_event (ConnectionEstablished), handle_connection_closed; crates/p2p/src/host/p2p_host/protocols.rs handle_identify_event",
+        model_ref: "MC_ActivePeersIdentify_{Green,Red_AnswerAtOnce}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/p2p/src/host/active_peers_tests.rs active_peers_lists_a_dialer_at_its_listen_address_before_its_identify",
+    },
+    Property {
         // The first shutdown caller to swap the flag builds the one drain,
         // which owns the only completion sender; a closed edge hands the
         // drain back and the winner runs it in place. The drain waits for

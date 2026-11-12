@@ -104,15 +104,46 @@ impl<S: Store> P2PHost<S> {
         }
     }
 
-    pub(super) fn handle_peer_addresses(&self, response: crate::rt::oneshot::Sender<Vec<String>>) {
+    /// Answer `ActivePeers` once every connected peer that dialed us has
+    /// identified. Until then its address is the connection's source port,
+    /// not its listen address (#2774); the reply waits for the peer's Identify,
+    /// whose failure or timeout, or the peer's disconnect, also ends the wait.
+    pub(super) fn handle_peer_addresses(
+        &mut self,
+        response: crate::rt::oneshot::Sender<Vec<String>>,
+    ) {
+        self.pending_peer_addresses.push(response);
+        self.answer_peer_addresses();
+    }
+
+    /// The peer's Identify arrived or failed: release any `ActivePeers` reply
+    /// it held.
+    pub(in crate::host) fn on_identify_settled(&mut self, peer_id: PeerId) {
+        self.unidentified.remove(&peer_id);
+        self.answer_peer_addresses();
+    }
+
+    /// Send the held `ActivePeers` replies if no connected peer still awaits
+    /// its Identify.
+    pub(in crate::host) fn answer_peer_addresses(&mut self) {
+        if self.pending_peer_addresses.is_empty()
+            || self
+                .unidentified
+                .iter()
+                .any(|peer| self.swarm.is_connected(peer))
+        {
+            return;
+        }
         // Build full multiaddrs for connected peers (matches Go's ActivePeers).
         let connected: RapidHashSet<PeerId> = self.swarm.connected_peers().cloned().collect();
         let addrs: Vec<String> = connected
             .iter()
             .filter_map(|pid| self.peer_addrs.get(pid).map(|addr| peer_address(addr, pid)))
             .collect();
-        if response.send(addrs).is_err() {
-            debug!("PeerAddresses command response dropped - caller cancelled");
+        for response in self.pending_peer_addresses.drain(..) {
+            if response.send(addrs.clone()).is_err() {
+                debug!("PeerAddresses command response dropped - caller cancelled");
+            }
         }
     }
 }
