@@ -134,3 +134,81 @@ async fn stalled_transport_times_out_and_transient_rpc_errors_are_retryable() {
         task.join().await.unwrap();
     }
 }
+
+/// A well-formed consensus key; no receipt in these tests is verified against it.
+const TRUSTED_KEY: &str = "92b050b6fbe80695b5d56835e978918e37c8707a7fad09a01ae782d4c3170c9baa4c2c196b36eac6b78ceb210b287aeb0727ef1c60e48042142f7bcc8b6382305cd50c5a4542c44ec72a4de6640c194f8ef36bea1dbed168ab6fd8681d910d55";
+
+/// Answers every call with a fixed result and records what it was asked.
+struct Recorded {
+    result: Value,
+    calls: regolith::sync::Mutex<Vec<(String, Value, usize)>>,
+}
+
+impl RpcTransport for Recorded {
+    fn call<'a>(
+        &'a self,
+        method: &'a str,
+        params: Value,
+        max_bytes: usize,
+    ) -> MaybeBoxFuture<'a, Result<Value, ClientError>> {
+        Box::pin(async move {
+            self.calls
+                .lock()
+                .await
+                .push((method.to_owned(), params, max_bytes));
+            Ok(self.result.clone())
+        })
+    }
+}
+
+#[nuclei::test]
+async fn injected_transport_keeps_the_submission_and_receipt_checks() {
+    let signer = vera_client::BlsSigner::random(9001).unwrap();
+    let wire = signer
+        .sign_native_tx_with_sequence(Address::ZERO, Bytes::new(), 0)
+        .unwrap();
+    let hash = NativeTx::decode_wire(&wire).unwrap().tx_id().0;
+    for returned in [B256::ZERO, hash] {
+        let transport = Arc::new(Recorded {
+            result: json!(returned),
+            calls: regolith::sync::Mutex::new(Vec::new()),
+        });
+        let client = VeraRsClient::with_transport(transport.clone());
+        let result = client.send(&wire).await;
+        if returned == hash {
+            assert_eq!(result.unwrap(), hash);
+        } else {
+            assert!(matches!(
+                result,
+                Err(ClientError::InvalidResponse("submission ID mismatch"))
+            ));
+        }
+        assert_eq!(
+            *transport.calls.lock().await,
+            [(
+                "vera_sendNativeTx".to_owned(),
+                json!([Bytes::copy_from_slice(&wire)]),
+                4096
+            )]
+        );
+    }
+
+    let absent = Arc::new(Recorded {
+        result: Value::Null,
+        calls: regolith::sync::Mutex::new(Vec::new()),
+    });
+    let trusted = {
+        use commonware_codec::DecodeExt as _;
+        ConsensusPublicKey::decode(hex::decode(TRUSTED_KEY).unwrap()).unwrap()
+    };
+    let client = VeraRsClient::with_transport(absent.clone());
+    assert!(client.receipt(hash, &trusted).await.unwrap().is_none());
+    assert_eq!(
+        *absent.calls.lock().await,
+        [(
+            "vera_getReceiptProof".to_owned(),
+            json!([hash]),
+            RECEIPT_RESPONSE_BYTES
+        )]
+    );
+}

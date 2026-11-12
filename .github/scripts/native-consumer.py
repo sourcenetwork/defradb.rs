@@ -19,6 +19,7 @@ UNIT_NAMES = (
     "abi::tests::set_relationship_subject_object_edge_round_trips",
     "bearer::tests::bearer_token_uses_vera_rs_es256k_shape",
     "bearer::tests::invalid_lifetime_is_rejected",
+    "client::tests::injected_transport_keeps_the_submission_and_receipt_checks",
     "client::tests::rpc_binds_response_and_requires_a_result",
     "client::tests::rpc_enforces_declared_and_streamed_byte_limits",
     "client::tests::stalled_transport_times_out_and_transient_rpc_errors_are_retryable",
