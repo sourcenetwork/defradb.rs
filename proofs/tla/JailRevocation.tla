@@ -24,20 +24,26 @@ CONSTANTS
   Peers,             \* who each node can talk to
   CheaterKeys,       \* every key the cheater could make
   HonestKey,         \* the honest writer's key
+  RestoreKey,        \* the key a restored writer would mint
   WriterHome,        \* the node the honest writer writes on
   Budget,            \* how many cheater keys the admin will admit
   CheckMembership,   \* GREEN TRUE; RED_FreeKeys FALSE: merge from any key
   CheckEvidence,     \* GREEN TRUE; RED_AclOnly FALSE: membership ignores the fork proof
-  RetryOnAdmission   \* GREEN TRUE; RED_DropEarly FALSE: a block that came early is never merged
+  RetryOnAdmission,  \* GREEN TRUE; RED_DropEarly FALSE: a block that came early is never merged
+  RotateOnRestore,   \* GREEN TRUE; RED_KeepKey FALSE: a restored writer keeps its old key
+  Restores           \* the scenario: whether the writer is ever restored from a backup
 
-Keys == CheaterKeys \cup {HonestKey}   \* every key that can sign
+HonestKeys == {HonestKey, RestoreKey}  \* the honest writer's keys, before and after restore
+Keys == CheaterKeys \cup HonestKeys    \* every key that can sign
 
-ASSUME HonestKey \notin CheaterKeys                          \* the writer is not the cheater
+ASSUME HonestKeys \cap CheaterKeys = {}                      \* the writer is not the cheater
+ASSUME HonestKey # RestoreKey                                \* restoring mints a different key
 ASSUME WriterHome \in Nodes                                  \* it writes on a real node
 ASSUME Peers \in [Nodes -> SUBSET Nodes]                     \* links between nodes
 ASSUME \A n \in Nodes : \A m \in Peers[n] : n \in Peers[m]   \* links go both ways
 ASSUME Budget \in Nat                                        \* a count of admissions
 ASSUME CheckMembership \in BOOLEAN /\ CheckEvidence \in BOOLEAN /\ RetryOnAdmission \in BOOLEAN
+ASSUME RotateOnRestore \in BOOLEAN /\ Restores \in BOOLEAN
 
 \* A block: its signing key, the version (two versions are a fork). One height
 \* is enough here: the fork itself is the only conflict there is.
@@ -92,6 +98,7 @@ Receive(n, b) ==
 \* within Budget. It cannot tell which cheater key is which person's; Budget
 \* is how much admitting costs.
 Admit(k) ==
+  /\ k \in CheaterKeys \cup {HonestKey} \cup (IF Restores THEN {RestoreKey} ELSE {})  \* a key that can write here
   /\ k \notin admitted                                    \* a new admission
   /\ k \in CheaterKeys => Cardinality(admitted \cap CheaterKeys) < Budget  \* the cost
   /\ admitted' = admitted \cup {k}
@@ -118,6 +125,23 @@ Write ==
   LET b == [a |-> HonestKey, v |-> 1]
   IN /\ HonestKey \in admitted                            \* only after admission
      /\ b \notin produced                                 \* writes it once
+     /\ produced' = produced \cup {b}
+     /\ Receive(WriterHome, b)
+     /\ UNCHANGED <<admitted, known>>
+
+\* The writer is restored from a backup taken before its first block, so it
+\* has forgotten that block (which its peers may already hold) and writes
+\* again. With RotateOnRestore it signs with a new key, which must be
+\* admitted first; without it, it signs again with the old key, and its new
+\* block and the forgotten one are two blocks by one key, neither building
+\* on the other: to everyone else, a fork.
+RestoreAndWrite ==
+  LET b == IF RotateOnRestore THEN [a |-> RestoreKey, v |-> 1]   \* new key, first block
+                              ELSE [a |-> HonestKey, v |-> 2]    \* old key, a second version
+  IN /\ Restores                                               \* only in a restore scenario
+     /\ [a |-> HonestKey, v |-> 1] \in produced                 \* it wrote before the backup point
+     /\ b.a \in admitted                                         \* only an admitted key writes
+     /\ b \notin produced                                        \* restores once
      /\ produced' = produced \cup {b}
      /\ Receive(WriterHome, b)
      /\ UNCHANGED <<admitted, known>>
@@ -155,6 +179,7 @@ Next ==
   \/ \E n \in Nodes, k \in Keys : Learn(n, k)
   \/ \E n \in Nodes, b \in Block : Retry(n, b)
   \/ Write
+  \/ RestoreAndWrite
   \/ \E b \in Block : Sign(b)
   \/ \E b \in Block, n \in Nodes : Show(b, n)
   \/ \E n, m \in Nodes, b \in Block : Relay(n, m, b)
@@ -182,7 +207,11 @@ INV_CheaterWithinBudget ==
 \* No node ever merges a block from a key it holds a fork proof against.
 INV_NoMergeAfterProof == ~lateMerge
 
-\* Once the honest writer's block exists, every node ends up merging it.
+\* No node ever holds a fork proof against an honest key: a restore is never
+\* a wrongful conviction.
+INV_NoWrongfulRevocation == \A n \in Nodes : \A k \in HonestKeys : ~Forked(seen[n], k)
+
+\* Once the honest writer's first block exists, every node ends up merging it.
 HonestBlock == [a |-> HonestKey, v |-> 1]
 PROP_AdmittedWritesLand == (HonestBlock \in produced) ~> (\A n \in Nodes : HonestBlock \in merged[n])
 ====
