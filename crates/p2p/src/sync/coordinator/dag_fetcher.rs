@@ -28,6 +28,7 @@ use super::fetch_logs::{log_exhausted, log_no_progress_batch, log_retry};
 use super::provider_health::ProviderHealth;
 use super::DagFetchLimiter;
 use crate::sync::arbitration::AttemptSample;
+use crate::sync::car::MAX_HAVE_CIDS;
 use crate::sync::manager::links::find_all_missing_links;
 use crate::sync::manager::SyncEvent;
 use crate::sync::manager::{FetchCompletion, SyncDiagnostics};
@@ -187,6 +188,8 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
             emit_dag_ready(&event_tx, root_cid, &context, &root_data).await;
             return (FetchTaskEnd::Settled, AttemptSample::Complete);
         }
+        let haves = root_haves(blockstore.as_ref(), &root_data, context.haves()).await;
+        context = context.with_haves(haves);
     }
 
     // A durable provider identity is reconnectable, not continuously
@@ -806,6 +809,34 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
     }
 }
 
+/// The haves for a root this node already holds: the root's merged heads
+/// first, then `haves`, up to [`MAX_HAVE_CIDS`]. The root's heads are where
+/// its missing history meets what is held here, so naming them keeps a
+/// provider from re-sending history below a fork deeper than `haves` reach.
+async fn root_haves<B>(blockstore: &B, root_data: &[u8], haves: &[Cid]) -> Vec<Cid>
+where
+    B: Blockstore,
+{
+    let mut named = Vec::with_capacity(MAX_HAVE_CIDS);
+    if let Ok(block) = defra_core::Block::from_dag_cbor(root_data) {
+        for head in block.heads.unwrap_or_default() {
+            if named.len() >= MAX_HAVE_CIDS {
+                break;
+            }
+            if matches!(blockstore.is_merged(&head).await, Ok(true)) {
+                named.push(head);
+            }
+        }
+    }
+    for have in haves {
+        if !named.contains(have) {
+            named.push(*have);
+        }
+    }
+    named.truncate(MAX_HAVE_CIDS);
+    named
+}
+
 /// A shed attempt with no delivery proves saturation, not an unfetchable DAG:
 /// a busy hub's alternates often do not hold a fresh write yet and answer empty.
 /// A batch that every provider shed releases as busy directly, without this.
@@ -873,7 +904,7 @@ async fn poll_fetch_rooted_car<B: Blockstore, T: P2PTransport>(
 
     match crate::rt::time::timeout(
         Duration::from_secs(10),
-        transport.send_car_request(source_peer, *root_cid),
+        transport.send_car_request_with_haves(source_peer, *root_cid, context.haves().to_vec()),
     )
     .await
     {
@@ -993,6 +1024,7 @@ async fn poll_fetch_rooted_provider<B: Blockstore, T: P2PTransport>(
             vec![source_peer.clone()],
             watch_cids.to_vec(),
             depth.get(),
+            context.haves().to_vec(),
         )
         .await
     {
@@ -1323,6 +1355,7 @@ async fn poll_fetch_blocks<B: Blockstore, T: P2PTransport>(
             vec![source_peer.clone()],
             missing.clone(),
             depth.get(),
+            context.haves().to_vec(),
         )
         .await
     {

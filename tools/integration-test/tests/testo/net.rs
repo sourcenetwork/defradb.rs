@@ -76,6 +76,7 @@ mod simple {
     }
 }
 mod sync {
+    mod exact_fetch;
     mod branchable_collection {
         mod complex_network;
         mod simple;

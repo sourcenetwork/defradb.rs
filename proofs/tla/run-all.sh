@@ -11,6 +11,14 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 # event to the settled rest (depth = events + 1), and DEADLOCK:<l> stops with
 # event l next (past the end when l = events + 1).
 RUNS=(
+  "MC_DocumentUpdateJournal_Green.cfg DocumentUpdateJournal.tla GREEN"
+  "MC_DocumentUpdateJournal_Red_Detached.cfg DocumentUpdateJournal.tla RED"
+  "MC_DocumentUpdateJournal_Red_Duplicate.cfg DocumentUpdateJournal.tla RED"
+  "MC_DocumentUpdateJournal_Red_Superseded.cfg DocumentUpdateJournal.tla RED"
+  "MC_DocumentUpdateJournal_Red_Authorization.cfg DocumentUpdateJournal.tla RED"
+  "MC_DocumentUpdateJournal_Red_Deleted.cfg DocumentUpdateJournal.tla RED"
+  "MC_DocumentUpdateJournal_Red_Stale.cfg DocumentUpdateJournal.tla RED"
+  "MC_DocumentUpdateJournal_Red_Skip.cfg DocumentUpdateJournal.tla RED"
   "MC_UsersetRelationManager_Green.cfg UsersetRelationManager.tla GREEN"
   "MC_UsersetRelationManager_Red_Owner.cfg UsersetRelationManager.tla RED"
   "MC_UsersetRelationManager_Red_Direct.cfg UsersetRelationManager.tla RED"
@@ -201,6 +209,16 @@ RUNS=(
   "MC_DepthCutFetch_Green.cfg DepthCutFetch.tla GREEN" # a depth-cut DAG fetch re-sends little held history, in logarithmic rounds, and completes
   "MC_DepthCutFetch_Red_Unbounded.cfg DepthCutFetch.tla RED" # the provider ignores the cut (INV_HistoryNotResent)
   "MC_DepthCutFetch_Red_NoWiden.cfg DepthCutFetch.tla RED" # the receiver never widens the cut (INV_RoundsLogarithmic)
+  "MC_ExactDagFetch_Green.cfg ExactDagFetch.tla GREEN" # a fetch naming its haves is sent only what it lacks, in one request, and merges
+  "MC_ExactDagFetch_Green_Liar.cfg ExactDagFetch.tla GREEN" # a lying provider gets no forgery stored and no incomplete DAG merged
+  "MC_ExactDagFetch_Red_NoHaves.cfg ExactDagFetch.tla RED" # the provider ignores the haves (INV_HeldNotResent)
+  "MC_ExactDagFetch_Red_Fifo.cfg ExactDagFetch.tla RED" # the walk pops out of priority order (INV_HeldNotResent)
+  "MC_ExactDagFetch_Red_FlipWant.cfg ExactDagFetch.tla RED" # held overrides a block asked for by name (INV_RoundsBounded)
+  "MC_ExactDagFetch_Red_TrustProvider.cfg ExactDagFetch.tla RED" # the receiver merges on the provider's word (INV_MergeComplete)
+  "MC_ExactDagFetch_Red_SkipCid.cfg ExactDagFetch.tla RED" # the receiver skips the CID check (INV_NoForged)
+  "MC_HeldBlockIngest_Green.cfg HeldBlockIngest.tla GREEN" # ingest owns only the blocks it stores; one writer per mark, no contention on held blocks
+  "MC_HeldBlockIngest_Red_NoOwners.cfg HeldBlockIngest.tla RED" # ingest owns nothing (INV_OneMarkWriter)
+  "MC_HeldBlockIngest_Red_OwnHeld.cfg HeldBlockIngest.tla RED" # ingest also owns held blocks (INV_HeldNeverContends)
   "MC_DocumentPush_Red_Ownership.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Selection.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Grant.cfg DocumentPush.tla RED"

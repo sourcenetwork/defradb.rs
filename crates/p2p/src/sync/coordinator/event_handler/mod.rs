@@ -750,13 +750,13 @@ mod tests {
     use crate::{QueryId, ReplicatorInfo};
 
     #[derive(Clone)]
-    struct TestTransport {
+    pub(super) struct TestTransport {
         peer_id: PeerId,
         pubkey: Vec<u8>,
     }
 
     impl TestTransport {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             Self {
                 peer_id: PeerId::new("local-peer".to_string()),
                 pubkey: vec![1, 2, 3],
@@ -975,7 +975,7 @@ mod tests {
         }
     }
 
-    fn create_lww_block(field_name: &str) -> (Cid, Vec<u8>) {
+    pub(super) fn create_lww_block(field_name: &str) -> (Cid, Vec<u8>) {
         let block = Block::new(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: field_name.to_string(),
@@ -991,7 +991,11 @@ mod tests {
         (cid, bytes)
     }
 
-    fn create_composite_block(_doc_id: &str, field_name: &str, field_cid: Cid) -> (Cid, Vec<u8>) {
+    pub(super) fn create_composite_block(
+        _doc_id: &str,
+        field_name: &str,
+        field_cid: Cid,
+    ) -> (Cid, Vec<u8>) {
         let block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
                 collection_version_id: "schema1".to_string(),
@@ -1611,3 +1615,7 @@ mod tests {
         assert!(events.try_recv().is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/car_ingest_held.rs"]
+mod car_ingest_held;

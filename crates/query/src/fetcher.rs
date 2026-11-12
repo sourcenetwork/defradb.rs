@@ -391,6 +391,21 @@ pub trait DocFetcher: MaybeSendSync {
         ))
     }
 
+    /// Read committed updates in local commit order, as `reader` may see
+    /// them. The rows, their documents' deletion state and the access decision
+    /// are read in one transaction: this fetcher's own, or one opened for the
+    /// page.
+    async fn get_document_updates(
+        &self,
+        options: &DocumentUpdateOptions,
+        reader: &DocumentReader<'_>,
+    ) -> Result<DocumentUpdatePage> {
+        let _ = (options, reader);
+        Err(crate::error::QueryError::execution(
+            "document update queries are unsupported",
+        ))
+    }
+
     /// The conflicts of a Json field of one document: for each path, the
     /// concurrent edits its winner beat.
     async fn get_json_conflicts(&self, options: &JsonConflictOptions) -> Result<Vec<JsonConflict>> {
@@ -767,4 +782,53 @@ pub struct DocumentArrivalPage {
 pub struct DocumentArrival {
     pub cursor: u64,
     pub doc_id: String,
+}
+
+/// A node-local update cursor, scoped to one collection. Updates made before
+/// the journal was installed are not reconstructed from historical blocks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentUpdateOptions {
+    /// Collection whose local update journal is read.
+    pub collection: String,
+    /// Exclusive checkpoint in the local journal.
+    pub after: u64,
+    /// Maximum raw rows examined before authorization filtering.
+    pub limit: u64,
+}
+
+/// Who reads a page of the update journal, and what decides for them.
+pub struct DocumentReader<'request> {
+    /// The request the page serves.
+    pub context: &'request defra_core::RequestContext,
+    /// The provider that decides document access. A fetcher that opens the
+    /// page's transaction binds it to that transaction.
+    pub acp: &'request dyn acp::DocumentACP,
+    /// Registrations the page's transaction still owes the provider.
+    pub projection: Option<&'request crate::txn::AcpRegistrationProjection>,
+    /// The caller.
+    pub identity: &'request acp::Identity,
+}
+
+/// A page observed in one transaction snapshot. `next` includes rows hidden
+/// by authorization or by a deleted document, and an empty page therefore
+/// need not mean an empty log.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DocumentUpdatePage {
+    /// Highest committed cursor in this snapshot.
+    pub head: u64,
+    /// Last scanned cursor, including rows not visible to the caller.
+    pub next: u64,
+    /// Updates the caller is permitted to read.
+    pub entries: Vec<DocumentUpdate>,
+}
+
+/// Identity of one locally committed document update.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentUpdate {
+    /// Local commit-order position.
+    pub cursor: u64,
+    /// The updated document.
+    pub doc_id: String,
+    /// Composite block identifying this update.
+    pub cid: String,
 }

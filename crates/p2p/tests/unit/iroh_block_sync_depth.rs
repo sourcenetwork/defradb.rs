@@ -20,13 +20,14 @@ async fn serve_capturing(endpoint: Endpoint, root: cid::Cid) -> CarFetchRequest 
     request
 }
 
-/// The receiver's depth cut reaches the provider on the wire, and a sync
-/// without one still asks for the whole closure.
+/// The receiver's depth cut and haves reach the provider on the wire, and a
+/// sync without them still asks for the whole closure.
 #[nuclei::test]
 async fn block_sync_sends_the_receivers_depth_cut() {
     edge::compat(async {
         nuclei::time::timeout(std::time::Duration::from_secs(10), async {
-            for max_depth in [Some(3), None] {
+            let held = cid::Cid::new_v1(0x71, Code::Sha2_256.digest(b"held"));
+            for (max_depth, haves) in [(Some(3), vec![held]), (None, Vec::new())] {
                 let client = tests::localhost_endpoint(vec![]).await;
                 let provider_endpoint =
                     tests::localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
@@ -62,6 +63,7 @@ async fn block_sync_sends_the_receivers_depth_cut() {
                     vec![provider],
                     vec![root],
                     max_depth,
+                    haves.clone(),
                 )
                 .await;
 
@@ -73,7 +75,8 @@ async fn block_sync_sends_the_receivers_depth_cut() {
                 let expected = CarFetchRequest {
                     max_depth,
                     ..CarFetchRequest::selective_dag(root, vec![root])
-                };
+                }
+                .with_haves(haves);
                 assert_eq!(serve_task.join().await.unwrap(), expected);
                 provider_endpoint.close().await;
             }

@@ -4232,6 +4232,71 @@ fn first_materialization_arrivals_include_peer_batches_once() {
 }
 
 #[test]
+fn peer_update_is_discovered_once_by_committed_cursor() {
+    workers::block_on(async {
+        let (handler, blockstore, _) = make_handler_with_schema_and_bus().await;
+        let collection = handler
+            .db()
+            .find_collection_by_id("col-users")
+            .unwrap()
+            .unwrap();
+        let mut doc = Document::new(collection.schema_arc());
+        doc.set("name", "before").unwrap();
+        doc.set_collection_version_id("v1");
+        let (doc_id, _, created) = create_doc_locally(&handler, &collection, &mut doc).await;
+        let mut changed_value = Vec::new();
+        ciborium::into_writer(&NormalValue::String("after".into()), &mut changed_value).unwrap();
+        let field = Block::new(
+            CrdtDelta::Lww(LwwDeltaPayload {
+                field_name: "name".into(),
+                collection_version_id: "v1".into(),
+                priority: 2,
+                data: changed_value,
+            }),
+            created.field_cids,
+            vec![],
+        );
+        let field_cid = field.generate_cid().unwrap();
+        blockstore
+            .put(&field_cid, &field.to_dag_cbor().unwrap())
+            .await
+            .unwrap();
+        let payload = CompositeDeltaPayload {
+            collection_version_id: "v1".into(),
+            priority: 7,
+            status: 1,
+        };
+        let block = Block::new(
+            CrdtDelta::Composite(payload.clone()),
+            vec![created.cid],
+            vec![DAGLink::new("name", field_cid)],
+        );
+        let cid = block.generate_cid().unwrap();
+        blockstore
+            .put(&cid, &block.to_dag_cbor().unwrap())
+            .await
+            .unwrap();
+        let id = doc_id.to_string();
+        let metadata =
+            BlockMetadata::normal(&id, "col-users", "did:key:z6MkrBatchMergeTest", None, false);
+        handler
+            .process_composite_delta(&cid, &block, &payload, &metadata, false, 0)
+            .await
+            .unwrap();
+        handler
+            .process_composite_delta(&cid, &block, &payload, &metadata, false, 0)
+            .await
+            .unwrap();
+        let page = super::update_journal::journal(handler.db()).await;
+        assert_eq!(page.head, 1);
+        assert_eq!(page.entries.len(), 1);
+        assert_eq!(page.entries[0].doc_id, id);
+        assert_eq!(page.entries[0].cid, cid.to_string());
+    })
+    .unwrap();
+}
+
+#[test]
 fn first_materialization_and_local_create_arrive_in_commit_order() {
     workers::block_on(async {
         use query::fetcher::{DocFetcher, DocumentArrivalOptions};

@@ -159,7 +159,10 @@ impl Node {
                 .map_err(|e| Error::InvalidConfig(format!("vera.rs provider: {}", e)))?,
             );
 
-            let document_acp = Arc::new(vera::VeraDocumentACP::without_access_cache(provider));
+            let document_acp = Arc::new(
+                vera::VeraDocumentACP::without_access_cache(provider)
+                    .on_network(edge, tuning.request_timeout),
+            );
             let dac_policies = db::DacPolicies::remote(document_acp.clone(), zanzibar_store);
 
             info!("Document ACP configured (vera.rs)");

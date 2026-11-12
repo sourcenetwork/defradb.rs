@@ -55,6 +55,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | CID content-addressing determinism + Block canonicalization | Lean | defra-core |
 | Deferred-ACP overlay consistency | TLA+ | query |
 | Order-preserving key encoding | Lean | storage |
+| vera.rs actor spelling | Lean | vera |
 | DiskANN resident code table | Lean | db-index |
 | DiskANN walk cutoff | Lean | db-index (vector) |
 | PQ distance four sums | Lean | db-index (vector) |
@@ -62,6 +63,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Index-maintenance consistency | Lean + TLA+ | db-index, db-merge |
 | Concurrent collection-head transitions | TLA+ & Lean | db-block-builder, storage |
 | Commit-ordered document arrivals | TLA+ | db, storage (pinned regolith) |
+| Committed document update discovery | TLA+ & Lean | db, db-merge, query |
 | DiskANN pending cache | TLA+ & Lean | db-index (vector), storage |
 | DiskANN shared quantizer | TLA+ & Lean | db-index (vector), db-write |
 | RobustPrune blocked covered checks | Lean | db-index (vector), defra-core |
@@ -86,6 +88,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Iroh solicited replies | TLA+ | p2p |
 | Reply-driven DAG fetch | TLA+ | p2p |
 | Depth-cut DAG fetch | TLA+, Lean | p2p |
+| Have-set DAG fetch | TLA+, Lean | p2p |
 | Index drop during backfill | TLA+ | db-index |
 | Purge by DocID | TLA+ | db |
 | Replication filter | TLA+ | db-merge |
@@ -223,6 +226,7 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 | P2P capability replay gate | Boundary | P2P-wire internal |
 | JWT issuer / algorithm binding | Boundary | DID-binding via `acp.rs`; forge unreachable via CLI |
 | Order-preserving key encoding | Boundary | ordered query may sort in memory; consts `pub(crate)` |
+| vera.rs actor spelling | Boundary | over an abstract key; that distinct keys have distinct spellings is the `did:key` encoding's injectivity; unit tests in `crates/vera/src/vera_rs/did_spelling.rs`, live case `actor_spelling` |
 | DiskANN resident code table | Boundary | in-memory search cache, not observable on the wire; `DiskAnnCodes`; unit tests in `crates/db/tests/vector/diskann_resident.rs` |
 | P2P delivery liveness | Behavioral (trace) + Boundary | `model_trace.rs` replays recorded runs through `Trace_P2PDelivery.tla`; eventual connectivity, the bounded instance and the restart scenarios stay Boundary |
 | Cursor tokens | Boundary | `CursorToken`; tokens pinned by `crates/cursor/tests/go_fixtures.rs` |

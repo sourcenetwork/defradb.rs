@@ -225,6 +225,27 @@ impl NodeBuilder {
         self
     }
 
+    /// Configure the node to use document ACP backed by a vera.rs node.
+    ///
+    /// Requires the `vera` feature (on by default).
+    #[cfg(feature = "vera")]
+    pub fn with_vera_rs(mut self, config: crate::VeraRsConfig) -> Self {
+        self.config.document_acp = DocumentAcpConfig::VeraRs(config);
+        self
+    }
+
+    /// Use a document ACP provider the host built, for example one over a
+    /// Vera node it runs itself. The node wires it as it wires
+    /// [`with_vera_rs`](Self::with_vera_rs): verified access decisions without
+    /// a cache, remote policies mirrored locally, owed registrations gated.
+    ///
+    /// Requires the `vera` feature (on by default).
+    #[cfg(feature = "vera")]
+    pub fn with_document_acp_provider(mut self, provider: crate::DocumentAcpProvider) -> Self {
+        self.config.document_acp = DocumentAcpConfig::Provider(provider);
+        self
+    }
+
     /// Use an identity already registered in DefraDB's process-local signing registry.
     ///
     /// The caller must register the signer before calling [`NodeBuilder::build`].

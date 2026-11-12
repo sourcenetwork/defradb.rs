@@ -228,7 +228,9 @@ where
             &mut alternate_providers,
         )
         .await;
+        let haves = coordinator.document_haves(&doc_id).await;
         let context = DagFetchContext::new(doc_id, collection_id, creator, source_peer)
+            .with_haves(haves)
             .with_alternate_providers(alternate_providers)
             .with_explicit_replicator(is_explicit_replicator)
             .with_explicit_replay_authorization(explicit_replay_authorization)

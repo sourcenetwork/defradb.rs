@@ -6,6 +6,8 @@ mod busy_provider_rotation;
 mod car_size_retry;
 #[path = "../../../tests/unit/dag_fetch_depth.rs"]
 mod dag_fetch_depth;
+#[path = "../../../tests/unit/dag_fetch_haves.rs"]
+mod dag_fetch_haves;
 #[path = "../../../tests/unit/dag_fetch_logs.rs"]
 mod dag_fetch_logs;
 #[path = "../../../tests/unit/dispatch_merge_fifo.rs"]
@@ -693,12 +695,14 @@ impl P2PTransport for TestTransport {
         providers: Vec<PeerId>,
         missing: Vec<Cid>,
         max_depth: u32,
+        haves: Vec<Cid>,
     ) -> P2PResult<QueryId> {
         let provider = self.closure_provider.load().as_deref().cloned();
         if let Some(provider) = provider {
-            let collected = crate::sync::car::collect_dag_blocks_within(
+            let collected = crate::sync::car::collect_missing_region(
                 provider.as_ref(),
                 &missing,
+                &haves,
                 Some(max_depth),
             )
             .await?;

@@ -47,3 +47,4 @@ mod signature_blocks;
 mod single_root_batch;
 mod synced_definition_cache;
 mod text_merge;
+mod update_journal;

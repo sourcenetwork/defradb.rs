@@ -24,6 +24,12 @@ pub enum DocumentAcpConfig {
         config: VeraConfig,
         lcd_address: String,
     },
+    /// Document ACP via a vera.rs node.
+    #[cfg(feature = "vera")]
+    VeraRs(crate::VeraRsConfig),
+    /// Document ACP via a provider the host built.
+    #[cfg(feature = "vera")]
+    Provider(crate::DocumentAcpProvider),
 }
 
 /// Vera document ACP configuration.
