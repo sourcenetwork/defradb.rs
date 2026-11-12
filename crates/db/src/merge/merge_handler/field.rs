@@ -26,6 +26,9 @@ pub struct FieldMergeResult {
     /// The custom CRDT type of a block this node lacks: the block changed
     /// nothing, and its composite parks it.
     pub(crate) parked: Option<schema::CrdtName>,
+    /// A state that lost to a different state already stored: the field keeps
+    /// the value it had. A repeat of the stored state is not superseded.
+    pub(crate) superseded: bool,
 }
 
 impl FieldMergeResult {
@@ -137,6 +140,7 @@ where
                     deferred: true,
                     op: None,
                     parked: Some(crdt),
+                    superseded: false,
                 })
             }
             Err(error) => return Err(MergeError::UnsupportedDelta(error.to_string())),

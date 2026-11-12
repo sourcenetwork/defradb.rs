@@ -4234,7 +4234,6 @@ fn first_materialization_arrivals_include_peer_batches_once() {
 #[test]
 fn peer_update_is_discovered_once_by_committed_cursor() {
     workers::block_on(async {
-        use query::fetcher::{DocFetcher, DocumentUpdateOptions};
         let (handler, blockstore, _) = make_handler_with_schema_and_bus().await;
         let collection = handler
             .db()
@@ -4288,14 +4287,7 @@ fn peer_update_is_discovered_once_by_committed_cursor() {
             .process_composite_delta(&cid, &block, &payload, &metadata, false, 0)
             .await
             .unwrap();
-        let page = db::LensedAutoCommitFetcher::new(handler.db().clone())
-            .get_document_updates(&DocumentUpdateOptions {
-                collection: "Users".into(),
-                after: 0,
-                limit: 10,
-            })
-            .await
-            .unwrap();
+        let page = super::update_journal::journal(handler.db()).await;
         assert_eq!(page.head, 1);
         assert_eq!(page.entries.len(), 1);
         assert_eq!(page.entries[0].doc_id, id);

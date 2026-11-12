@@ -391,11 +391,16 @@ pub trait DocFetcher: MaybeSendSync {
         ))
     }
 
+    /// Read committed updates in local commit order, as `reader` may see
+    /// them. The rows, their documents' deletion state and the access decision
+    /// are read in one transaction: this fetcher's own, or one opened for the
+    /// page.
     async fn get_document_updates(
         &self,
         options: &DocumentUpdateOptions,
+        reader: &DocumentReader<'_>,
     ) -> Result<DocumentUpdatePage> {
-        let _ = options;
+        let _ = (options, reader);
         Err(crate::error::QueryError::execution(
             "document update queries are unsupported",
         ))
@@ -791,8 +796,22 @@ pub struct DocumentUpdateOptions {
     pub limit: u64,
 }
 
+/// Who reads a page of the update journal, and what decides for them.
+pub struct DocumentReader<'request> {
+    /// The request the page serves.
+    pub context: &'request defra_core::RequestContext,
+    /// The provider that decides document access. A fetcher that opens the
+    /// page's transaction binds it to that transaction.
+    pub acp: &'request dyn acp::DocumentACP,
+    /// Registrations the page's transaction still owes the provider.
+    pub projection: Option<&'request crate::txn::AcpRegistrationProjection>,
+    /// The caller.
+    pub identity: &'request acp::Identity,
+}
+
 /// A page observed in one transaction snapshot. `next` includes rows hidden
-/// by authorization, and an empty page therefore need not mean an empty log.
+/// by authorization or by a deleted document, and an empty page therefore
+/// need not mean an empty log.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DocumentUpdatePage {
     /// Highest committed cursor in this snapshot.

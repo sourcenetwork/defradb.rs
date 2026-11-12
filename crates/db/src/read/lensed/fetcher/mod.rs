@@ -513,10 +513,11 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
     async fn get_document_updates(
         &self,
         options: &query::fetcher::DocumentUpdateOptions,
+        reader: &query::fetcher::DocumentReader<'_>,
     ) -> query::error::Result<query::fetcher::DocumentUpdatePage> {
-        crate::event::updates::read(&*self.shared_txn()?, options)
+        crate::event::updates::read(&*self.shared_txn()?, options, reader)
             .await
-            .map_err(|error| query::error::QueryError::execution(error.to_string()))
+            .map_err(crate::event::updates::query_error)
     }
 
     async fn get_json_conflicts(
