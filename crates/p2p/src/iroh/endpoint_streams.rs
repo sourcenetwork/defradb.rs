@@ -214,16 +214,19 @@ pub(super) async fn adopt_new_connection(
             &b"peer revoked"[..],
         ),
     };
+    let revoked = !admitted && lifecycle.admission.is_revoked(&remote_id);
     if !admitted {
         warn!(peer_id = %peer_id, "Closing Iroh connection: peer was refused while it was adopted");
+        // Close with the typed code first: QUIC keeps the first close, and the
+        // peer-wide close below would otherwise send the disconnect code.
+        connection.close(code.into(), reason);
         // The allowlist only governs connections to us, so a miss spares the
         // sibling this node dialed; a revoke bars the peer outright.
-        if lifecycle.admission.is_revoked(&remote_id) {
+        if revoked {
             close_peer_connections(&lifecycle.peer_map, cache, &remote_id);
         } else {
             restore_displaced_connection(cache, &connection, displaced);
         }
-        connection.close(code.into(), reason);
     }
 
     // The pump owns the count from here, and with it the `PeerConnected`
@@ -243,9 +246,17 @@ pub(super) async fn adopt_new_connection(
         )));
     }
     if !admitted {
-        return Err(Error::Dial(format!(
-            "dial to {peer_id} raced a revoke: connection closed"
-        )));
+        return Err(Error::Dial(match (direction, revoked) {
+            (ConnectionDirection::Outbound, _) => {
+                format!("dial to {peer_id} raced a revoke: connection closed")
+            }
+            (ConnectionDirection::Inbound, true) => {
+                format!("inbound connection from revoked peer {peer_id} refused")
+            }
+            (ConnectionDirection::Inbound, false) => {
+                format!("inbound connection from {peer_id} refused by the allowlist")
+            }
+        }));
     }
 
     cache.gossip.connected(remote_id, &connection);
