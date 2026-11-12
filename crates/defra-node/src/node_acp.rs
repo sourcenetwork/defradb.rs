@@ -116,21 +116,20 @@ where
                 .await
                 .map_err(Error::VeraProvider)?,
             );
-            // Access decisions are verified per request against current evidence, not cached.
-            let vera_acp = Arc::new(
-                vera::VeraDocumentACP::without_access_cache(provider)
-                    .on_network(&edge, config.tuning.request_timeout),
-            );
-            let dac_policies = vera_policies(&vera_acp, &store);
-            let (document_acp, redrive) = gate_external_acp(vera_acp.clone(), store);
-            Ok(DocumentAcpSetup {
-                document_acp,
-                local_zanzibar_store: None,
-                dac_policies,
-                vera_acp: Some(vera_acp),
-                redrive: Some(redrive),
-            })
+            Ok(verified_acp_setup(
+                provider,
+                &edge,
+                config.tuning.request_timeout,
+                store,
+            ))
         }
+        #[cfg(feature = "vera")]
+        crate::DocumentAcpConfig::Provider(host) => Ok(verified_acp_setup(
+            Arc::clone(&host.provider),
+            &remote_edge(network)?,
+            host.request_timeout,
+            store,
+        )),
         crate::DocumentAcpConfig::Local => {
             // Memory and disk profiles both share the engine with document rows.
             let zanzibar_store = Arc::new(acp::PersistentZanzibarStore::from_store(store));
@@ -147,6 +146,33 @@ fn remote_edge(network: Option<&edge::Edge>) -> Result<edge::Edge> {
     match network {
         Some(edge) => Ok(edge.clone()),
         None => edge::on_demand().cloned().map_err(Error::EdgeRuntime),
+    }
+}
+
+/// Document ACP over a provider whose reads are verified: access decisions
+/// run on `edge` and are not cached, the provider's policies are mirrored into
+/// `store`, and owed registrations are gated and redriven.
+#[cfg(feature = "vera")]
+fn verified_acp_setup<S>(
+    provider: Arc<dyn vera::VeraProvider>,
+    edge: &edge::Edge,
+    request_timeout: std::time::Duration,
+    store: Arc<S>,
+) -> DocumentAcpSetup
+where
+    S: storage::corekv::Store + 'static,
+{
+    let vera_acp = Arc::new(
+        vera::VeraDocumentACP::without_access_cache(provider).on_network(edge, request_timeout),
+    );
+    let dac_policies = vera_policies(&vera_acp, &store);
+    let (document_acp, redrive) = gate_external_acp(vera_acp.clone(), store);
+    DocumentAcpSetup {
+        document_acp,
+        local_zanzibar_store: None,
+        dac_policies,
+        vera_acp: Some(vera_acp),
+        redrive: Some(redrive),
     }
 }
 

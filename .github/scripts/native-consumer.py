@@ -47,6 +47,7 @@ LIVE_CASES = (
     ("writer-update", "policy_generations::strict_replication::native_replicated_update_accepts_granted_writer"),
     ("writer-delete", "policy_generations::strict_replication::native_replicated_delete_accepts_granted_writer"),
     ("node-builder", "node_builder::node_built_with_vera_rs_enforces_verified_document_access"),
+    ("node-provider", "node_builder::node_built_with_a_host_provider_enforces_verified_document_access"),
 )
 CARGO = ["cargo", "+1.99.1"]
 BUILD = ["--release", "--frozen", "-j", "2"]
