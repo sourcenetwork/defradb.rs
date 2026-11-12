@@ -7,6 +7,7 @@ mod provider_commands;
 mod transport;
 mod worker;
 
+pub use acp_light_client::{AcpTransport, HeaderStream};
 pub use client::{ClientError, VeraRsClient};
 pub use provider::VeraRsProvider;
 pub use transport::RpcTransport;
