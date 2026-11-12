@@ -184,6 +184,13 @@ pub enum ClientError {
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Receipt(#[from] vera_domain::ReceiptResponseError),
+    /// A transport other than HTTP could not carry the call.
+    #[error("transport: {message}")]
+    Transport {
+        /// Whether the same call may succeed if sent again.
+        retryable: bool,
+        message: String,
+    },
 }
 
 impl ClientError {
@@ -193,6 +200,10 @@ impl ClientError {
             Self::Http(_)
                 | Self::Rpc {
                     code: -32002 | -32000,
+                    ..
+                }
+                | Self::Transport {
+                    retryable: true,
                     ..
                 }
         )

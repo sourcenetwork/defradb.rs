@@ -24,6 +24,7 @@ UNIT_NAMES = (
     "client::tests::rpc_enforces_declared_and_streamed_byte_limits",
     "client::tests::stalled_transport_times_out_and_transient_rpc_errors_are_retryable",
     "client::tests::submission_id_must_match_locally_signed_bytes",
+    "client::tests::transport_failures_say_whether_the_call_may_be_sent_again",
     "provider::tests::resolve_registered_or_passthrough_bearer_token_builds_local_secp256k1_token",
     "provider::tests::resolve_registered_or_passthrough_bearer_token_uses_request_token_for_remote_identity",
     "provider::tests::trusted_consensus_key_is_required_before_connecting",
