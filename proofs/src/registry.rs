@@ -2029,7 +2029,7 @@ pub const PROPERTIES: &[Property] = &[
         name: "INV_ReadExact — a read through a deferred index finds exactly the matching documents",
         axis: Tla,
         anchor: "crates/db/src/index/deferred",
-        model_ref: "MC_DeferredIndex_{Green,Green_Drains,Red_NoOverlay,Red_NoOwnAppends,Red_UnvalidatedRecord,Red_TruncateHead,Red_ValidatedTxRecord}.cfg",
+        model_ref: "MC_DeferredIndex_{Green,Green_Deep,Green_Drains,Red_NoOverlay,Red_NoOwnAppends,Red_UnvalidatedRecord,Red_TruncateHead,Red_ValidatedTxRecord}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },

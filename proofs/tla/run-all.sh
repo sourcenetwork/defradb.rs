@@ -558,6 +558,7 @@ RUNS=(
   "MC_MergedFieldIndex_Green_Clear.cfg MergedFieldIndex.tla GREEN" # a field write drops the kept read instead of updating it
   "MC_MergedFieldIndex_Red_StaleCache.cfg MergedFieldIndex.tla RED" # a field write leaves the kept read stale, so the next block loses an edit (INV_NoLostEdit)
   "MC_DeferredIndex_Green.cfg DeferredIndex.tla GREEN" # reads through a deferred index are exact while drains catch up
+  "MC_DeferredIndex_Green_Deep.cfg DeferredIndex.tla GREEN" # the same with one drain and a third write
   "MC_DeferredIndex_Green_Drains.cfg DeferredIndex.tla GREEN" # every owed document is eventually drained
   "MC_DeferredIndex_Red_NoOverlay.cfg DeferredIndex.tla RED" # a read trusts stale stored entries (INV_ReadExact)
   "MC_DeferredIndex_Red_NoOwnAppends.cfg DeferredIndex.tla RED" # a transaction misses its own increments (INV_TxReadExact)
