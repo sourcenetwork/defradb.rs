@@ -230,7 +230,7 @@ pub(super) async fn handle_command(
                     let _ = reply.send(Ok(MessageId::new(uuid::Uuid::new_v4().to_string())));
                 }
                 Err(crate::error::Error::GossipTooLarge { .. }) => {
-                    let peers = direct_push::peers(gossip, &topic, &msg);
+                    let peers = direct_push::peers(resources, &topic, &msg);
                     let resources = resources.clone();
                     let _ = spawn_task(spawned_tasks, async move {
                         let _ = reply.send(direct_push::push(&resources, peers, &msg).await);

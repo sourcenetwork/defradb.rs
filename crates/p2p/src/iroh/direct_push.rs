@@ -1,10 +1,12 @@
-//! An update too large for gossip, pushed to the topic's neighbours on the
-//! PushLog stream instead.
+//! An update too large for gossip, pushed on the PushLog stream instead.
 //!
 //! iroh-gossip drops a broadcast over its budget, so a block bigger than that
-//! would reach no subscriber. The neighbours gossip would have sent it to get
-//! it as a direct PushLog request, which a node accepts for any collection it
-//! subscribes to. Modeled in `proofs/tla/GossipDelivery.tla`.
+//! would reach no subscriber. A node takes a relayed gossip head only from an
+//! origin it is connected to, so the peers a small update reaches are the
+//! connected peers subscribed to its collection. The large one goes to every
+//! connected peer as a direct PushLog request, which a node accepts for any
+//! collection it subscribes to and refuses as access denied otherwise.
+//! Modeled in `proofs/tla/GossipDelivery.tla`.
 
 use futures::future::join_all;
 
@@ -15,26 +17,33 @@ use crate::transport::{MessageId, PeerId};
 
 use super::endpoint::{peer_direct_addr, EndpointResources};
 use super::endpoint_rpc::handle_request_response;
-use super::gossip::GossipHandle;
 use super::protocols::STREAM_PUSHLOG;
 
-/// The neighbours on `topic` to push `msg` to. A document topic leaves out
-/// the collection topic's neighbours, which its publish reaches.
-pub(super) fn peers(gossip: &GossipHandle, topic: &str, msg: &PushLogBroadcast) -> Vec<PeerId> {
-    let peers = gossip.topic_peers(topic);
-    let collection = DefraTopic::collection(msg.collection_id.as_str()).to_string();
-    if topic == collection {
-        return peers;
+/// Direct pushes of one update in flight at once.
+const FANOUT: usize = 8;
+
+/// How a peer that does not subscribe to the collection answers a push
+/// (`handle_pushlog_request`).
+const NOT_SUBSCRIBED: &str = "access denied:";
+
+/// The peers to push `msg` to. Its collection topic's publish goes to every
+/// connected peer; its document topic's goes to none, since a peer accepts a
+/// direct push only for a collection it subscribes to, and the collection
+/// topic's publish reaches every such peer.
+pub(super) fn peers(
+    resources: &EndpointResources,
+    topic: &str,
+    msg: &PushLogBroadcast,
+) -> Vec<PeerId> {
+    if topic != DefraTopic::collection(msg.collection_id.as_str()).to_string() {
+        return Vec::new();
     }
-    let reached = gossip.topic_peers(&collection);
-    peers
-        .into_iter()
-        .filter(|peer| !reached.contains(peer))
-        .collect()
+    resources.peer_map.connected_peers()
 }
 
-/// Pushes `msg` to every peer in `peers`, and answers once each one replied:
-/// an error names every peer that did not take it.
+/// Pushes `msg` to every peer in `peers`, at most `FANOUT` at once, and answers
+/// once each one replied: an error names every peer that subscribes to the
+/// collection and did not take it.
 pub(super) async fn push(
     resources: &EndpointResources,
     peers: Vec<PeerId>,
@@ -49,12 +58,16 @@ pub(super) async fn push(
     );
     request.message_id = uuid::Uuid::new_v4().to_string();
     request.supports_same_stream_reply = true;
-    let replies = join_all(peers.iter().map(|peer| push_one(resources, peer, &request))).await;
-    let failed: Vec<String> = peers
-        .iter()
-        .zip(replies)
-        .filter_map(|(peer, reply)| reply.err().map(|error| format!("{peer}: {error}")))
-        .collect();
+    let mut failed = Vec::new();
+    // ponytail: waves of FANOUT, so one slow peer holds its wave; a rolling window if that shows.
+    for wave in peers.chunks(FANOUT) {
+        let replies = join_all(wave.iter().map(|peer| push_one(resources, peer, &request))).await;
+        failed.extend(
+            wave.iter()
+                .zip(replies)
+                .filter_map(|(peer, reply)| reply.err().map(|error| format!("{peer}: {error}"))),
+        );
+    }
     if failed.is_empty() {
         return Ok(MessageId::new(request.message_id));
     }
@@ -67,6 +80,8 @@ pub(super) async fn push(
     )))
 }
 
+/// Pushes to one peer. A peer that does not subscribe to the collection is
+/// not owed the update, so its refusal is no failure.
 async fn push_one(
     resources: &EndpointResources,
     peer: &PeerId,
@@ -83,6 +98,7 @@ async fn push_one(
     )
     .await?;
     match reply.err_message {
+        Some(error) if error.starts_with(NOT_SUBSCRIBED) => Ok(()),
         Some(error) => Err(Error::GossipSubPublish(error)),
         None => Ok(()),
     }

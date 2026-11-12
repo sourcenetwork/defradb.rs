@@ -131,10 +131,10 @@ async fn a_refused_direct_push_is_reported_to_the_publisher() {
     stop(nodes).await;
 }
 
-/// A document topic leaves out the peers its collection topic reaches, so a
-/// peer on both gets one push.
+/// A document topic's publish pushes to nobody: the collection topic's
+/// publish reaches every peer a direct push is for, so a peer gets one push.
 #[nuclei::test(threads = 0)]
-async fn a_document_topic_push_skips_the_collection_topics_neighbours() {
+async fn a_document_topic_publish_leaves_the_push_to_the_collection_topic() {
     let collection = DefraTopic::collection("collection");
     let mut nodes = neighbours(&collection).await;
     let document = DefraTopic::document("doc");
@@ -156,6 +156,77 @@ async fn a_document_topic_push_skips_the_collection_topics_neighbours() {
     a.publish(document, update(3 * MAX_BROADCAST))
         .await
         .expect("nobody left to push to on the document topic");
+    stop(nodes).await;
+}
+
+/// More subscribers than gossip keeps as neighbours: a small update reaches
+/// every one (each takes a relayed head from the connected origin), so the
+/// large one must too, not only the active view.
+#[nuclei::test(threads = 0)]
+async fn an_update_too_large_for_gossip_reaches_every_connected_subscriber() {
+    const SUBSCRIBERS: usize = 7;
+    let topic = DefraTopic::collection("collection");
+    let publisher = node().await;
+    let mut subscribers = Vec::new();
+    for _ in 0..SUBSCRIBERS {
+        let subscriber = node().await;
+        publisher
+            .0
+            .dial(
+                subscriber.0.local_peer_id(),
+                subscriber.0.listen_addresses().await.unwrap(),
+            )
+            .await
+            .unwrap();
+        publisher
+            .0
+            .poll_until_connected(subscriber.0.local_peer_id(), Duration::from_secs(5))
+            .await
+            .unwrap();
+        subscriber.0.subscribe(topic.clone()).await.unwrap();
+        subscribers.push(subscriber);
+    }
+    publisher.0.subscribe(topic.clone()).await.unwrap();
+    let neighbours = publisher.0.topic_peers(topic.clone()).await.unwrap();
+    assert!(
+        neighbours.len() < SUBSCRIBERS,
+        "the active view holds {} of {SUBSCRIBERS}",
+        neighbours.len()
+    );
+
+    let msg = update(3 * MAX_BROADCAST);
+    let answers = futures::future::join_all(
+        subscribers
+            .iter_mut()
+            .map(|(transport, events, _)| answer_push(transport, events, PushLogReply::success)),
+    );
+    let (published, requests) = futures::join!(publisher.0.publish(topic, msg.clone()), answers);
+    published.expect("every subscriber took the block");
+    assert_eq!(requests.len(), SUBSCRIBERS);
+    assert!(requests.iter().all(|request| request.block == msg.block));
+
+    for (transport, _, task) in subscribers.into_iter().chain([publisher]) {
+        transport.shutdown().await.unwrap();
+        task.await.unwrap();
+    }
+}
+
+/// A connected peer that does not subscribe to the collection refuses the
+/// push as access denied. It was never owed the update, so the publish
+/// succeeds.
+#[nuclei::test(threads = 0)]
+async fn a_peer_that_does_not_subscribe_is_not_owed_the_update() {
+    let topic = DefraTopic::collection("collection");
+    let mut nodes = neighbours(&topic).await;
+    let [(a, ..), (b, b_events, _)] = &mut nodes;
+    let (published, _) = futures::join!(
+        a.publish(topic.clone(), update(3 * MAX_BROADCAST)),
+        answer_push(b, b_events, |id| PushLogReply::error(
+            id,
+            "access denied: not authorized for collection collection"
+        )),
+    );
+    published.expect("a peer that does not subscribe is not a failure");
     stop(nodes).await;
 }
 

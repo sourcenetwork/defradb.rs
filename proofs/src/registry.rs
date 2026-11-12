@@ -2418,7 +2418,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Gossip connection ownership",
         name: "INV_NoSilentLoss / INV_BroadcastFits",
         axis: Tla,
-        anchor: "crates/p2p/src/iroh/gossip/mod.rs GossipHandle::publish; crates/p2p/src/iroh/gossip/driver.rs write_stream, write_queue; crates/p2p/src/iroh/endpoint_commands.rs handle_command; crates/p2p/src/iroh/direct_push.rs peers, push, push_one",
+        anchor: "crates/p2p/src/iroh/gossip/mod.rs GossipHandle::publish; crates/p2p/src/iroh/gossip/driver.rs write_stream, write_queue; crates/p2p/src/iroh/endpoint_commands.rs handle_command; crates/p2p/src/iroh/direct_push.rs peers, push, push_one, FANOUT",
         model_ref: "MC_GossipDelivery_Green.cfg",
         tiers: &[Boundary],
         bound_by: "",
