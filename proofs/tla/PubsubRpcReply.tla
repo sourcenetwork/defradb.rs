@@ -50,8 +50,10 @@
 \*   | AnswerPublisher   | `from` is HostEvent::GossipRawMessage's `source`, the       |
 \*   |                   | message's signed author (protocols.rs, then                 |
 \*   |                   | handle_gossip_raw_message in crates/p2p/src/sync/           |
-\*   |                   | coordinator/event_handler/pubsub_raw.rs); RED: the          |
-\*   |                   | propagation_source, as before #2773                         |
+\*   |                   | coordinator/event_handler/pubsub_raw.rs); on iroh, the      |
+\*   |                   | key that sealed the payload (raw_publisher in               |
+\*   |                   | crates/p2p/src/iroh/gossip/delivery.rs, raw_origin.rs).     |
+\*   |                   | RED: the propagation_source, as before #2773                |
 \*   | inflight          | a reply published but not yet read by the reply loop's      |
 \*   |                   | `prep.responses.recv()`                                     |
 \*   | Arrive(p)         | that read, on the asker's own `_response` topic (got), or   |
@@ -68,6 +70,10 @@
 \*   * A reply on the asker's topic reaches the asker unless the deadline
 \*     comes first: the asker is connected to every peer it counts
 \*     (expected_responses is its topic peers).
+\*   * On iroh, an unsealed payload from a node that predates sealing is
+\*     accepted only straight from its sender, so it is a "direct" delivery;
+\*     a relayed unsealed one is dropped, the deadline's case again. The
+\*     sealing itself is proved in proofs/lean/GossipFrame/RawOrigin.lean.
 
 CONSTANTS Asker, Peers, AnswerPublisher
 \* Asker is the node that asks; Peers are the nodes that answer. When
@@ -91,8 +97,8 @@ VARIABLES via, answered, inflight, got, lost, done
 vars == <<via, answered, inflight, got, lost, done>>
 \* Every variable, for the stuttering steps.
 
+\* Promise: every variable holds a value of its kind.
 TypeOK ==
-  \* Every variable holds a value of its kind.
   /\ via \in [Peers -> {"none", Asker} \cup Peers]
   \* each peer got the request from nobody yet, the asker, or a peer;
   /\ answered \subseteq Peers

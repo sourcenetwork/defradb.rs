@@ -407,6 +407,8 @@ impl P2PTransport for IrohTransport {
     }
 
     async fn publish_raw(&self, topic: String, data: Vec<u8>) -> Result<MessageId> {
+        // Sealed with our key: gossip relays name only themselves (#2773).
+        let data = super::gossip::raw_origin::seal(&self.secret_key, &topic, &data)?;
         self.send_command(|reply| IrohCommand::PublishRaw { topic, data, reply })
             .await
     }

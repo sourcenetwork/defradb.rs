@@ -825,6 +825,14 @@ mod tests {
             Ok(true)
         }
 
+        async fn subscribe_raw(&self, _topic: String) -> P2PResult<bool> {
+            Ok(true)
+        }
+
+        async fn publish_raw(&self, _topic: String, _data: Vec<u8>) -> P2PResult<MessageId> {
+            Ok(MessageId::new("noop".to_string()))
+        }
+
         async fn publish(
             &self,
             _topic: DefraTopic,
@@ -1617,6 +1625,84 @@ mod tests {
             Ok(SyncEvent::DagNeedsFetch { .. })
         ));
         assert!(events.try_recv().is_err());
+    }
+    /// A KMS request a neighbour relayed is authorized and answered as its
+    /// publisher (`source`), never as the relay (`propagation_source`), #2773.
+    #[cfg(feature = "kms")]
+    #[nuclei::test(threads = 0)]
+    async fn relayed_kms_request_reaches_the_handler_as_its_publisher() {
+        use kms::{
+            FetchEncryptionKeyReply, FetchEncryptionKeyRequest, IncomingHandler, KeyTransport,
+        };
+        use kovan::AtomOption;
+
+        struct NoIdentity;
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl crate::peer_identity::PeerIdentityResolver for NoIdentity {
+            async fn resolve(&self, _peer_id: &PeerId) -> Option<identity::Did> {
+                None
+            }
+        }
+
+        struct SeenBy(Arc<AtomOption<String>>);
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl IncomingHandler for SeenBy {
+            async fn handle(
+                &self,
+                from: kms::PeerIdentity,
+                _req: FetchEncryptionKeyRequest,
+            ) -> kms::Result<FetchEncryptionKeyReply> {
+                self.0.store_some(from.peer_id);
+                Ok(FetchEncryptionKeyReply {
+                    links: Vec::new(),
+                    blocks: Vec::new(),
+                    ephemeral_public_key: vec![1; 32],
+                })
+            }
+        }
+
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(DefraBlockstore::new(store, true));
+        let (coordinator, _events) = SyncCoordinator::new(
+            TestTransport::new(),
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
+        let kms_transport = crate::kms::PubsubKeyTransport::new(
+            TestTransport::new(),
+            Arc::new(NoIdentity),
+            edge::testing::edge(),
+        )
+        .await
+        .expect("kms transport");
+        let seen = Arc::new(AtomOption::none());
+        kms_transport.install_handler(Arc::new(SeenBy(seen.clone())));
+        coordinator.install_kms_transport(kms_transport);
+
+        let request = FetchEncryptionKeyRequest {
+            identity: Vec::new(),
+            links: vec![vec![1]],
+            ephemeral_public_key: vec![2; 32],
+            explicit_replay_capability: None,
+        };
+        coordinator
+            .handle_transport_event(TransportEvent::GossipRawMessage {
+                propagation_source: PeerId::new("relay-peer".to_string()),
+                source: PeerId::new("asker-peer".to_string()),
+                message_id: MessageId::new("m".to_string()),
+                topic: crate::topics::ENCRYPTION_TOPIC.to_string(),
+                data: defra_core::cbor::to_vec(&request).unwrap(),
+            })
+            .await
+            .expect("handled");
+
+        let seen_by = seen.load().map(|peer| (*peer).clone());
+        assert_eq!(seen_by.as_deref(), Some("asker-peer"));
     }
 }
 
