@@ -206,7 +206,10 @@ fn a_node_with_no_peer_takes_no_head_hint() {
             false
         })
         .await;
-        assert!(!matches!(heard, Ok(true)), "a node with no peer took a head hint");
+        assert!(
+            !matches!(heard, Ok(true)),
+            "a node with no peer took a head hint"
+        );
         a.shutdown().await;
         b.shutdown().await;
         lonely.shutdown().await;
