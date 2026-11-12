@@ -1388,6 +1388,19 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // Design model ahead of code: nothing detects a fork or jails a peer
+        // yet. The anchor is the signature check the fork proof relies on.
+        // It proves exclusion of one key, not deterrence: a new key is free,
+        // so deterrence needs costly identities, decided outside the model.
+        family: "Single-writer chain jail",
+        name: "INV_NoWrongfulJail / INV_NoForkMerged / PROP_EveryoneJails: only a signed fork jails an author, a jailed fork is never merged, and the proof reaches every honest node",
+        axis: Tla,
+        anchor: "crates/defra-node/src/ops/block.rs verify_block_signature",
+        model_ref: "MC_ChainJail_{Green,Red_Hearsay,Red_NoJail,Red_NoGossip}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // Verify-before-merge fires only on the P2P merge path; injecting a
         // forged/unsigned block needs an adversarial peer, not reachable through
         // the public CLI. Rust makes signature verification mandatory (model->code

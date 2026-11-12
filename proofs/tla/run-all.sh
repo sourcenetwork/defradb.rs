@@ -443,6 +443,10 @@ RUNS=(
   "MC_Claim_Unfiltered_Execution.cfg MC_Claim_Common.tla     RED"    # exec-unique fails (CAS race)
   "MC_Claim_Filtered_Execution.cfg   MC_Claim_Common.tla     RED"    # exec-unique fails (filtered)
   "MC_Claim_Split_Eventual.cfg       MC_Claim_Common.tla     RED"    # split same-DID breaks convergence
+  "MC_ChainJail_Green.cfg            MC_ChainJail_Common.tla GREEN"  # evidence-only jail, enforced, gossiped
+  "MC_ChainJail_Red_Hearsay.cfg      MC_ChainJail_Common.tla RED"    # jail on accusation alone (INV_NoWrongfulJail)
+  "MC_ChainJail_Red_NoJail.cfg       MC_ChainJail_Common.tla RED"    # fork seen, cheater still merged (INV_NoForkMerged)
+  "MC_ChainJail_Red_NoGossip.cfg     MC_ChainJail_Common.tla RED"    # proof never passed on (PROP_EveryoneJails)
   "MC_Kms_Green.cfg             MC_Kms_Gossip.tla            GREEN"  # KMS policy-gated
   "MC_Kms_NoPolicy_Red.cfg      MC_Kms_Gossip.tla            RED"    # KMS unauthorized obtains key
   "MC_Kms_BroadcastCiphertext_Red.cfg MC_Kms_Gossip.tla     RED"    # KMS ciphertext to non-recipient
