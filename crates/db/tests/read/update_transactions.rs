@@ -139,3 +139,66 @@ fn a_scan_returns_the_rows_of_its_collection_and_range_only() {
     })
     .unwrap();
 }
+
+/// Yields the pairs it was given, and says whether it was closed.
+struct Scripted {
+    pairs: std::collections::VecDeque<storage::corekv::KvPair>,
+    closed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl storage::corekv::private::Sealed for Scripted {}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+impl storage::corekv::Iterator for Scripted {
+    async fn next(&mut self) -> storage::corekv::Result<Option<storage::corekv::KvPair>> {
+        Ok(self.pairs.pop_front())
+    }
+
+    async fn close(&mut self) -> storage::corekv::Result<()> {
+        self.closed.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn seek(&mut self, _key: &[u8]) -> storage::corekv::Result<bool> {
+        Ok(false)
+    }
+
+    async fn reset(&mut self) -> storage::corekv::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_scan_is_closed_when_a_row_is_missing() {
+    workers::block_on(async {
+        let row = serde_json::to_vec(&Update {
+            doc_id: "doc".into(),
+            cid: "cid".into(),
+        })
+        .unwrap();
+        for (pairs, complete) in [
+            (vec![(row_key(1, 1), row.clone())], true),
+            // The second cursor is due and the third is found.
+            (
+                vec![(row_key(1, 1), row.clone()), (row_key(1, 3), row.clone())],
+                false,
+            ),
+            (vec![(row_key(1, 1), b"not a row".to_vec())], false),
+        ] {
+            let closed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let rows = pairs.len() as u64;
+            let scan = Box::new(Scripted {
+                pairs: pairs
+                    .into_iter()
+                    .map(|(key, value)| storage::corekv::KvPair::new(key, value))
+                    .collect(),
+                closed: closed.clone(),
+            });
+            let read = drain(scan, 1, 0, rows).await;
+            assert_eq!(read.is_ok(), complete, "{read:?}");
+            assert!(closed.load(std::sync::atomic::Ordering::SeqCst));
+        }
+    })
+    .unwrap();
+}

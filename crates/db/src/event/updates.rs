@@ -56,9 +56,15 @@ pub(crate) async fn record(
         .map_err(Error::Storage)
 }
 
-/// One page of the journal as `reader` may see it. The rows, their documents'
-/// deletion state and the access decision are all read in `txn`.
+/// One page of the journal as `reader` may see it.
+///
+/// `txn` reads the rows and their documents' deletion state. The reader's
+/// provider is bound to `txn`, so it decides on what `txn` reads. A provider
+/// that cannot be bound decides outside `txn`, on live state; what it admits
+/// is then confirmed alive in a snapshot taken after it decided, of `db` or
+/// of the store `txn` was begun on.
 pub(crate) async fn read<S>(
+    db: Option<&crate::database::DB<S>>,
     txn: &crate::txn::DbTxn<S>,
     options: &DocumentUpdateOptions,
     reader: &DocumentReader<'_>,
@@ -88,47 +94,35 @@ where
     }
     let next = head.min(options.after.saturating_add(options.limit.min(1024)));
     let rows = rows(&store, root, options.after, next).await?;
-    let mut gate = gate::Gate::new(txn, &collection, reader)?;
-    let mut entries = Vec::with_capacity(rows.len());
-    for (cursor, row) in rows {
-        if gate.admits(&row.doc_id).await? {
-            entries.push(DocumentUpdate {
-                cursor,
-                doc_id: row.doc_id,
-                cid: row.cid,
-            });
-        }
+
+    let bound = reader.acp.bind_transaction(txn.acpstore()?);
+    let reader = DocumentReader {
+        context: reader.context,
+        acp: bound.as_deref().unwrap_or(reader.acp),
+        projection: reader.projection,
+        identity: reader.identity,
+    };
+    let mut gate = gate::Gate::new(txn, &collection, &reader)?;
+    for (_, row) in &rows {
+        gate.decide(&row.doc_id).await?;
     }
+    if bound.is_none() {
+        gate.confirm(db, txn).await?;
+    }
+    let entries = rows
+        .into_iter()
+        .filter(|(_, row)| gate.admits(&row.doc_id))
+        .map(|(cursor, row)| DocumentUpdate {
+            cursor,
+            doc_id: row.doc_id,
+            cid: row.cid,
+        })
+        .collect();
     Ok(DocumentUpdatePage {
         head,
         next,
         entries,
     })
-}
-
-/// [`read`] for a fetcher that scopes no provider to its transaction: the
-/// reader's provider is bound to `txn` here, so it decides on what `txn`
-/// reads. A request's own read transaction hands over one already bound.
-pub(crate) async fn read_bound<S>(
-    txn: &crate::txn::DbTxn<S>,
-    options: &DocumentUpdateOptions,
-    reader: &DocumentReader<'_>,
-) -> Result<DocumentUpdatePage>
-where
-    S: Store,
-{
-    let bound = reader.acp.bind_transaction(txn.acpstore()?);
-    read(
-        txn,
-        options,
-        &DocumentReader {
-            context: reader.context,
-            acp: bound.as_deref().unwrap_or(reader.acp),
-            projection: reader.projection,
-            identity: reader.identity,
-        },
-    )
-    .await
 }
 
 /// A journal read's error as its query reports it: an access decision's own
@@ -149,17 +143,40 @@ async fn rows(
     after: u64,
     next: u64,
 ) -> Result<Vec<(u64, Update)>> {
-    let mut rows = Vec::with_capacity((next - after) as usize);
     if after == next {
-        return Ok(rows);
+        return Ok(Vec::new());
     }
-    let mut scan = store
+    let scan = store
         .iterator(
             IterOptions::new()
                 .with_prefix(row_prefix(collection))
                 .with_start(row_key(collection, after + 1)),
         )
         .await?;
+    drain(scan, collection, after, next).await
+}
+
+/// Read the page from `scan` and close it, whether or not every row was there.
+async fn drain(
+    mut scan: Box<dyn storage::corekv::Iterator>,
+    collection: u32,
+    after: u64,
+    next: u64,
+) -> Result<Vec<(u64, Update)>> {
+    let rows = scanned(scan.as_mut(), collection, after, next).await;
+    let closed = scan.close().await;
+    let rows = rows?;
+    closed?;
+    Ok(rows)
+}
+
+async fn scanned(
+    scan: &mut dyn storage::corekv::Iterator,
+    collection: u32,
+    after: u64,
+    next: u64,
+) -> Result<Vec<(u64, Update)>> {
+    let mut rows = Vec::with_capacity((next - after) as usize);
     for cursor in after + 1..=next {
         let pair = scan
             .next()
@@ -170,7 +187,6 @@ async fn rows(
             .map_err(|error| Error::Serialization(error.to_string()))?;
         rows.push((cursor, row));
     }
-    scan.close().await?;
     Ok(rows)
 }
 

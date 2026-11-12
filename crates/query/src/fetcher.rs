@@ -394,7 +394,8 @@ pub trait DocFetcher: MaybeSendSync {
     /// Read committed updates in local commit order, as `reader` may see
     /// them. The rows, their documents' deletion state and the access decision
     /// are read in one transaction: this fetcher's own, or one opened for the
-    /// page.
+    /// page. A provider that cannot read in that transaction decides on live
+    /// state, and a document deleted by then is hidden.
     async fn get_document_updates(
         &self,
         options: &DocumentUpdateOptions,
@@ -800,8 +801,8 @@ pub struct DocumentUpdateOptions {
 pub struct DocumentReader<'request> {
     /// The request the page serves.
     pub context: &'request defra_core::RequestContext,
-    /// The provider that decides document access. A fetcher that opens the
-    /// page's transaction binds it to that transaction.
+    /// The provider that decides document access. The fetcher binds it to
+    /// the page's transaction when it can be bound.
     pub acp: &'request dyn acp::DocumentACP,
     /// Registrations the page's transaction still owes the provider.
     pub projection: Option<&'request crate::txn::AcpRegistrationProjection>,
