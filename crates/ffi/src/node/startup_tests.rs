@@ -71,7 +71,7 @@ fn an_identity_without_signing_names_the_node_and_signs_nothing() {
     let identity = unsafe { defra_identity_new(std::ptr::null()) }.identity_ptr;
     let node = node_with(NodeInitOptions {
         identity_ptr: identity,
-        enable_signing: 0,
+        disable_signing: 1,
         ..local_options()
     });
     assert_eq!(

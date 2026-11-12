@@ -192,7 +192,7 @@ fn a_signed_block_verifies_against_its_signer_only() {
     let identity = unsafe { crate::identities::defra_identity_new(ptr::null()) }.identity_ptr;
     let node = crate::test_support::node_with(crate::types::NodeInitOptions {
         identity_ptr: identity,
-        enable_signing: 1,
+        disable_signing: 0,
         ..crate::test_support::local_options()
     });
     add_collection(node, "type User { name: String }");

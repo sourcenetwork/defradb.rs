@@ -111,13 +111,17 @@ unsafe fn libp2p(
     retry_intervals: Option<Vec<u64>>,
 ) -> Result<defra_node::TransportConfig, String> {
     reject_iroh_only(options)?;
+    let listen_addrs = match (options.disable_p2p_listen != 0, listen_addrs.is_empty()) {
+        (true, true) => Vec::new(),
+        (true, false) => {
+            return Err("listening_addresses and disable_p2p_listen both set; set one".to_string())
+        }
+        (false, true) => vec![DEFAULT_LISTEN_ADDRESS.to_string()],
+        (false, false) => listen_addrs,
+    };
     Ok(defra_node::TransportConfig::Libp2p(
         defra_node::Libp2pConfig {
-            listen_addrs: if listen_addrs.is_empty() {
-                vec![DEFAULT_LISTEN_ADDRESS.to_string()]
-            } else {
-                listen_addrs
-            },
+            listen_addrs,
             bootstrap_peers: peers,
             enable_pubsub: options.enable_pub_sub != 0,
             enable_relay: options.enable_relay != 0,
@@ -326,6 +330,7 @@ unsafe fn iroh(
 #[cfg(feature = "iroh")]
 fn reject_libp2p_only(options: &NodeInitOptions) -> Result<(), String> {
     let libp2p_only = [
+        (options.disable_p2p_listen != 0, "disable_p2p_listen"),
         (options.enable_pub_sub != 0, "enable_pub_sub"),
         (options.enable_relay != 0, "enable_relay"),
         (
@@ -389,7 +394,8 @@ mod iroh_tests {
 
     #[test]
     fn libp2p_only_options_are_refused_under_iroh() {
-        let cases: [(SetOption, &str); 6] = [
+        let cases: [(SetOption, &str); 7] = [
+            (|o| o.disable_p2p_listen = 1, "disable_p2p_listen"),
             (|o| o.enable_pub_sub = 1, "enable_pub_sub"),
             (|o| o.enable_relay = 1, "enable_relay"),
             (
@@ -466,6 +472,39 @@ mod tests {
         assert_eq!(config.resource_limits.memory_mib, Some(256));
         assert_eq!(config.resource_limits.file_descriptors, Some(512));
         assert_eq!(config.resource_limits.max_streams_per_peer, Some(64));
+    }
+
+    #[test]
+    fn an_empty_listen_list_listens_on_the_go_default() {
+        let config = libp2p_config(&NodeInitOptions::default());
+        assert_eq!(
+            config.listen_addrs,
+            vec![DEFAULT_LISTEN_ADDRESS.to_string()]
+        );
+    }
+
+    #[test]
+    fn disable_p2p_listen_runs_a_dial_only_host() {
+        let config = libp2p_config(&NodeInitOptions {
+            disable_p2p_listen: 1,
+            ..NodeInitOptions::default()
+        });
+        assert!(config.listen_addrs.is_empty(), "{:?}", config.listen_addrs);
+    }
+
+    #[test]
+    fn disable_p2p_listen_with_listening_addresses_is_refused() {
+        let listen = std::ffi::CString::new("/ip4/127.0.0.1/tcp/0").unwrap();
+        let options = NodeInitOptions {
+            disable_p2p_listen: 1,
+            listening_addresses: listen.as_ptr(),
+            ..NodeInitOptions::default()
+        };
+        let error = match unsafe { read(&options) } {
+            Err(error) => error,
+            Ok(_) => panic!("both were accepted"),
+        };
+        assert!(error.contains("disable_p2p_listen"), "{error}");
     }
 
     #[test]

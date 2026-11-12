@@ -54,12 +54,14 @@ impl DocumentCall {
             args.signing.unwrap_or(node_signing),
         );
         let dac_bypass = crate::query::resolve_dac_bypass_for(node, request.identity.as_deref());
-        let context = defra_core::RequestContext::default()
-            .with_txn(request.target.txn_id())
-            .with_identity(request.identity.clone())
-            .with_dac_bypass(dac_bypass)
-            .with_batch_session(signing.as_ref().map(|s| s.public_key_hex.clone()))
-            .with_signing(signing);
+        let context = request.present(
+            defra_core::RequestContext::default()
+                .with_txn(request.target.txn_id())
+                .with_identity(request.identity.clone())
+                .with_dac_bypass(dac_bypass)
+                .with_batch_session(signing.as_ref().map(|s| s.public_key_hex.clone()))
+                .with_signing(signing),
+        );
         Ok(Self {
             identity: request.did()?,
             target: request.target,

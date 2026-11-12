@@ -13,7 +13,7 @@ type ReplicatorPushOptionsCallback =
 
 /// On-demand replicator retry trigger. Runs a single retry pass that re-pushes
 /// failed doc blocks AND regenerates/re-pushes their SE artifacts. Backs the
-/// `p2p_retry_replicators` FFI op, mirroring Go's `RetryReplicators`.
+/// `defra_p2p_replicator_retry` FFI call, mirroring Go's `RetryReplicators`.
 type RetryReplicatorsCallback =
     Arc<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync>;
 
@@ -104,7 +104,8 @@ impl ManagedP2PSystem {
     }
 
     /// Run a single on-demand replicator retry pass (re-push failed doc blocks
-    /// and regenerate/re-push their SE artifacts). Backs `p2p_retry_replicators`.
+    /// and regenerate/re-push their SE artifacts). Backs
+    /// `defra_p2p_replicator_retry`.
     pub async fn retry_replicators(&self) -> Result<(), String> {
         match self.retry_replicators.get() {
             Some(callback) => {

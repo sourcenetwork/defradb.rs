@@ -372,6 +372,9 @@ impl Default for P2PConfig {
 pub struct NodeConfig {
     /// Optional application-owned keyring for the transport identity.
     pub peer_keyring: Option<crate::PeerKeyring>,
+    /// A transport identity for this start only, used ahead of the keyring
+    /// and the store, and recorded in neither.
+    pub start_peer_key: Option<crate::StartPeerKey>,
     pub persistence: Persistence,
     pub transport: TransportConfig,
     /// The network runtime the node's networking runs on: its transport,

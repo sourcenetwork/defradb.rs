@@ -1,10 +1,16 @@
 use super::*;
 
+/// Whether `ptr` is a set, empty C string: what Go's `returnC` puts in the
+/// field a result does not use, never null.
+fn is_empty(ptr: *mut c_char) -> bool {
+    !ptr.is_null() && unsafe { CStr::from_ptr(ptr) }.to_bytes().is_empty()
+}
+
 #[test]
 fn test_defra_result_success() {
     let mut result = DefraResult::success(r#"{"data": "test"}"#);
     assert_eq!(result.status, 0);
-    assert!(result.error.is_null());
+    assert!(is_empty(result.error), "no error, but never null");
     assert!(!result.value.is_null());
 
     unsafe { defra_result_free(&mut result) };
@@ -15,7 +21,7 @@ fn test_defra_result_error() {
     let mut result = DefraResult::error("something went wrong");
     assert_eq!(result.status, 1);
     assert!(!result.error.is_null());
-    assert!(result.value.is_null());
+    assert!(is_empty(result.value), "no value, but never null");
 
     unsafe { defra_result_free(&mut result) };
 }
@@ -120,8 +126,23 @@ fn freeing_a_null_result_does_nothing() {
 
 #[test]
 fn test_defra_result_ok() {
-    let result = DefraResult::ok();
+    let mut result = DefraResult::ok();
     assert_eq!(result.status, 0);
-    assert!(result.error.is_null());
+    assert!(
+        is_empty(result.error),
+        "both strings are set, as Go sets them"
+    );
+    assert!(is_empty(result.value));
+    unsafe { defra_result_free(&mut result) };
+}
+
+#[test]
+fn a_secret_success_holds_the_hex_of_its_bytes() {
+    let mut result = DefraResult::success_secret_hex(&[0x00, 0x1f, 0xab, 0xff]);
+    assert_eq!(result.status, 0);
+    assert!(is_empty(result.error));
+    let value = unsafe { CStr::from_ptr(result.value) }.to_str().unwrap();
+    assert_eq!(value, "001fabff");
+    unsafe { defra_result_free(&mut result) };
     assert!(result.value.is_null());
 }

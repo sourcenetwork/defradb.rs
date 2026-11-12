@@ -3,6 +3,8 @@
 
 use std::ffi::c_char;
 
+use zeroize::Zeroizing;
+
 use crate::state::{IdentityState, NodeIdentity, IDENTITIES, NODES};
 use crate::target::{non_empty, resolve_identity_state, resolve_node};
 use crate::types::{DefraNewIdentityResult, DefraResult};
@@ -12,6 +14,11 @@ use crate::{ffi_entry, try_ffi};
 /// the host provides instead of a key of its own: the token may be signed by
 /// a device-bound key authorized to act on behalf of `did`. Answers with the
 /// identity's handle.
+///
+/// The token is presented only by requests made with this handle, and goes
+/// when the handle is freed; another handle for the same DID presents its
+/// own. The identity has no key, so on a signing node its blocks are signed
+/// with the node's key, as Go signs for an identity without a private key.
 ///
 /// # Safety
 ///
@@ -32,13 +39,13 @@ pub unsafe extern "C" fn defra_identity_new_from_bearer_token(
             return DefraNewIdentityResult::error(format!("invalid DID: {}", error));
         }
 
-        defra_core::signing::set_request_bearer_token(&did, token);
         DefraNewIdentityResult::success(IDENTITIES.insert(IdentityState {
             did,
             key_type: None,
             private_key: None,
             public_key_hex: String::new(),
             hold: None,
+            bearer_token: Some(Zeroizing::new(token)),
         }))
     }
 }

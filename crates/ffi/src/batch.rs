@@ -6,7 +6,7 @@
 use crate::ffi_entry;
 use crate::helpers::get_rt;
 use crate::state::NODES;
-use crate::target::resolve_identity;
+use crate::target::{resolve_identity, resolve_target_node, ERR_INVALID_HANDLE};
 use crate::try_ffi;
 use crate::types::DefraResult;
 
@@ -16,11 +16,13 @@ use crate::types::DefraResult;
 pub extern "C" fn defra_batch_start(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
         let _rt = try_ffi!(get_rt());
+        let node = try_ffi!(resolve_target_node(node_ptr));
         let identity_str = try_ffi!(resolve_identity(identity_ptr));
 
-        let (node_did, signing_enabled) = NODES
-            .get(node_ptr, |state| (state.identity_did(), state.signing_enabled))
-            .unwrap_or((None, false));
+        let node_state = NODES
+            .get(node, |state| (state.identity_did(), state.signing_enabled))
+            .ok_or_else(|| DefraResult::error(ERR_INVALID_HANDLE));
+        let (node_did, signing_enabled) = try_ffi!(node_state);
 
         let signing = defra_core::signing::resolve_signing_config_with_flag(
             identity_str.as_deref(),
@@ -48,11 +50,13 @@ pub extern "C" fn defra_batch_start(node_ptr: usize, identity_ptr: usize) -> Def
 pub extern "C" fn defra_batch_sign(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
         let _rt = try_ffi!(get_rt());
+        let node = try_ffi!(resolve_target_node(node_ptr));
         let identity_str = try_ffi!(resolve_identity(identity_ptr));
 
-        let (node_did, signing_enabled) = NODES
-            .get(node_ptr, |state| (state.identity_did(), state.signing_enabled))
-            .unwrap_or((None, false));
+        let node_state = NODES
+            .get(node, |state| (state.identity_did(), state.signing_enabled))
+            .ok_or_else(|| DefraResult::error(ERR_INVALID_HANDLE));
+        let (node_did, signing_enabled) = try_ffi!(node_state);
 
         let signing = defra_core::signing::resolve_signing_config_with_flag(
             identity_str.as_deref(),

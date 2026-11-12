@@ -5,7 +5,7 @@ use crate::ffi_entry;
 use crate::helpers::{get_node_runner, get_rt};
 use crate::nac_check::admit_on_node;
 use crate::state::{GraphQLSubscriptionState, GRAPHQL_SUBSCRIPTIONS, NODES};
-use crate::target::{go_string, non_empty, resolve_identity, resolve_target, Target};
+use crate::target::{go_string, non_empty, resolve_caller, resolve_target, Caller, Target};
 use crate::types::DefraResult;
 use crate::{try_ffi, ERR_INVALID_NODE_HANDLE};
 
@@ -48,12 +48,15 @@ pub unsafe extern "C" fn defra_query_execute(
 }
 
 /// [`defra_query_execute`] for a caller that is called back instead of
-/// waiting: returns once the request is admitted to the node's worker pool,
-/// and `callback` receives `context` and the result exactly once, as
-/// [`defra_query_execute`] would return it, on the DefraDB thread that ran
-/// the request. A request refused before it runs (an invalid argument, a
-/// denied permission) and a subscription, which answers at once with its ID,
-/// call it on the caller's thread before this returns.
+/// waiting: returns once the request is admitted (to the node's worker pool,
+/// or, in a transaction, to its turn on the transaction), and `callback`
+/// receives `context` and the result exactly once, as [`defra_query_execute`]
+/// would return it, on the DefraDB thread that ran the request. In a
+/// transaction, calls made on it before this one run first and calls made
+/// after it (a commit included) wait for it. A request refused before it
+/// runs (an invalid argument, a denied permission) and a subscription, which
+/// answers at once with its ID, call it on the caller's thread before this
+/// returns.
 ///
 /// # Safety
 ///
@@ -79,7 +82,7 @@ pub unsafe extern "C" fn defra_query_execute_async(
                         let done = move |response| reply.send(DefraResult::from(respond(response)));
                         runner.execute_then(request, Box::new(done)).await
                     }
-                    Ok(prepared) => reply.send(DefraResult::from(respond(prepared.run().await))),
+                    Ok(prepared) => run_in_turn(prepared, reply),
                     Err(decided) => reply.send(decided),
                 }
             }),
@@ -97,7 +100,7 @@ fn respond(response: query::QueryResponse) -> Result<String, String> {
 /// before the call returns.
 struct ExecArgs {
     target: Target,
-    identity: Option<String>,
+    caller: Caller,
     query: String,
     operation_name: Option<String>,
     variables: Option<String>,
@@ -116,7 +119,7 @@ impl ExecArgs {
     ) -> Result<Self, DefraResult> {
         Ok(Self {
             target: resolve_target(node_ptr)?,
-            identity: resolve_identity(identity_ptr)?,
+            caller: resolve_caller(identity_ptr)?,
             query: go_string(query),
             operation_name: non_empty(operation_name),
             variables: non_empty(variables),
@@ -134,10 +137,14 @@ enum Prepared {
         runner: std::sync::Arc<dyn query::QueryExecutor>,
         request: query::QueryRequest,
         handle: query::txn::TransactionHandle,
+        /// The call's turn on the transaction, held until the request ends.
+        turn: Target,
     },
 }
 
 impl Prepared {
+    /// Runs the request: in a transaction, once the calls made on it before
+    /// this one have run.
     async fn run(self) -> query::QueryResponse {
         match self {
             Prepared::Node { runner, request } => runner.execute(request).await,
@@ -145,8 +152,29 @@ impl Prepared {
                 runner,
                 request,
                 handle,
-            } => runner.execute_in_txn(request, &handle).await,
+                turn,
+            } => {
+                turn.turn().await;
+                let response = runner.execute_in_txn(request, &handle).await;
+                drop(turn);
+                response
+            }
         }
+    }
+}
+
+/// Answers `reply` with a transaction request's result once it has run, on
+/// the network runtime, so the caller returns as soon as the request holds
+/// its turn: calls made on the transaction before it run first, calls made
+/// after it wait for it.
+fn run_in_turn(prepared: Prepared, reply: Reply) {
+    match crate::helpers::get_rt() {
+        // A task the runtime refuses drops `reply`, which reports that the
+        // call ended without a result.
+        Ok(rt) => drop(rt.spawn(async move {
+            reply.send(DefraResult::from(respond(prepared.run().await)));
+        })),
+        Err(error) => reply.send(error),
     }
 }
 
@@ -156,11 +184,12 @@ impl Prepared {
 async fn prepare(args: ExecArgs) -> Result<Prepared, DefraResult> {
     let ExecArgs {
         target,
-        identity: identity_str,
+        caller,
         query: query_str,
         operation_name: op_name,
         variables: vars_str,
     } = args;
+    let identity_str = caller.did.clone();
     let node_ptr = target.node();
 
     let permission = nac_permission_for_query(&query_str);
@@ -191,12 +220,14 @@ async fn prepare(args: ExecArgs) -> Result<Prepared, DefraResult> {
 
     // The caller acts in the request's context, so DB-layer NAC checks
     // resolve it; a NAC admin/owner can read all documents.
-    let context = defra_core::RequestContext::default()
-        .with_txn(target.txn_id())
-        .with_identity(identity_str.clone())
-        .with_dac_bypass(dac_bypass(node_ptr, identity_str.as_deref()).await)
-        .with_signing(signing)
-        .with_batch_session(session_key);
+    let context = caller.present(
+        defra_core::RequestContext::default()
+            .with_txn(target.txn_id())
+            .with_identity(identity_str.clone())
+            .with_dac_bypass(dac_bypass(node_ptr, identity_str.as_deref()).await)
+            .with_signing(signing)
+            .with_batch_session(session_key),
+    );
 
     let variables = match vars_str {
         Some(vars) => Some(
@@ -253,6 +284,7 @@ async fn prepare(args: ExecArgs) -> Result<Prepared, DefraResult> {
             runner,
             request,
             handle: query::txn::TransactionHandle::new(id.to_string()),
+            turn: target,
         },
     })
 }

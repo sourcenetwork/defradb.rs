@@ -1,4 +1,4 @@
-//! What the view, lens, encrypted-index and query calls refuse.
+//! What the view, lens, encrypted-index, query and batch calls refuse.
 
 use std::ptr;
 
@@ -115,4 +115,18 @@ fn a_query_needs_a_request() {
         "a null request runs nothing: {status} {outcome:?}"
     );
     close(node);
+}
+
+/// A batch call on a handle that names nothing says so, as every other call
+/// does, rather than reporting a missing signing identity.
+#[test]
+fn batch_calls_refuse_an_invalid_handle() {
+    assert_eq!(
+        err(crate::batch::defra_batch_start(0, 0)),
+        crate::target::ERR_INVALID_HANDLE
+    );
+    assert_eq!(
+        err(crate::batch::defra_batch_sign(0, 0)),
+        crate::target::ERR_INVALID_HANDLE
+    );
 }

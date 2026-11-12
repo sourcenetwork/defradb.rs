@@ -141,7 +141,8 @@ pub use mobile::{
 };
 pub use peer::{defra_p2p_connect, defra_p2p_disconnect, defra_p2p_info, defra_p2p_peer_list};
 pub use replicator::{
-    defra_p2p_replicator_add, defra_p2p_replicator_delete, defra_p2p_replicator_list,
+    defra_p2p_replicator_add, defra_p2p_replicator_add_with_filter, defra_p2p_replicator_delete,
+    defra_p2p_replicator_list, defra_p2p_replicator_retry,
 };
 
 #[cfg(test)]

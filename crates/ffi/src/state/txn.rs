@@ -15,6 +15,8 @@ pub struct TxnState {
     pub node: NodeHandle,
     /// The transaction's ID.
     pub id: defra_core::TxnId,
+    /// The turns its calls take, so they run in call order.
+    pub turns: Arc<super::Turns>,
 }
 
 /// Global registry of open transactions.

@@ -19,6 +19,23 @@ use crate::test_support::{close, cstr, err, node, ok, take};
 use crate::txn::{defra_transaction_commit, defra_transaction_create, defra_transaction_discard};
 use crate::types::{defra_new_txn_result_free, defra_result_free, DefraResult};
 
+/// A query that did not parse: answered with status 0 and GraphQL errors, as
+/// `defra_query_execute` answers every GraphQL failure, and no data.
+fn assert_graphql_error(status: i32, value: &Result<String, String>) {
+    assert_eq!(
+        status, 0,
+        "GraphQL errors are part of the result: {value:?}"
+    );
+    let response: serde_json::Value =
+        serde_json::from_str(value.as_deref().expect("a result")).expect("a JSON result");
+    assert!(
+        response["errors"]
+            .as_array()
+            .is_some_and(|errors| !errors.is_empty()),
+        "{response}"
+    );
+}
+
 // ── NULL pointer handling (07-51) ─────────────────────────────────────────
 
 /// A NULL SDL reads as Go's empty string: an SDL with no collection, not a
@@ -26,24 +43,20 @@ use crate::types::{defra_new_txn_result_free, defra_result_free, DefraResult};
 #[test]
 fn add_collection_null_sdl_is_empty() {
     let node = node();
-    let (status, _) = take(unsafe { defra_collection_add(node, ptr::null(), 0) });
-    assert!(
-        status == 0 || status == 1,
-        "status must be 0 or 1, got {status}"
-    );
+    let (status, value) = take(unsafe { defra_collection_add(node, ptr::null(), 0) });
+    assert_eq!(status, 0, "an empty SDL adds nothing: {value:?}");
+    assert_eq!(value.as_deref(), Ok("[]"));
     close(node);
 }
 
-/// A NULL query reads as Go's empty string and fails as GraphQL, not a crash.
+/// A NULL query reads as Go's empty string and fails as GraphQL: status 0
+/// with GraphQL errors.
 #[test]
 fn execute_query_null_query_does_not_crash() {
     let node = node();
-    let (status, _) =
+    let (status, value) =
         take(unsafe { defra_query_execute(node, ptr::null(), 0, ptr::null(), ptr::null()) });
-    assert!(
-        status == 0 || status == 1,
-        "status must be 0 or 1, got {status}"
-    );
+    assert_graphql_error(status, &value);
     close(node);
 }
 
@@ -141,32 +154,27 @@ fn invalid_subscription_ids_return_errors() {
 // ── Non-UTF-8 string handling (07-51) ─────────────────────────────────────
 
 /// A C string's invalid UTF-8 reads lossily (U+FFFD for each bad sequence):
-/// the call fails or succeeds on that text, and never crashes.
+/// that text is not SDL, so the call fails with status 1.
 #[test]
 fn add_collection_invalid_utf8_sdl_does_not_crash() {
     let node = node();
     let invalid_utf8: &[u8] = &[0xFF, 0xFE, 0xFD, 0x00];
     let sdl = invalid_utf8.as_ptr() as *const c_char;
-    let (status, _) = take(unsafe { defra_collection_add(node, sdl, 0) });
-    assert!(
-        status == 0 || status == 1,
-        "status must be 0 or 1, got {status}"
-    );
+    let (status, value) = take(unsafe { defra_collection_add(node, sdl, 0) });
+    assert_eq!(status, 1, "lossy text is not SDL: {value:?}");
     close(node);
 }
 
-/// A query of invalid UTF-8 must not crash.
+/// A query of invalid UTF-8 reads lossily and fails as GraphQL: status 0
+/// with GraphQL errors.
 #[test]
 fn execute_query_invalid_utf8_query_does_not_crash() {
     let node = node();
     let invalid_utf8: &[u8] = &[0xC0, 0xAF, 0x00];
     let request = invalid_utf8.as_ptr() as *const c_char;
-    let (status, _) =
+    let (status, value) =
         take(unsafe { defra_query_execute(node, request, 0, ptr::null(), ptr::null()) });
-    assert!(
-        status == 0 || status == 1,
-        "must not crash, status={status}"
-    );
+    assert_graphql_error(status, &value);
     close(node);
 }
 

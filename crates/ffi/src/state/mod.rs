@@ -7,6 +7,7 @@ mod handle;
 mod identity;
 mod p2p;
 mod registry;
+mod turns;
 mod txn;
 
 use std::sync::Arc;
@@ -20,6 +21,7 @@ use blockstore::DefraBlockstore;
 pub use identity::{IdentityHandle, IdentityRegistry, IdentityState, NodeIdentity, IDENTITIES};
 pub use p2p::P2PState;
 pub use registry::{GraphQLSubscriptionRegistry, NodeRegistry, GRAPHQL_SUBSCRIPTIONS, NODES};
+pub use turns::{Ticket, Turns};
 pub use txn::{TxnHandle, TxnRegistry, TxnState, TXNS};
 
 /// Type alias for the database type used in FFI.

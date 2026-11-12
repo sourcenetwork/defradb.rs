@@ -31,6 +31,11 @@ impl Received {
         std::ptr::from_ref(self) as usize
     }
 
+    /// Whether the callback has been called yet, without waiting for it.
+    fn arrived(&self) -> bool {
+        self.calls.load(Ordering::Acquire) > 0
+    }
+
     /// The one result, once the callback ran.
     fn wait(&self) -> Result<String, String> {
         workers::block_on(self.done.wait()).unwrap();
@@ -303,5 +308,98 @@ fn an_asynchronous_request_made_on_a_worker_completes() {
     assert_eq!(made, Ok(()));
     let response: serde_json::Value = serde_json::from_str(&read.wait().unwrap()).unwrap();
     assert!(response["data"]["Note"].is_array(), "{response}");
+    crate::test_support::close(node);
+}
+
+/// A transaction on `node`.
+fn transaction(node: usize) -> usize {
+    let created = crate::txn::defra_transaction_create(node, 0);
+    assert_eq!(created.status, 0, "the transaction begins");
+    created.txn_ptr
+}
+
+/// Queues the GraphQL request `query` on `handle` asynchronously, answering
+/// `into`.
+fn execute_async(handle: usize, query: &str, into: &'static Received) {
+    let query = std::ffi::CString::new(query).unwrap();
+    unsafe {
+        crate::query::defra_query_execute_async(
+            handle,
+            query.as_ptr(),
+            0,
+            std::ptr::null(),
+            std::ptr::null(),
+            received,
+            into.context(),
+        )
+    };
+}
+
+/// `proofs/tla/TxnTurns.tla`: an asynchronous query on a transaction returns
+/// once it holds its turn, before it runs. While an earlier call still holds
+/// the transaction its callback has not run; it runs once that call ends.
+#[test]
+fn an_async_query_in_a_transaction_returns_before_it_runs() {
+    let node = node();
+    let txn = transaction(node);
+    let earlier = crate::target::resolve_target(txn).unwrap_or_else(|_| panic!("a txn"));
+    workers::block_on(earlier.turn()).unwrap();
+
+    let created = Received::leak();
+    execute_async(
+        txn,
+        r#"mutation { add_Note(input: {text: "queued"}) { text } }"#,
+        created,
+    );
+    assert!(
+        !created.arrived(),
+        "it returned while the earlier call still holds the transaction"
+    );
+
+    drop(earlier);
+    let response: serde_json::Value = serde_json::from_str(&created.wait().unwrap()).unwrap();
+    assert_eq!(
+        response["data"]["add_Note"][0]["text"], "queued",
+        "{response}"
+    );
+    let mut committed = crate::txn::defra_transaction_commit(txn);
+    assert_eq!(committed.status, 0);
+    unsafe { defra_result_free(&mut committed) };
+    crate::test_support::close(node);
+}
+
+/// INV_NoOvertake: calls on a transaction run in the order they were made. A
+/// read queued after an asynchronous write sees it, and a commit made after
+/// both waits for them, so the write is committed.
+#[test]
+fn calls_on_a_transaction_run_in_the_order_they_were_made() {
+    let node = node();
+    let txn = transaction(node);
+    let earlier = crate::target::resolve_target(txn).unwrap_or_else(|_| panic!("a txn"));
+    workers::block_on(earlier.turn()).unwrap();
+
+    let written = Received::leak();
+    let read = Received::leak();
+    execute_async(
+        txn,
+        r#"mutation { add_Note(input: {text: "first"}) { text } }"#,
+        written,
+    );
+    execute_async(txn, "{ Note { text } }", read);
+    let commit = std::thread::spawn(move || {
+        let mut result = crate::txn::defra_transaction_commit(txn);
+        let status = result.status;
+        unsafe { defra_result_free(&mut result) };
+        status
+    });
+
+    drop(earlier);
+    assert!(written.wait().is_ok());
+    let seen: serde_json::Value = serde_json::from_str(&read.wait().unwrap()).unwrap();
+    assert_eq!(seen["data"]["Note"][0]["text"], "first", "{seen}");
+    assert_eq!(commit.join().unwrap(), 0, "the commit ran after both");
+
+    let committed = crate::test_support::query(node, "{ Note { text } }");
+    assert_eq!(committed["data"]["Note"][0]["text"], "first", "{committed}");
     crate::test_support::close(node);
 }

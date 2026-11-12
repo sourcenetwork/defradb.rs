@@ -31,7 +31,8 @@ use super::{DefraRemoteSignAsyncCallback, DefraRemoteSignCallback, FfiRemoteSign
 /// gives another handle for the same signer. `signer_handle` must stay
 /// valid, and `callback` callable, until every identity handle naming them
 /// is freed and every node started with one (or given one as its identity)
-/// is closed: a node keeps signing through them after the handle is freed.
+/// is closed or given another identity: a node keeps signing through them
+/// after the handle is freed.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[no_mangle]
 pub extern "C" fn defra_identity_new_remote(
@@ -249,5 +250,6 @@ fn store(
         private_key: None,
         public_key_hex,
         hold: Some(hold),
+        bearer_token: None,
     }))
 }

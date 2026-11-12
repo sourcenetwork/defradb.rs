@@ -10,6 +10,32 @@ fn a_node_without_p2p_has_no_addresses_but_refuses_peer_calls() {
 }
 
 #[test]
+fn a_filtered_replicator_refuses_filters_that_are_not_json() {
+    let node = node_with(local_options());
+    let collections = cstr("User");
+    let addresses = cstr("/ip4/127.0.0.1/tcp/1");
+    let filters = cstr("{not json");
+    let error = err(unsafe {
+        defra_p2p_replicator_add_with_filter(
+            node,
+            collections.as_ptr(),
+            addresses.as_ptr(),
+            filters.as_ptr(),
+            0,
+        )
+    });
+    assert!(error.contains("filters_json"), "{error}");
+    close(node);
+}
+
+#[test]
+fn a_replicator_retry_needs_p2p() {
+    let node = node_with(local_options());
+    assert_eq!(err(defra_p2p_replicator_retry(node, 0)), ERR_NO_P2P);
+    close(node);
+}
+
+#[test]
 fn a_node_without_p2p_has_no_shareable_address_yet() {
     let node = node_with(local_options());
     assert_eq!(ok(defra_mobile_shareable_address(node, 0)), "null");
@@ -31,7 +57,7 @@ fn a_transaction_handle_is_refused_as_a_transaction() {
     assert_eq!(txn.status, 0);
     assert_eq!(
         err(defra_p2p_peer_list(txn.txn_ptr, 0)),
-        "not supported yet: P2P in a transaction"
+        "not supported: P2P in a transaction"
     );
     crate::txn::defra_transaction_discard(txn.txn_ptr);
     close(node);
@@ -154,7 +180,88 @@ mod libp2p {
             query(target, "{ User { name } }")["data"]["User"].clone()
         });
 
+        ok(defra_p2p_replicator_retry(source, 0));
+        assert_eq!(
+            query(target, "{ User { name } }")["data"]["User"],
+            json!([{"name": "replicated"}]),
+            "a retry pass re-pushes nothing twice"
+        );
+
         close(source);
+        close(target);
+    }
+
+    /// A replicator with a filter pushes only the documents it selects.
+    #[test]
+    fn a_filtered_replicator_pushes_only_what_its_filter_selects() {
+        let source = p2p_node();
+        let target = p2p_node();
+        for node in [source, target] {
+            add_collection(node, "type User { name: String }");
+        }
+
+        let collections = cstr("User");
+        let target_address = cstr(&address(target));
+        let filters = cstr(r#"{"User": {"Field": "name", "Value": "kept"}}"#);
+        ok(unsafe {
+            defra_p2p_replicator_add_with_filter(
+                source,
+                collections.as_ptr(),
+                target_address.as_ptr(),
+                filters.as_ptr(),
+                0,
+            )
+        });
+        for name in ["skipped", "kept"] {
+            query(
+                source,
+                &format!(r#"mutation {{ add_User(input: {{name: "{name}"}}) {{ _docID }} }}"#),
+            );
+        }
+        eventually(json!([{"name": "kept"}]), || {
+            query(target, "{ User { name } }")["data"]["User"].clone()
+        });
+
+        close(source);
+        close(target);
+    }
+
+    /// A libp2p node that listens on nothing.
+    fn dial_only_node() -> usize {
+        node_with(NodeInitOptions {
+            disable_p2p: 0,
+            disable_p2p_listen: 1,
+            enable_pub_sub: 1,
+            ..local_options()
+        })
+    }
+
+    /// Dial-only nodes run side by side in one process, competing for no
+    /// port, and one still replicates out to a peer that listens.
+    #[test]
+    fn dial_only_nodes_share_a_process_and_replicate_out() {
+        let source = dial_only_node();
+        let other = dial_only_node();
+        let target = p2p_node();
+        for node in [source, target] {
+            add_collection(node, "type User { name: String }");
+        }
+
+        let collections = cstr("User");
+        let target_address = cstr(&address(target));
+        ok(unsafe {
+            defra_p2p_replicator_add(source, collections.as_ptr(), target_address.as_ptr(), 0)
+        });
+        query(
+            source,
+            r#"mutation { add_User(input: {name: "dialed"}) { _docID } }"#,
+        );
+        eventually(json!([{"name": "dialed"}]), || {
+            query(target, "{ User { name } }")["data"]["User"].clone()
+        });
+
+        close(source);
+        close(other);
         close(target);
     }
 

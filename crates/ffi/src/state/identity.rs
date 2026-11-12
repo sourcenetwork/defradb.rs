@@ -27,6 +27,11 @@ pub struct IdentityState {
     /// handing it to a node) keeps the key even if the handle is freed
     /// meanwhile. `None` for an identity a bearer token stands for.
     pub hold: Option<IdentityHold>,
+    /// The token an identity a bearer token stands for acts by. It travels
+    /// with each request that names this identity, never through a
+    /// process-wide store, so it goes when the last reference to this state
+    /// does, and two handles for one DID each present their own.
+    pub bearer_token: Option<Zeroizing<String>>,
 }
 
 impl IdentityState {
@@ -66,6 +71,7 @@ impl IdentityState {
             private_key: Some(private_key),
             public_key_hex,
             hold: Some(hold),
+            bearer_token: None,
         })
     }
 }

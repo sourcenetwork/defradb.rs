@@ -20,7 +20,7 @@ use crate::types::{CollectionOptions, NodeInitOptions};
 /// at once never share one.
 fn widgets(signing: bool) -> usize {
     let node = node_with(NodeInitOptions {
-        enable_signing: c_int::from(signing),
+        disable_signing: c_int::from(!signing),
         ..local_options()
     });
     add_collection(node, "type Widget { name: String }");

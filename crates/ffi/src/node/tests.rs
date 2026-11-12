@@ -24,7 +24,7 @@ unsafe fn defra_new_node_or_error(options: NodeInitOptions) -> Result<usize, Str
 fn options_report_what_the_node_runs_with_and_redact_secrets() {
     let key = [7u8; 32];
     let node = node_with(NodeInitOptions {
-        enable_signing: 1,
+        disable_signing: 0,
         searchable_encryption_key: key.as_ptr(),
         searchable_encryption_key_len: key.len() as i32,
         max_transaction_retries: 9,
@@ -36,6 +36,45 @@ fn options_report_what_the_node_runs_with_and_redact_secrets() {
     assert_eq!(options["DB"]["MaxTxnRetries"], 9);
     assert_eq!(options["DB"]["SearchableEncryptionKey"], "<redacted>");
     assert_eq!(options["Store"]["BadgerInMemory"], true);
+    close(node);
+}
+
+/// Options the caller leaves unset report the value the node resolved them
+/// to, never null.
+#[test]
+fn unset_options_report_the_defaults_the_node_runs_with() {
+    let node = node_with(local_options());
+    let options = ok_json(defra_node_options(node));
+    assert_eq!(
+        options["DB"]["MaxTxnRetries"],
+        db::DEFAULT_MAX_TXN_RETRIES,
+        "{options}"
+    );
+    assert_eq!(
+        options["Store"]["BadgerFileSize"],
+        storage::RegolithStoreOptions::default()
+            .engine
+            .get_target_file_size(),
+        "{options}"
+    );
+    close(node);
+}
+
+#[cfg(feature = "libp2p")]
+#[test]
+fn an_unset_block_sync_timeout_reports_the_default() {
+    let listen = cstr("/ip4/127.0.0.1/tcp/0");
+    let node = node_with(NodeInitOptions {
+        disable_p2p: 0,
+        listening_addresses: listen.as_ptr(),
+        ..local_options()
+    });
+    let options = ok_json(defra_node_options(node));
+    assert_eq!(
+        options["DB"]["P2PBlockSyncTimeout"],
+        p2p::P2PHostConfig::default().stream_timeout * 1_000_000_000,
+        "{options}"
+    );
     close(node);
 }
 

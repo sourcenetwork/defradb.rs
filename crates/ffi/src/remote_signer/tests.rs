@@ -353,7 +353,7 @@ fn a_write_signs_its_blocks_through_the_async_callback() {
     let identity = host.identity.load(Ordering::Relaxed);
 
     let node = crate::test_support::node_with(NodeInitOptions {
-        enable_signing: 1,
+        disable_signing: 0,
         ..crate::test_support::local_options()
     });
     crate::test_support::add_collection(node, "type Note { text: String }");

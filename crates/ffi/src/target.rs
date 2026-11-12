@@ -8,7 +8,9 @@
 use std::ffi::c_char;
 use std::sync::Arc;
 
-use crate::state::{IdentityState, TxnState, IDENTITIES, NODES, TXNS};
+use zeroize::Zeroizing;
+
+use crate::state::{IdentityState, Ticket, TxnState, IDENTITIES, NODES, TXNS};
 use crate::types::{c_str_to_string, CollectionOptions, DefraResult};
 
 /// What a call made with a handle the registries do not hold reports.
@@ -19,8 +21,23 @@ pub const ERR_INVALID_HANDLE: &str = "invalid handle";
 pub(crate) enum Target {
     /// A node, each operation in its own transaction.
     Node(usize),
-    /// An open transaction of a node.
-    Txn(Arc<TxnState>),
+    /// An open transaction of a node, with the call's turn on it.
+    Txn(Arc<TxnCall>),
+}
+
+/// One call on a transaction: the transaction, and the call's ticket, which
+/// it holds until it ends, so calls on the transaction run in call order
+/// (`proofs/tla/TxnTurns.tla`).
+pub(crate) struct TxnCall {
+    txn: Arc<TxnState>,
+    ticket: Ticket,
+}
+
+impl TxnCall {
+    /// Waits until it is this call's turn on its transaction.
+    pub(crate) async fn turn(&self) {
+        self.ticket.wait().await;
+    }
 }
 
 impl Target {
@@ -28,7 +45,7 @@ impl Target {
     pub(crate) fn node(&self) -> usize {
         match self {
             Target::Node(node) => *node,
-            Target::Txn(txn) => txn.node,
+            Target::Txn(call) => call.txn.node,
         }
     }
 
@@ -36,18 +53,43 @@ impl Target {
     pub(crate) fn txn_id(&self) -> Option<defra_core::TxnId> {
         match self {
             Target::Node(_) => None,
-            Target::Txn(txn) => Some(txn.id),
+            Target::Txn(call) => Some(call.txn.id),
+        }
+    }
+
+    /// Waits until it is the call's turn on its transaction; at once on a
+    /// node.
+    pub(crate) async fn turn(&self) {
+        if let Target::Txn(call) = self {
+            call.turn().await;
         }
     }
 }
 
-/// The node or transaction `handle` names.
+/// The node or transaction `handle` names. Naming a transaction takes the
+/// call's ticket on it, in the order calls name it.
 pub(crate) fn resolve_target(handle: usize) -> Result<Target, DefraResult> {
     if NODES.contains(handle) {
         return Ok(Target::Node(handle));
     }
     TXNS.get(handle)
-        .map(Target::Txn)
+        .map(|txn| {
+            Target::Txn(Arc::new(TxnCall {
+                ticket: txn.turns.take(),
+                txn,
+            }))
+        })
+        .ok_or_else(|| DefraResult::error(ERR_INVALID_HANDLE))
+}
+
+/// The node `handle` names, or the node of the transaction it names, for a
+/// call that only needs the node: it takes no turn on the transaction.
+pub(crate) fn resolve_target_node(handle: usize) -> Result<usize, DefraResult> {
+    if NODES.contains(handle) {
+        return Ok(handle);
+    }
+    TXNS.get(handle)
+        .map(|txn| txn.node)
         .ok_or_else(|| DefraResult::error(ERR_INVALID_HANDLE))
 }
 
@@ -63,6 +105,48 @@ pub(crate) fn resolve_node(handle: usize) -> Result<usize, DefraResult> {
 /// The DID of the identity `handle` names; `None` for the null handle.
 pub(crate) fn resolve_identity(handle: usize) -> Result<Option<String>, DefraResult> {
     resolve_identity_state(handle).map(|identity| identity.map(|identity| identity.did.clone()))
+}
+
+/// Who the identity `handle` names acts as: its DID, and the bearer token it
+/// acts by when a token stands for it. Both `None` for the null handle.
+pub(crate) fn resolve_caller(handle: usize) -> Result<Caller, DefraResult> {
+    Ok(match resolve_identity_state(handle)? {
+        Some(identity) => Caller {
+            did: Some(identity.did.clone()),
+            bearer: identity.bearer_token.clone(),
+            _identity: Some(identity),
+        },
+        None => Caller::default(),
+    })
+}
+
+/// The identity a call acts as.
+#[derive(Clone, Default)]
+pub(crate) struct Caller {
+    /// Its DID; `None` for no identity.
+    pub(crate) did: Option<String>,
+    /// The bearer token it acts by, for an identity a token stands for.
+    pub(crate) bearer: Option<Zeroizing<String>>,
+    /// The identity itself, held while the call lives: its hold keeps the
+    /// identity's key in the signing store, so a `defra_identity_free` on
+    /// another thread cannot make the call sign with the node's key while it
+    /// acts as this DID.
+    _identity: Option<Arc<IdentityState>>,
+}
+
+impl Caller {
+    /// `context` presenting this caller's bearer token, so a remote ACP
+    /// provider acts with the token of the handle that made the call. A
+    /// caller without one leaves `context` unchanged.
+    pub(crate) fn present(
+        &self,
+        context: defra_core::RequestContext,
+    ) -> defra_core::RequestContext {
+        match &self.bearer {
+            Some(token) => context.with_bearer(self.did.clone(), Some(token.to_string())),
+            None => context,
+        }
+    }
 }
 
 /// The identity `handle` names; `None` for the null handle. Holding it keeps

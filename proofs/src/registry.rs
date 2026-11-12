@@ -1856,6 +1856,62 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A peer key the caller hands in for one start (Go's P2PPrivateKey)
+        // is used as given: never checked against the store and never
+        // recorded in it, so a later start without it carries on with the
+        // store's own key.
+        family: "Peer key loading",
+        name: "INV_StartKeyStarts / INV_StartKeyLeavesNoMark / INV_PlainKeyStable: a start with a start key always starts, leaves no mark that refuses a later plain start, and never changes the key plain starts use",
+        axis: Tla,
+        anchor: "crates/defra-node/src/peer_key.rs load_with_keyring, load_or_create; crates/defra-node/src/start_peer_key.rs StartPeerKey; crates/defra-node/src/libp2p_runtime.rs assemble_libp2p; crates/defra-node/src/p2p_runtime.rs setup_iroh; crates/ffi/src/node/mod.rs build_node_state",
+        model_ref: "MC_PeerKeyLoad_{Green,Red_StartKeyChecked,Red_StartKeyRecorded}.cfg",
+        tiers: &[Contract],
+        bound_by: "crates/defra-node/tests/unit/peer_keyring.rs a_start_key_is_used_as_given_and_leaves_a_plain_store_as_it_was, a_start_key_starts_a_keyring_store_without_changing_it",
+    },
+    Property {
+        family: "Peer key loading",
+        name: "start_key_is_used / start_key_leaves_store / plain_after_start_key: a start key is answered as given, the store comes back unchanged, and a plain start after it loads what it would have without it",
+        axis: Lean,
+        anchor: "crates/defra-node/src/peer_key.rs load_with_keyring, load_or_create",
+        model_ref: "PeerKeyLoad (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // Calls a C caller makes on one explicit transaction run one at a
+        // time, in call order, even when a call returns before its work runs
+        // (the asynchronous query): each takes a ticket as it names the
+        // transaction, and a ticket dropped before its turn is skipped once.
+        family: "FFI transaction turns",
+        name: "INV_OneRunning / INV_NoOvertake / Progress: calls on a transaction run one at a time, none overtakes an earlier ticket (a commit never lands before work asked for first), and no call waits forever on a dropped ticket",
+        axis: Tla,
+        anchor: "crates/ffi/src/state/turns.rs Turns::take, Turns::finish, Ticket::wait, Ticket; crates/ffi/src/target.rs resolve_target, TxnCall; crates/ffi/src/request.rs Request::resolve; crates/ffi/src/query/exec.rs Prepared::run, run_in_turn, defra_query_execute_async; crates/ffi/src/txn/lifecycle.rs defra_transaction_commit, defra_transaction_discard",
+        model_ref: "MC_TxnTurns_{Green,Red_NoRecheck,Red_CancelSkipsNow}.cfg",
+        tiers: &[Contract],
+        bound_by: "crates/ffi/src/state/turns_tests.rs tickets_are_served_in_the_order_they_were_taken, a_ticket_dropped_before_its_turn_is_skipped, a_ticket_dropped_on_its_turn_serves_the_next, calls_from_several_threads_never_run_at_once; crates/ffi/src/call/tests.rs an_async_query_in_a_transaction_returns_before_it_runs, calls_on_a_transaction_run_in_the_order_they_were_made",
+    },
+    Property {
+        family: "FFI transaction turns",
+        name: "take_hands_out_next / take_moves_next / skip_passes_only_dropped: tickets come out distinct and in call order, and skipping passes only dropped tickets",
+        axis: Lean,
+        anchor: "crates/ffi/src/state/turns.rs Turns::take, Turns::finish",
+        model_ref: "TxnTurns (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A vector index description's stored form is the normalized one:
+        // Go's defaults filled in, and an empty algorithm or metric read as
+        // the default. Normalizing is stable, so the stored form never drifts.
+        family: "Vector index defaults",
+        name: "normalize_idempotent / normalize_hnsw_fills / normalize_other_unchanged / empty_reads_default / nonempty_reads_itself: normalizing twice is normalizing once, an HNSW index is stored with every parameter set, any other index is untouched, and an empty string reads as the default",
+        axis: Lean,
+        anchor: "crates/schema/src/vector_index_defaults.rs VectorIndexDescription::normalized, empty_is_default",
+        model_ref: "VectorIndexDefaults (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // `default_pool()` answers the first registered pool that still runs,
         // else one pool started once for the process. Registration moves the
         // slot only off a pool that stopped, with one compare-and-swap; the

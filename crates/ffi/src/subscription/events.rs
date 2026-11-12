@@ -19,9 +19,16 @@ use crate::target::{go_string, resolve_identity, resolve_node};
 use crate::types::DefraResult;
 use crate::{try_ffi, ERR_INVALID_NODE_HANDLE};
 
-/// Events held for a caller that has not polled them yet. A full buffer
-/// holds the subscription back until the caller polls again.
+/// Events held for a caller that has not polled them yet. A full buffer holds
+/// the forwarding back until the caller polls again; meanwhile the event bus
+/// drops what its own subscriber queue cannot hold, and the next event
+/// delivered is preceded by an `events-dropped` event counting them, so a
+/// slow poller learns it lost events rather than losing them silently.
 const EVENT_BUFFER: usize = 4096;
+
+/// The name of the event that reports events the bus dropped before this
+/// subscription could take them.
+const EVENTS_DROPPED: &str = "events-dropped";
 
 /// Every event a caller can name, under the names Go's event package uses.
 const NAMEABLE: [EventName; 13] = [
@@ -47,7 +54,8 @@ const NAMEABLE: [EventName; 13] = [
 ///
 /// Each `defra_subscription_poll` of the ID yields the next event as a JSON
 /// object whose `name` is the event's name, with that event's fields
-/// beside it. Events carry documents without document access control, so
+/// beside it. A caller that polls too slowly loses events; the first event
+/// after a loss is `{"name": "events-dropped", "count": N}`. Events carry documents without document access control, so
 /// when node access control is on, only an identity allowed to bypass
 /// document access control may subscribe.
 ///
@@ -73,11 +81,7 @@ pub unsafe extern "C" fn defra_event_subscribe(
         };
         let event_sub_id = subscription.id();
         let (sender, receiver) = kovan_channel::bounded::<String>(EVENT_BUFFER);
-        let service = runtime.spawn_service(async move {
-            while let Some(message) = subscription.recv().await {
-                sender.send_async(event_json(&message).to_string()).await;
-            }
-        });
+        let service = runtime.spawn_service(forward(subscription, sender));
 
         let id = GRAPHQL_SUBSCRIPTIONS.insert(GraphQLSubscriptionState {
             result_receiver: receiver,
@@ -86,6 +90,23 @@ pub unsafe extern "C" fn defra_event_subscribe(
             service,
         });
         DefraResult::subscription(id.to_string())
+    }
+}
+
+/// Hands each event `subscription` receives to the caller's buffer as JSON,
+/// first reporting any events the bus dropped since the last one delivered.
+async fn forward(
+    mut subscription: events::Subscription,
+    sender: kovan_channel::bounded::Sender<String>,
+) {
+    while let Some(message) = subscription.recv().await {
+        let dropped = subscription.check_and_reset_dropped();
+        if dropped > 0 {
+            sender
+                .send_async(json!({ "name": EVENTS_DROPPED, "count": dropped }).to_string())
+                .await;
+        }
+        sender.send_async(event_json(&message).to_string()).await;
     }
 }
 

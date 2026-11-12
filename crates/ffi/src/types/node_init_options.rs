@@ -3,10 +3,11 @@ use std::ptr;
 
 /// Options for node initialization.
 ///
-/// Go's NodeInitOptions struct, field for field: an all-zero struct (null
-/// strings, zero numbers) is the default node, and every opt-out is a
-/// `disable_` flag. The fields after Go's are this implementation's own, so
-/// the struct is larger than Go's: a caller passes this header's struct,
+/// Go's NodeInitOptions struct, field for field except `disable_api`: this
+/// library serves no HTTP API yet, so it has no API to disable. An all-zero
+/// struct (null strings, zero numbers) is the default node, and every opt-out
+/// is a `disable_` flag. The fields after Go's are this implementation's own,
+/// so the layout differs from Go's: a caller passes this header's struct,
 /// never one laid out by Go's `defra_structs.h`.
 ///
 /// Go's Badger options name the store regolith replaced, so they are named
@@ -18,7 +19,8 @@ pub struct NodeInitOptions {
     /// Path to the store directory. Null or empty keeps the store in memory.
     pub db_path: *const c_char,
     /// Comma-separated P2P listen multiaddrs. Empty listens on
-    /// `/ip4/0.0.0.0/tcp/9171`, as Go does.
+    /// `/ip4/0.0.0.0/tcp/9171`, as Go does; `disable_p2p_listen` listens on
+    /// nothing.
     pub listening_addresses: *const c_char,
     /// Comma-separated seconds between replicator retries, the last one
     /// repeating. Empty keeps the default ladder.
@@ -31,9 +33,6 @@ pub struct NodeInitOptions {
     pub in_memory: c_int,
     /// Run without P2P (1=true, 0=false).
     pub disable_p2p: c_int,
-    /// Run without the HTTP API (1=true, 0=false). An embedded node does not
-    /// serve the HTTP API yet.
-    pub disable_api: c_int,
     /// Enable node access control at startup, owned by the node identity
     /// (1=true, 0=false).
     pub enable_node_acp: c_int,
@@ -51,9 +50,10 @@ pub struct NodeInitOptions {
     /// Length of `store_encryption_key` in bytes.
     pub store_encryption_key_len: c_int,
 
-    /// Sign blocks (1=true, 0=false), with the node identity, or with a
-    /// generated secp256k1 key when there is none.
-    pub enable_signing: c_int,
+    /// Run without signing blocks (1=true, 0=false). Signing is on by
+    /// default, as in Go: with the node identity, or with a generated
+    /// secp256k1 key when there is none.
+    pub disable_signing: c_int,
     /// 32-byte searchable encryption key, or null.
     pub searchable_encryption_key: *const u8,
     /// Length of `searchable_encryption_key` in bytes.
@@ -72,7 +72,11 @@ pub struct NodeInitOptions {
     /// Clear dial backoff before retrying a replicator. Not supported yet:
     /// must be 0.
     pub enable_clear_backoff_on_retry: c_int,
-    /// The libp2p Ed25519 private key, or null for the node's stored key.
+    /// The Ed25519 private key the node's peer identity uses for this start
+    /// (its 32-byte seed, or seed and public key), or null for the node's
+    /// stored key. As Go's `P2PPrivateKey`, it applies to this start only: it
+    /// is never checked against or recorded in the store, so a later start
+    /// without it, or with another key, works and uses that start's key.
     pub p2p_private_key: *const u8,
     /// Length of `p2p_private_key` in bytes.
     pub p2p_private_key_len: c_int,
@@ -168,6 +172,11 @@ pub struct NodeInitOptions {
     pub p2p_resource_file_descriptors: u64,
     /// Streams one peer may hold open; zero keeps the default.
     pub p2p_max_streams_per_peer: usize,
+    /// Run libp2p without listening (1=true, 0=false): a dial-only host that
+    /// connects out to peers and replicators but accepts no connections, as a
+    /// mobile embedder runs it. Several such nodes run in one process without
+    /// competing for a port. Refused together with `listening_addresses`.
+    pub disable_p2p_listen: c_int,
 }
 
 impl Default for NodeInitOptions {
@@ -181,14 +190,13 @@ impl Default for NodeInitOptions {
             identity_ptr: 0,
             in_memory: 0,
             disable_p2p: 0,
-            disable_api: 0,
             enable_node_acp: 0,
             max_transaction_retries: 0,
             store_type: ptr::null(),
             store_file_size: 0,
             store_encryption_key: ptr::null(),
             store_encryption_key_len: 0,
-            enable_signing: 0,
+            disable_signing: 0,
             searchable_encryption_key: ptr::null(),
             searchable_encryption_key_len: 0,
             p2p_block_sync_timeout_ms: 0,
@@ -235,6 +243,7 @@ impl Default for NodeInitOptions {
             p2p_resource_memory_mib: 0,
             p2p_resource_file_descriptors: 0,
             p2p_max_streams_per_peer: 0,
+            disable_p2p_listen: 0,
         }
     }
 }

@@ -1,7 +1,6 @@
 //! Node lifecycle: create, close, and report options.
 
 pub(crate) mod options;
-mod peer_key;
 mod sanitized;
 mod transport;
 
@@ -81,10 +80,13 @@ pub(crate) async fn build_node_state(
     };
     config.transport = with_derived_iroh_key_path(transport, &db_path);
     config.edge = Some(edge);
+    // Go's P2PPrivateKey is an option of one start: used as given, never
+    // checked against or recorded in the store.
     if let Some(key) = peer_key {
-        config.peer_keyring = Some(defra_node::PeerKeyring::new(Arc::new(
-            peer_key::CallerPeerKey::new(key),
-        )));
+        config.start_peer_key = Some(
+            defra_node::StartPeerKey::from_ed25519_private_key(&key)
+                .map_err(|error| error.to_string())?,
+        );
     }
 
     // A persistent store opens with the server profile. The embedding process
@@ -106,6 +108,7 @@ pub(crate) async fn build_node_state(
         builder = builder.with_at_rest_encryption_key(*key);
     }
     let node = builder.build().await.map_err(|error| error.to_string())?;
+    let options_json = sanitized::with_node(options_json, &node);
 
     let state = NodeState {
         database: node.database().clone(),
@@ -132,8 +135,29 @@ pub(crate) async fn build_node_state(
     };
     // The node holds the key now; the handle's state may go.
     drop(identity);
-    state.sync_replicator_push_options()?;
+    if let Err(error) = state.sync_replicator_push_options() {
+        // A node that will not be returned is shut down, not just dropped:
+        // dropping it would leave its transport and workers running and its
+        // store open.
+        if let Err(closing) = shut_down(&state).await {
+            tracing::warn!(%closing, "shutting down a node that failed to start");
+        }
+        return Err(error);
+    }
     Ok(state)
+}
+
+/// Shuts node `state` down: its own shutdown stops its tasks and transport
+/// and closes the database, and the event bus is FFI's to close. The signing
+/// store is process-wide and other nodes still use it, so the node gives back
+/// only its own hold on its identity's key.
+async fn shut_down(state: &NodeState) -> Result<(), String> {
+    let closed = state._node.shutdown().await;
+    state.event_bus.close();
+    if let Some(identity) = &*state.node_identity.swap(None) {
+        identity.release();
+    }
+    closed.map_err(|error| format!("failed to close database: {}", error))
 }
 
 fn with_derived_iroh_key_path(
@@ -161,33 +185,22 @@ pub extern "C" fn defra_node_close(node_ptr: usize) -> DefraResult {
         use crate::state::GRAPHQL_SUBSCRIPTIONS;
 
         let rt = try_ffi!(crate::helpers::get_rt());
-        try_ffi!(resolve_node(node_ptr));
 
-        for sub_state in GRAPHQL_SUBSCRIPTIONS.remove_for_node(node_ptr) {
-            sub_state.service.stop();
-            NODES.get(node_ptr, |state| {
-                state.event_bus.unsubscribe(sub_state.event_sub_id);
-            });
-        }
-        TXNS.remove_for_node(node_ptr);
-
+        // The node leaves the registry before its transactions and
+        // subscriptions are swept, so a concurrent create, subscribe or
+        // set_identity that looks it up from here on fails instead of
+        // registering something that outlives the node.
         let state = match NODES.remove(node_ptr) {
             Some(state) => state,
             None => return DefraResult::error(ERR_INVALID_HANDLE),
         };
-
-        // The node's own shutdown stops its tasks and transport and closes the
-        // database, and the event bus is FFI's to close. The signing store is
-        // process-wide and other nodes still use it, so the node gives back
-        // only its own hold on its identity's key.
-        let result = crate::helpers::block_on(rt, async {
-            let closed = state._node.shutdown().await;
-            state.event_bus.close();
-            closed.map_err(|error| format!("failed to close database: {}", error))
-        });
-        if let Some(identity) = &*state.node_identity.swap(None) {
-            identity.release();
+        for sub_state in GRAPHQL_SUBSCRIPTIONS.remove_for_node(node_ptr) {
+            sub_state.service.stop();
+            state.event_bus.unsubscribe(sub_state.event_sub_id);
         }
+        TXNS.remove_for_node(node_ptr);
+
+        let result = crate::helpers::block_on(rt, shut_down(&state));
         drop(state);
 
         match result {

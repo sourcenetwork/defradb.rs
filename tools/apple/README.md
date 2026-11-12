@@ -94,7 +94,11 @@ The entry points a mobile app typically needs:
 - `defra_p2p_info(node, identity)`
 - `defra_p2p_connect(node, addresses, identity)` /
   `defra_p2p_disconnect(node, addresses, identity)`
-- `defra_p2p_replicator_add(node, collections, addresses, identity)`
+- `defra_p2p_replicator_add(node, collections, addresses, identity)` (or
+  `defra_p2p_replicator_add_with_filter(..., filters_json, identity)` to push
+  only matching documents), and
+  `defra_p2p_replicator_retry(node, identity)` to re-push what a replicator
+  missed, for example after a reconnect
 - `defra_p2p_collection_sync_versions(node, version_ids, timeout, identity)`
   and `defra_p2p_document_sync(node, collection, doc_ids, timeout, identity)`
 - `defra_identity_new_remote(...)` / `defra_identity_new_remote_bytes(...)`
@@ -144,6 +148,13 @@ For Secure Enclave-backed P-256 (`secp256r1`) identities on iOS:
 5. Call `defra_node_set_identity(node, identity_ptr)` with the handle of either
    the device identity or the logical one that should back GraphQL and
    block-signing requests.
+
+Keep `signer_handle` valid and the callback callable until every node using
+the DID is closed (`defra_node_close`) or given another identity
+(`defra_node_set_identity`), not just until you call `defra_identity_free`. A
+node keeps its hold on the identity after the handle is freed and goes on
+signing through the callback, so freeing the signing context together with
+the handle leaves that node calling into freed memory.
 
 `defra_identity_new_remote_bytes` is the most direct Swift path when the app
 already has the public key as `Data`. For `secp256r1`, pass the uncompressed

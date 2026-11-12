@@ -622,6 +622,12 @@ RUNS=(
   "MC_IdentityStore_Red_ClearRemoves.cfg IdentityStore.tla RED" # clear removes the slot from the map: a held DID answers no key (INV_KeyWhileHeld)
   "MC_IdentityStore_Red_ClearDropsHeld.cfg IdentityStore.tla RED" # clear drops held keys too: a holder's key is gone (INV_KeyWhileHeld)
   "MC_IdentityStore_Red_RetainAbsent.cfg IdentityStore.tla RED" # retain holds a key the store does not have (INV_KeyWhileHeld)
+  "MC_PeerKeyLoad_Green.cfg PeerKeyLoad.tla GREEN" # plain, keyring and start-key starts of one store: a start key always starts, leaves no mark, never moves the plain key
+  "MC_PeerKeyLoad_Red_StartKeyChecked.cfg PeerKeyLoad.tla RED" # a start key checked against the store as a keyring is: refused over a plaintext key (INV_StartKeyStarts)
+  "MC_PeerKeyLoad_Red_StartKeyRecorded.cfg PeerKeyLoad.tla RED" # a start key recorded as a keyring identity: the next plain start is refused (INV_StartKeyLeavesNoMark)
+  "MC_TxnTurns_Green.cfg TxnTurns.tla GREEN" # calls on one transaction take tickets, may drop them: one runs at a time, none overtakes an earlier ticket, no call waits forever
+  "MC_TxnTurns_Red_NoRecheck.cfg TxnTurns.tla RED" # a dropping call never looks again: a dropped ticket nobody skips stalls the transaction (Progress)
+  "MC_TxnTurns_Red_CancelSkipsNow.cfg TxnTurns.tla RED" # a dropped ticket serves the next at once: two calls run together (INV_OneRunning)
   "MC_CpuLedger_Green_Edge.cfg CpuLedger.tla GREEN" # a network runtime claims cores alone beside a pool, or gives up holding nothing
   "MC_CpuLedger_Red_EdgeNoCap.cfg CpuLedger.tla RED" # network runtime claims alone forever: its start never ends (LIVE_StartEnds)
   "MC_DefaultPool_Green.cfg DefaultPool.tla GREEN" # the first registered pool that runs is the default, else one pool started once; never a closing pool, a stop's deadline goes elsewhere, every call returns

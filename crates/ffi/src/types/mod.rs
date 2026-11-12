@@ -16,14 +16,17 @@ pub use node_init_options::NodeInitOptions;
 ///   whose ID is in the value field; read its events with
 ///   `defra_subscription_poll` and end it with `defra_subscription_close`
 ///
-/// The caller owns its strings and frees them with [`defra_result_free`].
+/// Both strings are always set, as Go's `returnC` sets them: the one a result
+/// does not use is empty, never null, so a host may read both. The caller
+/// owns them and frees them with [`defra_result_free`].
 #[repr(C)]
 pub struct DefraResult {
     /// Status code: 0=success, 1=error, 2=subscription
     pub status: c_int,
-    /// Error message (null on success). Freed with the result.
+    /// Error message; empty, never null, on success. Freed with the result.
     pub error: *mut c_char,
-    /// JSON value (null on error). Freed with the result.
+    /// JSON value; empty, never null, on error or when there is none. Freed
+    /// with the result.
     pub value: *mut c_char,
 }
 
@@ -35,8 +38,33 @@ impl DefraResult {
     pub fn success(value: impl Into<String>) -> Self {
         Self {
             status: 0,
-            error: ptr::null_mut(),
+            error: empty_c_string(),
             value: sanitize_to_cstring(value, "{}").into_raw(),
+        }
+    }
+
+    /// A success whose value is the secret `bytes`, hex-encoded (a private
+    /// key). The hex is written once, into a buffer the value takes over
+    /// without copying, so no unwiped copy is left behind;
+    /// [`defra_result_free`] wipes it.
+    pub(crate) fn success_secret_hex(bytes: &[u8]) -> Self {
+        let digits = bytes.len() * 2;
+        // Exactly the digits and the terminating NUL, so handing the buffer
+        // to the C string never reallocates (and leaves no copy behind).
+        let mut text = zeroize::Zeroizing::new(vec![0u8; digits + 1]);
+        if hex::encode_to_slice(bytes, &mut text[..digits]).is_err() {
+            return Self::error("could not encode the key");
+        }
+        match CString::from_vec_with_nul(std::mem::take(&mut *text)) {
+            Ok(value) => Self {
+                status: 0,
+                error: empty_c_string(),
+                value: value.into_raw(),
+            },
+            Err(error) => {
+                zeroize::Zeroize::zeroize(&mut error.into_bytes());
+                Self::error("could not encode the key")
+            }
         }
     }
 
@@ -48,7 +76,7 @@ impl DefraResult {
         Self {
             status: 1,
             error: sanitize_to_cstring(message, "unknown error").into_raw(),
-            value: ptr::null_mut(),
+            value: empty_c_string(),
         }
     }
 
@@ -56,8 +84,8 @@ impl DefraResult {
     pub fn ok() -> Self {
         Self {
             status: 0,
-            error: ptr::null_mut(),
-            value: ptr::null_mut(),
+            error: empty_c_string(),
+            value: empty_c_string(),
         }
     }
 
@@ -65,7 +93,7 @@ impl DefraResult {
     pub fn subscription(id: impl Into<String>) -> Self {
         Self {
             status: 2,
-            error: ptr::null_mut(),
+            error: empty_c_string(),
             value: sanitize_to_cstring(id, "0").into_raw(),
         }
     }
@@ -99,7 +127,7 @@ impl From<Result<(), String>> for DefraResult {
 pub struct DefraNewNodeResult {
     /// Status code: 0=success, 1=error
     pub status: c_int,
-    /// Error message (null on success). Freed with the result.
+    /// Error message; empty, never null, on success. Freed with the result.
     pub error: *mut c_char,
     /// Handle to the node (0 on error).
     pub node_ptr: usize,
@@ -136,7 +164,7 @@ impl DefraNewNodeResult {
 pub struct DefraNewTxnResult {
     /// Status code: 0=success, 1=error
     pub status: c_int,
-    /// Error message (null on success). Freed with the result.
+    /// Error message; empty, never null, on success. Freed with the result.
     pub error: *mut c_char,
     /// Handle to the transaction (0 on error).
     pub txn_ptr: usize,
@@ -170,7 +198,7 @@ impl DefraNewTxnResult {
 pub struct DefraNewIdentityResult {
     /// Status code: 0=success, 1=error
     pub status: c_int,
-    /// Error message (null on success). Freed with the result.
+    /// Error message; empty, never null, on success. Freed with the result.
     pub error: *mut c_char,
     /// Handle to the identity (0 on error).
     pub identity_ptr: usize,
@@ -264,6 +292,11 @@ impl FfiPanicResult for () {
     }
 }
 
+/// An empty C string the caller frees: the field a result does not use.
+fn empty_c_string() -> *mut c_char {
+    CString::default().into_raw()
+}
+
 /// Convert a string to a CString, sanitizing null bytes.
 ///
 /// If the string contains embedded null bytes, they are replaced with the
@@ -300,15 +333,18 @@ pub unsafe fn c_str_to_string(ptr: *const c_char) -> Option<String> {
     }
 }
 
-/// Frees a string this crate allocated and nulls the pointer, so a second
-/// free does nothing.
+/// Wipes and frees a string this crate allocated, and nulls the pointer, so
+/// a second free does nothing.
 ///
 /// # Safety
 ///
 /// `ptr` must be null or a string this crate allocated.
 unsafe fn free_c_string(ptr: &mut *mut c_char) {
     if !ptr.is_null() {
-        drop(CString::from_raw(*ptr));
+        // Wiped before the memory goes back: a result may carry a secret (an
+        // exported private key).
+        let mut bytes = CString::from_raw(*ptr).into_bytes_with_nul();
+        zeroize::Zeroize::zeroize(&mut bytes);
         *ptr = ptr::null_mut();
     }
 }

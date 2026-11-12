@@ -13,7 +13,7 @@ use super::{dac_bypass, defra_query_execute};
 #[test]
 fn node_identity_is_not_promoted_to_nac_dac_bypass() {
     let node = node_with(NodeInitOptions {
-        enable_signing: 1,
+        disable_signing: 0,
         ..local_options()
     });
     let node_did = NODES

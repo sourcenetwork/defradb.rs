@@ -320,9 +320,16 @@ fn a_bearer_token_identity_acts_for_its_did_through_the_token() {
     let identity =
         registered(unsafe { defra_identity_new_from_bearer_token(did.as_ptr(), bearer.as_ptr()) });
     assert_eq!(ok(defra_identity_did(identity)), logical_did);
+    let node = node();
     assert_eq!(
-        defra_core::signing::stored_bearer_token(&logical_did).as_deref(),
-        Some(token.as_str())
+        presented(node, identity, &logical_did).as_deref(),
+        Some(token.as_str()),
+        "a request made with the handle presents its token"
+    );
+    assert_eq!(
+        defra_core::signing::stored_bearer_token(&logical_did),
+        None,
+        "the token is never put in the process-wide store"
     );
 
     let not_a_did = cstr("not-a-did");
@@ -330,4 +337,55 @@ fn a_bearer_token_identity_acts_for_its_did_through_the_token() {
     refused(unsafe { defra_identity_new_from_bearer_token(did.as_ptr(), std::ptr::null()) });
 
     defra_identity_free(identity);
+    assert!(
+        crate::request::Request::resolve(node, identity).is_err(),
+        "a freed handle presents nothing"
+    );
+    close(node);
+}
+
+/// Two bearer identities for one DID each present their own token: a second
+/// token never replaces the first for the first handle's requests.
+#[test]
+fn two_bearer_identities_for_one_did_present_their_own_tokens() {
+    let logical = RawIdentity::from_ed25519(crypto::generate_ed25519().unwrap()).unwrap();
+    let logical_did = logical.did().unwrap().to_string();
+    let did = cstr(&logical_did);
+    let first_token = cstr("first-token");
+    let second_token = cstr("second-token");
+    let first = registered(unsafe {
+        defra_identity_new_from_bearer_token(did.as_ptr(), first_token.as_ptr())
+    });
+    let second = registered(unsafe {
+        defra_identity_new_from_bearer_token(did.as_ptr(), second_token.as_ptr())
+    });
+    let node = node();
+
+    assert_eq!(
+        presented(node, first, &logical_did).as_deref(),
+        Some("first-token")
+    );
+    assert_eq!(
+        presented(node, second, &logical_did).as_deref(),
+        Some("second-token")
+    );
+
+    defra_identity_free(second);
+    assert_eq!(
+        presented(node, first, &logical_did).as_deref(),
+        Some("first-token"),
+        "freeing one handle leaves the other's token"
+    );
+
+    defra_identity_free(first);
+    close(node);
+}
+
+/// The bearer token a request made on `node` with `identity` presents for
+/// `did`.
+fn presented(node: usize, identity: usize, did: &str) -> Option<String> {
+    crate::request::Request::resolve(node, identity)
+        .unwrap_or_else(|_| panic!("the handles resolve"))
+        .context()
+        .bearer_token_for(did)
 }

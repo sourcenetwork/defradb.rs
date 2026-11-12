@@ -71,7 +71,7 @@ pub(crate) unsafe fn read(options: &NodeInitOptions) -> Result<NodeSetup, String
         Some(identity) => defra_node::NodeSigning::RegisteredIdentity {
             did: identity.did.clone(),
         },
-        None if options.enable_signing != 0 => defra_node::NodeSigning::Enabled { key: None },
+        None if options.disable_signing == 0 => defra_node::NodeSigning::Enabled { key: None },
         None => defra_node::NodeSigning::Disabled,
     };
 
@@ -104,7 +104,7 @@ pub(crate) unsafe fn read(options: &NodeInitOptions) -> Result<NodeSetup, String
         .transpose()?,
         config,
         identity,
-        signing_enabled: options.enable_signing != 0,
+        signing_enabled: options.disable_signing == 0,
         searchable_encryption_key: key_bytes(
             options.searchable_encryption_key,
             options.searchable_encryption_key_len,

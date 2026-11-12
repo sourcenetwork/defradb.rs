@@ -126,3 +126,82 @@ fn node_access_control_lets_only_an_identity_past_document_access_subscribe() {
     defra_identity_free(owner);
     defra_identity_free(stranger);
 }
+
+/// A replicator completion carries its outcome (delivered, skipped, or a
+/// replay error) under its Go name; a bare completion signal carries none.
+#[test]
+fn a_replicator_completion_carries_its_outcome() {
+    for (skipped, error) in [(false, None), (true, None), (false, Some("replay failed"))] {
+        let message =
+            events::Message::replicator_completed_with_data(events::ReplicatorCompletedData {
+                peer_id: "peer-a".into(),
+                collections: vec!["Note".into(), "User".into()],
+                skipped,
+                error: error.map(str::to_owned),
+            });
+        assert_eq!(
+            super::event_json(&message),
+            serde_json::json!({
+                "name": "replicator-completed",
+                "peer_id": "peer-a",
+                "collections": ["Note", "User"],
+                "skipped": skipped,
+                "error": error,
+            })
+        );
+    }
+    assert_eq!(
+        super::event_json(&events::Message::replicator_completed()),
+        serde_json::json!({ "name": "replicator-completed" })
+    );
+}
+
+/// An action execution carries Go's wire shape of the execution.
+#[test]
+fn an_action_execution_carries_its_execution() {
+    let execution = defra_core::ActionExecution {
+        collection_id: "bafycollection".into(),
+        action: defra_core::Action::TRUNCATE,
+        subject: "doc".into(),
+        status: defra_core::ActionStatus::ERRORED,
+        reason: "failed".into(),
+    };
+    let event = super::event_json(&events::Message::action_execution(execution.clone()));
+    assert_eq!(event["name"], "action-execution", "{event}");
+    assert_eq!(
+        event["action_execution"],
+        serde_json::to_value(&execution).unwrap(),
+        "{event}"
+    );
+}
+
+/// Events the bus drops for a slow subscriber are reported, not lost
+/// silently: the next event delivered is preceded by their count.
+#[test]
+fn events_the_bus_drops_are_reported_before_the_next_one() {
+    use events::Bus;
+
+    let bus = events::ChannelBus::with_config(events::ChannelBusConfig {
+        event_buffer_size: 2,
+        ..Default::default()
+    });
+    let subscription = bus.subscribe(&[events::EventName::ReplicatorCompleted]);
+    for _ in 0..5 {
+        bus.publish(events::Message::replicator_completed());
+    }
+    drop(bus);
+
+    let (sender, receiver) = kovan_channel::bounded::<String>(16);
+    futures_lite::future::block_on(super::forward(subscription, sender));
+    let delivered: Vec<Value> = std::iter::from_fn(|| receiver.try_recv())
+        .map(|json| serde_json::from_str(&json).unwrap())
+        .collect();
+    assert_eq!(
+        delivered,
+        vec![
+            serde_json::json!({ "name": "events-dropped", "count": 3 }),
+            serde_json::json!({ "name": "replicator-completed" }),
+            serde_json::json!({ "name": "replicator-completed" }),
+        ]
+    );
+}

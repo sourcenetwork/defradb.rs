@@ -72,6 +72,7 @@ where
 {
     let NodeConfig {
         peer_keyring,
+        start_peer_key,
         persistence,
         transport,
         edge: given_edge,
@@ -88,7 +89,7 @@ where
     } = config;
     let introspection_cache = introspection_cache.unwrap_or(true);
     #[cfg(not(any(feature = "p2p", feature = "libp2p")))]
-    let _ = (&peer_keyring, &transport);
+    let _ = (&peer_keyring, &start_peer_key, &transport);
 
     let event_bus: Arc<dyn events::Bus> = Arc::new(events::ChannelBus::default());
     let node_identity::NodeIdentity {
@@ -269,6 +270,7 @@ where
                     libp2p.sync.sync_config(),
                     schedule,
                     peer_keyring.as_ref(),
+                    start_peer_key.as_ref(),
                     network.edge(),
                 )
                 .await
@@ -284,6 +286,7 @@ where
                 document_acp.clone(),
                 strict_replicated_doc_access,
                 peer_keyring.as_ref(),
+                start_peer_key.as_ref(),
                 network.sibling(),
             )
             .await

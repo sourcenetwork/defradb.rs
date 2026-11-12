@@ -3,6 +3,9 @@
 //! Go's index API writes an unset algorithm or metric as `""` and an HNSW
 //! block with zero parameters, and fills in the defaults when it creates the
 //! index (internal/db/collection_index.go validateVectorIndexDescription).
+//!
+//! The stored form is the normalized one; `proofs/lean/VectorIndexDefaults.lean`
+//! proves normalizing is idempotent and leaves no zero HNSW parameter.
 
 use serde::de::{Error as _, IntoDeserializer};
 use serde::{Deserialize, Deserializer};

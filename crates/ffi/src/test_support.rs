@@ -106,10 +106,11 @@ pub(crate) fn ok_json(result: DefraResult) -> serde_json::Value {
     serde_json::from_str(&value).unwrap_or_else(|e| panic!("not JSON ({e}): {value}"))
 }
 
-/// Options for an in-memory node without P2P.
+/// Options for an in-memory node without P2P or block signing.
 pub(crate) fn local_options() -> NodeInitOptions {
     NodeInitOptions {
         disable_p2p: 1,
+        disable_signing: 1,
         ..NodeInitOptions::default()
     }
 }

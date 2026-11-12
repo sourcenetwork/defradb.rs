@@ -10,7 +10,7 @@ use identity::RawIdentity;
 use zeroize::Zeroizing;
 
 use crate::state::{IdentityState, IDENTITIES, NODES};
-use crate::target::{go_string, resolve_target};
+use crate::target::{go_string, resolve_target_node};
 use crate::types::{DefraNewIdentityResult, DefraResult};
 use crate::{ffi_entry, try_ffi};
 
@@ -133,7 +133,9 @@ fn insert(identity: Result<RawIdentity, String>) -> DefraNewIdentityResult {
     }
 }
 
-/// Returns the identity's private key, hex-encoded.
+/// Returns the identity's private key, hex-encoded. The key leaves no unwiped
+/// copy behind, and [`defra_result_free`](crate::types::defra_result_free)
+/// wipes it before freeing it.
 #[no_mangle]
 pub extern "C" fn defra_identity_export_private_key(identity_ptr: usize) -> DefraResult {
     ffi_entry! {
@@ -142,7 +144,7 @@ pub extern "C" fn defra_identity_export_private_key(identity_ptr: usize) -> Defr
         }
         match IDENTITIES.get(identity_ptr) {
             Some(identity) => match &identity.private_key {
-                Some(key) => DefraResult::success(hex::encode(key.as_slice())),
+                Some(key) => DefraResult::success_secret_hex(key.as_slice()),
                 None => DefraResult::error(ERR_NO_PRIVATE_KEY),
             },
             None => DefraResult::error(crate::target::ERR_INVALID_HANDLE),
@@ -182,7 +184,7 @@ pub extern "C" fn defra_identity_free(identity_ptr: usize) {
 #[no_mangle]
 pub extern "C" fn defra_node_identity(node_ptr: usize) -> DefraResult {
     ffi_entry! {
-        let node = try_ffi!(resolve_target(node_ptr)).node();
+        let node = try_ffi!(resolve_target_node(node_ptr));
         let Some(did) = NODES.get(node, |state| state.identity_did()).flatten() else {
             return DefraResult::success("Node has no identity assigned to it.");
         };

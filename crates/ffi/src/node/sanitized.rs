@@ -13,7 +13,16 @@ fn seconds_as_nanos(seconds: u64) -> u64 {
     seconds.saturating_mul(1_000_000_000)
 }
 
-/// The sanitized options of a node built from `options` and `setup`.
+/// `report` with what only the built `node` knows: the transaction retries
+/// it resolved, from the caller's value or its default.
+pub(crate) fn with_node(mut report: Value, node: &defra_node::Node) -> Value {
+    report["DB"]["MaxTxnRetries"] = json!(node.database().options().max_txn_retries());
+    report
+}
+
+/// The sanitized options of a node built from `options` and `setup`, each
+/// value as the node runs with it: the caller's, or the default it resolves
+/// to. [`with_node`] fills in the values only the built node knows.
 ///
 /// # Safety
 ///
@@ -36,7 +45,11 @@ pub(crate) unsafe fn options_json(
             libp2p.bootstrap_peers.clone(),
             libp2p.enable_pubsub,
             libp2p.enable_relay,
-            libp2p.stream_timeout_secs,
+            Some(
+                libp2p
+                    .stream_timeout_secs
+                    .unwrap_or(p2p::P2PHostConfig::default().stream_timeout),
+            ),
         ),
         _ => (Vec::new(), Vec::new(), false, false, None),
     };
@@ -52,7 +65,11 @@ pub(crate) unsafe fn options_json(
         "Store": {
             "Store": if persistent { "regolith" } else { "memory" },
             "Path": redacted_text(persistent),
-            "BadgerFileSize": setup.store_file_size,
+            "BadgerFileSize": setup.store_file_size.unwrap_or_else(|| {
+                storage::RegolithStoreOptions::default()
+                    .engine
+                    .get_target_file_size()
+            }),
             "BadgerEncryptionKey": redacted(setup.store_encryption_key.is_some()),
             "BadgerInMemory": !persistent,
         },
