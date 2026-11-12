@@ -87,6 +87,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Gossip connection ownership | TLA+, Lean | p2p |
 | Iroh service records | TLA+, Lean | p2p |
 | Iroh solicited replies | TLA+ | p2p |
+| Pubsub RPC reply addressing | TLA+, Lean | p2p |
 | Reply-driven DAG fetch | TLA+ | p2p |
 | Depth-cut DAG fetch | TLA+, Lean | p2p |
 | Have-set DAG fetch | TLA+, Lean | p2p |
