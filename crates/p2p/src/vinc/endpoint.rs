@@ -710,6 +710,8 @@ impl<H: Hosted + 'static> Node<H> {
         // One thread runs both, so nothing lands between these two.
         self.allowlist.allow(peer);
         self.ep.unrevoke(&peer);
+        // The allowlist's answer changed: vinc drops the deny it cached.
+        self.ep.admission_changed(&peer);
         Ok(())
     }
 
@@ -768,7 +770,7 @@ impl<H: Hosted + 'static> Node<H> {
             .set_hints(pointer)
             .map_err(|error| vinc_error("record hints", error))?;
         self.ep
-            .publish()
+            .publish_record()
             .await
             .map_err(|error| vinc_error("record publish", error))?;
         let connections: Vec<Connection<H>> = self
