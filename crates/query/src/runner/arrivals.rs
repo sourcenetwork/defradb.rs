@@ -1,6 +1,6 @@
 use super::QueryRunner;
 use crate::error::{QueryError, Result};
-use crate::fetcher::{DocFetcher, DocumentArrivalOptions};
+use crate::fetcher::{DocFetcher, DocumentArrivalOptions, DocumentUpdateOptions};
 use crate::mapper::{Requestable, Select};
 use crate::txn::TransactionRegistry;
 use identity::Did;
@@ -40,18 +40,45 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 "arrival limit and docID count must be between 1 and 1024",
             ));
         }
-        let page = fetcher
-            .get_document_arrivals(&DocumentArrivalOptions {
-                collection: collection_name.clone(),
-                after: select.arrival_after,
-                limit,
-                doc_ids: select.doc_ids.clone(),
-            })
-            .await?;
+        let updates = select.collection_name == "_documentUpdates";
+        let (head, next, rows) = if updates {
+            let page = fetcher
+                .get_document_updates(&DocumentUpdateOptions {
+                    collection: collection_name.clone(),
+                    after: select.arrival_after,
+                    limit,
+                })
+                .await?;
+            (
+                page.head,
+                page.next,
+                page.entries
+                    .into_iter()
+                    .map(|entry| (entry.cursor, entry.doc_id, Some(entry.cid)))
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            let page = fetcher
+                .get_document_arrivals(&DocumentArrivalOptions {
+                    collection: collection_name.clone(),
+                    after: select.arrival_after,
+                    limit,
+                    doc_ids: select.doc_ids.clone(),
+                })
+                .await?;
+            (
+                page.head,
+                page.next,
+                page.entries
+                    .into_iter()
+                    .map(|entry| (entry.cursor, entry.doc_id, None))
+                    .collect::<Vec<_>>(),
+            )
+        };
         let identity = acp::Identity::from(caller);
         let context = self.context();
         let mut entries = Vec::new();
-        for entry in page.entries {
+        for (cursor, doc_id, cid) in rows {
             let allowed = match &collection.policy {
                 None => true,
                 Some(policy) => {
@@ -64,18 +91,22 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                         &policy.resource_name,
                         &collection.collection_id,
                         collection.is_branchable,
-                        &entry.doc_id,
+                        &doc_id,
                         None,
                     )
                     .await?
                 }
             };
             if allowed {
-                entries.push(json!({"cursor": entry.cursor.to_string(), "docID": entry.doc_id}));
+                let mut row = json!({"cursor": cursor.to_string(), "docID": doc_id});
+                if let Some(cid) = cid {
+                    row["cid"] = json!(cid);
+                }
+                entries.push(row);
             }
         }
         project(
-            &json!({"head":page.head.to_string(), "next":page.next.to_string(), "entries":entries}),
+            &json!({"head":head.to_string(), "next":next.to_string(), "entries":entries}),
             &select.fields,
         )
     }
