@@ -17,6 +17,7 @@ SDK_MANIFESTS = ("crates/vera/Cargo.toml", "tools/integration-test/Cargo.toml")
 UNIT_NAMES = (
     "abi::tests::delete_relationship_subject_userset_round_trips",
     "abi::tests::set_relationship_subject_object_edge_round_trips",
+    "bearer::pinned::a_delegation_token_is_these_exact_bytes",
     "bearer::tests::a_scoped_token_keeps_the_issuer_spelling_it_was_given",
     "bearer::tests::bearer_token_uses_vera_rs_es256k_shape",
     "bearer::tests::invalid_lifetime_is_rejected",
@@ -30,6 +31,8 @@ UNIT_NAMES = (
     "did_spelling::tests::both_spellings_of_a_secp256k1_key_meet_at_the_uncompressed_did",
     "did_spelling::tests::other_identifiers_pass_through_unchanged",
     "did_spelling::tests::the_uncompressed_spelling_is_the_one_defradb_derives",
+    "provider::signer_tests::a_signature_vera_rs_would_refuse_is_never_sent",
+    "provider::signer_tests::the_provider_signs_its_delegations_through_its_signer",
     "provider::tests::a_request_token_under_the_compressed_issuer_spelling_is_refused",
     "provider::tests::resolve_registered_or_passthrough_bearer_token_builds_local_secp256k1_token",
     "provider::tests::resolve_registered_or_passthrough_bearer_token_uses_request_token_for_remote_identity",
@@ -44,6 +47,9 @@ UNIT_NAMES = (
     "provider_commands::tests::encodes_register_object_as_vera_rs_policy_cmd",
     "provider_commands::tests::encodes_relationship_subjects_as_vera_rs_policy_cmds",
     "provider_commands::request_bearer_tests::a_remote_identity_acts_with_the_token_its_request_carries",
+    "signer::tests::a_signature_is_admitted_exactly_when_vera_rs_would_verify_it",
+    "signer::tests::a_signer_must_name_a_secp256k1_key",
+    "signer::tests::the_secp256k1_signer_names_its_actor_in_the_uncompressed_spelling",
     "worker::tests::pending_request_and_identity_survive_reopen",
 )
 UNIT_TESTS = tuple("vera_rs::" + name for name in UNIT_NAMES)
