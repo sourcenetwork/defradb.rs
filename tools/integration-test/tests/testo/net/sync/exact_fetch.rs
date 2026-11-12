@@ -146,12 +146,53 @@ fn holds(node: &str, name: &str) -> Actions {
     .into()
 }
 
+fn counters(limits: &[(&str, u64)]) -> BTreeMap<String, u64> {
+    limits
+        .iter()
+        .map(|(name, limit)| ((*name).to_owned(), *limit))
+        .collect()
+}
+
 fn at_most(node: &str, limits: &[(&str, u64)]) -> Actions {
     SyncCounters {
-        at_most: limits
-            .iter()
-            .map(|(name, limit)| ((*name).to_owned(), *limit))
-            .collect::<BTreeMap<_, _>>(),
+        at_most: counters(limits),
+        common: on(node),
+        ..Default::default()
+    }
+    .into()
+}
+
+/// `node` served at least one CAR block, and at most `limit`.
+fn car_served_within(node: &str, limit: u64) -> Actions {
+    SyncCounters {
+        at_most: counters(&[("car_served_cids", limit)]),
+        at_least: counters(&[("car_served_cids", 1)]),
+        common: on(node),
+        ..Default::default()
+    }
+    .into()
+}
+
+/// Captures `node`'s `car_served_cids` as `name`.
+fn served_so_far(node: &str, name: &str) -> Actions {
+    SyncCounters {
+        common: Common {
+            capture: captures([(name, "/car_served_cids")]),
+            ..on(node)
+        },
+        ..Default::default()
+    }
+    .into()
+}
+
+/// Since the capture `name`, `node` served at least one CAR block, and at
+/// most `limit`.
+fn car_served_since(node: &str, name: &str, limit: u64) -> Actions {
+    let since = [("car_served_cids".to_owned(), name.to_owned())].into();
+    SyncCounters {
+        at_most: counters(&[("car_served_cids", limit)]),
+        at_least: counters(&[("car_served_cids", 1)]),
+        since,
         common: on(node),
         ..Default::default()
     }
@@ -183,10 +224,7 @@ fn each_new_head_over_held_history_is_served_alone() {
         actions.push(step);
         actions.push(holds("db1", &format!("n{}", idx + 1)));
     }
-    actions.push(at_most(
-        "db0",
-        &[("car_served_cids", u64::from(3 * (UPDATES + 1)))],
-    ));
+    actions.push(car_served_within("db0", u64::from(3 * (UPDATES + 1))));
     actions.push(at_most(
         "db1",
         &[("car_received_already_held", u64::from(UPDATES + 1))],
@@ -214,15 +252,14 @@ fn a_deep_concurrent_branch_is_served_without_shared_history() {
         (1..=BRANCH).map(|idx| update("db0", json!({ "name": format!("b{idx}"), "age": idx }))),
     );
     actions.push(update("db1", json!({ "age": 999 })));
+    actions.push(served_so_far("db0", "served_before_branch"));
     actions.push(reconnect());
     actions.push(update("db0", json!({ "name": "last" })));
     actions.push(holds("db1", "last"));
-    actions.push(at_most(
+    actions.push(car_served_since(
         "db0",
-        &[(
-            "car_served_cids",
-            u64::from(3 * (HISTORY + 1) + 3 * (BRANCH + 1)),
-        )],
+        "served_before_branch",
+        u64::from(3 * (BRANCH + 1)),
     ));
     actions.push(at_most(
         "db1",

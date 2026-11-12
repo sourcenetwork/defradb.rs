@@ -7,12 +7,20 @@ use serde_json::{json, Value};
 use testo::prelude::*;
 
 /// Checks counters in a Rust node's `p2p status`: each counter named in
-/// `at_most` is no more than its limit. The node is read directly, whichever
-/// client the test runs through; a Go node has no such status.
+/// `at_most` is no more than its limit, and each named in `at_least` no less.
+/// A counter named in `since` is checked as its rise past the value captured
+/// under that name by an earlier `SyncCounters` (the result is the whole
+/// status, so `capture` takes `/<counter>`). The node is read directly,
+/// whichever client the test runs through; a Go node has no such status.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncCounters {
+    #[serde(default)]
     pub at_most: BTreeMap<String, u64>,
+    #[serde(default)]
+    pub at_least: BTreeMap<String, u64>,
+    #[serde(default)]
+    pub since: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -47,12 +55,19 @@ impl Op for SyncCounters {
             .map_err(|e| Failure::operation(e.to_string()))?;
         let mut seen = serde_json::Map::new();
         for (counter, limit) in &self.at_most {
-            let value = status[counter.as_str()]
-                .as_u64()
-                .ok_or_else(|| Failure::operation(format!("status has no counter {counter}")))?;
+            let value = self.counter(state, &status, counter)?;
             if value > *limit {
                 return Err(Failure::operation(format!(
                     "{counter} is {value}, more than {limit}"
+                )));
+            }
+            seen.insert(counter.clone(), json!(value));
+        }
+        for (counter, limit) in &self.at_least {
+            let value = self.counter(state, &status, counter)?;
+            if value < *limit {
+                return Err(Failure::operation(format!(
+                    "{counter} is {value}, less than {limit}"
                 )));
             }
             seen.insert(counter.clone(), json!(value));
@@ -62,7 +77,25 @@ impl Op for SyncCounters {
             self.common.node(),
             Value::Object(seen)
         );
-        Ok(json!({}))
+        Ok(status)
+    }
+}
+
+impl SyncCounters {
+    /// `counter`'s value, less its captured baseline when `since` names one.
+    fn counter(&self, state: &State, status: &Value, counter: &str) -> Result<u64, Failure> {
+        let value = status[counter]
+            .as_u64()
+            .ok_or_else(|| Failure::operation(format!("status has no counter {counter}")))?;
+        let Some(capture) = self.since.get(counter) else {
+            return Ok(value);
+        };
+        let base = state
+            .captures
+            .get(capture)
+            .and_then(Value::as_u64)
+            .ok_or_else(|| Failure::operation(format!("no counter captured as {capture}")))?;
+        Ok(value.saturating_sub(base))
     }
 }
 
