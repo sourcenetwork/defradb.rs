@@ -727,7 +727,9 @@ impl Events {
     }
 }
 
-/// The peer ID at the end of a `/p2p/<ID>` address.
+/// The peer ID of an address: the end of a libp2p `/p2p/<ID>` address, or
+/// the start of a vinc `<ID>@<ip:port>` one.
 pub fn peer_id(address: &str) -> &str {
-    address.rsplit("/p2p/").next().unwrap_or(address)
+    let id = address.rsplit("/p2p/").next().unwrap_or(address);
+    id.split('@').next().unwrap_or(id)
 }
