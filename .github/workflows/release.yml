@@ -31,8 +31,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
-
       # rust-toolchain.toml pins the toolchain cargo runs here; add the target to that one.
       - run: rustup target add ${{ matrix.target }}
 
@@ -210,8 +208,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
-
       # rust-toolchain.toml pins the toolchain cargo runs here; add the target to that one.
       - run: rustup target add ${{ matrix.target }}
 
@@ -326,8 +322,6 @@ jobs:
             features: native,libp2p
     steps:
       - uses: actions/checkout@v7
-
-      - uses: dtolnay/rust-toolchain@stable
 
       # rust-toolchain.toml pins the toolchain cargo runs here; add the targets to that one.
       - run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
