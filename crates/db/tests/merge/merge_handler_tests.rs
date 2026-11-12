@@ -4464,9 +4464,18 @@ async fn assert_remote_merge_invalidates_stable_scope_after_schema_patch(batch: 
     let original = db.get_collection("ObservationProbe").unwrap().unwrap();
     let root_id = original.collection_id().to_owned();
     let mut scoped = bus.subscribe_collection_changes(vec![root_id.clone()]);
-    let patched = db.patch_collection("ObservationProbe",
+    db.patch_collection(
+        &defra_core::RequestContext::default(),
         r#"[{"op":"add","path":"/ObservationProbe/Fields/-","value":{"Name":"extra","Kind":"String"}}]"#,
-        None).await.unwrap();
+        None,
+    )
+    .await
+    .unwrap();
+    let patched = db
+        .get_collection("ObservationProbe")
+        .unwrap()
+        .unwrap()
+        .schema_arc();
     assert_eq!(patched.collection_id, root_id);
     assert_ne!(
         patched.version_id, root_id,
