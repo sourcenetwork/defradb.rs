@@ -95,7 +95,13 @@ impl SyncCounters {
             .get(capture)
             .and_then(Value::as_u64)
             .ok_or_else(|| Failure::operation(format!("no counter captured as {capture}")))?;
-        Ok(value.saturating_sub(base))
+        // A counter below its baseline was reset (a restarted node), so a
+        // rise measured from that baseline would be meaningless.
+        value.checked_sub(base).ok_or_else(|| {
+            Failure::operation(format!(
+                "{counter} is {value}, below its captured {capture} of {base}"
+            ))
+        })
     }
 }
 
