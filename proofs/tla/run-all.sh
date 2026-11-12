@@ -1064,6 +1064,13 @@ RUNS=(
   "MC_VincReplyBridge_Red_NoDropReset.cfg VincReplyBridge.tla RED" # a dropped token sends nothing: its stream is held forever (LIVE_NoLeak)
   "MC_VincReplyBridge_Red_NoSweep.cfg VincReplyBridge.tla RED" # no sweep: a drop lost to a full queue leaks its entry (LIVE_NoLeak)
   "MC_VincReplyBridge_Red_NoCap.cfg VincReplyBridge.tla RED" # no capacity check: the table outgrows its bound (INV_Bounded)
+  "MC_VincTopicDelivery_Green.cfg VincTopicDelivery.tla GREEN" # two nodes subscribe, unsubscribe, publish with and without waiting, link and unlink: only a node on the mesh gets a message, JOINED only for a linked member, a waiting publish keeps the engine's topic
+  "MC_VincTopicDelivery_Green_Raw.cfg VincTopicDelivery.tla GREEN" # a raw topic: every message reaches the engine as bytes
+  "MC_VincTopicDelivery_Red_NoGate.cfg VincTopicDelivery.tla RED" # no peer-session gate: a node that dialed no one takes the hub's push (INV_NoDeliveryOffMesh)
+  "MC_VincTopicDelivery_Red_RawLate.cfg VincTopicDelivery.tla RED" # raw marked after the join: a KMS message is decoded as a PushLog (INV_RawNeverDecoded)
+  "MC_VincTopicDelivery_Red_NoSessionFilter.cfg VincTopicDelivery.tla RED" # JOINED from the hub's member list: a peer with no session is reported joined (INV_JoinedOnlyLinkedMembers)
+  "MC_VincTopicDelivery_Red_NoOwnerCheck.cfg VincTopicDelivery.tla RED" # a waiting publish leaves whatever happened: the engine loses a topic it subscribed to meanwhile (INV_EngineKeepsItsTopic)
+  "MC_VincTopicDelivery_Red_NoEngineFilter.cfg VincTopicDelivery.tla RED" # events of a topic the engine is not subscribed to reach it (INV_OnlyEngineTopics)
   "MC_CoordinatorShutdown_Green.cfg CoordinatorShutdown.tla GREEN" # two callers, a late spawn racing the drain, the edge closing and the runtime torn down at any moment: one drain, no task left in the set, every caller returns
   "MC_CoordinatorShutdown_Green_TwoSpawns.cfg CoordinatorShutdown.tla GREEN" # two late spawns whose pruners race the drain and each other: no task left in the set, the caller returns
   "MC_CoordinatorShutdown_Red_DropRefused.cfg CoordinatorShutdown.tla RED" # the old code, a refused drain dropped: the tracked task leaks (INV_NoLeak)

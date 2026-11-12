@@ -32,7 +32,7 @@ use super::admission::AdmissionAuthority;
 use super::command::{Command, CommandSender, EndpointStopped, Outbound, ReplyBody};
 use super::services;
 use super::token::VincResponseToken;
-use super::{not_supported, wire};
+use super::wire;
 
 #[derive(Clone)]
 pub struct VincTransport {
@@ -320,32 +320,68 @@ impl P2PTransport for VincTransport {
             .await
     }
 
-    async fn subscribe(&self, _topic: DefraTopic) -> Result<bool> {
-        Err(not_supported("subscribe"))
+    async fn subscribe(&self, topic: DefraTopic) -> Result<bool> {
+        self.send_command(|reply| Command::Subscribe {
+            topic: topic.to_string(),
+            raw: false,
+            reply,
+        })
+        .await
     }
 
-    async fn unsubscribe(&self, _topic: DefraTopic) -> Result<bool> {
-        Err(not_supported("unsubscribe"))
+    async fn unsubscribe(&self, topic: DefraTopic) -> Result<bool> {
+        self.send_command(|reply| Command::Unsubscribe {
+            topic: topic.to_string(),
+            reply,
+        })
+        .await
     }
 
-    async fn publish(&self, _topic: DefraTopic, _msg: PushLogBroadcast) -> Result<MessageId> {
-        Err(not_supported("publish"))
+    async fn publish(&self, topic: DefraTopic, msg: PushLogBroadcast) -> Result<MessageId> {
+        let payload = msg
+            .encode_gossip_payload()
+            .map_err(|error| Error::CborSerialization(error.to_string()))?;
+        self.send_command(|reply| Command::Publish {
+            topic: topic.to_string(),
+            payload,
+            wait: false,
+            reply,
+        })
+        .await
     }
 
-    async fn publish_raw(&self, _topic: String, _data: Vec<u8>) -> Result<MessageId> {
-        Err(not_supported("publish_raw"))
+    async fn publish_raw(&self, topic: String, data: Vec<u8>) -> Result<MessageId> {
+        // A KMS request or reply: published before any member is known, it
+        // reaches nobody.
+        self.send_command(|reply| Command::Publish {
+            topic,
+            payload: data,
+            wait: true,
+            reply,
+        })
+        .await
     }
 
-    async fn subscribe_raw(&self, _topic: String) -> Result<bool> {
-        Err(not_supported("subscribe_raw"))
+    async fn subscribe_raw(&self, topic: String) -> Result<bool> {
+        self.send_command(|reply| Command::Subscribe {
+            topic,
+            raw: true,
+            reply,
+        })
+        .await
     }
 
-    async fn register_pubsub_rpc_topic(&self, _topic: String) -> Result<()> {
-        Err(not_supported("register_pubsub_rpc_topic"))
+    async fn register_pubsub_rpc_topic(&self, topic: String) -> Result<()> {
+        self.send_command(|reply| Command::RegisterRawTopic { topic, reply })
+            .await
     }
 
-    async fn topic_peers(&self, _topic: DefraTopic) -> Result<Vec<PeerId>> {
-        Err(not_supported("topic_peers"))
+    async fn topic_peers(&self, topic: DefraTopic) -> Result<Vec<PeerId>> {
+        self.send_command(|reply| Command::TopicPeers {
+            topic: topic.to_string(),
+            reply,
+        })
+        .await
     }
 
     async fn send_pushlog_response(

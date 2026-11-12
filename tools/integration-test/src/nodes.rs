@@ -410,6 +410,7 @@ fn vinc_transport(
         bind,
         peer_key: defra_node::PeerKeySource::Store,
         max_connections: 16,
+        hubs: vec![VINC_HUB.clone()],
         ..Default::default()
     };
     if let Some(limits) = &spec.admission {
@@ -422,6 +423,23 @@ fn vinc_transport(
     }
     builder.with_vinc(config)
 }
+
+/// The vinc hub every node of this test process names, as a gossip mesh's
+/// stand-in: vinc topics run through a hub.
+#[cfg(feature = "vinc")]
+static VINC_HUB: regolith::sync::Lazy<String> = regolith::sync::Lazy::new(|| {
+    let edge = edge::testing::edge();
+    let bind = std::net::SocketAddr::from(([127, 0, 0, 1], 0));
+    let (ticket, task) = workers::block_on(edge.clone().spawn(async move {
+        defra_node::spawn_vinc_hub([0x48; 32], bind, edge).await
+    }))
+    .expect("the test thread waits")
+    .expect("the hub task runs")
+    .expect("the vinc hub binds");
+    // ponytail: the hub lives as long as the process; nothing stops it.
+    std::mem::forget(task);
+    ticket
+});
 
 #[cfg(not(feature = "vinc"))]
 fn vinc_transport(

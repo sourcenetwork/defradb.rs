@@ -139,6 +139,34 @@ pub enum Command {
         query_id: QueryId,
         reply: Reply<bool>,
     },
+    /// Join `topic`. A `raw` topic is marked raw before the join, so none of
+    /// its messages is ever decoded as a PushLog.
+    Subscribe {
+        topic: String,
+        raw: bool,
+        reply: Reply<bool>,
+    },
+    Unsubscribe {
+        topic: String,
+        reply: Reply<bool>,
+    },
+    /// Route `topic`'s messages as raw, without joining it.
+    RegisterRawTopic {
+        topic: String,
+        reply: Reply<()>,
+    },
+    /// Publish `payload` on `topic`. With `wait`, first wait briefly for a
+    /// member of the topic: a KMS reply must not reach nobody.
+    Publish {
+        topic: String,
+        payload: Vec<u8>,
+        wait: bool,
+        reply: Reply<crate::transport::MessageId>,
+    },
+    TopicPeers {
+        topic: String,
+        reply: Reply<Vec<PeerId>>,
+    },
     Shutdown {
         reply: Reply<()>,
     },

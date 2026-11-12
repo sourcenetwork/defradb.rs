@@ -106,6 +106,9 @@ pub use config::SyncTuning;
 pub use config::VeraConfig;
 #[cfg(feature = "vinc")]
 pub use config::VincConfig;
+/// Runs a vinc hub, which vinc topics travel through.
+#[cfg(feature = "vinc")]
+pub use p2p::vinc::spawn_hub as spawn_vinc_hub;
 pub use config::{
     DocumentAcpConfig, IndexBuildGateHandle, NodeConfig, NodeSigning, Persistence,
     ReplicationFilterHandle, SigningKey, TransportConfig,

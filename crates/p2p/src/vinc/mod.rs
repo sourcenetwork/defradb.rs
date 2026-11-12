@@ -1,14 +1,13 @@
-//! The vinc transport: direct connections over a vinc endpoint.
+//! The vinc transport: a node over a vinc endpoint.
 //!
 //! A second Rust-to-Rust transport beside iroh, built on vinc's async facade
 //! (`sourcenetwork/vinc`). It is opt-in (`vinc-transport`), native only, and
-//! carries what DefraDB needs over direct connections: identity from the
-//! shared Ed25519 seed, dial by address or by a peer id seen before, every
-//! request service with its reply on the request's own stream, CAR sync,
-//! urgency by service class, admission and revocation, the service-record
-//! pointer, path info and `network_change`. Gossip and the raw topics KMS
-//! uses wait on vinc topic pubsub (sourcenetwork/vinc#24); until then those
-//! calls return [`not_supported`].
+//! carries what DefraDB needs: identity from the shared Ed25519 seed, dial by
+//! address or by a peer id seen before, every request service with its reply
+//! on the request's own stream, CAR sync, urgency by service class, admission
+//! and revocation, the service-record pointer, path info, `network_change`,
+//! and topic pubsub (gossip head hints and the raw topics KMS uses) through
+//! the hubs the node names.
 //!
 //! # Shape
 //!
@@ -22,6 +21,8 @@
 //!   id the endpoint maps to the request's `!Send` send stream. The bridge is
 //!   modeled in `proofs/tla/VincReplyBridge.tla` and its table proved in
 //!   `proofs/lean/VincReplyTable`.
+//! - Topics run through vinc hubs ([`spawn_hub`] runs one); what reaches the
+//!   engine is modeled in `proofs/tla/VincTopicDelivery.tla`.
 //!
 //! The iroh backend's transport-neutral parts are copied here rather than
 //! shared, so iroh's live code is untouched while vinc is evaluated.
@@ -32,12 +33,14 @@ mod command;
 mod config;
 mod directory;
 mod endpoint;
+mod hub;
 mod inbound_budget;
 mod reply_table;
 mod requests;
 mod serve;
 mod services;
 mod token;
+mod topics;
 mod transport;
 mod wire;
 
@@ -51,16 +54,7 @@ pub use addr::{
 pub use admission::AdmissionAuthority;
 pub use config::{VincAllowlistConfig, VincEndpointConfig};
 pub use endpoint::spawn_endpoint;
+pub use hub::spawn_hub;
 pub use services::{ALPN_MUX, SERVICE_POINTER_LEN};
 pub use token::VincResponseToken;
 pub use transport::{VincPeerIdentityResolver, VincTransport};
-
-/// The error a call this transport does not carry yet returns: gossip and raw
-/// topics wait on vinc topic pubsub (sourcenetwork/vinc#24).
-pub fn not_supported(operation: &'static str) -> crate::error::Error {
-    crate::error::Error::NotSupportedOnTransport {
-        operation,
-        transport: "vinc",
-        waits_on: "vinc topic pubsub (sourcenetwork/vinc#24)",
-    }
-}

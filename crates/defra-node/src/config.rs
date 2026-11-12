@@ -198,7 +198,8 @@ pub enum TransportConfig {
     Vinc(VincConfig),
 }
 
-/// The vinc transport's configuration: direct connections only, no gossip.
+/// The vinc transport's configuration: direct connections, and topics through
+/// the hubs it names.
 #[cfg(feature = "vinc")]
 #[derive(Debug, Clone, PartialEq)]
 pub struct VincConfig {
@@ -211,8 +212,11 @@ pub struct VincConfig {
     pub secret_key_path: Option<std::path::PathBuf>,
     /// Where the secret key lives.
     pub peer_key: PeerKeySource,
-    /// The most sessions at once; vinc reserves its tables for all of them.
+    /// The most sessions at once.
     pub max_connections: usize,
+    /// The vinc hubs topics run through, as `<peer id>@<udp address>`. With
+    /// none, gossip and the KMS key exchange reach no one.
+    pub hubs: Vec<String>,
     /// Reload collection subscriptions persisted in the local store.
     pub load_persisted_collections: bool,
     /// Sync limits and the replicator retry ladder.
@@ -228,6 +232,7 @@ impl Default for VincConfig {
             secret_key_path: None,
             peer_key: PeerKeySource::default(),
             max_connections: p2p::vinc::VincEndpointConfig::DEFAULT_MAX_CONNECTIONS,
+            hubs: Vec::new(),
             load_persisted_collections: true,
             sync: SyncTuning::default(),
         }

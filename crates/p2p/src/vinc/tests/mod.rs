@@ -10,6 +10,7 @@ mod bridge;
 mod identity;
 mod inbound_admission;
 mod mux;
+mod topics;
 mod two_stream;
 
 use std::future::Future;
