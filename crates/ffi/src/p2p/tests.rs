@@ -197,7 +197,9 @@ mod libp2p {
         let source = p2p_node();
         let target = p2p_node();
         for node in [source, target] {
-            add_collection(node, "type User { name: String }");
+            // A replication filter field must be immutable, so a filtered
+            // replica cannot be stranded by an update.
+            add_collection(node, "type User { name: String @immutable }");
         }
 
         let collections = cstr("User");

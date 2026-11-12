@@ -75,7 +75,7 @@ pub unsafe extern "C" fn defra_event_subscribe(
         try_ffi!(check(node, identity.as_deref(), NodePermission::DacBypass));
         let runtime = try_ffi!(get_rt());
 
-        let Some(mut subscription) = NODES.get(node, |state| state.event_bus.subscribe(&names))
+        let Some(subscription) = NODES.get(node, |state| state.event_bus.subscribe(&names))
         else {
             return DefraResult::error(ERR_INVALID_NODE_HANDLE);
         };
