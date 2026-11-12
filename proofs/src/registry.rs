@@ -2638,12 +2638,12 @@ pub const PROPERTIES: &[Property] = &[
         // version's settings, and activation refuses settings other than the
         // first version's, even for a record stored before the merge checked.
         family: "Text chunking",
-        name: "FirstValid / MergedMatchFirst / ActiveMatchesFirst: a synced version's @chunk settings are ones a schema could declare, and every merged or active version keeps its collection's first version's",
+        name: "FirstValid / MergedMatchFirst / ActiveMatchesFirst / MergedKeepName / ActiveKeepsName: a synced version's @chunk settings are ones a schema could declare, and every merged or active version keeps its collection's first version's settings and name",
         axis: Tla,
         anchor: "crates/db/src/merge/merge_handler/definition.rs process_collection_definition_delta; crates/db/src/merge/merge_handler/definition_chunks.rs chunk_settings_error, chunk_parent_error; crates/schema/src/chunk_rules.rs chunk_settings_errors, chunk_settings_change, ensure_chunk_settings_kept; crates/db/src/chunk/user_writes.rs ensure_keeps_first_chunk_settings; crates/ffi/src/mobile_schema.rs plan_bootstrap; crates/db/src/collection/ops/version.rs set_active_collection_version_as; crates/db/src/txn/registry/collections.rs set_collection_active_in_txn_as",
-        model_ref: "MC_ChunkSettingsSync_{Green,Green_Legacy}.cfg (GREEN) / MC_ChunkSettingsSync_{Red_NoFirstCheck,Red_NoMergeGuard,Red_NoActivateGuard}.cfg (RED)",
+        model_ref: "MC_ChunkSettingsSync_{Green,Green_Legacy}.cfg (GREEN) / MC_ChunkSettingsSync_{Red_NoFirstCheck,Red_NoMergeGuard,Red_NoActivateGuard,Red_NoNameCheck}.cfg (RED)",
         tiers: &[Contract],
-        bound_by: "crates/db/tests/merge/chunk_definition_guard.rs a_patch_that_changes_max_chars_is_rejected, a_first_version_with_max_chars_below_the_minimum_is_rejected, an_honest_patch_that_keeps_the_chunk_settings_is_accepted, activating_a_version_with_other_chunk_settings_is_refused, a_patch_that_changes_the_splitter_version_is_rejected, activating_a_version_with_another_splitter_version_is_refused; crates/ffi/src/mobile_schema_tests.rs another_splitter_version_than_a_synced_inactive_version_is_refused",
+        bound_by: "crates/db/tests/merge/chunk_definition_guard.rs a_patch_that_changes_max_chars_is_rejected, a_first_version_with_max_chars_below_the_minimum_is_rejected, an_honest_patch_that_keeps_the_chunk_settings_is_accepted, activating_a_version_with_other_chunk_settings_is_refused, a_patch_that_changes_the_splitter_version_is_rejected, activating_a_version_with_another_splitter_version_is_refused, a_patch_that_renames_the_parent_is_rejected, activating_a_renamed_version_is_refused; crates/schema/tests/chunk_validation_tests.rs renaming_the_parent_is_refused, renaming_the_chunk_collection_is_refused; crates/ffi/src/mobile_schema_tests.rs another_splitter_version_than_a_synced_inactive_version_is_refused",
     },
     Property {
         // One task serves a pg-compat connection: one deadline read at the

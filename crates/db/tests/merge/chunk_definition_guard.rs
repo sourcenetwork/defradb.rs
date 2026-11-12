@@ -25,6 +25,8 @@ const CHUNKS: usize = 1;
 const CHANGED_FIELDS: &str = "Changed: the @chunk fields";
 const CHANGED_PARENT: &str = "Changed: the chunk parent";
 const CHANGED_SPLITTER: &str = "Changed: the @chunk splitter version";
+const CHANGED_NAME: &str = "Changed: the collection name";
+const RENAMED: &str = "Story";
 
 /// An author with the `@chunk` schema and a peer that has synced both collections.
 async fn synced() -> (Node, Node, Vec<CollectionVersion>) {
@@ -256,6 +258,18 @@ fn a_patch_that_removes_chunk_of_from_the_chunk_collection_is_rejected() {
 }
 
 #[test]
+fn a_patch_that_renames_the_parent_is_rejected() {
+    workers::block_on(async {
+        let (_author, peer, parsed) = synced().await;
+        let mut delta = CollectionDefinitionDeltaPayload::new(2).with_chunked_fields(chunked(64));
+        delta.name = Some(RENAMED.to_string());
+        let merged = merge(&peer, &patch(&parsed[PARENT].version_id, delta)).await;
+        assert_rejected(&peer, &parsed, merged, CHANGED_NAME).await;
+    })
+    .unwrap()
+}
+
+#[test]
 fn a_first_version_with_max_chars_below_the_minimum_is_rejected() {
     workers::block_on(async {
         let author = node();
@@ -365,12 +379,12 @@ fn an_honest_patch_that_keeps_the_chunk_settings_is_accepted() {
 /// node that merged it before the merge checked them would hold it.
 async fn store_drifted_version<F>(peer: &Node, first: &CollectionVersion, drift: F) -> String
 where
-    F: FnOnce(&mut schema::ChunkedField),
+    F: FnOnce(&mut CollectionVersion),
 {
     let mut drifted = first.clone();
     drifted.version_id = "bafyreidriftedchunksettingsversion".to_string();
     drifted.previous_version = Some(CollectionSource::new(first.version_id.clone()));
-    drift(&mut drifted.chunked_fields[0]);
+    drift(&mut drifted);
     drifted.is_active = false;
     let txn = peer.db.new_txn(false).await.unwrap();
     {
@@ -406,17 +420,24 @@ where
 
 #[test]
 fn activating_a_version_with_other_chunk_settings_is_refused() {
-    activating_a_drifted_version_is_refused(|field| field.max_chars = 1);
+    activating_a_drifted_version_is_refused(|version| version.chunked_fields[0].max_chars = 1);
 }
 
 #[test]
 fn activating_a_version_with_another_splitter_version_is_refused() {
-    activating_a_drifted_version_is_refused(|field| field.splitter_version = unknown_splitter());
+    activating_a_drifted_version_is_refused(|version| {
+        version.chunked_fields[0].splitter_version = unknown_splitter()
+    });
+}
+
+#[test]
+fn activating_a_renamed_version_is_refused() {
+    activating_a_drifted_version_is_refused(|version| version.name = RENAMED.to_string());
 }
 
 fn activating_a_drifted_version_is_refused<F>(drift: F)
 where
-    F: FnOnce(&mut schema::ChunkedField),
+    F: FnOnce(&mut CollectionVersion),
 {
     workers::block_on(async {
         let (_author, peer, parsed) = synced().await;

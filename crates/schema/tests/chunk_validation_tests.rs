@@ -313,3 +313,62 @@ fn the_stored_record_omits_the_default_splitter_version() {
     let read: ChunkedField = serde_json::from_value(versioned).unwrap();
     assert_eq!(read, on_splitter(OTHER_SPLITTER).chunked_fields[0]);
 }
+
+const RENAMED: &str = "Story";
+const RENAMED_VERSION: &str = "v-renamed";
+const CHANGED_NAME: &str = "Changed: the collection name";
+
+/// A patch gives a renamed version a new version ID, so only the chunk rule sees the rename.
+fn renamed(mut version: CollectionVersion) -> CollectionVersion {
+    version.name = RENAMED.into();
+    version.version_id = RENAMED_VERSION.into();
+    version
+}
+
+fn active(mut version: CollectionVersion) -> CollectionVersion {
+    version.is_active = true;
+    version
+}
+
+#[test]
+fn renaming_the_parent_is_refused() {
+    assert_eq!(
+        schema::chunk_settings_change(&article(), &renamed(article())),
+        Some(ChunkSettingsChange::Name)
+    );
+    let err = check(
+        vec![active(article()), active(chunk())],
+        vec![active(renamed(article())), active(chunk())],
+    )
+    .unwrap_err();
+    assert!(err.contains(CHANGED_NAME), "{err}");
+}
+
+#[test]
+fn renaming_the_chunk_collection_is_refused() {
+    assert_eq!(
+        schema::chunk_settings_change(&chunk(), &renamed(chunk())),
+        Some(ChunkSettingsChange::Name)
+    );
+    let err = schema::ensure_chunk_settings_kept(&chunk(), &renamed(chunk())).unwrap_err();
+    assert!(err.to_string().ends_with(CHANGED_NAME), "{err}");
+}
+
+#[test]
+fn renaming_a_collection_without_chunk_settings_is_allowed() {
+    let plain = CollectionVersion::new(
+        "Author",
+        "v-author",
+        "c-author",
+        vec![FieldDescription::new(
+            "1",
+            "_docID",
+            FieldKind::doc_id(),
+            CType::LwwRegister,
+        )],
+    );
+    assert_eq!(
+        schema::chunk_settings_change(&plain, &renamed(plain.clone())),
+        None
+    );
+}

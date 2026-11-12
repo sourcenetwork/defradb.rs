@@ -38,9 +38,9 @@ pub(super) fn validate_chunks_not_modified(
             }
             continue;
         };
-        if chunk_settings_change(old_col, new_col).is_some() {
+        if let Some(changed) = chunk_settings_change(old_col, new_col) {
             errs.push(format!(
-                "collection chunk settings cannot be mutated. Collection: {}",
+                "collection chunk settings cannot be mutated. Collection: {}, Changed: {changed}",
                 new_col.name
             ));
         } else if old_col.is_generated() && new_col.fields != old_col.fields {

@@ -88,6 +88,8 @@ pub enum ChunkSettingsChange {
     SplitterVersion,
     /// The parent field a chunk collection is made from.
     ChunkOf,
+    /// The name of a parent or a chunk collection.
+    Name,
 }
 
 impl fmt::Display for ChunkSettingsChange {
@@ -96,6 +98,7 @@ impl fmt::Display for ChunkSettingsChange {
             Self::ChunkedFields => "the @chunk fields",
             Self::SplitterVersion => "the @chunk splitter version",
             Self::ChunkOf => "the chunk parent",
+            Self::Name => "the collection name",
         })
     }
 }
@@ -126,9 +129,16 @@ pub fn chunk_settings_change(
         Some(ChunkSettingsChange::SplitterVersion)
     } else if previous.chunk_of != next.chunk_of {
         Some(ChunkSettingsChange::ChunkOf)
+    } else if previous.name != next.name && has_chunk_settings(previous) {
+        Some(ChunkSettingsChange::Name)
     } else {
         None
     }
+}
+
+/// Chunks find their parent by name, so a rename would orphan them.
+fn has_chunk_settings(version: &CollectionVersion) -> bool {
+    !version.chunked_fields.is_empty() || version.chunk_of.is_some()
 }
 
 fn same_ignoring_version(left: &[&ChunkedField], right: &[&ChunkedField]) -> bool {

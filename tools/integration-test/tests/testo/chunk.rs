@@ -11,4 +11,5 @@ mod protect_admin_ops;
 mod protect_api_writes;
 mod protect_list_input;
 mod protect_no_mutations;
+mod protect_rename;
 mod support;
