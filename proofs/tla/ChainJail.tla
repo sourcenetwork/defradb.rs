@@ -28,8 +28,10 @@
 \* heads, not its author's last block, so "two versions at one height" stands
 \* for two blocks signed by one key on one document where neither is an
 \* ancestor of the other. That is only a fork if one key never writes from two
-\* places at once, so every instance signs with a key of its own; instances
-\* that share a DID (gents) each get their own key under it.
+\* places at once, so every instance signs with a key of its own. A did:key
+\* DID is its key, so each instance is its own DID; an agent that runs several
+\* instances (gents) is an ACP group of their DIDs, and a jail revokes one
+\* instance, never the group.
 \*
 \* This is the design model for the single-writer chain layer of the
 \* exactly-one-winner work. There is no Rust for it yet; the anchor in the
