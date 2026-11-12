@@ -19,6 +19,7 @@ RUNS=(
   "MC_DocumentUpdateJournal_Red_Authorization.cfg DocumentUpdateJournal.tla RED"
   "MC_DocumentUpdateJournal_Red_Deleted.cfg DocumentUpdateJournal.tla RED"
   "MC_DocumentUpdateJournal_Red_Stale.cfg DocumentUpdateJournal.tla RED"
+  "MC_DocumentUpdateJournal_Red_Unordered.cfg DocumentUpdateJournal.tla RED"
   "MC_DocumentUpdateJournal_Red_Skip.cfg DocumentUpdateJournal.tla RED"
   "MC_UsersetRelationManager_Green.cfg UsersetRelationManager.tla GREEN"
   "MC_UsersetRelationManager_Red_Owner.cfg UsersetRelationManager.tla RED"

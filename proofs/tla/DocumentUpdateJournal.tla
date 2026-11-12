@@ -8,11 +8,19 @@
 \* its page saw as deleted. Deleting unregisters a document, and the access
 \* check alone would then call it public.
 \* The access provider either reads in the page's transaction, or stands
-\* outside it and answers from the state of the moment it is asked.
+\* outside it and answers from the state of the moment it is asked. A
+\* provider outside loses a document's registration in a step of its own,
+\* which this node takes only after its delete has committed.
+\* Not prevented: a provider shared with other nodes can lose a registration
+\* with no delete on this node, when a peer deleted the document and this
+\* node has not merged that yet. The document is still alive here, and this
+\* page returns its rows as every other query on this node returns the
+\* document. Red_Unordered walks that trace.
 \* Not modeled: the reader's errors for a cursor beyond the head and for a
 \* missing row; a page here always finds every row it scans.
 \* Rust owners: crates/db/src/event/updates.rs (record, read, rows),
 \* crates/db/src/event/updates/gate.rs (Gate::decide, Gate::confirm),
+\* crates/db/src/txn/mod.rs (DbTxn::later),
 \* crates/db/src/write/update.rs (write_blocks),
 \* crates/db/src/merge/merge_handler/composite_persist.rs (persist_merged_document)
 \* and crates/query/src/runner/arrivals.rs (execute_arrivals_query).
@@ -31,7 +39,7 @@ ASSUME /\ Allowed \subseteq Docs
        /\ Provider \in {"bound", "outside"}
 \* "safe" is the design; every other mode breaks exactly one guard.
        /\ Mode \in {"safe", "duplicate", "detached", "superseded",
-                    "unauthorized", "deleted", "stale", "skip"}
+                    "unauthorized", "deleted", "stale", "unordered", "skip"}
 
 \* An update is one block of one document.
 Updates == Docs \X Blocks
@@ -42,7 +50,8 @@ Min(x, y) == IF x < y THEN x ELSE y
 
 \* stored holds every block the node keeps; changed holds the ones that
 \* changed their document; log is the journal in commit order; deleted holds
-\* the deleted documents; retried bounds replay to once per block.
+\* the deleted documents; unregistered holds the documents whose registration
+\* the provider has lost; retried bounds replay to once per block.
 \* seen is what the reader was handed; hidden is what a page passed over
 \* because its document was deleted; leaked is what a page handed over
 \* although its own snapshot held the document as deleted; cursor is the
@@ -50,16 +59,16 @@ Min(x, y) == IF x < y THEN x ELSE y
 \* open says a page's transaction is running; upto is the last row it
 \* scanned; snapshot is the set of documents deleted when it began; asked
 \* says the provider has answered; admitted is what it let through.
-VARIABLES stored, changed, log, deleted, retried,
+VARIABLES stored, changed, log, deleted, unregistered, retried,
           seen, hidden, leaked, cursor, open, upto, snapshot, asked, admitted
 \* The writer's half of the state.
-writer == <<stored, changed, log, deleted, retried>>
+writer == <<stored, changed, log, deleted, unregistered, retried>>
 \* What earlier pages left behind.
 past == <<seen, hidden, leaked, cursor>>
 \* The page being read.
 page == <<open, upto, snapshot, asked, admitted>>
 \* Every variable.
-vars == <<stored, changed, log, deleted, retried,
+vars == <<stored, changed, log, deleted, unregistered, retried,
           seen, hidden, leaked, cursor, open, upto, snapshot, asked, admitted>>
 
 \* Rows is the set of updates in the journal sequence.
@@ -70,6 +79,7 @@ Init == /\ stored = {}
         /\ changed = {}
         /\ log = <<>>
         /\ deleted = {}
+        /\ unregistered = {}
         /\ retried = {}
         /\ seen = {}
         /\ hidden = {}
@@ -89,7 +99,7 @@ Commit(u) ==
   /\ stored' = stored \cup {u}
   /\ changed' = changed \cup {u}
   /\ log' = IF Mode = "detached" THEN log ELSE Append(log, u)
-  /\ UNCHANGED <<deleted, retried>>
+  /\ UNCHANGED <<deleted, unregistered, retried>>
   /\ UNCHANGED <<past, page>>
 
 \* A merged block whose every field loses to the stored value is kept, but
@@ -100,7 +110,7 @@ Supersede(u) ==
   /\ Doc(u) \notin deleted
   /\ stored' = stored \cup {u}
   /\ log' = IF Mode = "superseded" THEN Append(log, u) ELSE log
-  /\ UNCHANGED <<changed, deleted, retried>>
+  /\ UNCHANGED <<changed, deleted, unregistered, retried>>
   /\ UNCHANGED <<past, page>>
 
 \* Re-delivery of a journaled block is a no-op; the broken variant appends it.
@@ -108,14 +118,29 @@ Retry(u) ==
   /\ u \in changed \ retried
   /\ retried' = retried \cup {u}
   /\ log' = IF Mode = "duplicate" THEN Append(log, u) ELSE log
-  /\ UNCHANGED <<stored, changed, deleted>>
+  /\ UNCHANGED <<stored, changed, deleted, unregistered>>
   /\ UNCHANGED <<past, page>>
 
-\* A document is deleted, and its access record goes in the same commit.
+\* A document is deleted on this node. A provider that reads in the node's
+\* transactions loses the registration in that same commit; a provider
+\* outside keeps it until Unregister.
 Delete(d) ==
   /\ d \in Docs \ deleted
   /\ deleted' = deleted \cup {d}
+  /\ unregistered' = IF Provider = "bound" THEN unregistered \cup {d} ELSE unregistered
   /\ UNCHANGED <<stored, changed, log, retried>>
+  /\ UNCHANGED <<past, page>>
+
+\* A provider outside the node's transactions loses a document's registration.
+\* The node asks for that only once its delete has committed. The broken
+\* variant lets it happen with no delete here: ahead of the commit, or
+\* because a peer that shares the provider deleted the document first.
+Unregister(d) ==
+  /\ Provider = "outside"
+  /\ d \in Docs \ unregistered
+  /\ Mode = "unordered" \/ d \in deleted
+  /\ unregistered' = unregistered \cup {d}
+  /\ UNCHANGED <<stored, changed, log, deleted, retried>>
   /\ UNCHANGED <<past, page>>
 
 \* A page begins: one transaction scans up to n rows after the checkpoint in
@@ -138,14 +163,15 @@ Gone(u) == Doc(u) \in snapshot
 
 \* Whether the provider lets a scanned row through. The design asks only for
 \* documents alive in the page's snapshot. A bound provider reads that same
-\* snapshot. A provider outside reads the state of the moment, where a
-\* document deleted since the page began is unregistered and so public.
-\* "unauthorized" checks nothing. "deleted" asks the provider alone, which
-\* calls a document its snapshot holds as deleted public.
+\* snapshot, where a document is unregistered exactly when it is deleted. A
+\* provider outside reads the state of the moment, and calls a document it
+\* finds unregistered public.
+\* "unauthorized" checks nothing. "deleted" asks the bound provider alone,
+\* which calls a document its snapshot holds as deleted public.
 Admit(u) ==
   CASE Mode = "unauthorized" -> TRUE
     [] Mode = "deleted" -> Doc(u) \in Allowed \/ Gone(u)
-    [] Provider = "outside" -> ~Gone(u) /\ (Doc(u) \in Allowed \/ Doc(u) \in deleted)
+    [] Provider = "outside" -> ~Gone(u) /\ (Doc(u) \in Allowed \/ Doc(u) \in unregistered)
     [] OTHER -> ~Gone(u) /\ Doc(u) \in Allowed
 
 \* The provider answers for the rows the page scanned.
@@ -159,8 +185,9 @@ Ask ==
   /\ UNCHANGED writer
 
 \* What the page returns. After a provider outside the transaction has
-\* answered, the page looks again and drops every document deleted by then:
-\* the provider can call a document public only after its delete committed.
+\* answered, the page looks again and drops every document deleted by then.
+\* That is enough only while INV_UnregisteredAfterDelete holds: a document
+\* the provider called public was already deleted when it answered.
 \* "stale" skips that second look.
 Returned ==
   IF Provider = "outside" /\ Mode # "stale"
@@ -184,11 +211,11 @@ Decide ==
   /\ admitted' = {}
   /\ UNCHANGED writer
 
-\* Each step stores a block, replays one, deletes a document, or runs one
-\* part of a page.
+\* Each step stores a block, replays one, deletes or unregisters a document,
+\* or runs one part of a page.
 Next ==
   \/ \E u \in Updates : Commit(u) \/ Supersede(u) \/ Retry(u)
-  \/ \E d \in Docs : Delete(d)
+  \/ \E d \in Docs : Delete(d) \/ Unregister(d)
   \/ \E n \in 1..Limit : Scan(n)
   \/ Ask
   \/ Decide
@@ -206,6 +233,9 @@ INV_Authorized == \A u \in seen : Doc(u) \in Allowed
 \* No page returns a row of a document its own snapshot held as deleted,
 \* whoever is reading.
 INV_DeletedHidden == leaked = {}
+\* The provider loses a registration only for a document this node deleted:
+\* the order the second look of a page relies on.
+INV_UnregisteredAfterDelete == unregistered \subseteq deleted
 \* A checkpoint never passes the end of the journal.
 INV_CursorBound == cursor <= Len(log) /\ upto <= Len(log)
 \* Every readable row behind the checkpoint was returned on an earlier page,

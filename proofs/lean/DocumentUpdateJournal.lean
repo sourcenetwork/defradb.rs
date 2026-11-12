@@ -6,9 +6,14 @@ left its document unchanged is not recorded at all. A reader pages the journal
 in order, and sees only rows of documents that are alive and that it is
 authorized to read.
 
+A provider outside the page's transaction also lets through a document it
+finds unregistered. The page then drops what is deleted, which is enough as
+long as a document is unregistered only once it is deleted.
+
 Rust owners: crates/db/src/event/updates.rs (record, read, rows, once_key),
-crates/db/src/event/updates/gate.rs (Gate::decide), and the document update
-and merge writers that append the journal entry in the document transaction.
+crates/db/src/event/updates/gate.rs (Gate::decide, Gate::confirm), and the
+document update and merge writers that append the journal entry in the
+document transaction.
 -/
 
 namespace DocumentUpdateJournal
@@ -31,6 +36,16 @@ def recordMerged (changed : Bool) (journal : List Update) (update : Update) : Li
 -- A reader sees a row only when its document is authorized and not deleted.
 def visible (allowed deleted : Update → Bool) (journal : List Update) : List Update :=
   journal.filter (fun update => allowed update && !deleted update)
+
+-- What a provider outside the page's transaction lets through: authorized
+-- documents, and documents it finds unregistered, which it reads as public.
+def admittedOutside (allowed unregistered : Update → Bool) (journal : List Update) :
+    List Update :=
+  journal.filter (fun update => allowed update || unregistered update)
+
+-- The page's second look drops every row whose document is deleted by then.
+def confirmed (deleted : Update → Bool) (admitted : List Update) : List Update :=
+  admitted.filter (fun update => !deleted update)
 
 -- A page holds at most `limit` rows, starting right after the checkpoint.
 def page (journal : List Update) (after limit : Nat) : List Update :=
@@ -69,6 +84,23 @@ theorem deleted_not_visible (allowed deleted : Update → Bool) (journal : List 
     (update : Update) (h : deleted update = true) :
     update ∉ visible allowed deleted journal := by
   simp [visible, h]
+
+-- After the second look, every row left is one the reader is authorized
+-- for, provided a document is unregistered only once it is deleted.
+theorem confirmed_rows_are_allowed (allowed unregistered deleted : Update → Bool)
+    (journal : List Update)
+    (ordered : ∀ update, unregistered update = true → deleted update = true)
+    (update : Update)
+    (kept : update ∈ confirmed deleted (admittedOutside allowed unregistered journal)) :
+    allowed update = true := by
+  simp only [confirmed, admittedOutside, List.mem_filter, Bool.or_eq_true,
+    Bool.not_eq_true'] at kept
+  obtain ⟨⟨_, admitted⟩, alive⟩ := kept
+  cases admitted with
+  | inl authorized => exact authorized
+  | inr public =>
+    rw [ordered update public] at alive
+    exact absurd alive (by decide)
 
 -- A page never holds more rows than its limit.
 theorem page_within_limit (journal : List Update) (after limit : Nat) :
