@@ -19,6 +19,7 @@ use vera_modules::acp::types::PolicyRecord;
 use super::abi::{IAcp, ACP_ADDRESS};
 use super::bearer;
 use super::client::VeraRsClient;
+use super::did_spelling;
 #[cfg(test)]
 use super::provider_commands::resolve_registered_or_passthrough_bearer_token;
 use super::provider_commands::{
@@ -93,7 +94,7 @@ impl VeraRsProvider {
             .map_err(|e| ProviderError::Config(format!("HTTP client: {e}")))?;
         let signing_key = SigningKey::from_slice(private_key)
             .map_err(|e| ProviderError::Config(format!("actor key: {e}")))?;
-        let actor_did = bearer::did_from_signing_key(&signing_key, true);
+        let actor_did = bearer::did_from_signing_key(&signing_key, false);
         let worker_did = worker.did().to_owned();
         let deployment = worker.deployment_id();
 
@@ -126,13 +127,29 @@ impl VeraRsProvider {
     }
 }
 
+/// A relationship subject as vera.rs records it: an actor by its one DID.
+fn vera_subject(
+    kind: u8,
+    resource: &str,
+    object_id: &str,
+    relation: &str,
+) -> Result<zanzibar::Subject, ProviderError> {
+    let object_id = if kind == 0 {
+        did_spelling::defra(object_id)
+    } else {
+        object_id.into()
+    };
+    zanzibar::decode_subject(kind, resource, &object_id, relation)
+        .map_err(|e| ProviderError::Config(format!("relationship subject: {e}")))
+}
+
 fn access_request(
     resource: &str,
     object_id: &str,
     permission: &str,
     actor_did: &str,
 ) -> Result<acp_light_client::AccessRequest, ProviderError> {
-    let actor = actor_did
+    let actor = did_spelling::defra(actor_did)
         .parse()
         .map_err(|e| ProviderError::Query(format!("actor DID: {e}")))?;
     Ok(acp_light_client::AccessRequest {
@@ -230,10 +247,10 @@ impl VeraProvider for VeraRsProvider {
         context: &defra_core::RequestContext,
         did: &str,
     ) -> Result<String, ProviderError> {
-        if Some(did.to_string()) == self.self_did() {
+        if did_spelling::defra(did) == self.actor_did {
             return bearer::create_bearer_token(
                 &self.signing_key,
-                did,
+                &self.actor_did,
                 &self.worker_did,
                 self.deployment,
                 300,
@@ -267,17 +284,12 @@ impl VeraProvider for VeraRsProvider {
     }
 
     async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| ProviderError::Config(e.to_string()))?
-            .as_secs();
-        let token = vera_client::create_scoped_bearer_token(
+        let token = bearer::create_scoped_bearer_token(
             &self.signing_key,
+            &self.actor_did,
             &self.worker_did,
             self.deployment,
-            now,
-            now.checked_add(300)
-                .ok_or_else(|| ProviderError::Config("invalid clock".into()))?,
+            300,
             vera_client::DelegationScope::CreatePolicy,
         )
         .map_err(|e| ProviderError::Config(e.to_string()))?;
@@ -430,9 +442,7 @@ impl VeraProvider for VeraRsProvider {
         subject_object_id: &str,
         subject_relation: &str,
     ) -> Result<bool, ProviderError> {
-        let subject =
-            zanzibar::decode_subject(kind, subject_resource, subject_object_id, subject_relation)
-                .map_err(|e| ProviderError::Config(format!("relationship subject: {e}")))?;
+        let subject = vera_subject(kind, subject_resource, subject_object_id, subject_relation)?;
         let cmd = serde_json::to_vec(&serde_json::json!({
             "SetRelationship": { "resource": resource, "object_id": object_id, "relation": relation, "subject": subject }
         })).map_err(|e| ProviderError::Config(e.to_string()))?;
@@ -456,9 +466,7 @@ impl VeraProvider for VeraRsProvider {
         subject_object_id: &str,
         subject_relation: &str,
     ) -> Result<bool, ProviderError> {
-        let subject =
-            zanzibar::decode_subject(kind, subject_resource, subject_object_id, subject_relation)
-                .map_err(|e| ProviderError::Config(format!("relationship subject: {e}")))?;
+        let subject = vera_subject(kind, subject_resource, subject_object_id, subject_relation)?;
         let cmd = serde_json::to_vec(&serde_json::json!({
             "DeleteRelationship": { "resource": resource, "object_id": object_id, "relation": relation, "subject": subject }
         })).map_err(|e| ProviderError::Config(e.to_string()))?;
@@ -511,7 +519,7 @@ impl VeraProvider for VeraRsProvider {
             .await
             .map_err(|e| ProviderError::Query(format!("owner proof: {e}")))?;
         Ok(match owner {
-            Some(owner) => (true, owner.0.as_str().into()),
+            Some(owner) => (true, did_spelling::defra(owner.0.as_str()).into_owned()),
             None => (false, String::new()),
         })
     }
@@ -544,7 +552,7 @@ impl VeraProvider for VeraRsProvider {
             resources: vec![resource.to_string()],
             objectIds: vec![object_id.to_string()],
             permissions: vec![permission.to_string()],
-            actor: actor_did.to_string(),
+            actor: did_spelling::defra(actor_did).into_owned(),
         };
         let confirmed = self
             .send_tx_with_sequence(Bytes::from(call.abi_encode()))
@@ -650,6 +658,33 @@ mod tests {
         assert_eq!(resolved, token);
 
         defra_core::signing::clear_request_bearer_token(did);
+    }
+
+    #[test]
+    fn a_request_token_under_the_compressed_issuer_spelling_is_refused() {
+        use base64::Engine;
+        let key = SigningKey::from_slice(&[42; 32]).expect("valid key");
+        let did = bearer::did_from_signing_key(&key, false);
+        let token = |issuer: &str| {
+            let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(serde_json::json!({ "iss": issuer }).to_string());
+            format!("header.{payload}.signature")
+        };
+        store_remote_secp256r1_identity(&did);
+
+        let compressed = token(&bearer::did_from_signing_key(&key, true));
+        defra_core::signing::set_request_bearer_token(&did, compressed);
+        let refused = resolve_registered_or_passthrough_bearer_token(&did, "did:key:w", 9001);
+        assert!(
+            matches!(refused, Err(ProviderError::Config(ref message)) if message.contains("uncompressed-key"))
+        );
+
+        defra_core::signing::set_request_bearer_token(&did, token(&did));
+        let accepted = resolve_registered_or_passthrough_bearer_token(&did, "did:key:w", 9001)
+            .expect("resolution should succeed");
+        assert_eq!(accepted, Some(token(&did)));
+
+        defra_core::signing::clear_request_bearer_token(&did);
     }
 
     #[test]

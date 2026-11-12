@@ -17,6 +17,7 @@ SDK_MANIFESTS = ("crates/vera/Cargo.toml", "tools/integration-test/Cargo.toml")
 UNIT_NAMES = (
     "abi::tests::delete_relationship_subject_userset_round_trips",
     "abi::tests::set_relationship_subject_object_edge_round_trips",
+    "bearer::tests::a_scoped_token_keeps_the_issuer_spelling_it_was_given",
     "bearer::tests::bearer_token_uses_vera_rs_es256k_shape",
     "bearer::tests::invalid_lifetime_is_rejected",
     "client::tests::injected_transport_keeps_the_submission_and_receipt_checks",
@@ -25,6 +26,11 @@ UNIT_NAMES = (
     "client::tests::stalled_transport_times_out_and_transient_rpc_errors_are_retryable",
     "client::tests::submission_id_must_match_locally_signed_bytes",
     "client::tests::transport_failures_say_whether_the_call_may_be_sent_again",
+    "did_spelling::tests::a_token_must_name_its_secp256k1_issuer_in_the_uncompressed_spelling",
+    "did_spelling::tests::both_spellings_of_a_secp256k1_key_meet_at_the_uncompressed_did",
+    "did_spelling::tests::other_identifiers_pass_through_unchanged",
+    "did_spelling::tests::the_uncompressed_spelling_is_the_one_defradb_derives",
+    "provider::tests::a_request_token_under_the_compressed_issuer_spelling_is_refused",
     "provider::tests::resolve_registered_or_passthrough_bearer_token_builds_local_secp256k1_token",
     "provider::tests::resolve_registered_or_passthrough_bearer_token_uses_request_token_for_remote_identity",
     "provider::tests::trusted_consensus_key_is_required_before_connecting",
@@ -32,6 +38,7 @@ UNIT_NAMES = (
     "provider::verified::tests::a_read_overtaken_at_every_ask_returns_the_refusal_after_the_last",
     "provider::verified::tests::a_read_the_chain_overtook_is_asked_again_until_answered",
     "provider::verified::tests::any_other_error_is_returned_at_the_first_ask",
+    "provider_commands::tests::an_actor_subject_is_sent_under_one_spelling",
     "provider_commands::tests::encodes_register_object_as_vera_rs_policy_cmd",
     "provider_commands::tests::encodes_relationship_subjects_as_vera_rs_policy_cmds",
     "provider_commands::request_bearer_tests::a_remote_identity_acts_with_the_token_its_request_carries",
@@ -47,6 +54,7 @@ LIVE_CASES = (
     ("writer-update", "policy_generations::strict_replication::native_replicated_update_accepts_granted_writer"),
     ("writer-delete", "policy_generations::strict_replication::native_replicated_delete_accepts_granted_writer"),
     ("node-builder", "node_builder::node_built_with_vera_rs_enforces_verified_document_access"),
+    ("actor-spelling", "actor_spelling::either_spelling_of_a_secp256k1_actor_is_one_vera_actor"),
 )
 CARGO = ["cargo", "+1.99.1"]
 BUILD = ["--release", "--frozen", "-j", "2"]

@@ -4,7 +4,9 @@ use crate::provider::SubjectRef;
 
 pub(crate) fn subject_to_cmd_json(subject: &SubjectRef) -> serde_json::Value {
     match subject {
-        SubjectRef::Actor(did) => serde_json::json!({ "Entity": did }),
+        SubjectRef::Actor(did) => {
+            serde_json::json!({ "Entity": super::did_spelling::defra(did) })
+        }
         SubjectRef::AllActors => serde_json::json!("Wildcard"),
     }
 }
@@ -94,18 +96,35 @@ pub(crate) fn resolve_registered_or_passthrough_bearer_token_as(
                 crate::provider::ProviderError::Config(format!("invalid signing key: {}", e))
             })?;
 
-            return super::bearer::create_bearer_token(&key, did, submitter, deployment_id, 300)
-                .map(Some)
-                .map_err(|e| {
-                    crate::provider::ProviderError::Config(format!(
-                        "bearer token creation failed: {}",
-                        e
-                    ))
-                });
+            let issuer = super::did_spelling::defra(did);
+            return super::bearer::create_bearer_token(
+                &key,
+                &issuer,
+                submitter,
+                deployment_id,
+                300,
+            )
+            .map(Some)
+            .map_err(|e| {
+                crate::provider::ProviderError::Config(format!(
+                    "bearer token creation failed: {}",
+                    e
+                ))
+            });
         }
     }
 
-    Ok(context.bearer_token_for(did))
+    let token = context.bearer_token_for(did);
+    if token
+        .as_deref()
+        .is_some_and(|token| !super::did_spelling::issuer_is_canonical(token))
+    {
+        return Err(crate::provider::ProviderError::Config(format!(
+            "the request token for {did} names its secp256k1 issuer by the compressed key; \
+             this node records actors under the uncompressed-key did:key"
+        )));
+    }
+    Ok(token)
 }
 
 #[cfg(test)]
@@ -125,6 +144,36 @@ mod tests {
                 "RegisterObject": { "resource": "users", "id": "doc-1" }
             })
         );
+    }
+
+    #[test]
+    fn an_actor_subject_is_sent_under_one_spelling() {
+        let key = vera_client::Secp256k1SigningKey::from_slice(&[42; 32]).unwrap();
+        let compressed = crate::vera_rs::bearer::did_from_signing_key(&key, true);
+        let uncompressed = crate::vera_rs::bearer::did_from_signing_key(&key, false);
+        for did in [&compressed, &uncompressed] {
+            for cmd in [
+                encode_set_relationship_cmd(
+                    "users",
+                    "doc",
+                    "reader",
+                    &SubjectRef::Actor(did.clone()),
+                ),
+                encode_delete_relationship_cmd(
+                    "users",
+                    "doc",
+                    "reader",
+                    &SubjectRef::Actor(did.clone()),
+                ),
+            ] {
+                let value: Value = serde_json::from_slice(&cmd).unwrap();
+                let subject = value
+                    .as_object()
+                    .and_then(|command| command.values().next())
+                    .map(|body| body["subject"]["Entity"].clone());
+                assert_eq!(subject, Some(json!(uncompressed)));
+            }
+        }
     }
 
     #[test]

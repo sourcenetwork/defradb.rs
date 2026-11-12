@@ -266,8 +266,8 @@ class Tests(unittest.TestCase):
         self.assertEqual(runs['compile-native'][3]['DEFRA_VERA_BINARY'], '/staged/defradb')
         self.assertEqual(runs['compile-native'][3]['VERAD_BINARY'], '/staged/verad')
         tests = [c for c in runner.calls if c[0] == 'test']
-        self.assertEqual(len(tests), 9)
-        self.assertEqual(len(tests[0][4]), 21)
+        self.assertEqual(len(tests), 10)
+        self.assertEqual(len(tests[0][4]), 28)
         self.assertEqual({c[1] for c in tests[1:]}, {phase for phase, _ in driver.LIVE_CASES})
         for _, _, _, selectors, expected in tests[1:]:
             self.assertEqual(selectors, [expected[0], '--exact'])
