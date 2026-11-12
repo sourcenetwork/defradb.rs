@@ -13,6 +13,28 @@ pub fn create_bearer_token(
     deployment_id: u64,
     expiry_secs: u64,
 ) -> Result<String, BearerError> {
+    create_scoped_bearer_token(
+        signing_key,
+        issuer,
+        subject,
+        deployment_id,
+        expiry_secs,
+        vera_client::DelegationScope::PolicyCommands,
+    )
+}
+
+/// A delegation for one scope, issued under the spelling `issuer` gives.
+///
+/// vera.rs records the issuer as written, so the caller chooses the one
+/// spelling its actor is known by.
+pub(super) fn create_scoped_bearer_token(
+    signing_key: &SigningKey,
+    issuer: &str,
+    subject: &str,
+    deployment_id: u64,
+    expiry_secs: u64,
+    scope: vera_client::DelegationScope,
+) -> Result<String, BearerError> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| BearerError::Time(e.to_string()))?
@@ -33,7 +55,7 @@ pub fn create_bearer_token(
         "iss": issuer,
         "sub": subject,
         "aud": format!("vera:{deployment_id}"),
-        "scope": "acp:policy",
+        "scope": scope,
         "iat": now,
         "nbf": now.saturating_sub(30),
         "exp": expiry,
@@ -126,6 +148,32 @@ mod tests {
             .expect("issuer public key")
             .verify_prehash(digest.as_ref(), &signature)
             .expect("signature verifies");
+    }
+
+    #[test]
+    fn a_scoped_token_keeps_the_issuer_spelling_it_was_given() {
+        let key = SigningKey::from_slice(&[7u8; 32]).expect("valid signing key");
+        let decoder = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        for compressed in [false, true] {
+            let issuer = did_from_signing_key(&key, compressed);
+            let token = create_scoped_bearer_token(
+                &key,
+                &issuer,
+                "did:key:zSubject",
+                9001,
+                300,
+                vera_client::DelegationScope::CreatePolicy,
+            )
+            .expect("scoped token");
+            let payload: Value = serde_json::from_slice(
+                &decoder
+                    .decode(token.split('.').nth(1).expect("payload"))
+                    .expect("payload b64"),
+            )
+            .expect("payload json");
+            assert_eq!(payload["iss"], issuer);
+            assert_eq!(payload["scope"], "acp:policy:create");
+        }
     }
 
     #[test]

@@ -16,6 +16,9 @@ lean_lib ProjectionAccessNotification where
 lean_lib EmbeddedSigner where
 
 @[default_target]
+lean_lib VeraActorSpelling where
+
+@[default_target]
 lean_lib DelegatedRelationship where
 
 @[default_target]
