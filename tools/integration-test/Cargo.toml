@@ -20,7 +20,6 @@ path = "tests/verars/main.rs"
 
 [dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "419cdb4af02843af28cd76899b7dd5ad5e0bb2c3" }
 commonware-codec = "=2026.10.0"
 defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "502e60487f585a8303afa4998b07806aab69922c" }
 crypto = { path = "../../crates/crypto" }
@@ -63,6 +62,7 @@ path = "src/bin/gen_scenarios/main.rs"
 required-features = ["generator"]
 
 [dev-dependencies]
+vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "419cdb4af02843af28cd76899b7dd5ad5e0bb2c3" }
 mantra-macros = "0.9"
 keyring = { path = "../../crates/keyring" }
 vera-client = "0.1.1"
