@@ -10,7 +10,10 @@
 \* node dialed. What must never happen: an open shared path nobody serves, a
 \* count or cache entry nobody releases, a counted peer whose PeerConnected
 \* nobody will send, or an inbound allowlist miss that costs the sibling.
-\* Revocation races are modeled in SharedRpcConnection and GossipOwnership.
+\* Revoking the peer must close every handle it still holds, the cached one
+\* and a sibling that took the shared slot from it, so a displaced handle
+\* never outlives the revoke. Revocation racing a dial, and gossip ownership,
+\* are modeled in SharedRpcConnection and GossipOwnership.
 \*
 \* Code: crates/p2p/src/iroh/endpoint_streams.rs adopt_new_connection,
 \* handle_connection_streams, finish_connection and handle_incoming;
@@ -233,6 +236,7 @@ Hit == /\ Finished
        /\ UNCHANGED <<origin, allowed, registryOpen, sibling, step, cancelled, open, refused, cached, displaced, siblingOpen, pumped, exited, owed, announced>>
 
 \* Another connection takes the shared slot while the RPC connection stays open.
+\* It needs the adopt finished on an RPC-dialed connection that was admitted and is still open.
 Replace == /\ Finished /\ origin = "rpc" /\ ~refused /\ open
            \* Only once, and only while the RPC connection holds the slot.
            /\ ~sibling /\ cached = "new"
@@ -242,10 +246,12 @@ Replace == /\ Finished /\ origin = "rpc" /\ ~refused /\ open
            /\ UNCHANGED <<origin, allowed, registryOpen, step, cancelled, open, count, refused, displaced, pumped, exited, hit, owed, announced>>
 
 \* Revocation closes every retained handle, including a displaced sibling.
+\* It needs the adopt finished on a connection that was admitted and is still open.
 Revoke == /\ Finished /\ ~refused /\ open
-          \* The new connection closes if retained handles close, or it is the cached one.
+          \* The new connection closes when revoke closes every retained handle
+          \* (CloseRetained, the fix), or when it is the handle in the cache slot.
           /\ open' = IF CloseRetained \/ cached = "new" THEN FALSE ELSE open
-          \* The sibling closes the same way.
+          \* The sibling closes by the same rule: always with the fix, else only if it is cached.
           /\ siblingOpen' = IF CloseRetained \/ cached = "sibling" THEN FALSE ELSE siblingOpen
           \* The shared slot is emptied.
           /\ cached' = "none"

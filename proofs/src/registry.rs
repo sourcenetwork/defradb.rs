@@ -581,7 +581,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
-        name: "defer_preserves_incarnation / defer_does_not_resurrect / stale_defer_leaves_replacement / stale_mark_writes_nothing / deleted_mark_writes_nothing / mark_owned / only_replacement_stops / superseded_continues",
+        name: "defer_preserves_incarnation / defer_does_not_resurrect / stale_defer_leaves_replacement / fenced_preserves_incarnation / create_changes_incarnation / create_resurrects / stale_mark_writes_nothing / deleted_mark_writes_nothing / mark_owned / only_replacement_stops / superseded_continues",
         axis: Lean,
         anchor: "crates/db/src/merge/push_docs_replay.rs persist_replay_failures; crates/storage/src/stores/peerstore.rs record_push_failure_for_incarnation",
         model_ref: "ReplicatorInstall (lake build)",
@@ -608,10 +608,10 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
-        name: "INV_Capacity / INV_OwnedSlot / INV_NoIdleCapacity — only an owner's own generation releases its pending-DAG slot, and the release wakes the retry clock",
+        name: "INV_Capacity / INV_OwnedSlot / INV_NoIdleCapacity / INV_RollbackNeedsCause — only an owner's own generation releases its pending-DAG slot, the release wakes the retry clock, and a full-lane rollback does not",
         axis: Tla,
-        anchor: "crates/p2p/src/sync/coordinator/mod.rs PendingDagWorkOwner, claim_pending_dag_merge, spawn_pending_dag_fetch and run_pending_dag_retry_clock; crates/p2p/tests/unit/pending_capacity_wake.rs",
-        model_ref: "MC_PendingDagOwner_{Green,Red_NoGeneration,Red_NoWake}.cfg",
+        anchor: "crates/p2p/src/sync/coordinator/mod.rs PendingDagWorkOwner, claim_pending_dag_merge, spawn_pending_dag_fetch, dispatch_due_pending_dag_fetches and run_pending_dag_retry_clock; crates/p2p/tests/unit/pending_capacity_wake.rs",
+        model_ref: "MC_PendingDagOwner_{Green,Red_NoGeneration,Red_NoWake,Red_RollbackWake}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },

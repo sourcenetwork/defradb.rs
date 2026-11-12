@@ -7,12 +7,14 @@ cannot turn it into an independent transfer or manufacture durable retry work.
 The existing rooted grant and retry-registration owners retain their contracts.
 
 A receiver capacity hint pauses this call and retries the same head: it is not
-an acknowledgement and does not end a healthy large selection. The pause/retry
-allowance is fixed by the existing send timeout, never reset by more hints or
-acknowledgements. Exhausting it defers that one head: it fails alone and the
-rest of the selection is still tried, because the receiver is answering. A
+an acknowledgement and does not end a healthy large selection. Every head has
+its own pause/retry allowance, the send timeout, which starts at that head's
+first actual send. More hints for the same head never extend it; an
+acknowledgement moves on to the next head, which starts a fresh allowance of
+its own. Exhausting a head's allowance defers that one head: it fails alone and
+the rest of the selection is still tried, because the receiver is answering. A
 send deadline, a disconnect or caller drop stops scheduling; started sends
-still drain. SelectedPushIsolation.tla models the concurrency and the fixed
+still drain. SelectedPushIsolation.tla models the concurrency and the per-head
 pause budget; this owner binds attempt outcomes to exact completion.
 Rust: crates/db/src/merge/push_docs.rs, push_docs/selected.rs and push_docs/stop.rs.
 -/
@@ -141,9 +143,14 @@ theorem stopped_selection_fails (n : Nat) (o : SendOutcome) (rest : List SendOut
   -- The run takes the stopping branch at once.
   simp [serialRun, hs]
 
+/-- How many attempts in a run were acknowledgements: the heads the receiver
+accepted. -/
 def acknowledgements : List SendOutcome → Nat
+  -- No attempts: nothing was acknowledged.
   | [] => 0
+  -- An acknowledgement counts one, plus whatever the later attempts count.
   | .acknowledged :: rest => acknowledgements rest + 1
+  -- Any other outcome (a pause, refusal, expiry or stop) counts nothing.
   | _ :: rest => acknowledgements rest
 
 /-- Success requires a fresh acknowledgement for every required head. -/
@@ -190,13 +197,46 @@ def healthyHeadPauses (allowance : Nat) (pauses : List Nat) : Bool :=
 /-- Hints for one unacknowledged head consume its one budget; they never reset it. -/
 def sameHeadPauses (allowance : Nat) (pauses : List Nat) : Bool :=
   -- All of one head's pauses together must fit within its one allowance.
-  pauses.foldl (· + ·) 0 < allowance
+  pauses.sum < allowance
 
-/-- Three heads each pausing for less than their own allowance all stay healthy. -/
-theorem fresh_heads_do_not_inherit_elapsed : healthyHeadPauses 2 [1, 1, 1] = true := rfl
+/-- However many heads a selection has, each head that pauses for less than its
+own allowance stays healthy: no head inherits the time earlier heads spent. -/
+theorem fresh_heads_do_not_inherit_elapsed (allowance : Nat) (pauses : List Nat)
+    (fits : ∀ delay ∈ pauses, delay < allowance) :
+    healthyHeadPauses allowance pauses = true := by
+  -- `all` is true exactly when every head's pause fits, which is the assumption.
+  simpa [healthyHeadPauses] using fits
 
-/-- Two pauses of one head add up to its whole allowance: more hints never extend it. -/
-theorem same_head_hints_do_not_extend : sameHeadPauses 2 [1, 1] = false := rfl
+/-- Three heads together pause longer than one allowance, yet each fits its own,
+so all three stay healthy where one shared budget would have expired. -/
+example : healthyHeadPauses 2 [1, 1, 1] = true ∧ sameHeadPauses 2 [1, 1, 1] = false := by
+  -- Both sides are computed directly.
+  decide
+
+/-- A head's later pauses only add to the time it has spent. -/
+theorem spent_only_grows (earlier later : List Nat) :
+    earlier.sum ≤ (earlier ++ later).sum := by
+  -- Induct on the earlier pauses.
+  induction earlier with
+  -- With no earlier pauses, the earlier total is zero.
+  | nil => simp
+  -- One more earlier pause adds the same amount to both totals.
+  | cons delay rest ih =>
+    simp only [List.cons_append, List.sum_cons]
+    -- The rest already satisfies the bound, so adding `delay` to both keeps it.
+    omega
+
+/-- Once one head's pauses have used up its allowance, no further hint for that
+head ever gives it room again: more hints never extend a head's deadline. -/
+theorem same_head_hints_do_not_extend (allowance : Nat) (earlier later : List Nat)
+    (spent : sameHeadPauses allowance earlier = false) :
+    sameHeadPauses allowance (earlier ++ later) = false := by
+  -- The earlier pauses already reach the allowance.
+  simp [sameHeadPauses] at spent ⊢
+  -- The later pauses only add to that total.
+  have grows := spent_only_grows earlier later
+  -- So the whole total reaches the allowance too.
+  omega
 
 /-- The first hard failure ends sending after the preceding acknowledged heads. -/
 theorem first_stop_ends_sending (o : SendOutcome) (post : List SendOutcome)

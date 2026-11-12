@@ -91,6 +91,45 @@ theorem stale_defer_leaves_replacement (row : ReplayRow) (id : Nat)
   -- The row's incarnation differs from the install's, so the update branch is skipped.
   simp [deferReplay, h]
 
+-- How a replay writes the status it defers: `fenced` compares the row's
+-- incarnation with the install's before writing (the fix); `create` rewrites
+-- the row through create_replicator, which allocates the next identity (F48).
+inductive ReplayWrite where
+  | fenced
+  | create
+  deriving DecidableEq
+
+-- The row a replay leaves behind, by how it writes. `next` is the identity the
+-- allocator would hand out next.
+def replayWrite (write : ReplayWrite) (row : Option ReplayRow) (installId next : Nat) :
+    Option ReplayRow :=
+  match write with
+  -- The fenced write is exactly deferReplay.
+  | .fenced => deferReplay row installId
+  -- create_replicator writes an inactive row under a fresh identity, row or no row.
+  | .create => some { incarnation := next, active := false }
+
+-- The fenced write keeps the identity the install's own finish compares against.
+theorem fenced_preserves_incarnation (row : ReplayRow) (id next : Nat) :
+    (replayWrite .fenced (some row) id next).map ReplayRow.incarnation =
+      some row.incarnation :=
+  -- The fenced write unfolds to deferReplay, whose identity is already preserved.
+  defer_preserves_incarnation row id
+
+-- The red case: the create write moves the row to a new identity whenever the
+-- allocator has moved past it, so the install sees its own change.
+theorem create_changes_incarnation (row : ReplayRow) (id next : Nat)
+    (moved : next ≠ row.incarnation) :
+    (replayWrite .create (some row) id next).map ReplayRow.incarnation ≠
+      some row.incarnation := by
+  -- The create write names `next`, which differs from the row's identity.
+  simp [replayWrite, moved]
+
+-- The create write also brings back a row that was deleted while the replay ran.
+theorem create_resurrects (id next : Nat) : replayWrite .create none id next ≠ none := by
+  -- It returns a row whatever it was given.
+  simp [replayWrite]
+
 -- A replay records a retry marker only while its own install is the peer's
 -- incarnation; the peerstore transaction compares the two with the write.
 -- `current` is the peer's incarnation at the write, or none once it is deleted.
