@@ -68,7 +68,8 @@ def panic_site(log):
 
 
 def revision(root):
-    pins = []
+    """Return the pinned Vera harness revision after checking the published SDK declarations."""
+    pins, versions = [], []
     for name in SDK_MANIFESTS:
         for line in (root / name).read_text().splitlines():
             if 'git = "https://github.com/sourcenetwork/vera.rs"' in line:
@@ -76,8 +77,13 @@ def revision(root):
                 if match is None:
                     raise ValueError("SDK revision must be immutable")
                 pins.append(match[1])
-    if len(pins) != 7 or len(set(pins)) != 1:
-        raise ValueError("native SDK declarations disagree or are missing")
+            match = re.fullmatch(r'vera-(?:client|domain|modules) = "(\d+\.\d+\.\d+)"', line)
+            if match is not None:
+                versions.append(match[1])
+    if len(versions) != 6 or len(set(versions)) != 1:
+        raise ValueError("published native SDK declarations disagree or are missing")
+    if len(pins) != 1:
+        raise ValueError("native harness revision is missing or ambiguous")
     return pins[0]
 
 
