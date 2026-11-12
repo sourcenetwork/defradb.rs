@@ -86,7 +86,6 @@ fn allow_peer_authorizes_a_peer_added_at_runtime() {
 /// refused again on its next dial even after `allow_peer`. Ignored until
 /// vinc can drop a cached answer (see the facade gaps).
 #[test]
-#[ignore = "vinc caches a refused peer for 30 s; allow_peer cannot drop the cached answer"]
 fn allow_peer_admits_a_peer_the_allowlist_refused_before() {
     run(async {
         let server = TestNode::with_allowlist(explicit(&[])).await;
@@ -239,7 +238,6 @@ fn poll_until_connected_wakes_on_the_connection_and_times_out_without_one() {
 /// within those 30 s should get in; vinc refuses it on the cached deny.
 /// Ignored until vinc can drop a cached answer (see the facade gaps).
 #[test]
-#[ignore = "vinc caches the deny of a revoked peer's dial for 30 s past unrevoke"]
 fn allow_peer_admits_a_peer_that_dialed_while_revoked() {
     run(async {
         let a = TestNode::spawn().await;
