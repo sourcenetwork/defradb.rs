@@ -33,7 +33,7 @@
 \* And what must happen: a read ends with an answer whenever the chain
 \* finalizes fewer blocks than the read may ask.
 \*
-\* Code this models (defradb.rs, light client at backbone rev b48d74e):
+\* Code this models (defradb.rs, light client at backbone rev 502e604):
 \*   crates/vera/src/vera_rs/provider/verified.rs   verified, ATTEMPTS, overtaken
 \*   crates/vera/src/vera_rs/provider.rs            create_policy, query_policy,
 \*       query_object_owner, verify_access, create_access_decision (each read
