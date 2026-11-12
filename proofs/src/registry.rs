@@ -1404,10 +1404,10 @@ pub const PROPERTIES: &[Property] = &[
         // Design model ahead of code: membership of a contended resource is
         // admission minus a signed fork, and admission is the identity cost.
         family: "Single-writer chain jail",
-        name: "INV_OnlyAdmittedWrite / INV_CheaterWithinBudget / INV_NoMergeAfterProof / PROP_AdmittedWritesLand: only admitted keys write, free keys buy no more than the admission budget, a proven fork revokes with no admin step, and an early block lands once its admission arrives",
+        name: "INV_OnlyAdmittedWrite / INV_CheaterWithinBudget / INV_NoMergeAfterProof / INV_NoWrongfulRevocation / PROP_AdmittedWritesLand: only admitted keys write, free keys buy no more than the admission budget, a proven fork revokes with no admin step, a restore mints a new key so it is never a fork, and an early block lands once its admission arrives",
         axis: Tla,
         anchor: "crates/defra-node/src/ops/block.rs verify_block_signature",
-        model_ref: "MC_JailRevocation_{Green,Red_FreeKeys,Red_AclOnly,Red_DropEarly}.cfg",
+        model_ref: "MC_JailRevocation_{Green,Green_Restore,Red_FreeKeys,Red_AclOnly,Red_DropEarly,Red_KeepKey}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
