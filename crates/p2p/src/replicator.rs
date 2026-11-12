@@ -486,6 +486,25 @@ impl ReplicatorInfo {
         self.set_status_if_changed(status, changed_at)
     }
 
+    /// The persisted bytes of a replicator row with `status` applied by
+    /// [`set_status_if_changed_now`](Self::set_status_if_changed_now), or
+    /// `None` when the row already has that status. A peerstore rewrite runs
+    /// it inside the transaction that writes the result; it reads only the
+    /// clock, so a re-run attempt can call it again.
+    pub fn rewrite_status(
+        bytes: &[u8],
+        status: ReplicatorStatus,
+    ) -> Result<Option<Vec<u8>>, String> {
+        let mut info = Self::from_bytes(bytes)
+            .map_err(|error| format!("failed to decode replicator: {error}"))?;
+        if !info.set_status_if_changed_now(status) {
+            return Ok(None);
+        }
+        info.to_bytes()
+            .map(Some)
+            .map_err(|error| format!("failed to encode replicator status: {error}"))
+    }
+
     /// Format `LastStatusChange` exactly like Go's `time.Time.MarshalJSON`.
     pub fn last_status_change_go_string(&self) -> String {
         format_go_time(&self.last_status_change)

@@ -572,9 +572,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
-        name: "Deferred replay preserves its install identity, cannot recreate or alter a replaced peer row, writes retry markers only for its own install, and stops recording failures only when that install is replaced",
+        name: "Deferred replay preserves its install identity, cannot recreate or alter a replaced peer row, flips its own install's row in one transaction whatever same-incarnation rewrite came first, writes retry markers only for its own install, and stops recording failures only when that install is replaced",
         axis: Tla,
-        anchor: "crates/db/src/merge/push_docs_replay.rs persist_replay_failures; crates/db/src/merge/push_docs.rs push_existing_docs_with_config_and_allowlist; crates/storage/src/stores/peerstore.rs observe_push_head_for_incarnation, record_push_failure_for_incarnation; crates/p2p-adapter/src/replicator_install_store.rs finish",
+        anchor: "crates/db/src/merge/push_docs_replay.rs persist_replay_failures; crates/db/src/merge/push_docs.rs push_existing_docs_with_config_and_allowlist; crates/storage/src/stores/peerstore.rs update_replicator_for_incarnation, observe_push_head_for_incarnation, record_push_failure_for_incarnation; crates/p2p-adapter/src/replicator_status.rs set_persisted_replicator_status_for_incarnation_with_marker_state; crates/p2p-adapter/src/replicator_install_store.rs finish",
         model_ref: "MC_ReplicatorIncarnation_{Green,Red_Replay*}.cfg",
         tiers: &[Boundary],
         bound_by: "",

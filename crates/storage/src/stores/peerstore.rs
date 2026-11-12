@@ -124,12 +124,31 @@ struct SetReplicatorIfMarkerGenerationAttempt {
     updated_replicator: Vec<u8>,
 }
 
-struct SetReplicatorIfIncarnationAttempt {
+/// A pure rewrite of a replicator row's bytes, run inside the transaction
+/// that writes its result: `Ok(None)` leaves the row as it is, `Err` refuses
+/// bytes it cannot read. It runs once per attempt and a conflict re-runs the
+/// attempt, so it has no side effects.
+pub type ReplicatorRewrite =
+    Box<dyn Fn(&[u8]) -> std::result::Result<Option<Vec<u8>>, String> + Send + Sync>;
+
+/// What [`Peerstore::update_replicator_for_incarnation`] did to the row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReplicatorUpdate {
+    /// The rewrite's bytes were written.
+    Written,
+    /// Nothing was written: the row is gone, another incarnation owns the
+    /// peer, retry markers remain where none were required, or the rewrite
+    /// had nothing to change.
+    Unchanged,
+    /// The rewrite refused the row's bytes; nothing was written.
+    Refused(String),
+}
+
+struct UpdateReplicatorAttempt {
     peer_id: String,
-    expected_incarnation: u64,
-    expected_replicator: Vec<u8>,
-    updated_replicator: Vec<u8>,
+    expected_incarnation: Option<u64>,
     require_no_markers: bool,
+    rewrite: ReplicatorRewrite,
 }
 
 enum PeerstoreRetryAttempt {
@@ -666,29 +685,35 @@ impl RetryAttemptFn for SetReplicatorIfMarkerGenerationAttempt {
     }
 }
 
-impl RetryAttemptFn for SetReplicatorIfIncarnationAttempt {
+impl RetryAttemptFn for UpdateReplicatorAttempt {
     fn run<'a>(&'a mut self, txn: &'a mut dyn RetryTxn) -> RetryAttemptFuture<'a> {
         Box::pin(async move {
+            let unchanged =
+                || Box::new(ReplicatorUpdate::Unchanged) as crate::corekv::RetryAttemptValue;
             let mut io = txn.begin_attempt_io()?;
+            // The row and the incarnation are read here, in the transaction
+            // that writes: a writer that commits first changes one of them
+            // and conflicts this attempt, which then decides again.
             let replicator_key = ReplicatorKey::new(&self.peer_id).bytes();
             let Some(current_replicator) = io.get(&replicator_key).await? else {
                 txn.finish_attempt_io(io, crate::corekv::TxnCallbacks::default())?;
-                return Ok(Box::new(false) as crate::corekv::RetryAttemptValue);
+                return Ok(unchanged());
             };
-            if current_replicator.as_ref() != self.expected_replicator {
-                txn.finish_attempt_io(io, crate::corekv::TxnCallbacks::default())?;
-                return Ok(Box::new(false) as crate::corekv::RetryAttemptValue);
-            }
+            // An owned copy of the small row, so no view of the store is
+            // retained when an early return below finishes the attempt.
+            let current_replicator = current_replicator.to_vec();
 
-            let incarnation_key = ReplicatorIncarnationKey::new(&self.peer_id);
-            let current_incarnation = io
-                .get(&incarnation_key.bytes())
-                .await?
-                .map(|bytes| decode_retry_marker_generation(&bytes))
-                .unwrap_or(Some(0));
-            if current_incarnation != Some(self.expected_incarnation) {
-                txn.finish_attempt_io(io, crate::corekv::TxnCallbacks::default())?;
-                return Ok(Box::new(false) as crate::corekv::RetryAttemptValue);
+            if let Some(expected_incarnation) = self.expected_incarnation {
+                let incarnation_key = ReplicatorIncarnationKey::new(&self.peer_id);
+                let current_incarnation = io
+                    .get(&incarnation_key.bytes())
+                    .await?
+                    .map(|bytes| decode_retry_marker_generation(&bytes))
+                    .unwrap_or(Some(0));
+                if current_incarnation != Some(expected_incarnation) {
+                    txn.finish_attempt_io(io, crate::corekv::TxnCallbacks::default())?;
+                    return Ok(unchanged());
+                }
             }
 
             if self.require_no_markers {
@@ -696,19 +721,36 @@ impl RetryAttemptFn for SetReplicatorIfIncarnationAttempt {
                     ReplicatorRetryDocIDKey::peer_prefix(&self.peer_id),
                     ReplicatorRetryCollectionKey::peer_prefix(&self.peer_id),
                 ] {
-                    let mut iter = io.iterator(IterOptions::new().with_prefix(prefix)).await?;
-                    let has_marker = iter.next().await?.is_some();
-                    iter.close().await?;
+                    // The iterator drops at the end of this block: the
+                    // attempt cannot finish while it is retained.
+                    let has_marker = {
+                        let mut iter = io.iterator(IterOptions::new().with_prefix(prefix)).await?;
+                        let has_marker = iter.next().await?.is_some();
+                        iter.close().await?;
+                        has_marker
+                    };
                     if has_marker {
                         txn.finish_attempt_io(io, crate::corekv::TxnCallbacks::default())?;
-                        return Ok(Box::new(false) as crate::corekv::RetryAttemptValue);
+                        return Ok(unchanged());
                     }
                 }
             }
 
-            io.set(&replicator_key, &self.updated_replicator).await?;
+            let updated = match (self.rewrite)(&current_replicator) {
+                Ok(Some(updated)) => updated,
+                Ok(None) => {
+                    txn.finish_attempt_io(io, crate::corekv::TxnCallbacks::default())?;
+                    return Ok(unchanged());
+                }
+                Err(reason) => {
+                    txn.finish_attempt_io(io, crate::corekv::TxnCallbacks::default())?;
+                    return Ok(Box::new(ReplicatorUpdate::Refused(reason))
+                        as crate::corekv::RetryAttemptValue);
+                }
+            };
+            io.set(&replicator_key, &updated).await?;
             txn.finish_attempt_io(io, crate::corekv::TxnCallbacks::default())?;
-            Ok(Box::new(true) as crate::corekv::RetryAttemptValue)
+            Ok(Box::new(ReplicatorUpdate::Written) as crate::corekv::RetryAttemptValue)
         })
     }
 }
@@ -1088,41 +1130,24 @@ impl<S: Store> Peerstore<S> {
         .await
     }
 
-    /// Replace replicator bytes only while the peer incarnation and current
-    /// bytes still match the values observed by the caller.
-    pub async fn set_replicator_if_incarnation(
+    /// Rewrite a replicator row in one transaction: read it, check that
+    /// `expected_incarnation` (when given) still owns the peer and, with
+    /// `require_no_markers`, that no retry marker remains, then write what
+    /// `rewrite` makes of the row's current bytes. A writer that commits
+    /// between the read and the write conflicts the attempt, which re-runs
+    /// against the new row (`ReplicatorIncarnation.tla` ReplayFlip).
+    pub async fn update_replicator_for_incarnation(
         &self,
         peer_id: &str,
-        expected_incarnation: u64,
-        expected_replicator: &[u8],
-        updated_replicator: &[u8],
-    ) -> Result<bool> {
-        self.set_replicator_if_incarnation_with_marker_state(
-            peer_id,
-            expected_incarnation,
-            expected_replicator,
-            updated_replicator,
-            false,
-        )
-        .await
-    }
-
-    /// Replace replicator bytes only while the incarnation and expected bytes
-    /// match, optionally requiring that no retry markers remain.
-    pub async fn set_replicator_if_incarnation_with_marker_state(
-        &self,
-        peer_id: &str,
-        expected_incarnation: u64,
-        expected_replicator: &[u8],
-        updated_replicator: &[u8],
+        expected_incarnation: Option<u64>,
         require_no_markers: bool,
-    ) -> Result<bool> {
-        self.transact_conflicts(Box::new(SetReplicatorIfIncarnationAttempt {
+        rewrite: ReplicatorRewrite,
+    ) -> Result<ReplicatorUpdate> {
+        self.transact_conflicts(Box::new(UpdateReplicatorAttempt {
             peer_id: peer_id.to_owned(),
             expected_incarnation,
-            expected_replicator: expected_replicator.to_vec(),
-            updated_replicator: updated_replicator.to_vec(),
             require_no_markers,
+            rewrite,
         }))
         .await
     }

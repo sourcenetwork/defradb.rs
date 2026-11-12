@@ -163,46 +163,36 @@ pub async fn persist_replay_failures<S: storage::corekv::Store>(
 
     // Match the live-push failure recorder's observable state. Retry records
     // remain authoritative even if legacy/invalid replicator bytes prevent the
-    // status update.
-    if let Some(bytes) = peerstore
-        .get_replicator(peer_id.as_str())
+    // status update. The row is read, flipped and written in one peerstore
+    // transaction fenced by the install's incarnation (`ReplicatorIncarnation.tla`
+    // ReplayFlip), so a same-incarnation rewrite that commits first is flipped
+    // on top of rather than skipped.
+    let flip = peerstore
+        .update_replicator_for_incarnation(
+            peer_id.as_str(),
+            Some(install_incarnation),
+            false,
+            Box::new(|bytes| {
+                p2p::ReplicatorInfo::rewrite_status(bytes, p2p::ReplicatorStatus::Inactive)
+            }),
+        )
         .await
-        .map_err(|error| format!("failed to load persisted replicator status: {error}"))?
-    {
-        match p2p::ReplicatorInfo::from_bytes(&bytes) {
-            Ok(mut info) => {
-                let bytes_before = bytes;
-                if info.set_status_if_changed_now(p2p::ReplicatorStatus::Inactive) {
-                    let bytes = info.to_bytes().map_err(|error| {
-                        format!("failed to encode inactive replicator status: {error}")
-                    })?;
-                    let flipped = peerstore
-                        .set_replicator_if_incarnation(
-                            peer_id.as_str(),
-                            install_incarnation,
-                            &bytes_before,
-                            &bytes,
-                        )
-                        .await
-                        .map_err(|error| {
-                            format!("failed to persist inactive replicator status: {error}")
-                        })?;
-                    if !flipped {
-                        tracing::debug!(
-                            peer_id = %peer_id,
-                            install_incarnation,
-                            "Replay left the replicator status alone: its row was replaced, removed or rewritten after it was read"
-                        );
-                    }
-                }
-            }
-            Err(error) => {
-                tracing::warn!(
-                    peer_id = %peer_id,
-                    %error,
-                    "Replay retries were recorded but replicator status could not be decoded"
-                );
-            }
+        .map_err(|error| format!("failed to persist inactive replicator status: {error}"))?;
+    match flip {
+        storage::stores::peerstore::ReplicatorUpdate::Written => {}
+        storage::stores::peerstore::ReplicatorUpdate::Unchanged => {
+            tracing::debug!(
+                peer_id = %peer_id,
+                install_incarnation,
+                "Replay left the replicator status alone: the peer was removed or replaced, or is already inactive"
+            );
+        }
+        storage::stores::peerstore::ReplicatorUpdate::Refused(error) => {
+            tracing::warn!(
+                peer_id = %peer_id,
+                %error,
+                "Replay retries were recorded but replicator status could not be updated"
+            );
         }
     }
 
