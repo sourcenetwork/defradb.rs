@@ -62,12 +62,12 @@ path = "src/bin/gen_scenarios/main.rs"
 required-features = ["generator"]
 
 [dev-dependencies]
-vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "419cdb4af02843af28cd76899b7dd5ad5e0bb2c3" }
+vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "a9ce2e431d6f43786f94946dfc5c8a3405a9a8f6" }
 mantra-macros = "0.9"
 keyring = { path = "../../crates/keyring" }
-vera-client = "0.1.1"
-vera-domain = "0.1.1"
-vera-modules = "0.1.1"
+vera-client = "0.1.2"
+vera-domain = "0.1.2"
+vera-modules = "0.1.2"
 alloy-sol-types.workspace = true
 acp = { path = "../../crates/acp" }
 vera = { path = "../../crates/vera" }

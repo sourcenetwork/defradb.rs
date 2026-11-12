@@ -42,9 +42,9 @@ crypto = { path = "../crypto" }
 keyring = { path = "../keyring" }
 events = { path = "../events" }
 tempfile = "3"
-vera-client = "0.1.1"
-vera-domain = "0.1.1"
-vera-modules = "0.1.1"
+vera-client = "0.1.2"
+vera-domain = "0.1.2"
+vera-modules = "0.1.2"
 commonware-codec = "=2026.10.0"
 
 # Lock-free shared state
