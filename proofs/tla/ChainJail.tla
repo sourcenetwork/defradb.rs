@@ -24,6 +24,13 @@
 \* admitted validator or member may write a contended resource, so a new key
 \* has no rights until it is admitted again. Admission is outside this model.
 \*
+\* How this maps onto DefraDB. A block's heads are the document's previous
+\* heads, not its author's last block, so "two versions at one height" stands
+\* for two blocks signed by one key on one document where neither is an
+\* ancestor of the other. That is only a fork if one key never writes from two
+\* places at once, so every instance signs with a key of its own; instances
+\* that share a DID (gents) each get their own key under it.
+\*
 \* This is the design model for the single-writer chain layer of the
 \* exactly-one-winner work. There is no Rust for it yet; the anchor in the
 \* registry is the signature check the proof relies on.
