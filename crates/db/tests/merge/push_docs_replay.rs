@@ -1115,3 +1115,134 @@ fn replay_without_a_replicator_row_is_an_error_not_a_completion() {
     })
     .unwrap()
 }
+
+/// Rewrites one replicator row, keeping its incarnation, just before the
+/// second peerstore transaction: after the replay's retry marker, before its
+/// status flip.
+struct RewriteBeforeSecondTransact {
+    inner: Arc<storage::RegolithStore>,
+    transactions: AtomicUsize,
+    peer_id: String,
+    rewritten: Vec<u8>,
+}
+
+impl storage::corekv::private::Sealed for RewriteBeforeSecondTransact {}
+
+#[async_trait::async_trait]
+impl storage::corekv::Store for RewriteBeforeSecondTransact {
+    fn crdts(&self) -> &storage::Crdts {
+        self.inner.crdts()
+    }
+
+    async fn allocate(
+        &self,
+        key: &[u8],
+        count: u64,
+    ) -> storage::corekv::Result<std::ops::Range<u64>> {
+        self.inner.allocate(key, count).await
+    }
+
+    async fn new_txn(
+        &self,
+        readonly: bool,
+    ) -> storage::corekv::Result<Box<dyn storage::corekv::Txn>> {
+        self.inner.new_txn(readonly).await
+    }
+
+    async fn transact_retry(
+        &self,
+        options: storage::corekv::RetryOptions,
+        attempt: storage::corekv::RetryAttempt,
+    ) -> std::result::Result<storage::corekv::RetryAttemptValue, storage::corekv::RetryAttemptError>
+    {
+        if self.transactions.fetch_add(1, Ordering::SeqCst) == 1 {
+            use storage::corekv::{Key as _, Writer as _};
+            let peerstore = storage::namespace::NamespacedStore::new(
+                self.inner.clone(),
+                storage::namespace::Namespace::Peerstore,
+            );
+            let mut txn = peerstore.new_txn(false).await.unwrap();
+            txn.set(
+                &storage::keys::ReplicatorKey::new(self.peer_id.as_str()).bytes(),
+                &self.rewritten,
+            )
+            .await
+            .unwrap();
+            txn.commit().await.unwrap();
+        }
+        self.inner.transact_retry(options, attempt).await
+    }
+
+    async fn close(&self) -> storage::corekv::Result<()> {
+        self.inner.close().await
+    }
+}
+
+/// Another writer rewrites the row under the same incarnation (here, a new
+/// address) after the replay read it and before its status flip. The flip
+/// must still land, on top of that rewrite: the install is still current.
+#[test]
+fn a_same_incarnation_rewrite_does_not_skip_the_inactive_flip() {
+    workers::block_on(async {
+        let peer = PeerId::new("peer-rewritten".to_string());
+        let info = p2p::ReplicatorInfo::from_raw(
+            peer.to_string(),
+            vec!["collection".to_string()],
+            Vec::new(),
+        );
+        let mut rewritten = info.clone();
+        rewritten
+            .addresses
+            .push("/ip4/127.0.0.1/tcp/9171".to_string());
+        let store = Arc::new(RewriteBeforeSecondTransact {
+            inner: Arc::new(storage::RegolithStore::in_memory().unwrap()),
+            transactions: AtomicUsize::new(0),
+            peer_id: peer.to_string(),
+            rewritten: rewritten.to_bytes().unwrap(),
+        });
+        let setup = storage::stores::Peerstore::new(store.inner.clone());
+        setup
+            .create_replicator(peer.as_str(), &info.to_bytes().unwrap())
+            .await
+            .unwrap();
+        let incarnation = setup
+            .get_replicator_incarnation(peer.as_str())
+            .await
+            .unwrap()
+            .unwrap();
+
+        let peerstore = storage::stores::Peerstore::new(store.clone());
+        persist_replay_failures(
+            &peerstore,
+            &peer,
+            incarnation,
+            &[ReplayDocumentFailure {
+                doc_id: "doc-1".to_string(),
+                collection_id: "collection".to_string(),
+            }],
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            store.transactions.load(Ordering::SeqCst) >= 2,
+            "the rewrite must have run between the marker and the flip"
+        );
+        let saved = peerstore
+            .get_replicator(peer.as_str())
+            .await
+            .unwrap()
+            .unwrap();
+        let saved = p2p::ReplicatorInfo::from_bytes(&saved).unwrap();
+        assert_eq!(
+            saved.addresses, rewritten.addresses,
+            "the other writer's rewrite stands"
+        );
+        assert_eq!(
+            saved.status,
+            p2p::ReplicatorStatus::Inactive,
+            "a same-incarnation rewrite must not skip the replay's Inactive flip"
+        );
+    })
+    .unwrap()
+}
