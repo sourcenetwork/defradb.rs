@@ -596,12 +596,19 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// missing and the fetch asks for it again.
     async fn drop_held_blocks(&self, blocks: Vec<(Cid, Vec<u8>)>) -> Vec<(Cid, Vec<u8>)> {
         let received = blocks.len();
-        let mut fresh = Vec::with_capacity(received);
-        for (cid, data) in blocks {
-            if !matches!(self.manager.blockstore().has(&cid).await, Ok(true)) {
-                fresh.push((cid, data));
-            }
-        }
+        let cids: Vec<Cid> = blocks.iter().map(|(cid, _)| *cid).collect();
+        let present = self
+            .manager
+            .blockstore()
+            .has_many(&cids)
+            .await
+            .unwrap_or_default();
+        let fresh: Vec<_> = blocks
+            .into_iter()
+            .enumerate()
+            .filter(|(idx, _)| !present.get(*idx).copied().unwrap_or(false))
+            .map(|(_, block)| block)
+            .collect();
         self.manager
             .diagnostics
             .record_car_received_already_held(received - fresh.len());

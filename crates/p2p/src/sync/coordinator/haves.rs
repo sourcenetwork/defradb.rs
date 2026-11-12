@@ -43,8 +43,11 @@ where
             let Ok(Some(data)) = blockstore.get(&cid).await else {
                 continue;
             };
-            if named && haves.len() < MAX_HAVE_CIDS {
+            if named {
                 haves.push(cid);
+                if haves.len() >= MAX_HAVE_CIDS {
+                    break;
+                }
             }
             if let Ok(block) = defra_core::Block::from_dag_cbor(&data) {
                 parents.extend(block.heads.unwrap_or_default());

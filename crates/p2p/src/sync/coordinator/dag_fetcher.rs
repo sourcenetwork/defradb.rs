@@ -820,6 +820,9 @@ where
     let mut named = Vec::with_capacity(MAX_HAVE_CIDS);
     if let Ok(block) = defra_core::Block::from_dag_cbor(root_data) {
         for head in block.heads.unwrap_or_default() {
+            if named.len() >= MAX_HAVE_CIDS {
+                break;
+            }
             if matches!(blockstore.is_merged(&head).await, Ok(true)) {
                 named.push(head);
             }

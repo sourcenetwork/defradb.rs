@@ -388,8 +388,17 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             let explicit_replicator_collections =
                 self.access.replicators.get_collections(peer_id.as_str());
             let mut fetches = Vec::with_capacity(cids_to_fetch.len());
+            let mut haves_by_doc: rapidhash::RapidHashMap<String, Vec<Cid>> =
+                rapidhash::RapidHashMap::default();
             for (root_cid, doc_id) in cids_to_fetch {
-                let haves = self.document_haves(&doc_id).await;
+                let haves = match haves_by_doc.get(&doc_id) {
+                    Some(haves) => haves.clone(),
+                    None => {
+                        let haves = self.document_haves(&doc_id).await;
+                        haves_by_doc.insert(doc_id.clone(), haves.clone());
+                        haves
+                    }
+                };
                 fetches.push((root_cid, doc_id, haves));
             }
 

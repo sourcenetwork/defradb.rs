@@ -93,6 +93,26 @@ mod basic_crud {
     }
 
     #[test]
+    fn has_many_answers_each_cid_in_order() {
+        workers::block_on(async {
+            let store = Arc::new(RegolithStore::in_memory().unwrap());
+            let blockstore = DefraBlockstore::new(store, false);
+            let (held, missing, other) = (test_cid(), test_cid2(), test_cid3());
+            blockstore.put(&held, b"held").await.unwrap();
+            blockstore.put(&other, b"other").await.unwrap();
+
+            let present = blockstore
+                .has_many(&[missing, held, other, missing])
+                .await
+                .unwrap();
+
+            assert_eq!(present, vec![false, true, true, false]);
+            assert!(blockstore.has_many(&[]).await.unwrap().is_empty());
+        })
+        .unwrap()
+    }
+
+    #[test]
     fn delete() {
         workers::block_on(async {
             let store = Arc::new(RegolithStore::in_memory().unwrap());
