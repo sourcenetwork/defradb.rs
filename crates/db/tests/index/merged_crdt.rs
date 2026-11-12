@@ -151,6 +151,77 @@ impl FieldCrdt for Tally {
     }
 }
 
+/// The same type, claiming its writes are not blind, so an index on it is inline.
+struct InlineTally;
+
+impl FieldCrdt for InlineTally {
+    fn ctype(&self) -> CType {
+        Tally.ctype()
+    }
+
+    fn replicates_ops(&self) -> bool {
+        Tally.replicates_ops()
+    }
+
+    fn blind_op(&self) -> bool {
+        false
+    }
+
+    fn op(&self, input: NormalValue, creating: bool) -> Result<FieldOp, FieldCrdtError> {
+        Tally.op(input, creating)
+    }
+
+    fn named_op(&self, op: FieldOp) -> Result<FieldOp, FieldCrdtError> {
+        Tally.named_op(op)
+    }
+
+    fn apply(
+        &self,
+        field: &FieldDescription,
+        current: Option<&NormalValue>,
+        op: &FieldOp,
+    ) -> Result<NormalValue, FieldCrdtError> {
+        Tally.apply(field, current, op)
+    }
+
+    fn write<'value>(
+        &self,
+        value: &'value NormalValue,
+        op: Option<&'value FieldOp>,
+    ) -> FieldWrite<'value> {
+        Tally.write(value, op)
+    }
+
+    fn decode(&self, field: &FieldDescription, data: &[u8]) -> Result<NormalValue, FieldCrdtError> {
+        Tally.decode(field, data)
+    }
+
+    fn delta(&self, parts: DeltaParts<'_>) -> CrdtDelta {
+        Tally.delta(parts)
+    }
+
+    fn state(
+        &self,
+        field: &FieldDescription,
+        priority: u64,
+        value: &NormalValue,
+    ) -> Result<StoredField, FieldCrdtError> {
+        Tally.state(field, priority, value)
+    }
+
+    fn materialize(&self, state: Part<'_>) -> Option<NormalValue> {
+        Tally.materialize(state)
+    }
+
+    fn merge(&self, state: &mut StoredField, incoming: StoredField) -> Option<MergeResult> {
+        Tally.merge(state, incoming)
+    }
+
+    fn folds_exactly(&self, state: Part<'_>) -> bool {
+        Tally.folds_exactly(state)
+    }
+}
+
 fn collection() -> CollectionVersion {
     CollectionVersion::new(
         COLLECTION,
@@ -177,6 +248,10 @@ async fn entries_at(db: &DB<RegolithStore>, index_id: u32, value: i64) -> usize 
     )
     .try_bytes()
     .unwrap();
+    keys_under(db, prefix).await
+}
+
+async fn keys_under(db: &DB<RegolithStore>, prefix: Vec<u8>) -> usize {
     let txn = db.new_txn(true).await.unwrap();
     let datastore = txn.datastore().unwrap();
     let mut iter = storage::corekv::Reader::iterator(
@@ -208,6 +283,10 @@ fn with_type() -> Crdts {
     Crdts::new([crdt::Registration::new(Tally)]).unwrap()
 }
 
+fn with_inline_type() -> Crdts {
+    Crdts::new([crdt::Registration::new(InlineTally)]).unwrap()
+}
+
 impl Node {
     async fn open() -> Self {
         let options = RegolithStoreOptions::memory().with_crdts(with_type());
@@ -215,13 +294,12 @@ impl Node {
         Self::on(store, true).await
     }
 
-    /// The node on disk at `path`, with the type or without it.
-    async fn on_disk(path: &std::path::Path, typed: bool, fresh: bool) -> Self {
+    /// The node on disk at `path`, with these types or none.
+    async fn on_disk(path: &std::path::Path, crdts: Option<Crdts>, fresh: bool) -> Self {
         let options = RegolithStoreOptions::default();
-        let options = if typed {
-            options.with_crdts(with_type())
-        } else {
-            options
+        let options = match crdts {
+            Some(crdts) => options.with_crdts(crdts),
+            None => options,
         };
         Self::on(
             RegolithStore::open_with_options(path, options).unwrap(),
@@ -233,7 +311,7 @@ impl Node {
     async fn on(store: RegolithStore, fresh: bool) -> Self {
         let store = Arc::new(store);
         let (db, index_id) = if fresh {
-            let db = Arc::new(DB::from_arc(store.clone()).unwrap());
+            let db = Arc::new(DB::open_from_arc(store.clone()).await.unwrap());
             db.create_collection(collection()).await.unwrap();
             let index = db
                 .create_index(
@@ -346,6 +424,24 @@ impl Node {
         }
     }
 
+    /// How many position records and log entries the index keeps.
+    async fn deferred_state(&self) -> (usize, usize) {
+        let short_id = self
+            .db
+            .require_collection(COLLECTION)
+            .unwrap()
+            .resolved_root_id();
+        let log = storage::keys::index_pending_log(short_id, self.index_id);
+        (
+            keys_under(
+                &self.db,
+                storage::keys::index_position_prefix(short_id, self.index_id),
+            )
+            .await,
+            keys_under(&self.db, log.entry_prefix().to_vec()).await,
+        )
+    }
+
     async fn count(&self) -> Option<NormalValue> {
         LensedAutoCommitFetcher::new(self.db.clone())
             .get_all(COLLECTION)
@@ -456,7 +552,7 @@ fn replayed_parked_increments_move_the_entry_to_the_total() {
     workers::block_on(async {
         let dir = tempfile::tempdir().unwrap();
         let alice = Node::open().await;
-        let bob = Node::on_disk(dir.path(), false, true).await;
+        let bob = Node::on_disk(dir.path(), None, true).await;
         let doc_id = alice.create(1).await;
         bob.receive(&alice, &doc_id, &alice.head(&doc_id).await)
             .await;
@@ -468,7 +564,7 @@ fn replayed_parked_increments_move_the_entry_to_the_total() {
         bob.db.close().await.unwrap();
         drop(bob);
 
-        let bob = Node::on_disk(dir.path(), true, false).await;
+        let bob = Node::on_disk(dir.path(), Some(with_type()), false).await;
         assert_eq!(bob.handler.replay_parked().await.unwrap(), 3);
         assert_eq!(bob.count().await, Some(NormalValue::Int(5)));
         assert_eq!(
@@ -477,6 +573,71 @@ fn replayed_parked_increments_move_the_entry_to_the_total() {
             "one entry, at the replayed total"
         );
         bob.db.close().await.unwrap();
+    })
+    .unwrap()
+}
+
+/// An index kept inline on one start and deferred on the next is rebuilt at
+/// open, so its entries get the records a drain moves them by.
+#[test]
+fn an_index_that_becomes_deferred_is_rebuilt_at_open() {
+    workers::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let doc_id = {
+            let node = Node::on_disk(dir.path(), Some(with_inline_type()), true).await;
+            let doc_id = node.create(1).await;
+            assert_eq!(node.deferred_state().await, (0, 0), "kept inline");
+            node.db.close().await.unwrap();
+            doc_id
+        };
+
+        let node = Node::on_disk(dir.path(), Some(with_type()), false).await;
+        node.increment(&doc_id, 4).await;
+        assert_eq!(
+            node.entries([1, 5]).await,
+            (1, [(1, 0), (5, 1)]),
+            "the drain moved the entry from before the change"
+        );
+        node.db.close().await.unwrap();
+    })
+    .unwrap()
+}
+
+/// An index kept deferred on one start and inline on the next is rebuilt at
+/// open: what it was owed lands and its records and log go, so the start
+/// after that, deferred again, rebuilds it once more.
+#[test]
+fn an_index_that_becomes_inline_is_rebuilt_at_open() {
+    workers::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let doc_id = {
+            let node = Node::on_disk(dir.path(), Some(with_type()), true).await;
+            let doc_id = node.create(1).await;
+            node.increment(&doc_id, 4).await;
+            assert_eq!(node.deferred_state().await, (1, 1), "owed a drain");
+            node.db.close().await.unwrap();
+            doc_id
+        };
+
+        {
+            let node = Node::on_disk(dir.path(), Some(with_inline_type()), false).await;
+            assert_eq!(
+                node.entries([1, 5]).await,
+                (1, [(1, 0), (5, 1)]),
+                "the entry is at the value it was owed"
+            );
+            assert_eq!(node.deferred_state().await, (0, 0), "kept inline");
+            node.db.close().await.unwrap();
+        }
+
+        let node = Node::on_disk(dir.path(), Some(with_type()), false).await;
+        node.increment(&doc_id, 1).await;
+        assert_eq!(
+            node.entries([5, 6]).await,
+            (1, [(5, 0), (6, 1)]),
+            "deferred again, the drain moved the entry"
+        );
+        node.db.close().await.unwrap();
     })
     .unwrap()
 }

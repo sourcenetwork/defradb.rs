@@ -47,6 +47,8 @@ pub(super) struct ReindexPage {
     /// Whether this page records the owed reindex itself, for a rebuild
     /// asked for directly while none was owed.
     pub(super) owe: bool,
+    /// The indexes the reindex this page records rebuilds; `None` for all.
+    pub(super) indexes: Option<Vec<u32>>,
     /// A fence taken after the clear committed, for a walk that has none.
     pub(super) fence: Option<u64>,
     /// Also move the version of documents whose path runs no transform.
@@ -73,31 +75,61 @@ impl ReindexPage {
         size: usize,
     ) -> Result<Step> {
         let collection_id = self.collection.collection_id();
-        if self.owe {
-            owed::owe_full_reindex(systemstore, &self.collections, collection_id, self.token)
-                .await?;
-        } else if !owed::owes(systemstore, collection_id, self.token).await? {
-            return Ok(Step::Superseded);
-        }
+        let rebuilt = if self.owe {
+            owed::owe_full_reindex(
+                systemstore,
+                &self.collections,
+                collection_id,
+                self.token,
+                self.indexes.clone(),
+            )
+            .await?;
+            self.indexes.clone()
+        } else {
+            match owed::owed_under(systemstore, collection_id, self.token).await? {
+                Some(owed) => owed.indexes,
+                None => return Ok(Step::Superseded),
+            }
+        };
         let collection = crate::collection::loader::load_collection_for_write_attempt(
             systemstore,
             self.collection.name(),
             &self.collection,
         )
         .await?;
+        let indexes: Vec<_> = collection
+            .write_indexes()
+            .iter()
+            .filter(|index| rebuilt.as_ref().is_none_or(|ids| ids.contains(&index.id)))
+            .cloned()
+            .collect();
         let manager = IndexManager::from_indexes(
             collection.resolved_root_id(),
             collection.schema(),
-            collection.write_indexes(),
+            &indexes,
             collection.crdts(),
         )?;
+        let mut deferred: Vec<u32> = indexes
+            .iter()
+            .filter(|index| manager.is_deferred(index, collection.schema()))
+            .map(|index| index.id)
+            .collect();
+        deferred.sort_unstable();
 
-        let mut stage = progress::read(systemstore, collection_id, self.token).await?;
+        let mut stage = progress::read(systemstore, collection_id, self.token, &deferred).await?;
         let mut budget = size;
         let clearing = matches!(stage, Stage::Clear { .. });
-        clear(&manager, datastore, &mut stage, &mut budget).await?;
+        clear(
+            &manager,
+            collection.resolved_root_id(),
+            &deferred,
+            datastore,
+            &mut stage,
+            &mut budget,
+        )
+        .await?;
         let Stage::Walk { fence, last } = stage else {
-            progress::write(systemstore, collection_id, self.token, stage).await?;
+            progress::write(systemstore, collection_id, self.token, &deferred, stage).await?;
             return Ok(Step::More {
                 materialized: 0,
                 needs_fence: false,
@@ -142,6 +174,7 @@ impl ReindexPage {
             systemstore,
             collection_id,
             self.token,
+            &deferred,
             Stage::Walk {
                 fence,
                 last: walked.last,
@@ -251,9 +284,13 @@ struct Walked {
 }
 
 /// Removes the entries of the indexes in `manager`, in index ID order, up to
-/// `budget` keys, and moves `stage` to the walk once none is left.
+/// `budget` keys, and moves `stage` to the walk once none is left. An index
+/// not in `deferred` loses its position records and log too, which a start
+/// that kept it deferred left.
 async fn clear(
     manager: &IndexManager,
+    short_id: u32,
+    deferred: &[u32],
     datastore: &NamespaceView,
     stage: &mut Stage,
     budget: &mut usize,
@@ -281,14 +318,35 @@ async fn clear(
             None
         };
         let limit = *budget;
-        let (removed, last) = manager
-            .get_index(&index.name)
-            .ok_or_else(|| Error::Other(format!("index '{}' not found", index.name)))?
-            .remove_page(&mut datastore.clone(), from.as_deref(), limit)
-            .await
-            .map_err(Error::Storage)?;
-        *budget -= removed.min(limit);
-        *stage = if removed < limit {
+        let past = from
+            .as_deref()
+            .is_some_and(|key| crate::index::deferred::past_entries(short_id, index.id, key));
+        let (mut used, mut last, mut done) = (0, None, true);
+        if !past {
+            let (removed, at) = manager
+                .get_index(&index.name)
+                .ok_or_else(|| Error::Other(format!("index '{}' not found", index.name)))?
+                .remove_page(&mut datastore.clone(), from.as_deref(), limit)
+                .await
+                .map_err(Error::Storage)?;
+            (used, last, done) = (removed.min(limit), at, removed < limit);
+        }
+        if done && !deferred.contains(&index.id) {
+            let left = limit - used;
+            let (removed, at) = crate::index::deferred::remove_page(
+                datastore,
+                short_id,
+                index.id,
+                from.as_deref().filter(|_| past),
+                left,
+            )
+            .await?;
+            used += removed.min(left);
+            done = removed < left;
+            last = at.or(last);
+        }
+        *budget -= used;
+        *stage = if done {
             Stage::Clear {
                 next_index: id + 1,
                 after: None,

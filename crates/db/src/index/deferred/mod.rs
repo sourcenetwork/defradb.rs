@@ -11,12 +11,14 @@ mod cleanup;
 mod drain;
 #[cfg(test)]
 mod lifecycle_tests;
+mod mode;
 mod overlay;
 mod record;
 mod requests;
 mod task;
 
 pub(crate) use cleanup::{past_entries, remove_page};
+pub(crate) use mode::kept_in_other_mode;
 pub(crate) use record::{decode_record, encode_record};
 pub use requests::DrainRequests;
 pub(crate) use requests::IndexRef;

@@ -1,7 +1,8 @@
 //! Where a paged reindex resumes: its stage and cursor, committed with every
 //! page under the token of the owed record it settles. A record under another
 //! token belongs to a reindex a later schema change superseded, so it reads as
-//! the start.
+//! the start. So does one written while other indexes were deferred: the
+//! pages so far kept them the other way (`proofs/tla/DeferredIndexMode.tla`).
 
 use datastore::NamespaceView;
 use serde::{Deserialize, Serialize};
@@ -41,18 +42,22 @@ impl Stage {
 struct Progress {
     token: u64,
     stage: Stage,
+    /// The IDs of the indexes the pages so far kept deferred, in order.
+    #[serde(default)]
+    deferred: Vec<u32>,
 }
 
 fn progress_key(collection_id: &str) -> Vec<u8> {
     [PROGRESS_PREFIX, collection_id.as_bytes()].concat()
 }
 
-/// The stage the reindex owed under `token` reached: its start until a page
-/// of it commits.
+/// The stage the reindex owed under `token` reached, with the indexes in
+/// `deferred` kept deferred: its start until a page of it commits.
 pub(super) async fn read(
     systemstore: &NamespaceView,
     collection_id: &str,
     token: u64,
+    deferred: &[u32],
 ) -> Result<Stage> {
     let Some(bytes) = systemstore
         .get(&progress_key(collection_id))
@@ -63,23 +68,30 @@ pub(super) async fn read(
     };
     let progress: Progress = serde_json::from_slice(&bytes)
         .map_err(|error| Error::Other(format!("invalid reindex progress record: {error}")))?;
-    Ok(if progress.token == token {
-        progress.stage
-    } else {
-        Stage::start()
-    })
+    Ok(
+        if progress.token == token && progress.deferred == deferred {
+            progress.stage
+        } else {
+            Stage::start()
+        },
+    )
 }
 
 /// Records, in the page's transaction, that the reindex owed under `token`
-/// reached `stage`.
+/// reached `stage`, with the indexes in `deferred` kept deferred.
 pub(super) async fn write(
     systemstore: &NamespaceView,
     collection_id: &str,
     token: u64,
+    deferred: &[u32],
     stage: Stage,
 ) -> Result<()> {
-    let bytes = serde_json::to_vec(&Progress { token, stage })
-        .map_err(|error| Error::Other(format!("failed to encode reindex progress: {error}")))?;
+    let bytes = serde_json::to_vec(&Progress {
+        token,
+        stage,
+        deferred: deferred.to_vec(),
+    })
+    .map_err(|error| Error::Other(format!("failed to encode reindex progress: {error}")))?;
     systemstore
         .set(&progress_key(collection_id), &bytes)
         .await

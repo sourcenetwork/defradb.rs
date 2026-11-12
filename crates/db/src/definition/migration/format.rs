@@ -19,14 +19,16 @@ use crate::DB;
 
 /// Bumped whenever an index key encoding changes. Version 1 is the original
 /// single-varint DateTime encoding; version 2 splits seconds from nanos;
-/// version 3 gives each deferred index entry its position record.
+/// version 3 gives each deferred index entry its position record, which the
+/// check at every open does for the deferred indexes alone.
 pub const CURRENT_INDEX_FORMAT: u32 = 3;
 
 /// Systemstore key holding the format the indexes on disk were written with.
 pub use storage::keys::systemstore::INDEX_FORMAT_KEY;
 
 impl<S: Store> DB<S> {
-    /// Rebuild secondary indexes when the store predates the current encoding.
+    /// Rebuild secondary indexes when the store predates the current encoding,
+    /// and, at every open, the indexes kept the other way on an earlier start.
     ///
     /// A store with no stamp is either brand new, where the rebuild is a no-op
     /// because there are no documents, or written before the stamp existed, in
@@ -37,10 +39,68 @@ impl<S: Store> DB<S> {
         S: 'static,
     {
         let stored = self.stored_index_format().await?;
+        if stored.is_some_and(|format| format >= 2) {
+            self.rebuild_indexes_kept_the_other_way().await?;
+        } else {
+            self.rebuild_every_index(stored).await?;
+        }
         if stored == Some(CURRENT_INDEX_FORMAT) {
             return Ok(());
         }
+        self.stamp_index_format().await
+    }
 
+    /// Rebuilds each index whose stored state belongs to the other way of
+    /// keeping it than this start's types give it, and only those.
+    async fn rebuild_indexes_kept_the_other_way(&self) -> Result<()>
+    where
+        S: 'static,
+    {
+        for schema in self.get_all_active_collections_internal()? {
+            if schema.indexes.is_empty() {
+                continue;
+            }
+            let Some(collection) = self.get_collection(&schema.name)? else {
+                continue;
+            };
+            let short_id = collection.resolved_root_id();
+            let txn = self.new_txn(true).await?;
+            let mut changed = Vec::new();
+            {
+                let datastore = txn.datastore()?;
+                for index in collection.write_indexes() {
+                    let deferred =
+                        crdt::deferred_index(index, collection.schema(), collection.crdts());
+                    if crate::index::deferred::kept_in_other_mode(
+                        &datastore, short_id, index.id, deferred,
+                    )
+                    .await?
+                    {
+                        changed.push(index.id);
+                    }
+                }
+            }
+            txn.discard()?;
+            if changed.is_empty() {
+                continue;
+            }
+            info!(
+                collection = %schema.name,
+                indexes = ?changed,
+                "rebuilding indexes kept the other way on an earlier start"
+            );
+            if let Err(error) = self.reindex_indexes(&schema.name, changed).await {
+                warn!(collection = %schema.name, error = %error, "index rebuild failed");
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+
+    async fn rebuild_every_index(&self, stored: Option<u32>) -> Result<()>
+    where
+        S: 'static,
+    {
         let stale: Vec<String> = self
             .get_all_active_collections_internal()?
             .into_iter()
@@ -66,8 +126,7 @@ impl<S: Store> DB<S> {
                 return Err(error);
             }
         }
-
-        self.stamp_index_format().await
+        Ok(())
     }
 
     /// The format stamped on disk, or `None` on a store that predates it.

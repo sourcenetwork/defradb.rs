@@ -570,6 +570,11 @@ RUNS=(
   "MC_DeferredIndex_Green_Drop.cfg DeferredIndex.tla GREEN" # a drop truncates the log in pages from the first entry left
   "MC_DeferredIndex_Red_DropWhole.cfg DeferredIndex.tla RED" # a drop truncates the whole backlog in one transaction (INV_CleanupBounded)
   "MC_DeferredIndex_Red_DropFromOne.cfg DeferredIndex.tla RED" # each drop page truncates from position 1 (INV_CleanupBounded)
+  "MC_DeferredIndexMode_Green.cfg DeferredIndexMode.tla GREEN" # an index kept the other way on an earlier start is rebuilt at open
+  "MC_DeferredIndexMode_Red_NoCheck.cfg DeferredIndexMode.tla RED" # no check at open: inline entries open deferred with no records (INV_OpenMatchesMode)
+  "MC_DeferredIndexMode_Red_OneWay.cfg DeferredIndexMode.tla RED" # the check misses a deferred index that opens inline (INV_OpenMatchesMode)
+  "MC_DeferredIndexMode_Red_KeepRecords.cfg DeferredIndexMode.tla RED" # an inline rebuild keeps stale records that hide the next change (INV_OpenMatchesMode)
+  "MC_DeferredIndexMode_Red_NoProgressReset.cfg DeferredIndexMode.tla RED" # a rebuild resumed under the other way mixes both (INV_OpenMatchesMode)
   "MC_DeferredDrainTask_Green.cfg DeferredDrainTask.tla GREEN" # owed work is always asked for, and a quiet index settles under steady traffic
   "MC_DeferredDrainTask_Red_StopAtFailure.cfg DeferredDrainTask.tla RED" # a failing index ends the pass and the rest is forgotten (INV_OwedKept)
   "MC_DeferredDrainTask_Red_DropFailed.cfg DeferredDrainTask.tla RED" # a failed drain drops its request (INV_OwedKept)

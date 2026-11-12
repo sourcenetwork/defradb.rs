@@ -2057,6 +2057,17 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // Whether an index is deferred follows the types a start registers,
+        // so the check at open rebuilds one whose stored state is the other way.
+        family: "Index-maintenance consistency",
+        name: "INV_OpenMatchesMode — an open node's index holds exactly what the way it is kept accounts for",
+        axis: Tla,
+        anchor: "crates/db/src/definition/migration/format.rs DB::migrate_index_format; crates/db/src/index/deferred/mode.rs kept_in_other_mode; crates/db/src/definition/migration/reindex/page.rs clear; crates/db/src/definition/migration/reindex/progress.rs read",
+        model_ref: "MC_DeferredIndexMode_{Green,Red_NoCheck,Red_OneWay,Red_KeepRecords,Red_NoProgressReset}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/db/tests/index/merged_crdt.rs",
+    },
+    Property {
         // Every write that owes a deferred index asks for its drain; the
         // drain task keeps a failed index for the sweep, and the sweep runs
         // on a fixed deadline that requests cannot push back.
