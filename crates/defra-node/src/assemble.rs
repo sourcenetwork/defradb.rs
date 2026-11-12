@@ -200,6 +200,7 @@ where
             persistence,
             &document_acp_config,
             network.as_ref().map(NodeEdge::edge),
+            Some(event_bus.clone()),
         )
         .await,
     )
