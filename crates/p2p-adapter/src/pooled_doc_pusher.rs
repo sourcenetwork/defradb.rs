@@ -153,6 +153,7 @@ impl TransportDocPusher for PooledDocPusher {
         filters: &p2p::ReplicationFilters,
         se_key: Option<&[u8]>,
         se_identity_pubkey: Option<&[u8]>,
+        install_incarnation: u64,
     ) -> P2PResult<()> {
         let (peer_id, collections, filters) =
             (peer_id.clone(), collections.to_vec(), filters.clone());
@@ -168,6 +169,7 @@ impl TransportDocPusher for PooledDocPusher {
                     &filters,
                     se_key.as_deref(),
                     se_identity_pubkey.as_deref(),
+                    install_incarnation,
                 )
                 .await
         })
@@ -178,11 +180,17 @@ impl TransportDocPusher for PooledDocPusher {
         &self,
         peer_id: &PeerId,
         docs: &[(String, String)],
+        stop: &db::merge::SelectedPushStop,
     ) -> P2PResult<()> {
-        let (peer_id, docs) = (peer_id.clone(), docs.to_vec());
-        self.on_pool(
-            move |inner| async move { inner.push_existing_docs_by_id(&peer_id, &docs).await },
-        )
+        let (peer_id, docs, worker_stop) = (peer_id.clone(), docs.to_vec(), stop.clone());
+        // A started worker call runs to its end once this caller is gone; the
+        // guard hands it this caller's drop so it schedules nothing more.
+        let _stop_on_drop = stop.stop_on_drop();
+        self.on_pool(move |inner| async move {
+            inner
+                .push_existing_docs_by_id(&peer_id, &docs, &worker_stop)
+                .await
+        })
         .await
     }
 
@@ -329,6 +337,7 @@ mod tests {
             _: &p2p::ReplicationFilters,
             _: Option<&[u8]>,
             _: Option<&[u8]>,
+            _: u64,
         ) -> P2PResult<()> {
             self.note()
         }

@@ -1014,7 +1014,7 @@ mod tests {
         (cid, bytes)
     }
 
-    fn make_broadcast(
+    pub(super) fn make_broadcast(
         doc_id: &str,
         cid: Cid,
         block: Vec<u8>,
@@ -1623,3 +1623,7 @@ mod tests {
 #[cfg(test)]
 #[path = "../../../../tests/unit/car_ingest_held.rs"]
 mod car_ingest_held;
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/pending_capacity_wake.rs"]
+mod pending_capacity_wake;

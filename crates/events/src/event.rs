@@ -212,6 +212,10 @@ pub struct Update {
     pub cid: Cid,
     /// Collection ID (collection version ID) the document belongs to.
     pub collection_id: String,
+    /// Stable collection identity for current-state observations. Raw events keep
+    /// their existing collection/version identifier; merges resolve this identity
+    /// from the installed collection rather than from a transport claim.
+    pub observation_collection_id: Option<String>,
     /// Serialized block data.
     pub block: Bytes,
     /// Whether this is a retry of a previously failed operation.
@@ -235,10 +239,26 @@ impl Update {
             subject_doc_id: None,
             cid,
             collection_id,
+            observation_collection_id: None,
             block: block.into(),
             is_retry,
             is_relay,
         }
+    }
+
+    /// Bind the stable installed collection without changing the raw event's
+    /// version identifier, CID, payload or authorization subject.
+    pub fn with_observation_collection_id(mut self, collection_id: String) -> Self {
+        self.observation_collection_id = Some(collection_id);
+        self
+    }
+
+    /// Local producers already publish stable IDs. Legacy producers retain that
+    /// behavior when no separate observation identity is supplied.
+    pub fn observation_collection_id(&self) -> &str {
+        self.observation_collection_id
+            .as_deref()
+            .unwrap_or(&self.collection_id)
     }
 
     /// Create a new Update event with an internal authorization subject document ID.
@@ -256,6 +276,7 @@ impl Update {
             subject_doc_id: Some(subject_doc_id),
             cid,
             collection_id,
+            observation_collection_id: None,
             block: block.into(),
             is_retry,
             is_relay,

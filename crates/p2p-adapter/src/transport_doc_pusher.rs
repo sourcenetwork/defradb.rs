@@ -76,16 +76,24 @@ pub trait TransportDocPusher: defra_core::thread_bounds::MaybeSendSync {
         filters: &p2p::ReplicationFilters,
         se_key: Option<&[u8]>,
         se_identity_pubkey: Option<&[u8]>,
+        install_incarnation: u64,
     ) -> P2PResult<()>;
 
-    /// Replay an explicit `(collection_name, doc_id)` set to one peer.
-    ///
-    /// Loads persisted replicator filters the same way [`Self::retry_doc`]
-    /// does. Default implementations report the operation as unsupported.
+    /// Send an explicit `(collection_name, doc_id)` set to one peer
+    /// ([`db::merge::push_existing_docs_by_id`]): no subscription filter,
+    /// retry marker or retry schedule applies or changes, and success means
+    /// the peer acknowledged every selected document's current heads in this
+    /// call. Each head gets one deadline from its first actual send after initial
+    /// pacing; retries and capacity pauses spend it, and a fresh ACK advances to a
+    /// new head and deadline. `stop` is raised by the first stall, lost connection,
+    /// expired head deadline, the caller, or dropping the call; it
+    /// ends scheduling while started sends drain on their own deadline.
+    /// Default implementations report the operation as unsupported.
     async fn push_existing_docs_by_id(
         &self,
         _peer_id: &PeerId,
         _docs: &[(String, String)],
+        _stop: &db::merge::SelectedPushStop,
     ) -> P2PResult<()> {
         Err(P2PError::unsupported(
             "push_existing_docs_by_id is not implemented",
@@ -309,6 +317,7 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
         filters: &p2p::ReplicationFilters,
         se_key: Option<&[u8]>,
         se_identity_pubkey: Option<&[u8]>,
+        install_incarnation: u64,
     ) -> P2PResult<()> {
         db::merge::push_existing_docs_with_config(
             &self.transport,
@@ -323,6 +332,7 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
             },
             db::merge::ReplayPushConfig {
                 retry_schedule: self.retry_schedule.clone(),
+                install_incarnation: Some(install_incarnation),
                 ..Default::default()
             },
             &replication_filter::QueryReplicationFilterMatcher::new(),
@@ -336,6 +346,7 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
         &self,
         peer_id: &PeerId,
         docs: &[(String, String)],
+        stop: &db::merge::SelectedPushStop,
     ) -> P2PResult<()> {
         db::merge::push_existing_docs_by_id(
             &self.transport,
@@ -351,6 +362,7 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
             },
             &replication_filter::QueryReplicationFilterMatcher::new(),
             &self.car_authority,
+            stop,
         )
         .await
         .map_err(P2PError::from)

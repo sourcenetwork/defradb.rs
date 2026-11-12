@@ -605,14 +605,23 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     .drain(..)
                     .map(Message::unique_index_conflict)
                     .collect();
-                committed_events.push(Message::update(Update::new(
-                    doc_id_str.to_string(),
-                    *cid,
-                    payload.collection_version_id.clone(),
-                    event_block,
-                    false,
-                    true,
-                )));
+                committed_events.push(Message::update(
+                    Update::new(
+                        doc_id_str.to_string(),
+                        *cid,
+                        payload.collection_version_id.clone(),
+                        event_block,
+                        false,
+                        true,
+                    )
+                    .with_observation_collection_id(
+                        context
+                            .collection
+                            .as_ref()
+                            .map(|collection| collection.collection_id().to_owned())
+                            .unwrap_or_else(|| payload.collection_version_id.clone()),
+                    ),
+                ));
                 committed_events.push(Message::merge_complete(MergeCompleteData {
                     doc_id: doc_id_str.to_string(),
                     subject_doc_id: None,
@@ -1082,6 +1091,13 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         })?,
                         false,
                         true,
+                    )
+                    .with_observation_collection_id(
+                        context
+                            .collection
+                            .as_ref()
+                            .map(|collection| collection.collection_id().to_owned())
+                            .unwrap_or_else(|| payload.collection_version_id.clone()),
                     );
                     pending_events.push(PendingMergeEvent {
                         message: Message::update(update),

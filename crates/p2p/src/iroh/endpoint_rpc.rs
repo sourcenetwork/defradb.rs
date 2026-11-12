@@ -15,6 +15,7 @@ use crate::transport::{FetchFailureCause, PeerId, TransportEvent};
 use crate::QueryId;
 
 use super::endpoint_config::PeerAdmission;
+use super::endpoint_streams::{adopt_new_connection, ConnectionDirection, ConnectionLifecycle};
 use super::fetch_stats::{selected_path_rtt, FetchOutcome, FetchStats, FetchTimer};
 use super::gossip::GossipHandle;
 use super::peer_map::{parse_endpoint_id, SharedPeerMap};
@@ -28,17 +29,22 @@ pub(super) struct ConnectionCacheState {
     legacy_connections: HopscotchMap<iroh::EndpointId, iroh::endpoint::Connection, RandomState>,
     dial_guards: HopscotchMap<iroh::EndpointId, Arc<regolith::sync::Mutex<()>>, RandomState>,
     /// Every connection we dial carries gossip too, so gossip hears of it.
-    gossip: GossipHandle,
+    pub(super) gossip: GossipHandle,
+    /// Set once by the endpoint's event loop, so a connection this cache dials
+    /// is adopted and serves the peer's streams. Test fixtures leave it unset.
+    pub(super) lifecycle: regolith::sync::OnceCell<ConnectionLifecycle>,
 }
 
 pub(super) type ConnectionCache = Arc<ConnectionCacheState>;
 
+#[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
 pub(super) fn new_connection_cache(gossip: GossipHandle) -> ConnectionCache {
     Arc::new(ConnectionCacheState {
         connections: HopscotchMap::with_hasher(RandomState::default()),
         legacy_connections: HopscotchMap::with_hasher(RandomState::default()),
         dial_guards: HopscotchMap::with_hasher(RandomState::default()),
         gossip,
+        lifecycle: regolith::sync::OnceCell::new(),
     })
 }
 
@@ -271,16 +277,36 @@ fn cached_connection(
 
 /// Keep protocol-specific paths separate so a concurrent legacy publication
 /// cannot overwrite a modern handle. The key comes from QUIC, not the caller.
+/// Returns the entry this insert replaced.
 pub(super) fn remember_connection(
     cache: &ConnectionCache,
     connection: &iroh::endpoint::Connection,
-) {
+) -> Option<iroh::endpoint::Connection> {
     let connections = match connection.alpn() {
+        protocols::ALPN_MUX => &cache.connections,
+        protocols::ALPN_MUX_V1 => &cache.legacy_connections,
+        _ => return None,
+    };
+    connections.insert(connection.remote_id(), connection.clone())
+}
+
+/// Put back the entry a refused publish displaced, unless another publish has
+/// replaced the refused one since.
+pub(super) fn restore_displaced_connection(
+    cache: &ConnectionCache,
+    refused: &iroh::endpoint::Connection,
+    displaced: Option<iroh::endpoint::Connection>,
+) {
+    let Some(displaced) = displaced else {
+        return;
+    };
+    evict_connection(cache, refused.remote_id(), refused);
+    let connections = match displaced.alpn() {
         protocols::ALPN_MUX => &cache.connections,
         protocols::ALPN_MUX_V1 => &cache.legacy_connections,
         _ => return,
     };
-    connections.insert(connection.remote_id(), connection.clone());
+    let _ = connections.insert_if_absent(displaced.remote_id(), displaced);
 }
 
 /// Remove only this handle, leaving replacements visible to concurrent disconnects.
@@ -352,7 +378,7 @@ fn dial_guard(
 
 /// QUIC application error code used when locally closing a connection in
 /// response to a `disconnect` request.
-const DISCONNECT_ERROR_CODE: u32 = 0;
+pub(super) const DISCONNECT_ERROR_CODE: u32 = 0;
 
 /// Close and remove the cached connection to `endpoint_id`.
 ///
@@ -424,24 +450,18 @@ async fn connect_with_cache(
             return Err(error);
         }
     };
-    remember_connection(cache, &connection);
-
-    // Re-check AFTER caching, not only before the dial. The dial above can run
-    // for many seconds, and a revoke landing inside that window looked at the
-    // connection cache while this connection was still absent from it, so it
-    // closed nothing and the caller would go on to send RPC requests over it.
-    // Caching first and re-checking second means one of the two always sees
-    // the other: either the revoke finds this connection, or this finds the
-    // revoke. Same ordering as the accept and explicit-dial paths.
-    if !admission.admits_outbound(&endpoint_id) {
-        close_cached_connections(cache, &endpoint_id);
-        connection.close(DISCONNECT_ERROR_CODE.into(), b"peer revoked");
-        return Err(crate::error::Error::Dial(format!(
-            "dial to {peer_id} raced a revoke: connection closed"
-        )));
-    }
-
-    cache.gossip.connected(endpoint_id, &connection);
+    let Some(lifecycle) = cache.lifecycle.get() else {
+        remember_connection(cache, &connection);
+        return Ok(connection);
+    };
+    adopt_new_connection(
+        lifecycle,
+        cache,
+        connection.clone(),
+        direct_addr,
+        ConnectionDirection::Outbound,
+    )
+    .await?;
     crate::model_trace!(Reconnect {
         peer: peer_id.to_string(),
         mode: crate::model_trace::ConnMode::Dialer,

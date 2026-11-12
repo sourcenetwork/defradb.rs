@@ -293,6 +293,10 @@ fn unfinished_replay_uses_configured_schedule_and_marks_replicator_inactive() {
             .await
             .unwrap();
 
+        let incarnation = peerstore
+            .get_replicator_incarnation(peer.as_str())
+            .await
+            .unwrap();
         let before = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -300,6 +304,11 @@ fn unfinished_replay_uses_configured_schedule_and_marks_replicator_inactive() {
         persist_replay_failures(
             &peerstore,
             &peer,
+            peerstore
+                .get_replicator_incarnation(peer.as_str())
+                .await
+                .unwrap()
+                .unwrap(),
             &[ReplayDocumentFailure {
                 doc_id: "doc-1".to_string(),
                 collection_id: "collection".to_string(),
@@ -308,6 +317,14 @@ fn unfinished_replay_uses_configured_schedule_and_marks_replicator_inactive() {
         .await
         .unwrap();
 
+        assert_eq!(
+            peerstore
+                .get_replicator_incarnation(peer.as_str())
+                .await
+                .unwrap(),
+            incarnation,
+            "deferring a replay must preserve the install incarnation"
+        );
         let retries = peerstore.get_retry_documents(peer.as_str()).await.unwrap();
         assert_eq!(retries.len(), 1);
         assert_eq!(retries[0].doc_id, "doc-1");
@@ -332,6 +349,64 @@ fn unfinished_replay_uses_configured_schedule_and_marks_replicator_inactive() {
 }
 
 #[test]
+fn stale_replay_does_not_mark_reconfigured_peer_inactive() {
+    workers::block_on(async {
+        let peerstore =
+            storage::stores::Peerstore::new(Arc::new(storage::RegolithStore::in_memory().unwrap()));
+        let peer = PeerId::new("peer-reconfigured".to_owned());
+        let info = p2p::ReplicatorInfo::from_raw(peer.to_string(), vec!["old".into()], Vec::new());
+        peerstore
+            .create_replicator(peer.as_str(), &info.to_bytes().unwrap())
+            .await
+            .unwrap();
+        let old_incarnation = peerstore
+            .get_replicator_incarnation(peer.as_str())
+            .await
+            .unwrap()
+            .unwrap();
+        let replacement =
+            p2p::ReplicatorInfo::from_raw(peer.to_string(), vec!["new".into()], Vec::new());
+        let replacement_bytes = replacement.to_bytes().unwrap();
+        peerstore
+            .create_replicator(peer.as_str(), &replacement_bytes)
+            .await
+            .unwrap();
+        let replacement_incarnation = peerstore
+            .get_replicator_incarnation(peer.as_str())
+            .await
+            .unwrap();
+        persist_replay_failures(
+            &peerstore,
+            &peer,
+            old_incarnation,
+            &[ReplayDocumentFailure {
+                doc_id: "old-doc".into(),
+                collection_id: "old".into(),
+            }],
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            peerstore
+                .get_replicator(peer.as_str())
+                .await
+                .unwrap()
+                .unwrap()
+                .as_ref(),
+            replacement_bytes.as_slice()
+        );
+        assert_eq!(
+            peerstore
+                .get_replicator_incarnation(peer.as_str())
+                .await
+                .unwrap(),
+            replacement_incarnation
+        );
+    })
+    .unwrap()
+}
+
+#[test]
 fn forgotten_peer_cannot_be_resurrected_by_unfinished_replay() {
     workers::block_on(async {
         use storage::RegolithStore;
@@ -349,6 +424,11 @@ fn forgotten_peer_cannot_be_resurrected_by_unfinished_replay() {
             .await
             .unwrap();
 
+        let incarnation = peerstore
+            .get_replicator_incarnation(peer.as_str())
+            .await
+            .unwrap()
+            .unwrap();
         let persistence_peer = peer.clone();
         let persistence_store = storage::stores::Peerstore::new(store.clone());
         let failures = [ReplayDocumentFailure {
@@ -356,7 +436,12 @@ fn forgotten_peer_cannot_be_resurrected_by_unfinished_replay() {
             collection_id: "collection".to_string(),
         }];
         let (persisted, deleted) = futures::join!(
-            persist_replay_failures(&persistence_store, &persistence_peer, &failures),
+            persist_replay_failures(
+                &persistence_store,
+                &persistence_peer,
+                incarnation,
+                &failures
+            ),
             peerstore.delete_replicator(peer.as_str()),
         );
         persisted.unwrap();
@@ -405,6 +490,11 @@ fn a_first_replay_hint_seeds_the_missing_retry_schedule() {
         persist_replay_failures(
             &peerstore,
             &peer,
+            peerstore
+                .get_replicator_incarnation(peer.as_str())
+                .await
+                .unwrap()
+                .unwrap(),
             &[ReplayDocumentFailure {
                 doc_id: "doc-seed".into(),
                 collection_id: "collection-seed".into(),
@@ -436,6 +526,14 @@ fn a_first_replay_hint_seeds_the_missing_retry_schedule() {
     .unwrap()
 }
 
+/// Overrides the reply to the request with this 0-based arrival index; `None`
+/// leaves the configured reply.
+pub(super) type ReplyScript = Arc<
+    dyn Fn(usize) -> futures::future::BoxFuture<'static, Option<p2p::Result<PushLogReply>>>
+        + Send
+        + Sync,
+>;
+
 #[derive(Clone)]
 pub(super) struct ConnectedPeerTransport {
     local: PeerId,
@@ -446,6 +544,8 @@ pub(super) struct ConnectedPeerTransport {
     before_reply:
         Option<Arc<dyn Fn(String) -> futures::future::BoxFuture<'static, ()> + Send + Sync>>,
     retry_after_ms: Option<u64>,
+    script: Option<ReplyScript>,
+    arrivals: Arc<kovan::Atom<Vec<Instant>>>,
 }
 
 impl ConnectedPeerTransport {
@@ -458,7 +558,19 @@ impl ConnectedPeerTransport {
             require_selected_authority: None,
             before_reply: None,
             retry_after_ms: None,
+            script: None,
+            arrivals: Arc::new(kovan::Atom::new(Vec::new())),
         }
+    }
+
+    pub(super) fn with_reply_script(mut self, script: ReplyScript) -> Self {
+        self.script = Some(script);
+        self
+    }
+
+    /// When each PushLog reached this transport, in arrival order.
+    pub(super) fn arrivals(&self) -> Vec<Instant> {
+        self.arrivals.load_clone()
     }
 
     pub(super) fn with_replies(
@@ -598,8 +710,20 @@ impl p2p::P2PTransport for ConnectedPeerTransport {
         requests
             .try_send(req)
             .expect("bounded test request capture");
+        let mut index = 0;
+        self.arrivals.rcu(|arrivals| {
+            index = arrivals.len();
+            let mut next = arrivals.clone();
+            next.push(Instant::now());
+            next
+        });
         if let Some(hook) = &self.before_reply {
             hook(doc_id).await;
+        }
+        if let Some(script) = &self.script {
+            if let Some(reply) = script(index).await {
+                return reply;
+            }
         }
         if let Some(store) = &self.remove_on_reply {
             store.delete_replicator(self.remote.as_str()).await.unwrap();

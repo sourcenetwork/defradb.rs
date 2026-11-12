@@ -4437,3 +4437,107 @@ fn remote_field_tombstone_clears_materialized_value_and_keeps_its_priority() {
     })
     .unwrap()
 }
+
+#[test]
+fn standalone_remote_merge_invalidates_stable_scope_after_schema_patch() {
+    workers::block_on(assert_remote_merge_invalidates_stable_scope_after_schema_patch(false))
+        .unwrap();
+}
+
+#[test]
+fn batch_remote_merge_invalidates_stable_scope_after_schema_patch() {
+    workers::block_on(assert_remote_merge_invalidates_stable_scope_after_schema_patch(true))
+        .unwrap();
+}
+
+async fn assert_remote_merge_invalidates_stable_scope_after_schema_patch(batch: bool) {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let bus = Arc::new(ChannelBus::new());
+    let mut db = DB::from_arc(store.clone()).unwrap();
+    db.set_event_bus(bus.clone());
+    let db = Arc::new(db);
+    db.create_collections_atomic(
+        query::parse_sdl("type ObservationProbe { value: String }").unwrap(),
+    )
+    .await
+    .unwrap();
+    let original = db.get_collection("ObservationProbe").unwrap().unwrap();
+    let root_id = original.collection_id().to_owned();
+    let mut scoped = bus.subscribe_collection_changes(vec![root_id.clone()]);
+    let patched = db.patch_collection("ObservationProbe",
+        r#"[{"op":"add","path":"/ObservationProbe/Fields/-","value":{"Name":"extra","Kind":"String"}}]"#,
+        None).await.unwrap();
+    assert_eq!(patched.collection_id, root_id);
+    assert_ne!(
+        patched.version_id, root_id,
+        "the regression requires schema-version divergence"
+    );
+    let mut raw = bus.subscribe(&[EventName::Update]);
+    let blockstore = Arc::new(DefraBlockstore::new(store, false));
+    let mut doc = Document::new(patched.clone());
+    doc.set("value", NormalValue::String("remote".into()))
+        .unwrap();
+    let built = db::block::builder::build_blocks_from_document(
+        &storage::Crdts::default(),
+        &doc,
+        &patched,
+        &blockstore,
+    )
+    .await
+    .unwrap();
+    let handler = DbMergeHandler::new(db, blockstore);
+    if batch {
+        let blocks = [MergeBlock {
+            cid: built.cid,
+            block_data: built.block.clone(),
+            doc_id: built.doc_id.clone(),
+            collection_id: root_id.clone(),
+            creator: "did:key:z6MkrBatchMergeTest".into(),
+            sender_peer: Some("remote".into()),
+            is_explicit_replicator: false,
+            explicit_replay_authorization: None,
+            verified_creator: None,
+        }];
+        let outcomes = handler.handle_block_batch(&blocks).await;
+        assert!(
+            matches!(outcomes.as_slice(), [Ok(MergeOutcome::Merged)]),
+            "{outcomes:?}"
+        );
+    } else {
+        let metadata = BlockMetadata::normal(
+            &built.doc_id,
+            &root_id,
+            "did:key:z6MkrBatchMergeTest",
+            Some("remote"),
+            false,
+        );
+        assert_eq!(
+            handler
+                .handle_block(&built.cid, &built.block, metadata)
+                .await
+                .unwrap(),
+            MergeOutcome::Merged
+        );
+    }
+    let message = timeout(Duration::from_secs(1), raw.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let event = message.as_update().unwrap();
+    assert_eq!(
+        event.collection_id, patched.version_id,
+        "raw event retains the block's schema version"
+    );
+    assert_eq!(event.doc_id, built.doc_id);
+    assert_eq!(event.cid, built.cid);
+    assert_eq!(event.block, built.block);
+    let batch = timeout(Duration::from_secs(1), scoped.recv())
+        .await
+        .expect("a remote merge must wake the pre-patch stable collection scope")
+        .unwrap();
+    assert_eq!(batch.changes.len(), 1);
+    assert_eq!(batch.changes[0].collection_id, root_id);
+    assert_eq!(batch.changes[0].doc_id, built.doc_id);
+    assert!(!batch.changes[0].has_local_write);
+    assert!(!batch.resync_required);
+}
