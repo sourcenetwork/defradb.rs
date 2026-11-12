@@ -15,7 +15,7 @@ const SENDER: &str = "db1";
 
 /// Fields in the collection. A write to every one links all of them from its
 /// composite block, the block gossip carries, which then holds well over
-/// iroh-gossip's 4,055-byte broadcast budget.
+/// iroh-gossip's 4,023-byte broadcast budget.
 const FIELDS: usize = 160;
 
 fn field(i: usize) -> String {

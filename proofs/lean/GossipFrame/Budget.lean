@@ -5,9 +5,10 @@ The story, in plain words. iroh-gossip sends a broadcast only if it fits its
 budget of `max_message_size - 2` bytes, and it keeps every other message it
 sends under `max_message_size` too. Its own wire sends a topic once per
 stream, so that budget leaves the topic out. Our frame carries the topic in
-every message: 32 more bytes. The frame limit is therefore
-`max_message_size + 32`, and the largest content gossip carries is 4,055
-bytes. A publish larger than that is refused before it reaches gossip.
+every message: 32 more bytes. The frame limit stays at 4,096 bytes, the size
+every release reads, so gossip's `max_message_size` is set to 4,096 - 32 and
+the largest content gossip carries is 4,023 bytes. A publish larger than that
+is refused before it reaches gossip.
 
 What must never happen:
 * gossip sends a message that is over our frame limit, so the writer cannot
@@ -28,14 +29,15 @@ Rust anchors: `MAX_MESSAGE_SIZE`, `TOPIC_ID_LEN`, `FRAME_LIMIT`,
 
 namespace GossipFrame
 
--- iroh-gossip's `max_message_size`, `MAX_MESSAGE_SIZE`.
-def maxMessage : Nat := 4096
+-- Our frame limit, `FRAME_LIMIT`: what every release writes and reads.
+def frameLimit : Nat := 4096
 
 -- The topic our frame carries, `TOPIC_ID_LEN`.
 def topicLen : Nat := 32
 
--- Our frame limit, `FRAME_LIMIT`: gossip's size plus the topic.
-def frameLimit : Nat := maxMessage + topicLen
+-- iroh-gossip's `max_message_size`, `MAX_MESSAGE_SIZE`: the frame less the
+-- topic.
+def maxMessage : Nat := frameLimit - topicLen
 
 -- What a broadcast adds to its content besides the content's length prefix,
 -- `BROADCAST_OVERHEAD`: a tag, a 32-byte ID and the scope at its top round.
@@ -65,7 +67,7 @@ def gossipSize (n : Nat) : Nat := overhead + varintLen n + n
 def gossipSends (n : Nat) : Prop := gossipSize n ≤ maxMessage - 2
 
 -- The largest content gossip sends, `MAX_BROADCAST`.
-def maxBroadcast : Nat := 4055
+def maxBroadcast : Nat := 4023
 
 -- Promise: a length of 128 or more takes at least two varint bytes.
 theorem varintLen_ge_two (n : Nat) (h : 128 ≤ n) : 2 ≤ varintLen n := by
@@ -97,12 +99,12 @@ theorem emitted_fits_frame (message : Nat)
     -- the frame with the topic fits our limit.
     topicLen + message ≤ frameLimit := by
   -- The limit is that size plus the topic.
-  unfold frameLimit
+  simp only [frameLimit, topicLen, maxMessage] at *
   omega
 
 -- Promise: gossip sends a broadcast of `MAX_BROADCAST` bytes.
 theorem max_broadcast_fits : gossipSends maxBroadcast := by
-  -- 37 + 2 + 4055 = 4094, which is 4096 - 2.
+  -- 37 + 2 + 4023 = 4062, which is 4064 - 2.
   unfold gossipSends
   decide
 
@@ -115,8 +117,8 @@ theorem over_max_broadcast_dropped (n : Nat)
     ¬ gossipSends n := by
   -- Such a length takes at least two varint bytes,
   have hlen := varintLen_ge_two n (by unfold maxBroadcast at h; omega)
-  -- so its size is at least 37 + 2 + 4056, past 4094.
-  unfold gossipSends gossipSize overhead maxMessage
+  -- so its size is at least 37 + 2 + 4024, past 4062.
+  unfold gossipSends gossipSize overhead maxMessage frameLimit topicLen
   unfold maxBroadcast at h
   omega
 

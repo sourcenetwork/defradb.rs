@@ -320,7 +320,7 @@ Gossip has no reply and no retry, so a gossip head a node refuses for its per-pe
 - **Parents:** ["defra"]
 - **Scenarios:** ["net::iroh_large_update::a_document_too_large_for_gossip_replicates_over_iroh", "net::iroh_large_update::an_update_too_large_for_gossip_replicates_over_iroh"]
 
-Over iroh, a create or an update whose head block is larger than one gossip broadcast holds (4,055 bytes of payload) reaches every peer subscribed to the collection that is a gossip neighbour of the writer: a document of a 160-field collection, created with every field set or updated in every field on one node, is queried with the same values on the other. Such an update goes to those peers as a direct PushLog request instead of a broadcast, and the write's broadcast reports any peer that did not take it.
+Over iroh, a create or an update whose head block is larger than one gossip broadcast holds (4,023 bytes of payload) reaches every peer subscribed to the collection that is a gossip neighbour of the writer: a document of a 160-field collection, created with every field set or updated in every field on one node, is queried with the same values on the other. Such an update goes to those peers as a direct PushLog request instead of a broadcast, and the write's broadcast reports any peer that did not take it.
 
 # `defra.commits`: Commit history queries beyond Go
 

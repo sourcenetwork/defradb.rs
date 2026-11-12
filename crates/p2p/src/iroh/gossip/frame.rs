@@ -13,17 +13,19 @@ use crate::error::{Error, Result};
 
 pub(super) type ProtoMessage = proto::Message<EndpointId>;
 
-/// iroh-gossip's `max_message_size`: it keeps every message's tag and body
-/// under it, and sizes broadcasts against it.
-pub(super) const MAX_MESSAGE_SIZE: usize = proto::DEFAULT_MAX_MESSAGE_SIZE;
+/// The largest frame we write or read. Every release so far reads frames up
+/// to this size, so it never grows.
+pub(super) const FRAME_LIMIT: usize = proto::DEFAULT_MAX_MESSAGE_SIZE;
 
 /// A topic ID's encoding. iroh-gossip's own wire sends the topic once, in a
 /// stream header, so its budget leaves it out; our frame carries it in every
 /// message.
 pub(super) const TOPIC_ID_LEN: usize = 32;
 
-/// The largest frame: what iroh-gossip may emit, plus the topic.
-pub(super) const FRAME_LIMIT: usize = MAX_MESSAGE_SIZE + TOPIC_ID_LEN;
+/// iroh-gossip's `max_message_size`. It keeps every message's tag and body
+/// under it and sizes broadcasts against it, so with the topic added every
+/// frame it emits fits `FRAME_LIMIT`.
+pub(super) const MAX_MESSAGE_SIZE: usize = FRAME_LIMIT - TOPIC_ID_LEN;
 
 /// What a swarm broadcast adds to its content in iroh-gossip's size check,
 /// besides the content's length prefix: the message tag, the 32-byte message

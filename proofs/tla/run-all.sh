@@ -868,7 +868,7 @@ RUNS=(
   "MC_GossipInbox_Red_Shared.cfg GossipInbox.tla RED" # one bounded inbox: peers fill it while the driver waits on events, the endpoint loop stalls (LIVE_RequestAnswered)
   "MC_GossipInbox_Red_LossyShared.cfg GossipInbox.tla RED" # received dropped when full but control waits in the same queue: same stall (LIVE_RequestAnswered)
   "MC_GossipDelivery_Green.cfg MC_GossipDelivery_Common.tla GREEN" # #2820: every gossip broadcast fits a frame; a publish over the budget goes by direct push; no message is lost unreported
-  "MC_GossipDelivery_Red_LimitMismatch.cfg MC_GossipDelivery_Common.tla RED" # frame limit forgets the topic: an accepted broadcast cannot be framed (INV_BroadcastFits)
+  "MC_GossipDelivery_Red_LimitMismatch.cfg MC_GossipDelivery_Common.tla RED" # gossip sized at the frame limit, forgetting the topic: an accepted broadcast cannot be framed (INV_BroadcastFits)
   "MC_GossipDelivery_Red_NoFallback.cfg MC_GossipDelivery_Common.tla RED" # a publish over the budget goes to gossip, which drops it silently (INV_NoSilentLoss)
   "MC_GossipDelivery_Red_EndStream.cfg MC_GossipDelivery_Common.tla RED" # an unsendable frame ends the stream and the queue behind it (INV_NoSilentLoss)
   "MC_GossipDelivery_Red_SilentFailure.cfg MC_GossipDelivery_Common.tla RED" # a failed stream drops its queue without a report (INV_NoSilentLoss)

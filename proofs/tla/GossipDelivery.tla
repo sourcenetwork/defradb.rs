@@ -24,12 +24,12 @@
 EXTENDS Naturals, Sequences
 
 CONSTANTS
-  MaxMessage,     \* iroh-gossip's max_message_size
+  FrameLimit,     \* the largest frame any release writes or reads
   TopicLen,       \* bytes our frame adds: the topic
   Overhead,       \* bytes a broadcast adds to its content in gossip's check
   Size,           \* each message's content size
   Control,        \* messages the protocol emits itself, never size-checked
-  LimitMatched,   \* guard: the frame limit allows for the topic
+  LimitMatched,   \* guard: gossip's size leaves room for the topic
   Fallback,       \* guard: a publish over the budget goes by direct push
   SkipOversize,   \* guard: the writer skips a frame it cannot send
   ReportLoss      \* guard: a failed stream reports what it took with it
@@ -38,10 +38,15 @@ CONSTANTS
 Msgs == DOMAIN Size
 
 \* Every size is a number, and the guards are switches.
-ASSUME MaxMessage \in Nat /\ TopicLen \in Nat /\ Overhead \in Nat
+ASSUME FrameLimit \in Nat /\ TopicLen \in Nat /\ Overhead \in Nat
 ASSUME \A m \in Msgs : Size[m] \in Nat
 ASSUME Control \subseteq Msgs
 ASSUME {LimitMatched, Fallback, SkipOversize, ReportLoss} \subseteq BOOLEAN
+
+\* iroh-gossip's max_message_size. With the guard it is the frame less the
+\* topic; without it, the frame limit itself, which forgets the topic our
+\* frame carries.
+MaxMessage == IF LimitMatched THEN FrameLimit - TopicLen ELSE FrameLimit
 
 \* The largest content gossip broadcasts: its budget is max_message_size - 2.
 Budget == MaxMessage - 2 - Overhead
@@ -49,9 +54,8 @@ Budget == MaxMessage - 2 - Overhead
 \* A message's frame: the topic, the message tag, the overhead, the content.
 FrameSize(m) == TopicLen + 1 + Overhead + Size[m]
 
-\* The largest frame the writer sends. Without the guard it is gossip's own
-\* size, which forgets the topic our frame carries.
-Limit == IF LimitMatched THEN MaxMessage + TopicLen ELSE MaxMessage
+\* The largest frame the writer sends: the one every release reads.
+Limit == FrameLimit
 
 VARIABLES
   published,  \* messages handed to gossip so far
