@@ -39,7 +39,27 @@ pub(super) fn create_scoped_bearer_token(
         .duration_since(UNIX_EPOCH)
         .map_err(|e| BearerError::Time(e.to_string()))?
         .as_secs();
+    issue_at(
+        signing_key,
+        issuer,
+        subject,
+        deployment_id,
+        expiry_secs,
+        scope,
+        now,
+    )
+}
 
+/// The delegation as it is issued at `now`, in seconds since the epoch.
+fn issue_at(
+    signing_key: &SigningKey,
+    issuer: &str,
+    subject: &str,
+    deployment_id: u64,
+    expiry_secs: u64,
+    scope: vera_client::DelegationScope,
+    now: u64,
+) -> Result<String, BearerError> {
     if issuer != did_from_signing_key(signing_key, true)
         && issuer != did_from_signing_key(signing_key, false)
     {
@@ -95,6 +115,9 @@ pub enum BearerError {
     #[error("system time error: {0}")]
     Time(String),
 }
+
+#[cfg(test)]
+mod pinned;
 
 #[cfg(test)]
 mod tests {

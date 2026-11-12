@@ -17,6 +17,7 @@ SDK_MANIFESTS = ("crates/vera/Cargo.toml", "tools/integration-test/Cargo.toml")
 UNIT_NAMES = (
     "abi::tests::delete_relationship_subject_userset_round_trips",
     "abi::tests::set_relationship_subject_object_edge_round_trips",
+    "bearer::pinned::a_delegation_token_is_these_exact_bytes",
     "bearer::tests::a_scoped_token_keeps_the_issuer_spelling_it_was_given",
     "bearer::tests::bearer_token_uses_vera_rs_es256k_shape",
     "bearer::tests::invalid_lifetime_is_rejected",
