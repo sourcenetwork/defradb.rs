@@ -11,7 +11,7 @@ use db::txn::registry::DbTransactionRegistry;
 use defra_core::merge::{BlockMetadata, MergeHandler, MergeOutcome};
 use defra_core::{
     Block, ChunkOfDelta, ChunkedFieldDelta, CollectionDefinitionDeltaPayload, CrdtDelta,
-    DEFAULT_SPLITTER_VERSION,
+    RequestContext, DEFAULT_SPLITTER_VERSION,
 };
 use query::txn::TransactionRegistry;
 use schema::{ChunkSettingsError, CollectionSource, CollectionVersion};
@@ -353,19 +353,20 @@ fn a_chunk_collection_naming_a_parent_field_without_chunk_is_rejected() {
 fn an_honest_patch_that_keeps_the_chunk_settings_is_accepted() {
     workers::block_on(async {
         let (author, peer, parsed) = synced().await;
-        let patched = author
+        author
             .db
             .patch_collection(
-                "Article",
+                &RequestContext::default(),
                 r#"[{"op": "add", "path": "/Article/Fields/-", "value": {"Name": "summary", "Kind": "String"}}]"#,
                 None,
             )
             .await
             .unwrap();
-        sync_definition(&author, &peer, &patched.version_id).await;
+        let patched = author.db.get_collection("Article").unwrap().unwrap();
+        sync_definition(&author, &peer, patched.version_id()).await;
         let synced = peer
             .db
-            .get_collection_by_version_id_full(&patched.version_id)
+            .get_collection_by_version_id_full(patched.version_id())
             .await
             .unwrap()
             .expect("synced patch");
