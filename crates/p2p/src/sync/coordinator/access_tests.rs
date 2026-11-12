@@ -693,6 +693,9 @@ pub(super) struct NoopTransport {
     pub(super) raw_published: Arc<Atom<Vec<String>>>,
     /// Gets a permit on every `publish_raw` call, accepted or refused.
     pub(super) raw_publish_attempted: Arc<regolith::sync::Notify>,
+    /// Whether `publish_raw` never completes, like a host whose command queue
+    /// does not drain.
+    pub(super) raw_publish_stalls: Arc<AtomicBool>,
 }
 
 /// Appends to a recorder that tests read back cumulatively.
@@ -722,6 +725,7 @@ impl NoopTransport {
             raw_topic_has_peer: Arc::new(AtomicBool::new(false)),
             raw_published: Arc::new(Atom::new(Vec::new())),
             raw_publish_attempted: Arc::new(regolith::sync::Notify::new()),
+            raw_publish_stalls: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -836,6 +840,9 @@ impl P2PTransport for NoopTransport {
     }
 
     async fn publish_raw(&self, topic: String, _data: Vec<u8>) -> crate::Result<MessageId> {
+        if self.raw_publish_stalls.load(Ordering::Acquire) {
+            std::future::pending::<()>().await;
+        }
         let accepted = self.raw_topic_has_peer.load(Ordering::Acquire);
         if accepted {
             record(&self.raw_published, topic);

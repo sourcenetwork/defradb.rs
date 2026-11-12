@@ -60,6 +60,7 @@ RUNS=(
   "MC_HeldPubsubRequest_Red_NoResend.cfg HeldPubsubRequest.tla RED" # a later subscriber is never sent the request (Delivered)
   "MC_HeldPubsubRequest_Red_LateWatch.cfg HeldPubsubRequest.tla RED" # the wake-up is armed after the publish (Delivered)
   "MC_HeldPubsubRequest_Red_NoDedupe.cfg HeldPubsubRequest.tla RED" # a resend's duplicate reply reaches the caller (OneReplyEach)
+  "MC_HeldPubsubRequest_Red_ResendLate.cfg HeldPubsubRequest.tla RED" # a resend goes out after the deadline (NoResendAfterDeadline)
   "MC_VerifiedClientGraph_Green.cfg VerifiedClientGraph.tla GREEN"
   "MC_VerifiedClientGraph_Red_SingleMutation.cfg VerifiedClientGraph.tla RED" # a multi-mutation request is accepted (INV_SingleMutation)
   "MC_VerifiedClientGraph_Red_Unencrypted.cfg VerifiedClientGraph.tla RED" # the request adds encryption outside the approved graph (INV_Unencrypted)

@@ -122,6 +122,10 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             &mut prep.responses,
             request_deadline(timeout),
         );
+        if expected_responses == Some(0) {
+            request.send().await?;
+            return Ok(Vec::new());
+        }
         let mut out = Vec::new();
         loop {
             if expected_responses.is_some_and(|expected| out.len() >= expected) {
@@ -229,6 +233,10 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             &mut prep.responses,
             request_deadline(timeout),
         );
+        if expected_responses == Some(0) {
+            request.send().await?;
+            return Ok(Vec::new());
+        }
         let mut out = Vec::new();
         loop {
             if expected_responses.is_some_and(|expected| out.len() >= expected) {

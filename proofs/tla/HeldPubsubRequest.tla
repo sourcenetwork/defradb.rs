@@ -11,27 +11,37 @@
 \* the request it receives).
 \*
 \* What must never happen: the request ends while a peer that subscribed in
-\* time never received it, or the caller sees the same peer's reply twice.
+\* time never received it, the caller sees the same peer's reply twice, or
+\* the request is sent again after its deadline has passed.
 \*
 \* How the code avoids it: the request is held until its deadline. It is
 \* published again each time a peer subscribes (a wake-up from a Notify
 \* that is armed before the first publish), a refusal before any peer exists
 \* only means "not sent yet", and only the first reply from each peer is kept.
-\* This is what Go does with pubsub-rpc's WithRepublishing.
+\* Once the deadline has passed nothing is sent again, and a publish still in
+\* progress is given up. This is what Go does with pubsub-rpc's
+\* WithRepublishing.
 \*
 \* Rust code modelled (crates/p2p/src/sync/coordinator/held_request.rs):
 \*   phase, watching, woken, sent  ->  HeldRequest::next / HeldRequest::publish
 \*     (publish_due, next_join, sent, refused)
+\*   Deadline, Expire              ->  HeldRequest::next's Wake::Done and its
+\*     deadline check on Wake::Joined, HeldRequest::publish_by_deadline,
+\*     HeldRequest::finish
 \*   Subscribe                     ->  PubsubServices::peer_subscribed
 \*     (pubsub_services.rs), called from handle_peer_subscribed
 \*     (event_handler/mod.rs)
 \*   returned / DedupeReplies      ->  HeldRequest::answered
 \*   Callers: SyncCoordinator::pubsub_sync_documents and
-\*   pubsub_sync_branchable_collection (pubsub_client.rs).
+\*   pubsub_sync_branchable_collection (pubsub_client.rs). A caller that
+\*   expects no reply sends once through HeldRequest::send and is not held;
+\*   that path is covered by held_request_tests.rs, not by this model.
 \*
-\* Modelling assumption: the deadline (5 s by default) outlasts every peer's
-\* subscription and every reply, so Expire happens only once all of that is
-\* over. A peer that subscribes after the deadline is out of scope, as in Go.
+\* The deadline can pass at any moment, even before any peer subscribes (the
+\* path doc_sync_no_peer_ever_receives_fails_at_the_deadline tests). A peer
+\* that subscribes just before it may get no copy in time, as in Go, so
+\* Delivered is promised only for a deadline that comes once every
+\* subscription and every reply is over (the "quiet" deadline below).
 
 \* Numbers, and Cardinality for counting peers.
 EXTENDS Naturals, FiniteSets
@@ -48,6 +58,9 @@ CONSTANT ResendOnJoin
 CONSTANT WatchBeforePublish
 \* TRUE: only the first reply from each peer is handed to the caller.
 CONSTANT DedupeReplies
+\* TRUE: after the deadline nothing is sent again, and a due resend or a
+\* publish in progress ends the request instead.
+CONSTANT StopAtDeadline
 
 \* Where the requester is: about to publish, arming its wake-up, waiting, or done.
 VARIABLE phase
@@ -69,9 +82,19 @@ VARIABLE returned
 VARIABLE sent
 \* How the request ended: still open, ok, or refused (no peer ever got it).
 VARIABLE outcome
+\* Whether the deadline has passed.
+VARIABLE expired
+\* Whether a publish was ever attempted (the first one is always allowed).
+VARIABLE attempted
+\* Whether a publish was attempted again after the deadline.
+VARIABLE late
+\* Whether the deadline came once everything was over: every peer
+\* subscribed, every copy answered, every reply read, no wake-up pending.
+VARIABLE quiet
 
 \* Every variable, for stuttering steps.
-vars == <<phase, watching, woken, subscribed, got, handled, replies, returned, sent, outcome>>
+vars == <<phase, watching, woken, subscribed, got, handled, replies, returned, sent, outcome,
+          expired, attempted, late, quiet>>
 
 \* The most copies a peer can get: the first publish plus one per subscription.
 MaxCopies == 1 + Cardinality(Peers)
@@ -82,6 +105,8 @@ TypeOK ==
     /\ phase \in {"Publish", "Arm", "Wait", "Done"}
     \* Flags are booleans.
     /\ watching \in BOOLEAN /\ woken \in BOOLEAN /\ sent \in BOOLEAN
+    \* So are the deadline's flags.
+    /\ expired \in BOOLEAN /\ attempted \in BOOLEAN /\ late \in BOOLEAN /\ quiet \in BOOLEAN
     \* Subscribers are some of the peers.
     /\ subscribed \subseteq Peers
     \* Counters stay within the copies a peer can receive.
@@ -110,6 +135,11 @@ Init ==
     \* Nothing was accepted, and the request is open.
     /\ sent = FALSE
     /\ outcome = "open"
+    \* The deadline is ahead and no publish has been tried.
+    /\ expired = FALSE
+    /\ attempted = FALSE
+    /\ late = FALSE
+    /\ quiet = FALSE
 
 \* Where the requester goes after publishing: wait if its wake-up is armed,
 \* otherwise arm it first.
@@ -120,6 +150,13 @@ AfterPublish == IF watching THEN "Wait" ELSE "Arm"
 Publish ==
     \* Only when a publish is due.
     /\ phase = "Publish"
+    \* With the fix, only the first publish may still go out after the deadline
+    \* (it is polled before the deadline in publish_by_deadline).
+    /\ StopAtDeadline => (~expired \/ ~attempted)
+    \* This attempt is late if the deadline had passed and it is a resend.
+    /\ late' = (late \/ (expired /\ attempted))
+    \* From now on any further publish is a resend.
+    /\ attempted' = TRUE
     /\ IF subscribed = {}
        \* Refused: no peer on the topic.
        THEN IF HoldOnRefusal
@@ -136,7 +173,7 @@ Publish ==
             /\ phase' = AfterPublish
             /\ UNCHANGED outcome
     \* Publishing touches nothing else.
-    /\ UNCHANGED <<watching, woken, subscribed, handled, replies, returned>>
+    /\ UNCHANGED <<watching, woken, subscribed, handled, replies, returned, expired, quiet>>
 
 \* Only in the late-arming bug: the wake-up is armed after the publish, so
 \* a subscription between the two is missed.
@@ -147,7 +184,8 @@ Arm ==
     /\ watching' = TRUE
     /\ phase' = "Wait"
     \* Nothing else changes.
-    /\ UNCHANGED <<woken, subscribed, got, handled, replies, returned, sent, outcome>>
+    /\ UNCHANGED <<woken, subscribed, got, handled, replies, returned, sent, outcome,
+                   expired, attempted, late, quiet>>
 
 \* Peer p subscribes to the topic (gossip learns it, then the coordinator's
 \* handle_peer_subscribed calls PubsubServices::peer_subscribed).
@@ -160,7 +198,8 @@ Subscribe(p) ==
     \* notify_waiters wakes an armed wake-up; with none armed it is lost.
     /\ woken' = (woken \/ watching)
     \* Nothing else changes.
-    /\ UNCHANGED <<phase, watching, got, handled, replies, returned, sent, outcome>>
+    /\ UNCHANGED <<phase, watching, got, handled, replies, returned, sent, outcome,
+                   expired, attempted, late, quiet>>
 
 \* Peer p answers one copy of the request it received.
 Answer(p) ==
@@ -171,7 +210,8 @@ Answer(p) ==
     /\ handled' = [handled EXCEPT ![p] = @ + 1]
     /\ replies' = [replies EXCEPT ![p] = @ + 1]
     \* Nothing else changes.
-    /\ UNCHANGED <<phase, watching, woken, subscribed, got, returned, sent, outcome>>
+    /\ UNCHANGED <<phase, watching, woken, subscribed, got, returned, sent, outcome,
+                   expired, attempted, late, quiet>>
 
 \* The requester reads one of p's replies (the Wake::Reply branch).
 TakeReply(p) ==
@@ -186,7 +226,8 @@ TakeReply(p) ==
                    THEN returned
                    ELSE [returned EXCEPT ![p] = @ + 1]
     \* Nothing else changes.
-    /\ UNCHANGED <<phase, watching, woken, subscribed, got, handled, sent, outcome>>
+    /\ UNCHANGED <<phase, watching, woken, subscribed, got, handled, sent, outcome,
+                   expired, attempted, late, quiet>>
 
 \* The wake-up fired (the Wake::Joined branch): re-arm it, then publish again.
 Joined ==
@@ -200,21 +241,45 @@ Joined ==
     \* The fix publishes again; without the resend it just keeps waiting.
     /\ phase' = IF ResendOnJoin THEN "Publish" ELSE "Wait"
     \* Nothing else changes.
-    /\ UNCHANGED <<subscribed, got, handled, replies, returned, sent, outcome>>
+    /\ UNCHANGED <<subscribed, got, handled, replies, returned, sent, outcome,
+                   expired, attempted, late, quiet>>
 
-\* The deadline passes (the Wake::Done branch), once everything is quiet.
-Expire ==
-    \* Only while waiting, every peer subscribed, no wake-up pending, and
-    \* every copy answered and every reply read (the modelling assumption).
+\* Everything is over: every peer subscribed, no wake-up pending, every copy
+\* answered and every reply read, and the requester is waiting.
+AllOver ==
     /\ phase = "Wait"
     /\ subscribed = Peers
     /\ ~woken
     /\ \A p \in Peers : handled[p] = got[p] /\ replies[p] = 0
+
+\* The deadline passes, at any moment while the request is open.
+Deadline ==
+    \* Only once, and only while the request is open.
+    /\ ~expired
+    /\ phase # "Done"
+    \* From now on the deadline is behind us.
+    /\ expired' = TRUE
+    \* Remember whether it came once everything was over.
+    /\ quiet' = AllOver
+    \* Nothing else changes.
+    /\ UNCHANGED <<phase, watching, woken, subscribed, got, handled, replies, returned, sent,
+                   outcome, attempted, late>>
+
+\* The request ends after its deadline (HeldRequest::finish): from waiting
+\* (Wake::Done), or, with the fix, from a resend that is due or a publish in
+\* progress (the Wake::Joined deadline check and publish_by_deadline).
+Expire ==
+    \* Only once the deadline has passed.
+    /\ expired
+    \* Without the fix only a waiting request ends; with it a due publish too.
+    /\ \/ phase = "Wait"
+       \/ StopAtDeadline /\ phase = "Publish"
     \* The request ends: refused only if gossip never accepted it.
     /\ phase' = "Done"
     /\ outcome' = IF sent THEN "ok" ELSE "refused"
     \* Nothing else changes.
-    /\ UNCHANGED <<watching, woken, subscribed, got, handled, replies, returned, sent>>
+    /\ UNCHANGED <<watching, woken, subscribed, got, handled, replies, returned, sent,
+                   expired, attempted, late, quiet>>
 
 \* A finished request stays finished (keeps TLC from reporting a deadlock).
 Finished == phase = "Done" /\ UNCHANGED vars
@@ -224,6 +289,7 @@ Next ==
     \/ Publish
     \/ Arm
     \/ Joined
+    \/ Deadline
     \/ Expire
     \/ \E p \in Peers : Subscribe(p) \/ Answer(p) \/ TakeReply(p)
     \/ Finished
@@ -231,12 +297,16 @@ Next ==
 \* The whole behaviour: start in Init, then take steps.
 Spec == Init /\ [][Next]_vars
 
-\* Every peer that subscribed before the deadline received the request.
-Delivered == phase = "Done" => \A p \in Peers : got[p] >= 1
+\* A request that ended before its deadline, or whose deadline came once
+\* every subscription and reply was over, was received by every peer.
+Delivered == (phase = "Done" /\ (quiet \/ ~expired)) => \A p \in Peers : got[p] >= 1
 
 \* The caller is handed at most one reply per peer.
 OneReplyEach == \A p \in Peers : returned[p] <= 1
 
 \* A request is reported refused only when no peer ever received it.
 RefusedOnlyUnsent == outcome = "refused" => \A p \in Peers : got[p] = 0
+
+\* Once the deadline has passed, the request is never sent again.
+NoResendAfterDeadline == ~late
 ====

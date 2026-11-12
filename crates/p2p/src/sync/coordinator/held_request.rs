@@ -6,7 +6,14 @@
 //! `InsufficientPeers`. Go's `PublishToTopic` (go-p2p, `WithRepublishing`)
 //! keeps the request and sends it again to every peer that joins the topic
 //! until its context ends; [`HeldRequest`] does the same, woken by the
-//! topic's subscription [`Notify`] rather than by a timer.
+//! topic's subscription [`Notify`] rather than by a timer. Nothing is sent
+//! again once the deadline has passed, and a publish that has not finished
+//! by then is abandoned.
+//!
+//! Gossipsub cannot address one peer, so a resend reaches every topic peer,
+//! not only the one that joined: a peer that already answered runs its
+//! handler again, and its second reply is dropped here. That repeat work on
+//! responders is expected, and bounded by the deadline.
 
 use std::pin::Pin;
 
@@ -80,8 +87,8 @@ where
     /// error instead.
     pub(super) async fn next(&mut self) -> Result<Option<PubsubResponse>> {
         loop {
-            if std::mem::take(&mut self.publish_due) {
-                self.publish().await?;
+            if std::mem::take(&mut self.publish_due) && !self.publish_by_deadline().await? {
+                return self.finish();
             }
             let (responses, next_join, deadline) =
                 (&mut *self.responses, self.next_join.as_mut(), self.deadline);
@@ -100,18 +107,46 @@ where
                         return Ok(Some(response));
                     }
                 }
+                // A join and the deadline can be ready together; the join
+                // wins the select, so the deadline is checked here.
+                Wake::Joined if Instant::now() >= self.deadline => return self.finish(),
                 Wake::Joined => {
                     self.next_join = Box::pin(self.joined.notified());
                     self.publish_due = true;
                 }
-                Wake::Done => {
-                    return match self.refused.take() {
-                        Some(error) if !self.sent => Err(error),
-                        _ => Ok(None),
-                    };
-                }
+                Wake::Done => return self.finish(),
             }
         }
+    }
+
+    /// Sends the request once, for a caller that waits for no reply. A
+    /// refused or unfinished send is an error, as no peer got the request.
+    pub(super) async fn send(mut self) -> Result<()> {
+        self.publish_by_deadline().await?;
+        self.finish().map(drop)
+    }
+
+    /// `Ok(None)` once any send was accepted; otherwise the refusal, or a
+    /// publish that did not finish before the deadline.
+    fn finish(&mut self) -> Result<Option<PubsubResponse>> {
+        if self.sent {
+            return Ok(None);
+        }
+        Err(self.refused.take().unwrap_or_else(|| {
+            Error::GossipSubPublish("publish did not complete before the deadline".to_string())
+        }))
+    }
+
+    /// Publishes, unless the deadline passes first: `false` if it did.
+    async fn publish_by_deadline(&mut self) -> Result<bool> {
+        let deadline = self.deadline;
+        let expired = async {
+            crate::rt::time::sleep_until(deadline).await;
+            Ok(false)
+        };
+        async { self.publish().await.map(|()| true) }
+            .or(expired)
+            .await
     }
 
     async fn publish(&mut self) -> Result<()> {

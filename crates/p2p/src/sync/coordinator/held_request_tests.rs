@@ -11,11 +11,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use blockstore::DefraBlockstore;
+use regolith::sync::Notify;
 use storage::RegolithStore;
 
 use super::access_tests::NoopTransport;
+use super::held_request::HeldRequest;
 use super::pubsub_services::{BRANCHABLE_SYNC_TOPIC, DOC_SYNC_TOPIC};
 use super::SyncCoordinator;
+use crate::rt::time::Instant;
 use crate::sync::manager::SyncConfig;
 use crate::transport::{PeerId, TransportEvent};
 
@@ -137,6 +140,94 @@ fn doc_sync_no_peer_ever_receives_fails_at_the_deadline() {
             .expect_err("a request no peer received must fail");
 
         assert!(error.to_string().contains("InsufficientPeers"), "{error}");
+    })
+    .unwrap();
+}
+
+#[test]
+fn doc_sync_expecting_no_reply_is_still_sent() {
+    workers::block_on(async {
+        let transport = NoopTransport::new().with_libp2p_identity();
+        transport.raw_topic_has_peer.store(true, Ordering::Release);
+        let probe = transport.clone();
+        let coordinator = coordinator(transport).await;
+
+        let replies = coordinator
+            .pubsub_sync_documents(vec!["doc1".into()], Some(WAIT), Some(0))
+            .await
+            .unwrap();
+
+        assert!(replies.is_empty());
+        assert_eq!(probe.raw_published.load_clone(), vec![DOC_SYNC_TOPIC]);
+    })
+    .unwrap();
+}
+
+#[test]
+fn branchable_sync_expecting_no_reply_is_still_sent() {
+    workers::block_on(async {
+        let transport = NoopTransport::new().with_libp2p_identity();
+        transport.raw_topic_has_peer.store(true, Ordering::Release);
+        let probe = transport.clone();
+        let coordinator = coordinator(transport).await;
+
+        let replies = coordinator
+            .pubsub_sync_branchable_collection("c1".into(), Some(WAIT), Some(0))
+            .await
+            .unwrap();
+
+        assert!(replies.is_empty());
+        assert_eq!(
+            probe.raw_published.load_clone(),
+            vec![BRANCHABLE_SYNC_TOPIC]
+        );
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_peer_joining_after_the_deadline_is_not_sent_the_request() {
+    workers::block_on(async {
+        let transport = NoopTransport::new();
+        transport.raw_topic_has_peer.store(true, Ordering::Release);
+        let joined = Notify::new();
+        let (_replies_open, mut responses) = crate::rt::mpsc::channel(1);
+        let mut request = HeldRequest::new(
+            &transport,
+            DOC_SYNC_TOPIC,
+            Vec::new(),
+            &joined,
+            &mut responses,
+            Instant::now(),
+        );
+        // The deadline has passed and a join is waiting when the request runs.
+        joined.notify_waiters();
+
+        assert!(request.next().await.unwrap().is_none());
+        assert_eq!(
+            transport.raw_published.load_clone(),
+            vec![DOC_SYNC_TOPIC],
+            "only the first send may go out once the deadline has passed"
+        );
+    })
+    .unwrap();
+}
+
+#[test]
+fn doc_sync_ends_at_the_deadline_when_publish_stalls() {
+    workers::block_on(async {
+        let transport = NoopTransport::new().with_libp2p_identity();
+        transport.raw_publish_stalls.store(true, Ordering::Release);
+        let coordinator = coordinator(transport).await;
+
+        let ended = crate::rt::time::timeout(
+            WAIT * 4,
+            coordinator.pubsub_sync_documents(vec!["doc1".into()], Some(WAIT), Some(1)),
+        )
+        .await
+        .expect("a stalled publish must not hold the request past its deadline");
+
+        ended.expect_err("a request whose publish never completed must fail");
     })
     .unwrap();
 }
