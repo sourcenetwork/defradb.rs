@@ -166,6 +166,15 @@ impl<S: Store + 'static> VincPeer<S> {
         #[cfg(feature = "kms")]
         coordinator.install_kms_transport(Arc::clone(&kms_transport));
 
+        // The topics every libp2p node joins at start, so peers see each other
+        // JOINED on them. Raw: vinc has no pubsub doc-sync service, so what
+        // arrives is never decoded as a head hint.
+        for topic in [p2p::DOC_SYNC_TOPIC, p2p::SYNC_BRANCHABLE_TOPIC] {
+            if let Err(error) = transport.subscribe_raw(topic.to_owned()).await {
+                tracing::warn!(topic, %error, "failed to subscribe to default topic");
+            }
+        }
+
         let replication = db::merge::create_replication_stack_with_max_merge_depth(
             Arc::clone(&database),
             Arc::clone(&blockstore),
