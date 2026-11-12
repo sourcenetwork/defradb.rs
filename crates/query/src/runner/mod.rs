@@ -655,9 +655,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
     /// The provider this runner resolves collections through: a transaction's
     /// own provider for a runner scoped to that transaction, so its uncommitted
-    /// schemas are visible, and the process-wide one otherwise.
-    /// The provider this request resolves collections through: the version
-    /// the request works through, when it names one, answers for its name.
+    /// schemas are visible, and the process-wide one otherwise. When the
+    /// request names a collection version, that version answers for its
+    /// collection's name.
     fn effective_provider(&self) -> Arc<dyn CollectionProvider> {
         match self.context().collection_version() {
             Some(version_id) => Arc::new(pinned::PinnedProvider::new(
