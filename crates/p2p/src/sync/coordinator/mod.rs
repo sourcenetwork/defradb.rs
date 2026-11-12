@@ -54,6 +54,10 @@ mod event_handler;
 mod fetch_failures;
 mod fetch_logs;
 pub(crate) mod haves;
+#[cfg(feature = "libp2p-transport")]
+mod held_request;
+#[cfg(all(test, feature = "libp2p-transport"))]
+mod held_request_tests;
 mod merge_state;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod network_tests;

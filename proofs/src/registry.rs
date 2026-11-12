@@ -99,6 +99,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/p2p/src/sync/coordinator/dag_fetcher_tests.rs local_complete_fetch_releases_peer_permit_before_waiting_to_send",
     },
     Property {
+        family: "Pull sync (doc-sync / sync-branchable)",
+        name: "Delivered / OneReplyEach / RefusedOnlyUnsent — a pubsub_rpc request is held until a peer subscribes and resent to each later subscriber",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/held_request.rs HeldRequest::next, HeldRequest::publish; crates/p2p/src/sync/coordinator/pubsub_services.rs PubsubServices::peer_subscribed",
+        model_ref: "MC_HeldPubsubRequest_{Green,Red_NoHold,Red_NoResend,Red_LateWatch,Red_NoDedupe}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/p2p/src/sync/coordinator/held_request_tests.rs doc_sync_sent_before_the_topic_has_a_peer_waits_for_one",
+    },
+    Property {
         family: "Transactional node source grants",
         name: "INV_Authority / INV_Private / INV_NoRevival / INV_Independent / INV_Reconciled / INV_RequestUnchanged",
         axis: Tla,

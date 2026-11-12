@@ -18,6 +18,7 @@ use std::time::Duration;
 use blockstore::Blockstore;
 use tracing::{debug, warn};
 
+use super::held_request::HeldRequest;
 use super::pubsub_services::{BRANCHABLE_SYNC_TOPIC, DOC_SYNC_TOPIC};
 use super::SyncCoordinator;
 use crate::error::{Error, Result};
@@ -113,33 +114,21 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             },
         );
 
-        if let Err(e) = self
-            .runtime
-            .transport
-            .publish_raw(DOC_SYNC_TOPIC.to_string(), prep.data.clone())
-            .await
-        {
-            warn!(error = %e, "doc-sync publish_raw failed");
-            return Err(e);
-        }
-
-        let wait = timeout.unwrap_or(DEFAULT_PUBSUB_SYNC_TIMEOUT);
-        let deadline = crate::rt::time::Instant::now()
-            .checked_add(wait)
-            .unwrap_or_else(|| crate::rt::time::Instant::now() + Duration::from_secs(86_400 * 365));
+        let mut request = HeldRequest::new(
+            &self.runtime.transport,
+            DOC_SYNC_TOPIC,
+            prep.data.clone(),
+            &services.doc_sync_joined,
+            &mut prep.responses,
+            request_deadline(timeout),
+        );
         let mut out = Vec::new();
         loop {
             if expected_responses.is_some_and(|expected| out.len() >= expected) {
                 break;
             }
 
-            let Some(remaining) = deadline.checked_duration_since(crate::rt::time::Instant::now())
-            else {
-                break;
-            };
-
-            let Ok(Some(resp)) = crate::rt::time::timeout(remaining, prep.responses.recv()).await
-            else {
+            let Some(resp) = request.next().await? else {
                 break;
             };
 
@@ -232,31 +221,21 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             },
         );
 
-        if let Err(e) = self
-            .runtime
-            .transport
-            .publish_raw(BRANCHABLE_SYNC_TOPIC.to_string(), prep.data.clone())
-            .await
-        {
-            warn!(error = %e, "sync-branchable publish_raw failed");
-            return Err(e);
-        }
-
-        let wait = timeout.unwrap_or(DEFAULT_PUBSUB_SYNC_TIMEOUT);
-        let deadline = crate::rt::time::Instant::now() + wait;
+        let mut request = HeldRequest::new(
+            &self.runtime.transport,
+            BRANCHABLE_SYNC_TOPIC,
+            prep.data.clone(),
+            &services.branchable_sync_joined,
+            &mut prep.responses,
+            request_deadline(timeout),
+        );
         let mut out = Vec::new();
         loop {
             if expected_responses.is_some_and(|expected| out.len() >= expected) {
                 break;
             }
 
-            let Some(remaining) = deadline.checked_duration_since(crate::rt::time::Instant::now())
-            else {
-                break;
-            };
-
-            let Ok(Some(resp)) = crate::rt::time::timeout(remaining, prep.responses.recv()).await
-            else {
+            let Some(resp) = request.next().await? else {
                 break;
             };
 
@@ -294,6 +273,14 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
 
         Ok(out)
     }
+}
+
+/// When a request's wait ends: `timeout` (default 5s) from now, capped a year
+/// out so an oversized caller timeout cannot overflow the clock.
+fn request_deadline(timeout: Option<Duration>) -> crate::rt::time::Instant {
+    let now = crate::rt::time::Instant::now();
+    now.checked_add(timeout.unwrap_or(DEFAULT_PUBSUB_SYNC_TIMEOUT))
+        .unwrap_or_else(|| now + Duration::from_secs(86_400 * 365))
 }
 
 fn authenticated_response_peer(resp: &PubsubResponse) -> PeerId {
