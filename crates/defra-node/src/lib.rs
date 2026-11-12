@@ -23,6 +23,8 @@
 #[cfg(feature = "p2p")]
 mod access_hooks;
 mod acp_ops;
+#[cfg(feature = "vera")]
+mod acp_provider;
 mod assemble;
 #[cfg(not(target_arch = "wasm32"))]
 mod background_tasks;
@@ -80,6 +82,8 @@ pub use access_hooks::AccessHooks;
 /// [`Node::document_acp`] returns) without depending on `acp` directly.
 pub use acp::nac::NodePermission;
 pub use acp::{DocumentACP, DocumentPermission, Identity as AcpIdentity};
+#[cfg(feature = "vera")]
+pub use acp_provider::DocumentAcpProvider;
 #[cfg(not(target_arch = "wasm32"))]
 pub use background_tasks::BackgroundTasks;
 pub use coding_search::{
