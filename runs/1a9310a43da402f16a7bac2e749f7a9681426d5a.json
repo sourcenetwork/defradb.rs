@@ -1,0 +1,6606 @@
+{
+ "commit": "1a9310a43da402f16a7bac2e749f7a9681426d5a",
+ "label": "main",
+ "platforms": {
+  "aarch64-apple-darwin": {
+   "families": {
+    "criterion": {
+     "deterministic": false,
+     "groups": [],
+     "note": "No criterion sample sets were found under the target directory for this run.",
+     "title": "Criterion benchmarks",
+     "trust": "absent"
+    },
+    "disk_footprint": {
+     "deterministic": true,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "on disk, server",
+       "rows": [
+        {
+         "name": "0 collections",
+         "value": 836.0,
+         "x": 0.0
+        },
+        {
+         "name": "1 collections",
+         "value": 220132.0,
+         "x": 1.0
+        },
+        {
+         "name": "10 collections",
+         "value": 221055.0,
+         "x": 10.0
+        },
+        {
+         "name": "100 collections",
+         "value": 243852.0,
+         "x": 100.0
+        }
+       ],
+       "unit": "B",
+       "x_label": "collections"
+      },
+      {
+       "lower_is_better": true,
+       "name": "on disk, embedded",
+       "rows": [
+        {
+         "name": "0 collections",
+         "value": 836.0,
+         "x": 0.0
+        },
+        {
+         "name": "1 collections",
+         "value": 241236.0,
+         "x": 1.0
+        },
+        {
+         "name": "10 collections",
+         "value": 244448.0,
+         "x": 10.0
+        },
+        {
+         "name": "100 collections",
+         "value": 265763.0,
+         "x": 100.0
+        }
+       ],
+       "unit": "B",
+       "x_label": "collections"
+      }
+     ],
+     "note": "What a database occupies after 200 documents, per store profile and collection count. Blocks, heads, indexes and the log, everything the directory holds.",
+     "title": "Disk footprint",
+     "trust": "clean"
+    },
+    "document_ops": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": false,
+       "name": "create",
+       "rows": [
+        {
+         "max": 44311.50991470034,
+         "min": 36531.62871882848,
+         "name": "4 fields",
+         "value": 41959.87880308606,
+         "x": 4.0
+        },
+        {
+         "max": 16994.699778006736,
+         "min": 16379.010298302726,
+         "name": "16 fields",
+         "value": 16980.149950006195,
+         "x": 16.0
+        },
+        {
+         "max": 4514.821277865081,
+         "min": 4185.27518487773,
+         "name": "64 fields",
+         "value": 4339.088954035488,
+         "x": 64.0
+        }
+       ],
+       "unit": "ops/s",
+       "x_label": "fields"
+      },
+      {
+       "lower_is_better": false,
+       "name": "read",
+       "rows": [
+        {
+         "max": 361418.5678789248,
+         "min": 311384.8529952109,
+         "name": "4 fields",
+         "value": 355186.7927342989,
+         "x": 4.0
+        },
+        {
+         "max": 176697.95692987298,
+         "min": 172655.65986835008,
+         "name": "16 fields",
+         "value": 175714.80783828616,
+         "x": 16.0
+        },
+        {
+         "max": 54669.08121775378,
+         "min": 51488.891400402594,
+         "name": "64 fields",
+         "value": 52535.3838944375,
+         "x": 64.0
+        }
+       ],
+       "unit": "ops/s",
+       "x_label": "fields"
+      }
+     ],
+     "note": "Documents created and read back one at a time, 200 of each, through the same mutator and fetcher every platform uses. Measured with a wall clock natively and with `performance.now()` in the browser, so the two are the same operation counted the same way.",
+     "title": "Document operations",
+     "trust": "contaminated"
+    },
+    "memory": {
+     "deterministic": true,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "server profile",
+       "rows": [
+        {
+         "name": "baseline",
+         "value": 9306112.0
+        },
+        {
+         "name": "open",
+         "value": 12337152.0
+        },
+        {
+         "name": "seed",
+         "value": 18530304.0
+        },
+        {
+         "name": "scan",
+         "value": 19824640.0
+        }
+       ],
+       "unit": "B"
+      },
+      {
+       "lower_is_better": true,
+       "name": "embedded profile",
+       "rows": [
+        {
+         "name": "baseline",
+         "value": 9125888.0
+        },
+        {
+         "name": "open",
+         "value": 12222464.0
+        },
+        {
+         "name": "seed",
+         "value": 15319040.0
+        },
+        {
+         "name": "scan",
+         "value": 16941056.0
+        }
+       ],
+       "unit": "B"
+      },
+      {
+       "lower_is_better": true,
+       "name": "memory profile",
+       "rows": [
+        {
+         "name": "baseline",
+         "value": 9306112.0
+        },
+        {
+         "name": "open",
+         "value": 12271616.0
+        },
+        {
+         "name": "seed",
+         "value": 21856256.0
+        },
+        {
+         "name": "scan",
+         "value": 23134208.0
+        }
+       ],
+       "unit": "B"
+      }
+     ],
+     "note": "Peak resident set size of a process that ran one workload and nothing else. Each row is its own child process, because peak RSS only ever rises and cases sharing a process would all report the largest of them. baseline is the process floor, to be subtracted from the rest; open is an empty database opened and closed; seed writes 1000 documents; scan writes them and reads every one back.",
+     "title": "Resident memory",
+     "trust": "clean"
+    },
+    "startup": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "cold open, server",
+       "note": "Lower is better. The x axis is how many collections the open has to load.",
+       "rows": [
+        {
+         "max": 0.000804292,
+         "min": 0.000683042,
+         "name": "0 collections",
+         "value": 0.000724875,
+         "x": 0.0
+        },
+        {
+         "max": 0.001138666,
+         "min": 0.000911333,
+         "name": "1 collections",
+         "value": 0.001007833,
+         "x": 1.0
+        },
+        {
+         "max": 0.001164792,
+         "min": 0.00094725,
+         "name": "10 collections",
+         "value": 0.001011208,
+         "x": 10.0
+        },
+        {
+         "max": 0.002606834,
+         "min": 0.001908459,
+         "name": "100 collections",
+         "value": 0.002374958,
+         "x": 100.0
+        }
+       ],
+       "unit": "s",
+       "x_label": "collections"
+      },
+      {
+       "lower_is_better": true,
+       "name": "cold open, embedded",
+       "note": "Lower is better. The x axis is how many collections the open has to load.",
+       "rows": [
+        {
+         "max": 0.000968541,
+         "min": 0.000706084,
+         "name": "0 collections",
+         "value": 0.000845125,
+         "x": 0.0
+        },
+        {
+         "max": 0.001218166,
+         "min": 0.000935667,
+         "name": "1 collections",
+         "value": 0.001064208,
+         "x": 1.0
+        },
+        {
+         "max": 0.001590334,
+         "min": 0.001267083,
+         "name": "10 collections",
+         "value": 0.001370083,
+         "x": 10.0
+        },
+        {
+         "max": 0.005178833,
+         "min": 0.00470275,
+         "name": "100 collections",
+         "value": 0.004969167,
+         "x": 100.0
+        }
+       ],
+       "unit": "s",
+       "x_label": "collections"
+      }
+     ],
+     "note": "Cold open of a database already on disk: the store's recovery plus loading every collection. The largest collection carries 200 documents, so the open replays real content rather than an empty log.",
+     "title": "Startup",
+     "trust": "contaminated"
+    }
+   },
+   "host": {
+    "arch": "x86_64",
+    "cores": 4,
+    "cpu": "AMD EPYC 7763 64-Core Processor",
+    "os": "linux",
+    "ram_gib": 15.6,
+    "store": null
+   },
+   "loadguard": {
+    "note": "No load guard was run, so the host is not certified quiet. Timing families are marked contaminated; deterministic families stay comparable.",
+    "passed": false
+   },
+   "timestamp": "2026-11-12T10:34:09Z",
+   "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)"
+  },
+  "wasm32-unknown-unknown": {
+   "families": {
+    "browser_storage": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": false,
+       "name": "key/value",
+       "rows": [
+        {
+         "name": "batched write",
+         "value": 416666.6666666509
+        },
+        {
+         "name": "read",
+         "value": 625000.0000001243
+        },
+        {
+         "name": "write per commit",
+         "value": 129870.12987012335
+        }
+       ],
+       "unit": "ops/s"
+      }
+     ],
+     "note": "The regolith key/value path in a browser tab: 200 operations of a 256 byte value. `batched write` puts every write in one transaction; `write per commit` opens and commits one per write, and the gap between them is what batching buys.",
+     "title": "Browser storage",
+     "trust": "contaminated"
+    },
+    "criterion": {
+     "deterministic": false,
+     "groups": [],
+     "note": "No criterion sample sets were found under the target directory for this run.",
+     "title": "Criterion benchmarks",
+     "trust": "absent"
+    },
+    "document_ops": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": false,
+       "name": "create",
+       "rows": [
+        {
+         "name": "4 fields",
+         "value": 4721.435316336165,
+         "x": 4.0
+        },
+        {
+         "name": "16 fields",
+         "value": 2287.2827081427263,
+         "x": 16.0
+        },
+        {
+         "name": "64 fields",
+         "value": 815.1287903488752,
+         "x": 64.0
+        }
+       ],
+       "unit": "ops/s",
+       "x_label": "fields"
+      },
+      {
+       "lower_is_better": false,
+       "name": "read",
+       "rows": [
+        {
+         "name": "4 fields",
+         "value": 59880.23952095751,
+         "x": 4.0
+        },
+        {
+         "name": "16 fields",
+         "value": 47169.81132075461,
+         "x": 16.0
+        },
+        {
+         "name": "64 fields",
+         "value": 13755.158184319047,
+         "x": 64.0
+        }
+       ],
+       "unit": "ops/s",
+       "x_label": "fields"
+      }
+     ],
+     "note": "Documents created and read back one at a time, 200 of each, through the same mutator and fetcher every platform uses. Measured with `performance.now()` in the browser and with a wall clock natively, so the two are the same operation counted the same way.",
+     "title": "Document operations",
+     "trust": "contaminated"
+    }
+   },
+   "host": {
+    "arch": "x86_64",
+    "cores": 4,
+    "cpu": "AMD EPYC 7763 64-Core Processor",
+    "os": "linux",
+    "ram_gib": 15.6,
+    "store": null
+   },
+   "loadguard": {
+    "note": "No load guard was run, so the host is not certified quiet. Timing families are marked contaminated; deterministic families stay comparable.",
+    "passed": false
+   },
+   "timestamp": "2026-11-12T10:34:08Z",
+   "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)"
+  },
+  "x86_64-unknown-linux-gnu": {
+   "families": {
+    "allocs": {
+     "deterministic": true,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "per operation",
+       "note": "Allocations observed across the whole process while performing the operation, divided by how many were performed. A ceiling on the operation's own cost, not an attribution of it.",
+       "rows": [
+        {
+         "name": "document create",
+         "value": 1217.025
+        },
+        {
+         "name": "document get by id",
+         "value": 121.0
+        },
+        {
+         "name": "document to map",
+         "value": 36.0
+        },
+        {
+         "name": "document from json",
+         "value": 40.0
+        },
+        {
+         "name": "collection load, 10 in txn",
+         "value": 38.0
+        },
+        {
+         "name": "collection load, 50 in txn",
+         "value": 37.24
+        },
+        {
+         "name": "collection load, 200 in txn",
+         "value": 37.07
+        }
+       ],
+       "unit": "allocations/op"
+      },
+      {
+       "lower_is_better": true,
+       "name": "collection load bytes",
+       "note": "Bytes allocated across the whole process per collection a transaction loads into its catalog, with that many collections loaded into the one transaction.",
+       "rows": [
+        {
+         "name": "collection load, 10 in txn",
+         "value": 5297.8
+        },
+        {
+         "name": "collection load, 50 in txn",
+         "value": 5774.6
+        },
+        {
+         "name": "collection load, 200 in txn",
+         "value": 8730.57
+        }
+       ],
+       "unit": "bytes/op"
+      }
+     ],
+     "note": "How many allocations each path makes, averaged over 200 operations. Deterministic: a count does not move because the runner was busy, so this is comparable across every run whatever the load guard said.",
+     "title": "Allocations per operation",
+     "trust": "clean"
+    },
+    "artifact_size": {
+     "deterministic": true,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "Shipped artifacts",
+       "rows": [
+        {
+         "name": "defra, raw",
+         "value": 65708824
+        },
+        {
+         "name": "defra-wasm, raw",
+         "value": 13407371
+        },
+        {
+         "name": "defra-wasm, gzip",
+         "value": 5234619
+        },
+        {
+         "name": "defra-wasm, brotli",
+         "value": 3768679
+        }
+       ],
+       "unit": "B"
+      }
+     ],
+     "note": "What each shipped artifact weighs. The browser bundle is also reported compressed, because that is what a browser downloads.",
+     "title": "Artifact size",
+     "trust": "clean"
+    },
+    "criterion_acp": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "acp_check",
+       "rows": [
+        {
+         "max": 563.7088145748462,
+         "min": 562.438698346235,
+         "name": "allow/1",
+         "value": 562.9000847514759
+        },
+        {
+         "max": 985.2852678120901,
+         "min": 982.760747174286,
+         "name": "allow/100",
+         "value": 983.4924547396654
+        },
+        {
+         "max": 2649.9575424439117,
+         "min": 2646.9431446061103,
+         "name": "allow/1000",
+         "value": 2648.4531697707735
+        },
+        {
+         "max": 1529.5874845648675,
+         "min": 1526.8805976032797,
+         "name": "allow/10000",
+         "value": 1528.655141319773
+        },
+        {
+         "max": 1899.5705789441843,
+         "min": 1894.258417817612,
+         "name": "deny/1",
+         "value": 1897.7103591194045
+        },
+        {
+         "max": 2365.087926166074,
+         "min": 2360.659842606149,
+         "name": "deny/100",
+         "value": 2363.074416381975
+        },
+        {
+         "max": 4037.6617791010685,
+         "min": 4031.621183995966,
+         "name": "deny/1000",
+         "value": 4033.593097401562
+        },
+        {
+         "max": 2892.84827431645,
+         "min": 2887.483280106081,
+         "name": "deny/10000",
+         "value": 2888.9833541720727
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "acp_register",
+       "rows": [
+        {
+         "max": 712.1661908766339,
+         "min": 683.8176155771093,
+         "name": "register_doc_object",
+         "value": 701.7470413958729
+        },
+        {
+         "max": 218992.35833333334,
+         "min": 214760.07321428572,
+         "name": "register_doc_object_regolith",
+         "value": 217234.7178240741
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "acp_result_set",
+       "rows": [
+        {
+         "max": 2262.480795168811,
+         "min": 2258.284607305315,
+         "name": "1",
+         "value": 2261.2699034938405,
+         "x": 1.0
+        },
+        {
+         "max": 22600.81979495268,
+         "min": 22545.95917609946,
+         "name": "10",
+         "value": 22567.960992477554,
+         "x": 10.0
+        },
+        {
+         "max": 285763.31833333336,
+         "min": 284675.41983333335,
+         "name": "100",
+         "value": 285215.9886111111,
+         "x": 100.0
+        },
+        {
+         "max": 2798157.572172619,
+         "min": 2779848.1041666665,
+         "name": "1000",
+         "value": 2782881.975694444,
+         "x": 1000.0
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `acp` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "acp benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_backup": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "backup_export",
+       "rows": [
+        {
+         "max": 453009.8831496786,
+         "min": 451707.7768595041,
+         "name": "100",
+         "value": 452248.38223140495,
+         "x": 100.0
+        },
+        {
+         "max": 4298387.692307692,
+         "min": 4271497.75,
+         "name": "1000",
+         "value": 4276590.810897436,
+         "x": 1000.0
+        },
+        {
+         "max": 22574320.466666665,
+         "min": 22319401.092592593,
+         "name": "5000",
+         "value": 22428249.666666668,
+         "x": 5000.0
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "backup_import",
+       "rows": [
+        {
+         "max": 3138652.592647059,
+         "min": 3132036.696078432,
+         "name": "100",
+         "value": 3135878.2088235295,
+         "x": 100.0
+        },
+        {
+         "max": 34477727.45,
+         "min": 34320782.49107143,
+         "name": "1000",
+         "value": 34352378.01388889,
+         "x": 1000.0
+        },
+        {
+         "max": 180398778.75,
+         "min": 178251446.0,
+         "name": "5000",
+         "value": 179511659.25,
+         "x": 5000.0
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `backup` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "backup benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_block": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "cbor",
+       "rows": [
+        {
+         "max": 311.86353293549956,
+         "min": 310.8417134477029,
+         "name": "decode_lww",
+         "value": 311.5243265673432
+        },
+        {
+         "max": 225.2319398900874,
+         "min": 215.49779201323673,
+         "name": "encode_and_cid",
+         "value": 216.01913234504963
+        },
+        {
+         "max": 307.11395810391696,
+         "min": 299.31142597447183,
+         "name": "encode_composite_5_links",
+         "value": 306.6010144668441
+        },
+        {
+         "max": 80.26265711535105,
+         "min": 79.98153723814109,
+         "name": "encode_lww_small",
+         "value": 80.0644174555568
+        },
+        {
+         "max": 225.81576235182274,
+         "min": 223.367211787098,
+         "name": "generate_cid",
+         "value": 224.7182419642108
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "cbor_go_vectors",
+       "rows": [
+        {
+         "max": 156.17388509016098,
+         "min": 155.87244396553064,
+         "name": "cid_from_go_bytes/collection",
+         "value": 156.07643040595963
+        },
+        {
+         "max": 114.06296018452167,
+         "min": 113.20604845933357,
+         "name": "cid_from_go_bytes/composite_active",
+         "value": 113.87928731963129
+        },
+        {
+         "max": 113.80500786693153,
+         "min": 112.80473860179374,
+         "name": "cid_from_go_bytes/composite_deleted",
+         "value": 113.55868896990492
+        },
+        {
+         "max": 111.09731972624937,
+         "min": 110.96634559892131,
+         "name": "cid_from_go_bytes/counter",
+         "value": 111.02593018928326
+        },
+        {
+         "max": 113.26710135830814,
+         "min": 112.88003598913699,
+         "name": "cid_from_go_bytes/lww_deletion",
+         "value": 113.09175415656921
+        },
+        {
+         "max": 113.6589146390628,
+         "min": 113.40198950042611,
+         "name": "cid_from_go_bytes/lww_high_priority",
+         "value": 113.55550946723311
+        },
+        {
+         "max": 114.16952957148524,
+         "min": 113.92340384222359,
+         "name": "cid_from_go_bytes/lww_simple",
+         "value": 114.06866592130415
+        },
+        {
+         "max": 213.6735623438732,
+         "min": 212.243099232745,
+         "name": "decode_go/collection",
+         "value": 213.12183996939135
+        },
+        {
+         "max": 236.72856025753373,
+         "min": 235.9949308699674,
+         "name": "decode_go/composite_active",
+         "value": 236.38558707431025
+        },
+        {
+         "max": 237.0359777257877,
+         "min": 236.33035760145492,
+         "name": "decode_go/composite_deleted",
+         "value": 236.59451333602377
+        },
+        {
+         "max": 336.4804220966138,
+         "min": 335.52817700194646,
+         "name": "decode_go/counter",
+         "value": 336.3283512230168
+        },
+        {
+         "max": 296.2620014228669,
+         "min": 291.9150423478028,
+         "name": "decode_go/lww_deletion",
+         "value": 295.03823189669686
+        },
+        {
+         "max": 302.51288989641546,
+         "min": 301.6784677557164,
+         "name": "decode_go/lww_high_priority",
+         "value": 302.05041560037546
+        },
+        {
+         "max": 315.89255038041125,
+         "min": 314.5247871221971,
+         "name": "decode_go/lww_simple",
+         "value": 315.1522624325445
+        },
+        {
+         "max": 511.73879421495644,
+         "min": 504.31098423240263,
+         "name": "decode_reencode_go/collection",
+         "value": 507.7410345717234
+        },
+        {
+         "max": 327.9871550835079,
+         "min": 324.6119047619048,
+         "name": "decode_reencode_go/composite_active",
+         "value": 325.7046255502709
+        },
+        {
+         "max": 325.8996421152821,
+         "min": 323.52081759722364,
+         "name": "decode_reencode_go/composite_deleted",
+         "value": 324.27767428804736
+        },
+        {
+         "max": 458.270555737325,
+         "min": 456.327422949347,
+         "name": "decode_reencode_go/counter",
+         "value": 457.50789688142515
+        },
+        {
+         "max": 391.6844873844136,
+         "min": 390.7673649408631,
+         "name": "decode_reencode_go/lww_deletion",
+         "value": 390.9387077851551
+        },
+        {
+         "max": 436.7436824909988,
+         "min": 433.44622949726636,
+         "name": "decode_reencode_go/lww_high_priority",
+         "value": 435.54621878876776
+        },
+        {
+         "max": 416.3089933543324,
+         "min": 412.4662777672098,
+         "name": "decode_reencode_go/lww_simple",
+         "value": 414.60645354054145
+        },
+        {
+         "max": 298.5780265495058,
+         "min": 287.11909055181434,
+         "name": "reencode_go/collection",
+         "value": 295.1234937174012
+        },
+        {
+         "max": 57.713194743548875,
+         "min": 52.928103761050636,
+         "name": "reencode_go/composite_active",
+         "value": 56.027401219974664
+        },
+        {
+         "max": 57.07009022141169,
+         "min": 54.94654806048776,
+         "name": "reencode_go/composite_deleted",
+         "value": 55.61800061645947
+        },
+        {
+         "max": 143.04540274224627,
+         "min": 134.51891046473838,
+         "name": "reencode_go/counter",
+         "value": 141.09941223508886
+        },
+        {
+         "max": 89.35747762668527,
+         "min": 86.2631401066572,
+         "name": "reencode_go/lww_deletion",
+         "value": 88.08285268938559
+        },
+        {
+         "max": 94.26747109032999,
+         "min": 92.90842233175874,
+         "name": "reencode_go/lww_high_priority",
+         "value": 93.82191415074965
+        },
+        {
+         "max": 87.7235540388026,
+         "min": 82.34983077285302,
+         "name": "reencode_go/lww_simple",
+         "value": 85.0077389400113
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "cbor_shape",
+       "rows": [
+        {
+         "max": 841.2414404792914,
+         "min": 840.6518299036208,
+         "name": "cid/links0_payload1024",
+         "value": 840.9398834463682
+        },
+        {
+         "max": 112.29775073599487,
+         "min": 111.20400948615918,
+         "name": "cid/links0_payload16",
+         "value": 112.03419862406086
+        },
+        {
+         "max": 1705.8916622103388,
+         "min": 1704.3550059417707,
+         "name": "cid/links20_payload1024",
+         "value": 1705.3570818478906
+        },
+        {
+         "max": 975.8052168001209,
+         "min": 975.2178627184369,
+         "name": "cid/links20_payload16",
+         "value": 975.3840774034345
+        },
+        {
+         "max": 1075.1196442318899,
+         "min": 1074.071217580251,
+         "name": "cid/links5_payload1024",
+         "value": 1074.627336721093
+        },
+        {
+         "max": 341.04038932301694,
+         "min": 340.44475213097263,
+         "name": "cid/links5_payload16",
+         "value": 340.8792581141738
+        },
+        {
+         "max": 353.801948847218,
+         "min": 350.5854137295304,
+         "name": "decode/links0_payload1024",
+         "value": 352.64309703147956
+        },
+        {
+         "max": 307.4631485425741,
+         "min": 304.88933356405715,
+         "name": "decode/links0_payload16",
+         "value": 307.04185651853527
+        },
+        {
+         "max": 2827.822870561018,
+         "min": 2819.2062106227104,
+         "name": "decode/links20_payload1024",
+         "value": 2824.6877318448746
+        },
+        {
+         "max": 2787.151925290914,
+         "min": 2780.4351711438476,
+         "name": "decode/links20_payload16",
+         "value": 2783.934257654535
+        },
+        {
+         "max": 1005.9309231125269,
+         "min": 1003.4151073340611,
+         "name": "decode/links5_payload1024",
+         "value": 1005.1069062263573
+        },
+        {
+         "max": 961.6028455498642,
+         "min": 959.1108549810406,
+         "name": "decode/links5_payload16",
+         "value": 960.5280837013252
+        },
+        {
+         "max": 99.4957445923805,
+         "min": 98.8020918713421,
+         "name": "encode/links0_payload1024",
+         "value": 99.23534127928941
+        },
+        {
+         "max": 78.96807291056217,
+         "min": 78.68450522268347,
+         "name": "encode/links0_payload16",
+         "value": 78.88119452010382
+        },
+        {
+         "max": 998.8572405965717,
+         "min": 995.8034083946078,
+         "name": "encode/links20_payload1024",
+         "value": 997.5128708384395
+        },
+        {
+         "max": 961.599670637294,
+         "min": 959.3983004385965,
+         "name": "encode/links20_payload16",
+         "value": 960.0870913733946
+        },
+        {
+         "max": 383.05387041737754,
+         "min": 375.1980847655112,
+         "name": "encode/links5_payload1024",
+         "value": 376.29239560665513
+        },
+        {
+         "max": 350.04316644686213,
+         "min": 349.21800379921547,
+         "name": "encode/links5_payload16",
+         "value": 349.6556538732968
+        },
+        {
+         "max": 972.9683026026669,
+         "min": 972.0348810774873,
+         "name": "encode_and_cid/links0_payload1024",
+         "value": 972.3800006321162
+        },
+        {
+         "max": 218.1571587663373,
+         "min": 215.97708801201503,
+         "name": "encode_and_cid/links0_payload16",
+         "value": 217.01894710055967
+        },
+        {
+         "max": 2728.0053614035087,
+         "min": 2723.309396992481,
+         "name": "encode_and_cid/links20_payload1024",
+         "value": 2724.7738206627682
+        },
+        {
+         "max": 1960.8220527748813,
+         "min": 1958.130214035888,
+         "name": "encode_and_cid/links20_payload16",
+         "value": 1959.5277728190345
+        },
+        {
+         "max": 1490.71646865107,
+         "min": 1489.075831534537,
+         "name": "encode_and_cid/links5_payload1024",
+         "value": 1489.7574576465202
+        },
+        {
+         "max": 714.1444883143033,
+         "min": 712.6309500336998,
+         "name": "encode_and_cid/links5_payload16",
+         "value": 713.2698531410035
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "cbor_variants",
+       "rows": [
+        {
+         "max": 215.4417551450456,
+         "min": 214.68921658806346,
+         "name": "decode/collection",
+         "value": 215.16372935969048
+        },
+        {
+         "max": 238.85129025712916,
+         "min": 238.2064011755881,
+         "name": "decode/composite",
+         "value": 238.54800051647175
+        },
+        {
+         "max": 342.17365166964504,
+         "min": 341.8897774921506,
+         "name": "decode/counter",
+         "value": 341.9945550700045
+        },
+        {
+         "max": 315.46271486014507,
+         "min": 313.8922879055309,
+         "name": "decode/lww",
+         "value": 314.7506585703322
+        },
+        {
+         "max": 278.46847963730465,
+         "min": 277.4159755998227,
+         "name": "encode/collection",
+         "value": 277.77038872635353
+        },
+        {
+         "max": 53.779403325186934,
+         "min": 53.459010894398276,
+         "name": "encode/composite",
+         "value": 53.673179350652454
+        },
+        {
+         "max": 138.72239750194822,
+         "min": 138.2072654854021,
+         "name": "encode/counter",
+         "value": 138.3204683007877
+        },
+        {
+         "max": 77.86309519128395,
+         "min": 77.6947825420639,
+         "name": "encode/lww",
+         "value": 77.76694656755872
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `block` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "block benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_block_write": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "block_write_create",
+       "rows": [
+        {
+         "max": 8165.659127425535,
+         "min": 8008.648854604955,
+         "name": "fields2_value1024",
+         "value": 8095.616487455197
+        },
+        {
+         "max": 6378.7357142857145,
+         "min": 6285.796201814059,
+         "name": "fields2_value16",
+         "value": 6314.069217687074
+        },
+        {
+         "max": 96343.40189933524,
+         "min": 94904.75412087912,
+         "name": "fields32_value1024",
+         "value": 95818.31607843138
+        },
+        {
+         "max": 66955.96452012385,
+         "min": 66031.13886363636,
+         "name": "fields32_value16",
+         "value": 66485.02738095238
+        },
+        {
+         "max": 23615.835436507936,
+         "min": 23251.91606060606,
+         "name": "fields8_value1024",
+         "value": 23398.612962962965
+        },
+        {
+         "max": 16598.27951807229,
+         "min": 16391.827086122266,
+         "name": "fields8_value16",
+         "value": 16489.096598157335
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "block_write_update",
+       "rows": [
+        {
+         "max": 14829.732864357864,
+         "min": 14618.545707070707,
+         "name": "fields2_value1024",
+         "value": 14754.704712566845
+        },
+        {
+         "max": 12722.665922158336,
+         "min": 12592.72367965368,
+         "name": "fields2_value16",
+         "value": 12643.780317460318
+        },
+        {
+         "max": 171395.56344537815,
+         "min": 170189.6619981326,
+         "name": "fields32_value1024",
+         "value": 170614.0589177979
+        },
+        {
+         "max": 144227.68621794874,
+         "min": 141912.73783643893,
+         "name": "fields32_value16",
+         "value": 143466.6975
+        },
+        {
+         "max": 46500.50802669553,
+         "min": 45844.509469696975,
+         "name": "fields8_value1024",
+         "value": 46146.53745059289
+        },
+        {
+         "max": 38936.19857142857,
+         "min": 38434.834375,
+         "name": "fields8_value16",
+         "value": 38574.384999999995
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `block_write` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "block_write benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_blockstore": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "blockstore",
+       "rows": [
+        {
+         "max": 650.8913933667487,
+         "min": 638.5036399991162,
+         "name": "get_cache_hit",
+         "value": 641.1880607184214
+        },
+        {
+         "max": 656.1270228564354,
+         "min": 654.8108124985807,
+         "name": "get_cache_miss",
+         "value": 655.2041664963554
+        },
+        {
+         "max": 594.282358079113,
+         "min": 589.9140358816333,
+         "name": "has_check",
+         "value": 592.4036701380869
+        },
+        {
+         "max": 12697.126568100357,
+         "min": 10624.417603453894,
+         "name": "put_256b",
+         "value": 11814.367025089607
+        },
+        {
+         "max": 13412.637320044298,
+         "min": 11619.99970184854,
+         "name": "put_4kb",
+         "value": 12626.166370869032
+        },
+        {
+         "max": 442882.5838328338,
+         "min": 436142.9935897436,
+         "name": "put_get_cycle_100",
+         "value": 438901.69251336897
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "ungrouped",
+       "rows": [
+        {
+         "max": 20.80719858975536,
+         "min": 20.491932037267432,
+         "name": "raw_lru_get_arc",
+         "value": 20.66943290137852
+        },
+        {
+         "max": 36.23263589985911,
+         "min": 36.053382194753496,
+         "name": "raw_lru_get_clone",
+         "value": 36.181832019041494
+        },
+        {
+         "max": 177.84946215957302,
+         "min": 175.98618927056248,
+         "name": "txn_creation_only",
+         "value": 177.76348092626318
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `blockstore` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "blockstore benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_contention": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "contention_collection_cache",
+       "rows": [
+        {
+         "max": 84.0,
+         "min": 83.525,
+         "name": "1",
+         "value": 83.61805555555556,
+         "x": 1.0
+        },
+        {
+         "max": 43.94444444444444,
+         "min": 43.25,
+         "name": "16",
+         "value": 43.45,
+         "x": 16.0
+        },
+        {
+         "max": 58.29166666666667,
+         "min": 58.1,
+         "name": "2",
+         "value": 58.20833333333333,
+         "x": 2.0
+        },
+        {
+         "max": 43.5,
+         "min": 42.650000000000006,
+         "name": "4",
+         "value": 42.85714285714286,
+         "x": 4.0
+        },
+        {
+         "max": 43.33333333333333,
+         "min": 42.75,
+         "name": "8",
+         "value": 42.98571428571428,
+         "x": 8.0
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "contention_event_publish",
+       "rows": [
+        {
+         "max": 298.6111111111111,
+         "min": 297.64285714285717,
+         "name": "1",
+         "value": 298.0,
+         "x": 1.0
+        },
+        {
+         "max": 140.05,
+         "min": 139.0,
+         "name": "16",
+         "value": 139.54166666666669,
+         "x": 16.0
+        },
+        {
+         "max": 220.5,
+         "min": 218.25,
+         "name": "2",
+         "value": 219.49107142857144,
+         "x": 2.0
+        },
+        {
+         "max": 141.78125,
+         "min": 140.05,
+         "name": "4",
+         "value": 140.70833333333334,
+         "x": 4.0
+        },
+        {
+         "max": 140.83333333333331,
+         "min": 140.31944444444446,
+         "name": "8",
+         "value": 140.45,
+         "x": 8.0
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `contention` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "contention benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_crypto": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "crypto_aes",
+       "rows": [
+        {
+         "max": 748.1231824537133,
+         "min": 743.7428682523425,
+         "name": "decrypt/1024",
+         "value": 747.7306522893668
+        },
+        {
+         "max": 8298.23621835443,
+         "min": 8200.922049791108,
+         "name": "decrypt/16384",
+         "value": 8258.99280289331
+        },
+        {
+         "max": 132043.79494787045,
+         "min": 130306.54138321996,
+         "name": "decrypt/262144",
+         "value": 130492.19002782932
+        },
+        {
+         "max": 275.90454461202603,
+         "min": 271.32231476385095,
+         "name": "decrypt/64",
+         "value": 275.0587207180304
+        },
+        {
+         "max": 782.4653197081687,
+         "min": 780.0380464756524,
+         "name": "encrypt/1024",
+         "value": 781.4472549742078
+        },
+        {
+         "max": 8222.494226266495,
+         "min": 8210.087244572158,
+         "name": "encrypt/16384",
+         "value": 8216.265158426078
+        },
+        {
+         "max": 130723.19978056426,
+         "min": 129942.48325714286,
+         "name": "encrypt/262144",
+         "value": 130350.40633333335
+        },
+        {
+         "max": 312.5324563564325,
+         "min": 307.1223861069976,
+         "name": "encrypt/64",
+         "value": 308.8363906107347
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "crypto_ecies",
+       "rows": [
+        {
+         "max": 60604.90112699286,
+         "min": 60504.134532710275,
+         "name": "open/1024",
+         "value": 60545.45290016318
+        },
+        {
+         "max": 59537.06704304869,
+         "min": 59407.7170224653,
+         "name": "open/32",
+         "value": 59434.54774263641
+        },
+        {
+         "max": 79341.54680603949,
+         "min": 79248.42965885541,
+         "name": "seal/1024",
+         "value": 79305.21359490987
+        },
+        {
+         "max": 80227.80081300813,
+         "min": 78279.35034074605,
+         "name": "seal/32",
+         "value": 79231.5911875726
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "crypto_sha256",
+       "rows": [
+        {
+         "max": 689.0741171085127,
+         "min": 688.2731061419521,
+         "name": "1024",
+         "value": 688.7306319123805,
+         "x": 1024.0
+        },
+        {
+         "max": 10347.044334728274,
+         "min": 10342.532212553855,
+         "name": "16384",
+         "value": 10344.618667659215,
+         "x": 16384.0
+        },
+        {
+         "max": 164670.04055059524,
+         "min": 164536.5610775862,
+         "name": "262144",
+         "value": 164605.80952380953,
+         "x": 262144.0
+        },
+        {
+         "max": 87.26938905628654,
+         "min": 86.68474328174949,
+         "name": "64",
+         "value": 87.01854214785553,
+         "x": 64.0
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "crypto_sign",
+       "rows": [
+        {
+         "max": 20783.810612679994,
+         "min": 20751.450964630225,
+         "name": "ed25519",
+         "value": 20769.37622722401
+        },
+        {
+         "max": 42639.60121581527,
+         "min": 42576.19243421053,
+         "name": "secp256k1",
+         "value": 42606.91782296651
+        },
+        {
+         "max": 84534.91870467196,
+         "min": 84454.70330820075,
+         "name": "secp256r1",
+         "value": 84491.16383042245
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "crypto_verify",
+       "rows": [
+        {
+         "max": 36306.84184390048,
+         "min": 36194.06952247191,
+         "name": "ed25519",
+         "value": 36222.25692883895
+        },
+        {
+         "max": 81487.36162255466,
+         "min": 81322.4300822244,
+         "name": "secp256k1",
+         "value": 81375.49570033021
+        },
+        {
+         "max": 302599.65993265994,
+         "min": 302296.3435064935,
+         "name": "secp256r1",
+         "value": 302394.52997364954
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `crypto` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "crypto benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_cursor_codec": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "cursor_codec",
+       "rows": [
+        {
+         "max": 123.9160594725038,
+         "min": 123.67103583063978,
+         "name": "decode/0",
+         "value": 123.78259047000361
+        },
+        {
+         "max": 252.08736208802594,
+         "min": 250.86781185821474,
+         "name": "decode/1",
+         "value": 251.3254139331459
+        },
+        {
+         "max": 2070.4971240569516,
+         "min": 2060.395798510661,
+         "name": "decode/16",
+         "value": 2062.9675737166053
+        },
+        {
+         "max": 575.3179409104229,
+         "min": 573.5516550729808,
+         "name": "decode/4",
+         "value": 574.0159424614744
+        },
+        {
+         "max": 69.87855165343555,
+         "min": 69.73319181893126,
+         "name": "encode/0",
+         "value": 69.81793207066143
+        },
+        {
+         "max": 101.74656848778255,
+         "min": 100.94240914195723,
+         "name": "encode/1",
+         "value": 101.32838510729974
+        },
+        {
+         "max": 606.6363846492693,
+         "min": 604.2473051076608,
+         "name": "encode/16",
+         "value": 605.6941216726449
+        },
+        {
+         "max": 214.9091623306951,
+         "min": 211.81766677898867,
+         "name": "encode/4",
+         "value": 213.2229682320511
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "cursor_reject",
+       "rows": [
+        {
+         "max": 68.21690952157982,
+         "min": 67.87851448645594,
+         "name": "empty_doc_id",
+         "value": 68.06977816561253
+        },
+        {
+         "max": 11.064031127172163,
+         "min": 11.009844097410054,
+         "name": "not_base64",
+         "value": 11.040716836950596
+        },
+        {
+         "max": 41.13086794641194,
+         "min": 40.90183580304985,
+         "name": "not_json",
+         "value": 41.01502032988594
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `cursor_codec` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "cursor_codec benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_document_codec": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "codec_doc_id",
+       "rows": [
+        {
+         "max": 411.3558420113097,
+         "min": 410.735823916169,
+         "name": "new_v0",
+         "value": 411.03729956214676
+        },
+        {
+         "max": 148.9569205639615,
+         "min": 148.40926003799044,
+         "name": "to_string",
+         "value": 148.6082514917453
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "codec_json",
+       "rows": [
+        {
+         "max": 4814.572472509437,
+         "min": 4786.917811422944,
+         "name": "from_json/16",
+         "value": 4796.98494360145
+        },
+        {
+         "max": 1102.6936398385155,
+         "min": 1098.5644314646204,
+         "name": "from_json/4",
+         "value": 1100.4772937132016
+        },
+        {
+         "max": 23504.63394607843,
+         "min": 23447.998877960275,
+         "name": "from_json/64",
+         "value": 23491.079569327732
+        },
+        {
+         "max": 15668.620640038833,
+         "min": 15641.857864357864,
+         "name": "to_map/16",
+         "value": 15653.891975881263
+        },
+        {
+         "max": 233.3250033568462,
+         "min": 232.72606640678515,
+         "name": "to_map/4",
+         "value": 233.10806707326776
+        },
+        {
+         "max": 61213.07660658307,
+         "min": 61160.15355879752,
+         "name": "to_map/64",
+         "value": 61188.74107142857
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "codec_rfc3339",
+       "rows": [
+        {
+         "max": 32.8020770218506,
+         "min": 32.77538171173835,
+         "name": "fractional",
+         "value": 32.79285420207023
+        },
+        {
+         "max": 27.011980776111155,
+         "min": 26.00129080768948,
+         "name": "offset",
+         "value": 26.895902396711357
+        },
+        {
+         "max": 22.4506556482697,
+         "min": 22.404054271214704,
+         "name": "utc",
+         "value": 22.428907694309324
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `document_codec` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "document_codec benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_document_read": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "document_read_by_field",
+       "rows": [
+        {
+         "max": 281399.0206043956,
+         "min": 280559.34278002696,
+         "name": "100",
+         "value": 280848.5775829563,
+         "x": 100.0
+        },
+        {
+         "max": 3102760.8982905983,
+         "min": 3096434.27,
+         "name": "1000",
+         "value": 3098983.69,
+         "x": 1000.0
+        },
+        {
+         "max": 16109599.416666668,
+         "min": 15921023.67857143,
+         "name": "5000",
+         "value": 15999664.924836602,
+         "x": 5000.0
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "document_read_by_id",
+       "rows": [
+        {
+         "max": 160020.60242033456,
+         "min": 159485.39337979094,
+         "name": "batch_50/100",
+         "value": 159680.65203252033
+        },
+        {
+         "max": 170080.19636015326,
+         "min": 169581.18485280153,
+         "name": "batch_50/1000",
+         "value": 169732.2589371981
+        },
+        {
+         "max": 182097.5594771242,
+         "min": 181729.2972222222,
+         "name": "batch_50/5000",
+         "value": 181859.74793320106
+        },
+        {
+         "max": 4021.4549928332535,
+         "min": 4012.711797545105,
+         "name": "single/100",
+         "value": 4017.5669564092177
+        },
+        {
+         "max": 4266.756681679152,
+         "min": 4260.153897597147,
+         "name": "single/1000",
+         "value": 4263.029474754877
+        },
+        {
+         "max": 4250.282601092897,
+         "min": 4240.894607728337,
+         "name": "single/5000",
+         "value": 4242.214888226528
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "document_read_scan",
+       "rows": [
+        {
+         "max": 270428.5993157786,
+         "min": 269892.46933962265,
+         "name": "get_all/100",
+         "value": 270116.07547169813
+        },
+        {
+         "max": 3006108.1699346406,
+         "min": 2995754.89375,
+         "name": "get_all/1000",
+         "value": 3000330.9862348177
+        },
+        {
+         "max": 16304834.125,
+         "min": 15999764.166666668,
+         "name": "get_all/5000",
+         "value": 16147723.504464285
+        },
+        {
+         "max": 300029.75804924243,
+         "min": 298758.0677083334,
+         "name": "stream/100",
+         "value": 298887.60706018517
+        },
+        {
+         "max": 3276328.3200000003,
+         "min": 3267962.176785714,
+         "name": "stream/1000",
+         "value": 3273636.91
+        },
+        {
+         "max": 16987023.3,
+         "min": 16858287.760416664,
+         "name": "stream/5000",
+         "value": 16876420.405701756
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `document_read` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "document_read benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_document_write": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "document_create",
+       "rows": [
+        {
+         "max": 122269.06628787878,
+         "min": 114399.60838779956,
+         "name": "16",
+         "value": 118376.74479166666,
+         "x": 16.0
+        },
+        {
+         "max": 68246.90328947367,
+         "min": 61282.46331738437,
+         "name": "4",
+         "value": 64305.88006072874,
+         "x": 4.0
+        },
+        {
+         "max": 368737.03,
+         "min": 348170.04791666666,
+         "name": "64",
+         "value": 358087.75,
+         "x": 64.0
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "document_create_branchable",
+       "rows": [
+        {
+         "max": 51587.595813204505,
+         "min": 48157.34309090909,
+         "name": "1",
+         "value": 49103.21490196078,
+         "x": 1.0
+        },
+        {
+         "max": 48152.49245689655,
+         "min": 45317.55857142857,
+         "name": "14",
+         "value": 46378.90972222222,
+         "x": 14.0
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "document_create_many",
+       "rows": [
+        {
+         "max": 128426.65470679013,
+         "min": 119033.0943738657,
+         "name": "1",
+         "value": 120833.26630434782,
+         "x": 1.0
+        },
+        {
+         "max": 30271681.125,
+         "min": 28753821.375,
+         "name": "256",
+         "value": 29325621.0,
+         "x": 256.0
+        },
+        {
+         "max": 5785008.345833333,
+         "min": 5323545.468599034,
+         "name": "64",
+         "value": 5600453.537254902,
+         "x": 64.0
+        },
+        {
+         "max": 803925.2202380953,
+         "min": 770375.6677132391,
+         "name": "8",
+         "value": 788704.9726190476,
+         "x": 8.0
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "document_delete",
+       "rows": [
+        {
+         "max": 50930.26315789473,
+         "min": 47021.471884840306,
+         "name": "16",
+         "value": 49509.77700831025,
+         "x": 16.0
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "document_update",
+       "rows": [
+        {
+         "max": 140152.41148148148,
+         "min": 135893.9761904762,
+         "name": "16",
+         "value": 137959.5732804233,
+         "x": 16.0
+        },
+        {
+         "max": 96819.90071770335,
+         "min": 94375.10384012539,
+         "name": "4",
+         "value": 95445.53787878787,
+         "x": 4.0
+        },
+        {
+         "max": 287538.0408163265,
+         "min": 271294.084981685,
+         "name": "64",
+         "value": 281781.0238095238,
+         "x": 64.0
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "index_backfill",
+       "rows": [
+        {
+         "max": 9596429.666666666,
+         "min": 8742267.9,
+         "name": "1000",
+         "value": 9186967.191964285,
+         "x": 1000.0
+        },
+        {
+         "max": 98724659.0,
+         "min": 86031023.0,
+         "name": "10000",
+         "value": 96596387.5,
+         "x": 10000.0
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `document_write` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "document_write benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_events": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "events_publish",
+       "rows": [
+        {
+         "max": 16.572765529971512,
+         "min": 16.456229887957313,
+         "name": "0",
+         "value": 16.53171344683334,
+         "x": 0.0
+        },
+        {
+         "max": 57.78196991703798,
+         "min": 56.76641729852375,
+         "name": "1",
+         "value": 57.54103911769774,
+         "x": 1.0
+        },
+        {
+         "max": 19702.570048701302,
+         "min": 19217.57295048701,
+         "name": "512",
+         "value": 19514.47877312082,
+         "x": 512.0
+        },
+        {
+         "max": 2144.077749698171,
+         "min": 2056.7301640523256,
+         "name": "64",
+         "value": 2108.6809813983323,
+         "x": 64.0
+        },
+        {
+         "max": 284.63111041586444,
+         "min": 274.26848545114706,
+         "name": "8",
+         "value": 276.4075913915094,
+         "x": 8.0
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "events_publish_backlogged",
+       "rows": [
+        {
+         "max": 57.6026006204237,
+         "min": 57.23040117428155,
+         "name": "1_subscriber_not_draining",
+         "value": 57.359649088872274
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `events` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "events benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_filter": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "filter",
+       "rows": [
+        {
+         "max": 159.7117583163917,
+         "min": 159.32303365574907,
+         "name": "and_3_conditions",
+         "value": 159.39863849445874
+        },
+        {
+         "max": 13244.340977961432,
+         "min": 13217.963566736295,
+         "name": "batch_100_docs",
+         "value": 13224.577590023611
+        },
+        {
+         "max": 53.86909588212883,
+         "min": 53.28844932884694,
+         "name": "eq_single",
+         "value": 53.798491435798454
+        },
+        {
+         "max": 167.0016986891722,
+         "min": 166.35495279993842,
+         "name": "in_10_values",
+         "value": 166.8436689009698
+        },
+        {
+         "max": 81.62943408412045,
+         "min": 81.27691993516123,
+         "name": "like_pattern",
+         "value": 81.50775759275332
+        },
+        {
+         "max": 181.97421420652591,
+         "min": 180.75715702548388,
+         "name": "nested_and_or",
+         "value": 181.32522815208554
+        },
+        {
+         "max": 58.23951917509797,
+         "min": 58.080239188344095,
+         "name": "numeric_gte",
+         "value": 58.18010018272922
+        },
+        {
+         "max": 318.9455229345583,
+         "min": 317.70347379469604,
+         "name": "or_5_conditions",
+         "value": 318.2032238199854
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `filter` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "filter benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_groupby": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "groupby",
+       "rows": [
+        {
+         "max": 426067.5372312872,
+         "min": 419597.0874125874,
+         "name": "1000_docs_10_groups",
+         "value": 423127.66000000003
+        },
+        {
+         "max": 44212.86405383116,
+         "min": 43134.08098086125,
+         "name": "100_docs_5_groups",
+         "value": 43387.58766306793
+        },
+        {
+         "max": 5643.894854546527,
+         "min": 5344.092865313125,
+         "name": "10_docs_2_groups",
+         "value": 5394.759011225307
+        },
+        {
+         "max": 47631.306760713334,
+         "min": 47422.14223113487,
+         "name": "key_generation_1000",
+         "value": 47594.4056372549
+        },
+        {
+         "max": 399068.09765625,
+         "min": 398118.72229166667,
+         "name": "render_only_1000_docs_10_fields",
+         "value": 398619.1961206896
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `groupby` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "groupby benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_identity": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "identity_from_token",
+       "rows": [
+        {
+         "max": 53695.874301739925,
+         "min": 53648.180868421055,
+         "name": "ed25519",
+         "value": 53671.06870089787
+        },
+        {
+         "max": 102669.53104941036,
+         "min": 101726.48195389267,
+         "name": "secp256k1",
+         "value": 101866.69160997732
+        },
+        {
+         "max": 340583.83155002893,
+         "min": 340172.73590225563,
+         "name": "secp256r1",
+         "value": 340460.23711911356
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "identity_new_token",
+       "rows": [
+        {
+         "max": 24287.84775171066,
+         "min": 23227.20071684588,
+         "name": "ed25519",
+         "value": 23395.271804062126
+        },
+        {
+         "max": 45235.3024176678,
+         "min": 45185.62654012654,
+         "name": "secp256k1",
+         "value": 45202.27307692308
+        },
+        {
+         "max": 87576.11640926641,
+         "min": 87385.33551051051,
+         "name": "secp256r1",
+         "value": 87410.09099099098
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "identity_verify_auth_token",
+       "rows": [
+        {
+         "max": 43.400949756871626,
+         "min": 43.3590644660105,
+         "name": "ed25519",
+         "value": 43.369502817102074
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `identity` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "identity benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_introspection": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "introspection",
+       "rows": [
+        {
+         "max": 10242136.15,
+         "min": 9821973.75874126,
+         "name": "off/100",
+         "value": 9992176.788690476
+        },
+        {
+         "max": 1831791.5479166666,
+         "min": 1816850.1514756945,
+         "name": "off/17",
+         "value": 1823135.6301470587
+        },
+        {
+         "max": 853008.056022409,
+         "min": 850776.3009803921,
+         "name": "on/100",
+         "value": 851716.6418685121
+        },
+        {
+         "max": 228594.68148148147,
+         "min": 227379.87976705833,
+         "name": "on/17",
+         "value": 228206.75347222222
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `introspection` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "introspection benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_json_merge": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "json_merge",
+       "rows": [
+        {
+         "max": 449.05198912408434,
+         "min": 444.84179313875484,
+         "name": "concurrent/10",
+         "value": 447.7843283856497
+        },
+        {
+         "max": 935.0650324873538,
+         "min": 853.5250000000001,
+         "name": "concurrent/100",
+         "value": 894.7086406186406
+        },
+        {
+         "max": 3837.431939715383,
+         "min": 3458.096887550201,
+         "name": "concurrent/1000",
+         "value": 3600.619520940906
+        },
+        {
+         "max": 27995.99766573296,
+         "min": 27825.33661926309,
+         "name": "concurrent/10000",
+         "value": 27935.119047619046
+        },
+        {
+         "max": 6787.410098968859,
+         "min": 6779.285448727913,
+         "name": "conflicts/10",
+         "value": 6782.60486314556
+        },
+        {
+         "max": 81323.66613924051,
+         "min": 80802.37566942551,
+         "name": "conflicts/100",
+         "value": 81010.72837552743
+        },
+        {
+         "max": 1155245.1958333333,
+         "min": 1153517.0496031744,
+         "name": "conflicts/1000",
+         "value": 1154460.374228395
+        },
+        {
+         "max": 14165079.357142858,
+         "min": 14119353.357142856,
+         "name": "conflicts/10000",
+         "value": 14147953.5
+        },
+        {
+         "max": 597.7995365937345,
+         "min": 594.6100115637787,
+         "name": "fast_path/10",
+         "value": 595.818191828181
+        },
+        {
+         "max": 1055.9546398721732,
+         "min": 1049.8451683227242,
+         "name": "fast_path/100",
+         "value": 1053.2006767308694
+        },
+        {
+         "max": 4020.9007507301935,
+         "min": 3875.44368545611,
+         "name": "fast_path/1000",
+         "value": 3936.730030699722
+        },
+        {
+         "max": 30065.548645320196,
+         "min": 29988.92272727273,
+         "name": "fast_path/10000",
+         "value": 30019.97794117647
+        },
+        {
+         "max": 2790.5875293632807,
+         "min": 2779.3504523912106,
+         "name": "read/10",
+         "value": 2786.250269280483
+        },
+        {
+         "max": 32939.331650492364,
+         "min": 32888.16036503887,
+         "name": "read/100",
+         "value": 32907.373622448984
+        },
+        {
+         "max": 448708.01895424834,
+         "min": 447042.6608187135,
+         "name": "read/1000",
+         "value": 447709.7347777778
+        },
+        {
+         "max": 5386507.2524999995,
+         "min": 5361147.916666667,
+         "name": "read/10000",
+         "value": 5378530.547619048
+        },
+        {
+         "max": 9720.341180466181,
+         "min": 9710.074094429358,
+         "name": "replay/10",
+         "value": 9714.576036201037
+        },
+        {
+         "max": 111257.34367816092,
+         "min": 110968.70110113011,
+         "name": "replay/100",
+         "value": 111051.9676724138
+        },
+        {
+         "max": 1375096.0966666667,
+         "min": 1371264.2916666665,
+         "name": "replay/1000",
+         "value": 1373317.6722689075
+        },
+        {
+         "max": 16429825.666666668,
+         "min": 16202896.5,
+         "name": "replay/10000",
+         "value": 16304028.25
+        },
+        {
+         "max": 3034.7710772378514,
+         "min": 3021.58268627451,
+         "name": "rewrite_all/10",
+         "value": 3031.3452669683256
+        },
+        {
+         "max": 47649.746467391305,
+         "min": 47603.69822303922,
+         "name": "rewrite_all/100",
+         "value": 47624.132352941175
+        },
+        {
+         "max": 772436.1352785146,
+         "min": 770703.8333333333,
+         "name": "rewrite_all/1000",
+         "value": 771641.1851851852
+        },
+        {
+         "max": 12586484.580745341,
+         "min": 12324313.519230768,
+         "name": "rewrite_all/10000",
+         "value": 12506341.342857143
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `json_merge` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "json_merge benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_merge": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "field_crdt",
+       "rows": [
+        {
+         "max": 43.97211046858353,
+         "min": 43.53127731154377,
+         "name": "counter_float32",
+         "value": 43.73364014397681
+        },
+        {
+         "max": 43.719751488480455,
+         "min": 43.20109404452391,
+         "name": "counter_float64",
+         "value": 43.372111598566704
+        },
+        {
+         "max": 43.76122414076315,
+         "min": 43.17976444337744,
+         "name": "counter_int64",
+         "value": 43.320392876812924
+        },
+        {
+         "max": 112.3184558685446,
+         "min": 99.75822535211267,
+         "name": "document_apply/1",
+         "value": 103.69733802816901
+        },
+        {
+         "max": 1146.3543771369395,
+         "min": 1093.9187256176854,
+         "name": "document_apply/16",
+         "value": 1130.106241872562
+        },
+        {
+         "max": 379.64245028571986,
+         "min": 292.1537426300948,
+         "name": "document_apply/4",
+         "value": 316.9650730581902
+        },
+        {
+         "max": 35.74774816854319,
+         "min": 34.84235883591309,
+         "name": "lww_clear_winner",
+         "value": 35.560235014887354
+        },
+        {
+         "max": 41.76594058621339,
+         "min": 40.60876358718083,
+         "name": "lww_tiebreak",
+         "value": 41.11534179271543
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `merge` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "merge benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_merge_dag": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "merge_dag",
+       "rows": [
+        {
+         "max": 59401.37419093851,
+         "min": 55903.74946062567,
+         "name": "depth1_fields1",
+         "value": 57741.4662505779
+        },
+        {
+         "max": 105732.95524691358,
+         "min": 92544.1294367284,
+         "name": "depth1_fields4",
+         "value": 97364.35570987655
+        },
+        {
+         "max": 3553333.0,
+         "min": 3431265.616666666,
+         "name": "depth64_fields1",
+         "value": 3493575.596153846
+        },
+        {
+         "max": 8565603.458333334,
+         "min": 8430673.63148148,
+         "name": "depth64_fields4",
+         "value": 8530684.59375
+        },
+        {
+         "max": 322194.75925925927,
+         "min": 318373.2561728395,
+         "name": "depth8_fields1",
+         "value": 319018.73919753084
+        },
+        {
+         "max": 712387.5850340136,
+         "min": 678673.371031746,
+         "name": "depth8_fields4",
+         "value": 692884.8229166666
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `merge_dag` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "merge_dag benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_merge_indexed": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "merge_indexed",
+       "rows": [
+        {
+         "max": 12621523.47121212,
+         "min": 12457936.857843138,
+         "name": "json_indexed",
+         "value": 12511737.125
+        },
+        {
+         "max": 13003872.524305556,
+         "min": 12810585.9625,
+         "name": "json_plain",
+         "value": 12872146.223214285
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `merge_indexed` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "merge_indexed benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_p2p_codec": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "p2p_auth",
+       "rows": [
+        {
+         "max": 21252.60536199095,
+         "min": 21223.603077777778,
+         "name": "sign/256",
+         "value": 21238.025937500002
+        },
+        {
+         "max": 34440.21671539961,
+         "min": 34411.24586707153,
+         "name": "sign/4096",
+         "value": 34421.489546783625
+        },
+        {
+         "max": 1821770.25,
+         "min": 1815451.885836386,
+         "name": "sign/524288",
+         "value": 1817511.580693816
+        },
+        {
+         "max": 244974.29819577353,
+         "min": 244672.63106060604,
+         "name": "sign/65536",
+         "value": 244767.8578892372
+        },
+        {
+         "max": 35903.8720996732,
+         "min": 35830.77165079365,
+         "name": "verify/256",
+         "value": 35872.14408386752
+        },
+        {
+         "max": 42805.24259919624,
+         "min": 42706.829495669896,
+         "name": "verify/4096",
+         "value": 42775.33714629741
+        },
+        {
+         "max": 940442.3779761905,
+         "min": 939610.2400560223,
+         "name": "verify/524288",
+         "value": 939940.2964285715
+        },
+        {
+         "max": 148236.73011363635,
+         "min": 148052.89958677685,
+         "name": "verify/65536",
+         "value": 148097.77037878789
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "p2p_cbor",
+       "rows": [
+        {
+         "max": 1232.1991353194599,
+         "min": 1226.3234712052245,
+         "name": "decode/256",
+         "value": 1230.7073728998928
+        },
+        {
+         "max": 1335.9834034058256,
+         "min": 1323.3741351456786,
+         "name": "decode/4096",
+         "value": 1334.5250370527206
+        },
+        {
+         "max": 28296.52498579007,
+         "min": 26815.20612350075,
+         "name": "decode/524288",
+         "value": 28252.68884698276
+        },
+        {
+         "max": 4130.599234738391,
+         "min": 3979.163608089856,
+         "name": "decode/65536",
+         "value": 4125.319257837493
+        },
+        {
+         "max": 291.3473963874113,
+         "min": 289.19843085106385,
+         "name": "encode/256",
+         "value": 290.5388630820577
+        },
+        {
+         "max": 324.74417769652393,
+         "min": 323.3779093340123,
+         "name": "encode/4096",
+         "value": 324.34950273578477
+        },
+        {
+         "max": 12202.064333814335,
+         "min": 12165.870209911616,
+         "name": "encode/524288",
+         "value": 12181.783653846154
+        },
+        {
+         "max": 1476.9824813855785,
+         "min": 1472.918763822161,
+         "name": "encode/65536",
+         "value": 1475.975211524285
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "p2p_gossip",
+       "rows": [
+        {
+         "max": 2981.7708726439655,
+         "min": 2964.984321305842,
+         "name": "decode/256",
+         "value": 2974.0365108789533
+        },
+        {
+         "max": 3283.11718268645,
+         "min": 3279.220399337732,
+         "name": "decode/4096",
+         "value": 3281.2871951219513
+        },
+        {
+         "max": 98138.7679750287,
+         "min": 94890.29973347549,
+         "name": "decode/524288",
+         "value": 98016.34497964723
+        },
+        {
+         "max": 12729.698060770752,
+         "min": 12471.3777585639,
+         "name": "decode/65536",
+         "value": 12718.286381602586
+        },
+        {
+         "max": 215.27199274180063,
+         "min": 214.08758297578055,
+         "name": "encode/256",
+         "value": 214.45592103589922
+        },
+        {
+         "max": 248.60788426569368,
+         "min": 247.90484582349984,
+         "name": "encode/4096",
+         "value": 248.26572958176962
+        },
+        {
+         "max": 11887.718462246776,
+         "min": 11859.921879987724,
+         "name": "encode/524288",
+         "value": 11871.56962742598
+        },
+        {
+         "max": 1396.3617750180126,
+         "min": 1395.332218713233,
+         "name": "encode/65536",
+         "value": 1395.8110088859992
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `p2p_codec` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "p2p_codec benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_parsing": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "parse",
+       "rows": [
+        {
+         "max": 5763.119318181818,
+         "min": 5741.546052631578,
+         "name": "commits",
+         "value": 5753.401274819495
+        },
+        {
+         "max": 11205.310619212964,
+         "min": 11162.361705889918,
+         "name": "complex_filter",
+         "value": 11183.031008873457
+        },
+        {
+         "max": 5633.319395280236,
+         "min": 5600.725360055527,
+         "name": "filtered",
+         "value": 5613.0412837355025
+        },
+        {
+         "max": 5199.002286819326,
+         "min": 5190.39021348763,
+         "name": "mutation",
+         "value": 5193.977238264529
+        },
+        {
+         "max": 5332.1648134789775,
+         "min": 5258.456084646602,
+         "name": "nested_join",
+         "value": 5317.390972794724
+        },
+        {
+         "max": 2662.3765294834748,
+         "min": 2603.5247522880263,
+         "name": "simple_select",
+         "value": 2653.707192021351
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `parsing` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "parsing benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_planner": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "planner",
+       "rows": [
+        {
+         "max": 2842.784942345733,
+         "min": 2807.6611665942974,
+         "name": "nested_join",
+         "value": 2821.50549141951
+        },
+        {
+         "max": 653.9807790873053,
+         "min": 648.5471340053068,
+         "name": "simple_scan",
+         "value": 651.0346437136006
+        },
+        {
+         "max": 1725.7894350684205,
+         "min": 1708.153078276468,
+         "name": "with_equality_filter",
+         "value": 1710.973304705672
+        },
+        {
+         "max": 2046.6376195687708,
+         "min": 2030.2708741963606,
+         "name": "with_range_filter",
+         "value": 2033.0113997368003
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `planner` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "planner benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_query_e2e": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "query_e2e",
+       "rows": [
+        {
+         "max": 472638.26851173025,
+         "min": 471390.1953405018,
+         "name": "filter_eq/100",
+         "value": 472137.25165425974
+        },
+        {
+         "max": 4495381.839473683,
+         "min": 4490251.359975962,
+         "name": "filter_eq/1000",
+         "value": 4493471.555555556
+        },
+        {
+         "max": 23946395.7,
+         "min": 23762615.75,
+         "name": "filter_eq/5000",
+         "value": 23833083.575630255
+        },
+        {
+         "max": 484995.9144257703,
+         "min": 483435.6653409091,
+         "name": "filter_order_limit/100",
+         "value": 484541.4357051282
+        },
+        {
+         "max": 4545500.1375,
+         "min": 4535070.826388889,
+         "name": "filter_order_limit/1000",
+         "value": 4537704.15
+        },
+        {
+         "max": 23633427.613636363,
+         "min": 23567499.111111112,
+         "name": "filter_order_limit/5000",
+         "value": 23605880.424999997
+        },
+        {
+         "max": 479167.00629370625,
+         "min": 477916.79953703703,
+         "name": "filter_range/100",
+         "value": 478932.5891666666
+        },
+        {
+         "max": 4607356.3875,
+         "min": 4588945.275,
+         "name": "filter_range/1000",
+         "value": 4595252.5390625
+        },
+        {
+         "max": 24566502.027777776,
+         "min": 24349848.524853803,
+         "name": "filter_range/5000",
+         "value": 24402279.23529412
+        },
+        {
+         "max": 452417.18828125,
+         "min": 451316.003125,
+         "name": "offset_page/100",
+         "value": 451818.03828125
+        },
+        {
+         "max": 1001472.9199999999,
+         "min": 1000004.4285067874,
+         "name": "offset_page/1000",
+         "value": 1000635.8115009747
+        },
+        {
+         "max": 1033300.8309523809,
+         "min": 1032379.2642857144,
+         "name": "offset_page/5000",
+         "value": 1032886.8720238095
+        },
+        {
+         "max": 488647.64783549786,
+         "min": 487749.0935185185,
+         "name": "order_limit/100",
+         "value": 488098.0017361111
+        },
+        {
+         "max": 4723200.036931818,
+         "min": 4711811.75,
+         "name": "order_limit/1000",
+         "value": 4717518.573778195
+        },
+        {
+         "max": 25619764.15,
+         "min": 25436825.666666664,
+         "name": "order_limit/5000",
+         "value": 25551108.133333333
+        },
+        {
+         "max": 479843.53351715684,
+         "min": 478545.4943732194,
+         "name": "scan_all/100",
+         "value": 479190.7209064327
+        },
+        {
+         "max": 4719709.298611111,
+         "min": 4702347.21875,
+         "name": "scan_all/1000",
+         "value": 4707290.3359375
+        },
+        {
+         "max": 25558190.0,
+         "min": 25386405.525,
+         "name": "scan_all/5000",
+         "value": 25488452.166666664
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "query_e2e_mutation",
+       "rows": [
+        {
+         "max": 167691.83421266233,
+         "min": 166285.375,
+         "name": "create",
+         "value": 167035.9758522727
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `query_e2e` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "query_e2e benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_replication_filter": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "replication_filter",
+       "rows": [
+        {
+         "max": 17.153866046401745,
+         "min": 17.106751351075943,
+         "name": "accept/1",
+         "value": 17.132101091198958
+        },
+        {
+         "max": 486.80757971082016,
+         "min": 474.6356997625506,
+         "name": "accept/16",
+         "value": 480.20420389158085
+        },
+        {
+         "max": 80.58555787951559,
+         "min": 80.3950993798696,
+         "name": "accept/4",
+         "value": 80.42518655616922
+        },
+        {
+         "max": 7439.040669336384,
+         "min": 7363.093154080854,
+         "name": "accept/64",
+         "value": 7416.702216819222
+        },
+        {
+         "max": 69.13950750199946,
+         "min": 68.5540714192125,
+         "name": "reject_unknown_field",
+         "value": 68.7758024181967
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `replication_filter` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "replication_filter benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_retry_markers": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "sender_marker_registration",
+       "rows": [
+        {
+         "max": 10462.343777233116,
+         "min": 10249.5447255291,
+         "name": "docs1/peers1",
+         "value": 10362.493607954544
+        },
+        {
+         "max": 39018.852864583336,
+         "min": 38548.87219551282,
+         "name": "docs1/peers4",
+         "value": 38806.28472222222
+        },
+        {
+         "max": 86191.03376068376,
+         "min": 85620.70695970696,
+         "name": "docs10/peers1",
+         "value": 85879.3295096716
+        },
+        {
+         "max": 355255.76323529414,
+         "min": 353102.8772727273,
+         "name": "docs10/peers4",
+         "value": 354225.41673414304
+        },
+        {
+         "max": 863039.7833333333,
+         "min": 859073.2369047619,
+         "name": "docs100/peers1",
+         "value": 861441.7109243697
+        },
+        {
+         "max": 3560510.645833333,
+         "min": 3545757.6875,
+         "name": "docs100/peers4",
+         "value": 3551253.638888889
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `retry_markers` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "retry_markers benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_schema_validate": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "schema_collection_validate",
+       "rows": [
+        {
+         "max": 661.7965366570427,
+         "min": 661.372372310442,
+         "name": "16",
+         "value": 661.4928738055298,
+         "x": 16.0
+        },
+        {
+         "max": 8895.318428392533,
+         "min": 8880.932073087431,
+         "name": "256",
+         "value": 8888.6191249931,
+         "x": 256.0
+        },
+        {
+         "max": 170.34677990561943,
+         "min": 170.12425259183402,
+         "name": "4",
+         "value": 170.22609896677204,
+         "x": 4.0
+        },
+        {
+         "max": 2320.4783752411963,
+         "min": 2317.37510801401,
+         "name": "64",
+         "value": 2318.937982061354,
+         "x": 64.0
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "schema_field_by_name",
+       "rows": [
+        {
+         "max": 26.1602892823013,
+         "min": 25.379152567509955,
+         "name": "last/16",
+         "value": 26.13369961701294
+        },
+        {
+         "max": 583.2321403278788,
+         "min": 582.9320431144461,
+         "name": "last/256",
+         "value": 583.118026283501
+        },
+        {
+         "max": 14.957215341933473,
+         "min": 14.922849921955411,
+         "name": "last/4",
+         "value": 14.930887267997939
+        },
+        {
+         "max": 234.76254700493013,
+         "min": 234.45386713387762,
+         "name": "last/64",
+         "value": 234.69638829030322
+        },
+        {
+         "max": 8.67109233079346,
+         "min": 8.366235407160836,
+         "name": "missing/16",
+         "value": 8.47757046563024
+        },
+        {
+         "max": 91.51336585592351,
+         "min": 90.52094705809519,
+         "name": "missing/256",
+         "value": 90.91403821151998
+        },
+        {
+         "max": 5.443408008491028,
+         "min": 4.155252702851122,
+         "name": "missing/4",
+         "value": 5.1906186300433745
+        },
+        {
+         "max": 30.626452687283454,
+         "min": 30.139388776900503,
+         "name": "missing/64",
+         "value": 30.37036445540307
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "schema_validate_all",
+       "rows": [
+        {
+         "max": 719.3416642155123,
+         "min": 718.5685110660845,
+         "name": "1",
+         "value": 718.7449979545539,
+         "x": 1.0
+        },
+        {
+         "max": 7203.692539947975,
+         "min": 7194.512302914477,
+         "name": "10",
+         "value": 7197.824183492299,
+         "x": 10.0
+        },
+        {
+         "max": 75727.91886892177,
+         "min": 75587.08003875968,
+         "name": "100",
+         "value": 75680.22124209214,
+         "x": 100.0
+        },
+        {
+         "max": 398468.44523326575,
+         "min": 397507.8867647059,
+         "name": "500",
+         "value": 398012.09182858665,
+         "x": 500.0
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `schema_validate` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "schema_validate benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_sift": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "sift_bulk_load",
+       "rows": [
+        {
+         "max": 3722770734.0,
+         "min": 3626123126.5,
+         "name": "diskann",
+         "value": 3675371271.5
+        },
+        {
+         "max": 984169.1140350876,
+         "min": 964275.5555555555,
+         "name": "flat",
+         "value": 974188.7390977443
+        },
+        {
+         "max": 2316398653.0,
+         "min": 2190973136.0,
+         "name": "hnsw",
+         "value": 2256804358.0
+        },
+        {
+         "max": 571285784.0,
+         "min": 565182747.0,
+         "name": "ivfflat",
+         "value": 570705981.5
+        },
+        {
+         "max": 2698463721.5,
+         "min": 2656042280.0,
+         "name": "ivfpq",
+         "value": 2684092437.0
+        },
+        {
+         "max": 2164274170.0,
+         "min": 2103085477.0,
+         "name": "ssg",
+         "value": 2128715759.0
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "sift_insert",
+       "rows": [
+        {
+         "max": 709731.56,
+         "min": 697133.0068965517,
+         "name": "diskann",
+         "value": 699683.4466666667
+        },
+        {
+         "max": 10721.404307692308,
+         "min": 7759.7640625,
+         "name": "flat",
+         "value": 8904.276050420169
+        },
+        {
+         "max": 27439957.125,
+         "min": 26685987.0,
+         "name": "hnsw",
+         "value": 27107160.125
+        },
+        {
+         "max": 542743.6979166666,
+         "min": 531808.3732142857,
+         "name": "ivfflat",
+         "value": 537348.3615384615
+        },
+        {
+         "max": 1727500.3807017542,
+         "min": 1705364.6875,
+         "name": "ivfpq",
+         "value": 1718531.826923077
+        },
+        {
+         "max": 33726805.75,
+         "min": 31245682.625,
+         "name": "ssg",
+         "value": 33124566.5
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "sift_search",
+       "rows": [
+        {
+         "max": 140128.0916530278,
+         "min": 137219.81506458967,
+         "name": "diskann",
+         "value": 138843.31056364314
+        },
+        {
+         "max": 477327.2883928571,
+         "min": 472597.1907040328,
+         "name": "flat",
+         "value": 473953.60436076607
+        },
+        {
+         "max": 142522.0078144078,
+         "min": 141240.00802614377,
+         "name": "hnsw",
+         "value": 141741.2154835391
+        },
+        {
+         "max": 25910.138222222224,
+         "min": 25632.223599999998,
+         "name": "ivfflat",
+         "value": 25765.47387017544
+        },
+        {
+         "max": 144212.7858695652,
+         "min": 142344.7575250836,
+         "name": "ivfpq",
+         "value": 143028.57890499197
+        },
+        {
+         "max": 218559.50842490842,
+         "min": 217552.6645238095,
+         "name": "ssg",
+         "value": 217776.34090909088
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `sift` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "sift benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_startup": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "startup",
+       "rows": [
+        {
+         "max": 1711025.545138889,
+         "min": 1639037.671875,
+         "name": "cold_open_embedded_10_collections",
+         "value": 1692065.0458333334
+        },
+        {
+         "max": 1549062.9305555555,
+         "min": 1490615.502910053,
+         "name": "cold_open_server_10_collections",
+         "value": 1526687.5066666668
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `startup` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "startup benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_text_merge": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "text_merge",
+       "rows": [
+        {
+         "max": 1410.6725825849703,
+         "min": 1404.7282889279265,
+         "name": "critical/10",
+         "value": 1408.4301242236024
+        },
+        {
+         "max": 1652.5362699215784,
+         "min": 1646.0510326835674,
+         "name": "critical/100",
+         "value": 1648.9679041234506
+        },
+        {
+         "max": 4187.563375654478,
+         "min": 4181.022568448501,
+         "name": "critical/1000",
+         "value": 4183.803657330396
+        },
+        {
+         "max": 21710.991089828043,
+         "min": 21666.69479886585,
+         "name": "critical/10000",
+         "value": 21679.195005611673
+        },
+        {
+         "max": 205.99589237096484,
+         "min": 197.8485886585848,
+         "name": "fast_path/10",
+         "value": 204.30489727080462
+        },
+        {
+         "max": 928.6257715656848,
+         "min": 903.8531115929864,
+         "name": "fast_path/100",
+         "value": 917.7575522290617
+        },
+        {
+         "max": 7396.465987975439,
+         "min": 7148.608277900961,
+         "name": "fast_path/1000",
+         "value": 7180.198329109915
+        },
+        {
+         "max": 71062.16666666666,
+         "min": 68655.74577352472,
+         "name": "fast_path/10000",
+         "value": 69357.94802631579
+        },
+        {
+         "max": 4748.045241991416,
+         "min": 4735.146981699829,
+         "name": "replay/10",
+         "value": 4740.459076394007
+        },
+        {
+         "max": 60569.070003594534,
+         "min": 60324.93224299065,
+         "name": "replay/100",
+         "value": 60387.9945482866
+        },
+        {
+         "max": 1384224.6866666665,
+         "min": 1374976.759090909,
+         "name": "replay/1000",
+         "value": 1382333.6724999999
+        },
+        {
+         "max": 22366550.0,
+         "min": 22027695.8,
+         "name": "replay/10000",
+         "value": 22188335.4
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `text_merge` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "text_merge benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_transaction": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "storage_embedded",
+       "rows": [
+        {
+         "max": 403.05116573737627,
+         "min": 340.8606121356403,
+         "name": "get_from_pending",
+         "value": 374.47948460928035
+        },
+        {
+         "max": 229.00799933134047,
+         "min": 225.13861824189027,
+         "name": "get_from_tree",
+         "value": 226.80265934200406
+        },
+        {
+         "max": 226448.1431060606,
+         "min": 207064.5670437406,
+         "name": "keys_only_scan_1000",
+         "value": 210782.48148148146
+        },
+        {
+         "max": 4093276.3125,
+         "min": 3955946.5868055555,
+         "name": "random_get_1000",
+         "value": 4051593.1071428573
+        },
+        {
+         "max": 18802.49899952919,
+         "min": 17967.906779661018,
+         "name": "sequential_scan_100",
+         "value": 18152.833467850418
+        },
+        {
+         "max": 159233.27,
+         "min": 150490.15517555858,
+         "name": "sequential_scan_1000",
+         "value": 150953.60524746572
+        },
+        {
+         "max": 197370.36510416667,
+         "min": 193879.7003205128,
+         "name": "set_single",
+         "value": 194839.13043114974
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "storage_memory",
+       "rows": [
+        {
+         "max": 410.8920155390349,
+         "min": 324.66559374183953,
+         "name": "get_from_pending",
+         "value": 387.6245507403244
+        },
+        {
+         "max": 224.49096456802494,
+         "min": 222.87416128553403,
+         "name": "get_from_tree",
+         "value": 223.64261784752767
+        },
+        {
+         "max": 146583.44576504122,
+         "min": 131360.28186423506,
+         "name": "keys_only_scan_1000",
+         "value": 133684.75531914894
+        },
+        {
+         "max": 558174.7350574713,
+         "min": 550980.8611111111,
+         "name": "random_get_1000",
+         "value": 552802.8352272727
+        },
+        {
+         "max": 20021.72034955392,
+         "min": 19279.10027928085,
+         "name": "sequential_scan_100",
+         "value": 19559.223445940806
+        },
+        {
+         "max": 146409.4219858156,
+         "min": 134877.1739361702,
+         "name": "sequential_scan_1000",
+         "value": 136887.28578992974
+        },
+        {
+         "max": 1263.449185833503,
+         "min": 1189.0158077263968,
+         "name": "set_single",
+         "value": 1240.0227210607427
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "storage_server",
+       "rows": [
+        {
+         "max": 322.0154818640451,
+         "min": 290.79514095614115,
+         "name": "get_from_pending",
+         "value": 299.1133164737709
+        },
+        {
+         "max": 224.13914910312582,
+         "min": 222.8717511421163,
+         "name": "get_from_tree",
+         "value": 223.11848910223407
+        },
+        {
+         "max": 201740.48867753625,
+         "min": 198464.84920634923,
+         "name": "keys_only_scan_1000",
+         "value": 200526.3072916667
+        },
+        {
+         "max": 193386.56158730158,
+         "min": 190995.8033910534,
+         "name": "random_get_1000",
+         "value": 191987.69850392264
+        },
+        {
+         "max": 21029.376964415394,
+         "min": 20593.098243464054,
+         "name": "sequential_scan_100",
+         "value": 20816.978867102396
+        },
+        {
+         "max": 210201.71868686867,
+         "min": 203425.56553030305,
+         "name": "sequential_scan_1000",
+         "value": 208328.37028775824
+        },
+        {
+         "max": 198602.79256854256,
+         "min": 195863.8806116723,
+         "name": "set_single",
+         "value": 196938.04315886134
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `transaction` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "transaction benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_transport": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "query_context",
+       "rows": [
+        {
+         "max": 7244.837388244037,
+         "min": 7221.359997973042,
+         "name": "fast_path",
+         "value": 7236.47986646309
+        },
+        {
+         "max": 7286.4999458920865,
+         "min": 7215.833472686733,
+         "name": "spawn_blocking_nac",
+         "value": 7279.932922874227
+        },
+        {
+         "max": 7354.459704880817,
+         "min": 7337.6238649262195,
+         "name": "spawn_blocking_signing",
+         "value": 7343.409464967495
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "transport",
+       "rows": [
+        {
+         "max": 91.2562606909706,
+         "min": 90.3398455501349,
+         "name": "executor_direct",
+         "value": 90.93674483670056
+        },
+        {
+         "max": 7151.655604883463,
+         "min": 7123.86506174797,
+         "name": "router_bare",
+         "value": 7132.800277469479
+        },
+        {
+         "max": 31935.994401225835,
+         "min": 28425.384405940596,
+         "name": "router_with_middleware",
+         "value": 29728.066673013454
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `transport` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "transport benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_vector_mutations": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "build",
+       "rows": [
+        {
+         "max": 1152665724.5,
+         "min": 1147352103.5,
+         "name": "diskann",
+         "value": 1148575669.5
+        },
+        {
+         "max": 75164256.0,
+         "min": 73881743.875,
+         "name": "ivfflat",
+         "value": 73994321.53333333
+        },
+        {
+         "max": 914292475.5,
+         "min": 911782403.5,
+         "name": "ivfpq",
+         "value": 912643711.5
+        },
+        {
+         "max": 15222714.65,
+         "min": 15174204.791666666,
+         "name": "ssg",
+         "value": 15201489.104166668
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "bulk_load",
+       "rows": [
+        {
+         "max": 671777.9847560975,
+         "min": 668996.9903455285,
+         "name": "diskann",
+         "value": 669765.183197832
+        },
+        {
+         "max": 566888.0438596491,
+         "min": 563946.0368421052,
+         "name": "flat",
+         "value": 564621.2864661654
+        },
+        {
+         "max": 455207183.0,
+         "min": 452600396.0,
+         "name": "hnsw",
+         "value": 454339317.5
+        },
+        {
+         "max": 680937.788580247,
+         "min": 678401.2937487753,
+         "name": "ivfflat",
+         "value": 679223.179526749
+        },
+        {
+         "max": 669554.941395664,
+         "min": 668159.5106707318,
+         "name": "ivfpq",
+         "value": 668851.3796747967
+        },
+        {
+         "max": 456095676.5,
+         "min": 455403141.5,
+         "name": "ssg",
+         "value": 455733971.0
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "delete",
+       "rows": [
+        {
+         "max": 20790.039542275907,
+         "min": 20020.217692452476,
+         "name": "diskann",
+         "value": 20229.560606060608
+        },
+        {
+         "max": 38725.48565696491,
+         "min": 38431.59175084175,
+         "name": "diskann[built]",
+         "value": 38562.88219977553
+        },
+        {
+         "max": 15304.094829178208,
+         "min": 14909.147538986355,
+         "name": "flat",
+         "value": 15162.87620614035
+        },
+        {
+         "max": 29950.451182795696,
+         "min": 29498.51464019851,
+         "name": "hnsw",
+         "value": 29764.156239388794
+        },
+        {
+         "max": 23429.91239316239,
+         "min": 23299.99859775641,
+         "name": "ivfflat",
+         "value": 23329.15544871795
+        },
+        {
+         "max": 596812.9966931217,
+         "min": 595666.6468253968,
+         "name": "ivfflat[built]",
+         "value": 596101.8624338624
+        },
+        {
+         "max": 25100.925412087912,
+         "min": 24514.157092907095,
+         "name": "ivfpq",
+         "value": 24684.781376518218
+        },
+        {
+         "max": 2929657.2722222223,
+         "min": 2915354.461309524,
+         "name": "ivfpq[built]",
+         "value": 2927710.542328042
+        },
+        {
+         "max": 31315.027980364655,
+         "min": 30855.514823348694,
+         "name": "ssg",
+         "value": 31232.592812676852
+        },
+        {
+         "max": 31862.625,
+         "min": 31425.06423611111,
+         "name": "ssg[built]",
+         "value": 31663.553472222222
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "insert",
+       "rows": [
+        {
+         "max": 33474.834615384614,
+         "min": 33084.804603174605,
+         "name": "diskann",
+         "value": 33154.2185
+        },
+        {
+         "max": 1136007.9807058824,
+         "min": 1134351.3136752136,
+         "name": "diskann[built]",
+         "value": 1134940.1175213675
+        },
+        {
+         "max": 27087.657553084522,
+         "min": 27001.032038475765,
+         "name": "flat",
+         "value": 27025.354388843312
+        },
+        {
+         "max": 30584286.0,
+         "min": 30444264.125,
+         "name": "hnsw",
+         "value": 30521969.125
+        },
+        {
+         "max": 33871.596008846886,
+         "min": 33302.45650510204,
+         "name": "ivfflat",
+         "value": 33480.680272108846
+        },
+        {
+         "max": 621589.289936401,
+         "min": 620757.6233019854,
+         "name": "ivfflat[built]",
+         "value": 621404.0883597884
+        },
+        {
+         "max": 33430.626700680274,
+         "min": 33342.39009168885,
+         "name": "ivfpq",
+         "value": 33364.17747813411
+        },
+        {
+         "max": 2932147.104166667,
+         "min": 2924947.1833333336,
+         "name": "ivfpq[built]",
+         "value": 2929102.8333333335
+        },
+        {
+         "max": 30587063.5,
+         "min": 30538859.75,
+         "name": "ssg",
+         "value": 30558794.5
+        },
+        {
+         "max": 31969691.625,
+         "min": 31932841.75,
+         "name": "ssg[built]",
+         "value": 31955680.375
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "insert_through_index",
+       "rows": [
+        {
+         "max": 326551.8008522727,
+         "min": 323067.3918115942,
+         "name": "ivfpq[built]/768",
+         "value": 324617.73020833335
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "merge",
+       "rows": [
+        {
+         "max": 20322786.023809522,
+         "min": 20254440.18888889,
+         "name": "diskann",
+         "value": 20278871.9
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "update",
+       "rows": [
+        {
+         "max": 32182.763181818184,
+         "min": 32058.57024509804,
+         "name": "diskann",
+         "value": 32081.684761904762
+        },
+        {
+         "max": 1145745.737815126,
+         "min": 1142578.705,
+         "name": "diskann[built]",
+         "value": 1143999.0499999998
+        },
+        {
+         "max": 27043.73946886447,
+         "min": 26931.633653846155,
+         "name": "flat",
+         "value": 27011.544689685314
+        },
+        {
+         "max": 30805462.375,
+         "min": 30748583.375,
+         "name": "hnsw",
+         "value": 30777776.25
+        },
+        {
+         "max": 32022.152087198516,
+         "min": 31815.06731263934,
+         "name": "ivfflat",
+         "value": 31927.02989616899
+        },
+        {
+         "max": 1153377.3617391305,
+         "min": 1152109.079090909,
+         "name": "ivfflat[built]",
+         "value": 1152561.4368421054
+        },
+        {
+         "max": 32645.481390374334,
+         "min": 32212.357833333335,
+         "name": "ivfpq",
+         "value": 32476.403928571428
+        },
+        {
+         "max": 5793058.701388889,
+         "min": 5778893.954166667,
+         "name": "ivfpq[built]",
+         "value": 5788185.541666666
+        },
+        {
+         "max": 30788421.5,
+         "min": 30697628.0,
+         "name": "ssg",
+         "value": 30758199.375
+        },
+        {
+         "max": 30932732.875,
+         "min": 30870910.75,
+         "name": "ssg[built]",
+         "value": 30902201.25
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `vector_mutations` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "vector_mutations benchmarks",
+     "trust": "contaminated"
+    },
+    "criterion_vector_search": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "kernel[avx512f]",
+       "rows": [
+        {
+         "max": 51.99741998302511,
+         "min": 51.913786015681794,
+         "name": "cosine_f32/128",
+         "value": 51.95834775167722
+        },
+        {
+         "max": 17.891942539664125,
+         "min": 17.86637736571589,
+         "name": "cosine_f32/16",
+         "value": 17.875030727630282
+        },
+        {
+         "max": 282.796151007533,
+         "min": 282.4217187464887,
+         "name": "cosine_f32/768",
+         "value": 282.6507039943696
+        },
+        {
+         "max": 17.049290236001546,
+         "min": 17.01020953095665,
+         "name": "cosine_normalized_f32/128",
+         "value": 17.02023010765911
+        },
+        {
+         "max": 5.826604162840913,
+         "min": 5.815408899740512,
+         "name": "cosine_normalized_f32/16",
+         "value": 5.820939218110116
+        },
+        {
+         "max": 93.7181691576504,
+         "min": 93.64604654718053,
+         "name": "cosine_normalized_f32/768",
+         "value": 93.69069439254201
+        },
+        {
+         "max": 16.082148360841735,
+         "min": 16.060574637113987,
+         "name": "dot_f32/128",
+         "value": 16.065088868409823
+        },
+        {
+         "max": 4.033972197424808,
+         "min": 4.02602319507645,
+         "name": "dot_f32/16",
+         "value": 4.028621734873256
+        },
+        {
+         "max": 91.38137040554068,
+         "min": 91.31916918217416,
+         "name": "dot_f32/768",
+         "value": 91.3490845210521
+        },
+        {
+         "max": 12.549419846236326,
+         "min": 12.543974899164507,
+         "name": "dot_f64/128",
+         "value": 12.547157553512891
+        },
+        {
+         "max": 3.567744829600769,
+         "min": 3.556643219875202,
+         "name": "dot_f64/16",
+         "value": 3.5599756369299644
+        },
+        {
+         "max": 78.54208053844468,
+         "min": 78.45472690788387,
+         "name": "dot_f64/768",
+         "value": 78.5157030758368
+        },
+        {
+         "max": 18.69023382980049,
+         "min": 18.654443220463293,
+         "name": "squared_euclidean_f32/128",
+         "value": 18.673202825656272
+        },
+        {
+         "max": 4.3202820728726605,
+         "min": 4.309949373975608,
+         "name": "squared_euclidean_f32/16",
+         "value": 4.315998679089771
+        },
+        {
+         "max": 105.19565793737429,
+         "min": 105.03479642211252,
+         "name": "squared_euclidean_f32/768",
+         "value": 105.13958048501183
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "kernel_tiers[768]",
+       "rows": [
+        {
+         "max": 173.6619640542616,
+         "min": 173.47932542886622,
+         "name": "dot_f32/avx2,fma",
+         "value": 173.5660033979276
+        },
+        {
+         "max": 92.24437975968861,
+         "min": 92.07591407645589,
+         "name": "dot_f32/avx512f",
+         "value": 92.16544205348063
+        },
+        {
+         "max": 624.0810338479099,
+         "min": 623.6873767639668,
+         "name": "dot_f32/scalar",
+         "value": 623.8965548924218
+        },
+        {
+         "max": 299.1744987323377,
+         "min": 298.91757103546365,
+         "name": "dot_f32/sse2",
+         "value": 299.0115390391385
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "search",
+       "rows": [
+        {
+         "max": 118973.35738636364,
+         "min": 118750.73490909091,
+         "name": "diskann",
+         "value": 118893.52392344497
+        },
+        {
+         "max": 273281.2791176471,
+         "min": 272458.23,
+         "name": "flat",
+         "value": 272673.3422727273
+        },
+        {
+         "max": 144907.89118165785,
+         "min": 144622.03995726496,
+         "name": "hnsw",
+         "value": 144785.93138083737
+        },
+        {
+         "max": 22754.91543154762,
+         "min": 22727.66375510204,
+         "name": "ivfflat",
+         "value": 22739.055802665895
+        },
+        {
+         "max": 193021.73384866767,
+         "min": 192185.4244281046,
+         "name": "ivfpq",
+         "value": 192519.6864219372
+        },
+        {
+         "max": 138955.18875156448,
+         "min": 138607.34522658194,
+         "name": "ssg",
+         "value": 138793.9677214039
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "search_by_corpus",
+       "rows": [
+        {
+         "max": 126492.64594083247,
+         "min": 125553.5642248897,
+         "name": "diskann/1000",
+         "value": 126144.1553362573
+        },
+        {
+         "max": 116223.38908246225,
+         "min": 115848.65311653118,
+         "name": "diskann/20000",
+         "value": 116085.56361788619
+        },
+        {
+         "max": 138935.9761442441,
+         "min": 138446.53130354083,
+         "name": "diskann/5000",
+         "value": 138748.32133432908
+        },
+        {
+         "max": 54284.09650522317,
+         "min": 53988.917103909465,
+         "name": "flat/1000",
+         "value": 54080.5649691358
+        },
+        {
+         "max": 1151589.8153846154,
+         "min": 1147068.6153846155,
+         "name": "flat/20000",
+         "value": 1149688.210837745
+        },
+        {
+         "max": 270275.1455525606,
+         "min": 269479.7009433962,
+         "name": "flat/5000",
+         "value": 269705.44103773584
+        },
+        {
+         "max": 106951.0407960199,
+         "min": 106544.30503121647,
+         "name": "hnsw/1000",
+         "value": 106655.22777777778
+        },
+        {
+         "max": 242753.29788011697,
+         "min": 241228.49464285714,
+         "name": "hnsw/20000",
+         "value": 241834.6538888889
+        },
+        {
+         "max": 169653.48273809525,
+         "min": 168690.64272486774,
+         "name": "hnsw/5000",
+         "value": 169347.76428571428
+        },
+        {
+         "max": 10712.953558052435,
+         "min": 10691.857781939243,
+         "name": "ivfflat/1000",
+         "value": 10699.680802568218
+        },
+        {
+         "max": 63303.703272498424,
+         "min": 63120.84221732746,
+         "name": "ivfflat/20000",
+         "value": 63199.18181818182
+        },
+        {
+         "max": 25863.653405666064,
+         "min": 25816.650438169425,
+         "name": "ivfflat/5000",
+         "value": 25841.621252498335
+        },
+        {
+         "max": 179921.64702380955,
+         "min": 179476.746875,
+         "name": "ivfpq/1000",
+         "value": 179653.77437499998
+        },
+        {
+         "max": 262320.47799043066,
+         "min": 260693.90079545457,
+         "name": "ivfpq/20000",
+         "value": 261046.5981634527
+        },
+        {
+         "max": 196845.88693194173,
+         "min": 196041.32380834315,
+         "name": "ivfpq/5000",
+         "value": 196435.4196347032
+        },
+        {
+         "max": 127840.14430187037,
+         "min": 126994.49772727273,
+         "name": "ssg/1000",
+         "value": 127163.6356060606
+        },
+        {
+         "max": 179098.08862433862,
+         "min": 178634.90333549923,
+         "name": "ssg/20000",
+         "value": 178880.91121399176
+        },
+        {
+         "max": 183949.94247538678,
+         "min": 183159.14065681153,
+         "name": "ssg/5000",
+         "value": 183432.67208527648
+        }
+       ],
+       "unit": "ns/iter"
+      },
+      {
+       "lower_is_better": true,
+       "name": "search_through_index",
+       "rows": [
+        {
+         "max": 1178436.5625,
+         "min": 1173475.983173077,
+         "name": "ivfpq/768",
+         "value": 1175099.8261278195
+        }
+       ],
+       "unit": "ns/iter"
+      }
+     ],
+     "note": "Median wall time per iteration, harvested from the sample sets criterion wrote for the `vector_search` bench target. Lower is better. Criterion was driven with `--warm-up-time 1 --measurement-time 3 --sample-size 30`.",
+     "title": "vector_search benchmarks",
+     "trust": "contaminated"
+    },
+    "disk_footprint": {
+     "deterministic": true,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "on disk, server",
+       "rows": [
+        {
+         "name": "0 collections",
+         "value": 836.0,
+         "x": 0.0
+        },
+        {
+         "name": "1 collections",
+         "value": 220132.0,
+         "x": 1.0
+        },
+        {
+         "name": "10 collections",
+         "value": 221055.0,
+         "x": 10.0
+        },
+        {
+         "name": "100 collections",
+         "value": 243852.0,
+         "x": 100.0
+        }
+       ],
+       "unit": "B",
+       "x_label": "collections"
+      },
+      {
+       "lower_is_better": true,
+       "name": "on disk, embedded",
+       "rows": [
+        {
+         "name": "0 collections",
+         "value": 836.0,
+         "x": 0.0
+        },
+        {
+         "name": "1 collections",
+         "value": 241236.0,
+         "x": 1.0
+        },
+        {
+         "name": "10 collections",
+         "value": 244448.0,
+         "x": 10.0
+        },
+        {
+         "name": "100 collections",
+         "value": 265763.0,
+         "x": 100.0
+        }
+       ],
+       "unit": "B",
+       "x_label": "collections"
+      }
+     ],
+     "note": "What a database occupies after 200 documents, per store profile and collection count. Blocks, heads, indexes and the log, everything the directory holds.",
+     "title": "Disk footprint",
+     "trust": "clean"
+    },
+    "document_ops": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": false,
+       "name": "create",
+       "rows": [
+        {
+         "max": 27414.621615853437,
+         "min": 25429.6207273787,
+         "name": "4 fields",
+         "value": 27094.705206897877,
+         "x": 4.0
+        },
+        {
+         "max": 11909.802303236667,
+         "min": 11318.50959450251,
+         "name": "16 fields",
+         "value": 11722.626480252678,
+         "x": 16.0
+        },
+        {
+         "max": 3284.2070153256373,
+         "min": 2957.7186429915882,
+         "name": "64 fields",
+         "value": 3186.420952400192,
+         "x": 64.0
+        }
+       ],
+       "unit": "ops/s",
+       "x_label": "fields"
+      },
+      {
+       "lower_is_better": false,
+       "name": "read",
+       "rows": [
+        {
+         "max": 233015.50019107273,
+         "min": 222575.12745208238,
+         "name": "4 fields",
+         "value": 225849.87307237132,
+         "x": 4.0
+        },
+        {
+         "max": 127080.95056551023,
+         "min": 124466.42798154661,
+         "name": "16 fields",
+         "value": 125661.52941390834,
+         "x": 16.0
+        },
+        {
+         "max": 38157.50387346361,
+         "min": 35428.31593980162,
+         "name": "64 fields",
+         "value": 36629.01021271748,
+         "x": 64.0
+        }
+       ],
+       "unit": "ops/s",
+       "x_label": "fields"
+      }
+     ],
+     "note": "Documents created and read back one at a time, 200 of each, through the same mutator and fetcher every platform uses. Measured with a wall clock natively and with `performance.now()` in the browser, so the two are the same operation counted the same way.",
+     "title": "Document operations",
+     "trust": "contaminated"
+    },
+    "memory": {
+     "deterministic": true,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "server profile",
+       "rows": [
+        {
+         "name": "baseline",
+         "value": 16199680.0
+        },
+        {
+         "name": "open",
+         "value": 20496384.0
+        },
+        {
+         "name": "seed",
+         "value": 37359616.0
+        },
+        {
+         "name": "scan",
+         "value": 45907968.0
+        }
+       ],
+       "unit": "B"
+      },
+      {
+       "lower_is_better": true,
+       "name": "embedded profile",
+       "rows": [
+        {
+         "name": "baseline",
+         "value": 16031744.0
+        },
+        {
+         "name": "open",
+         "value": 20418560.0
+        },
+        {
+         "name": "seed",
+         "value": 29036544.0
+        },
+        {
+         "name": "scan",
+         "value": 30457856.0
+        }
+       ],
+       "unit": "B"
+      },
+      {
+       "lower_is_better": true,
+       "name": "memory profile",
+       "rows": [
+        {
+         "name": "baseline",
+         "value": 16293888.0
+        },
+        {
+         "name": "open",
+         "value": 20512768.0
+        },
+        {
+         "name": "seed",
+         "value": 54095872.0
+        },
+        {
+         "name": "scan",
+         "value": 58515456.0
+        }
+       ],
+       "unit": "B"
+      }
+     ],
+     "note": "Peak resident set size of a process that ran one workload and nothing else. Each row is its own child process, because peak RSS only ever rises and cases sharing a process would all report the largest of them. baseline is the process floor, to be subtracted from the rest; open is an empty database opened and closed; seed writes 1000 documents; scan writes them and reads every one back.",
+     "title": "Resident memory",
+     "trust": "clean"
+    },
+    "purge_baseline_merges": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": false,
+       "name": "commits",
+       "rows": [
+        {
+         "max": 1065.4412760190853,
+         "min": 845.5961119966419,
+         "name": "1",
+         "value": 914.019656221212,
+         "x": 1.0
+        },
+        {
+         "max": 1773.451158876684,
+         "min": 1168.060169197565,
+         "name": "16",
+         "value": 1629.9459099982564,
+         "x": 16.0
+        }
+       ],
+       "unit": "commits/s",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "storage conflicts",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        }
+       ],
+       "unit": "conflicts/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "engine retries",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        }
+       ],
+       "unit": "retries/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "latency p50",
+       "rows": [
+        {
+         "max": 0.608686,
+         "min": 0.582267,
+         "name": "1",
+         "value": 0.598371,
+         "x": 1.0
+        },
+        {
+         "max": 0.637099,
+         "min": 0.528796,
+         "name": "16",
+         "value": 0.572541,
+         "x": 16.0
+        }
+       ],
+       "unit": "ms",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "latency p99",
+       "rows": [
+        {
+         "max": 18.094674,
+         "min": 9.54691,
+         "name": "1",
+         "value": 10.114844,
+         "x": 1.0
+        },
+        {
+         "max": 140.748192,
+         "min": 112.421425,
+         "name": "16",
+         "value": 121.201281,
+         "x": 16.0
+        }
+       ],
+       "unit": "ms",
+       "x_label": "writers"
+      }
+     ],
+     "note": "On-disk Immediate durability; 128 documents per writer; 3 fresh-store repetitions. merges: each writer merges its own new documents through DbMergeHandler::handle_block. truncates: one filtered truncate removes every writer's documents (a collection runs one truncate at a time), so writers scales its size.",
+     "title": "Purge data paths: merges",
+     "trust": "contaminated"
+    },
+    "purge_baseline_truncates": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": false,
+       "name": "commits",
+       "rows": [
+        {
+         "max": 6466.715487000513,
+         "min": 6355.719700844219,
+         "name": "1",
+         "value": 6430.66753192638,
+         "x": 1.0
+        },
+        {
+         "max": 805.8792869866691,
+         "min": 778.6811636821188,
+         "name": "16",
+         "value": 796.9754008355186,
+         "x": 16.0
+        }
+       ],
+       "unit": "commits/s",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "storage conflicts",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        }
+       ],
+       "unit": "conflicts/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "engine retries",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        }
+       ],
+       "unit": "retries/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "latency p50",
+       "rows": [
+        {
+         "max": 20.071002,
+         "min": 19.738302,
+         "name": "1",
+         "value": 19.824536000000002,
+         "x": 1.0
+        },
+        {
+         "max": 2629.995731,
+         "min": 2541.247458,
+         "name": "16",
+         "value": 2569.6205010000003,
+         "x": 16.0
+        }
+       ],
+       "unit": "ms",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "latency p99",
+       "rows": [
+        {
+         "max": 20.071002,
+         "min": 19.738302,
+         "name": "1",
+         "value": 19.824536000000002,
+         "x": 1.0
+        },
+        {
+         "max": 2629.995731,
+         "min": 2541.247458,
+         "name": "16",
+         "value": 2569.6205010000003,
+         "x": 16.0
+        }
+       ],
+       "unit": "ms",
+       "x_label": "writers"
+      }
+     ],
+     "note": "On-disk Immediate durability; 128 documents per writer; 3 fresh-store repetitions. merges: each writer merges its own new documents through DbMergeHandler::handle_block. truncates: one filtered truncate removes every writer's documents (a collection runs one truncate at a time), so writers scales its size.",
+     "title": "Purge data paths: truncates",
+     "trust": "contaminated"
+    },
+    "read_baseline_page": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": false,
+       "name": "reads",
+       "rows": [
+        {
+         "max": 4289.569446489332,
+         "min": 4263.57147366072,
+         "name": "1",
+         "value": 4267.207037317826,
+         "x": 1.0
+        },
+        {
+         "max": 8193.379584867742,
+         "min": 8164.308592032652,
+         "name": "4",
+         "value": 8173.247709118585,
+         "x": 4.0
+        },
+        {
+         "max": 8230.632010469324,
+         "min": 8219.336283688774,
+         "name": "16",
+         "value": 8224.773836151468,
+         "x": 16.0
+        },
+        {
+         "max": 8216.039341345997,
+         "min": 8204.575183150371,
+         "name": "64",
+         "value": 8214.221337453166,
+         "x": 64.0
+        }
+       ],
+       "unit": "reads/s",
+       "x_label": "readers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "latency p50",
+       "rows": [
+        {
+         "max": 0.222897,
+         "min": 0.222035,
+         "name": "1",
+         "value": 0.222066,
+         "x": 1.0
+        },
+        {
+         "max": 0.48157099999999997,
+         "min": 0.48114,
+         "name": "4",
+         "value": 0.481541,
+         "x": 4.0
+        },
+        {
+         "max": 1.932667,
+         "min": 1.931294,
+         "name": "16",
+         "value": 1.932566,
+         "x": 16.0
+        },
+        {
+         "max": 7.7702409999999995,
+         "min": 7.757649,
+         "name": "64",
+         "value": 7.761706,
+         "x": 64.0
+        }
+       ],
+       "unit": "ms",
+       "x_label": "readers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "latency p99",
+       "rows": [
+        {
+         "max": 0.30258599999999997,
+         "min": 0.271588,
+         "name": "1",
+         "value": 0.27781,
+         "x": 1.0
+        },
+        {
+         "max": 0.5571830000000001,
+         "min": 0.544849,
+         "name": "4",
+         "value": 0.552273,
+         "x": 4.0
+        },
+        {
+         "max": 2.115549,
+         "min": 2.072258,
+         "name": "16",
+         "value": 2.088248,
+         "x": 16.0
+        },
+        {
+         "max": 8.698297,
+         "min": 8.46441,
+         "name": "64",
+         "value": 8.573386000000001,
+         "x": 64.0
+        }
+       ],
+       "unit": "ms",
+       "x_label": "readers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "pool tasks",
+       "rows": [
+        {
+         "max": 3.0,
+         "min": 3.0,
+         "name": "1",
+         "value": 3.0,
+         "x": 1.0
+        },
+        {
+         "max": 3.0,
+         "min": 3.0,
+         "name": "4",
+         "value": 3.0,
+         "x": 4.0
+        },
+        {
+         "max": 3.0,
+         "min": 3.0,
+         "name": "16",
+         "value": 3.0,
+         "x": 16.0
+        },
+        {
+         "max": 3.0,
+         "min": 3.0,
+         "name": "64",
+         "value": 3.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "tasks/read",
+       "x_label": "readers"
+      }
+     ],
+     "note": "On-disk store on the worker pool, 1024 documents, warmed; 1024 requests per reader; 3 repetitions. Requests go through the HTTP router as a server builds it, without sockets, signing or ACP. Pool tasks count every task the pool started per read.",
+     "title": "Concurrent reads: page",
+     "trust": "contaminated"
+    },
+    "read_baseline_point": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": false,
+       "name": "reads",
+       "rows": [
+        {
+         "max": 5350.9448815001115,
+         "min": 5335.674749689377,
+         "name": "1",
+         "value": 5341.5715946907285,
+         "x": 1.0
+        },
+        {
+         "max": 12951.47834564203,
+         "min": 12430.707832485214,
+         "name": "4",
+         "value": 12483.372709850837,
+         "x": 4.0
+        },
+        {
+         "max": 12784.086239610557,
+         "min": 12488.210307034924,
+         "name": "16",
+         "value": 12680.398314684357,
+         "x": 16.0
+        },
+        {
+         "max": 12729.688947946943,
+         "min": 12327.777952513472,
+         "name": "64",
+         "value": 12723.063673724562,
+         "x": 64.0
+        }
+       ],
+       "unit": "reads/s",
+       "x_label": "readers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "latency p50",
+       "rows": [
+        {
+         "max": 0.180127,
+         "min": 0.179657,
+         "name": "1",
+         "value": 0.179917,
+         "x": 1.0
+        },
+        {
+         "max": 0.31084100000000003,
+         "min": 0.30249600000000004,
+         "name": "4",
+         "value": 0.310281,
+         "x": 4.0
+        },
+        {
+         "max": 1.266219,
+         "min": 1.243177,
+         "name": "16",
+         "value": 1.250551,
+         "x": 16.0
+        },
+        {
+         "max": 5.050641,
+         "min": 5.00699,
+         "name": "64",
+         "value": 5.0082629999999995,
+         "x": 64.0
+        }
+       ],
+       "unit": "ms",
+       "x_label": "readers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "latency p99",
+       "rows": [
+        {
+         "max": 0.219411,
+         "min": 0.214551,
+         "name": "1",
+         "value": 0.21588400000000002,
+         "x": 1.0
+        },
+        {
+         "max": 0.394257,
+         "min": 0.368941,
+         "name": "4",
+         "value": 0.375212,
+         "x": 4.0
+        },
+        {
+         "max": 1.5834840000000001,
+         "min": 1.390412,
+         "name": "16",
+         "value": 1.497142,
+         "x": 16.0
+        },
+        {
+         "max": 7.1460930000000005,
+         "min": 5.423369,
+         "name": "64",
+         "value": 5.426996,
+         "x": 64.0
+        }
+       ],
+       "unit": "ms",
+       "x_label": "readers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "pool tasks",
+       "rows": [
+        {
+         "max": 3.0,
+         "min": 3.0,
+         "name": "1",
+         "value": 3.0,
+         "x": 1.0
+        },
+        {
+         "max": 3.0,
+         "min": 3.0,
+         "name": "4",
+         "value": 3.0,
+         "x": 4.0
+        },
+        {
+         "max": 3.0,
+         "min": 3.0,
+         "name": "16",
+         "value": 3.0,
+         "x": 16.0
+        },
+        {
+         "max": 3.0,
+         "min": 3.0,
+         "name": "64",
+         "value": 3.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "tasks/read",
+       "x_label": "readers"
+      }
+     ],
+     "note": "On-disk store on the worker pool, 1024 documents, warmed; 1024 requests per reader; 3 repetitions. Requests go through the HTTP router as a server builds it, without sockets, signing or ACP. Pool tasks count every task the pool started per read.",
+     "title": "Concurrent reads: point",
+     "trust": "contaminated"
+    },
+    "startup": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": true,
+       "name": "cold open, server",
+       "note": "Lower is better. The x axis is how many collections the open has to load.",
+       "rows": [
+        {
+         "max": 0.001194061,
+         "min": 0.000533121,
+         "name": "0 collections",
+         "value": 0.000567475,
+         "x": 0.0
+        },
+        {
+         "max": 0.001013392,
+         "min": 0.000765176,
+         "name": "1 collections",
+         "value": 0.000800752,
+         "x": 1.0
+        },
+        {
+         "max": 0.001129991,
+         "min": 0.001013332,
+         "name": "10 collections",
+         "value": 0.001041044,
+         "x": 10.0
+        },
+        {
+         "max": 0.003021601,
+         "min": 0.002876178,
+         "name": "100 collections",
+         "value": 0.002969473,
+         "x": 100.0
+        }
+       ],
+       "unit": "s",
+       "x_label": "collections"
+      },
+      {
+       "lower_is_better": true,
+       "name": "cold open, embedded",
+       "note": "Lower is better. The x axis is how many collections the open has to load.",
+       "rows": [
+        {
+         "max": 0.000598894,
+         "min": 0.000497473,
+         "name": "0 collections",
+         "value": 0.000547237,
+         "x": 0.0
+        },
+        {
+         "max": 0.001059939,
+         "min": 0.000764024,
+         "name": "1 collections",
+         "value": 0.000789612,
+         "x": 1.0
+        },
+        {
+         "max": 0.001398074,
+         "min": 0.001252851,
+         "name": "10 collections",
+         "value": 0.001303546,
+         "x": 10.0
+        },
+        {
+         "max": 0.008996514,
+         "min": 0.006196169,
+         "name": "100 collections",
+         "value": 0.006264417,
+         "x": 100.0
+        }
+       ],
+       "unit": "s",
+       "x_label": "collections"
+      }
+     ],
+     "note": "Cold open of a database already on disk: the store's recovery plus loading every collection. The largest collection carries 200 documents, so the open replays real content rather than an empty log.",
+     "title": "Startup",
+     "trust": "contaminated"
+    },
+    "write_baseline_counters_indexes": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": false,
+       "name": "commits",
+       "rows": [
+        {
+         "max": 1758.2756074624156,
+         "min": 1486.4457371270764,
+         "name": "1",
+         "value": 1665.85847586092,
+         "x": 1.0
+        },
+        {
+         "max": 2085.060223207774,
+         "min": 1293.2894920151732,
+         "name": "4",
+         "value": 1520.4960100313772,
+         "x": 4.0
+        },
+        {
+         "max": 975.5071895931354,
+         "min": 765.3166907680358,
+         "name": "16",
+         "value": 872.4815292937739,
+         "x": 16.0
+        },
+        {
+         "max": 234.3190327709,
+         "min": 207.33033096463734,
+         "name": "64",
+         "value": 220.82361435163617,
+         "x": 64.0
+        }
+       ],
+       "unit": "commits/s",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "storage conflicts",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.1171875,
+         "min": 0.080078125,
+         "name": "4",
+         "value": 0.109375,
+         "x": 4.0
+        },
+        {
+         "max": 0.23180263800683928,
+         "min": 0.21142578125,
+         "name": "16",
+         "value": 0.21875,
+         "x": 16.0
+        },
+        {
+         "max": 0.8361859712454098,
+         "min": 0.6795304108904708,
+         "name": "64",
+         "value": 0.7420474979847461,
+         "x": 64.0
+        }
+       ],
+       "unit": "conflicts/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "client conflicts",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "conflicts/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "HTTP retries (retired)",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "retries/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "embedded retries (retired)",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "retries/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "short ID reservation retries (retired)",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "retries/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "merge retries (retired)",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "retries/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "engine retries",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.1171875,
+         "min": 0.080078125,
+         "name": "4",
+         "value": 0.109375,
+         "x": 4.0
+        },
+        {
+         "max": 0.231314118221788,
+         "min": 0.21142578125,
+         "name": "16",
+         "value": 0.21875,
+         "x": 16.0
+        },
+        {
+         "max": 0.8164560901226116,
+         "min": 0.6564256275758711,
+         "name": "64",
+         "value": 0.726111490047746,
+         "x": 64.0
+        }
+       ],
+       "unit": "retries/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "push marker retries",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "retries/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "client conflict requests",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "requests",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "engine exhausted requests",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 2.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 370.0,
+         "min": 257.0,
+         "name": "64",
+         "value": 317.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "requests",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "latency p50",
+       "rows": [
+        {
+         "max": 0.531301,
+         "min": 0.511672,
+         "name": "1",
+         "value": 0.527906,
+         "x": 1.0
+        },
+        {
+         "max": 1.018017,
+         "min": 0.9647870000000001,
+         "name": "4",
+         "value": 0.971237,
+         "x": 4.0
+        },
+        {
+         "max": 2.813264,
+         "min": 2.588694,
+         "name": "16",
+         "value": 2.604497,
+         "x": 16.0
+        },
+        {
+         "max": 161.772853,
+         "min": 95.95027999999999,
+         "name": "64",
+         "value": 143.57407899999998,
+         "x": 64.0
+        }
+       ],
+       "unit": "ms",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "latency p99",
+       "rows": [
+        {
+         "max": 7.804431,
+         "min": 0.9775070000000001,
+         "name": "1",
+         "value": 1.459265,
+         "x": 1.0
+        },
+        {
+         "max": 54.909092,
+         "min": 9.960329999999999,
+         "name": "4",
+         "value": 16.125525000000003,
+         "x": 4.0
+        },
+        {
+         "max": 221.130965,
+         "min": 96.366279,
+         "name": "16",
+         "value": 118.43390400000001,
+         "x": 16.0
+        },
+        {
+         "max": 1540.140654,
+         "min": 1401.971029,
+         "name": "64",
+         "value": 1527.9003530000002,
+         "x": 64.0
+        }
+       ],
+       "unit": "ms",
+       "x_label": "writers"
+      }
+     ],
+     "note": "On-disk Immediate durability; 256 requests per writer; 3 fresh-store repetitions. HTTP execution without sockets, signing or ACP. Latencies include client-conflict and engine-exhausted requests. Storage conflicts exclude pre-commit query conflicts; client conflicts count requests returned with a transaction conflict. Engine retries count replay executions after a losing attempt; exhaustion is reported separately. Retired retry layers report zero by definition.",
+     "title": "Concurrent writes: counters_indexes",
+     "trust": "contaminated"
+    },
+    "write_baseline_creates": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": false,
+       "name": "commits",
+       "rows": [
+        {
+         "max": 2118.2356440840517,
+         "min": 1507.5662423576327,
+         "name": "1",
+         "value": 1848.746655564943,
+         "x": 1.0
+        },
+        {
+         "max": 4362.23059764817,
+         "min": 3030.8929924759505,
+         "name": "4",
+         "value": 3393.4991340230963,
+         "x": 4.0
+        },
+        {
+         "max": 3743.094151213247,
+         "min": 1502.439379981401,
+         "name": "16",
+         "value": 3336.302585617643,
+         "x": 16.0
+        },
+        {
+         "max": 4462.451517308867,
+         "min": 3323.2172887153583,
+         "name": "64",
+         "value": 3783.528942318484,
+         "x": 64.0
+        }
+       ],
+       "unit": "commits/s",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "storage conflicts",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "conflicts/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "client conflicts",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "conflicts/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "HTTP retries (retired)",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "retries/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "embedded retries (retired)",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "retries/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "short ID reservation retries (retired)",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "retries/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "merge retries (retired)",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "retries/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "engine retries",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "retries/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "push marker retries",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "retries/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "client conflict requests",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "requests",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "engine exhausted requests",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "requests",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "latency p50",
+       "rows": [
+        {
+         "max": 0.45110300000000003,
+         "min": 0.409641,
+         "name": "1",
+         "value": 0.43606,
+         "x": 1.0
+        },
+        {
+         "max": 0.6068020000000001,
+         "min": 0.596376,
+         "name": "4",
+         "value": 0.605209,
+         "x": 4.0
+        },
+        {
+         "max": 1.765523,
+         "min": 0.682292,
+         "name": "16",
+         "value": 1.5524600000000002,
+         "x": 16.0
+        },
+        {
+         "max": 10.299498,
+         "min": 1.5407330000000001,
+         "name": "64",
+         "value": 1.569836,
+         "x": 64.0
+        }
+       ],
+       "unit": "ms",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "latency p99",
+       "rows": [
+        {
+         "max": 9.939948000000001,
+         "min": 1.384894,
+         "name": "1",
+         "value": 2.0241830000000003,
+         "x": 1.0
+        },
+        {
+         "max": 8.673709,
+         "min": 3.613216,
+         "name": "4",
+         "value": 5.364548999999999,
+         "x": 4.0
+        },
+        {
+         "max": 169.603493,
+         "min": 22.007332,
+         "name": "16",
+         "value": 36.086349,
+         "x": 16.0
+        },
+        {
+         "max": 192.265562,
+         "min": 55.298501,
+         "name": "64",
+         "value": 160.938209,
+         "x": 64.0
+        }
+       ],
+       "unit": "ms",
+       "x_label": "writers"
+      }
+     ],
+     "note": "On-disk Immediate durability; 256 requests per writer; 3 fresh-store repetitions. HTTP execution without sockets, signing or ACP. Latencies include client-conflict and engine-exhausted requests. Storage conflicts exclude pre-commit query conflicts; client conflicts count requests returned with a transaction conflict. Engine retries count replay executions after a losing attempt; exhaustion is reported separately. Retired retry layers report zero by definition.",
+     "title": "Concurrent writes: creates",
+     "trust": "contaminated"
+    },
+    "write_baseline_shared_updates": {
+     "deterministic": false,
+     "groups": [
+      {
+       "lower_is_better": false,
+       "name": "commits",
+       "rows": [
+        {
+         "max": 1695.523089835443,
+         "min": 484.4262193208523,
+         "name": "1",
+         "value": 1582.6929264191901,
+         "x": 1.0
+        },
+        {
+         "max": 2545.865178319408,
+         "min": 2081.818885485533,
+         "name": "4",
+         "value": 2298.5067842706044,
+         "x": 4.0
+        },
+        {
+         "max": 1512.134495385066,
+         "min": 1451.362584443055,
+         "name": "16",
+         "value": 1459.118195733009,
+         "x": 16.0
+        },
+        {
+         "max": 512.5902332530089,
+         "min": 465.30014603068224,
+         "name": "64",
+         "value": 478.1914460061499,
+         "x": 64.0
+        }
+       ],
+       "unit": "commits/s",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "storage conflicts",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0517578125,
+         "min": 0.0390625,
+         "name": "4",
+         "value": 0.0517578125,
+         "x": 4.0
+        },
+        {
+         "max": 0.077880859375,
+         "min": 0.06494140625,
+         "name": "16",
+         "value": 0.074951171875,
+         "x": 16.0
+        },
+        {
+         "max": 0.190673828125,
+         "min": 0.16162109375,
+         "name": "64",
+         "value": 0.18359375,
+         "x": 64.0
+        }
+       ],
+       "unit": "conflicts/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "client conflicts",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "conflicts/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "HTTP retries (retired)",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "retries/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "embedded retries (retired)",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "retries/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "short ID reservation retries (retired)",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "retries/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "merge retries (retired)",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "retries/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "engine retries",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0517578125,
+         "min": 0.0390625,
+         "name": "4",
+         "value": 0.0517578125,
+         "x": 4.0
+        },
+        {
+         "max": 0.077880859375,
+         "min": 0.06494140625,
+         "name": "16",
+         "value": 0.074951171875,
+         "x": 16.0
+        },
+        {
+         "max": 0.190673828125,
+         "min": 0.16162109375,
+         "name": "64",
+         "value": 0.18359375,
+         "x": 64.0
+        }
+       ],
+       "unit": "retries/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "push marker retries",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "retries/commit",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "client conflict requests",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "requests",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "engine exhausted requests",
+       "rows": [
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "1",
+         "value": 0.0,
+         "x": 1.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "4",
+         "value": 0.0,
+         "x": 4.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "16",
+         "value": 0.0,
+         "x": 16.0
+        },
+        {
+         "max": 0.0,
+         "min": 0.0,
+         "name": "64",
+         "value": 0.0,
+         "x": 64.0
+        }
+       ],
+       "unit": "requests",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "latency p50",
+       "rows": [
+        {
+         "max": 0.520524,
+         "min": 0.492513,
+         "name": "1",
+         "value": 0.500626,
+         "x": 1.0
+        },
+        {
+         "max": 0.8373900000000001,
+         "min": 0.813895,
+         "name": "4",
+         "value": 0.836208,
+         "x": 4.0
+        },
+        {
+         "max": 1.6549010000000002,
+         "min": 1.608415,
+         "name": "16",
+         "value": 1.617175,
+         "x": 16.0
+        },
+        {
+         "max": 16.995542,
+         "min": 12.640578,
+         "name": "64",
+         "value": 14.77192,
+         "x": 64.0
+        }
+       ],
+       "unit": "ms",
+       "x_label": "writers"
+      },
+      {
+       "lower_is_better": true,
+       "name": "latency p99",
+       "rows": [
+        {
+         "max": 15.66913,
+         "min": 3.359515,
+         "name": "1",
+         "value": 3.889934,
+         "x": 1.0
+        },
+        {
+         "max": 12.620276,
+         "min": 8.40858,
+         "name": "4",
+         "value": 11.479921000000001,
+         "x": 4.0
+        },
+        {
+         "max": 65.094942,
+         "min": 63.188280999999996,
+         "name": "16",
+         "value": 64.199005,
+         "x": 16.0
+        },
+        {
+         "max": 628.278928,
+         "min": 574.307331,
+         "name": "64",
+         "value": 581.7134189999999,
+         "x": 64.0
+        }
+       ],
+       "unit": "ms",
+       "x_label": "writers"
+      }
+     ],
+     "note": "On-disk Immediate durability; 256 requests per writer; 3 fresh-store repetitions. HTTP execution without sockets, signing or ACP. Latencies include client-conflict and engine-exhausted requests. Storage conflicts exclude pre-commit query conflicts; client conflicts count requests returned with a transaction conflict. Engine retries count replay executions after a losing attempt; exhaustion is reported separately. Retired retry layers report zero by definition.",
+     "title": "Concurrent writes: shared_updates",
+     "trust": "contaminated"
+    }
+   },
+   "host": {
+    "arch": "x86_64",
+    "cores": 4,
+    "cpu": "AMD EPYC 7763 64-Core Processor",
+    "os": "linux",
+    "ram_gib": 15.6,
+    "store": null
+   },
+   "loadguard": {
+    "detail": {
+     "ceiling": 2.0,
+     "cores": 4,
+     "loadavg": [
+      2.11767578125,
+      0.634765625,
+      0.220703125
+     ],
+     "note": "one-minute load 2.12 on 4 core(s) exceeds the 2.00 ceiling, so timing families are marked contaminated. Binary size, allocation counts and other deterministic families stay comparable.",
+     "passed": false
+    },
+    "note": "one-minute load 2.12 on 4 core(s) exceeds the 2.00 ceiling, so timing families are marked contaminated. Binary size, allocation counts and other deterministic families stay comparable.",
+    "passed": false
+   },
+   "timestamp": "2026-11-12T10:34:25Z",
+   "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)"
+  }
+ },
+ "schema_version": 1,
+ "timestamp": "2026-11-12T10:34:08Z"
+}
