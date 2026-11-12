@@ -253,8 +253,11 @@ impl DocFetcher for FetcherWrapper {
     async fn get_document_updates(
         &self,
         options: &crate::fetcher::DocumentUpdateOptions,
+        reader: &crate::fetcher::DocumentReader<'_>,
     ) -> Result<crate::fetcher::DocumentUpdatePage> {
-        self.get_fetcher().get_document_updates(options).await
+        self.get_fetcher()
+            .get_document_updates(options, reader)
+            .await
     }
 
     async fn get_json_conflicts(
