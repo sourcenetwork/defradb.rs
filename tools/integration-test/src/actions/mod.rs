@@ -175,6 +175,7 @@ client_actions! {
         Restart,
         Start,
         SubscriptionRequest,
+        SyncCounters,
         Wait,
         WaitForIndexReady,
         WaitForPeersEvents,

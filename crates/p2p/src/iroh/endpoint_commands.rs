@@ -561,6 +561,7 @@ pub(super) async fn handle_command(
             providers,
             missing,
             max_depth,
+            haves,
             reply,
         } => {
             let query_id = QueryId(*next_query_id);
@@ -576,7 +577,10 @@ pub(super) async fn handle_command(
                 Arc::clone(&resources.fetch_stats),
             );
             let task = spawn_task(spawned_tasks, async move {
-                handle_block_sync(resources, query_id, root, providers, missing, max_depth).await;
+                handle_block_sync(
+                    resources, query_id, root, providers, missing, max_depth, haves,
+                )
+                .await;
             });
             if let Some(abort_handle) = task {
                 active_syncs.insert(query_id.0, ActiveSync { abort_handle });

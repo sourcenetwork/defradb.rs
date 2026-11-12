@@ -387,9 +387,14 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             let source_peer = peer_id.clone();
             let explicit_replicator_collections =
                 self.access.replicators.get_collections(peer_id.as_str());
+            let mut fetches = Vec::with_capacity(cids_to_fetch.len());
+            for (root_cid, doc_id) in cids_to_fetch {
+                let haves = self.document_haves(&doc_id).await;
+                fetches.push((root_cid, doc_id, haves));
+            }
 
             self.spawn_background_task("doc_sync_reply_fetch_dags", async move {
-                join_all(cids_to_fetch.into_iter().map(|(root_cid, doc_id)| {
+                join_all(fetches.into_iter().map(|(root_cid, doc_id, haves)| {
                     let transport = transport.clone();
                     let blockstore = blockstore.clone();
                     let event_tx = event_tx.clone();
@@ -421,6 +426,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                             event_tx,
                             root_cid,
                             DagFetchContext::new(doc_id, String::new(), String::new(), source_peer)
+                                .with_haves(haves)
                                 .with_alternate_providers(alternate_providers)
                                 .with_explicit_replicator_collections(
                                     explicit_replicator_collections,

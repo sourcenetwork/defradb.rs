@@ -53,6 +53,7 @@ pub(crate) mod dag_retry;
 mod event_handler;
 mod fetch_failures;
 mod fetch_logs;
+pub(crate) mod haves;
 mod merge_state;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod network_tests;
@@ -191,6 +192,12 @@ pub struct SyncStatus {
     pub car_present_cids: u64,
     pub car_served_cids: u64,
     pub car_filtered_cids: u64,
+    /// Block bytes served in CAR responses.
+    pub car_served_bytes: u64,
+    /// Blocks fetched CAR responses brought that were already held here.
+    pub car_received_already_held: u64,
+    /// `car_served_cids` over `car_requested_cids`; 0 before any request.
+    pub car_served_per_requested: f64,
     pub provider_rotations: u64,
     /// Providers ranked behind a healthy peer for poor measured fetch health,
     /// summed over roots.
@@ -280,6 +287,15 @@ struct SyncShutdownState {
     pending_dag_fetch_tasks: Atom<RapidHashMap<Cid, PendingDagFetchTask>>,
     /// Where the coordinator's network work runs.
     network: crate::network::Network,
+}
+
+/// Blocks served per wanted CID: near 1 when fetches are exact.
+fn served_per_requested(served: u64, requested: u64) -> f64 {
+    if requested == 0 {
+        0.0
+    } else {
+        served as f64 / requested as f64
+    }
 }
 
 #[derive(Clone)]
@@ -1102,6 +1118,12 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             car_present_cids: diagnostics.car_present_cids,
             car_served_cids: diagnostics.car_served_cids,
             car_filtered_cids: diagnostics.car_filtered_cids,
+            car_served_bytes: diagnostics.car_served_bytes,
+            car_received_already_held: diagnostics.car_received_already_held,
+            car_served_per_requested: served_per_requested(
+                diagnostics.car_served_cids,
+                diagnostics.car_requested_cids,
+            ),
             provider_rotations: diagnostics.provider_rotations,
             provider_demotions_total: diagnostics.provider_demotions,
             provider_cooldown_skips_total: diagnostics.provider_cooldown_skips,

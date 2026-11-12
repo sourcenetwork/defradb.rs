@@ -519,6 +519,18 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
 
     async fn send_car_request(&self, peer_id: &PeerId, root_cid: Cid) -> Result<()>;
 
+    /// [`send_car_request`](Self::send_car_request) naming merged blocks held
+    /// here, so the provider leaves their closures out. Transports that cannot
+    /// carry them keep the default and ask for the whole DAG.
+    async fn send_car_request_with_haves(
+        &self,
+        peer_id: &PeerId,
+        root_cid: Cid,
+        _haves: Vec<Cid>,
+    ) -> Result<()> {
+        self.send_car_request(peer_id, root_cid).await
+    }
+
     async fn send_car_response(&self, peer_id: &PeerId, car_data: Vec<u8>) -> Result<()>;
 
     async fn send_car_response_token(
@@ -616,14 +628,16 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
     ) -> Result<QueryId>;
 
     /// [`sync_blocks`](Self::sync_blocks) with descendant closures cut
-    /// `max_depth` links below each missing CID. Exact-CID transports keep
-    /// the default.
+    /// `max_depth` links below each missing CID, leaving out the closures of
+    /// `haves` (merged blocks held here) where the provider holds one of them.
+    /// Exact-CID transports keep the default.
     async fn sync_blocks_within(
         &self,
         root: Cid,
         providers: Vec<PeerId>,
         missing: Vec<Cid>,
         _max_depth: u32,
+        _haves: Vec<Cid>,
     ) -> Result<QueryId> {
         self.sync_blocks(root, providers, missing).await
     }

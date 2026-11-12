@@ -125,7 +125,12 @@ pub enum HostEvent {
     },
 
     /// Received a CAR fetch request (peer wants a DAG packaged as CARv1).
-    CarFetchRequest { peer_id: PeerId, root_cid: Cid },
+    CarFetchRequest {
+        peer_id: PeerId,
+        root_cid: Cid,
+        /// Merged blocks the requester holds; empty from older peers.
+        haves: Vec<Cid>,
+    },
 
     /// Received a CAR fetch response (CARv1 bytes containing a DAG).
     CarFetchResponse {

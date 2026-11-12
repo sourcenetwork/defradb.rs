@@ -2337,6 +2337,33 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "Have-set DAG fetch",
+        name: "INV_MergeComplete / INV_NoForged / INV_HeldNotResent / INV_RoundsBounded / INV_Converges",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/car/region.rs collect_missing_region, Walk::mark_held, Walk::mark_wanted, Walk::serve_attachments; crates/p2p/src/sync/coordinator/haves.rs haves_from_heads; crates/p2p/src/sync/coordinator/dag_fetcher.rs fetch_dag_attempt, root_haves; crates/p2p/src/sync/coordinator/event_handler/car.rs drop_held_blocks",
+        model_ref: "MC_ExactDagFetch_{Green,Green_Liar,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Have-set DAG fetch",
+        name: "INV_OneMarkWriter / INV_HeldNeverContends / INV_Lands",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/event_handler/car.rs drop_held_blocks; crates/p2p/src/sync/manager/process/mod.rs try_acquire_car_storage_owners; crates/storage/src/stores/blockstore.rs BlockWritesAttempt",
+        model_ref: "MC_HeldBlockIngest_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Have-set DAG fetch",
+        name: "wanted_served / served_held_is_asked / missing_is_served / receiver_complete / reach_lowers_priority / first_is_root / decode_encode",
+        axis: Lean,
+        anchor: "crates/p2p/src/sync/car/region.rs collect_missing_region; crates/p2p/src/two_stream/handler/car.rs encode_car_request, decode_car_request",
+        model_ref: "CarMissingRegion (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // Clock and PushLog fetches single-flight per root in
         // PendingDagFetchTask, separately, and may overlap a reply fetch of the
         // same root. CAR ingest serializes the overlap (StorageContended
