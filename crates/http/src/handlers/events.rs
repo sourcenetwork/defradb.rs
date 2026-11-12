@@ -12,7 +12,7 @@ use query::subscription::response_has_data;
 use serde::Deserialize;
 
 use crate::error::HttpError;
-use crate::handlers::closing::until_closing;
+use crate::handlers::closing::next_unless_closing;
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
 use crate::query_context::{
@@ -212,7 +212,7 @@ pub async fn events_sse(
     let closing = state.edge.closing();
     let stream = async_stream::stream! {
         let mut closing = std::pin::pin!(closing);
-        while let Some(message) = until_closing(closing.as_mut(), subscription.recv()).await {
+        while let Some(message) = next_unless_closing(closing.as_mut(), subscription.recv()).await {
             let json = if let Some(data) = message.as_topic_peer_event() {
                 serde_json::json!({
                     "name": "topic-peer-event",

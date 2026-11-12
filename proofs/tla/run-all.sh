@@ -869,7 +869,7 @@ RUNS=(
   "MC_ServerDrain_Red_CheckInside.cfg ServerDrain.tla RED" # closing looked at inside a request cuts it off (INV_NoDropBeforeDeadline)
   "MC_ServerDrain_Red_NoCheck.cfg ServerDrain.tla RED" # closing never looked at: new requests while draining (INV_NoNewWorkWhenClosing)
   "MC_ServerDrain_Red_NoDeadline.cfg ServerDrain.tla RED" # no deadline: a hung request keeps the server from returning (LIVE_ServerReturns)
-  "MC_ServerDrain_Red_StreamIgnoresClosing.cfg ServerDrain.tla RED" # a subscription stream ignores closing: the drain waits out its deadline for it (INV_DeadlineCutsOnlyStuck)
+  "MC_ServerDrain_Red_StreamIgnoresClosing.cfg ServerDrain.tla RED" # a subscription stream ignores closing: the drain waits out its deadline for it (INV_DeadlineStopsNoStream)
   "MC_DocTopicIngress_Green.cfg DocTopicIngress.tla GREEN" # updates queued past an unsubscribe are dropped, followed ones applied
   "MC_DocTopicIngress_Red_NoCheck.cfg DocTopicIngress.tla RED" # the code before (#2545): an update after the unsubscribe is applied (INV_NoApplyAfterUnsubscribe)
   "MC_DocTopicIngress_Red_OwnSet.cfg DocTopicIngress.tla RED" # the handler checks a set the unsubscribe never clears (INV_NoApplyAfterUnsubscribe)

@@ -1,7 +1,7 @@
 //! A GraphQL subscription open over SSE does not hold `Node::shutdown` for
 //! the request drain's deadline: its stream ends, with its `complete` event,
 //! once the node stops admitting requests (#2779). Modeled by
-//! proofs/tla/ServerDrain.tla (INV_DeadlineCutsOnlyStuck).
+//! proofs/tla/ServerDrain.tla (INV_DeadlineStopsNoStream).
 #![cfg(feature = "http")]
 
 use std::io::{Read, Write};

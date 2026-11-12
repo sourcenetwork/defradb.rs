@@ -12,7 +12,7 @@ use futures::future::{select, Either};
 /// its next item through this, with its edge's `closing()`, ends instead as
 /// soon as the edge stops admitting requests (proofs/tla/ServerDrain.tla
 /// EndStream). `closing` must not be polled again once it completed.
-pub(crate) async fn until_closing<C, F, T>(closing: Pin<&mut C>, next: F) -> Option<T>
+pub(crate) async fn next_unless_closing<C, F, T>(closing: Pin<&mut C>, next: F) -> Option<T>
 where
     C: Future<Output = ()>,
     F: Future<Output = Option<T>>,

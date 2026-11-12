@@ -24,9 +24,10 @@
 \*   2. a connection starts a new request after closing began
 \*      - INV_NoNewWorkWhenClosing;
 \*   3. the server never returns - LIVE_ServerReturns;
-\*   4. the drain's deadline stops a request that would have ended: an open
-\*      subscription stream holds shutdown for the whole deadline
-\*      - INV_DeadlineCutsOnlyStuck.
+\*   4. the drain's deadline stops a subscription stream: an open stream
+\*      holds shutdown for the whole deadline - INV_DeadlineStopsNoStream.
+\*      The deadline may still stop an ordinary request that is stuck or
+\*      just slow, as the code does (edge::Scope::drain logs it).
 \*
 \* The Rust code each guard models:
 \*   Drained       the server's tasks are plain edge tasks the drain waits for
@@ -39,9 +40,10 @@
 \*   CheckClosing  a connection does look, so it closes after its request;
 \*   Deadline      the drain gives up at its deadline (edge::Scope::drain);
 \*   EndStreams    a subscription stream ends once its edge closes
-\*                 (crates/http/src/handlers/closing.rs until_closing, used by
-\*                 graphql_sse in crates/http/src/handlers/graphql/query.rs
-\*                 and events_sse in crates/http/src/handlers/events.rs).
+\*                 (crates/http/src/handlers/closing.rs next_unless_closing,
+\*                 used by graphql_sse in
+\*                 crates/http/src/handlers/graphql/query.rs and events_sse in
+\*                 crates/http/src/handlers/events.rs).
 
 EXTENDS Naturals
 
@@ -127,11 +129,13 @@ BeginClosing ==
   /\ UNCHANGED <<expired, late, returned, cut>>         \* the rest stays
 
 \* The drain's deadline passes, once closing began; what is still open is stopped then.
-\* The deadline (30 seconds) is far longer than any request that ends, so it
-\* passes only once every request in flight is one that will not end.
+\* An ordinary request may be slow or stuck, and the deadline may pass while
+\* it is in flight and stop it. A stream that sees closing ends at once, far
+\* inside the deadline (30 seconds), so the deadline never passes while such
+\* a stream is still open; only a stream that will not end can be waiting.
 Expire ==
   /\ closing /\ Deadline /\ ~expired                    \* after closing, with a deadline
-  /\ \A c \in Conns : conn[c] = "busy" => ~WillEnd(c)   \* only stuck requests are left
+  /\ \A c \in Streams : conn[c] = "busy" => ~WillEnd(c) \* a stream that will end is not waited out
   /\ expired' = TRUE                                    \* the deadline passed
   /\ cut' = {c \in Conns : conn[c] = "busy"}            \* the requests it stops
   /\ conn' = [c \in Conns |-> "closed"]                 \* the rest stopped, now allowed
@@ -150,7 +154,7 @@ Next ==
 
 \* Ordinary requests on connections that do not hang always finish; a stream that looks at
 \* closing ends; closing may begin at any moment or never; the deadline, once closing began
-\* and only stuck requests are left, always comes; the server returns when it can.
+\* and no stream that will end is open, always comes; the server returns when it can.
 Fairness ==
   /\ \A c \in Conns \ (Hangs \cup Streams) : WF_vars(Finish(c))
   /\ \A c \in Streams : WF_vars(EndStream(c))
@@ -175,6 +179,11 @@ INV_NoDropBeforeDeadline == dropped => expired
 INV_NoNewWorkWhenClosing == ~late
 \* Once the edge began closing, the server returns.
 LIVE_ServerReturns == closing ~> returned
-\* The drain's deadline stops only requests that hang; no subscription stream waits for it.
-INV_DeadlineCutsOnlyStuck == cut \subseteq Hangs
+\* The drain's deadline stops no subscription stream.
+\* Expire's guard reads WillEnd, so this invariant catches a stream that
+\* never looks at closing (Red_StreamIgnoresClosing). An EndStream that is
+\* broken while EndStreams still says the stream ends is caught by
+\* LIVE_ServerReturns instead: the stream stays open, Expire waits for it,
+\* and the server never returns.
+INV_DeadlineStopsNoStream == cut \cap Streams = {}
 ====
