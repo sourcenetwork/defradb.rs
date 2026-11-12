@@ -88,7 +88,9 @@ impl IndexManager {
     }
 
     /// A rebuild's write of one document after the clear. A drain may have
-    /// moved the entry since, so the keys the record names go first.
+    /// moved the entry since, so the keys the record names go first. The
+    /// record is read unvalidated: the put below conflicts with a drain that
+    /// moved it anywhere else.
     pub(crate) async fn replace(
         &self,
         datastore: &NamespaceView,
@@ -103,7 +105,7 @@ impl IndexManager {
         );
         let old = Self::recorded(
             datastore
-                .get(&record)
+                .get_parts(&record, &[])
                 .await
                 .map_err(Error::Storage)?
                 .as_deref(),

@@ -2035,12 +2035,13 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         // A reindex clears the entries but keeps the records while drains run,
-        // so the walk removes what the record names before it writes.
+        // so the walk removes what the record names before it writes, and its
+        // put of the record conflicts with a drain that moved it elsewhere.
         family: "Index-maintenance consistency",
         name: "INV_NoOrphanEntry — a reindex walk racing drains leaves no entry that no record names",
         axis: Tla,
         anchor: "crates/db/src/index/manager/deferred.rs IndexManager::replace; crates/db/src/index/manager/rebuild.rs IndexManager::reindex_document",
-        model_ref: "MC_DeferredIndex_{Green_Reindex,Red_WalkOverwrite,Red_WalkUnvalidated}.cfg",
+        model_ref: "MC_DeferredIndex_{Green_Reindex,Red_WalkOverwrite,Red_WalkBlindRecord}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },

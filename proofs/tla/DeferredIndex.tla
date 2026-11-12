@@ -21,7 +21,11 @@
 \* A reindex (after a lens migration) clears the entries but keeps the
 \* records, then walks the documents one by one and writes each one's entry
 \* again. Drains keep running meanwhile, so the walk reads the document's
-\* record and removes the entry it names before it writes its own.
+\* record and removes the entry it names before it writes its own. That read
+\* is not validated: the walk always writes the record, and the store refuses
+\* a write to a key a newer commit changed, unless the key already holds what
+\* the write stores. So a drain that moved the record makes the walk run again,
+\* unless the drain moved it exactly where the walk puts it.
 \*
 \* A drop of the index removes its entries and records, then truncates what
 \* is left of the log in pages, each its own transaction, each starting at
@@ -43,7 +47,8 @@
 \* Code it models:
 \*   crates/db/src/index/manager/deferred.rs  IndexManager::owe (the append),
 \*                                            IndexManager::place (a create),
-\*                                            IndexManager::replace (the walk's record read)
+\*                                            IndexManager::replace (the walk's record read
+\*                                            and the record put it relies on)
 \*   crates/db/src/index/deferred/drain.rs    plan (snapshot), apply (position
 \*                                            record, live value), truncate
 \*   crates/db/src/index/manager/read.rs      IndexManager::read_index (owed docs,
@@ -67,7 +72,8 @@ CONSTANTS
   Truncate,    \* "Planned": a drain truncates through its planned head | "Head": through the head at commit
   Reindex,     \* "On": a reindex may run | "Off": it never does
   WalkRecord,  \* "Delete": the walk removes the entry the record names | "Overwrite": it only writes its own
-  WalkCheck,   \* "Validated": the walk's read of the record aborts if a drain changed it | "Unvalidated"
+  WalkCheck,   \* "WriteConflict": the walk's put of the record aborts if a drain changed it to
+               \* something else | "None": the put never conflicts
   Drop,        \* "On": the index may be dropped | "Off": it never is
   Cleanup,     \* "Paged": a drop page truncates up to Page entries from the first one left |
                \* "Whole": all that is left at once | "FromOne": up to Page past the first left, but from position 1
@@ -81,7 +87,7 @@ ASSUME TxRecordRead \in {"Validated", "Unvalidated"}
 ASSUME Truncate \in {"Planned", "Head"}
 ASSUME Reindex \in {"On", "Off"}
 ASSUME WalkRecord \in {"Delete", "Overwrite"}
-ASSUME WalkCheck \in {"Validated", "Unvalidated"}
+ASSUME WalkCheck \in {"WriteConflict", "None"}
 ASSUME Drop \in {"On", "Off"}
 ASSUME Cleanup \in {"Paged", "Whole", "FromOne"}
 \* At least one write, or nothing happens.
@@ -335,11 +341,15 @@ WalkRead(d) ==
   /\ UNCHANGED <<value, alive, index, rec, log, trunc, steps, crashed, rx, walked, dropped, biggest>>
   /\ UNCHANGED drainVars /\ UNCHANGED txVars
 
-\* The walk's transaction for d commits, or runs again if a drain moved the record it read.
+\* The walk's transaction for d commits, or runs again if a drain moved the record it read
+\* somewhere other than where the walk puts it. A walk that skips d writes nothing.
 WalkCommit(d) ==
   /\ wpc[d] = "Read"                           \* has read its inputs
-  /\ IF WalkCheck = "Validated" /\ rec[d] /= wRec[d]
-     THEN /\ wpc' = [wpc EXCEPT ![d] = "Idle"]  \* a drain moved the record: read again
+  /\ IF /\ WalkCheck = "WriteConflict"         \* the store checks the walk's put of the record:
+        /\ wLive[d] /= None                    \* the walk puts one,
+        /\ rec[d] /= wRec[d]                   \* a drain changed it since the walk read it,
+        /\ rec[d] /= wLive[d]                  \* and not to what the walk puts
+     THEN /\ wpc' = [wpc EXCEPT ![d] = "Idle"]  \* the put conflicts: read again
           /\ UNCHANGED <<index, rec, walked, rx>>
      ELSE /\ walked' = walked \cup {d}          \* d is written
           /\ rx' = IF walked \cup {d} = Docs THEN "Done" ELSE "Cleared"   \* the last one ends the reindex

@@ -566,7 +566,7 @@ RUNS=(
   "MC_DeferredIndex_Red_ValidatedTxRecord.cfg DeferredIndex.tla RED" # a drain aborts a transaction that read through the index (INV_TxNotAbortedByDrain)
   "MC_DeferredIndex_Green_Reindex.cfg DeferredIndex.tla GREEN" # a reindex walk racing drains leaves no orphan entry
   "MC_DeferredIndex_Red_WalkOverwrite.cfg DeferredIndex.tla RED" # the walk overwrites the record and keeps the drain's entry (INV_NoOrphanEntry)
-  "MC_DeferredIndex_Red_WalkUnvalidated.cfg DeferredIndex.tla RED" # the walk acts on a record a drain moved (INV_NoOrphanEntry)
+  "MC_DeferredIndex_Red_WalkBlindRecord.cfg DeferredIndex.tla RED" # the walk's record put never conflicts, so it acts on a record a drain moved (INV_NoOrphanEntry)
   "MC_DeferredIndex_Green_Drop.cfg DeferredIndex.tla GREEN" # a drop truncates the log in pages from the first entry left
   "MC_DeferredIndex_Red_DropWhole.cfg DeferredIndex.tla RED" # a drop truncates the whole backlog in one transaction (INV_CleanupBounded)
   "MC_DeferredIndex_Red_DropFromOne.cfg DeferredIndex.tla RED" # each drop page truncates from position 1 (INV_CleanupBounded)

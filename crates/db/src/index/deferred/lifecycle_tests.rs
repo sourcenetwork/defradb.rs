@@ -123,7 +123,8 @@ fn a_walk_after_a_drain_leaves_no_orphan() {
     .unwrap();
 }
 
-/// A drain that moves the record while the walk is open makes the walk run again.
+/// A drain that moves the record while the walk is open makes the walk run
+/// again: both put the record, so the walk's put conflicts.
 #[test]
 fn a_walk_that_read_a_moved_record_does_not_commit() {
     workers::block_on(async {
@@ -138,6 +139,31 @@ fn a_walk_that_read_a_moved_record_does_not_commit() {
         drain(&db, index_id).await;
 
         assert!(walking.commit().await.is_err());
+    })
+    .unwrap();
+}
+
+/// A drain that moves the record to where the walk puts it does not make
+/// the walk run again, and leaves nothing behind.
+#[test]
+fn a_walk_that_lands_where_the_drain_moved_the_entry_commits() {
+    workers::block_on(async {
+        let (db, short_id, index_id) = indexed().await;
+        let id = create(&db, 5).await;
+        clear(&db, short_id).await;
+        increment(&db, &id).await;
+        drain(&db, index_id).await;
+
+        let walking = walk(&db, short_id, index_id, 7).await;
+        increment(&db, &id).await;
+        drain(&db, index_id).await;
+        walking
+            .commit()
+            .await
+            .expect("the record already holds what the walk puts");
+
+        assert!(keys(&db, at(short_id, index_id, 6)).await.is_empty());
+        assert_eq!(keys(&db, at(short_id, index_id, 7)).await.len(), 1);
     })
     .unwrap();
 }
