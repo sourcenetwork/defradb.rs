@@ -33,7 +33,7 @@ pub(super) const MAX_MESSAGE_SIZE: usize = FRAME_LIMIT - TOPIC_ID_LEN;
 const BROADCAST_OVERHEAD: usize = 37;
 
 /// The largest content iroh-gossip broadcasts; it drops anything larger.
-pub(in crate::iroh) const MAX_BROADCAST: usize = max_broadcast(MAX_MESSAGE_SIZE);
+pub(crate) const MAX_BROADCAST: usize = max_broadcast(MAX_MESSAGE_SIZE);
 
 /// The bytes postcard's varint length prefix takes for `n`.
 const fn varint_len(mut n: usize) -> usize {

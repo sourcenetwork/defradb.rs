@@ -60,6 +60,13 @@ struct PeerTransport {
     peer: DefraKms,
     requests: AtomicUsize,
     links: AtomicUsize,
+    /// The most keys one request asked for.
+    largest: AtomicUsize,
+    /// The keys per request this transport carries, if limited.
+    cap: Option<usize>,
+    /// Requests on the wire now, and the most at once.
+    in_flight: AtomicUsize,
+    most_in_flight: AtomicUsize,
 }
 
 #[async_trait]
@@ -76,7 +83,12 @@ impl KeyTransport for PeerTransport {
         let request: FetchEncryptionKeyRequest = defra_core::cbor::from_slice(&request.payload)
             .map_err(|error| crate::Error::WireDecode(error.to_string()))?;
         self.links.fetch_add(request.links.len(), Ordering::SeqCst);
+        self.largest
+            .fetch_max(request.links.len(), Ordering::SeqCst);
+        let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        self.most_in_flight.fetch_max(now, Ordering::SeqCst);
         nuclei::time::sleep(LATENCY).await;
+        self.in_flight.fetch_sub(1, Ordering::SeqCst);
         let from = PeerIdentity {
             peer_id: "peer".into(),
             authenticated_did: Some(node()),
@@ -91,12 +103,26 @@ impl KeyTransport for PeerTransport {
     }
 
     fn install_handler(&self, _: Arc<dyn IncomingHandler>) {}
+
+    fn max_keys_per_request(&self) -> Option<usize> {
+        self.cap
+    }
 }
 
 /// A peer holding `count` keys, and a node that has none and asks it.
 async fn peer_and_node(
     count: usize,
     owned: bool,
+) -> (Arc<PeerTransport>, DefraKms, Vec<EncryptionCid>) {
+    peer_and_node_capped(count, owned, None).await
+}
+
+/// [`peer_and_node`], over a transport carrying at most `cap` keys per
+/// request.
+async fn peer_and_node_capped(
+    count: usize,
+    owned: bool,
+    cap: Option<usize>,
 ) -> (Arc<PeerTransport>, DefraKms, Vec<EncryptionCid>) {
     let peer = DefraKms::new(
         Arc::new(MemoryKeyStore::new()),
@@ -124,6 +150,10 @@ async fn peer_and_node(
         peer,
         requests: AtomicUsize::new(0),
         links: AtomicUsize::new(0),
+        largest: AtomicUsize::new(0),
+        cap,
+        in_flight: AtomicUsize::new(0),
+        most_in_flight: AtomicUsize::new(0),
     });
     let node_kms = DefraKms::new(
         Arc::new(MemoryKeyStore::new()),
@@ -188,4 +218,54 @@ async fn a_merge_after_a_prefetch_joins_it_instead_of_asking_again() {
         .unwrap();
     assert!(keys.iter().all(Result::is_ok));
     assert_eq!(transport.requests.load(Ordering::SeqCst), 1);
+}
+
+/// A transport that carries at most two keys per request gets the five a
+/// call asks for in three requests, sent together, and every key comes back.
+#[nuclei::test(start_paused = true)]
+async fn a_batch_is_split_to_the_keys_a_transport_carries() {
+    let (transport, kms, cids) = peer_and_node_capped(5, true, Some(2)).await;
+    let started = nuclei::time::Instant::now();
+    let keys = kms
+        .get_keys_each(&RequestContext::anonymous(), &cids)
+        .await
+        .unwrap();
+    assert!(keys.iter().all(Result::is_ok));
+    assert_eq!(transport.requests.load(Ordering::SeqCst), 3);
+    assert_eq!(transport.links.load(Ordering::SeqCst), 5);
+    assert_eq!(transport.largest.load(Ordering::SeqCst), 2);
+    assert_eq!(started.elapsed(), LATENCY, "the chunks go out together");
+}
+
+/// A transport with no limit of its own gets the whole batch in one
+/// request, however many keys it holds.
+#[nuclei::test(start_paused = true)]
+async fn a_transport_without_a_limit_gets_the_batch_whole() {
+    let (transport, kms, cids) = peer_and_node_capped(40, true, None).await;
+    let keys = kms
+        .get_keys_each(&RequestContext::anonymous(), &cids)
+        .await
+        .unwrap();
+    assert!(keys.iter().all(Result::is_ok));
+    assert_eq!(transport.requests.load(Ordering::SeqCst), 1);
+    assert_eq!(transport.largest.load(Ordering::SeqCst), 40);
+}
+
+/// A batch split into more chunks than may be on the wire at once goes out
+/// a few chunks at a time, and every key still comes back.
+#[nuclei::test(start_paused = true)]
+async fn a_split_batch_keeps_few_chunks_on_the_wire_at_once() {
+    let (transport, kms, cids) = peer_and_node_capped(10, true, Some(1)).await;
+    let started = nuclei::time::Instant::now();
+    let keys = kms
+        .get_keys_each(&RequestContext::anonymous(), &cids)
+        .await
+        .unwrap();
+    assert!(keys.iter().all(Result::is_ok));
+    assert_eq!(transport.requests.load(Ordering::SeqCst), 10);
+    assert_eq!(
+        transport.most_in_flight.load(Ordering::SeqCst),
+        super::CHUNKS_IN_FLIGHT
+    );
+    assert_eq!(started.elapsed(), 3 * LATENCY, "ten chunks in waves of four");
 }

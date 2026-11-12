@@ -1,6 +1,7 @@
 //! Keys fetched from peers, as an [`inputs::Source`]: one wire request per
-//! batch of CIDs that share an explicit-replay capability, with one
-//! ephemeral key, fanned out over every transport.
+//! batch of CIDs that share an explicit-replay capability (split into chunks
+//! when a transport carries fewer keys per request), with one ephemeral key
+//! per request, fanned out over every transport.
 //!
 //! A peer authorizes the requesting node (and the capability), never the
 //! user behind the request, so one peer answer serves every caller asking
@@ -10,6 +11,7 @@
 use std::sync::Arc;
 
 use defra_core::thread_bounds::MaybeBoxFuture;
+use futures::future::join_all;
 use futures::stream::{FuturesUnordered, StreamExt};
 use identity::Did;
 use kovan::AtomOption;
@@ -22,6 +24,9 @@ use crate::tier::{verified_key, KeyTier};
 use crate::transport::{EncodedFetchRequest, KeyTransport, TransportReplyStream};
 use crate::types::EncryptionCid;
 use crate::wire::{FetchEncryptionKeyReply, FetchEncryptionKeyRequest};
+
+/// Chunk requests of one batch on the wire at once.
+const CHUNKS_IN_FLIGHT: usize = 4;
 
 /// One remote key request: the key's CID and the capability it is asked
 /// under.
@@ -104,9 +109,54 @@ impl RemoteKeys {
         }
     }
 
-    /// One wire request for every key of the batch; answers in their order.
-    /// A key no peer released carries the last failure seen.
+    /// The batch's keys, in their order: one wire request for all of them,
+    /// or one per chunk when a transport carries fewer per request, at most
+    /// `CHUNKS_IN_FLIGHT` at once. Proved to answer every key once, in order,
+    /// in `proofs/lean/KmsChunks.lean`. A chunk
+    /// whose request failed answers its keys with that error; when every
+    /// chunk failed, the batch fails as one request would.
     async fn fetch_batch(
+        &self,
+        capability: Option<&str>,
+        keys: &[RemoteKey],
+    ) -> inputs::Answers<RemoteDek, Error> {
+        let per_request = self
+            .transports
+            .iter()
+            .filter_map(|transport| transport.max_keys_per_request())
+            .min()
+            .map(|limit| limit.max(1));
+        let Some(per_request) = per_request.filter(|limit| *limit < keys.len()) else {
+            return self.fetch_request(capability, keys).await;
+        };
+        let chunks = keys.chunks(per_request);
+        let mut results = Vec::with_capacity(chunks.len());
+        // ponytail: waves, so one slow chunk holds its wave; a rolling window if that shows.
+        for wave in keys.chunks(per_request * CHUNKS_IN_FLIGHT) {
+            let requests = wave
+                .chunks(per_request)
+                .map(|chunk| self.fetch_request(capability, chunk));
+            results.extend(join_all(requests).await);
+        }
+        if let Some(Err(error)) = results
+            .first()
+            .filter(|_| results.iter().all(Result::is_err))
+        {
+            return Err(error.clone());
+        }
+        let mut answers = Vec::with_capacity(keys.len());
+        for (chunk, result) in chunks.zip(results) {
+            match result {
+                Ok(chunk_answers) => answers.extend(chunk_answers),
+                Err(error) => answers.extend(chunk.iter().map(|_| Err(error.clone()))),
+            }
+        }
+        Ok(answers)
+    }
+
+    /// One wire request for every key of `keys`; answers in their order.
+    /// A key no peer released carries the last failure seen.
+    async fn fetch_request(
         &self,
         capability: Option<&str>,
         keys: &[RemoteKey],

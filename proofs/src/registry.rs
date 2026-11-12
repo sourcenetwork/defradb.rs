@@ -1513,6 +1513,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "proofs/tests/behavioral/kms.rs kms_unauthorized_dek_release_denied",
     },
     Property {
+        family: "KMS key distribution",
+        name: "chunks_flatten / chunk_size_le / answers_in_order / answers_length / waves_flatten",
+        axis: Lean,
+        anchor: "crates/kms/src/remote.rs fetch_batch, CHUNKS_IN_FLIGHT",
+        model_ref: "KmsChunks (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // A merge that needs a DEK fetches it inline on the serial merge
         // executor, blocking unrelated merges for up to RESPONSE_TIMEOUT (5 s,
         // plus up to SUBSCRIBER_WAIT_TIMEOUT, 10 s, when no subscriber is

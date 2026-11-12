@@ -464,6 +464,12 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
         ))
     }
 
+    /// The largest payload [`P2PTransport::publish_raw`] carries, or `None`
+    /// when this transport sets no limit of its own.
+    fn max_raw_publish(&self) -> Option<usize> {
+        None
+    }
+
     /// Subscribe to an arbitrary topic string without the [`DefraTopic`]
     /// wrapper. Used for dynamic pubsub_rpc response sub-topics.
     ///
