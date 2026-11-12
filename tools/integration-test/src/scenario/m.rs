@@ -47,6 +47,12 @@ pub fn nonempty() -> Value {
     json!({"$match": "nonempty"})
 }
 
+/// Matches any number above zero, for a value whose exact size is not the
+/// point (a relevance score).
+pub fn positive() -> Value {
+    json!({"$match": "positive"})
+}
+
 pub fn nonempty_string() -> Value {
     json!({"$match": "nonemptyString"})
 }
@@ -77,6 +83,12 @@ pub fn current_timestamp() -> Value {
 
 pub fn not_plain_cbor_string(value: Value) -> Value {
     json!({"$match": "notPlainCBORString", "value": value})
+}
+
+/// Matches an introspection result describing the same schema as `golden`,
+/// whatever order its lists come in.
+pub fn same_schema(golden: Value) -> Value {
+    json!({"$match": "sameSchema", "value": golden})
 }
 
 pub fn introspection_types() -> Value {

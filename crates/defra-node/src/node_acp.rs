@@ -25,6 +25,9 @@ pub(crate) async fn create_document_acp<S>(
     _persistence: Persistence,
     config: &crate::DocumentAcpConfig,
     #[cfg_attr(not(feature = "vera"), allow(unused_variables))] network: Option<&edge::Edge>,
+    #[cfg_attr(not(feature = "vera"), allow(unused_variables))] event_bus: Option<
+        Arc<dyn events::Bus>,
+    >,
 ) -> Result<DocumentAcpSetup>
 where
     S: storage::corekv::Store + 'static,
@@ -74,6 +77,47 @@ where
                 .map_err(Error::VeraProvider)?,
             );
             let vera_acp = Arc::new(vera::VeraDocumentACP::tuned(provider, &tuning, network));
+            let dac_policies = vera_policies(&vera_acp, &store);
+            let (document_acp, redrive) = gate_external_acp(vera_acp.clone(), store);
+            Ok(DocumentAcpSetup {
+                document_acp,
+                local_zanzibar_store: None,
+                dac_policies,
+                vera_acp: Some(vera_acp),
+                redrive: Some(redrive),
+            })
+        }
+        #[cfg(feature = "vera")]
+        crate::DocumentAcpConfig::VeraRs(config) => {
+            let edge = remote_edge(network)?;
+            let worker = {
+                let (directory, keyring, deployment) = (
+                    config.worker_dir.clone(),
+                    Arc::clone(&config.keyring),
+                    config.deployment_id,
+                );
+                edge.spawn_blocking(move || {
+                    vera::vera_rs::NativeWorker::open(&directory, keyring.as_ref(), deployment)
+                })
+                .await
+                .map_err(Error::EdgeRuntime)?
+                .map_err(Error::VeraProvider)?
+            };
+            let provider = Arc::new(
+                vera::VeraRsProvider::new(
+                    config.rpc_address.clone(),
+                    &config.consensus_key,
+                    &config.actor_key,
+                    worker,
+                    &config.tuning,
+                    event_bus,
+                    &edge,
+                )
+                .await
+                .map_err(Error::VeraProvider)?,
+            );
+            // Access decisions are verified per request against current evidence, not cached.
+            let vera_acp = Arc::new(vera::VeraDocumentACP::without_access_cache(provider));
             let dac_policies = vera_policies(&vera_acp, &store);
             let (document_acp, redrive) = gate_external_acp(vera_acp.clone(), store);
             Ok(DocumentAcpSetup {
@@ -148,20 +192,25 @@ where
 }
 
 /// The node's NAC manager. With `owner`, NAC is enabled at startup and owned
-/// by it; without, NAC stays off until enabled at runtime.
+/// by it; without, NAC stays off until enabled at runtime. A status change
+/// that loses its commit re-runs up to `max_txn_retries` times, as the
+/// database's transactions do.
 pub(crate) async fn create_nac_manager<S>(
     store: Arc<S>,
     owner: Option<&identity::Did>,
+    max_txn_retries: u32,
 ) -> Result<Arc<dyn db::NacManagerApi>>
 where
     S: storage::corekv::Store + 'static,
 {
     let nac_store = Arc::new(acp::PersistentZanzibarStore::from_store(store));
-    let mut nac_config = db::NacConfig::new().with_dev_mode();
+    let mut nac_config = db::NacConfig::new()
+        .with_dev_mode()
+        .with_max_txn_retries(max_txn_retries);
     if owner.is_some() {
         nac_config = nac_config.with_enabled();
     }
-    let manager = Arc::new(db::NacManager::new(nac_store, nac_config));
+    let manager = Arc::new(db::NacManager::new_bound(nac_store, nac_config));
     manager.initialize(owner).await.map_err(Error::NacInit)?;
     Ok(manager)
 }
@@ -193,14 +242,59 @@ mod tests {
         Did::new(value).unwrap()
     }
 
+    #[cfg(feature = "vera")]
+    #[test]
+    fn vera_rs_document_acp_rejects_an_invalid_trusted_key_before_connecting() {
+        edge::testing::edge()
+            .block_on(async {
+                let directory = tempfile::tempdir().unwrap();
+                let keyring: Arc<dyn keyring::Keyring> = Arc::new(
+                    keyring::FileKeyring::open(directory.path().join("keys"), b"test-password")
+                        .unwrap(),
+                );
+                let worker_dir = directory.path().join("worker");
+                let config = DocumentAcpConfig::VeraRs(crate::VeraRsConfig {
+                    // Nothing listens here; a connection attempt would fail differently.
+                    rpc_address: "http://127.0.0.1:1".into(),
+                    consensus_key: "not-a-key".into(),
+                    deployment_id: 9001,
+                    actor_key: vec![7; 32],
+                    worker_dir: worker_dir.clone(),
+                    keyring,
+                    tuning: vera::AcpTuning::default(),
+                });
+                let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
+                let result = create_document_acp(
+                    store,
+                    Persistence::Memory,
+                    &config,
+                    Some(&edge::testing::edge()),
+                    None,
+                )
+                .await;
+                assert!(matches!(
+                    result.err(),
+                    Some(crate::Error::VeraProvider(vera::ProviderError::Config(message)))
+                        if message.contains("invalid trusted consensus key")
+                ));
+                assert!(worker_dir.exists(), "the worker journal is opened first");
+            })
+            .unwrap()
+    }
+
     #[test]
     fn local_document_acp_enforces_stored_custom_policy() {
         workers::block_on(async {
             let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
-            let acp_setup =
-                create_document_acp(store, Persistence::Memory, &DocumentAcpConfig::Local, None)
-                    .await
-                    .unwrap();
+            let acp_setup = create_document_acp(
+                store,
+                Persistence::Memory,
+                &DocumentAcpConfig::Local,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
 
             #[cfg(feature = "vera")]
             assert!(acp_setup.vera_acp.is_none());

@@ -24,6 +24,9 @@ pub enum DocumentAcpConfig {
         config: VeraConfig,
         lcd_address: String,
     },
+    /// Document ACP via a vera.rs node.
+    #[cfg(feature = "vera")]
+    VeraRs(crate::VeraRsConfig),
 }
 
 /// Vera document ACP configuration.
@@ -236,6 +239,13 @@ pub struct SyncTuning {
     /// links; overflow is nacked back to the pusher. Each source peer may use
     /// at most one quarter of this capacity. Default: 1000.
     pub max_pending_dags: usize,
+    /// Bytes of durable records one peer may hold for gossip heads refused
+    /// at admission; past it they are dropped and reported. Default: room
+    /// for a million Shinzo Log heads.
+    pub gossip_deferral_peer_bytes: u64,
+    /// Bytes of durable records all peers together may hold for refused
+    /// gossip heads. Default: four times the per-peer budget.
+    pub gossip_deferral_total_bytes: u64,
     /// Seconds between replicator retries, the last one repeating; `None`
     /// keeps the Go-compatible default ladder.
     pub replicator_retry_intervals: Option<Vec<u64>>,
@@ -252,6 +262,8 @@ impl Default for SyncTuning {
             rate_limit_burst: defaults.rate_limit_burst,
             rate_limit_rate: defaults.rate_limit_rate,
             max_pending_dags: defaults.max_pending_dags,
+            gossip_deferral_peer_bytes: defaults.gossip_deferral_peer_bytes,
+            gossip_deferral_total_bytes: defaults.gossip_deferral_total_bytes,
             replicator_retry_intervals: None,
         }
     }
@@ -267,6 +279,8 @@ impl SyncTuning {
             rate_limit_burst: self.rate_limit_burst,
             rate_limit_rate: self.rate_limit_rate,
             max_pending_dags: self.max_pending_dags,
+            gossip_deferral_peer_bytes: self.gossip_deferral_peer_bytes,
+            gossip_deferral_total_bytes: self.gossip_deferral_total_bytes,
             ..Default::default()
         }
     }
@@ -375,8 +389,12 @@ pub struct NodeConfig {
     pub max_txn_retries: Option<u32>,
     /// Bytes per block chunk; `None` keeps the database default.
     pub chunk_size: Option<usize>,
-    /// Enable node access control at startup, owned by the node identity.
+    /// Enable node access control at startup, owned by the node identity
+    /// unless `node_acp_owner` names another.
     pub node_acp_enabled: bool,
+    /// The DID that owns node access control when it is enabled at startup:
+    /// the identity starting the node, as Go's `start` takes it.
+    pub node_acp_owner: Option<String>,
     /// Per-query deadline; `None` keeps the engine default.
     pub query_timeout: Option<Duration>,
     /// The introspection cache; `None` keeps it on.

@@ -29,19 +29,21 @@ jobs:
             exit 0
           fi
           cancelled=0
-          for status in in_progress queued; do
-            ids=$(gh run list \
-              --repo "$REPO" \
-              --branch "$BRANCH" \
-              --workflow CI \
-              --status "$status" \
-              --limit 50 \
-              --json databaseId \
-              --jq '.[].databaseId' || true)
-            for id in $ids; do
-              echo "Cancelling $status run $id on $BRANCH"
-              gh run cancel "$id" --repo "$REPO" || true
-              cancelled=$((cancelled + 1))
+          for workflow in CI "Performance (pull request)"; do
+            for status in in_progress queued; do
+              ids=$(gh run list \
+                --repo "$REPO" \
+                --branch "$BRANCH" \
+                --workflow "$workflow" \
+                --status "$status" \
+                --limit 50 \
+                --json databaseId \
+                --jq '.[].databaseId' || true)
+              for id in $ids; do
+                echo "Cancelling $status $workflow run $id on $BRANCH"
+                gh run cancel "$id" --repo "$REPO" || true
+                cancelled=$((cancelled + 1))
+              done
             done
           done
           echo "Cancelled $cancelled run(s) for branch $BRANCH"

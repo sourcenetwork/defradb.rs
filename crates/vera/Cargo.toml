@@ -42,9 +42,9 @@ crypto = { path = "../crypto" }
 keyring = { path = "../keyring" }
 events = { path = "../events" }
 tempfile = "3"
-vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "523de40514848e9f0349f3bf7d5a0e9d161402c9" }
-vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "523de40514848e9f0349f3bf7d5a0e9d161402c9" }
-vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "523de40514848e9f0349f3bf7d5a0e9d161402c9" }
+vera-client = "0.1.1"
+vera-domain = "0.1.1"
+vera-modules = "0.1.1"
 commonware-codec = "=2026.10.0"
 
 # Lock-free shared state
@@ -73,7 +73,7 @@ alloy-primitives.workspace = true
 bs58.workspace = true
 
 # Authenticated ACP records and permission evaluation
-acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "330e38f184215f40a2bc926480b542bb75051b6d" }
+acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "e8fc9b75fbadba355d08120c527f27ca9429ed57" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # HTTP for REST/LCD and CometBFT JSON-RPC, and the gRPC channel, on nuclei
@@ -84,11 +84,11 @@ prost.workspace = true
 tonic.workspace = true
 tonic-prost.workspace = true
 # The Cosmos event stream: a WebSocket over a futures-io stream (net::connect).
-async-tungstenite = "0.29.1"
+async-tungstenite = "0.35.0"
 nuclei.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-reqwest = { version = "0.12", default-features = false, features = ["json", "charset", "http2"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "charset", "http2"] }
 n0-future.workspace = true
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]

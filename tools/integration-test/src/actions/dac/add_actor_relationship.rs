@@ -1,4 +1,6 @@
-use crate::scenario::{Common, Op, Text};
+use super::relationship::{Change, Relationship};
+use crate::clients::{CliRun, HttpRun};
+use crate::scenario::{Common, Failure, Op, Text};
 use crate::test_case::State;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -38,6 +40,43 @@ impl Op for AddDACActorRelationship {
     fn expected_error(&self) -> Option<&str> {
         self.expected_error.as_deref()
     }
+
+    fn run(&self, state: &State) -> Result<Value, Failure> {
+        self.relationship(state)?.in_process(state)
+    }
+}
+
+impl AddDACActorRelationship {
+    fn relationship(&self, state: &State) -> Result<Relationship<'_>, Failure> {
+        let target = match &self.target_identity_node {
+            Some(node) => state
+                .node_identity_of(node)
+                .map(crate::scenario::identity::node_did)
+                .ok_or_else(|| {
+                    // Go gives every node an identity; a Rust node has one
+                    // only when the test names it.
+                    Failure::unsupported(format!(
+                        "{} argument targetIdentityNode: node {node} was started with no identity",
+                        Self::name()
+                    ))
+                })?,
+            None => crate::actions::nac::target_actor(
+                Self::name(),
+                self.target_actor.as_deref(),
+                self.target_identity_seed,
+                None,
+            )?,
+        };
+        Ok(Relationship {
+            change: Change::Add,
+            op: Self::name(),
+            common: &self.common,
+            collection: &self.collection,
+            doc_id: self.doc_id.as_str(),
+            relation: &self.relation,
+            target,
+        })
+    }
 }
 
 impl Action for AddDACActorRelationship {
@@ -45,5 +84,21 @@ impl Action for AddDACActorRelationship {
 
     fn execute(&self, state: &mut State) {
         crate::scenario::execute(self, state);
+    }
+}
+
+impl HttpRun for AddDACActorRelationship {
+    fn execute_http(&self, state: &mut State) {
+        crate::scenario::execute_with(self, state, |action, state| {
+            action.relationship(state)?.http(state)
+        });
+    }
+}
+
+impl CliRun for AddDACActorRelationship {
+    fn execute_cli(&self, state: &mut State) {
+        crate::scenario::execute_with(self, state, |action, state| {
+            action.relationship(state)?.cli(state)
+        });
     }
 }

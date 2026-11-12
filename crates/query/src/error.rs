@@ -154,6 +154,11 @@ pub enum QueryError {
     #[error("unexpected type. Property: {property}, Actual: {actual}")]
     UnexpectedType { property: String, actual: String },
 
+    /// A mutation input names the secondary side of a relation, which Go's
+    /// mutation input types leave out (GraphQL validation's message).
+    #[error("Argument \"input\" has invalid value.\nIn field \"{0}\": Unknown field.")]
+    SecondaryRelationInput(String),
+
     /// Storage layer error
     #[error("storage error: {0}")]
     Storage(#[from] storage::corekv::Error),

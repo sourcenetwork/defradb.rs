@@ -66,6 +66,7 @@ pub struct NodeBuilder {
     telemetry_handle: Option<TelemetryHandle>,
     crdts: Vec<crdt::Registration>,
     txn_ownership: db::TxnOwnership,
+    document_projector: Option<Arc<dyn db::DocumentMutationProjector>>,
 }
 
 /// Durability is a separate builder setting, so it is applied over the
@@ -98,6 +99,16 @@ fn with_at_rest_keys(
 }
 
 impl NodeBuilder {
+    /// Install a trusted in-process document projector. It stages its changes
+    /// through the mutation's transaction and cannot be selected over HTTP.
+    pub fn with_document_projector(
+        mut self,
+        projector: Arc<dyn db::DocumentMutationProjector>,
+    ) -> Self {
+        self.document_projector = Some(projector);
+        self
+    }
+
     /// The worker pool the node's data path runs on. Unset, the pool's own
     /// defaults (`workers::Config::default()`).
     pub fn with_workers(mut self, config: workers::Config) -> Self {
@@ -214,6 +225,15 @@ impl NodeBuilder {
         self
     }
 
+    /// Configure the node to use document ACP backed by a vera.rs node.
+    ///
+    /// Requires the `vera` feature (on by default).
+    #[cfg(feature = "vera")]
+    pub fn with_vera_rs(mut self, config: crate::VeraRsConfig) -> Self {
+        self.config.document_acp = DocumentAcpConfig::VeraRs(config);
+        self
+    }
+
     /// Use an identity already registered in DefraDB's process-local signing registry.
     ///
     /// The caller must register the signer before calling [`NodeBuilder::build`].
@@ -233,6 +253,15 @@ impl NodeBuilder {
     /// own the policy — [`NodeBuilder::build`] fails otherwise.
     pub fn with_node_acp_enabled(mut self) -> Self {
         self.config.node_acp_enabled = true;
+        self
+    }
+
+    /// Enable Node Access Control (NAC) owned by `owner`, the identity
+    /// starting the node, as Go's `start` with NAC enabled does. A node whose
+    /// NAC was set up before keeps its owner.
+    pub fn with_node_acp_owner(mut self, owner: impl Into<String>) -> Self {
+        self.config.node_acp_enabled = true;
+        self.config.node_acp_owner = Some(owner.into());
         self
     }
 
@@ -420,11 +449,17 @@ impl NodeBuilder {
             None => (false, None),
         };
 
+        #[cfg(feature = "http")]
+        if serves_http && self.txn_ownership == db::TxnOwnership::Embedder {
+            return Err(crate::Error::HttpEmbedderTransactionOwnership);
+        }
+
         let extras = Extras {
             embedding_url: self.embedding_url.take(),
             embedding_model: self.embedding_model.take(),
             embedding_api_key: self.embedding_api_key.take(),
             txn_ownership: self.txn_ownership,
+            document_projector: self.document_projector.take(),
             #[cfg(feature = "http")]
             transaction_cleanup,
             #[cfg(feature = "http")]
@@ -468,6 +503,18 @@ impl NodeBuilder {
                 schema_ops: Arc::clone(&node.schema_ops),
                 context: None,
             }));
+            let ops = crate::ops::HttpNodeOps::new(node.ops());
+            let server = server
+                .with_view_arc(ops.clone())
+                .with_backup_arc(ops.clone())
+                .with_doc_acp_arc(ops.clone())
+                .with_encrypted_index_arc(ops.clone())
+                .with_block_arc(ops);
+
+            #[cfg(not(target_arch = "wasm32"))]
+            let server = server.with_index_arc(defra_http::index_adapter::IndexAdapter::new_arc(
+                Arc::clone(node.database()),
+            ));
 
             // A local document ACP is the node's own store: its routes run on
             // the pool, as the node's own calls do.

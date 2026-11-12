@@ -9,6 +9,14 @@ enum EffectiveLinkedDelta {
     SkipField,
 }
 
+pub(super) fn indexes_field(collection: &Collection, field: &str) -> bool {
+    collection
+        .schema()
+        .indexes
+        .iter()
+        .any(|index| index.fields.iter().any(|indexed| indexed.name == field))
+}
+
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     pub(crate) async fn process_linked_field_blocks(
         &self,
@@ -179,11 +187,23 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .as_ref()
             .filter(|_| !branchable)
         {
-            let collection_id = context
-                .collection
-                .as_ref()
+            let found;
+            let collection = match context.collection.as_ref() {
+                Some(collection) => Some(collection),
+                None => {
+                    found = context
+                        .metadata
+                        .collection_id
+                        .and_then(|id| self.db.find_collection_by_id(id).ok().flatten());
+                    found.as_ref()
+                }
+            };
+            let collection_id = collection
                 .map(|collection| collection.collection_id())
                 .or(context.metadata.collection_id)
+                .unwrap_or_default();
+            let collection_name = collection
+                .map(|collection| collection.name())
                 .unwrap_or_default();
             // A refusal drops the whole document, so a commit after the
             // first finding no heads follows a refused one: the commits
@@ -196,12 +216,38 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     .next()
                     .is_none();
             if follows_refusal
-                || !filter.allow_replication(collection_id, context.doc_id_str, &filtered_fields)
+                || !filter.allow_replication(
+                    collection_id,
+                    collection_name,
+                    context.doc_id_str,
+                    &filtered_fields,
+                )
             {
                 return Ok(Some(MergeOutcome::terminal_skip(
                     "refused by the replication filter",
                 )));
             }
+        }
+
+        // Read the document before merging fields. Some merges save the new
+        // value right away, and the index needs the old one to drop its entry.
+        if let Some(collection) = context.collection.as_ref().filter(|collection| {
+            pending.iter().any(|(_, _, deltas)| {
+                deltas.iter().any(|effective| {
+                    effective
+                        .field()
+                        .is_some_and(|delta| indexes_field(collection, delta.field_name))
+                })
+            })
+        }) {
+            let doc_id = DocID::from_string(context.doc_id_str)
+                .map_err(|e| MergeError::MergeFailed(format!("invalid doc_id: {e}")))?;
+            let before = state
+                .reads
+                .document(collection, datastore, context.doc_short_id, &doc_id)
+                .await
+                .map_err(MergeError::Database)?;
+            state.indexed_before = Some(before);
         }
 
         // Phase 2: persist the decoded deltas.
@@ -263,7 +309,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         state.field_priorities.insert(field_name.clone(), order);
                     }
                     // An operation is an operand on the stored value.
-                    None => state.reads.wrote_document(),
+                    None => state.reads.wrote_field(
+                        &field_name,
+                        result.value.as_ref().filter(|_| result.op.is_none()),
+                    ),
                 }
                 if result.applied {
                     state.any_field_applied = true;

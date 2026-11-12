@@ -21,3 +21,7 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+    # The tag names the Rust release it installs, so a "newer" tag is a
+    # toolchain change (or one that does not exist), never an action update.
+    ignore:
+      - dependency-name: dtolnay/rust-toolchain

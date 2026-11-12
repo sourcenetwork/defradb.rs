@@ -20,18 +20,19 @@ path = "tests/verars/main.rs"
 
 [dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "523de40514848e9f0349f3bf7d5a0e9d161402c9" }
+vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "419cdb4af02843af28cd76899b7dd5ad5e0bb2c3" }
 commonware-codec = "=2026.10.0"
-defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "330e38f184215f40a2bc926480b542bb75051b6d" }
+defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "e8fc9b75fbadba355d08120c527f27ca9429ed57" }
 crypto = { path = "../../crates/crypto" }
 document = { path = "../../crates/document" }
 edge = { path = "../../crates/edge", features = ["testing"] }
 nuclei.workspace = true
 net = { path = "../../crates/net" }
 serde_json = "1.0"
+graphql-parser.workspace = true
 futures.workspace = true
 paste = "1.0"
-ctor = "0.2"
+ctor = "1.0"
 chrono = { version = "0.4" }
 defra-node = { path = "../../crates/defra-node", features = ["http", "libp2p"] }
 events = { path = "../../crates/events" }
@@ -44,7 +45,7 @@ serde.workspace = true
 tempfile = "3.17"
 thiserror.workspace = true
 workers = { path = "../../crates/workers" }
-testo = { git = "https://github.com/sourcenetwork/testo.rs", rev = "79d83b0adedf00f85f9fd9aecc6fd009ed41332a" }
+testo = { git = "https://github.com/sourcenetwork/testo.rs", rev = "dc53fa515d5c39511845407dcd42a7650c07f66c" }
 kovan.workspace = true
 regolith.workspace = true
 rapidhash.workspace = true
@@ -64,20 +65,20 @@ required-features = ["generator"]
 [dev-dependencies]
 mantra-macros = "0.9"
 keyring = { path = "../../crates/keyring" }
-vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "523de40514848e9f0349f3bf7d5a0e9d161402c9" }
-vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "523de40514848e9f0349f3bf7d5a0e9d161402c9" }
-vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "523de40514848e9f0349f3bf7d5a0e9d161402c9" }
+vera-client = "0.1.1"
+vera-domain = "0.1.1"
+vera-modules = "0.1.1"
 alloy-sol-types.workspace = true
 acp = { path = "../../crates/acp" }
 vera = { path = "../../crates/vera" }
 libc = "0.2"
 p2p = { path = "../../crates/p2p", features = ["iroh-transport"] }
 ciborium = { workspace = true }
-serial_test = "3"
+serial_test = "4"
 
 [lints]
 workspace = true
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
-mach2 = "0.4"
+mach2 = "0.6"
 

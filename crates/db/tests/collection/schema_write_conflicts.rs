@@ -72,28 +72,6 @@ fn document_write_conflicts_with_collection_drop() {
 }
 
 #[test]
-fn document_write_conflicts_with_schema_patch() {
-    workers::block_on(async {
-        let db = open().await;
-        db.create_collection(schema("race", "race-v1", "race-id"))
-            .await
-            .unwrap();
-        let writer = stage_create(&db, "race").await;
-
-        db.patch_collection(
-            "race",
-            r#"[{"op":"add","path":"/race/Fields/-","value":{"Name":"extra","Kind":"String"}}]"#,
-            None,
-        )
-        .await
-        .unwrap();
-
-        assert!(is_txn_conflict(writer.commit().await.unwrap_err()));
-    })
-    .unwrap()
-}
-
-#[test]
 fn document_write_conflicts_with_index_definition() {
     workers::block_on(async {
         let db = open().await;

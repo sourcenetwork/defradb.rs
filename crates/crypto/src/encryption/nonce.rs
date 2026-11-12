@@ -9,8 +9,8 @@
 //! `DEFRA_ALLOW_DETERMINISTIC_TEST_CRYPTO=1`; production deployments must never
 //! set either variable.
 
-use rand::rngs::OsRng;
-use rand::RngCore;
+use rand::rngs::SysRng;
+use rand::TryRng;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use defra_core::Result;
@@ -49,7 +49,7 @@ pub fn generate_nonce() -> Result<[u8; AES_NONCE_SIZE]> {
 /// Generate a random nonce using cryptographically secure RNG
 fn generate_random_nonce() -> Result<[u8; AES_NONCE_SIZE]> {
     let mut nonce = [0u8; AES_NONCE_SIZE];
-    OsRng.try_fill_bytes(&mut nonce).map_err(|e| {
+    SysRng.try_fill_bytes(&mut nonce).map_err(|e| {
         crate::error::crypto_error(format!("RNG failure in nonce generation: {}", e))
     })?;
     Ok(nonce)

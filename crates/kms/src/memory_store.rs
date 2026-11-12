@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use kovan_map::HopscotchMap;
-use rand::RngCore;
+use rand::Rng;
 use rapidhash::fast::RandomState;
 
 use defra_core::block::generate_cid_from_bytes;
@@ -47,7 +47,7 @@ impl KeyStore for MemoryKeyStore {
 
     async fn generate(&self, _scope: &KeyScope) -> Result<(EncryptionCid, StoredKey)> {
         let mut key = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut key);
+        rand::rand_core::UnwrapErr(rand::rngs::SysRng).fill_bytes(&mut key);
 
         // Encryption blocks carry only the key (Go #4838); ownership is
         // tracked in the block-CID -> DocID index, not the block itself.

@@ -3,6 +3,8 @@ use async_graphql::Value as GqlValue;
 use rapidhash::RapidHashMap;
 use schema::{CollectionVersion, FieldKind, ScalarArrayKind, ScalarKind};
 
+use super::descriptions as d;
+
 const SIMILARITY_DESCRIPTION: &str = "\nReturns how similar the given vector is to the specified field's value. The metric is\n whichever one the field's vector index was created with, defaulting to cosine similarity\n when the field has no vector index. Higher values are more similar for every metric.\n";
 
 /// Build the object type for a collection.
@@ -27,34 +29,27 @@ pub(super) fn build_collection_type(
             "_docID".to_string(),
             Field::new("_docID", TypeRef::named("ID"), |_| {
                 FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
-            }),
+            })
+            .description(d::DOC_ID_FIELD),
         ));
         named_fields.push((
             "_deleted".to_string(),
             Field::new("_deleted", TypeRef::named("Boolean"), |_| {
                 FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
-            }),
+            })
+            .description(d::DELETED_FIELD),
         ));
     }
 
-    // _group field with args sorted alphabetically
-    let group_filter = format!("{}FilterArg", coll_name);
-    let group_order = format!("{}OrderArg", coll_name);
-    let group_field_enum = format!("{}Field", coll_name);
     named_fields.push((
         "GROUP".to_string(),
-        Field::new("GROUP", TypeRef::named_list(coll_name), |_| {
-            FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
-        })
-        .argument(InputValue::new("docID", TypeRef::named_nn_list("ID")))
-        .argument(InputValue::new("filter", TypeRef::named(&group_filter)))
-        .argument(InputValue::new(
-            "groupBy",
-            TypeRef::named_nn_list(&group_field_enum),
-        ))
-        .argument(InputValue::new("limit", TypeRef::named("Int")))
-        .argument(InputValue::new("offset", TypeRef::named("Int")))
-        .argument(InputValue::new("order", TypeRef::named_list(&group_order))),
+        list_join_args(
+            Field::new("GROUP", TypeRef::named_list(coll_name), |_| {
+                FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+            })
+            .description(d::GROUP_FIELD),
+            coll_name,
+        ),
     ));
 
     // _version field (not for views)
@@ -63,7 +58,8 @@ pub(super) fn build_collection_type(
             "_version".to_string(),
             Field::new("_version", TypeRef::named_list("Commit"), |_| {
                 FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
-            }),
+            })
+            .description(d::VERSION_FIELD),
         ));
     }
 
@@ -90,23 +86,23 @@ pub(super) fn build_collection_type(
             ));
         }
         for field in &collection.fields {
-            match &field.kind {
-                FieldKind::ScalarArray(_) | FieldKind::Relation { is_array: true, .. } => {
-                    count_args.push((
-                        field.name.clone(),
-                        InputValue::new(
-                            &field.name,
-                            TypeRef::named(format!("{}__{}__CountSelector", coll_name, field.name)),
-                        ),
-                    ));
+            let selector = match relation_target(&field.kind, id_to_name, coll_name) {
+                Some((target, true)) => format!("{target}__CountSelector"),
+                _ if matches!(field.kind, FieldKind::ScalarArray(_)) => {
+                    format!("{}__{}__CountSelector", coll_name, field.name)
                 }
-                _ => {}
-            }
+                _ => continue,
+            };
+            count_args.push((
+                field.name.clone(),
+                InputValue::new(&field.name, TypeRef::named(selector)),
+            ));
         }
         count_args.sort_by(|a, b| a.0.cmp(&b.0));
         let mut count_field = Field::new("COUNT", TypeRef::named_nn("Int"), |_| {
             FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
-        });
+        })
+        .description(d::COUNT);
         for (_, arg) in count_args {
             count_field = count_field.argument(arg);
         }
@@ -114,11 +110,11 @@ pub(super) fn build_collection_type(
     }
 
     // _sum, _avg, _max, _min: take args for _group and each numeric inline array field
-    for (agg_name, agg_type) in &[
-        ("SUM", "Float"),
-        ("AVG", "Float"),
-        ("MAX", "Float"),
-        ("MIN", "Float"),
+    for (agg_name, agg_type, description) in &[
+        ("SUM", "Float", d::SUM),
+        ("AVG", "Float", d::AVG),
+        ("MAX", "Float", d::MAX),
+        ("MIN", "Float", d::MIN),
     ] {
         let mut agg_args: Vec<(String, InputValue)> = Vec::new();
         agg_args.push((
@@ -129,6 +125,15 @@ pub(super) fn build_collection_type(
             ),
         ));
         for field in &collection.fields {
+            if let Some((target, true)) = relation_target(&field.kind, id_to_name, coll_name) {
+                agg_args.push((
+                    field.name.clone(),
+                    InputValue::new(
+                        &field.name,
+                        TypeRef::named(format!("{target}__NumericSelector")),
+                    ),
+                ));
+            }
             if let FieldKind::ScalarArray(arr) = &field.kind {
                 let is_numeric = matches!(
                     arr,
@@ -160,7 +165,8 @@ pub(super) fn build_collection_type(
         };
         let mut agg_field = Field::new(*agg_name, output_type, |_| {
             FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
-        });
+        })
+        .description(*description);
         for (_, arg) in agg_args {
             agg_field = agg_field.argument(arg);
         }
@@ -216,12 +222,20 @@ pub(super) fn build_collection_type(
             continue;
         }
         let type_ref = field_kind_to_type_ref(&field.kind, id_to_name, &collection.name);
-        named_fields.push((
-            field.name.clone(),
-            Field::new(&field.name, type_ref, |_| {
-                FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
-            }),
-        ));
+        let mut gql_field = Field::new(&field.name, type_ref, |_| {
+            FieldFuture::new(async { Ok(Some(GqlValue::Null)) })
+        });
+        if let Some((target, is_array)) = relation_target(&field.kind, id_to_name, coll_name) {
+            gql_field = if is_array {
+                list_join_args(gql_field, &target)
+            } else {
+                gql_field.argument(
+                    InputValue::new("filter", TypeRef::named(format!("{target}FilterArg")))
+                        .description(d::SINGLE_FIELD_FILTER_ARG),
+                )
+            };
+        }
+        named_fields.push((field.name.clone(), gql_field));
     }
 
     // Sort alphabetically to match Go introspection output
@@ -233,6 +247,64 @@ pub(super) fn build_collection_type(
     }
 
     obj
+}
+
+/// The arguments Go gives a field that joins a list of `target` documents
+/// (a one-to-many relation, or the `GROUP` selector), sorted by name.
+fn list_join_args(field: Field, target: &str) -> Field {
+    field
+        .argument(
+            InputValue::new("docID", TypeRef::named_nn_list("ID")).description(d::DOC_IDS_ARG),
+        )
+        .argument(
+            InputValue::new("filter", TypeRef::named(format!("{target}FilterArg")))
+                .description(d::LIST_FIELD_FILTER_ARG),
+        )
+        .argument(
+            InputValue::new("groupBy", TypeRef::named_nn_list(format!("{target}Field")))
+                .description(d::GROUP_BY_ARG),
+        )
+        .argument(InputValue::new("limit", TypeRef::named("Int")).description(d::LIMIT_ARG))
+        .argument(InputValue::new("offset", TypeRef::named("Int")).description(d::OFFSET_ARG))
+        .argument(
+            InputValue::new("order", TypeRef::named_list(format!("{target}OrderArg")))
+                .description(d::ORDER_ARG),
+        )
+}
+
+/// The collection a relation field joins, and whether it joins a list.
+fn relation_target(
+    kind: &FieldKind,
+    id_to_name: &RapidHashMap<String, String>,
+    current_name: &str,
+) -> Option<(String, bool)> {
+    match kind {
+        FieldKind::Relation {
+            collection_id,
+            is_array,
+        } => Some((
+            id_to_name
+                .get(collection_id)
+                .cloned()
+                .unwrap_or_else(|| collection_id.clone()),
+            *is_array,
+        )),
+        FieldKind::SelfRef {
+            relative_id,
+            is_array,
+        } if relative_id.is_empty() => Some((current_name.to_string(), *is_array)),
+        FieldKind::SelfRef {
+            relative_id,
+            is_array,
+        } => Some((
+            id_to_name
+                .get(relative_id)
+                .cloned()
+                .unwrap_or_else(|| relative_id.clone()),
+            *is_array,
+        )),
+        _ => None,
+    }
 }
 
 /// Build the Commit object type (used by _version and _commits fields).
@@ -249,23 +321,30 @@ pub(super) fn build_commit_type() -> Object {
 
     fn with_commit_link_args(field: Field) -> Field {
         field
-            .argument(InputValue::new("cid", TypeRef::named_nn_list("ID")))
-            .argument(InputValue::new("docID", TypeRef::named_nn_list("ID")))
-            .argument(InputValue::new(
-                "filter",
-                TypeRef::named("CommitsFilterArg"),
-            ))
-            .argument(InputValue::new(
-                "groupBy",
-                TypeRef::named_nn_list("commitFields"),
-            ))
-            .argument(InputValue::new(
-                "order",
-                TypeRef::named_list("commitsOrderArg"),
-            ))
+            .description(d::COMMIT_LINKS)
+            .argument(
+                InputValue::new("cid", TypeRef::named_nn_list("ID")).description(d::COMMIT_CID_ARG),
+            )
+            .argument(
+                InputValue::new("docID", TypeRef::named_nn_list("ID"))
+                    .description(d::COMMIT_DOC_ID_ARG),
+            )
+            .argument(
+                InputValue::new("filter", TypeRef::named("CommitsFilterArg"))
+                    .description(d::COMMIT_FILTER_ARG),
+            )
+            .argument(
+                InputValue::new("groupBy", TypeRef::named_nn_list("commitFields"))
+                    .description(d::GROUP_BY_ARG),
+            )
+            .argument(
+                InputValue::new("order", TypeRef::named_list("commitsOrderArg"))
+                    .description(d::ORDER_ARG),
+            )
     }
 
     Object::new("Commit")
+        .description(d::COMMIT)
         .field(
             null_field!("AVG", TypeRef::named_nn("Float")).argument(InputValue::new(
                 "field",
@@ -273,12 +352,14 @@ pub(super) fn build_commit_type() -> Object {
             )),
         )
         .field(
-            null_field!("COUNT", TypeRef::named_nn("Int")).argument(InputValue::new(
-                "field",
-                TypeRef::named("commitCountFieldArg"),
-            )),
+            null_field!("COUNT", TypeRef::named_nn("Int"))
+                .description(d::COUNT)
+                .argument(InputValue::new(
+                    "field",
+                    TypeRef::named("commitCountFieldArg"),
+                )),
         )
-        .field(null_field!("GROUP", TypeRef::named_list("Commit")))
+        .field(null_field!("GROUP", TypeRef::named_list("Commit")).description(d::GROUP_FIELD))
         .field(
             null_field!("MAX", TypeRef::named("Float")).argument(InputValue::new(
                 "field",
@@ -297,22 +378,27 @@ pub(super) fn build_commit_type() -> Object {
                 TypeRef::named("commitNumericFieldArg"),
             )),
         )
-        .field(null_field!("cid", TypeRef::named("String")))
+        .field(null_field!("cid", TypeRef::named("String")).description(d::COMMIT_CID))
         .field(null_field!("collectionID", TypeRef::named("String")))
-        .field(null_field!("collectionVersionId", TypeRef::named("String")))
-        .field(null_field!("delta", TypeRef::named("String")))
-        .field(null_field!("docID", TypeRef::named("String")))
-        .field(null_field!("fieldName", TypeRef::named("String")))
+        .field(
+            null_field!("collectionVersionId", TypeRef::named("String"))
+                .description(d::COMMIT_COLLECTION_VERSION_ID),
+        )
+        .field(null_field!("delta", TypeRef::named("String")).description(d::COMMIT_DELTA))
+        .field(null_field!("docID", TypeRef::named("String")).description(d::COMMIT_DOC_ID))
+        .field(null_field!("fieldName", TypeRef::named("String")).description(d::COMMIT_FIELD_NAME))
         .field(with_commit_link_args(null_field!(
             "heads",
             TypeRef::named_list("Commit")
         )))
-        .field(null_field!("height", TypeRef::named("Int")))
+        .field(null_field!("height", TypeRef::named("Int")).description(d::COMMIT_HEIGHT))
         .field(with_commit_link_args(null_field!(
             "links",
             TypeRef::named_list("Commit")
         )))
-        .field(null_field!("signature", TypeRef::named("Signature")))
+        .field(
+            null_field!("signature", TypeRef::named("Signature")).description(d::COMMIT_SIGNATURE),
+        )
 }
 
 /// Convert field kind to async-graphql TypeRef.

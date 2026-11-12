@@ -42,7 +42,7 @@ async fn server_dump_reads_encrypted_regolith_store() {
         database.print_dump().await.unwrap()
     };
 
-    let output = Command::new(env!("CARGO_BIN_EXE_defra"))
+    let output = Command::new(env!("CARGO_BIN_EXE_defradb"))
         .args(["--rootdir"])
         .arg(root.path())
         .arg("server-dump")

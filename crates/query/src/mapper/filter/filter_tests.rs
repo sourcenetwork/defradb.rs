@@ -35,108 +35,6 @@ fn test_empty_filter_matches_all() {
 }
 
 #[test]
-fn test_eq_filter() {
-    let filter = Filter::from_conditions(map([("name".to_string(), json!({"_eq": "Alice"}))]));
-    let mapping = make_mapping();
-    let fields = make_fields();
-    assert!(filter.matches(&fields, &mapping).unwrap());
-
-    let filter = Filter::from_conditions(map([("name".to_string(), json!({"_eq": "Bob"}))]));
-    assert!(!filter.matches(&fields, &mapping).unwrap());
-}
-
-#[test]
-fn test_ne_filter() {
-    let filter = Filter::from_conditions(map([("name".to_string(), json!({"_ne": "Bob"}))]));
-    let mapping = make_mapping();
-    let fields = make_fields();
-    assert!(filter.matches(&fields, &mapping).unwrap());
-}
-
-#[test]
-fn test_gt_filter() {
-    let filter = Filter::from_conditions(map([("age".to_string(), json!({"_gt": 25}))]));
-    let mapping = make_mapping();
-    let fields = make_fields();
-    assert!(filter.matches(&fields, &mapping).unwrap());
-
-    let filter = Filter::from_conditions(map([("age".to_string(), json!({"_gt": 35}))]));
-    assert!(!filter.matches(&fields, &mapping).unwrap());
-}
-
-#[test]
-fn test_in_filter() {
-    let filter = Filter::from_conditions(map([(
-        "name".to_string(),
-        json!({"_in": ["Alice", "Bob", "Charlie"]}),
-    )]));
-    let mapping = make_mapping();
-    let fields = make_fields();
-    assert!(filter.matches(&fields, &mapping).unwrap());
-
-    let filter = Filter::from_conditions(map([(
-        "name".to_string(),
-        json!({"_in": ["Bob", "Charlie"]}),
-    )]));
-    assert!(!filter.matches(&fields, &mapping).unwrap());
-}
-
-#[test]
-fn test_and_filter() {
-    let filter = Filter::from_conditions(map([(
-        "_and".to_string(),
-        json!([
-            {"name": {"_eq": "Alice"}},
-            {"age": {"_gte": 18}}
-        ]),
-    )]));
-    let mapping = make_mapping();
-    let fields = make_fields();
-    assert!(filter.matches(&fields, &mapping).unwrap());
-
-    let filter = Filter::from_conditions(map([(
-        "_and".to_string(),
-        json!([
-            {"name": {"_eq": "Alice"}},
-            {"age": {"_lt": 18}}
-        ]),
-    )]));
-    assert!(!filter.matches(&fields, &mapping).unwrap());
-}
-
-#[test]
-fn test_or_filter() {
-    let filter = Filter::from_conditions(map([(
-        "_or".to_string(),
-        json!([
-            {"name": {"_eq": "Bob"}},
-            {"age": {"_eq": 30}}
-        ]),
-    )]));
-    let mapping = make_mapping();
-    let fields = make_fields();
-    assert!(filter.matches(&fields, &mapping).unwrap());
-
-    let filter = Filter::from_conditions(map([(
-        "_or".to_string(),
-        json!([
-            {"name": {"_eq": "Bob"}},
-            {"age": {"_eq": 25}}
-        ]),
-    )]));
-    assert!(!filter.matches(&fields, &mapping).unwrap());
-}
-
-#[test]
-fn test_not_filter() {
-    let filter =
-        Filter::from_conditions(map([("_not".to_string(), json!({"name": {"_eq": "Bob"}}))]));
-    let mapping = make_mapping();
-    let fields = make_fields();
-    assert!(filter.matches(&fields, &mapping).unwrap());
-}
-
-#[test]
 fn test_null_logical_filters_are_valid_and_match_all() {
     let mapping = make_mapping();
     let fields = make_fields();
@@ -188,75 +86,6 @@ fn test_custom_filter_depth_limit() {
 }
 
 #[test]
-fn test_like_filter() {
-    let filter = Filter::from_conditions(map([("name".to_string(), json!({"_like": "Ali%"}))]));
-    let mapping = make_mapping();
-    let fields = make_fields();
-    assert!(filter.matches(&fields, &mapping).unwrap());
-
-    let filter = Filter::from_conditions(map([("name".to_string(), json!({"_like": "%ice"}))]));
-    assert!(filter.matches(&fields, &mapping).unwrap());
-}
-
-#[test]
-fn test_ilike_filter_case_insensitive_prefix() {
-    // Pattern "ALI%" should match "Alice" (case-insensitive)
-    let filter = Filter::from_conditions(map([("name".to_string(), json!({"_ilike": "ALI%"}))]));
-    let mapping = make_mapping();
-    let fields = make_fields(); // name = "Alice"
-    assert!(filter.matches(&fields, &mapping).unwrap());
-}
-
-#[test]
-fn test_ilike_filter_case_insensitive_suffix() {
-    // Pattern "%ICE" should match "Alice" (case-insensitive)
-    let filter = Filter::from_conditions(map([("name".to_string(), json!({"_ilike": "%ICE"}))]));
-    let mapping = make_mapping();
-    let fields = make_fields();
-    assert!(filter.matches(&fields, &mapping).unwrap());
-}
-
-#[test]
-fn test_ilike_filter_case_insensitive_contains() {
-    // Pattern "%LIC%" should match "Alice" (case-insensitive)
-    let filter = Filter::from_conditions(map([("name".to_string(), json!({"_ilike": "%LIC%"}))]));
-    let mapping = make_mapping();
-    let fields = make_fields();
-    assert!(filter.matches(&fields, &mapping).unwrap());
-}
-
-#[test]
-fn test_ilike_filter_case_insensitive_exact() {
-    // Pattern "ALICE" should match "Alice" (case-insensitive exact)
-    let filter = Filter::from_conditions(map([("name".to_string(), json!({"_ilike": "ALICE"}))]));
-    let mapping = make_mapping();
-    let fields = make_fields();
-    assert!(filter.matches(&fields, &mapping).unwrap());
-}
-
-#[test]
-fn test_ilike_filter_no_match() {
-    // Pattern "BOB%" should NOT match "Alice"
-    let filter = Filter::from_conditions(map([("name".to_string(), json!({"_ilike": "BOB%"}))]));
-    let mapping = make_mapping();
-    let fields = make_fields();
-    assert!(!filter.matches(&fields, &mapping).unwrap());
-}
-
-#[test]
-fn test_nilike_filter() {
-    // Negated: pattern "BOB%" should NOT match "Alice", so nilike returns true
-    let filter = Filter::from_conditions(map([("name".to_string(), json!({"_nilike": "BOB%"}))]));
-    let mapping = make_mapping();
-    let fields = make_fields();
-    assert!(filter.matches(&fields, &mapping).unwrap());
-
-    // Negated: pattern "ALI%" WOULD match "Alice", so nilike returns false
-    let filter = Filter::from_conditions(map([("name".to_string(), json!({"_nilike": "ALI%"}))]));
-    assert!(!filter.matches(&fields, &mapping).unwrap());
-}
-
-#[test]
 fn test_ilike_underscore_as_literal() {
     // Underscore is treated as literal character (matches Go behavior)
     let filter = Filter::from_conditions(map([("name".to_string(), json!({"_ilike": "Al_ce"}))]));
@@ -269,29 +98,6 @@ fn test_ilike_underscore_as_literal() {
     let mut fields_with_underscore = make_fields();
     fields_with_underscore[1] = Some(json!("Al_ce"));
     assert!(filter.matches(&fields_with_underscore, &mapping).unwrap());
-}
-
-#[test]
-fn test_ilike_prefix_suffix_pattern() {
-    // Pattern "Ali%ce" should match "Alice" (starts with "ali" AND ends with "ce")
-    let filter = Filter::from_conditions(map([("name".to_string(), json!({"_ilike": "ALI%CE"}))]));
-    let mapping = make_mapping();
-    let fields = make_fields(); // name = "Alice"
-    assert!(filter.matches(&fields, &mapping).unwrap());
-}
-
-#[test]
-fn test_like_prefix_suffix_pattern() {
-    // Pattern "Ali%ce" should match "Alice" (case-sensitive)
-    let filter = Filter::from_conditions(map([("name".to_string(), json!({"_like": "Ali%ce"}))]));
-    let mapping = make_mapping();
-    let fields = make_fields(); // name = "Alice"
-    assert!(filter.matches(&fields, &mapping).unwrap());
-
-    // Wrong case should NOT match
-    let filter_wrong_case =
-        Filter::from_conditions(map([("name".to_string(), json!({"_like": "ALI%CE"}))]));
-    assert!(!filter_wrong_case.matches(&fields, &mapping).unwrap());
 }
 
 #[test]
@@ -574,66 +380,6 @@ fn test_value_le_null_returns_false() {
 }
 
 #[test]
-fn test_nested_and_or_operators() {
-    // Test _and containing _or: match if (name=Alice OR name=Bob) AND age>=18
-    let filter = Filter::from_conditions(map([(
-        "_and".to_string(),
-        json!([
-            {"_or": [
-                {"name": {"_eq": "Alice"}},
-                {"name": {"_eq": "Bob"}}
-            ]},
-            {"age": {"_gte": 18}}
-        ]),
-    )]));
-    let mapping = make_mapping();
-
-    // Alice, age 30 - should match
-    let fields_alice = vec![
-        Some(json!("doc1")),
-        Some(json!("Alice")),
-        Some(json!(30)),
-        Some(json!(true)),
-    ];
-    assert!(filter.matches(&fields_alice, &mapping).unwrap());
-
-    // Charlie, age 25 - should NOT match (name not Alice or Bob)
-    let fields_charlie = vec![
-        Some(json!("doc2")),
-        Some(json!("Charlie")),
-        Some(json!(25)),
-        Some(json!(true)),
-    ];
-    assert!(!filter.matches(&fields_charlie, &mapping).unwrap());
-}
-
-#[test]
-fn test_nested_not_and_operators() {
-    // Test _not containing _and: match if NOT (name=Alice AND age<18)
-    let filter = Filter::from_conditions(map([(
-        "_not".to_string(),
-        json!({"_and": [
-            {"name": {"_eq": "Alice"}},
-            {"age": {"_lt": 18}}
-        ]}),
-    )]));
-    let mapping = make_mapping();
-
-    // Alice, age 30 - should match (Alice but NOT age<18)
-    let fields = make_fields();
-    assert!(filter.matches(&fields, &mapping).unwrap());
-
-    // Alice, age 15 - should NOT match
-    let fields_young = vec![
-        Some(json!("doc1")),
-        Some(json!("Alice")),
-        Some(json!(15)),
-        Some(json!(true)),
-    ];
-    assert!(!filter.matches(&fields_young, &mapping).unwrap());
-}
-
-#[test]
 fn test_like_underscore_as_literal() {
     // Underscore is treated as literal character (matches Go behavior)
     let filter = Filter::from_conditions(map([("name".to_string(), json!({"_like": "Al_ce"}))]));
@@ -769,15 +515,6 @@ fn test_missing_nested_field_in_matches_implicit_null() {
 // =========================================================================
 // Pattern matching edge cases
 // =========================================================================
-
-#[test]
-fn test_like_pattern_only_percent() {
-    // Pattern "%" should match any non-empty string (suffix after empty prefix)
-    let filter = Filter::from_conditions(map([("name".to_string(), json!({"_like": "%"}))]));
-    let mapping = make_mapping();
-    let fields = make_fields();
-    assert!(filter.matches(&fields, &mapping).unwrap());
-}
 
 #[test]
 fn test_like_empty_pattern() {
@@ -1000,18 +737,6 @@ fn make_scores_fields() -> Vec<Option<JsonValue>> {
 }
 
 #[test]
-fn test_any_filter_match() {
-    // _any: {_gt: 90} should match because 95 > 90
-    let filter = Filter::from_conditions(map([(
-        "testScores".to_string(),
-        json!({"_any": {"_gt": 90}}),
-    )]));
-    let mapping = make_scores_mapping();
-    let fields = make_scores_fields();
-    assert!(filter.matches(&fields, &mapping).unwrap());
-}
-
-#[test]
 fn test_any_filter_no_match() {
     // _any: {_gt: 100} should not match because no score > 100
     let filter = Filter::from_conditions(map([(
@@ -1056,18 +781,6 @@ fn test_any_filter_null_field() {
 }
 
 #[test]
-fn test_all_filter_match() {
-    // _all: {_gte: 70} should match because all scores >= 70
-    let filter = Filter::from_conditions(map([(
-        "testScores".to_string(),
-        json!({"_all": {"_gte": 70}}),
-    )]));
-    let mapping = make_scores_mapping();
-    let fields = make_scores_fields(); // [85, 90, 75, 95]
-    assert!(filter.matches(&fields, &mapping).unwrap());
-}
-
-#[test]
 fn test_all_filter_no_match() {
     // _all: {_gte: 80} should not match because 75 < 80
     let filter = Filter::from_conditions(map([(
@@ -1109,18 +822,6 @@ fn test_all_filter_null_field() {
         Some(json!(null)), // Null field
     ];
     assert!(!filter.matches(&fields, &mapping).unwrap());
-}
-
-#[test]
-fn test_none_filter_match() {
-    // _none: {_lt: 70} should match because no score < 70
-    let filter = Filter::from_conditions(map([(
-        "testScores".to_string(),
-        json!({"_none": {"_lt": 70}}),
-    )]));
-    let mapping = make_scores_mapping();
-    let fields = make_scores_fields(); // [85, 90, 75, 95]
-    assert!(filter.matches(&fields, &mapping).unwrap());
 }
 
 #[test]

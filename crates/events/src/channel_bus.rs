@@ -58,6 +58,17 @@ struct Subscriber {
     /// Shared count of messages dropped due to buffer overflow.
     /// Used to signal clients that they may need to resync.
     dropped_count: std::sync::Arc<AtomicU64>,
+    close_on_overflow: bool,
+}
+
+impl Subscriber {
+    fn record_overflow(&self) -> u64 {
+        let previous = self.dropped_count.fetch_add(1, Ordering::Relaxed);
+        if self.close_on_overflow {
+            self.sender.close();
+        }
+        previous
+    }
 }
 
 /// Channel-based event bus using runtime-neutral async channels.
@@ -138,7 +149,11 @@ impl Bus for ChannelBus {
     }
 
     fn subscribe(&self, events: &[EventName]) -> Subscription {
-        self.subscribe_raw(events)
+        self.subscribe_raw(events, false)
+    }
+
+    fn subscribe_closing_on_overflow(&self, events: &[EventName]) -> Subscription {
+        self.subscribe_raw(events, true)
     }
 
     fn unsubscribe(&self, sub_id: u64) {
@@ -281,7 +296,7 @@ impl ChannelBus {
                 Ok(()) => delivered += 1,
                 Err(TrySendError::Full(_)) => {
                     // Buffer full - track dropped count for resync signaling
-                    let prev_dropped = subscriber.dropped_count.fetch_add(1, Ordering::Relaxed);
+                    let prev_dropped = subscriber.record_overflow();
                     tracing::warn!(
                         sub_id = *id,
                         event = %msg.name,
@@ -336,7 +351,7 @@ impl ChannelBus {
         }
     }
 
-    fn subscribe_raw(&self, events: &[EventName]) -> Subscription {
+    fn subscribe_raw(&self, events: &[EventName], close_on_overflow: bool) -> Subscription {
         if self.closed.load(Ordering::Acquire) {
             // Return a subscription with a closed channel
             let (_tx, rx) = async_channel::bounded(1);
@@ -353,6 +368,7 @@ impl ChannelBus {
             sender: tx,
             events: events.to_vec(),
             dropped_count: dropped_count.clone(),
+            close_on_overflow,
         };
 
         // Re-checked inside the closure: see `subscribe_document_changes`.
@@ -383,3 +399,7 @@ impl ChannelBus {
         Subscription::with_dropped_counter(id, rx, dropped_count)
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/channel_bus.rs"]
+mod tests;

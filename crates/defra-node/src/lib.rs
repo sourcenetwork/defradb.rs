@@ -37,6 +37,7 @@ pub mod config;
 mod dac_api_tests;
 mod db_impls;
 pub mod dense_search;
+mod embedded_signer;
 mod error;
 #[cfg(feature = "libp2p")]
 mod libp2p_recovery;
@@ -55,6 +56,7 @@ mod node_query_identity_tests;
 #[cfg(test)]
 mod on_pool_tests;
 mod ops;
+pub use ops::{EncryptedIndexListing, IndexListing};
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
 mod p2p_runtime;
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
@@ -63,6 +65,8 @@ mod peer_keyring;
 pub mod search_chunks;
 mod signed_query;
 mod transaction;
+#[cfg(feature = "vera")]
+mod vera_rs_config;
 pub mod version;
 
 use std::sync::Arc;
@@ -74,6 +78,7 @@ use defra_core::RequestContext;
 pub use access_hooks::AccessHooks;
 /// Re-exported so callers can name `Arc<dyn DocumentACP>` (the type
 /// [`Node::document_acp`] returns) without depending on `acp` directly.
+pub use acp::nac::NodePermission;
 pub use acp::{DocumentACP, DocumentPermission, Identity as AcpIdentity};
 #[cfg(not(target_arch = "wasm32"))]
 pub use background_tasks::BackgroundTasks;
@@ -96,8 +101,11 @@ pub use config::{
 #[cfg(feature = "p2p")]
 pub use config::{P2PConfig, PeerKeySource};
 #[cfg(feature = "managed-p2p")]
-pub use defra_p2p_adapter::{ReplicatorPushOptions, ReplicatorPushOptionsState};
+pub use defra_p2p_adapter::{
+    ReplicationFilter, ReplicationFilters, ReplicatorPushOptions, ReplicatorPushOptionsState,
+};
 pub use dense_search::{DenseHybridSearchHit, DenseHybridSearchRequest, DenseHybridSearchResponse};
+pub use embedded_signer::{EmbeddedSigner, EmbeddedSignerError};
 pub use error::{Error, Result};
 pub use events::EventName;
 pub use keyring;
@@ -107,6 +115,7 @@ pub use lens::{LensConfig, LensModule, TransformId};
 pub use managed_p2p::{ManagedP2PSystem, ShutdownHandle, TransportKind};
 pub use node_builder::{NodeBuilder, StorageBackend, StoreProfile};
 pub use peer_keyring::PeerKeyring;
+pub use query::owners::{DocumentAccessDecision, DocumentAccessMode};
 pub use query::QueryLimits;
 pub use query::{QueryExecutor, QueryRequest, QueryResponse, TransactionHandle};
 pub use schema::CollectionVersion;
@@ -114,6 +123,8 @@ pub use telemetry::{ConflictMetricsSnapshot, RetryLayerSnapshot};
 #[cfg(feature = "otel")]
 pub use telemetry::{TelemetryConfig, TelemetryHandle};
 pub use transaction::NodeTransaction;
+#[cfg(feature = "vera")]
+pub use vera_rs_config::VeraRsConfig;
 pub use zeroize::Zeroizing;
 
 use network::NodeEdge;
@@ -140,6 +151,12 @@ trait SchemaOps: Send + Sync {
         context: &RequestContext,
         source_query: &str,
         target_sdl: &str,
+        transform: Option<&str>,
+    ) -> Result<Vec<CollectionVersion>>;
+    async fn refresh_views(
+        &self,
+        context: &RequestContext,
+        selector: db::CollectionSelector,
     ) -> Result<()>;
     async fn materialize_collection(
         &self,
@@ -230,10 +247,9 @@ pub struct Node {
     remote_acp: bool,
     #[cfg(not(target_arch = "wasm32"))]
     transaction_stats: Option<storage::TransactionStatsHandle>,
-    #[cfg(feature = "http")]
-    txn_cleanup_task: kovan_queue::seg_queue::SegQueue<workers::Background>,
-    /// Vector index rebuild, downsample view refresh, parked-block replay and
-    /// the Vera redrive. Each holds the database open until aborted.
+    /// Vector index rebuild, downsample view refresh, parked-block replay,
+    /// the Vera redrive and the HTTP transaction sweep. Each holds the
+    /// database open until aborted; dropping the set aborts them.
     #[cfg(not(target_arch = "wasm32"))]
     background_tasks: Arc<BackgroundTasks>,
     #[cfg(feature = "managed-p2p")]
@@ -255,7 +271,7 @@ struct TransactionCleanupConfig {
     sweep_interval: Duration,
 }
 
-#[cfg(any(feature = "http", feature = "otel"))]
+#[cfg(feature = "otel")]
 fn single_slot<T>(value: Option<T>) -> kovan_queue::seg_queue::SegQueue<T>
 where
     T: 'static,
@@ -265,6 +281,58 @@ where
         slot.push(value);
     }
     slot
+}
+
+trait VerifiedClientGraph {
+    fn signer_did(&self) -> &str;
+    fn doc_id(&self) -> &str;
+    fn matches_mutation(&self, mutation: &query::mapper::Mutation) -> bool;
+    fn signing_config_for_execution(
+        &self,
+    ) -> (
+        defra_core::signing::SigningConfig,
+        db::block::builder::VerifiedSignatureReceipt,
+    );
+}
+
+impl VerifiedClientGraph for db::block::builder::VerifiedClientCreate {
+    fn signer_did(&self) -> &str {
+        self.signer_did()
+    }
+    fn doc_id(&self) -> &str {
+        self.doc_id()
+    }
+    fn matches_mutation(&self, mutation: &query::mapper::Mutation) -> bool {
+        self.matches_mutation(mutation)
+    }
+    fn signing_config_for_execution(
+        &self,
+    ) -> (
+        defra_core::signing::SigningConfig,
+        db::block::builder::VerifiedSignatureReceipt,
+    ) {
+        self.signing_config_for_execution()
+    }
+}
+
+impl VerifiedClientGraph for db::block::builder::VerifiedClientMutation {
+    fn signer_did(&self) -> &str {
+        self.signer_did()
+    }
+    fn doc_id(&self) -> &str {
+        self.doc_id()
+    }
+    fn matches_mutation(&self, mutation: &query::mapper::Mutation) -> bool {
+        self.matches_mutation(mutation)
+    }
+    fn signing_config_for_execution(
+        &self,
+    ) -> (
+        defra_core::signing::SigningConfig,
+        db::block::builder::VerifiedSignatureReceipt,
+    ) {
+        self.signing_config_for_execution()
+    }
 }
 
 impl Node {
@@ -286,6 +354,12 @@ impl Node {
     ///
     /// Storage conflicts are returned to the caller. Eligible implicit mutations
     /// retry inside the engine-owned transaction boundary.
+    ///
+    /// A caller's key on the request ([`EmbeddedSigner::attach`]) signs in
+    /// place of the node's. The request must name that key's DID as its actor,
+    /// native ACP authorizes that actor, and the node stays the transaction
+    /// principal. This trusted embedded capability does not authenticate an
+    /// HTTP caller.
     pub async fn execute_request(&self, request: QueryRequest) -> QueryResponse {
         self.execute_prepared_request(request, None).await
     }
@@ -303,6 +377,137 @@ impl Node {
             .await
     }
 
+    /// Stage one verified client create in a node-owned transaction. Native ACP
+    /// still authorizes the graph's signer as the request actor; signature
+    /// evidence is not an authorization grant.
+    pub async fn execute_verified_create_in_txn(
+        &self,
+        request: QueryRequest,
+        handle: &TransactionHandle,
+        graph: &db::block::builder::VerifiedClientCreate,
+    ) -> QueryResponse {
+        self.execute_verified_graph_in_txn(request, handle, graph)
+            .await
+    }
+
+    /// Stage one verified client update or delete under native ACP in the
+    /// node-owned transaction. A changed state requires an unapproved wave and
+    /// causes the transaction to be discarded.
+    pub async fn execute_verified_mutation_in_txn(
+        &self,
+        request: QueryRequest,
+        handle: &TransactionHandle,
+        graph: &db::block::builder::VerifiedClientMutation,
+    ) -> QueryResponse {
+        self.execute_verified_graph_in_txn(request, handle, graph)
+            .await
+    }
+
+    async fn execute_verified_graph_in_txn<G>(
+        &self,
+        mut request: QueryRequest,
+        handle: &TransactionHandle,
+        graph: &G,
+    ) -> QueryResponse
+    where
+        G: VerifiedClientGraph,
+    {
+        if request.parsed.is_some()
+            || request.context.dac_bypass()
+            || request
+                .identity
+                .as_ref()
+                .map(ToString::to_string)
+                .as_deref()
+                != Some(graph.signer_did())
+        {
+            let _ = self.discard_transaction(handle).await;
+            return QueryResponse::error("verified create actor or DAC context does not match");
+        }
+        let variables = match &request.variables {
+            Some(serde_json::Value::Object(values)) => Some(
+                values
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect(),
+            ),
+            None => None,
+            _ => {
+                let _ = self.discard_transaction(handle).await;
+                return QueryResponse::error("verified create variables must be an object");
+            }
+        };
+        let Ok(query::query_parse::ParsedOperation::Mutation {
+            mutations,
+            explain: None,
+        }) = query::query_parse::parse_request_with_limits(
+            &request.query,
+            variables.as_ref(),
+            request.operation_name.as_deref(),
+            query::QueryLimits::default(),
+        )
+        else {
+            let _ = self.discard_transaction(handle).await;
+            return QueryResponse::error("verified create requires one matching mutation");
+        };
+        if mutations.len() != 1 || !graph.matches_mutation(&mutations[0]) {
+            let _ = self.discard_transaction(handle).await;
+            return QueryResponse::error("verified create requires one matching mutation");
+        }
+        let key = mutations[0].output_name();
+        // The graph supplies signatures only; no caller context may carry a
+        // separate actor, encryption, bearer, or transaction authority.
+        request.context =
+            defra_core::RequestContext::default().with_transactional_authority_required();
+        let Some(node_did) = self.node_identity_did.as_deref() else {
+            let _ = self.discard_transaction(handle).await;
+            return QueryResponse::error("verified create requires a configured node identity");
+        };
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (node_did, key);
+            let _ = self.discard_transaction(handle).await;
+            QueryResponse::error("verified create is unavailable on wasm32")
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let Some(network) = self.network.as_ref() else {
+                let _ = self.discard_transaction(handle).await;
+                return unavailable_node_signer_response(node_did);
+            };
+            let (signing_config, receipt) = graph.signing_config_for_execution();
+            let response = execute_with_signing_context(
+                network.requests(),
+                self.runner.clone(),
+                request,
+                Some(handle.clone()),
+                signing_config,
+                node_did.to_owned(),
+            )
+            .await;
+            if response.has_errors() {
+                let _ = self.discard_transaction(handle).await;
+                return response;
+            }
+            let matches = response
+                .data
+                .as_ref()
+                .and_then(|data| data.get(&key))
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|rows| {
+                    rows.len() == 1
+                        && rows[0].get("_docID").and_then(serde_json::Value::as_str)
+                            == Some(graph.doc_id())
+                });
+            if !matches || !receipt.is_complete() {
+                // A failed or unconfirmed stage must not leave partial writes available to commit.
+                let _ = self.discard_transaction(handle).await;
+                return QueryResponse::error("verified create was not confirmed");
+            }
+            response
+        }
+    }
+
     async fn execute_request_once(&self, request: QueryRequest) -> QueryResponse {
         self.execute_prepared_request(request, None).await
     }
@@ -312,8 +517,19 @@ impl Node {
         request: QueryRequest,
         txn_handle: Option<TransactionHandle>,
     ) -> QueryResponse {
+        // Read before the node's default fills in the actor: a caller's key
+        // signs only for an actor the caller named.
+        let caller_signer = match embedded_signer::admitted_signer(&request) {
+            Ok(signer) => signer,
+            Err(error) => return QueryResponse::error(error.to_string()),
+        };
         let request = self.with_default_query_identity(request);
         let Some(node_identity_did) = self.node_identity_did.as_deref() else {
+            if caller_signer.is_some() {
+                return QueryResponse::error(
+                    "explicit embedded signing requires a configured node identity",
+                );
+            }
             let runner = Arc::clone(&self.runner);
             return self
                 .as_request(async move {
@@ -332,11 +548,13 @@ impl Node {
         ));
 
         #[cfg(not(target_arch = "wasm32"))]
-        let signing_config = defra_core::signing::resolve_signing_config_with_flag(
-            None,
-            Some(node_identity_did),
-            true,
-        );
+        let signing_config = caller_signer.or_else(|| {
+            defra_core::signing::resolve_signing_config_with_flag(
+                None,
+                Some(node_identity_did),
+                true,
+            )
+        });
         #[cfg(not(target_arch = "wasm32"))]
         let Some(signing_config) = signing_config
         else {
@@ -405,11 +623,7 @@ impl Node {
         Fut: std::future::Future<Output = Result<T>> + 'static,
         T: Send + 'static,
     {
-        if self.remote_acp {
-            make().await
-        } else {
-            self.on_pool(make).await
-        }
+        self.ops().on_acp(make).await
     }
 
     /// The context the node's own operations run in: the node's identity acts
@@ -502,10 +716,34 @@ impl Node {
     /// `target_sdl` is the SDL for the view collection (may include directives
     /// like `@downsample` that are forward-declared for future defradb.rs support).
     pub async fn add_view(&self, source_query: &str, target_sdl: &str) -> Result<()> {
-        let (ops, context) = (Arc::clone(&self.schema_ops), self.node_context());
-        let (query, sdl) = (source_query.to_owned(), target_sdl.to_owned());
-        self.on_pool(move || async move { ops.add_view(&context, &query, &sdl).await })
+        self.add_view_as(&self.node_context(), source_query, target_sdl, None)
             .await
+            .map(drop)
+    }
+
+    /// [`Self::add_view`] as `context`'s identity, which node access control
+    /// checks, its documents run through the stored lens `transform` when it
+    /// names one; the view collections it created (Go: `client.Store::AddView`).
+    pub async fn add_view_as(
+        &self,
+        context: &RequestContext,
+        source_query: &str,
+        target_sdl: &str,
+        transform: Option<&str>,
+    ) -> Result<Vec<CollectionVersion>> {
+        self.ops()
+            .add_view(context, source_query, target_sdl, transform)
+            .await
+    }
+
+    /// Refresh the materialized views `selector` names, every one when it
+    /// names none (Go: `client.Store::RefreshViews`).
+    pub async fn refresh_views_as(
+        &self,
+        context: &RequestContext,
+        selector: db::CollectionSelector,
+    ) -> Result<()> {
+        self.ops().refresh_views(context, selector).await
     }
 
     /// Eagerly migrate and cache every known-version document in a collection.
@@ -663,13 +901,22 @@ impl Node {
         relation: &str,
         target: &str,
     ) -> Result<bool> {
-        let ops = Arc::clone(&self.acp_ops);
+        let ops = self.ops().acp_ops;
         let owned = |value: &str| value.to_owned();
         let (identity, collection, doc_id) = (owned(identity), owned(collection), owned(doc_id));
         let (relation, target) = (owned(relation), owned(target));
         self.on_acp(move || async move {
-            ops.add_dac_actor_relationship(&identity, &collection, &doc_id, &relation, &target)
-                .await
+            let context =
+                defra_core::RequestContext::default().with_identity(Some(identity.clone()));
+            ops.add_dac_actor_relationship(
+                &context,
+                &identity,
+                &collection,
+                &doc_id,
+                &relation,
+                &target,
+            )
+            .await
         })
         .await
     }
@@ -689,13 +936,22 @@ impl Node {
         relation: &str,
         target: &str,
     ) -> Result<bool> {
-        let ops = Arc::clone(&self.acp_ops);
+        let ops = self.ops().acp_ops;
         let owned = |value: &str| value.to_owned();
         let (identity, collection, doc_id) = (owned(identity), owned(collection), owned(doc_id));
         let (relation, target) = (owned(relation), owned(target));
         self.on_acp(move || async move {
-            ops.delete_dac_actor_relationship(&identity, &collection, &doc_id, &relation, &target)
-                .await
+            let context =
+                defra_core::RequestContext::default().with_identity(Some(identity.clone()));
+            ops.delete_dac_actor_relationship(
+                &context,
+                &identity,
+                &collection,
+                &doc_id,
+                &relation,
+                &target,
+            )
+            .await
         })
         .await
     }
@@ -806,10 +1062,9 @@ impl Node {
     /// of `collection`, so the node can write SE artifacts and act as an SE
     /// query owner (#976).
     pub async fn add_encrypted_index(&self, collection: &str, field_name: &str) -> Result<()> {
-        let database = Arc::clone(&self.database);
-        let (collection, field_name) = (collection.to_owned(), field_name.to_owned());
-        self.on_pool(move || add_encrypted_index(database, collection, field_name))
+        self.add_encrypted_index_as(&self.node_context(), collection, field_name)
             .await
+            .map(drop)
     }
 
     /// Authorize a peer to open an inbound P2P connection to this node while
@@ -881,12 +1136,6 @@ impl Node {
             return Ok(());
         }
         tracing::info!("node shutdown: begin");
-
-        #[cfg(feature = "http")]
-        if let Some(task) = self.txn_cleanup_task.pop() {
-            task.abort();
-            let _ = workers::timeout(Duration::from_secs(1), task).await;
-        }
 
         #[cfg(not(target_arch = "wasm32"))]
         self.background_tasks.shutdown().await;
@@ -1014,59 +1263,6 @@ fn refused_transaction(error: edge::EdgeError, step: &str) -> query::Transaction
         }
         error => format!("transaction task failed: {error}"),
     })
-}
-
-/// Adds the encrypted index [`Node::add_encrypted_index`] names, on
-/// the worker it runs on.
-async fn add_encrypted_index(
-    database: Arc<db::DB<storage::RegolithStore>>,
-    collection: String,
-    field_name: String,
-) -> Result<()> {
-    use storage::corekv::Key;
-
-    let (collection, field_name) = (collection.as_str(), field_name.as_str());
-    let col = database
-        .get_collection(collection)
-        .map_err(Error::CollectionLookupFailed)?
-        .ok_or_else(|| Error::CollectionMissing(collection.to_owned()))?;
-    let schema = col.schema();
-
-    if !schema.fields.iter().any(|f| f.name == field_name) {
-        return Err(Error::EncryptedIndexFieldMissing(field_name.to_owned()));
-    }
-    if schema
-        .encrypted_indexes
-        .iter()
-        .any(|idx| idx.field_name == field_name)
-    {
-        return Err(Error::EncryptedIndexExists(field_name.to_owned()));
-    }
-
-    let txn = database.new_txn(false).await.map_err(Error::TxnCreate)?;
-    {
-        let mut updated_schema = schema.clone();
-        updated_schema
-            .encrypted_indexes
-            .push(schema::EncryptedIndexDescription::new(field_name));
-
-        let collection_key =
-            storage::keys::systemstore::CollectionKey::new(&updated_schema.version_id);
-        let schema_data = serde_json::to_vec(&updated_schema).map_err(Error::SchemaSerialize)?;
-        let systemstore = txn.systemstore().map_err(Error::SystemstoreOpen)?;
-        systemstore
-            .set(&collection_key.bytes(), &schema_data)
-            .await
-            .map_err(Error::SchemaSave)?;
-        let name_key = storage::keys::systemstore::CollectionNameKey::new(collection);
-        systemstore
-            .set(&name_key.bytes(), updated_schema.version_id.as_bytes())
-            .await
-            .map_err(Error::NameMappingSave)?;
-    }
-    txn.commit().await.map_err(Error::Commit)?;
-    database.reload_cache().await.map_err(Error::CacheReload)?;
-    Ok(())
 }
 
 async fn execute_autocommit_request(
@@ -1355,8 +1551,44 @@ mod p2p_tests;
 #[cfg(test)]
 mod owner_observation_tests;
 
+#[cfg(test)]
+#[path = "../tests/unit/delegated_nac.rs"]
+mod delegated_nac_tests;
+#[cfg(test)]
+#[path = "../tests/unit/source_nac.rs"]
+mod source_nac_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "../tests/unit/document_projector.rs"]
+mod document_projector_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "../tests/unit/projection_access_notification.rs"]
+mod projection_access_notification_tests;
+#[cfg(test)]
+#[path = "../tests/unit/userset_manager.rs"]
+mod userset_manager_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/transactional_relationship.rs"]
+mod transactional_relationship_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/administrative_relationship.rs"]
+mod administrative_relationship_tests;
+#[cfg(test)]
+#[path = "../tests/unit/delegated_relationship.rs"]
+mod delegated_relationship_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "../tests/unit/verified_create.rs"]
+mod verified_create_tests;
+
 #[cfg(all(test, feature = "http"))]
 mod http_signing_tests;
+
+#[cfg(all(test, feature = "http"))]
+#[path = "../tests/unit/http_acp.rs"]
+mod http_acp_tests;
 
 #[cfg(all(test, feature = "http"))]
 mod router_transform_tests;

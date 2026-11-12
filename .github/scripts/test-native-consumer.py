@@ -19,6 +19,10 @@ def success(names):
     return "".join("test " + n + " ... ok\n" for n in names) + f"test result: ok. {len(names)} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
 
 
+SDK = 'vera-client = "0.1.1"\nvera-domain = "0.1.1"\nvera-modules = "0.1.1"\n'
+HARNESS = 'vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "' + 'a' * 40 + '" }\n'
+
+
 class Tests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -26,10 +30,10 @@ class Tests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
 
     def sdk_fixture(self):
-        for file, count in zip(driver.SDK_MANIFESTS, (3, 4)):
+        for file, harness in zip(driver.SDK_MANIFESTS, (False, True)):
             path = self.root / file
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(('vera = { git = "https://github.com/sourcenetwork/vera.rs", rev = "' + 'a' * 40 + '" }\n') * count)
+            path.write_text(SDK + (HARNESS if harness else ''))
 
     def test_runtime_revision_rejects_mutable_malformed_and_nonstring_values(self):
         for value in ('', 'main', 'a' * 7, 'A' * 40, 'a' * 40 + '\n',
@@ -70,7 +74,7 @@ class Tests(unittest.TestCase):
     def test_runtime_override_does_not_bypass_conflicting_sdk_declarations(self):
         self.sdk_fixture()
         path = self.root / driver.SDK_MANIFESTS[1]
-        path.write_text(path.read_text().replace('a' * 40, 'c' * 40, 1))
+        path.write_text(path.read_text().replace('vera-domain = "0.1.1"', 'vera-domain = "0.1.2"'))
         with patch.object(driver, 'source') as source, self.assertRaises(ValueError):
             driver.Runner(self.root, self.root / 'runtime', self.root, 'b' * 40)
         source.assert_not_called()
@@ -97,18 +101,25 @@ class Tests(unittest.TestCase):
         log.write_text('qualification failed without a Rust panic\n')
         self.assertIsNone(driver.panic_site(log))
 
-    def test_sdk_pin_reader_requires_all_seven_exact_matching_declarations(self):
-        for file, count in zip(driver.SDK_MANIFESTS, (3, 4)):
-            path = self.root / file
-            path.parent.mkdir(parents=True)
-            path.write_text(('vera = { git = "https://github.com/sourcenetwork/vera.rs", rev = "' + 'a' * 40 + '" }\n') * count)
+    def test_sdk_reader_requires_published_declarations_and_one_immutable_harness_pin(self):
+        self.sdk_fixture()
         self.assertEqual(driver.revision(self.root), 'a' * 40)
-        path.write_text(path.read_text().replace('a' * 40, 'b' * 40, 1))
-        with self.assertRaises(ValueError):
-            driver.revision(self.root)
-        path.write_text('')
-        with self.assertRaises(ValueError):
-            driver.revision(self.root)
+        sdk, harness = (self.root / name for name in driver.SDK_MANIFESTS)
+        changes = [
+            (sdk, SDK.replace('vera-domain = "0.1.1"', 'vera-domain = "0.1.2"')),
+            (sdk, SDK.replace('vera-modules = "0.1.1"\n', '')),
+            (sdk, SDK.replace('vera-client = "0.1.1"', 'vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "' + 'a' * 40 + '" }')),
+            (harness, SDK),
+            (harness, SDK + HARNESS + HARNESS.replace('a' * 40, 'b' * 40)),
+            (harness, SDK + HARNESS.replace('rev = "' + 'a' * 40 + '"', 'tag = "v0.1.1"')),
+        ]
+        for path, content in changes:
+            original = path.read_text()
+            path.write_text(content)
+            with self.assertRaises(ValueError):
+                driver.revision(self.root)
+            path.write_text(original)
+        self.assertEqual(driver.revision(self.root), 'a' * 40)
 
     def test_test_output_rejects_zero_extra_ignored_and_duplicate_passes(self):
         log = self.root / 'test.log'
@@ -124,18 +135,18 @@ class Tests(unittest.TestCase):
     def test_artifact_requires_unique_release_executable_under_owned_target(self):
         target = self.root / 'target'
         target.mkdir()
-        binary = target / 'defra'
+        binary = target / 'defradb'
         binary.write_bytes(b'fixture')
-        item = {'reason': 'compiler-artifact', 'target': {'name': 'defra'},
+        item = {'reason': 'compiler-artifact', 'target': {'name': 'defradb'},
                 'profile': {'debug_assertions': False}, 'executable': str(binary)}
         log = self.root / 'build.log'
         log.write_text(json.dumps(item) + '\n')
-        self.assertEqual(driver.artifact(log, 'defra', target), binary.resolve())
+        self.assertEqual(driver.artifact(log, 'defradb', target), binary.resolve())
         for entries in ([item, item], [{**item, 'profile': {'debug_assertions': True}}],
                         [{**item, 'executable': str(self.root / 'outside')}], []):
             log.write_text(''.join(json.dumps(x) + '\n' for x in entries))
             with self.assertRaises(ValueError):
-                driver.artifact(log, 'defra', target)
+                driver.artifact(log, 'defradb', target)
 
     def test_environment_removes_profile_compiler_runtime_and_deadline_overrides(self):
         poison = {key: 'poison' for key in ('CARGO_PROFILE_RELEASE_LTO', 'RUSTC', 'RUSTDOC',
@@ -249,14 +260,14 @@ class Tests(unittest.TestCase):
         runs = {c[1]: c for c in runner.calls if c[0] == 'run'}
         self.assertEqual(runs['build-defra'][2][runs['build-defra'][2].index('--features') + 1], 'vera')
         first_test = next(i for i, c in enumerate(runner.calls) if c[0] == 'test')
-        self.assertLess(runner.calls.index(('stage', 'defra')), first_test)
+        self.assertLess(runner.calls.index(('stage', 'defradb')), first_test)
         self.assertLess(runner.calls.index(('stage', 'verad')), first_test)
-        self.assertEqual(runs['compile-native'][3]['DEFRA_RUST_BINARY'], '/staged/defra')
-        self.assertEqual(runs['compile-native'][3]['DEFRA_VERA_BINARY'], '/staged/defra')
+        self.assertEqual(runs['compile-native'][3]['DEFRA_RUST_BINARY'], '/staged/defradb')
+        self.assertEqual(runs['compile-native'][3]['DEFRA_VERA_BINARY'], '/staged/defradb')
         self.assertEqual(runs['compile-native'][3]['VERAD_BINARY'], '/staged/verad')
         tests = [c for c in runner.calls if c[0] == 'test']
-        self.assertEqual(len(tests), 8)
-        self.assertEqual(len(tests[0][4]), 19)
+        self.assertEqual(len(tests), 9)
+        self.assertEqual(len(tests[0][4]), 21)
         self.assertEqual({c[1] for c in tests[1:]}, {phase for phase, _ in driver.LIVE_CASES})
         for _, _, _, selectors, expected in tests[1:]:
             self.assertEqual(selectors, [expected[0], '--exact'])

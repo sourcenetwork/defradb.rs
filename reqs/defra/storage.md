@@ -15,6 +15,13 @@ Index behaviour beyond what Go's integration suite checks.
 
 With a unique index on `User.name` and a stored `{"name":"alice","age":1}`, adding `{"name":"alice","age":2}` fails with `can not index a doc's field(s) that violates unique index. DocID: <new document's DocID>, name: alice`. Updating another document's `name` to `alice` fails with `failed to update index: can not index a doc's field(s) that violates unique index. DocID: <updated document's DocID>, name: alice. IndexName: User_name_ASC`. The error never contains the DocID of the document already holding the value, which the writer may not be allowed to read. Go develop builds the same text (`NewErrCanNotIndexNonUniqueFields`, `NewErrUpdateIndex`).
 
+# `defra.index.merged_field`: An index on a merged field follows the merged value
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::merged_field::text::a_text_index_follows_local_edits", "index::merged_field::text::a_text_index_follows_merged_edits", "index::merged_field::json::a_json_index_follows_merged_edits"]
+
+For a field whose CRDT merges by value (text, JSON), the index holds only the current value. After a local edit, or after two nodes edit the field concurrently and replicate to each other, a filter on the merged value fetches one index entry and one document, and a filter on any earlier value fetches none.
+
 # `defra.collection`: Collection-wide operations
 
 - **Parents:** ["defra"]
@@ -162,7 +169,7 @@ The node configuration's `Libp2pConfig::orphan_sweep` sets whether the sweep run
 
 - **Parents:** ["defra"]
 
-An embedder may give a node a `db::replication_filter::ReplicationFilter` (`DbOptions::with_replication_filter`, `NodeBuilder::with_replication_filter`), asked `allow_replication(collection_id, doc_id, fields)` for every replicated document; refusing discards it. A node without one keeps every document, as before.
+An embedder may give a node a `db::replication_filter::ReplicationFilter` (`DbOptions::with_replication_filter`, `NodeBuilder::with_replication_filter`), asked `allow_replication(collection_id, collection_name, doc_id, fields)` for every replicated document; refusing discards it. `collection_name` is the collection's name, the key a Go filter matches on, and `collection_id` is the ID, which stays the same across a rename. A node without one keeps every document, as before.
 
 # `defra.replication_filter.field_values`: The fields the filter is given
 
@@ -197,6 +204,62 @@ How a GraphQL request is validated before it runs.
 - **Scenarios:** ["query::cyclic_fragments::fragments_spreading_each_other_fail_validation", "query::cyclic_fragments::a_cycle_no_field_spreads_still_fails_validation", "query::cyclic_fragments::a_fragment_spreading_itself_fails_validation"]
 
 A request whose fragments spread each other in a cycle fails validation with no `data`, instead of recursing, whether or not a field spreads into the cycle, in a query or a subscription: `query { User { ...A } } fragment A on User { name ...B } fragment B on User { name ...A }` and the same fragments under `query { User { name } }` both return `Cannot spread fragment "A" within itself via B.`; `query { User { ...A } } fragment A on User { name ...A }` returns `Cannot spread fragment "A" within itself.` These are graphql-js's and Go's texts; defradb.rs said `circular fragment reference` before, and only when a field spread into the cycle.
+
+# `defra.request.optional_variables`: An unset optional variable drops the field it fills
+
+- **Parents:** ["defra.request"]
+- **Scenarios:** ["query::optional_variables::an_empty_field_condition_filters_on_nothing"]
+
+A nullable variable with no default that the request leaves out is not an error and is not `null`: the argument or input field it fills is left out, as Go does. `query ($plot: String, $minRating: Float64) { Book(filter: {plot: {_like: $plot}, rating: {_geq: $minRating}}) { title } }` with only `{"minRating": 4.2}` returns the books rated 4.2 or more, whatever their plot. An explicit `null` is kept, and a missing list item becomes `null`. defradb.rs failed with `Variable "$plot" was not provided` before (#2104).
+
+# `defra.request.mutation_relation_filter`: A filtered update or delete follows relations
+
+- **Parents:** ["defra.request"]
+- **Scenarios:** ["mutation::delete_relation_filter::a_delete_filtered_through_a_relation_deletes_what_the_query_finds", "mutation::delete_relation_filter::an_update_filtered_through_a_relation_updates_what_the_query_finds"]
+
+`delete_Person(filter: {authoredBooks: {genre: {_eq: "Dystopia"}}})` deletes and returns exactly the people `Person(filter: {authoredBooks: {genre: {_eq: "Dystopia"}}})` returns, and `update_Person` with the same filter updates them; people the filter does not reach are untouched. defradb.rs matched such filters against the stored document only, where a relation has no value, so it found nothing (#2099).
+
+# `defra.commits.link_delta`: Commit links and heads show their block's delta
+
+- **Parents:** ["defra.commits"]
+- **Scenarios:** ["query::commits::with_link_delta::a_composite_link_shows_its_field_delta"]
+
+In `_commits { links { fieldName delta } heads { delta } }`, each link and head shows the base64 `delta` and `collectionVersionId` of the block it points to, as Go does: after an update that sets `genre: "Dystopia"`, the composite commit's `genre` link shows `aER5c3RvcGlh`, and a composite head shows `null`, since composites carry no field delta. An Immutable block shows the delta of the field the link names. defradb.rs showed `null` for every link before (#2625).
+
+# `defra.request.schema_descriptions`: The GraphQL schema describes itself like Go's
+
+- **Parents:** ["defra.request"]
+- **Scenarios:** ["query::schema_descriptions::introspection_shows_go_descriptions"]
+
+Introspection describes, in Go DefraDB's words (the only reference so far), every type, field, argument, input field and enum value both schemas share: collection objects (`_docID`, `_deleted`, `_version`, `GROUP` and the aggregates), filter, selector and operator blocks, `Commit`, `Signature`, the `_commits` query, mutations, `Ordering` and the custom scalars. A GraphQL client such as GraphiQL shows them in its docs pane. Exceptions: the built-in `ID`, `Int`, `Float` and `String` scalars keep async-graphql's texts, `docID` on update and delete is one ID in defradb.rs and is described as one, and `BlobOperatorBlock` says Blob where Go says String (#2106).
+
+# `defra.request.relation_field_args`: Introspection shows the arguments of relation fields
+
+- **Parents:** ["defra.request"]
+- **Scenarios:** ["query::relation_field_args::relation_fields_show_their_arguments"]
+
+A relation field shows in introspection the arguments the executor accepts on it, with Go DefraDB's names, types and descriptions: a one-to-one or many-to-one field such as `Book.author` takes `filter: AuthorFilterArg`, and a one-to-many field such as `Author.published` takes `docID: [ID!]`, `filter: BookFilterArg`, `groupBy: [BookField!]`, `limit: Int`, `offset: Int` and `order: [BookOrderArg]` (#2649).
+
+# `defra.request.mutation_introspection`: Introspection shows the mutations the parser accepts
+
+- **Parents:** ["defra.request"]
+- **Scenarios:** ["query::mutation_introspection::mutations_show_go_arguments_and_types"]
+
+For a collection `Book`, the `Mutation` type shows Go DefraDB's surface with its descriptions: `add_Book(encrypt: Boolean, encryptFields: [BookExplicitField!], input: [BookMutationInputArg!]): [Book]`, `update_Book(docID: [ID!], filter: BookFilterArg, input: BookMutationInputArg): [Book]`, `upsert_Book(add: BookMutationInputArg!, filter: BookFilterArg!, update: BookMutationInputArg!): [Book]` and `delete_Book(docID: [ID!], filter: BookFilterArg): [Book]`, where `BookExplicitField` lists the fields the schema declares. `update` and `delete` also take `docIDs: [ID]`, defradb.rs's own spelling of `docID`. `truncate_Book` takes no `docID`, since the parser does not accept one (#2649).
+
+# `defra.request.subscription_introspection`: Introspection describes the subscriptions
+
+- **Parents:** ["defra.request"]
+- **Scenarios:** ["query::subscription_introspection::subscriptions_appear_in_introspection"]
+
+Introspection names `Subscription` as the schema's `subscriptionType`, as Go DefraDB does. Like Go's, it has a field per collection (`Book: [Book]`) with the arguments of a query select (`cid`, `docID`, `filter`, `groupBy`, `limit`, `offset`, `order`, `showDeleted`), and `_commits: [Commit]` with the arguments of the `_commits` query. Subscriptions themselves run over Server-Sent Events (#2649).
+
+# `defra.request.aggregate_introspection`: Introspection shows the aggregate arguments the executor accepts
+
+- **Parents:** ["defra.request"]
+- **Scenarios:** ["query::aggregate_introspection::aggregates_show_relation_and_root_arguments"]
+
+As in Go DefraDB, a one-to-many relation field such as `Author.published` is an argument of `COUNT` (typed `Book__CountSelector`) and of `SUM`, `AVG`, `MIN` and `MAX` (typed `Book__NumericSelector`), and the `Query` root has `MIN` and `MAX` of nullable `Float` beside `COUNT`, `SUM` and `AVG`, with one argument per collection. Go's `ScalarAggregateNumericBlock` argument on a plain numeric field is not shown, since the executor does not aggregate a single scalar (#2649).
 
 # `defra.index.range_filter`: A two-sided range filter fetches only the range
 
@@ -244,3 +307,64 @@ Adding `type Foo { name: String } type FooBar { name: String }` to a fresh node 
 - **Scenarios:** ["db::merge::receive_gate::the_filter_sees_the_values_at_hand_and_keeps_a_head_alone", "db::merge::receive_gate::a_node_without_a_filter_has_no_gate", "p2p::sync::coordinator::access_tests::a_push_the_gate_refuses_on_arrival_stores_nothing", "p2p::sync::coordinator::access_tests::a_fetched_car_the_gate_refuses_is_not_imported", "p2p::sync::coordinator::access_tests::a_two_stream_push_the_gate_refuses_stores_nothing"]
 
 A node with a replication filter also asks it in the P2P receive path. On arrival (gossip, pushlog and a replicator's direct push), before the head is stored or a fetch registered, the filter sees the values of the blocks the head links that the node already stores; a composite head alone gives `{}`, so the filter keeps it. A refusal stores nothing and registers no pending DAG. On a fetched CAR, after CID verification and before import, the filter sees the CAR's values; a refusal imports nothing and discharges the root, so it is not fetched again. The merge asks again as the backstop. A node without a filter installs no gate, and its receive path is unchanged.
+
+# `defra.p2p.gossip_admission`: A gossip head refused at admission is kept or reported
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["net::gossip_admission::a_gossip_burst_over_the_admission_limits_loses_no_document", "net::gossip_admission::a_gossip_head_past_the_deferral_budget_is_reported"]
+
+Gossip has no reply and no retry, so a gossip head a node refuses for its per-peer rate limit or its pending-DAG capacity is kept as a durable pending record that takes no slot, and is fetched once a slot frees: a burst over both limits loses no document. These records are bounded by bytes, per source peer (`gossip_deferral_peer_bytes`) and in all (`gossip_deferral_total_bytes`). Past a budget the head is dropped, and the node reports a `p2p-gossip-head-dropped` event naming the peer and the root, so the application can resync it.
+
+# `defra.commits`: Commit history queries beyond Go
+
+- **Parents:** ["defra"]
+
+`_commits` behaviour that Go's integration suite does not check.
+
+# `defra.commits.height_filter`: Filtering commits on height
+
+- **Parents:** ["defra.commits"]
+- **Scenarios:** ["query::commits::with_height_filter::commits_filter_on_height_ranges"]
+
+`_commits(docID: [X], filter: {height: …})` takes `_eq`, `_gt`, `_gte`, `_lt` and `_lte`, alone, combined in one condition, under `_and`, or under `_or`. A document created at height 1 and then updated twice has composite commits at heights 1, 2 and 3: `{height: {_gte: 2, _lte: 3}, fieldName: {_eq: "_C"}}` and `{height: {_gte: 2, _lt: 5}, …}` return heights 2 and 3, `{height: {_gt: 1, _lt: 3}, …}` returns 2, `{height: {_eq: 2}, fieldName: {_eq: "age"}}` returns the `age` commit at height 2, and an `_or` of heights 1 and 3 returns both. A range above every height (`_gt: 10`) or an empty one (`_gt: 10, _lt: 5`) returns no commits. Go returns `{"data": null}` for these filters.
+
+# `defra.commits.immutable_block`: Commits of a shared immutable block
+
+- **Parents:** ["defra.commits"]
+- **Scenarios:** ["query::commits::with_cid_immutable::commits_by_cid_list_every_immutable_field"]
+
+The `@immutable` fields of a document share one block. `_commits(cid: <that block>)` returns one commit per immutable field (`author` and `kind` for `type Record { author: String @immutable kind: String @immutable body: String }`), and `filter: {fieldName: {_eq: "kind"}}` narrows it to `kind`. Each of those fields' commits is that block, with the field's own `delta`. Go has no `@immutable` directive.
+
+# `defra.bm25`: BM25 full-text scoring
+
+- **Parents:** ["defra"]
+
+`BM25(query:, fields:)` scores each document on its `@fulltext` fields. defradb.rs only; Go has no full-text search.
+
+# `defra.bm25.score`: Matching documents score above zero
+
+- **Parents:** ["defra.bm25"]
+- **Scenarios:** ["query::bm25::simple::only_articles_with_the_term_score_above_zero", "query::bm25::simple::a_term_in_any_listed_field_scores", "query::bm25::simple::an_unknown_term_scores_zero", "query::bm25::simple::a_score_is_named_by_its_alias_or_bm25"]
+
+A document scores above zero when a term of `query` appears in any of `fields`, and exactly `0` otherwise, so an unknown term scores every document `0`. The score is returned under its alias (`score: BM25(…)`), or as `BM25` without one, and `filter: {_alias: {score: {_gt: 0}}}` keeps only the matching documents.
+
+# `defra.bm25.order`: Ordering by score
+
+- **Parents:** ["defra.bm25"]
+- **Scenarios:** ["query::bm25::simple::ordering_by_the_score_ranks_the_best_match_first"]
+
+`order: {_alias: {score: DESC}}` puts the best-scoring document first and non-matching documents, at `0`, after it.
+
+# `defra.bm25.relation_fields`: Scoring across a relation
+
+- **Parents:** ["defra.bm25"]
+- **Scenarios:** ["query::bm25::relation_paths::a_parent_field_scores_its_children", "query::bm25::relation_paths::child_fields_score_their_parent_and_order_it"]
+
+A field path can follow a relation in either direction: `fields: ["file.content"]` scores a `Function` on its file's text, and `fields: ["functions.name", "functions.content"]` scores a `File` on its functions' text, which `order: {_alias: {score: DESC}}` can sort by.
+
+# `defra.bm25.nested_selection`: Scores on a nested selection
+
+- **Parents:** ["defra.bm25"]
+- **Scenarios:** ["query::bm25::relation_paths::a_nested_one_to_many_selection_scores_each_child", "query::bm25::relation_paths::a_nested_one_to_one_selection_scores_the_parent", "query::bm25::relation_paths::a_nested_selection_filters_and_orders_by_its_score"]
+
+`BM25` can be selected on a nested one-to-many (`File { functions { score: BM25(…) } }`) or one-to-one (`Function { file { score: BM25(…) } }`) selection, and that selection can filter (`filter: {_alias: {score: {_gt: 0}}}`) and order (`order: {_alias: {score: DESC}}`) by its score.

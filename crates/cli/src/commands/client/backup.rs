@@ -140,37 +140,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_backup_export_args() {
-        let args = BackupExportArgs {
-            file: PathBuf::from("backup.json"),
-            collections: vec![],
-            pretty: false,
-        };
-        assert_eq!(args.file, PathBuf::from("backup.json"));
-        assert!(args.collections.is_empty());
-        assert!(!args.pretty);
-    }
-
-    #[test]
-    fn test_backup_export_args_with_collections() {
-        let args = BackupExportArgs {
-            file: PathBuf::from("backup.json"),
-            collections: vec!["Users".to_string(), "Posts".to_string()],
-            pretty: true,
-        };
-        assert_eq!(args.collections.len(), 2);
-        assert!(args.pretty);
-    }
-
-    #[test]
-    fn test_backup_import_args() {
-        let args = BackupImportArgs {
-            file: PathBuf::from("backup.json"),
-        };
-        assert_eq!(args.file, PathBuf::from("backup.json"));
-    }
-
     #[nuclei::test]
     async fn export_requires_development_mode() {
         let args = BackupExportArgs {

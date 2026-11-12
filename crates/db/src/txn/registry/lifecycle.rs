@@ -31,6 +31,24 @@ async fn within<F: std::future::Future>(
         .map_err(TransactionError::execution)
 }
 
+impl<S: Store + 'static> DbTransactionRegistry<S> {
+    /// Trusted embedded-host only: the owner admits the transaction turn and
+    /// native NAC checks that owner on the same view. Never expose this
+    /// capability as an HTTP or GraphQL request parameter.
+    pub async fn change_host_nac_source_permission(
+        &self,
+        owner: &RequestContext,
+        edge: query::txn::SourcePermission,
+    ) -> std::result::Result<bool, TransactionError> {
+        let id = owner
+            .txn()
+            .ok_or_else(|| TransactionError::operation("an explicit transaction is required"))?;
+        let handle = TransactionHandle::new(id.to_string());
+        let job = query::txn::host_source_permission_job(owner.clone(), edge)?;
+        self.run_as(owner, &handle, None, job).await?
+    }
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
@@ -242,7 +260,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             ));
         }
         self.db
-            .patch_collections_as(context, patch, migration)
+            .patch_collection(context, patch, migration)
             .await
             .map_err(operation_error)
     }
@@ -299,6 +317,78 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .acp_light_client_status_as(context)
             .await
             .map_err(|error| TransactionError::operation(error.to_string()))
+    }
+
+    async fn nac_status_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<acp::nac::NacStatus, TransactionError> {
+        self.db
+            .nac_status_as(context)
+            .await
+            .map_err(|error| TransactionError::operation(error.to_string()))
+    }
+
+    async fn explain_nac_subject_as(
+        &self,
+        context: &RequestContext,
+        subject: &str,
+    ) -> std::result::Result<Vec<acp::nac::PermissionProvenance>, TransactionError> {
+        self.db
+            .explain_nac_subject_as(context, subject)
+            .await
+            .map_err(|error| TransactionError::operation(error.to_string()))
+    }
+
+    async fn disable_nac_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<(), TransactionError> {
+        self.db.disable_nac_as(context).await.map_err(nac_error)
+    }
+
+    async fn re_enable_nac_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<(), TransactionError> {
+        self.db.re_enable_nac_as(context).await.map_err(nac_error)
+    }
+
+    async fn add_nac_actor_relationship_as(
+        &self,
+        context: &RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        self.db
+            .add_nac_actor_relationship_as(context, relation, target_actor)
+            .await
+            .map_err(nac_error)
+    }
+
+    async fn change_nac_source_permission_as(
+        &self,
+        context: &RequestContext,
+        edge: &query::txn::SourcePermission,
+    ) -> std::result::Result<bool, TransactionError> {
+        let id = context
+            .txn()
+            .ok_or_else(|| TransactionError::operation("an explicit transaction is required"))?;
+        let handle = TransactionHandle::new(id.to_string());
+        let job = query::txn::source_permission_job(context.clone(), edge.clone())?;
+        self.run_as(context, &handle, None, job).await?
+    }
+
+    async fn delete_nac_actor_relationship_as(
+        &self,
+        context: &RequestContext,
+        relation: &str,
+        target_actor: &str,
+    ) -> std::result::Result<bool, TransactionError> {
+        self.db
+            .delete_nac_actor_relationship_as(context, relation, target_actor)
+            .await
+            .map_err(nac_error)
     }
 
     async fn set_active_collection_version_as(
@@ -486,6 +576,15 @@ fn context_txn(context: &RequestContext) -> std::result::Result<String, Transact
         .txn()
         .map(|id| id.to_string())
         .ok_or_else(|| TransactionError::not_found("the request carries no transaction"))
+}
+
+/// A NAC write that lost every try as a conflict, so the caller may run it
+/// again; any other failure in the words the core gave it.
+fn nac_error(error: crate::NodeAcpError) -> TransactionError {
+    match error.is_conflict() {
+        true => TransactionError::conflict(error.to_string()),
+        false => TransactionError::operation(error.to_string()),
+    }
 }
 
 /// A refused operation inside a transaction, in the words the core gave it;

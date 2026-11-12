@@ -7,7 +7,7 @@ use storage::corekv::Store;
 
 /// The identity acting in `context`, the wildcard for an anonymous request or
 /// an identity that is not a DID.
-fn acting_did(context: &RequestContext) -> Option<Did> {
+pub(crate) fn acting_did(context: &RequestContext) -> Option<Did> {
     context.identity().and_then(|value| Did::new(value).ok())
 }
 
@@ -22,6 +22,8 @@ pub(crate) fn ambient_as(identity: Option<&Did>) -> RequestContext {
 }
 
 impl<S: Store> DB<S> {
+    /// [`Self::check_node_access_as`] read in the transaction `view` belongs
+    /// to, each of [`NodePermission::go_order`] in turn.
     pub(crate) async fn check_node_access_in_txn(
         &self,
         context: &RequestContext,
@@ -39,17 +41,18 @@ impl<S: Store> DB<S> {
             return Ok(());
         }
         let identity = identity.unwrap_or_else(Did::wildcard);
-        if nac
-            .check_permission_in_txn(view, &identity, permission)
-            .await
-            .map_err(|error| Error::Acp(error.to_string()))?
-        {
-            Ok(())
-        } else {
-            Err(Error::NotAuthorized {
-                permission: permission.as_str().to_string(),
-            })
+        for permission in permission.go_order() {
+            if !nac
+                .check_permission_in_txn(view.clone(), &identity, permission)
+                .await
+                .map_err(|error| Error::Acp(error.to_string()))?
+            {
+                return Err(Error::NotAuthorized {
+                    permission: permission.as_str().to_string(),
+                });
+            }
         }
+        Ok(())
     }
 
     /// [`Self::check_node_access_as`] for `identity`, or for the identity
@@ -69,7 +72,8 @@ impl<S: Store> DB<S> {
     ///
     /// Returns `Ok(())` when NAC is not configured or not enabled (all
     /// operations allowed), or when the identity holds the permission.
-    /// Returns `Error::NotAuthorized` when the identity lacks it.
+    /// Returns `Error::NotAuthorized` naming the first of
+    /// [`NodePermission::go_order`] the identity lacks.
     pub async fn check_node_access_as(
         &self,
         context: &RequestContext,
@@ -90,16 +94,17 @@ impl<S: Store> DB<S> {
             }
         }
         let did = resolved.unwrap_or_else(Did::wildcard);
-        let allowed = nac
-            .check_permission(&did, permission)
-            .await
-            .map_err(|e| Error::Acp(e.to_string()))?;
-        if allowed {
-            Ok(())
-        } else {
-            Err(Error::NotAuthorized {
-                permission: permission.as_str().to_string(),
-            })
+        for permission in permission.go_order() {
+            if !nac
+                .check_permission(&did, permission)
+                .await
+                .map_err(|e| Error::Acp(e.to_string()))?
+            {
+                return Err(Error::NotAuthorized {
+                    permission: permission.as_str().to_string(),
+                });
+            }
         }
+        Ok(())
     }
 }

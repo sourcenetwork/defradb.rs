@@ -19,10 +19,12 @@ UNIT_NAMES = (
     "abi::tests::set_relationship_subject_object_edge_round_trips",
     "bearer::tests::bearer_token_uses_vera_rs_es256k_shape",
     "bearer::tests::invalid_lifetime_is_rejected",
+    "client::tests::injected_transport_keeps_the_submission_and_receipt_checks",
     "client::tests::rpc_binds_response_and_requires_a_result",
     "client::tests::rpc_enforces_declared_and_streamed_byte_limits",
     "client::tests::stalled_transport_times_out_and_transient_rpc_errors_are_retryable",
     "client::tests::submission_id_must_match_locally_signed_bytes",
+    "client::tests::transport_failures_say_whether_the_call_may_be_sent_again",
     "provider::tests::resolve_registered_or_passthrough_bearer_token_builds_local_secp256k1_token",
     "provider::tests::resolve_registered_or_passthrough_bearer_token_uses_request_token_for_remote_identity",
     "provider::tests::trusted_consensus_key_is_required_before_connecting",
@@ -37,13 +39,14 @@ UNIT_NAMES = (
 )
 UNIT_TESTS = tuple("vera_rs::" + name for name in UNIT_NAMES)
 LIVE_CASES = (
-    ("policy-lifecycle", "native_protected_collection_keeps_revocations_across_relation_recreation"),
-    ("replication-restart", "native_replicated_collection_keeps_revocations_across_relation_recreation_and_restart"),
-    ("peer-authorization", "peer_authorization::native_ungranted_peer_is_filtered_until_explicitly_trusted_replay"),
-    ("reader-update", "strict_replication::native_replicated_update_rejects_reader_only_signer"),
-    ("revoked-delete", "strict_replication::native_replicated_delete_rejects_revoked_writer"),
-    ("writer-update", "strict_replication::native_replicated_update_accepts_granted_writer"),
-    ("writer-delete", "strict_replication::native_replicated_delete_accepts_granted_writer"),
+    ("policy-lifecycle", "policy_generations::native_protected_collection_keeps_revocations_across_relation_recreation"),
+    ("replication-restart", "policy_generations::native_replicated_collection_keeps_revocations_across_relation_recreation_and_restart"),
+    ("peer-authorization", "policy_generations::peer_authorization::native_ungranted_peer_is_filtered_until_explicitly_trusted_replay"),
+    ("reader-update", "policy_generations::strict_replication::native_replicated_update_rejects_reader_only_signer"),
+    ("revoked-delete", "policy_generations::strict_replication::native_replicated_delete_rejects_revoked_writer"),
+    ("writer-update", "policy_generations::strict_replication::native_replicated_update_accepts_granted_writer"),
+    ("writer-delete", "policy_generations::strict_replication::native_replicated_delete_accepts_granted_writer"),
+    ("node-builder", "node_builder::node_built_with_vera_rs_enforces_verified_document_access"),
 )
 CARGO = ["cargo", "+1.99.1"]
 BUILD = ["--release", "--frozen", "-j", "2"]
@@ -66,7 +69,8 @@ def panic_site(log):
 
 
 def revision(root):
-    pins = []
+    """Return the pinned Vera harness revision after checking the published SDK declarations."""
+    pins, versions = [], []
     for name in SDK_MANIFESTS:
         for line in (root / name).read_text().splitlines():
             if 'git = "https://github.com/sourcenetwork/vera.rs"' in line:
@@ -74,8 +78,13 @@ def revision(root):
                 if match is None:
                     raise ValueError("SDK revision must be immutable")
                 pins.append(match[1])
-    if len(pins) != 7 or len(set(pins)) != 1:
-        raise ValueError("native SDK declarations disagree or are missing")
+            match = re.fullmatch(r'vera-(?:client|domain|modules) = "(\d+\.\d+\.\d+)"', line)
+            if match is not None:
+                versions.append(match[1])
+    if len(versions) != 6 or len(set(versions)) != 1:
+        raise ValueError("published native SDK declarations disagree or are missing")
+    if len(pins) != 1:
+        raise ValueError("native harness revision is missing or ambiguous")
     return pins[0]
 
 
@@ -296,16 +305,15 @@ def qualify(runner):
         runner.target = runner.cache_dir / "defra-target"
         runner.env["CARGO_TARGET_DIR"] = str(runner.target)
     runner.run("fetch-defra", fetch)
-    log = runner.run("build-defra", CARGO + ["build", *BUILD, "-p", "cli", "--bin", "defra", "--features", "vera", "--message-format=json"])
-    runner.env["DEFRA_RUST_BINARY"] = runner.stage(log, "defra", "defra")
+    log = runner.run("build-defra", CARGO + ["build", *BUILD, "-p", "cli", "--bin", "defradb", "--features", "vera", "--message-format=json"])
+    runner.env["DEFRA_RUST_BINARY"] = runner.stage(log, "defradb", "defradb")
     runner.env["DEFRA_VERA_BINARY"] = runner.env["DEFRA_RUST_BINARY"]
     log = runner.run("compile-provider", CARGO + ["test", *BUILD, "-p", "vera", "--lib", "--no-run", "--message-format=json"])
     provider = runner.stage(log, "vera", "provider-tests")
     log = runner.run("compile-native", CARGO + ["test", *BUILD, "-p", "integration-test", "--test", "verars", "--no-run", "--message-format=json"])
     native = runner.stage(log, "verars", "native-tests")
     runner.test("provider-units", provider, ["vera_rs::"], UNIT_TESTS)
-    for phase, suffix in LIVE_CASES:
-        selector = "policy_generations::" + suffix
+    for phase, selector in LIVE_CASES:
         runner.test(phase, native, [selector, "--exact"], [selector])
     runner.run("lint-provider", CARGO + ["clippy", *BUILD, "-p", "vera", "-p", "cli", "--features", "cli/vera", "--lib", "--tests", "--", "-D", "warnings"])
     runner.run("lint-native", CARGO + ["clippy", *BUILD, "-p", "integration-test", "--test", "verars", "--", "-D", "warnings"])

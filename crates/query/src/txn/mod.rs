@@ -11,6 +11,7 @@ mod guard;
 mod handle;
 mod read_access;
 mod registry;
+mod source_nac;
 mod turn;
 
 #[cfg(test)]
@@ -27,4 +28,8 @@ pub use guard::TransactionGuard;
 pub use handle::TransactionHandle;
 pub use read_access::OverlayChecker;
 pub use registry::{NoOpTransactionRegistry, TransactionRegistry};
+pub use source_nac::{
+    embedded_source_permission_job, host_source_permission_job, source_permission_job,
+    SourcePermission,
+};
 pub use turn::{txn_job, SharedTurn, TxnJob, TxnTurn};

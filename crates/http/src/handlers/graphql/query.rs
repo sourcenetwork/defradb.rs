@@ -374,7 +374,7 @@ async fn graphql_sse(
         HttpError::ServiceUnavailable("event bus is not available for subscriptions".to_string())
     })?;
 
-    let mut subscription = event_bus.subscribe(&[events::EventName::Update]);
+    let mut subscription = event_bus.subscribe_closing_on_overflow(&[events::EventName::Update]);
     let query_str = request.query;
     let operation_name = request.operation_name;
     let variables = request.variables;
@@ -402,6 +402,11 @@ async fn graphql_sse(
 
     let stream = async_stream::stream! {
         while let Some(message) = subscription.recv().await {
+            let dropped = subscription.check_and_reset_dropped();
+            if dropped != 0 {
+                tracing::warn!(dropped, "GraphQL subscription lost updates; ending stream for resynchronization");
+                break;
+            }
             if let Some(update) = message.as_update() {
                 let event_doc_id = update.doc_id.clone();
 
@@ -423,7 +428,7 @@ async fn graphql_sse(
                     Ok(query) => query,
                     Err(error) => {
                         tracing::warn!(error = %error, "failed to scope subscription query");
-                        continue;
+                        break;
                     }
                 };
 
@@ -442,14 +447,20 @@ async fn graphql_sse(
                     &state.edge, executor.clone(), req, signing_config.clone(), dac_bypass, acting_did.clone(),
                 ).await;
 
-                // Skip empty results (filter excluded the document)
-                if !response_has_data(&response) {
+                // Empty successful results may be filtered by document authorization.
+                if !response.has_errors() && !response_has_data(&response) {
                     continue;
                 }
 
-                if let Ok(json) = serde_json::to_string(&response) {
-                    yield Ok(Event::default().event("next").data(json));
-                }
+                let failed = response.has_errors();
+                match serde_json::to_string(&response) {
+                    Ok(json) => yield Ok(Event::default().event("next").data(json)),
+                    Err(error) => {
+                        tracing::warn!(%error, "failed to serialize subscription response");
+                        break;
+                    }
+                };
+                if failed { break; }
             }
         }
 

@@ -141,7 +141,7 @@ pub async fn serve_on(tls: Option<Arc<ServerConfig>>, edge: edge::Edge) -> Serve
 pub fn localhost_tls(alpn: &[&[u8]]) -> (Arc<ServerConfig>, net::http::tls::Certificate) {
     let certified = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
         .expect("a self-signed certificate");
-    let key = rustls::pki_types::PrivateKeyDer::Pkcs8(certified.key_pair.serialize_der().into());
+    let key = rustls::pki_types::PrivateKeyDer::Pkcs8(certified.signing_key.serialize_der().into());
     let mut config = ServerConfig::builder_with_provider(net::tls::provider())
         .with_safe_default_protocol_versions()
         .expect("TLS versions")

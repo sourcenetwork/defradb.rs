@@ -150,12 +150,14 @@ impl Engine<'_> {
             "currentTimestamp" => match_current_timestamp(got, Utc::now()) && next(current),
             "nonemptyString" => got.as_str().is_some_and(|s| !s.is_empty()) && next(current),
             "nonempty" => match_nonempty(got) && next(current),
+            "positive" => got.as_f64().is_some_and(|n| n > 0.0) && next(current),
             "length" => match_length(&w["value"], got) && next(current),
             "substring" => {
                 got.as_str().is_some_and(|s| s.contains(string_of("value"))) && next(current)
             }
             "explainScan" => match_explain_scan(w, got) && next(current),
             "introspectionTypes" => introspection_types(got) && next(current),
+            "sameSchema" => super::schema::same_schema(&w["value"], got) && next(current),
             "sortedStrings" => sorted_strings(string_of("field"), got) && next(current),
             "docID" => valid_doc_id(got) && next(current),
             "cid" => got.as_str().is_some_and(|s| cid::Cid::try_from(s).is_ok()) && next(current),

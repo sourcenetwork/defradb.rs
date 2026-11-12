@@ -134,3 +134,133 @@ async fn stalled_transport_times_out_and_transient_rpc_errors_are_retryable() {
         task.join().await.unwrap();
     }
 }
+
+/// A well-formed consensus key that signed nothing these tests return.
+const TRUSTED_KEY: &str = "92b050b6fbe80695b5d56835e978918e37c8707a7fad09a01ae782d4c3170c9baa4c2c196b36eac6b78ceb210b287aeb0727ef1c60e48042142f7bcc8b6382305cd50c5a4542c44ec72a4de6640c194f8ef36bea1dbed168ab6fd8681d910d55";
+
+/// Answers every call with a fixed result and records what it was asked.
+struct Recorded {
+    result: Result<Value, (bool, &'static str)>,
+    calls: regolith::sync::SegQueue<(String, Value, usize)>,
+}
+
+impl Recorded {
+    fn answering(result: Result<Value, (bool, &'static str)>) -> Arc<Self> {
+        Arc::new(Self {
+            result,
+            calls: regolith::sync::SegQueue::new(),
+        })
+    }
+
+    fn only_call(&self) -> (String, Value, usize) {
+        let call = self.calls.pop().expect("one call");
+        assert!(self.calls.pop().is_none(), "more than one call");
+        call
+    }
+}
+
+impl RpcTransport for Recorded {
+    fn call<'a>(
+        &'a self,
+        method: &'a str,
+        params: Value,
+        max_bytes: usize,
+    ) -> MaybeBoxFuture<'a, Result<Value, ClientError>> {
+        self.calls.push((method.to_owned(), params, max_bytes));
+        Box::pin(async move {
+            self.result
+                .clone()
+                .map_err(|(retryable, message)| ClientError::Transport {
+                    retryable,
+                    message: message.to_owned(),
+                })
+        })
+    }
+}
+
+#[nuclei::test]
+async fn injected_transport_keeps_the_submission_and_receipt_checks() {
+    let signer = vera_client::BlsSigner::random(9001).unwrap();
+    let wire = signer
+        .sign_native_tx_with_sequence(Address::ZERO, Bytes::new(), 0)
+        .unwrap();
+    let hash = NativeTx::decode_wire(&wire).unwrap().tx_id().0;
+    for returned in [B256::ZERO, hash] {
+        let transport = Recorded::answering(Ok(json!(returned)));
+        let client = VeraRsClient::with_transport(transport.clone());
+        let result = client.send(&wire).await;
+        if returned == hash {
+            assert_eq!(result.unwrap(), hash);
+        } else {
+            assert!(matches!(
+                result,
+                Err(ClientError::InvalidResponse("submission ID mismatch"))
+            ));
+        }
+        assert_eq!(
+            transport.only_call(),
+            (
+                "vera_sendNativeTx".to_owned(),
+                json!([Bytes::copy_from_slice(&wire)]),
+                4096
+            )
+        );
+    }
+
+    let trusted = {
+        use commonware_codec::DecodeExt as _;
+        ConsensusPublicKey::decode(hex::decode(TRUSTED_KEY).unwrap()).unwrap()
+    };
+    let absent = Recorded::answering(Ok(Value::Null));
+    let client = VeraRsClient::with_transport(absent.clone());
+    assert!(client.receipt(hash, &trusted).await.unwrap().is_none());
+    assert_eq!(
+        absent.only_call(),
+        (
+            "vera_getReceiptProof".to_owned(),
+            json!([hash]),
+            RECEIPT_RESPONSE_BYTES
+        )
+    );
+
+    // A receipt the trusted key did not certify is refused, whatever carried it.
+    let uncertified = json!({
+        "revision": {
+            "block_hash": format!("{:#x}", B256::ZERO),
+            "parent_hash": format!("{:#x}", B256::ZERO),
+            "height": 1,
+            "timestamp": 1,
+            "state_root": format!("{:#x}", B256::ZERO),
+            "module_state_root": format!("{:#x}", B256::ZERO),
+            "epoch": 0,
+            "view": 1,
+            "parent_view": 0,
+            "block": "0x00",
+            "finalization": "0x00",
+            "epoch_material": "0x00",
+        },
+        "gas_limit": 0,
+        "receipts": [],
+    });
+    let client = VeraRsClient::with_transport(Recorded::answering(Ok(uncertified)));
+    assert!(matches!(
+        client.receipt(hash, &trusted).await,
+        Err(ClientError::Receipt(_))
+    ));
+}
+
+#[nuclei::test]
+async fn transport_failures_say_whether_the_call_may_be_sent_again() {
+    for retryable in [true, false] {
+        let client = VeraRsClient::with_transport(Recorded::answering(Err((
+            retryable,
+            "node is not serving requests",
+        ))));
+        let error = client
+            .rpc::<Value>("test", json!([]), 4096)
+            .await
+            .unwrap_err();
+        assert!(matches!(&error, ClientError::Transport { .. }));
+        assert_eq!(error.retryable(), retryable);
+    }
+}

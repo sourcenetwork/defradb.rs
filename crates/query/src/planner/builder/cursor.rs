@@ -490,7 +490,6 @@ mod tests {
         let cursor = Cursor {
             keys,
             doc_id: "bae-test".to_string(),
-            direction: String::new(),
         };
         let order = order_asc("score");
 
@@ -531,7 +530,6 @@ mod tests {
         let cursor = Cursor {
             keys,
             doc_id: "bae-test".to_string(),
-            direction: String::new(),
         };
         let order = order_asc("stamp");
 
@@ -586,7 +584,6 @@ mod tests {
         let cursor = Cursor {
             keys,
             doc_id: "bae-test".to_string(),
-            direction: String::new(),
         };
         let order = order_asc("stamp");
 
@@ -635,7 +632,6 @@ mod tests {
         let cursor = Cursor {
             keys,
             doc_id: doc_id.to_string(),
-            direction: String::new(),
         };
         let order = order_asc("stamp");
 
