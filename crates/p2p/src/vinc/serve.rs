@@ -168,7 +168,7 @@ impl<H: Hosted + 'static> Node<H> {
 
     #[allow(clippy::too_many_arguments)]
     async fn dispatch(
-        &self,
+        self: &Rc<Self>,
         service: &'static Service,
         peer: &NodeId,
         peer_id: &PeerId,
@@ -187,6 +187,12 @@ impl<H: Hosted + 'static> Node<H> {
                 self.directory.insert(*peer, payload);
                 drop(lease);
                 let _ = send.finish().await;
+            }
+            services::STREAM_PEERS => {
+                let learned = self.learn_peers(&payload);
+                drop(lease);
+                let _ = send.finish().await;
+                learned?;
             }
             services::STREAM_PUSHLOG => {
                 let request = wire::decode(payload)?;

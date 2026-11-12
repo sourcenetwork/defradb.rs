@@ -36,6 +36,14 @@ impl PeerDirectory {
         }
         records.insert(node, record);
     }
+
+    /// The record kept as `node`'s, unverified.
+    pub fn get(&self, node: &NodeId) -> Option<Vec<u8>> {
+        self.records
+            .try_borrow()
+            .ok()
+            .and_then(|records| records.get(node).cloned())
+    }
 }
 
 impl vinc::Rendezvous for PeerDirectory {

@@ -377,6 +377,9 @@ impl<H: Hosted + 'static> Node<H> {
         let conn = connection.clone();
         self.spawn(async move { announcer.send_record(&conn).await });
         if is_new {
+            let sharer = Rc::clone(self);
+            let conn = connection.clone();
+            self.spawn(async move { sharer.share_peers(&conn).await });
             self.wake_waiters(&peer);
             if self
                 .events
