@@ -37,10 +37,9 @@ pub struct VincPeer<S: Store + 'static> {
     pub doc_pusher: Arc<dyn TransportDocPusher>,
     pub ops: Arc<dyn P2POperations>,
     pub manage: VincManageChannel,
-    /// KMS key exchange rides gossip, which vinc does not carry yet: this
-    /// transport refuses every fetch (sourcenetwork/vinc#24).
+    /// KMS key exchange over the raw `encryption` topics.
     #[cfg(feature = "kms")]
-    pub kms_transport: Arc<dyn kms::KeyTransport>,
+    pub kms_transport: Arc<p2p::kms::PubsubKeyTransport<VincTransport>>,
     pub local_peer_id: String,
     pub shutdown: VincPeerShutdown,
     #[cfg(not(target_arch = "wasm32"))]
@@ -144,9 +143,28 @@ impl<S: Store + 'static> VincPeer<S> {
             ))
             .await;
 
+        // The requester's DID has to come from the vinc handshake: the KMS
+        // release policy checks the transport-authenticated identity, and an
+        // anonymous one is denied every policy-bound document.
         #[cfg(feature = "kms")]
-        let kms_transport: Arc<dyn kms::KeyTransport> =
-            Arc::new(super::key_exchange::NoKeyExchange);
+        let kms_transport = match p2p::kms::PubsubKeyTransport::new(
+            transport.clone(),
+            Arc::new(p2p::vinc::VincPeerIdentityResolver::new(transport.clone())),
+            edge.clone(),
+        )
+        .await
+        {
+            Ok(kms_transport) => kms_transport,
+            Err(error) => {
+                coordinator.shutdown().await;
+                stop_endpoint(&transport, endpoint_task).await;
+                return Err(p2p::Error::Transport(format!(
+                    "failed to create KMS transport: {error}"
+                )));
+            }
+        };
+        #[cfg(feature = "kms")]
+        coordinator.install_kms_transport(Arc::clone(&kms_transport));
 
         let replication = db::merge::create_replication_stack_with_max_merge_depth(
             Arc::clone(&database),

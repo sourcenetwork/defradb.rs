@@ -7,8 +7,6 @@
 
 mod config;
 mod events;
-#[cfg(feature = "kms")]
-mod key_exchange;
 mod peer;
 mod shutdown;
 
