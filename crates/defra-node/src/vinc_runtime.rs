@@ -113,7 +113,7 @@ where
         system,
         mutator: peer.replication.broadcast_mutator.clone(),
         txn_broadcaster: Arc::clone(&peer.replication.txn_broadcaster),
-        kms_transport: Arc::clone(&peer.kms_transport),
+        kms_transport: peer.kms_transport.clone() as Arc<dyn kms::KeyTransport>,
         local_peer_id: peer.local_peer_id.clone(),
         wire_kms: Some(Box::new(move |kms| merge_handler_for_kms.set_kms(kms))),
         #[cfg(feature = "libp2p")]

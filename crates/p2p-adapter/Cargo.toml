@@ -74,7 +74,7 @@ default = ["native", "wasmtime-runtime", "iroh", "libp2p"]
 native = ["db/native", ]
 wasmtime-runtime = ["db/wasmtime-runtime", "lens/wasmtime-runtime"]
 iroh = ["p2p/iroh-transport"]
-# The vinc transport (opt-in): direct connections, no gossip or KMS pubsub yet.
+# The vinc transport (opt-in): direct connections, and topics through vinc hubs.
 vinc = ["p2p/vinc-transport"]
 # Encryption key distribution over the iroh peer's gossip, and the pubsub_rpc
 # services that come with it.
