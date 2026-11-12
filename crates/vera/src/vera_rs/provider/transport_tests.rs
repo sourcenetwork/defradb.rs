@@ -20,7 +20,7 @@ const UNREACHABLE: &str = "http://127.0.0.1:1";
 /// A light client transport to a node that serves nothing, counting what it
 /// was asked.
 #[derive(Default)]
-struct Silent {
+pub(super) struct Silent {
     calls: AtomicUsize,
     subscriptions: AtomicUsize,
 }
@@ -43,14 +43,14 @@ impl AcpTransport for Silent {
 }
 
 /// A fresh submission journal for every provider a test builds.
-struct Workers {
+pub(super) struct Workers {
     root: tempfile::TempDir,
     keys: keyring::FileKeyring,
     opened: usize,
 }
 
 impl Workers {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let root = tempfile::tempdir().unwrap();
         let keys = keyring::FileKeyring::open(root.path().join("keys"), b"test").unwrap();
         Self {
@@ -60,7 +60,7 @@ impl Workers {
         }
     }
 
-    fn next(&mut self) -> NativeWorker {
+    pub(super) fn next(&mut self) -> NativeWorker {
         self.opened += 1;
         let directory = self.root.path().join(self.opened.to_string());
         NativeWorker::open(&directory, &self.keys, 9001).unwrap()

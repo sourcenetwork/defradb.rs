@@ -5,9 +5,10 @@
 //! verifies these bytes; a change to how a token is built or signed must not
 //! move them.
 
-use vera_client::DelegationScope;
+use vera_client::{DelegationScope, Secp256k1SigningKey as SigningKey};
 
 use super::*;
+use crate::vera_rs::signer::Secp256k1Signer;
 
 const ISSUED_AT: u64 = 1_700_000_000;
 const WORKER: &str = "did:key:zWorker";
@@ -17,7 +18,10 @@ const WORKER: &str = "did:key:zWorker";
 async fn token(compressed: bool, scope: DelegationScope) -> String {
     let key = SigningKey::from_slice(&[7; 32]).expect("valid key");
     let issuer = did_from_signing_key(&key, compressed);
-    issue_at(&key, &issuer, WORKER, 9001, 300, scope, ISSUED_AT).expect("token")
+    let signer = Secp256k1Signer::from_slice(&[7; 32]).expect("valid key");
+    issue_at(&signer, &issuer, WORKER, 9001, 300, scope, ISSUED_AT)
+        .await
+        .expect("token")
 }
 
 #[nuclei::test]

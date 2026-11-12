@@ -19,6 +19,9 @@ lean_lib EmbeddedSigner where
 lean_lib VeraActorSpelling where
 
 @[default_target]
+lean_lib VeraDelegationSigner where
+
+@[default_target]
 lean_lib DelegatedRelationship where
 
 @[default_target]

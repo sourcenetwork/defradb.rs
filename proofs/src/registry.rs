@@ -135,6 +135,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "vera.rs delegation signing",
+        name: "admitted_iff_vera_accepts / sent_is_accepted / refused_is_not_sent / honest_answer_admitted / refusal_names_the_first_failure",
+        axis: Lean,
+        anchor: "crates/vera/src/vera_rs/signer/admission.rs admit, actor_key; crates/vera/src/vera_rs/bearer.rs issue_at",
+        model_ref: "VeraDelegationSigner (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Explicit embedded signing",
         name: "admitted_binds",
         axis: Lean,
