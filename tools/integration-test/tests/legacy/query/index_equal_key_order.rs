@@ -148,8 +148,9 @@ const PRODUCT_SCHEMA: &str = r#"
 "#;
 
 /// Ranks repeat so one scan covers the order across full keys and the
-/// creation order within one of them.
-const PRODUCTS: [(&str, i64); 5] = [("p0", 1), ("p1", 1), ("p2", 2), ("p3", 2), ("p4", 3)];
+/// creation order within one of them. They are created out of rank order, so
+/// a scan that kept plain creation order fails.
+const PRODUCTS: [(&str, i64); 5] = [("p0", 2), ("p1", 1), ("p2", 3), ("p3", 1), ("p4", 2)];
 
 /// A partial `_in` over a composite index prefix-scans, so one `_in` value
 /// spans several distinct full index keys: rank order across keys, creation
@@ -179,11 +180,12 @@ async fn rust_partial_in_over_composite_index_keeps_secondary_field_order() {
             .map(|row| row["name"].as_str().expect("name"))
             .collect();
 
-        // The products were created in rank order, so rank order with
-        // creation order inside one rank is the order they were added.
-        let created: Vec<&str> = PRODUCTS.iter().map(|(name, _)| *name).collect();
+        let mut by_rank = PRODUCTS.to_vec();
+        by_rank.sort_by_key(|(_, rank)| *rank);
+        let expected: Vec<&str> = by_rank.iter().map(|(name, _)| *name).collect();
+        assert_eq!(expected, ["p1", "p3", "p0", "p4", "p2"]);
         assert_eq!(
-            got, created,
+            got, expected,
             "a partial `_in` must return rank order, and creation order within one rank"
         );
     })

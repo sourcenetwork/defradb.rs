@@ -25,8 +25,9 @@ const INDEX: &str = "by_category_rank";
 const CATEGORY: &str = "a";
 
 /// Ranks repeat so one scan covers both the across-key order and the
-/// within-key creation order.
-const SEED: [(&str, i64); 5] = [("p0", 1), ("p1", 1), ("p2", 2), ("p3", 2), ("p4", 3)];
+/// within-key creation order. They are seeded out of rank order, so a scan
+/// that kept plain creation order fails.
+const SEED: [(&str, i64); 5] = [("p0", 2), ("p1", 1), ("p2", 3), ("p3", 1), ("p4", 2)];
 
 fn schema() -> CollectionVersion {
     let mut version = CollectionVersion::new(
@@ -117,6 +118,12 @@ fn partial_in_over_a_composite_index_keeps_secondary_field_order() {
         let (db, seeded) = populated().await;
 
         let expected = index_order(&seeded);
+        let creation_only: Vec<String> = seeded.iter().map(|(_, id)| id.clone()).collect();
+        assert_ne!(
+            expected, creation_only,
+            "the seed must distinguish index order from plain creation order, \
+         otherwise this test cannot fail"
+        );
         let doc_id_only: Vec<String> = {
             let mut ids: Vec<String> = seeded.iter().map(|(_, id)| id.clone()).collect();
             ids.sort();
