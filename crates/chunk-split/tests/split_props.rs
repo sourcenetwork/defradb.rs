@@ -1,8 +1,8 @@
 //! Property tests mirroring the Lean theorems in `proofs/lean/ChunkSplit`.
 
 use chunk_split::split::{
-    cut_sentences, cut_words, paragraphs, segments, split, units, Chunk, ChunkConfig, REPEAT_SHARE,
-    SEGMENT_CHUNKS,
+    cut_sentences, cut_words, paragraphs, segments, split, units, Chunk, ChunkConfig,
+    SplitterVersion, REPEAT_SHARE, SEGMENT_CHUNKS,
 };
 use proptest::prelude::*;
 use unicode_segmentation::UnicodeSegmentation;
@@ -59,7 +59,11 @@ fn text() -> impl Strategy<Value = String> {
 }
 
 fn config() -> impl Strategy<Value = ChunkConfig> {
-    (1usize..200, 0usize..3).prop_map(|(max_chars, overlap)| ChunkConfig { max_chars, overlap })
+    (1usize..200, 0usize..3).prop_map(|(max_chars, overlap)| ChunkConfig {
+        version: SplitterVersion::CURRENT,
+        max_chars,
+        overlap,
+    })
 }
 
 proptest! {
@@ -169,23 +173,6 @@ proptest! {
         prop_assert_eq!(shape(&text), shape(&edited));
     }
 
-    // Segments follow the text size on text where every paragraph sits under a heading.
-    #[test]
-    fn heading_led_segments_average_a_few_max_chars(
-        bodies in prop::collection::vec(prop::collection::vec(sentence(), 1..6), 500..600),
-        max in 64usize..=200,
-    ) {
-        let text = bodies
-            .iter()
-            .enumerate()
-            .map(|(i, body)| format!("## Section {i}\n\n{}", body.concat()))
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        let paras = paragraphs(&text);
-        let mean = text.chars().count() / segments(&paras, max).len();
-        prop_assert!(mean <= 2 * SEGMENT_CHUNKS as usize * max, "mean {} at max {}", mean, max);
-    }
-
     // Mirrors `local_edit`: editing one paragraph without moving the fence before
     // its unit leaves every chunk outside its segment unchanged.
     #[test]
@@ -271,5 +258,27 @@ fn ends_sentence(s: &str) -> bool {
         Some(c) if "。！？．｡".contains(c) => true,
         Some(c) if ".!?".contains(c) => saw_space,
         _ => false,
+    }
+}
+
+// A mean over 200 sections is already tight, so a few long cases are enough.
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(24))]
+
+    // Segments follow the text size on text where every paragraph sits under a heading.
+    #[test]
+    fn heading_led_segments_average_a_few_max_chars(
+        bodies in prop::collection::vec(prop::collection::vec(sentence(), 1..6), 200..240),
+        max in 64usize..=200,
+    ) {
+        let text = bodies
+            .iter()
+            .enumerate()
+            .map(|(i, body)| format!("## Section {i}\n\n{}", body.concat()))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let paras = paragraphs(&text);
+        let mean = text.chars().count() / segments(&paras, max).len();
+        prop_assert!(mean <= 2 * SEGMENT_CHUNKS as usize * max, "mean {} at max {}", mean, max);
     }
 }

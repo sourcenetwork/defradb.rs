@@ -1,10 +1,14 @@
 use chunk_split::split::{
     cut_sentences, cut_words, fence_before, paragraphs, segments, split, units, Chunk, ChunkConfig,
-    SEGMENT_CHUNKS,
+    SplitterVersion, SEGMENT_CHUNKS,
 };
 
 fn config(max_chars: usize, overlap: usize) -> ChunkConfig {
-    ChunkConfig { max_chars, overlap }
+    ChunkConfig {
+        version: SplitterVersion::CURRENT,
+        max_chars,
+        overlap,
+    }
 }
 
 fn cores<'a>(text: &'a str, chunks: &[Chunk]) -> Vec<&'a str> {

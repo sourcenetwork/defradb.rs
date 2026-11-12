@@ -140,6 +140,13 @@ pub enum Error {
     #[error(transparent)]
     ChunkSettings(#[from] schema::ChunkSettingsError),
 
+    /// A `@chunk` field's definition names splitting rules this node lacks.
+    #[error("cannot cut or check the chunks of {field}: {source}")]
+    UnknownSplitterVersion {
+        field: String,
+        source: chunk_split::split::UnknownSplitterVersion,
+    },
+
     /// A view names a lens transform CID with no committed lens config.
     #[error("lens CID not found: {0}")]
     ViewTransformMissing(String),

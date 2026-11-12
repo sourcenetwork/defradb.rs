@@ -88,6 +88,19 @@ fn other_chunk_settings_than_a_synced_inactive_version_are_refused() {
     assert!(err.contains(CHANGED_FIELDS), "{err}");
 }
 
+/// A peer on newer splitting rules: this node's SDL would cut its text differently.
+#[test]
+fn another_splitter_version_than_a_synced_inactive_version_is_refused() {
+    let mut stored = synced_inactive(CHUNKED);
+    stored[0].chunked_fields[0].splitter_version = defra_core::DEFAULT_SPLITTER_VERSION + 1;
+    let err = plan_bootstrap(parse(CHUNKED), &stored).err().unwrap();
+    assert!(err.contains("Collection: Article,"), "{err}");
+    assert!(
+        err.contains("Changed: the @chunk splitter version"),
+        "{err}"
+    );
+}
+
 #[test]
 fn a_placeholder_counts_as_existing_without_a_settings_check() {
     let mut stored = synced_inactive(PLAIN);

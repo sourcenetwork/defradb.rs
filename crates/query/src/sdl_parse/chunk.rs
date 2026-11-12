@@ -154,6 +154,7 @@ impl SdlParser<'_> {
                 field_name: spec.field.clone(),
                 max_chars: spec.config.max_chars,
                 overlap: spec.config.overlap,
+                splitter_version: chunk_split::split::SplitterVersion::CURRENT.number(),
             });
 
             // One index on `_sourceID` and `hash` serves both lookups writes need,

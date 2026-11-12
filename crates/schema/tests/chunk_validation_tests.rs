@@ -1,10 +1,12 @@
 //! Patches may not change `@chunk` settings or a generated chunk collection.
 
+use defra_core::DEFAULT_SPLITTER_VERSION;
 use schema::definition_validation::{
     validate_collection_changes, validate_new_collections_with_existing,
 };
 use schema::{
-    CType, ChunkSource, ChunkedField, CollectionVersion, FieldDescription, FieldKind, QuerySource,
+    CType, ChunkSettingsChange, ChunkSource, ChunkedField, CollectionVersion, Commitments,
+    FieldDescription, FieldKind, QuerySource,
 };
 
 fn article() -> CollectionVersion {
@@ -27,6 +29,7 @@ fn article() -> CollectionVersion {
         field_name: "body".into(),
         max_chars: 1600,
         overlap: 0,
+        splitter_version: DEFAULT_SPLITTER_VERSION,
     });
     article
 }
@@ -201,6 +204,7 @@ fn reordered_chunk_fields_pass() {
         field_name: "summary".into(),
         max_chars: 800,
         overlap: 1,
+        splitter_version: DEFAULT_SPLITTER_VERSION,
     };
     let with_summary = || {
         let mut article = article();
@@ -224,4 +228,88 @@ fn reordered_chunk_fields_pass() {
     patched.chunked_fields.push(summary);
     let result = check(vec![stored, chunk()], vec![patched, chunk()]);
     assert!(result.is_ok(), "{result:?}");
+}
+
+/// Any version other than the default.
+const OTHER_SPLITTER: u32 = DEFAULT_SPLITTER_VERSION + 1;
+
+fn on_splitter(version: u32) -> CollectionVersion {
+    let mut article = article();
+    article.chunked_fields[0].splitter_version = version;
+    article
+}
+
+#[test]
+fn changing_the_splitter_version_is_refused() {
+    let err = check(
+        vec![article(), chunk()],
+        vec![on_splitter(OTHER_SPLITTER), chunk()],
+    )
+    .unwrap_err();
+    assert!(err.contains("chunk settings cannot be mutated"), "{err}");
+    assert_eq!(
+        schema::chunk_settings_change(&article(), &on_splitter(OTHER_SPLITTER)),
+        Some(ChunkSettingsChange::SplitterVersion)
+    );
+    let mut wider = on_splitter(OTHER_SPLITTER);
+    wider.chunked_fields[0].max_chars = 800;
+    assert_eq!(
+        schema::chunk_settings_change(&article(), &wider),
+        Some(ChunkSettingsChange::ChunkedFields)
+    );
+}
+
+#[test]
+fn the_splitter_version_names_itself_in_the_refusal() {
+    let err =
+        schema::ensure_chunk_settings_kept(&article(), &on_splitter(OTHER_SPLITTER)).unwrap_err();
+    assert!(
+        err.to_string()
+            .ends_with("Changed: the @chunk splitter version"),
+        "{err}"
+    );
+}
+
+/// A first version on rules this node lacks is still valid; only cutting its text fails.
+#[test]
+fn a_first_version_on_another_splitter_version_passes_the_first_version_rules() {
+    assert!(first_version_errors(&on_splitter(OTHER_SPLITTER)).is_empty());
+}
+
+fn identity(version: &CollectionVersion) -> cid::Cid {
+    schema::generate_collection_cid_full_with_query(
+        Some(&version.name),
+        &[],
+        1,
+        &[],
+        None,
+        None,
+        Commitments::of(version),
+    )
+    .unwrap()
+}
+
+#[test]
+fn the_splitter_version_is_part_of_the_identity() {
+    assert_eq!(
+        identity(&article()),
+        identity(&on_splitter(DEFAULT_SPLITTER_VERSION))
+    );
+    assert_ne!(identity(&article()), identity(&on_splitter(OTHER_SPLITTER)));
+}
+
+/// The stored record omits the default, so records stored before it read the same.
+#[test]
+fn the_stored_record_omits_the_default_splitter_version() {
+    let stored = serde_json::to_value(&article().chunked_fields[0]).unwrap();
+    assert_eq!(
+        stored,
+        serde_json::json!({ "Field": "body", "MaxChars": 1600, "Overlap": 0 })
+    );
+    let read: ChunkedField = serde_json::from_value(stored).unwrap();
+    assert_eq!(read.splitter_version, DEFAULT_SPLITTER_VERSION);
+    let versioned = serde_json::to_value(&on_splitter(OTHER_SPLITTER).chunked_fields[0]).unwrap();
+    assert_eq!(versioned["SplitterVersion"], OTHER_SPLITTER);
+    let read: ChunkedField = serde_json::from_value(versioned).unwrap();
+    assert_eq!(read, on_splitter(OTHER_SPLITTER).chunked_fields[0]);
 }

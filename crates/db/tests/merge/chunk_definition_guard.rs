@@ -4,12 +4,14 @@
 use std::sync::Arc;
 
 use blockstore::Blockstore as _;
+use chunk_split::split::SplitterVersion;
 use cid::Cid;
 use db::merge::merge_handler::DbMergeHandler;
 use db::txn::registry::DbTransactionRegistry;
 use defra_core::merge::{BlockMetadata, MergeHandler, MergeOutcome};
 use defra_core::{
     Block, ChunkOfDelta, ChunkedFieldDelta, CollectionDefinitionDeltaPayload, CrdtDelta,
+    DEFAULT_SPLITTER_VERSION,
 };
 use query::txn::TransactionRegistry;
 use schema::{ChunkSettingsError, CollectionSource, CollectionVersion};
@@ -22,6 +24,7 @@ const PARENT: usize = 0;
 const CHUNKS: usize = 1;
 const CHANGED_FIELDS: &str = "Changed: the @chunk fields";
 const CHANGED_PARENT: &str = "Changed: the chunk parent";
+const CHANGED_SPLITTER: &str = "Changed: the @chunk splitter version";
 
 /// An author with the `@chunk` schema and a peer that has synced both collections.
 async fn synced() -> (Node, Node, Vec<CollectionVersion>) {
@@ -75,10 +78,25 @@ fn patch(previous: &str, payload: CollectionDefinitionDeltaPayload) -> Block {
 }
 
 fn chunked(max_chars: u32) -> Vec<ChunkedFieldDelta> {
+    chunked_on(max_chars, DEFAULT_SPLITTER_VERSION)
+}
+
+/// A version newer than any this build can split with.
+fn unknown_splitter() -> u32 {
+    SplitterVersion::ALL
+        .iter()
+        .map(|known| known.number())
+        .max()
+        .unwrap()
+        + 1
+}
+
+fn chunked_on(max_chars: u32, splitter_version: u32) -> Vec<ChunkedFieldDelta> {
     vec![ChunkedFieldDelta {
         field: "body".to_string(),
         max_chars,
         overlap: 1,
+        splitter_version,
     }]
 }
 
@@ -128,6 +146,62 @@ fn a_patch_that_changes_max_chars_is_rejected() {
         let delta = CollectionDefinitionDeltaPayload::new(2).with_chunked_fields(chunked(128));
         let merged = merge(&peer, &patch(&parsed[PARENT].version_id, delta)).await;
         assert_rejected(&peer, &parsed, merged, CHANGED_FIELDS).await;
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_patch_that_changes_the_splitter_version_is_rejected() {
+    workers::block_on(async {
+        let (_author, peer, parsed) = synced().await;
+        let delta = CollectionDefinitionDeltaPayload::new(2)
+            .with_chunked_fields(chunked_on(64, unknown_splitter()));
+        let merged = merge(&peer, &patch(&parsed[PARENT].version_id, delta)).await;
+        assert_rejected(&peer, &parsed, merged, CHANGED_SPLITTER).await;
+    })
+    .unwrap()
+}
+
+/// A newer peer's rules are a valid definition. This node keeps it and refuses
+/// only to cut or check its chunks.
+#[test]
+fn a_first_version_on_a_splitter_version_this_node_lacks_is_kept_but_not_cut() {
+    workers::block_on(async {
+        let author = node();
+        let parsed = query::parse_sdl(SDL).unwrap();
+        author
+            .db
+            .create_collections_atomic(parsed.clone())
+            .await
+            .unwrap();
+        let peer = node();
+        let mut block = author_block(&author, &parsed[PARENT].version_id).await;
+        for link in block.links.iter().flatten() {
+            let field = author.blockstore.get(&link.link).await.unwrap().unwrap();
+            peer.blockstore.put(&link.link, &field).await.unwrap();
+        }
+        let delta = payload(&block).with_chunked_fields(chunked_on(64, unknown_splitter()));
+        block.delta = CrdtDelta::CollectionDefinition(delta);
+        let (cid, outcome) = merge(&peer, &block).await;
+        assert!(
+            !matches!(outcome, MergeOutcome::Rejected { .. }),
+            "{outcome:?}"
+        );
+        assert_ne!(cid.to_string(), parsed[PARENT].version_id);
+        let stored = peer
+            .db
+            .get_collection_by_version_id_full(&cid.to_string())
+            .await
+            .unwrap()
+            .expect("stored first version");
+        let body = stored.schema().chunked_field("body").unwrap().clone();
+        assert_eq!(body.splitter_version, unknown_splitter());
+        match db::chunk::chunk_config("Article", &body) {
+            Err(db::error::Error::UnknownSplitterVersion { source, .. }) => {
+                assert_eq!(source.version, unknown_splitter())
+            }
+            other => panic!("expected an unknown splitter version, got {other:?}"),
+        }
     })
     .unwrap()
 }
@@ -289,11 +363,14 @@ fn an_honest_patch_that_keeps_the_chunk_settings_is_accepted() {
 
 /// A version stored with other settings than its collection's first, as a
 /// node that merged it before the merge checked them would hold it.
-async fn store_drifted_version(peer: &Node, first: &CollectionVersion) -> String {
+async fn store_drifted_version<F>(peer: &Node, first: &CollectionVersion, drift: F) -> String
+where
+    F: FnOnce(&mut schema::ChunkedField),
+{
     let mut drifted = first.clone();
     drifted.version_id = "bafyreidriftedchunksettingsversion".to_string();
     drifted.previous_version = Some(CollectionSource::new(first.version_id.clone()));
-    drifted.chunked_fields[0].max_chars = 1;
+    drift(&mut drifted.chunked_fields[0]);
     drifted.is_active = false;
     let txn = peer.db.new_txn(false).await.unwrap();
     {
@@ -329,9 +406,21 @@ where
 
 #[test]
 fn activating_a_version_with_other_chunk_settings_is_refused() {
+    activating_a_drifted_version_is_refused(|field| field.max_chars = 1);
+}
+
+#[test]
+fn activating_a_version_with_another_splitter_version_is_refused() {
+    activating_a_drifted_version_is_refused(|field| field.splitter_version = unknown_splitter());
+}
+
+fn activating_a_drifted_version_is_refused<F>(drift: F)
+where
+    F: FnOnce(&mut schema::ChunkedField),
+{
     workers::block_on(async {
         let (_author, peer, parsed) = synced().await;
-        let drifted = store_drifted_version(&peer, &parsed[PARENT]).await;
+        let drifted = store_drifted_version(&peer, &parsed[PARENT], drift).await;
 
         assert_settings_refused(peer.db.set_active_collection_version(&drifted).await);
         let registry = DbTransactionRegistry::new(Arc::clone(&peer.db));

@@ -3,6 +3,7 @@
 
 use std::fmt;
 
+use defra_core::DEFAULT_SPLITTER_VERSION;
 use rapidhash::{HashSetExt, RapidHashSet};
 use thiserror::Error;
 
@@ -83,6 +84,8 @@ pub enum ChunkSettingsError {
 pub enum ChunkSettingsChange {
     /// The parent's `@chunk` fields or their `maxChars` and `overlap`.
     ChunkedFields,
+    /// The splitting rules of a `@chunk` field.
+    SplitterVersion,
     /// The parent field a chunk collection is made from.
     ChunkOf,
 }
@@ -91,6 +94,7 @@ impl fmt::Display for ChunkSettingsChange {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::ChunkedFields => "the @chunk fields",
+            Self::SplitterVersion => "the @chunk splitter version",
             Self::ChunkOf => "the chunk parent",
         })
     }
@@ -112,8 +116,14 @@ pub fn chunk_settings_change(
     previous: &CollectionVersion,
     next: &CollectionVersion,
 ) -> Option<ChunkSettingsChange> {
-    if !same_chunked_fields(&previous.chunked_fields, &next.chunked_fields) {
+    let (before, after) = (
+        sorted_by_name(&previous.chunked_fields),
+        sorted_by_name(&next.chunked_fields),
+    );
+    if !same_ignoring_version(&before, &after) {
         Some(ChunkSettingsChange::ChunkedFields)
+    } else if before != after {
+        Some(ChunkSettingsChange::SplitterVersion)
     } else if previous.chunk_of != next.chunk_of {
         Some(ChunkSettingsChange::ChunkOf)
     } else {
@@ -121,11 +131,17 @@ pub fn chunk_settings_change(
     }
 }
 
-/// Order doesn't count: versions stored before the parser sorted them keep SDL order.
-fn same_chunked_fields(left: &[ChunkedField], right: &[ChunkedField]) -> bool {
-    sorted_by_name(left) == sorted_by_name(right)
+fn same_ignoring_version(left: &[&ChunkedField], right: &[&ChunkedField]) -> bool {
+    let unversioned = |field: &&ChunkedField| ChunkedField {
+        splitter_version: DEFAULT_SPLITTER_VERSION,
+        ..(*field).clone()
+    };
+    left.iter()
+        .map(unversioned)
+        .eq(right.iter().map(unversioned))
 }
 
+/// Order doesn't count: versions stored before the parser sorted them keep SDL order.
 fn sorted_by_name(fields: &[ChunkedField]) -> Vec<&ChunkedField> {
     let mut fields: Vec<&ChunkedField> = fields.iter().collect();
     fields.sort_by(|a, b| a.field_name.cmp(&b.field_name));

@@ -2347,6 +2347,7 @@ dependencies = [
  "proptest",
  "rapidhash",
  "sha2 0.10.9",
+ "thiserror 2.0.21",
  "unicode-segmentation",
 ]
 
@@ -10194,6 +10195,7 @@ dependencies = [
  "bm25",
  "bytes",
  "chrono",
+ "chunk-split",
  "ciborium",
  "cid",
  "crdt",

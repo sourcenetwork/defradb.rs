@@ -9,8 +9,12 @@
 \* What can happen: blocks arrive in any order. A patch waits until the
 \* version it patches is stored. Each block carries `@chunk` settings, which
 \* any peer can forge: the honest ones ("Good"), others ("Other"), or a
-\* `maxChars` below the minimum ("TooSmall"). The settings here stand for the
-\* whole pair the code compares: the chunked fields and the chunk parent.
+\* `maxChars` below the minimum ("TooSmall"). The settings here stand for
+\* everything the code compares: the chunked fields with their `maxChars`,
+\* `overlap` and splitter version, and the chunk parent. A block naming
+\* another splitter version is "Other": the same text would be cut with
+\* other rules. A first version on rules this node lacks is still "Good"; the
+\* node refuses to cut its text, which this model does not need.
 \* A node may also hold a record from before the merge checked settings
 \* (the "legacy" version), stored with other settings than version 1.
 \*
@@ -26,12 +30,15 @@
 \*   `chunk_settings_error`: a first version follows
 \*   `schema::chunk_settings_errors` (FirstCheck) and a patch must keep its
 \*   previous version's settings, `schema::ensure_chunk_settings_kept`
-\*   (MergeGuard). Modeled by `MergeFirst` and `MergePatch`.
+\*   (MergeGuard). Both compare through `crates/schema/src/chunk_rules.rs`
+\*   `chunk_settings_change`. Modeled by `MergeFirst` and `MergePatch`.
 \* * `crates/db/src/chunk/user_writes.rs` `ensure_keeps_first_chunk_settings`,
 \*   called from `crates/db/src/collection/ops/version.rs`
 \*   `set_active_collection_version_as` and
 \*   `crates/db/src/txn/registry/collections.rs`
 \*   `set_collection_active_in_txn_as` (ActivateGuard). Modeled by `Activate`.
+\* * `crates/ffi/src/mobile_schema.rs` `plan_bootstrap` holds a mobile SDL to
+\*   the stored first version with the same `ensure_chunk_settings_kept`.
 EXTENDS Naturals
 
 \* N: how many versions the collection has; the highest is a patch.

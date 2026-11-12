@@ -1,5 +1,5 @@
 use chunk_split::list::{chunk_list, describes, distinct, text_hash};
-use chunk_split::split::{split, ChunkConfig};
+use chunk_split::split::{split, ChunkConfig, SplitterVersion};
 
 #[test]
 fn list_starts_with_the_text_hash_then_chunks_in_order() {
@@ -7,6 +7,7 @@ fn list_starts_with_the_text_hash_then_chunks_in_order() {
     let chunks = split(
         text,
         &ChunkConfig {
+            version: SplitterVersion::CURRENT,
             max_chars: 64,
             overlap: 0,
         },
@@ -27,6 +28,7 @@ fn repeated_text_needs_one_chunk_document() {
     let chunks = split(
         &text,
         &ChunkConfig {
+            version: SplitterVersion::CURRENT,
             max_chars: 64,
             overlap: 0,
         },
