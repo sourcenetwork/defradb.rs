@@ -1,6 +1,7 @@
 mod abi;
 mod bearer;
 mod client;
+mod did_spelling;
 mod provider;
 mod provider_commands;
 mod transport;
