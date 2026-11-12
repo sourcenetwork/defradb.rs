@@ -96,3 +96,46 @@ fn updates_and_replay_checkpoint_survive_reopen() {
     })
     .unwrap();
 }
+
+#[test]
+fn a_scan_returns_the_rows_of_its_collection_and_range_only() {
+    workers::block_on(async {
+        let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+        // Collections 1 and 12: one's row prefix is not the other's.
+        for (collection, cid) in [(1, "a"), (12, "x"), (1, "b"), (12, "y"), (1, "c")] {
+            let txn = db.new_txn(false).await.unwrap();
+            record(&txn.systemstore().unwrap(), collection, "doc", cid)
+                .await
+                .unwrap();
+            txn.commit().await.unwrap();
+        }
+        let reader = db.new_txn(true).await.unwrap();
+        let store = reader.systemstore().unwrap();
+        let cids = |rows: Vec<(u64, Update)>| -> Vec<(u64, String)> {
+            rows.into_iter()
+                .map(|(cursor, row)| (cursor, row.cid))
+                .collect()
+        };
+        assert_eq!(
+            cids(rows(&store, 1, 0, 3).await.unwrap()),
+            [(1, "a".into()), (2, "b".into()), (3, "c".into())]
+        );
+        assert_eq!(
+            cids(rows(&store, 1, 1, 2).await.unwrap()),
+            [(2, "b".into())]
+        );
+        assert_eq!(
+            cids(rows(&store, 12, 0, 2).await.unwrap()),
+            [(1, "x".into()), (2, "y".into())]
+        );
+        assert!(rows(&store, 1, 3, 3).await.unwrap().is_empty());
+        // A range past the head finds no row where one is due, and never
+        // another collection's.
+        let missing = rows(&store, 1, 0, 4).await.unwrap_err();
+        assert!(
+            missing.to_string().contains("missing update row"),
+            "{missing}"
+        );
+    })
+    .unwrap();
+}

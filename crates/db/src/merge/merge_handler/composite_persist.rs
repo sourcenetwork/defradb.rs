@@ -162,7 +162,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .map_err(MergeError::Database)?;
         }
 
+        // A block whose every field lost to a stored state left the document
+        // as it was. A parked field lands later, with no merge of its own.
         if !doc_is_tombstoned
+            && (state.any_field_stands || state.parked_fields)
             && context
                 .block
                 .heads

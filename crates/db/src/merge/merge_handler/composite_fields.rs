@@ -317,6 +317,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 if result.applied {
                     state.any_field_applied = true;
                 }
+                if !result.superseded {
+                    state.any_field_stands = true;
+                }
                 if let Some(op) = result.op {
                     state.field_ops.insert(field_name.clone(), op);
                 }

@@ -41,15 +41,16 @@ impl<S: Store + 'static> DocFetcher for AutoCommitFetcher<S> {
     async fn get_document_updates(
         &self,
         options: &query::fetcher::DocumentUpdateOptions,
+        reader: &query::fetcher::DocumentReader<'_>,
     ) -> query::error::Result<query::fetcher::DocumentUpdatePage> {
         let txn = self
             .db
             .new_txn(true)
             .await
             .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
-        let result = crate::event::updates::read(&txn, options)
+        let result = crate::event::updates::read_bound(&txn, options, reader)
             .await
-            .map_err(|error| query::error::QueryError::execution(error.to_string()));
+            .map_err(crate::event::updates::query_error);
         let _ = txn.discard();
         result
     }
