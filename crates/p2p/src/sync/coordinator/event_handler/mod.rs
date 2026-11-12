@@ -476,6 +476,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             }
             TransportEvent::GossipRawMessage {
                 propagation_source,
+                source,
                 topic,
                 data,
                 ..
@@ -485,8 +486,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     &propagation_source,
                     "GossipRawMessage",
                 )?;
-                self.handle_gossip_raw_message(propagation_source, topic, data)
-                    .await?;
+                self.handle_gossip_raw_message(source, topic, data).await?;
             }
             TransportEvent::PushLogRequest {
                 peer_id,

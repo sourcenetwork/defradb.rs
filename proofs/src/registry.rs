@@ -2728,6 +2728,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/net/tests/connect.rs the_other_family_connects_when_the_first_is_silent_past_the_delay, the_other_family_is_tried_when_the_first_refuses, when_both_families_refuse_the_last_refusal_comes_back",
     },
     Property {
+        family: "Pubsub RPC reply addressing",
+        name: "INV_NoAnswerLost / INV_AllAnswered / LIVE_Done / LIVE_AllArrive: a peer answers a request on its publisher's reply topic, even when a relay handed it the request, so no answer is lost and the asker's wait ends with every answer",
+        axis: Tla,
+        anchor: "crates/p2p/src/host/p2p_host/protocols.rs handle_gossipsub_event; crates/p2p/src/sync/coordinator/event_handler/pubsub_raw.rs handle_gossip_raw_message; crates/p2p/src/pubsub_rpc/topic_handler.rs TopicHandler::deliver_gossip_message; crates/p2p/src/sync/coordinator/pubsub_client.rs pubsub_sync_branchable_collection",
+        model_ref: "MC_PubsubRpcReply_{Green,Red_AnswerRelay,Red_DeadlineCutsOff}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/p2p/tests/pubsub_rpc_relayed_request.rs a_relayed_request_names_its_publisher",
+    },
+    Property {
         // The first shutdown caller to swap the flag builds the one drain,
         // which owns the only completion sender; a closed edge hands the
         // drain back and the winner runs it in place. The drain waits for

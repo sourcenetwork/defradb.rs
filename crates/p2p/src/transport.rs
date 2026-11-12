@@ -160,7 +160,11 @@ pub enum TransportEvent<ResponseToken> {
     /// request or an `InternalResponse` envelope; the coordinator feeds
     /// it into a `pubsub_rpc::TopicHandler` for decoding.
     GossipRawMessage {
+        /// The neighbour that handed the message to us.
         propagation_source: PeerId,
+        /// The peer that published the message. A relayed request names its
+        /// publisher here, not the relay, and its reply goes to the publisher.
+        source: PeerId,
         message_id: MessageId,
         topic: String,
         data: Vec<u8>,

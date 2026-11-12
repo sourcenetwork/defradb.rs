@@ -65,7 +65,9 @@ impl Delivery {
         let sender_peer_id = endpoint_id_to_peer_id(&msg.delivered_from);
         let message_id = MessageId::new(uuid::Uuid::new_v4().to_string());
         if self.raw_topics.contains_key(topic) {
+            // iroh-gossip names only the neighbour a message came from.
             let event = TransportEvent::GossipRawMessage {
+                source: sender_peer_id.clone(),
                 propagation_source: sender_peer_id,
                 message_id,
                 topic: topic.to_string(),

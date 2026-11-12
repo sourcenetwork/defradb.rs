@@ -874,12 +874,11 @@ jobs:
       DEFRA_E2E_KEEP: '1'
       # A failing scenario shows its in-process nodes' P2P trace.
       DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,warn
-      # Two scenarios flip between runs (#2712), so a known-failure entry would
-      # fail the runs they pass; they stay out until #2712 is fixed.
+      # One scenario flips between runs (#2712), so a known-failure entry would
+      # fail the runs it passes; it stays out until #2712 is fixed.
       TESTO_FILTER: >-
         binary(testo)
         & not test(=encryption::peer_sec_index::doc_encryption_peer_if_encrypted_doc_has_indexed_field_should_index_after_decryption)
-        & not test(=net::sync::branchable_collection::complex_network::branchable_collection_sync_with_multiple_docs_in_complex_linked_network_should_sync_all)
       # Not run anywhere: p2p_interop_bench, whose one test is an ignored
       # benchmark that prints latencies, and verars, whose cluster needs the
       # verad validator binary from vera.rs, which CI does not build.

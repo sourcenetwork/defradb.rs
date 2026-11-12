@@ -419,11 +419,13 @@ pub fn convert_host_event(event: crate::host::HostEvent) -> TransportEvent<Respo
         },
         HostEvent::GossipRawMessage {
             propagation_source,
+            source,
             message_id,
             topic,
             data,
         } => TransportEvent::GossipRawMessage {
             propagation_source: PeerId::from(propagation_source),
+            source: PeerId::from(source),
             message_id: MessageId::from(message_id),
             topic,
             data,
