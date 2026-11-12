@@ -1401,6 +1401,17 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // Design model ahead of code: membership of a contended resource is
+        // admission minus a signed fork, and admission is the identity cost.
+        family: "Single-writer chain jail",
+        name: "INV_OnlyAdmittedWrite / INV_CheaterWithinBudget / INV_NoMergeAfterProof / PROP_AdmittedWritesLand: only admitted keys write, free keys buy no more than the admission budget, a proven fork revokes with no admin step, and an early block lands once its admission arrives",
+        axis: Tla,
+        anchor: "crates/defra-node/src/ops/block.rs verify_block_signature",
+        model_ref: "MC_JailRevocation_{Green,Red_FreeKeys,Red_AclOnly,Red_DropEarly}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // Verify-before-merge fires only on the P2P merge path; injecting a
         // forged/unsigned block needs an adversarial peer, not reachable through
         // the public CLI. Rust makes signature verification mandatory (model->code

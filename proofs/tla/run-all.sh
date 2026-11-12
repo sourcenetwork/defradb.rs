@@ -447,6 +447,10 @@ RUNS=(
   "MC_ChainJail_Red_Hearsay.cfg      MC_ChainJail_Common.tla RED"    # jail on accusation alone (INV_NoWrongfulJail)
   "MC_ChainJail_Red_NoJail.cfg       MC_ChainJail_Common.tla RED"    # fork seen, cheater still merged (INV_NoForkMerged)
   "MC_ChainJail_Red_NoGossip.cfg     MC_ChainJail_Common.tla RED"    # proof never passed on (PROP_EveryoneJails)
+  "MC_JailRevocation_Green.cfg         MC_JailRevocation_Common.tla GREEN"  # admission + fork proof decide membership
+  "MC_JailRevocation_Red_FreeKeys.cfg  MC_JailRevocation_Common.tla RED"    # any key writes (INV_CheaterWithinBudget)
+  "MC_JailRevocation_Red_AclOnly.cfg   MC_JailRevocation_Common.tla RED"    # fork proof ignored (INV_NoMergeAfterProof)
+  "MC_JailRevocation_Red_DropEarly.cfg MC_JailRevocation_Common.tla RED"    # early block stranded (PROP_AdmittedWritesLand)
   "MC_Kms_Green.cfg             MC_Kms_Gossip.tla            GREEN"  # KMS policy-gated
   "MC_Kms_NoPolicy_Red.cfg      MC_Kms_Gossip.tla            RED"    # KMS unauthorized obtains key
   "MC_Kms_BroadcastCiphertext_Red.cfg MC_Kms_Gossip.tla     RED"    # KMS ciphertext to non-recipient
