@@ -304,11 +304,7 @@ fn unfinished_replay_uses_configured_schedule_and_marks_replicator_inactive() {
         persist_replay_failures(
             &peerstore,
             &peer,
-            peerstore
-                .get_replicator_incarnation(peer.as_str())
-                .await
-                .unwrap()
-                .unwrap(),
+            incarnation.unwrap(),
             &[ReplayDocumentFailure {
                 doc_id: "doc-1".to_string(),
                 collection_id: "collection".to_string(),

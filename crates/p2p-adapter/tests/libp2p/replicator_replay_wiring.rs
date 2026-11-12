@@ -8,7 +8,6 @@ use regolith::sync::{Notify, Semaphore};
 use super::tests::{connect_hosts, identity_test_adapter, NoopBlockstore};
 use crate::{P2POperations, ReplicationFilters};
 
-#[cfg(not(target_arch = "wasm32"))]
 async fn replay_install_through_pooled_db_pusher(replace: bool) {
     use query::DocMutator;
 
@@ -181,13 +180,11 @@ async fn replay_install_through_pooled_db_pusher(replace: bool) {
     .expect("pooled replay install must finish");
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[nuclei::test]
 async fn pooled_db_replay_failure_preserves_install_identity() {
     replay_install_through_pooled_db_pusher(false).await;
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[nuclei::test]
 async fn pooled_db_replay_rejects_an_install_replaced_before_its_check() {
     replay_install_through_pooled_db_pusher(true).await;

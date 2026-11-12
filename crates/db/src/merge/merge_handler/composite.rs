@@ -50,6 +50,22 @@ impl<'a, 'b> CompositeMergeContext<'a, 'b> {
             mode,
         }
     }
+
+    /// The stable collection a merged update is observed under. Both merge
+    /// paths refuse a block whose collection did not resolve before building
+    /// the context, so a missing one here is a broken invariant, reported as
+    /// such rather than replaced by the version ID.
+    fn observation_collection_id(&self) -> std::result::Result<String, MergeError> {
+        self.collection
+            .as_ref()
+            .map(|collection| collection.collection_id().to_owned())
+            .ok_or_else(|| {
+                MergeError::MissingMetadata(format!(
+                    "Collection not found for collection_version_id: {}",
+                    self.payload.collection_version_id
+                ))
+            })
+    }
 }
 
 #[derive(Default)]
@@ -614,13 +630,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         false,
                         true,
                     )
-                    .with_observation_collection_id(
-                        context
-                            .collection
-                            .as_ref()
-                            .map(|collection| collection.collection_id().to_owned())
-                            .unwrap_or_else(|| payload.collection_version_id.clone()),
-                    ),
+                    .with_observation_collection_id(context.observation_collection_id()?),
                 ));
                 committed_events.push(Message::merge_complete(MergeCompleteData {
                     doc_id: doc_id_str.to_string(),
@@ -1092,13 +1102,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         false,
                         true,
                     )
-                    .with_observation_collection_id(
-                        context
-                            .collection
-                            .as_ref()
-                            .map(|collection| collection.collection_id().to_owned())
-                            .unwrap_or_else(|| payload.collection_version_id.clone()),
-                    );
+                    .with_observation_collection_id(context.observation_collection_id()?);
                     pending_events.push(PendingMergeEvent {
                         message: Message::update(update),
                     });

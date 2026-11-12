@@ -214,8 +214,10 @@ pub struct Update {
     pub collection_id: String,
     /// Stable collection identity for current-state observations. Raw events keep
     /// their existing collection/version identifier; merges resolve this identity
-    /// from the installed collection rather than from a transport claim.
-    pub observation_collection_id: Option<String>,
+    /// from the installed collection rather than from a transport claim. Read it
+    /// through [`Update::observation_collection_id`], which falls back to
+    /// `collection_id` for producers that set none.
+    observation_collection_id: Option<String>,
     /// Serialized block data.
     pub block: Bytes,
     /// Whether this is a retry of a previously failed operation.

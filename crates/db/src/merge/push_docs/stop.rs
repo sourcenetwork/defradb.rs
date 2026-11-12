@@ -14,6 +14,9 @@ use crate::merge::push_docs_replay::ReplayPushSendError;
 /// a lost connection) or by the caller giving up. Once
 /// raised the call starts no more documents and no task sends again; sends
 /// already on the wire end on their own deadline and are joined.
+///
+/// A stop belongs to exactly one call. Once raised it stays raised, so a
+/// caller makes a new one for every call rather than reusing it.
 #[derive(Clone, Debug, Default)]
 pub struct SelectedPushStop(Arc<StopState>);
 

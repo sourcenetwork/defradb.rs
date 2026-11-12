@@ -176,7 +176,7 @@ pub async fn persist_replay_failures<S: storage::corekv::Store>(
                     let bytes = info.to_bytes().map_err(|error| {
                         format!("failed to encode inactive replicator status: {error}")
                     })?;
-                    peerstore
+                    let flipped = peerstore
                         .set_replicator_if_incarnation(
                             peer_id.as_str(),
                             install_incarnation,
@@ -187,6 +187,13 @@ pub async fn persist_replay_failures<S: storage::corekv::Store>(
                         .map_err(|error| {
                             format!("failed to persist inactive replicator status: {error}")
                         })?;
+                    if !flipped {
+                        tracing::debug!(
+                            peer_id = %peer_id,
+                            install_incarnation,
+                            "Replay left the replicator status alone: its row was replaced, removed or rewritten after it was read"
+                        );
+                    }
                 }
             }
             Err(error) => {
