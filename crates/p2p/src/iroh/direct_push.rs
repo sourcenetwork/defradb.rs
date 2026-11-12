@@ -3,9 +3,10 @@
 //! iroh-gossip drops a broadcast over its budget, so a block bigger than that
 //! would reach no subscriber. A node takes a relayed gossip head only from an
 //! origin it is connected to, so the peers a small update reaches are the
-//! connected peers subscribed to its collection. The large one goes to every
-//! connected peer as a direct PushLog request, which a node accepts for any
-//! collection it subscribes to and refuses as access denied otherwise.
+//! connected peers subscribed to its collection or following its document.
+//! The large one goes to every connected peer as a direct PushLog request,
+//! which a node accepts for any collection it subscribes to or document it
+//! follows, and refuses as access denied otherwise.
 //! Modeled in `proofs/tla/GossipDelivery.tla`.
 
 use futures::future::join_all;
@@ -22,14 +23,14 @@ use super::protocols::STREAM_PUSHLOG;
 /// Direct pushes of one update in flight at once.
 const FANOUT: usize = 8;
 
-/// How a peer that does not subscribe to the collection answers a push
-/// (`handle_pushlog_request`).
+/// How a peer that neither subscribes to the collection nor follows the
+/// document answers a push (`handle_pushlog_request`).
 const NOT_SUBSCRIBED: &str = "access denied:";
 
 /// The peers to push `msg` to. Its collection topic's publish goes to every
-/// connected peer; its document topic's goes to none, since a peer accepts a
-/// direct push only for a collection it subscribes to, and the collection
-/// topic's publish reaches every such peer.
+/// connected peer; its document topic's goes to none, since that one push
+/// already reaches every connected peer, and a peer that follows only the
+/// document accepts it too.
 pub(super) fn peers(
     resources: &EndpointResources,
     topic: &str,
