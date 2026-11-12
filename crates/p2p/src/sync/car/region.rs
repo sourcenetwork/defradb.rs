@@ -14,6 +14,11 @@
 //! attachments and passes "wanted" on, unless the block is already held.
 //! Every composite a block links has a lower priority, so a block's colour
 //! is final before it is popped. The walk ends when nothing wanted is left.
+//!
+//! Only a document's spine is walked this way. A wanted block that is not a
+//! composite (a branchable collection's block, whose heads are collection
+//! blocks and whose document composite is a plain link) takes the depth-cut
+//! closure instead, which holds no have back.
 
 use std::collections::BinaryHeap;
 
@@ -85,6 +90,7 @@ struct Walk {
     queue: BinaryHeap<(u64, Cid)>,
     pending_wanted: usize,
     held_reads: usize,
+    held_bytes: usize,
     total_bytes: usize,
     served: RapidHashSet<Cid>,
     wants: RapidHashSet<Cid>,
@@ -149,12 +155,24 @@ impl Walk {
         if self.held_reads >= CAR_MAX_BLOCKS {
             return Ok(());
         }
+        let size = blockstore.get_size(&cid).await.map_err(|e| {
+            Error::BlockstoreError(format!("failed to get block size {}: {}", cid, e))
+        })?;
+        let Some(size) = size else {
+            return Ok(());
+        };
+        // Held reads get the byte budget of one response. A block past it
+        // stays uncoloured, which can only make the response larger.
+        if self.held_bytes + size > CAR_MAX_BYTES {
+            return Ok(());
+        }
         self.held_reads += 1;
         let data = blockstore
             .get(&cid)
             .await
             .map_err(|e| Error::BlockstoreError(format!("failed to get block {}: {}", cid, e)))?;
         if let Some(data) = data {
+            self.held_bytes += data.len();
             self.insert(cid, data, Colour::Held);
         }
         Ok(())
@@ -203,8 +221,9 @@ impl Walk {
 /// of `haves`, under the same caps as [`collect_dag_blocks_within`].
 ///
 /// A wanted CID is always served, even when a have reaches it: the receiver
-/// asked for it because it lacks it. With no have this responder holds, the
-/// walk falls back to [`collect_dag_blocks_within`] with `max_depth`.
+/// asked for it because it lacks it. With no have this responder holds, or a
+/// wanted block that is not a composite, the walk falls back to
+/// [`collect_dag_blocks_within`] with `max_depth`.
 pub async fn collect_missing_region<B>(
     blockstore: &B,
     wants: &[Cid],
@@ -229,6 +248,9 @@ where
             let named_held = walk.entries.remove(want).is_some();
             walk.insert(*want, data, Colour::Wanted);
             if let Some(entry) = walk.entries.get_mut(want) {
+                if !entry.shape.spine {
+                    return collect_dag_blocks_within(blockstore, wants, max_depth).await;
+                }
                 entry.held_below = named_held;
             }
         }

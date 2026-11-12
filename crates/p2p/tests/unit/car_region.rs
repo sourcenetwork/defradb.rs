@@ -132,6 +132,59 @@ async fn haves_the_provider_lacks_keep_the_depth_cut() {
     assert_eq!(got, cut.blocks.iter().map(|(cid, _)| *cid).collect());
 }
 
+fn collection_block(heads: Vec<Cid>, priority: u64, doc_composite: Cid) -> (Cid, Vec<u8>) {
+    let block = defra_core::Block::new(
+        defra_core::CrdtDelta::Collection(defra_core::CollectionDeltaPayload {
+            collection_version_id: "cv".to_string(),
+            priority,
+        }),
+        heads,
+        vec![defra_core::DAGLink::new(String::new(), doc_composite)],
+    );
+    (block.generate_cid().unwrap(), block.to_dag_cbor().unwrap())
+}
+
+/// A branchable collection's head merges two collection blocks; the receiver
+/// merged one of them, so `root_haves` names it. The other collection block
+/// and its document's blocks are outside the held closure and must be served:
+/// a wanted collection block takes the depth-cut closure, as before haves.
+#[nuclei::test(threads = 0)]
+async fn a_collection_block_head_outside_the_haves_is_served() {
+    let provider = store();
+    let (mut doc_a, mut doc_b, mut doc_c) =
+        (DocDag::default(), DocDag::default(), DocDag::default());
+    let a = updates(&mut doc_a, 1, 1);
+    let b = updates(&mut doc_b, 1, 2);
+    let c = updates(&mut doc_c, 1, 3);
+    let held_col = collection_block(vec![], 1, doc_a.heads()[0]);
+    let missing_col = collection_block(vec![], 1, doc_b.heads()[0]);
+    let root = collection_block(vec![held_col.0, missing_col.0], 2, doc_c.heads()[0]);
+    for blocks in [&a, &b, &c] {
+        put_all(&provider, blocks).await;
+    }
+    put_all(
+        &provider,
+        &[held_col.clone(), missing_col.clone(), root.clone()],
+    )
+    .await;
+
+    let got = served(&provider, &[root.0], &[held_col.0], None).await;
+
+    let mut missing = cids(&b);
+    missing.extend(cids(&c));
+    missing.insert(missing_col.0);
+    missing.insert(root.0);
+    assert!(
+        missing.is_subset(&got),
+        "missing blocks not served: {:?}",
+        missing.difference(&got).collect::<Vec<_>>()
+    );
+    let closure = collect_dag_blocks_within(&provider, &[root.0], None)
+        .await
+        .unwrap();
+    assert_eq!(got, closure.blocks.iter().map(|(cid, _)| *cid).collect());
+}
+
 /// A wanted block is served even when a have reaches it: the receiver lost
 /// it (a hole in held history), and only an exact ask brings it back.
 #[nuclei::test(threads = 0)]

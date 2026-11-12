@@ -23,6 +23,11 @@
 \* A provider may also lie: send any blocks, forged ones too, and claim the
 \* DAG is done.
 \*
+\* Only a composite spine is walked. When the provider holds no have, or a
+\* wanted block is not a composite (a branchable collection's block), it
+\* sends the wanted blocks' closure instead, as it did before haves; that
+\* path is CarMissingRegion.lean's fallback_complete, not this walk.
+\*
 \* What must never happen:
 \*   - the receiver merges a head while a block it reaches is missing;
 \*   - a forged block is stored;
@@ -200,22 +205,42 @@ Init ==
 \* held. A wanted block is served with its field block; a wanted composite
 \* marks its heads wanted, or held if it is held below.
 Pop ==
+  \* Only while the provider is still walking.
   /\ phase = "walk"
+  \* Something wanted is still waiting to be served.
   /\ Pending # {}
+  \* Take one of the highest priority blocks still to take.
   /\ \E b \in NextPops :
+       \* It is taken now, and never again in this walk.
        /\ popped' = popped \cup {b}
+       \* A held block sends nothing; it only passes "held" on.
        /\ IF col[b] = "H"
+            \* A held composite marks the composites it links held.
             THEN /\ col' = IF b \in Spine THEN MarkHeldCol(Heads(b)) ELSE col
+                 \* A head it reaches that was asked for by name stays
+                 \* wanted, and now knows a held block sits above it.
                  /\ heldBelow' = IF b \in Spine THEN MarkHeldBelow(Heads(b))
                                  ELSE heldBelow
+                 \* Nothing is sent for a held block.
                  /\ UNCHANGED served
+            \* A wanted block is sent, with its field block.
             ELSE /\ served' = served \cup {b}
+                                \* The field block goes too while it is still
+                                \* uncoloured ("-"). One asked for by name is
+                                \* coloured wanted, and is sent when the walk
+                                \* takes it itself.
                                 \cup {a \in Att(b) \cap PHas : col[a] = "-"}
+                 \* A field block passes nothing on; a composite passes
+                 \* "held" on when a held block sits above it, since the
+                 \* receiver then has everything below, and "wanted" otherwise.
                  /\ col' = IF b \notin Spine THEN col
                            ELSE IF heldBelow[b] THEN MarkHeldCol(Heads(b))
                            ELSE MarkWantedCol(Heads(b))
+                 \* Passing "held" on also passes the held-below mark on to
+                 \* heads that were asked for by name.
                  /\ heldBelow' = IF b \in Spine /\ heldBelow[b]
                                  THEN MarkHeldBelow(Heads(b)) ELSE heldBelow
+  \* The receiver's side and the round do not move while the provider walks.
   /\ UNCHANGED <<rhas, round, phase, wants, merged, sentHeld, world>>
 
 \* Nothing wanted is left: the response goes out.
@@ -306,7 +331,13 @@ INV_NoForged == "X" \notin rhas
 INV_HeldNotResent == ~Liar => sentHeld = 0
 
 \* An honest fetch takes one request, or two when a block was lost.
-INV_RoundsBounded == ~Liar => round <= 2
+INV_RoundsBounded ==
+  \* Only an honest provider promises a bound.
+  ~Liar =>
+    \* A receiver that lost nothing is served in one request.
+    /\ (world = "steady" => round <= 1)
+    \* A receiver with a hole asks once more, by name.
+    /\ round <= 2
 
 \* An honest fetch that is over has merged.
 INV_Converges == (~Liar /\ phase = "done") => merged
