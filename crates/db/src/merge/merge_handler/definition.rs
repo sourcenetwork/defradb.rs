@@ -17,9 +17,27 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // The version_id is the CID of this collection definition block
         let version_id = cid.to_string();
 
-        // For patched versions, payload.name is None (name didn't change).
-        // Resolve name and collection_id from the previous version via block.heads.
+        // A patch names its collection only when it renames it. Either way the
+        // collection_id comes from the previous version via block.heads.
+        let has_heads = block.heads.as_ref().is_some_and(|heads| !heads.is_empty());
         let (collection_name, collection_id, prev_fields, previous) = match &payload.name {
+            // A named patch renames its collection. It stays a patch, so the
+            // rename meets the rules a patch follows.
+            Some(name) if has_heads => {
+                match self.resolve_previous_collection_version(block).await? {
+                    Some(prev) => (
+                        name.clone(),
+                        prev.collection_id.clone(),
+                        prev.fields.clone(),
+                        Some(prev),
+                    ),
+                    None => {
+                        return Ok(MergeOutcome::retryable_skip(
+                            "collection predecessor definition is not yet available",
+                        ))
+                    }
+                }
+            }
             Some(name) => {
                 // Initial version: the name is explicit and the collection ID
                 // is this block's own CID, except that a policy reaches the
@@ -44,7 +62,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         (name, col_id, fields, Some(prev))
                     }
                     None => {
-                        if block.heads.as_ref().is_some_and(|heads| !heads.is_empty()) {
+                        if has_heads {
                             return Ok(MergeOutcome::retryable_skip(
                                 "collection predecessor definition is not yet available",
                             ));
