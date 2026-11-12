@@ -267,5 +267,9 @@ async fn a_split_batch_keeps_few_chunks_on_the_wire_at_once() {
         transport.most_in_flight.load(Ordering::SeqCst),
         super::CHUNKS_IN_FLIGHT
     );
-    assert_eq!(started.elapsed(), 3 * LATENCY, "ten chunks in waves of four");
+    assert_eq!(
+        started.elapsed(),
+        3 * LATENCY,
+        "ten chunks in waves of four"
+    );
 }
