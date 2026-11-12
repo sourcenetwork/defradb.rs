@@ -36,7 +36,7 @@ This codebase is designed for **AI-human pair programming**. Every structural ch
 | **Present** | What the code does now | Working tree |
 | **Future** | What we might do next | GitHub issues |
 
-**No commented-out code. No TODO comments (create issues instead). No speculative docs.**
+**No commented-out code. No TODO comments unless linked to a GitHub issue. No speculative docs.**
 
 ## 3. No Documentation Files
 
@@ -127,9 +127,9 @@ rest are scripts and non-Rust harnesses.
 
 **Minimal comments. Code should be self-documenting.**
 
-✅ Comment: Non-obvious WHY, safety invariants, public API docs (`///`)
+✅ Comment: Non-obvious WHY, safety invariants, todos, public API docs (`///`)
 
-❌ Don't: What the code does, TODO/FIXME, commented-out code, change history
+❌ Don't: What the code does, commented-out code, change history
 
 ## 7. Git Worktree Workflow
 
