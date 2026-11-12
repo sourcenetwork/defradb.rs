@@ -37,13 +37,14 @@ UNIT_NAMES = (
 )
 UNIT_TESTS = tuple("vera_rs::" + name for name in UNIT_NAMES)
 LIVE_CASES = (
-    ("policy-lifecycle", "native_protected_collection_keeps_revocations_across_relation_recreation"),
-    ("replication-restart", "native_replicated_collection_keeps_revocations_across_relation_recreation_and_restart"),
-    ("peer-authorization", "peer_authorization::native_ungranted_peer_is_filtered_until_explicitly_trusted_replay"),
-    ("reader-update", "strict_replication::native_replicated_update_rejects_reader_only_signer"),
-    ("revoked-delete", "strict_replication::native_replicated_delete_rejects_revoked_writer"),
-    ("writer-update", "strict_replication::native_replicated_update_accepts_granted_writer"),
-    ("writer-delete", "strict_replication::native_replicated_delete_accepts_granted_writer"),
+    ("policy-lifecycle", "policy_generations::native_protected_collection_keeps_revocations_across_relation_recreation"),
+    ("replication-restart", "policy_generations::native_replicated_collection_keeps_revocations_across_relation_recreation_and_restart"),
+    ("peer-authorization", "policy_generations::peer_authorization::native_ungranted_peer_is_filtered_until_explicitly_trusted_replay"),
+    ("reader-update", "policy_generations::strict_replication::native_replicated_update_rejects_reader_only_signer"),
+    ("revoked-delete", "policy_generations::strict_replication::native_replicated_delete_rejects_revoked_writer"),
+    ("writer-update", "policy_generations::strict_replication::native_replicated_update_accepts_granted_writer"),
+    ("writer-delete", "policy_generations::strict_replication::native_replicated_delete_accepts_granted_writer"),
+    ("node-builder", "node_builder::node_built_with_vera_rs_enforces_verified_document_access"),
 )
 CARGO = ["cargo", "+1.99.1"]
 BUILD = ["--release", "--frozen", "-j", "2"]
@@ -310,8 +311,7 @@ def qualify(runner):
     log = runner.run("compile-native", CARGO + ["test", *BUILD, "-p", "integration-test", "--test", "verars", "--no-run", "--message-format=json"])
     native = runner.stage(log, "verars", "native-tests")
     runner.test("provider-units", provider, ["vera_rs::"], UNIT_TESTS)
-    for phase, suffix in LIVE_CASES:
-        selector = "policy_generations::" + suffix
+    for phase, selector in LIVE_CASES:
         runner.test(phase, native, [selector, "--exact"], [selector])
     runner.run("lint-provider", CARGO + ["clippy", *BUILD, "-p", "vera", "-p", "cli", "--features", "cli/vera", "--lib", "--tests", "--", "-D", "warnings"])
     runner.run("lint-native", CARGO + ["clippy", *BUILD, "-p", "integration-test", "--test", "verars", "--", "-D", "warnings"])
