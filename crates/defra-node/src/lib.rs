@@ -65,8 +65,6 @@ mod peer_keyring;
 pub mod search_chunks;
 mod signed_query;
 mod transaction;
-#[cfg(feature = "vera")]
-mod vera_rs_config;
 pub mod version;
 
 use std::sync::Arc;
@@ -123,8 +121,6 @@ pub use telemetry::{ConflictMetricsSnapshot, RetryLayerSnapshot};
 #[cfg(feature = "otel")]
 pub use telemetry::{TelemetryConfig, TelemetryHandle};
 pub use transaction::NodeTransaction;
-#[cfg(feature = "vera")]
-pub use vera_rs_config::VeraRsConfig;
 pub use zeroize::Zeroizing;
 
 use network::NodeEdge;

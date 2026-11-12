@@ -1,7 +1,6 @@
 mod compartments;
 mod helpers;
 mod native_worker;
-mod node_builder;
 mod p2p_acp;
 mod policy_generations;
 mod policy_lifecycle;

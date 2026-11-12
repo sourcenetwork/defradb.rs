@@ -137,11 +137,6 @@ impl VeraDocumentACP {
         }
     }
 
-    /// The DID the provider itself acts as, for a provider that has one.
-    pub fn self_did(&self) -> Option<String> {
-        self.provider.self_did()
-    }
-
     /// Create a policy on Vera. Returns the policy ID.
     pub async fn add_policy(
         &self,

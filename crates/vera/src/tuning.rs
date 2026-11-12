@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 /// Tuning parameters for ACP network calls, caching, and circuit breaking.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AcpTuning {
     pub request_timeout: Duration,
     pub circuit_breaker_threshold: u32,
