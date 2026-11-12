@@ -222,3 +222,121 @@ async fn a_join_hint_dials_the_advertisers_of_a_joined_topic_only() {
     })
     .await
 }
+
+type ProtoState = proto::State<EndpointId, rand::rngs::StdRng>;
+
+fn proto_state(me: EndpointId) -> ProtoState {
+    proto::State::new(
+        me,
+        PeerData::new(Vec::new()),
+        proto::Config::default(),
+        rand::rngs::StdRng::seed_from_u64(1),
+    )
+}
+
+/// Feeds `event` to `a` and runs `a` and `b` against each other until
+/// neither has more to say. Returns what `a` sent `b`.
+fn exchange(
+    a: (EndpointId, &mut ProtoState),
+    b: (EndpointId, &mut ProtoState),
+    event: InEvent<EndpointId>,
+) -> Vec<ProtoMessage> {
+    let ((a_id, a), (b_id, b)) = (a, b);
+    let mut sent = Vec::new();
+    let mut queue = VecDeque::from([(true, event)]);
+    while let Some((to_a, event)) = queue.pop_front() {
+        let state = if to_a { &mut *a } else { &mut *b };
+        let out: Vec<_> = state.handle(event, Instant::now(), None).collect();
+        for event in out {
+            if let OutEvent::SendMessage(_, message) = event {
+                if to_a {
+                    sent.push(message.clone());
+                    queue.push_back((false, InEvent::RecvMessage(a_id, message)));
+                } else {
+                    queue.push_back((true, InEvent::RecvMessage(b_id, message)));
+                }
+            }
+        }
+    }
+    sent
+}
+
+fn broadcast(content: Vec<u8>) -> InEvent<EndpointId> {
+    InEvent::Command(
+        topic_id("t"),
+        Command::Broadcast(Bytes::from(content), Scope::Swarm),
+    )
+}
+
+/// A broadcast the protocol accepts must reach the peer, and must not cost
+/// the peer the messages published after it.
+#[nuclei::test(threads = 0)]
+async fn a_broadcast_the_protocol_sends_does_not_end_gossip_to_the_peer() {
+    edge::compat(async {
+        let dials = Dials::default();
+        let (mut driver, _events) = driver(&dials);
+        let (connection, far_side, _endpoints) = connection().await;
+        let (a_id, b_id) = (iroh::SecretKey::generate().public(), connection.remote_id());
+        let (mut a, mut b) = (proto_state(a_id), proto_state(b_id));
+        let host = InEvent::Command(topic_id("t"), Command::Join(Vec::new()));
+        b.handle(host, Instant::now(), None).for_each(drop);
+        let join = InEvent::Command(topic_id("t"), Command::Join(vec![b_id]));
+        exchange((a_id, &mut a), (b_id, &mut b), join);
+
+        let limit = driver.io.limit;
+        let size = |m: &ProtoMessage| postcard::to_stdvec(m).unwrap().len();
+        assert!(
+            exchange(
+                (a_id, &mut a),
+                (b_id, &mut b),
+                broadcast(vec![1; 2 * limit])
+            )
+            .is_empty(),
+            "the protocol drops a broadcast far over the limit itself"
+        );
+        let largest = (0..limit)
+            .rev()
+            .find_map(|len| exchange((a_id, &mut a), (b_id, &mut b), broadcast(vec![2; len])).pop())
+            .expect("the protocol sends a broadcast just under the limit");
+        let normal = exchange(
+            (a_id, &mut a),
+            (b_id, &mut b),
+            broadcast(b"normal".to_vec()),
+        )
+        .pop()
+        .expect("a normal broadcast is sent");
+        eprintln!(
+            "largest broadcast the protocol sends: {} byte frame; limit {limit}",
+            size(&largest)
+        );
+
+        driver.connected(b_id, connection.clone());
+        driver.send(b_id, largest);
+        driver.send(b_id, normal.clone());
+
+        let mut recv = nuclei::time::timeout(Duration::from_secs(10), far_side.accept_uni())
+            .await
+            .expect("a gossip stream opens")
+            .expect("accept uni");
+        protocols::read_stream_tag(&mut recv).await.unwrap();
+        let mut arrived = Vec::new();
+        loop {
+            match nuclei::time::timeout(Duration::from_secs(5), read_gossip_frame(&mut recv, limit))
+                .await
+            {
+                Ok(Ok(Some(message))) => arrived.push(size(&message)),
+                other => {
+                    eprintln!("stream ended: {other:?}");
+                    break;
+                }
+            }
+        }
+        eprintln!("frames that arrived: {arrived:?}");
+        assert!(
+            arrived.contains(&size(&normal)),
+            "the normal message published after the large one never arrived"
+        );
+        shutdown_tracked_tasks(Arc::clone(&driver.io.tasks)).await;
+    })
+    .await
+}
