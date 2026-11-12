@@ -106,9 +106,6 @@ pub use config::SyncTuning;
 pub use config::VeraConfig;
 #[cfg(feature = "vinc")]
 pub use config::VincConfig;
-/// Runs a vinc hub, which vinc topics travel through.
-#[cfg(feature = "vinc")]
-pub use p2p::vinc::spawn_hub as spawn_vinc_hub;
 pub use config::{
     DocumentAcpConfig, IndexBuildGateHandle, NodeConfig, NodeSigning, Persistence,
     ReplicationFilterHandle, SigningKey, TransportConfig,
@@ -133,6 +130,9 @@ pub use lens::{LensConfig, LensModule, TransformId};
 #[cfg(feature = "managed-p2p")]
 pub use managed_p2p::{ManagedP2PSystem, ShutdownHandle, TransportKind};
 pub use node_builder::{NodeBuilder, StorageBackend, StoreProfile};
+/// Runs a vinc hub, which vinc topics travel through.
+#[cfg(feature = "vinc")]
+pub use p2p::vinc::spawn_hub as spawn_vinc_hub;
 pub use peer_keyring::PeerKeyring;
 pub use query::owners::{DocumentAccessDecision, DocumentAccessMode};
 pub use query::QueryLimits;

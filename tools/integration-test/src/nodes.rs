@@ -430,9 +430,10 @@ fn vinc_transport(
 static VINC_HUB: regolith::sync::Lazy<String> = regolith::sync::Lazy::new(|| {
     let edge = edge::testing::edge();
     let bind = std::net::SocketAddr::from(([127, 0, 0, 1], 0));
-    let (ticket, task) = workers::block_on(edge.clone().spawn(async move {
-        defra_node::spawn_vinc_hub([0x48; 32], bind, edge).await
-    }))
+    let (ticket, task) = workers::block_on(
+        edge.clone()
+            .spawn(async move { defra_node::spawn_vinc_hub([0x48; 32], bind, edge).await }),
+    )
     .expect("the test thread waits")
     .expect("the hub task runs")
     .expect("the vinc hub binds");

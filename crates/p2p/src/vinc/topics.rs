@@ -146,9 +146,10 @@ impl<H: Hosted + 'static> Node<H> {
             let foreign = match &event {
                 Event::NeighborUp { topic, .. }
                 | Event::NeighborDown { topic, .. }
-                | Event::Message { topic, .. } => {
-                    !self.subscribed.borrow().contains(topic_name(topic).as_str())
-                }
+                | Event::Message { topic, .. } => !self
+                    .subscribed
+                    .borrow()
+                    .contains(topic_name(topic).as_str()),
                 Event::Lost { .. } => false,
             };
             if foreign {
@@ -205,7 +206,9 @@ impl<H: Hosted + 'static> Node<H> {
             });
         }
         let (mut broadcast, _) = PushLogBroadcast::decode_gossip_payload(&payload)
-            .inspect_err(|error| debug!(peer_id = %origin_id, topic, %error, "undecodable vinc head hint"))
+            .inspect_err(
+                |error| debug!(peer_id = %origin_id, topic, %error, "undecodable vinc head hint"),
+            )
             .ok()?;
         authenticate_origin(&mut broadcast, &origin_id)
             .inspect_err(|error| {
