@@ -1412,6 +1412,17 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // Design model ahead of code: the fast path that picks one winner for
+        // a contended slot. A vote is a signed block; no validator code exists.
+        family: "Quorum certificate winner",
+        name: "INV_OneCertificate / INV_OneActs / PROP_UncontendedCommits: 2F+1 votes from 3F+1 validators certify at most one proposal, only a certified contender acts, a restored validator abstains on slots open at its re-admission, and an uncontended slot commits without the cheater",
+        axis: Tla,
+        anchor: "crates/defra-node/src/ops/block.rs verify_block_signature",
+        model_ref: "MC_QuorumCertificate_{Green,Green_Restore,Red_LowQuorum,Red_HighQuorum,Red_Revote,Red_Optimistic,Red_RestoreRevote}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // Verify-before-merge fires only on the P2P merge path; injecting a
         // forged/unsigned block needs an adversarial peer, not reachable through
         // the public CLI. Rust makes signature verification mandatory (model->code

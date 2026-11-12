@@ -453,6 +453,13 @@ RUNS=(
   "MC_JailRevocation_Red_AclOnly.cfg   MC_JailRevocation_Common.tla RED"    # fork proof ignored (INV_NoMergeAfterProof)
   "MC_JailRevocation_Red_DropEarly.cfg MC_JailRevocation_Common.tla RED"    # early block stranded (PROP_AdmittedWritesLand)
   "MC_JailRevocation_Red_KeepKey.cfg   MC_JailRevocation_Common.tla RED"    # restore keeps its key (INV_NoWrongfulRevocation)
+  "MC_QuorumCertificate_Green.cfg          MC_QuorumCertificate_Common.tla GREEN"  # 2F+1, vote once, act on a certificate
+  "MC_QuorumCertificate_Green_Restore.cfg  MC_QuorumCertificate_Common.tla GREEN"  # a restored validator abstains on the open slot
+  "MC_QuorumCertificate_Red_LowQuorum.cfg  MC_QuorumCertificate_Common.tla RED"    # F+1 quorums (INV_OneCertificate)
+  "MC_QuorumCertificate_Red_HighQuorum.cfg MC_QuorumCertificate_Common.tla RED"    # N quorums, cheater withholds (PROP_UncontendedCommits)
+  "MC_QuorumCertificate_Red_Revote.cfg     MC_QuorumCertificate_Common.tla RED"    # honest votes twice (INV_OneCertificate)
+  "MC_QuorumCertificate_Red_Optimistic.cfg MC_QuorumCertificate_Common.tla RED"    # act before certified (INV_OneActs)
+  "MC_QuorumCertificate_Red_RestoreRevote.cfg MC_QuorumCertificate_Common.tla RED" # restored validator votes again (INV_OneCertificate)
   "MC_Kms_Green.cfg             MC_Kms_Gossip.tla            GREEN"  # KMS policy-gated
   "MC_Kms_NoPolicy_Red.cfg      MC_Kms_Gossip.tla            RED"    # KMS unauthorized obtains key
   "MC_Kms_BroadcastCiphertext_Red.cfg MC_Kms_Gossip.tla     RED"    # KMS ciphertext to non-recipient
