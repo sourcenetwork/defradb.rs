@@ -624,6 +624,76 @@ fn a_drain_indexes_an_old_document_at_its_migrated_value() {
     .unwrap();
 }
 
+/// A backfill that writes an old document back at its migrated value owes
+/// the counter index, and asks for the drain itself.
+#[test]
+fn a_backfill_write_back_is_drained_with_no_call_to_drain() {
+    super::deferred_task::on_pool(|| async {
+        let options = db::DbOptions::default()
+            .with_pool(crate::common::worker_io::pool().clone())
+            .with_deferred_index_sweep(std::time::Duration::from_secs(3600));
+        let mut raw = DB::with_options(RegolithStore::in_memory().unwrap(), options).unwrap();
+        raw.set_lens_store(Arc::new(TimesTen::default()));
+        let db = Arc::new(raw);
+        let node = Node::with(Arc::clone(&db), true).await;
+        let v1 = db
+            .require_collection(COLLECTION)
+            .unwrap()
+            .version_id()
+            .to_string();
+        let v2 = db
+            .patch_collection(
+                COLLECTION,
+                r#"[{"op":"add","path":"/Tallies/Fields/-","value":{"Name":"note","Kind":"String"}}]"#,
+                None,
+            )
+            .await
+            .unwrap()
+            .version_id;
+        db.set_migration(
+            lens::LensConfig::new(
+                &v1,
+                &v2,
+                lens::LensModule::from_bytes(b"\0asm\x01\0\0\0".to_vec()),
+            ),
+            None,
+        )
+        .await
+        .unwrap();
+        let task = Arc::clone(&db).start_deferred_index_task();
+        // Past the settle at start, so only a request drains what follows.
+        workers::sleep(std::time::Duration::from_millis(300))
+            .unwrap()
+            .await;
+        seed_owed_at(&db, &v1, "a", 1).await;
+        assert_eq!(node.stored_at(1).await, 1);
+
+        db.create_index(
+            COLLECTION,
+            Some("by_name"),
+            vec![IndexedFieldDescription {
+                name: "name".to_string(),
+                descending: false,
+            }],
+            IndexKind::Ordered(OrderedIndexDescription { unique: false }),
+        )
+        .await
+        .unwrap();
+
+        let start = std::time::Instant::now();
+        while (node.stored_at(1).await, node.stored_at(10).await) != (0, 1) {
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(10),
+                "the write-back asked for the drain"
+            );
+            workers::sleep(std::time::Duration::from_millis(20))
+                .unwrap()
+                .await;
+        }
+        task.abort();
+    });
+}
+
 #[test]
 fn a_truncate_leaves_no_record_and_no_log() {
     workers::block_on(async {

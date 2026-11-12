@@ -37,7 +37,7 @@ fn collection(name: &str) -> CollectionVersion {
 }
 
 /// Runs a test body on the test pool, where a timer can wait.
-fn on_pool<F, Fut>(body: F)
+pub(crate) fn on_pool<F, Fut>(body: F)
 where
     F: FnOnce() -> Fut + Send + 'static,
     Fut: Future<Output = ()> + 'static,
