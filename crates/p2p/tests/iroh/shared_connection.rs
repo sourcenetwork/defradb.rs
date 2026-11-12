@@ -5,7 +5,8 @@ use crate::message::{IdentityRequest, IdentityResponse, IDENTITY_UNCONFIGURED_ER
 use super::super::endpoint::EndpointResources;
 use super::super::endpoint_config::AllowlistState;
 use super::super::endpoint_streams::{
-    adopt_new_connection, handle_incoming, ConnectionDirection, ConnectionLifecycle,
+    adopt_new_connection, closed_by_refusal, handle_incoming, ConnectionDirection,
+    ConnectionLifecycle,
 };
 use super::super::records::RecordsHandle;
 use super::super::solicited::Solicited;
@@ -623,6 +624,38 @@ fn revoked_adoption_closes_every_connection_and_announces_nothing() {
             assert!(matches!(next, Some(TransportEvent::PeerDisconnected(_))));
             assert_eq!(open_connections(&local, &peer), 0);
             assert!(events.try_recv().is_none());
+            shutdown(&local).await;
+            peer.close().await;
+        }))
+        .unwrap();
+}
+
+/// An inbound connection from a revoked peer is closed with the refusal code
+/// before the peer-wide close, so the dialer's `handle_dial` reads it as a
+/// typed refusal (`Unauthorized`) rather than a plain disconnect.
+#[test]
+fn revoked_inbound_adoption_is_closed_with_the_refusal_code() {
+    edge::testing::edge()
+        .block_on(edge::compat(async {
+            let (local, _events) = adopting_resources(
+                tests::localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await,
+                AllowlistState::AcceptAll,
+            );
+            let peer = tests::localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+            local.admission.revoke(peer.id());
+            let (dialed, refused) = connect(&peer, &local.endpoint).await;
+            adopt(&local, &refused, ConnectionDirection::Inbound)
+                .await
+                .expect_err("a revoked peer must not be adopted");
+
+            crate::rt::time::timeout(std::time::Duration::from_secs(2), dialed.closed())
+                .await
+                .expect("the dialer must see the refusal");
+            assert!(
+                closed_by_refusal(&dialed),
+                "the dialer must see the refusal code, got {:?}",
+                dialed.close_reason()
+            );
             shutdown(&local).await;
             peer.close().await;
         }))
