@@ -2729,7 +2729,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Pubsub RPC reply addressing",
-        name: "INV_NoAnswerLost / INV_AllAnswered / LIVE_Done / LIVE_AllArrive: a peer answers a request on its publisher's reply topic, even when a relay handed it the request, so no answer is lost and the asker's wait ends with every answer",
+        name: "INV_NoAnswerLost / INV_AllAnswered / LIVE_Done / LIVE_AllArrive: a peer answers a request on its publisher's reply topic, even when a relay handed it the request, so no answer is lost and the asker's wait ends with every answer, or at its deadline while some answer is still missing or on its way",
         axis: Tla,
         anchor: "crates/p2p/src/host/p2p_host/protocols.rs handle_gossipsub_event; crates/p2p/src/sync/coordinator/event_handler/pubsub_raw.rs handle_gossip_raw_message; crates/p2p/src/pubsub_rpc/topic_handler.rs TopicHandler::deliver_gossip_message; crates/p2p/src/sync/coordinator/pubsub_client.rs pubsub_sync_branchable_collection",
         model_ref: "MC_PubsubRpcReply_{Green,Red_AnswerRelay,Red_DeadlineCutsOff}.cfg",

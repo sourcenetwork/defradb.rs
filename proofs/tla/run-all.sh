@@ -933,7 +933,7 @@ RUNS=(
   "MC_ConnectFallback_Red_KeepLoser.cfg ConnectFallback.tla RED" # the loser left running: its socket stays open after the answer (INV_OneSocket)
   "MC_ConnectFallback_Red_TimeoutMissesRace.cfg ConnectFallback.tla RED" # the connect timeout covers only the lookup: a hanging race runs past it (INV_WithinLimit)
   "MC_ConnectFallback_Red_TimeoutMissesRaceHangs.cfg ConnectFallback.tla RED" # the same, with both attempts hanging: the connect never ends (LIVE_Ends)
-  "MC_PubsubRpcReply_Green.cfg PubsubRpcReply.tla GREEN" # three peers, each request copy direct or relayed in every order: every answer reaches the asker, the deadline never cuts off a complete set, the asker stops
+  "MC_PubsubRpcReply_Green.cfg PubsubRpcReply.tla GREEN" # three peers, each request copy direct or relayed in every order: every answer reaches the asker, the deadline cuts off only an answer not yet sent or still on its way, the asker stops
   "MC_PubsubRpcReply_Red_AnswerRelay.cfg PubsubRpcReply.tla RED" # a peer answers the relay that handed it the request (INV_NoAnswerLost)
   "MC_PubsubRpcReply_Red_DeadlineCutsOff.cfg PubsubRpcReply.tla RED" # the same: every peer answered, one answer lost, the asker stops at its deadline (INV_AllAnswered)
   "MC_CoordinatorShutdown_Green.cfg CoordinatorShutdown.tla GREEN" # two callers, a late spawn racing the drain, the edge closing and the runtime torn down at any moment: one drain, no task left in the set, every caller returns
