@@ -68,3 +68,5 @@ pub use update::defra_document_update;
 mod signing_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod version_tests;

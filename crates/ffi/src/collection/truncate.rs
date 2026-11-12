@@ -9,7 +9,8 @@ use crate::types::{CollectionOptions, DefraResult};
 use crate::{ffi_async_ok, ffi_entry, try_ffi};
 
 /// Deletes every document in the collection `opts` selects, keeping the
-/// collection.
+/// collection. Every version of a collection shares its documents, so which
+/// version `opts` selects does not change what is deleted.
 ///
 /// # Safety
 ///
@@ -27,6 +28,8 @@ pub unsafe extern "C" fn defra_collection_truncate(
 
 /// Deletes the documents of the collection `opts` selects that match
 /// `filter_json`, a GraphQL filter as a JSON object, keeping the collection.
+/// The documents are shared by every version of the collection; the filter
+/// is checked against the active version's fields.
 ///
 /// # Safety
 ///

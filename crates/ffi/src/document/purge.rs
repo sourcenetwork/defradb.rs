@@ -13,7 +13,9 @@ use crate::{ffi_async, ffi_entry, try_ffi, ERR_INVALID_NODE_HANDLE};
 /// values, index entries, heads and DocID aliases, and their history unless
 /// the collection is branchable. A DocID that names no document is skipped.
 /// In a transaction, nothing is removed until it commits. Answers with
-/// `{"Count": ...}`, the documents purged.
+/// `{"Count": ...}`, the documents purged. Every version of a collection
+/// shares its documents, so which version `opts` selects does not change
+/// what is purged.
 ///
 /// # Safety
 ///
@@ -42,7 +44,7 @@ pub unsafe extern "C" fn defra_document_purge(
         ffi_async!(target &target, {
             let name = call.collection().await?.name;
             let purged = registry
-                .purge_by_doc_ids_as(call.context(), &name, &ids)
+                .purge_by_doc_ids_as(&call.context(), &name, &ids)
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::json!({ "Count": purged }).to_string())

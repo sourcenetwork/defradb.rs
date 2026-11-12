@@ -628,6 +628,9 @@ RUNS=(
   "MC_TxnTurns_Green.cfg TxnTurns.tla GREEN" # calls on one transaction take tickets, may drop them: one runs at a time, none overtakes an earlier ticket, no call waits forever
   "MC_TxnTurns_Red_NoRecheck.cfg TxnTurns.tla RED" # a dropping call never looks again: a dropped ticket nobody skips stalls the transaction (Progress)
   "MC_TxnTurns_Red_CancelSkipsNow.cfg TxnTurns.tla RED" # a dropped ticket serves the next at once: two calls run together (INV_OneRunning)
+  "MC_VersionPin_Green.cfg VersionPin.tla GREEN" # requests pin an old version, the active one or nothing while DDL changes the active version: pins stay in their turn, unpinned turns see the active version, old-version reads change nothing, writes land at the selected version
+  "MC_VersionPin_Red_PinLeaks.cfg VersionPin.tla RED" # a turn leaves its pin behind: the next request still sees the old version (INV_PinScoped)
+  "MC_VersionPin_Red_WriteBackOnPin.cfg VersionPin.tla RED" # a read through an old version stores the migrated document back (INV_ReadNoSideEffect)
   "MC_CpuLedger_Green_Edge.cfg CpuLedger.tla GREEN" # a network runtime claims cores alone beside a pool, or gives up holding nothing
   "MC_CpuLedger_Red_EdgeNoCap.cfg CpuLedger.tla RED" # network runtime claims alone forever: its start never ends (LIVE_StartEnds)
   "MC_DefaultPool_Green.cfg DefaultPool.tla GREEN" # the first registered pool that runs is the default, else one pool started once; never a closing pool, a stop's deadline goes elsewhere, every call returns

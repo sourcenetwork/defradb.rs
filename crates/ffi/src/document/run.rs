@@ -20,6 +20,10 @@ pub(crate) struct DocumentCall {
     runner: Arc<dyn query::QueryExecutor>,
     identity: Option<identity::Did>,
     context: defra_core::RequestContext,
+    /// The selected collection version, set when it is not the active one:
+    /// every request the call sends then works through it, as Go runs a
+    /// document call on the selected collection.
+    version: regolith::sync::OnceCell<String>,
 }
 
 impl DocumentCall {
@@ -68,6 +72,7 @@ impl DocumentCall {
             selector: args.selector(),
             runner,
             context,
+            version: regolith::sync::OnceCell::new(),
         })
     }
 
@@ -76,15 +81,28 @@ impl DocumentCall {
         &self.target
     }
 
-    /// The one collection the call's options select.
+    /// The one collection the call's options select. When it is not the
+    /// active version, the call's requests work through it from here on.
     pub(crate) async fn collection(&self) -> Result<CollectionVersion, String> {
-        collection(&self.runner, &self.context, &self.selector).await
+        let collection = collection(&self.runner, &self.context, &self.selector).await?;
+        if !collection.is_active {
+            // Set once: a call selects one collection.
+            let _ = self.version.set(collection.version_id.clone());
+        }
+        Ok(collection)
     }
 
     /// The context the call acts in: the caller's identity, its transaction,
-    /// its document ACP bypass and its signer.
-    pub(crate) fn context(&self) -> &defra_core::RequestContext {
-        &self.context
+    /// its document ACP bypass and its signer, and the selected collection
+    /// version when it is not the active one.
+    pub(crate) fn context(&self) -> defra_core::RequestContext {
+        match self.version.get() {
+            Some(version) => self
+                .context
+                .clone()
+                .with_collection_version(Some(version.clone())),
+            None => self.context.clone(),
+        }
     }
 
     /// Runs the GraphQL document `query` on the call's node or in its
@@ -97,7 +115,7 @@ impl DocumentCall {
     /// call's node or in its transaction.
     pub(crate) async fn execute(&self, request: query::QueryRequest) -> query::QueryResponse {
         let request = request
-            .with_context(self.context.clone())
+            .with_context(self.context())
             .with_identity(self.identity.clone());
         match self.target.txn_id() {
             None => self.runner.execute(request).await,

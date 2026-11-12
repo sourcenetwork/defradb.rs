@@ -144,7 +144,8 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             .await
             .map_err(|e| query::error::QueryError::permission_denied(e.to_string()))?;
 
-        let (_collection_guard, collection) = self.guarded_collection(collection_name).await?;
+        let (_collection_guard, collection) =
+            self.guarded_collection(context, collection_name).await?;
 
         let heads = super::base_heads::BaseHeads::read_if_signed(
             &self.db,
@@ -382,7 +383,8 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 .map(|r| vec![r]);
         }
 
-        let (_collection_guard, collection) = self.guarded_collection(collection_name).await?;
+        let (_collection_guard, collection) =
+            self.guarded_collection(context, collection_name).await?;
         let heads =
             super::base_heads::BaseHeads::read_if_signed(&self.db, &collection, doc_ids, context)
                 .await?;

@@ -263,3 +263,6 @@ lean_lib TxnTurns where
 
 @[default_target]
 lean_lib VectorIndexDefaults where
+
+@[default_target]
+lean_lib CatalogPin where

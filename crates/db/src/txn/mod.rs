@@ -656,9 +656,26 @@ impl<S: Store> DbTxn<S> {
     }
 
     /// The collection `name` as this transaction has it cached, without
-    /// loading it.
+    /// loading it: the pinned version when one carries that name.
     pub fn cached_collection(&self, name: &str) -> Option<Collection> {
         self.catalog.get(name)
+    }
+
+    /// Pins `collection` (a version the request selected, possibly inactive)
+    /// for the running request, so every lookup of its name answers it.
+    pub fn pin_collection(&self, collection: Collection) {
+        self.catalog.pin(collection);
+    }
+
+    /// Clears the running request's pin, so lookups answer the cache again.
+    pub fn unpin_collection(&self) {
+        self.catalog.unpin();
+    }
+
+    /// The collection the running request pinned, when it carries the name
+    /// `name`.
+    pub fn pinned_collection(&self, name: &str) -> Option<Collection> {
+        self.catalog.pinned(name)
     }
 
     /// The names of the collections this transaction has cached.
@@ -686,6 +703,12 @@ impl<S: Store> DbTxn<S> {
         name: &str,
         expected: &Collection,
     ) -> Result<Collection> {
+        // An inactive version the request selected is written at that
+        // version: pinned for this attempt, not reloaded as the active one.
+        if !expected.schema().is_active {
+            self.catalog.pin(expected.clone());
+            return Ok(expected.clone());
+        }
         let systemstore = self.systemstore()?;
         let collection = crate::collection::loader::load_collection_for_write_attempt(
             &systemstore,
@@ -698,11 +721,16 @@ impl<S: Store> DbTxn<S> {
     }
 
     /// Validate the active collection name and immutable schema through this
-    /// transaction so concurrent DDL changes conflict at commit.
+    /// transaction so concurrent DDL changes conflict at commit. A version
+    /// the request pinned is written at that version, active or not, as Go
+    /// writes through the selected collection: only its schema is validated.
     pub(crate) async fn validate_collection_for_write(
         &self,
         collection: &Collection,
     ) -> Result<()> {
+        if self.catalog.pins(collection.version_id()) {
+            return self.validate_collection_schema_for_write(collection).await;
+        }
         let systemstore = self.systemstore()?;
         let version_id = systemstore
             .get(&CollectionNameKey::new(collection.name()).bytes())

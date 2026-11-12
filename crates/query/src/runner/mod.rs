@@ -38,6 +38,7 @@ mod json_conflicts_tests;
 mod mutation;
 mod mutation_inputs;
 mod owners;
+mod pinned;
 mod plan;
 mod plan_aggregates;
 mod plan_drive;
@@ -655,8 +656,16 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     /// The provider this runner resolves collections through: a transaction's
     /// own provider for a runner scoped to that transaction, so its uncommitted
     /// schemas are visible, and the process-wide one otherwise.
+    /// The provider this request resolves collections through: the version
+    /// the request works through, when it names one, answers for its name.
     fn effective_provider(&self) -> Arc<dyn CollectionProvider> {
-        self.collection_provider.clone()
+        match self.context().collection_version() {
+            Some(version_id) => Arc::new(pinned::PinnedProvider::new(
+                self.collection_provider.clone(),
+                version_id.to_owned(),
+            )),
+            None => self.collection_provider.clone(),
+        }
     }
 
     pub(crate) fn transaction_collection_provider(
