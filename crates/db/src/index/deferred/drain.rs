@@ -55,7 +55,10 @@ where
         },
     )
     .await
-    .map_err(|error| Error::Other(format!("deferred index drain: {error:?}")))?;
+    .map_err(|error| match error.downcast_abort::<Error>() {
+        Ok(error) => error,
+        Err(error) => Error::Storage(error.into_storage()),
+    })?;
     Ok(true)
 }
 
@@ -149,44 +152,60 @@ async fn apply(
         .ok_or_else(|| Error::Other(format!("index '{}' not found", desc.name)))?;
     let mut live_docs = LiveDocs::new(&collection, &datastore, &systemstore, Some(lens_store));
     for &doc in &plan.docs {
-        let record = index_position_key(short_id, index_id, doc);
-        let old = IndexManager::recorded(
-            datastore
-                .get(&record)
-                .await
-                .map_err(Error::Storage)?
-                .as_deref(),
-        )?;
-        let new = match live_docs.get(doc).await? {
-            Some(live) => IndexManager::entry_keys(
-                index,
-                doc,
-                &manager.extract_index_values(&live, &desc, schema)?,
-            )?,
-            None => Vec::new(),
+        let moved = async {
+            let record = index_position_key(short_id, index_id, doc);
+            let old = IndexManager::recorded(
+                datastore
+                    .get(&record)
+                    .await
+                    .map_err(Error::Storage)?
+                    .as_deref(),
+            )?;
+            let new = match live_docs.get(doc).await? {
+                Some(live) => IndexManager::entry_keys(
+                    index,
+                    doc,
+                    &manager.extract_index_values(&live, &desc, schema)?,
+                )?,
+                None => Vec::new(),
+            };
+            if old == new {
+                return Ok(());
+            }
+            for key in old.iter().filter(|key| !new.contains(key)) {
+                datastore.delete(key).await.map_err(Error::Storage)?;
+            }
+            for key in new.iter().filter(|key| !old.contains(key)) {
+                datastore.set(key, &[]).await.map_err(Error::Storage)?;
+            }
+            if new.is_empty() {
+                datastore.delete(&record).await.map_err(Error::Storage)
+            } else {
+                datastore
+                    .set(&record, &super::encode_record(&new)?)
+                    .await
+                    .map_err(Error::Storage)
+            }
         };
-        if old == new {
-            continue;
-        }
-        for key in old.iter().filter(|key| !new.contains(key)) {
-            datastore.delete(key).await.map_err(Error::Storage)?;
-        }
-        for key in new.iter().filter(|key| !old.contains(key)) {
-            datastore.set(key, &[]).await.map_err(Error::Storage)?;
-        }
-        if new.is_empty() {
-            datastore.delete(&record).await.map_err(Error::Storage)?;
-        } else {
-            datastore
-                .set(&record, &super::encode_record(&new)?)
-                .await
-                .map_err(Error::Storage)?;
+        if let Err(source) = moved.await {
+            return Err(Error::DeferredDrainDocument {
+                doc: document_name(&systemstore, doc).await,
+                source: Box::new(source),
+            });
         }
     }
     datastore
         .truncate_log(&log, plan.first..=plan.through)
         .await
         .map_err(Error::Storage)
+}
+
+/// The document's DocID for an error, or its short id when that is not to be had.
+async fn document_name(systemstore: &datastore::NamespaceView, doc: u64) -> String {
+    match crate::docid::map::get_doc_id(systemstore, doc).await {
+        Ok(Some(id)) => id,
+        _ => format!("with short id {doc}"),
+    }
 }
 
 /// A log entry key ends in its position as 20 decimal digits.
@@ -343,6 +362,33 @@ pub(super) mod tests {
             while drain_index(&db, NAME, index_id).await.unwrap() {}
 
             assert!(first.commit().await.is_err());
+        })
+        .unwrap();
+    }
+
+    /// A drain that fails on one document names it.
+    #[test]
+    fn a_failed_drain_names_the_document() {
+        workers::block_on(async {
+            let (db, short_id, index_id) = indexed().await;
+            let id = create(&db, 1).await;
+            increment(&db, &id).await;
+            let doc = plan(&db, short_id, index_id).await.unwrap().unwrap().docs[0];
+            let txn = datastore::BasicTxn::new(db.store().as_ref(), 0, false)
+                .await
+                .unwrap();
+            txn.datastore()
+                .set(&index_position_key(short_id, index_id, doc), b"bad")
+                .await
+                .unwrap();
+            txn.commit().await.unwrap();
+
+            let error = db.drain_deferred_indexes().await.unwrap_err().to_string();
+
+            assert!(
+                error.contains(NAME) && error.contains(&id.to_string()),
+                "{error}"
+            );
         })
         .unwrap();
     }
