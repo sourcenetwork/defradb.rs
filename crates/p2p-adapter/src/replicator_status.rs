@@ -28,14 +28,17 @@ where
             peer_id,
             expected_incarnation,
             require_no_markers,
-            Box::new(move |bytes| p2p::ReplicatorInfo::rewrite_status(bytes, status)),
+            Box::new(move |bytes| {
+                p2p::ReplicatorInfo::rewrite_status(bytes, status)
+                    .map_err(|error| storage::corekv::Error::Serialization(error.to_string()))
+            }),
         )
         .await
         .map_err(|error| P2PError::persistence(format!("failed to persist replicator: {error}")))?;
     match update {
         ReplicatorUpdate::Written => Ok(true),
         ReplicatorUpdate::Unchanged => Ok(false),
-        ReplicatorUpdate::Refused(reason) => Err(P2PError::internal(reason)),
+        ReplicatorUpdate::Refused(error) => Err(P2PError::internal(error.to_string())),
     }
 }
 

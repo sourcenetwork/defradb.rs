@@ -494,15 +494,14 @@ impl ReplicatorInfo {
     pub fn rewrite_status(
         bytes: &[u8],
         status: ReplicatorStatus,
-    ) -> Result<Option<Vec<u8>>, String> {
-        let mut info = Self::from_bytes(bytes)
-            .map_err(|error| format!("failed to decode replicator: {error}"))?;
+    ) -> crate::error::Result<Option<Vec<u8>>> {
+        let mut info = Self::from_bytes(bytes).map_err(crate::error::Error::ReplicatorDecode)?;
         if !info.set_status_if_changed_now(status) {
             return Ok(None);
         }
         info.to_bytes()
             .map(Some)
-            .map_err(|error| format!("failed to encode replicator status: {error}"))
+            .map_err(crate::error::Error::ReplicatorEncode)
     }
 
     /// Format `LastStatusChange` exactly like Go's `time.Time.MarshalJSON`.

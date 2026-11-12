@@ -174,6 +174,7 @@ pub async fn persist_replay_failures<S: storage::corekv::Store>(
             false,
             Box::new(|bytes| {
                 p2p::ReplicatorInfo::rewrite_status(bytes, p2p::ReplicatorStatus::Inactive)
+                    .map_err(|error| storage::corekv::Error::Serialization(error.to_string()))
             }),
         )
         .await

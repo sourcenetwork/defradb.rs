@@ -128,11 +128,10 @@ struct SetReplicatorIfMarkerGenerationAttempt {
 /// that writes its result: `Ok(None)` leaves the row as it is, `Err` refuses
 /// bytes it cannot read. It runs once per attempt and a conflict re-runs the
 /// attempt, so it has no side effects.
-pub type ReplicatorRewrite =
-    Box<dyn Fn(&[u8]) -> std::result::Result<Option<Vec<u8>>, String> + Send + Sync>;
+pub type ReplicatorRewrite = Box<dyn Fn(&[u8]) -> Result<Option<Vec<u8>>> + Send + Sync>;
 
 /// What [`Peerstore::update_replicator_for_incarnation`] did to the row.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum ReplicatorUpdate {
     /// The rewrite's bytes were written.
     Written,
@@ -141,7 +140,7 @@ pub enum ReplicatorUpdate {
     /// had nothing to change.
     Unchanged,
     /// The rewrite refused the row's bytes; nothing was written.
-    Refused(String),
+    Refused(crate::corekv::Error),
 }
 
 struct UpdateReplicatorAttempt {
