@@ -24,6 +24,12 @@
 \* key, neither building on the other: a fork, handled by ChainJail.tla. A
 \* split vote (no proposal reaches Quorum) is left to the slow path, outside
 \* this model.
+\*
+\* A restored validator is the trap. Its old vote still counts, it has
+\* forgotten it, and its new key could vote again on the same slot, so one
+\* machine would count twice. The rule: a re-admitted key abstains on every
+\* slot that was already open when it was admitted. Abstaining spends fault
+\* budget, so on those slots the restored validator counts towards F.
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS
@@ -32,24 +38,31 @@ CONSTANTS
   Contenders,      \* who may propose themselves for the slot
   Quorum,          \* votes needed for a certificate; GREEN 2F + 1
   VoteOnce,        \* GREEN TRUE; RED_Revote FALSE: an honest validator votes again
-  ActOnCert        \* GREEN TRUE; RED_Optimistic FALSE: a contender acts as soon as it proposes
+  ActOnCert,       \* GREEN TRUE; RED_Optimistic FALSE: a contender acts as soon as it proposes
+  AbstainOnRestore, \* GREEN TRUE; RED_RestoreRevote FALSE: a restored validator votes again
+  Restores         \* the scenario: whether an honest validator is ever restored from a backup
 
 Validators == Honest \cup Cheaters   \* everyone who votes
 
 ASSUME Honest \cap Cheaters = {}                     \* nobody is both
 ASSUME Quorum \in Nat                                \* a count of votes
 ASSUME VoteOnce \in BOOLEAN /\ ActOnCert \in BOOLEAN
+ASSUME AbstainOnRestore \in BOOLEAN /\ Restores \in BOOLEAN
 
 \* proposed: the contenders that have proposed themselves.
 \* votes: every signed vote, as [voter, for].
 \* acted: the contenders that acted on the slot.
-VARIABLES proposed, votes, acted
-vars == <<proposed, votes, acted>>
+\* restored: the honest validators restored from a backup taken before they
+\*   voted. Each signs with a new, re-admitted key in the same seat, and has
+\*   forgotten its vote, which still counts.
+VARIABLES proposed, votes, acted, restored
+vars == <<proposed, votes, acted, restored>>
 
 TypeOK ==
   /\ proposed \subseteq Contenders                         \* only contenders propose
   /\ votes \subseteq [voter : Validators, for : Contenders]  \* well-formed votes
   /\ acted \subseteq Contenders                            \* only contenders act
+  /\ restored \subseteq Honest                             \* only honest validators restore
 
 \* The validators that voted for contender c.
 VotersFor(c) == {x.voter : x \in {y \in votes : y.for = c}}
@@ -57,34 +70,36 @@ VotersFor(c) == {x.voter : x \in {y \in votes : y.for = c}}
 \* Whether contender c holds a certificate.
 Certified(c) == Cardinality(VotersFor(c)) >= Quorum
 
-\* Whether honest validator v has voted already.
-HasVoted(v) == \E x \in votes : x.voter = v
+\* Whether honest validator v remembers voting: a restore wipes the memory.
+RemembersVote(v) == v \notin restored /\ \E x \in votes : x.voter = v
 
 Init ==
   /\ proposed = {}                            \* nobody proposed yet
   /\ votes = {}                               \* no votes yet
   /\ acted = {}                               \* nobody acted
+  /\ restored = {}                            \* nobody restored
 
 \* Contender c proposes itself.
 Propose(c) ==
   /\ c \notin proposed                        \* once
   /\ proposed' = proposed \cup {c}
-  /\ UNCHANGED <<votes, acted>>
+  /\ UNCHANGED <<votes, acted, restored>>
 
 \* Honest validator v votes for proposal c, once per slot.
 Vote(v, c) ==
   /\ c \in proposed                           \* only for a real proposal
   /\ [voter |-> v, for |-> c] \notin votes    \* not this vote again
-  /\ VoteOnce => ~HasVoted(v)                 \* RED_Revote drops this guard
+  /\ VoteOnce => ~RemembersVote(v)            \* RED_Revote drops this guard
+  /\ AbstainOnRestore => v \notin restored     \* the slot was open at its re-admission
   /\ votes' = votes \cup {[voter |-> v, for |-> c]}
-  /\ UNCHANGED <<proposed, acted>>
+  /\ UNCHANGED <<proposed, acted, restored>>
 
 \* A cheating validator votes for any proposal, as often as it likes.
 CheatVote(v, c) ==
   /\ c \in proposed                           \* still only real proposals
   /\ [voter |-> v, for |-> c] \notin votes    \* a new vote
   /\ votes' = votes \cup {[voter |-> v, for |-> c]}
-  /\ UNCHANGED <<proposed, acted>>
+  /\ UNCHANGED <<proposed, acted, restored>>
 
 \* Contender c acts on the slot.
 Act(c) ==
@@ -92,13 +107,24 @@ Act(c) ==
   /\ c \notin acted                           \* once
   /\ ActOnCert => Certified(c)                \* RED_Optimistic drops this guard
   /\ acted' = acted \cup {c}
-  /\ UNCHANGED <<proposed, votes>>
+  /\ UNCHANGED <<proposed, votes, restored>>
+
+\* Honest validator v is restored from a backup taken before its vote: it
+\* forgets the vote, which stays counted under its old key, and comes back
+\* under a new key in the same seat.
+Restore(v) ==
+  /\ Restores                                 \* only in a restore scenario
+  /\ v \notin restored                        \* once
+  /\ \E x \in votes : x.voter = v             \* it had voted
+  /\ restored' = restored \cup {v}
+  /\ UNCHANGED <<proposed, votes, acted>>
 
 Next ==
   \/ \E c \in Contenders : Propose(c)
   \/ \E v \in Honest, c \in Contenders : Vote(v, c)
   \/ \E v \in Cheaters, c \in Contenders : CheatVote(v, c)
   \/ \E c \in Contenders : Act(c)
+  \/ \E v \in Honest : Restore(v)
 
 \* Honest validators get round to voting, and a certified contender acts.
 \* Contenders propose when they like; cheaters need never vote.
