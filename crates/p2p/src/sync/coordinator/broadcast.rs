@@ -140,6 +140,18 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         let origin_bytes = broadcast.origin_signing_bytes()?;
         broadcast.origin_signature = Some(self.runtime.transport.sign(&origin_bytes)?);
         let broadcaster = self.runtime.broadcaster.clone();
+        // Go announces a write when it commits, to whoever is there then
+        // (SendUpdate). With no peer connected there is no one to coalesce
+        // for, and holding the write for the window would hand it to a peer
+        // that connects meanwhile, which Go never does (#2841).
+        if !self.access.peer_state.has_connected_peer() {
+            let Some(_slot) = self.publish_slot().await else {
+                return Err(crate::error::Error::GossipSubPublish(
+                    crate::error::BROADCAST_SLOT_ELAPSED.to_string(),
+                ));
+            };
+            return broadcaster.broadcast_update(&broadcast).await;
+        }
         // The slot is taken after the coalescing window, only for the publish:
         // held across the window, 32 slots capped gossip near 128/s (#2489).
         self.runtime

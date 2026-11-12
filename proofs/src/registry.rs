@@ -3111,6 +3111,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/p2p/src/host/active_peers_tests.rs active_peers_lists_a_dialer_at_its_listen_address_before_its_identify, active_peers_is_not_held_by_a_peer_that_dials_in_after_the_call",
     },
     Property {
+        family: "Gossip announcement audience",
+        name: "INV_GoAudience / LIVE_Announced: a write committed with no peer connected is announced at once, so it reaches only peers there at its commit, as Go's SendUpdate; every write is announced",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/broadcast.rs broadcast_local_update_with_creator; crates/p2p/src/sync/peer_state/tracker/operations.rs has_connected_peer; crates/p2p/src/sync/broadcast_coalescer.rs BroadcastCoalescer::run",
+        model_ref: "MC_AnnounceAudience_{Green,Red_HoldWhenAlone}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/p2p/src/sync/coordinator/broadcast_pool_tests.rs a_write_with_no_peer_connected_is_not_held_for_a_peer_that_joins",
+    },
+    Property {
         // The first shutdown caller to swap the flag builds the one drain,
         // which owns the only completion sender; a closed edge hands the
         // drain back and the winner runs it in place. The drain waits for
