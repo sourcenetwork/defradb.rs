@@ -2255,10 +2255,11 @@ pub const PROPERTIES: &[Property] = &[
     Property {
         // A node that runs its own Vera node stops it after the request
         // drain, waits for it up to a deadline and closes its transports:
-        // no decision is given without it, and its directory is free for
-        // the next node.
+        // no decision is given without it, and once it has ended its
+        // directory is free for the next node. A Vera node that hangs past
+        // the deadline keeps its directory.
         family: "Node shutdown order",
-        name: "INV_NoDecisionWithoutVera / INV_AdmittedRequestsDecided / INV_StoppedNodeFreesDirectory / LIVE_ShutdownReturns: no access decision is given while the embedded Vera node is not running, shutdown stops it under no admitted request, a node that shut down holds its directory no longer, shutdown returns",
+        name: "INV_NoDecisionWithoutVera / INV_AdmittedRequestsDecided / INV_StoppedNodeFreesDirectory / LIVE_ShutdownReturns: no access decision is given while the embedded Vera node is not running, shutdown stops it under no admitted request but one the request drain gave up on, a node that shut down holds the directory of an ended Vera node no longer, shutdown returns",
         axis: Tla,
         anchor: "crates/defra-node/src/lib.rs Node::shutdown; crates/defra-node/src/embedded_vera.rs start; crates/defra-node/src/node_acp.rs verified_acp_setup; crates/vera-embedded/src/host.rs HostedNode::stop; crates/vera-embedded/src/link.rs Link; crates/vera-embedded/src/call.rs call",
         model_ref: "MC_EmbeddedVeraStop_{Green,Red_DecisionCache,Red_StopBeforeRequests,Red_NoStopDeadline,Red_LinkStaysOpen}.cfg",

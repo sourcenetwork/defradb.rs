@@ -81,7 +81,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Worker pool CPU ledger | TLA+ & Lean | workers |
 | Signing identity store | TLA+ & Lean | defra-core, defra-node, ffi |
 | Worker default pool | TLA+ & Lean | workers |
-| Node shutdown order | TLA+ / Lean | defra-node, embedded, edge, acp, http, query, db, storage |
+| Node shutdown order | TLA+ / Lean | defra-node, embedded, edge, vera-embedded, acp, http, query, db, storage |
 | Inbound stream admission | TLA+, Lean | p2p |
 | Vector index link maintenance | TLA+ | storage, db-index |
 | Peer fetch stats | Lean | p2p |

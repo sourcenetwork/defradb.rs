@@ -11,8 +11,9 @@
 \* The Vera node ends in one of two ways. It can stop on its own (an actor
 \* exits, its watchdog trips). Or the node's shutdown stops it
 \* (defra-node Node::shutdown in crates/defra-node/src/lib.rs):
-\*   1. stop admitting requests and drain those in flight
-\*      (NodeEdge::drain_requests);
+\*   1. stop admitting requests and drain those in flight, up to a deadline
+\*      (NodeEdge::drain_requests). A request still waiting at the deadline
+\*      is given up on, and shutdown goes on without it;
 \*   2. tell the Vera node to stop, close its transports, and wait for its
 \*      thread up to a deadline (vera-embedded HostedNode::stop);
 \*   3. drain the rest of the node's network work and go on to close the
@@ -25,10 +26,13 @@
 \*      decision remembered from before is not a decision
 \*      - INV_NoDecisionWithoutVera;
 \*   2. a request the node admitted is refused because shutdown stopped the
-\*      Vera node under it - INV_AdmittedRequestsDecided;
+\*      Vera node under it - INV_AdmittedRequestsDecided. The one exception
+\*      is a request that outlived the request drain's deadline: shutdown
+\*      stopped waiting for it, and it is refused, never answered from memory;
 \*   3. a node that shut down and whose Vera node ended still holds the Vera
 \*      node's directory, so the next node over that directory waits forever
-\*      for its lock - INV_StoppedNodeFreesDirectory;
+\*      for its lock - INV_StoppedNodeFreesDirectory. A Vera node that hangs
+\*      past the stop deadline has not ended, and keeps its directory;
 \*   4. shutdown never returns - LIVE_ShutdownReturns.
 \*
 \* The Rust code each guard models:
@@ -66,12 +70,13 @@ VARIABLES
   dirHeld,     \* TRUE while Vera's directory is locked
   admitting,   \* TRUE while the node admits requests
   inflight,    \* how many requests wait for a decision (0 or 1)
+  overdue,     \* TRUE once the request drain gave up on a waiting request
   granted,     \* TRUE once a decision was given: what a cache would remember
   stale,       \* TRUE once a decision was given without Vera running
   vetoed       \* TRUE once shutdown's stop refused an admitted request
 
-vars == <<phase, vera, endedBy, link, dirHeld, admitting, inflight, granted,
-          stale, vetoed>>  \* every variable
+vars == <<phase, vera, endedBy, link, dirHeld, admitting, inflight, overdue,
+          granted, stale, vetoed>>  \* every variable
 
 Phases == {"Running", "Requests", "StopVera", "Drain", "Done"}  \* the steps
 
@@ -83,6 +88,7 @@ TypeOK ==
   /\ dirHeld \in BOOLEAN                               \* a flag
   /\ admitting \in BOOLEAN                             \* a flag
   /\ inflight \in 0..1                                 \* at most one request
+  /\ overdue \in BOOLEAN                               \* a flag
   /\ granted \in BOOLEAN                               \* a flag
   /\ stale \in BOOLEAN                                 \* a flag
   /\ vetoed \in BOOLEAN                                \* a flag
@@ -95,6 +101,7 @@ Init ==
   /\ dirHeld = TRUE        \* Vera holds its directory
   /\ admitting = TRUE      \* requests are admitted
   /\ inflight = 0          \* none waits yet
+  /\ overdue = FALSE       \* the drain gave up on none
   /\ granted = FALSE       \* no decision was given yet
   /\ stale = FALSE         \* none without Vera
   /\ vetoed = FALSE        \* shutdown refused none
@@ -110,7 +117,7 @@ Arrive ==
   /\ inflight = 0                \* one at a time is enough to show the order
   /\ inflight' = 1               \* it waits
   /\ UNCHANGED <<phase, vera, endedBy, link, dirHeld, admitting, granted,
-                 stale, vetoed>>
+                 stale, vetoed, overdue>>
 
 \* Vera answers and the provider verifies the answer.
 Decide ==
@@ -119,7 +126,7 @@ Decide ==
   /\ inflight' = 0               \* the request is answered
   /\ granted' = TRUE             \* a decision now exists to remember
   /\ UNCHANGED <<phase, vera, endedBy, link, dirHeld, admitting, stale,
-                 vetoed>>
+                 vetoed, overdue>>
 
 \* The transport reaches no running Vera node. Without a cache the request is
 \* refused. With one, a decision given before is given again.
@@ -128,8 +135,8 @@ Unreachable ==
   /\ ~Reachable                                      \* nothing to ask
   /\ inflight' = 0                                   \* the request ends
   /\ stale' = (stale \/ (~NoDecisionCache /\ granted))  \* served from memory
-  /\ vetoed' = (vetoed \/ endedBy = "shutdown")      \* shutdown's own doing
-  /\ UNCHANGED <<phase, vera, endedBy, link, dirHeld, admitting, granted>>
+  /\ vetoed' = (vetoed \/ (endedBy = "shutdown" /\ ~overdue))  \* shutdown's doing
+  /\ UNCHANGED <<phase, vera, endedBy, link, dirHeld, admitting, granted, overdue>>
 
 \* ---- What Vera does on its own ----
 
@@ -140,21 +147,21 @@ Fail ==
   /\ vera' = "down"              \* it is not any more
   /\ endedBy' = "itself"         \* nobody asked
   /\ dirHeld' = link             \* held while a transport holds the table
-  /\ UNCHANGED <<phase, link, admitting, inflight, granted, stale, vetoed>>
+  /\ UNCHANGED <<phase, link, admitting, inflight, overdue, granted, stale, vetoed>>
 
 \* A Vera node told to stop finishes: its thread ends.
 Settle ==
   /\ vera = "stopping"           \* it was told
   /\ vera' = "down"              \* it ended
   /\ dirHeld' = link             \* held while a transport holds the table
-  /\ UNCHANGED <<phase, endedBy, link, admitting, inflight, granted, stale,
+  /\ UNCHANGED <<phase, endedBy, link, admitting, inflight, overdue, granted, stale,
                  vetoed>>
 
 \* A Vera node told to stop never finishes.
 Hang ==
   /\ vera = "stopping"           \* it was told
   /\ vera' = "hung"              \* it will not end
-  /\ UNCHANGED <<phase, endedBy, link, dirHeld, admitting, inflight, granted,
+  /\ UNCHANGED <<phase, endedBy, link, dirHeld, admitting, inflight, overdue, granted,
                  stale, vetoed>>
 
 \* ---- The shutdown sequence ----
@@ -166,13 +173,23 @@ Begin ==
   /\ phase = "Running"                                        \* not begun
   /\ phase' = IF StopAfterRequests THEN "Requests" ELSE "StopVera"
   /\ admitting' = ~StopAfterRequests                          \* closed, or not
-  /\ UNCHANGED <<vera, endedBy, link, dirHeld, inflight, granted, stale,
+  /\ UNCHANGED <<vera, endedBy, link, dirHeld, inflight, overdue, granted, stale,
                  vetoed>>
 
 \* The request drain ends once no request waits.
 RequestsDrained ==
   /\ phase = "Requests"          \* draining requests
   /\ inflight = 0                \* none waits
+  /\ phase' = "StopVera"         \* Vera is next
+  /\ UNCHANGED <<vera, endedBy, link, dirHeld, admitting, inflight, overdue, granted,
+                 stale, vetoed>>
+
+\* The request drain reaches its deadline with a request still waiting. It
+\* gives up on that request and shutdown goes on.
+RequestsOverdue ==
+  /\ phase = "Requests"          \* draining requests
+  /\ inflight = 1                \* one still waits
+  /\ overdue' = TRUE             \* the drain gives up on it
   /\ phase' = "StopVera"         \* Vera is next
   /\ UNCHANGED <<vera, endedBy, link, dirHeld, admitting, inflight, granted,
                  stale, vetoed>>
@@ -187,7 +204,7 @@ TellStop ==
   /\ link' = (link /\ ~ClosesLink)                       \* closed, or kept
   /\ vera' = IF vera = "up" THEN "stopping" ELSE vera    \* told, if running
   /\ dirHeld' = IF vera = "down" THEN link' ELSE dirHeld \* freed if it ended
-  /\ UNCHANGED <<phase, admitting, inflight, granted, stale, vetoed>>
+  /\ UNCHANGED <<phase, admitting, inflight, overdue, granted, stale, vetoed>>
 
 \* The wait for Vera's thread ends: the thread finished, or the deadline
 \* passed. Nothing is admitted from here on.
@@ -197,7 +214,7 @@ StopReturns ==
   /\ vera = "down" \/ StopDeadline       \* it ended, or the wait gave up
   /\ phase' = "Drain"                    \* the rest of the network work
   /\ admitting' = FALSE                  \* the node's scope closes
-  /\ UNCHANGED <<vera, endedBy, link, dirHeld, inflight, granted, stale,
+  /\ UNCHANGED <<vera, endedBy, link, dirHeld, inflight, overdue, granted, stale,
                  vetoed>>
 
 \* The node's drain ends once no request waits, and shutdown goes on to
@@ -206,15 +223,15 @@ Drained ==
   /\ phase = "Drain"             \* draining the rest
   /\ inflight = 0                \* none waits
   /\ phase' = "Done"             \* shutdown returns
-  /\ UNCHANGED <<vera, endedBy, link, dirHeld, admitting, inflight, granted,
+  /\ UNCHANGED <<vera, endedBy, link, dirHeld, admitting, inflight, overdue, granted,
                  stale, vetoed>>
 
 \* Any one thing happens.
 Next ==
   \/ Arrive \/ Decide \/ Unreachable            \* requests
   \/ Fail \/ Settle \/ Hang                     \* Vera
-  \/ Begin \/ RequestsDrained \/ TellStop       \* shutdown,
-  \/ StopReturns \/ Drained                     \* step by step
+  \/ Begin \/ RequestsDrained \/ RequestsOverdue  \* shutdown,
+  \/ TellStop \/ StopReturns \/ Drained          \* step by step
 
 \* Fairness: a waiting request is answered or refused; a Vera node told to
 \* stop ends or hangs; each shutdown step that can run does. Whether a
@@ -233,10 +250,12 @@ Spec ==
 \* No decision is given while the Vera node is not running.
 INV_NoDecisionWithoutVera == ~stale
 
-\* Shutdown refuses no request the node admitted by stopping Vera under it.
+\* Shutdown refuses no request the node admitted by stopping Vera under it,
+\* unless the request outlived the request drain's deadline.
 INV_AdmittedRequestsDecided == ~vetoed
 
-\* Once the node shut down and its Vera node ended, the directory is free.
+\* Once the node shut down and its Vera node ended, the directory is free. A
+\* Vera node that hung has not ended.
 INV_StoppedNodeFreesDirectory ==
   (phase = "Done" /\ vera = "down") => ~dirHeld
 
