@@ -19,10 +19,7 @@ struct Counted(AtomicUsize);
 impl NodeAccessWrites for Counted {
     fn written(&self) -> OnCommit {
         self.0.fetch_add(1, Ordering::SeqCst);
-        OnCommit::AsyncOnce(
-            "test::edge",
-            storage::corekv::make_async_callback(|| async {}),
-        )
+        OnCommit::Async(storage::corekv::make_async_callback(|| async {}))
     }
 }
 

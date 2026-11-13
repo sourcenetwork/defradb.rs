@@ -2960,18 +2960,17 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/cli/src/nac_adapter_tests.rs a_returned_revocation_refuses_the_next_edge_check, the_snapshot_decides_every_permission_as_the_engine_does; crates/db/tests/nac/dropped_write.rs a_revoke_dropped_after_its_commit_still_checks_the_edge",
     },
     Property {
-        // A database transaction that writes NAC tuples (through a projector
-        // or a source grant) rebuilds the edge snapshot once when it commits;
-        // one that writes none rebuilds nothing. Each write registers the
-        // rebuild under one key, a savepoint rolled back drops only the
-        // registrations after it, and the commit runs each key once.
+        // A database transaction that commits a NAC tuple write (through a
+        // projector or a source grant) rebuilds the edge snapshot at commit;
+        // one that writes none registers nothing and rebuilds nothing. A
+        // savepoint rolled back drops the registrations made after it.
         family: "Node access control operations",
-        name: "INV_RebuiltAfterNacWrite / INV_AtMostOneRebuild",
+        name: "INV_RebuiltAfterNacWrite / INV_NoRebuildWithoutNacWrite",
         axis: Tla,
-        anchor: "crates/acp/src/zanzibar/store/transaction.rs written; crates/datastore/src/multistore.rs node_access_written, NodeAccessWrites; crates/db/src/nac/edge.rs EdgeRefreshOwed, refresh_edge_on_commit; crates/db/src/database/mod.rs new_db_txn; crates/storage/src/corekv/callbacks.rs TxnCallbacks::truncate, TxnCallbacks::into_ends",
-        model_ref: "MC_NacEdgeRefreshOnce_{Green,Red_PerDoc,Red_SkipAtRegister}.cfg",
+        anchor: "crates/acp/src/zanzibar/store/transaction.rs written; crates/datastore/src/multistore.rs node_access_written, NodeAccessWrites; crates/db/src/nac/edge.rs EdgeRefreshOwed, refresh_edge_on_commit; crates/db/src/database/mod.rs new_db_txn; crates/storage/src/corekv/callbacks.rs TxnCallbacks::mark, TxnCallbacks::truncate",
+        model_ref: "MC_NacEdgeRefreshOnWrite_{Green,Red_EveryWrite,Red_KeepOnRollback}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/storage/src/corekv/callbacks/tests.rs a_keyed_callback_runs_once_however_often_it_was_registered, a_rolled_back_savepoint_keeps_a_keyed_callback_made_before_it, a_keyed_callback_registered_again_after_a_rollback_runs; crates/acp/tests/node_access_writes.rs only_node_policy_writes_owe_the_edge_refresh",
+        bound_by: "crates/acp/tests/node_access_writes.rs only_node_policy_writes_owe_the_edge_refresh; crates/defra-node/tests/unit/document_projector.rs raw_document_mutations_stage_sources_in_the_same_transaction",
     },
     Property {
         family: "Node access control operations",

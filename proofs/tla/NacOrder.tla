@@ -71,7 +71,7 @@
 \*                                       crates/db/src/nac/mod.rs NacManager::check_permissions
 \*   - the edge snapshot and its swap    crates/db/src/nac/edge.rs NacManager::refresh_edge,
 \*                                       EdgeGrants::publish, NacManager::refresh_edge_on_commit
-\*                                       (once per database transaction: NacEdgeRefreshOnce.tla);
+\*                                       (only after a NAC write: NacEdgeRefreshOnWrite.tla);
 \*   - the withdraw when a write is      crates/db/src/nac/edge.rs RefreshGuard (drop),
 \*     dropped after its commit            NacManager::refresh_guard, reload_after_commit;
 \*                                       crates/db/src/nac/mod.rs NacManager::initialize,

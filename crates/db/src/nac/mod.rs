@@ -127,15 +127,11 @@ pub trait NacManagerApi: defra_core::thread_bounds::MaybeSendSync {
     ) -> Option<Vec<Result<bool>>> {
         None
     }
-    /// A database transaction wrote NAC tuples without this manager (a
-    /// document projector, or a source grant, writes them straight into the
-    /// ACP store): the commit work that rebuilds the edge snapshot, keyed so
-    /// it runs once per commit however many tuples were written.
+    /// A database transaction wrote a NAC tuple without this manager (a
+    /// document projector, or a source grant, writes it straight into the
+    /// ACP store): the commit work that rebuilds the edge snapshot.
     fn edge_refresh_owed(&self) -> storage::corekv::OnCommit {
-        storage::corekv::OnCommit::AsyncOnce(
-            edge::EDGE_REFRESH,
-            storage::corekv::make_async_callback(|| async {}),
-        )
+        storage::corekv::OnCommit::Async(storage::corekv::make_async_callback(|| async {}))
     }
     async fn check_permission_in_txn(
         &self,

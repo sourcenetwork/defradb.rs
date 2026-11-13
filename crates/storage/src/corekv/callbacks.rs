@@ -69,12 +69,6 @@ pub enum OnCommit {
     /// A hook: awaited before this commit's events go out, which holds back
     /// the events of every later commit until it finishes.
     OrderedAsync(CommitHook),
-    /// [`Async`](Self::Async), run once per key however many times it was
-    /// registered: the first registration that is still held when the
-    /// transaction commits runs, the rest are dropped. Each registration is
-    /// held on its own, so a savepoint rolled back drops only the ones made
-    /// after it, and one made before it still runs.
-    AsyncOnce(&'static str, AsyncTxnCallback),
 }
 
 impl OnCommit {
@@ -240,15 +234,8 @@ impl TxnCallbacks {
         let Some(entries) = self.entries else {
             return (committed, aborted);
         };
-        let mut once: Vec<&'static str> = Vec::new();
         while let Some(entry) = entries.pop() {
             match entry {
-                Entry::Commit(OnCommit::AsyncOnce(key, callback)) => {
-                    if !once.contains(&key) {
-                        once.push(key);
-                        committed.then.asynchronous.push(callback);
-                    }
-                }
                 // Run by `run_before_commit` before any commit; one that is
                 // still here belongs to a transaction that never committed.
                 Entry::Before(_) => {}

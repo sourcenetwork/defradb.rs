@@ -36,9 +36,7 @@ pub trait DocumentMutationProjector: storage::corekv::MaybeSendSync {
 /// database installs one per transaction; a transaction that writes no such
 /// tuple never calls it, and pays nothing.
 pub trait NodeAccessWrites: storage::corekv::MaybeSendSync {
-    /// Called on each such write. Returns the commit work to register,
-    /// keyed with [`OnCommit::AsyncOnce`] so it runs once per commit however
-    /// many writes there were.
+    /// Called on each such write. Returns the commit work to register.
     fn written(&self) -> OnCommit;
 }
 
