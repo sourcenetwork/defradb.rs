@@ -91,6 +91,13 @@ impl<S: Store> P2PHost<S> {
                     }
                 };
                 self.peer_addrs.insert(peer_id, peer_addr.clone());
+                // A source port is not the peer's address: hold `ActivePeers`
+                // until its Identify names the listen address.
+                if endpoint.is_dialer() {
+                    self.on_identify_settled(peer_id);
+                } else {
+                    self.unidentified.insert(peer_id);
+                }
 
                 // Add peer to Kademlia before any scheduled bootstrap. Kademlia's own
                 // ConnectionEstablished handler doesn't add peers to the
@@ -307,6 +314,7 @@ impl<S: Store> P2PHost<S> {
 
         info!(peer_id = %peer_id, "Peer disconnected");
         self.peer_addrs.remove(&peer_id);
+        self.on_identify_settled(peer_id);
         for response in self
             .pending_disconnects
             .remove(&peer_id)
