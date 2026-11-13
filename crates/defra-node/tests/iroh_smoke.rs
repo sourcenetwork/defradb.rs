@@ -201,10 +201,9 @@ fn an_apps_stream_protocol_round_trips_between_embedded_nodes() -> Result<()> {
             let client_peer = client_p2p.ops().local_peer_id().await?;
             assert_eq!(handler.peers.get(), Some(&client_peer));
 
-            server_p2p.shutdown().await;
-            client_p2p.shutdown().await;
-            server.database().close().await?;
-            client.database().close().await?;
+            // Each node's shutdown stops its transport and closes its database.
+            server.shutdown().await.unwrap();
+            client.shutdown().await.unwrap();
             Ok(())
         })
         .unwrap()
