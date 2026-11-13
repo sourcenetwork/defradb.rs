@@ -183,15 +183,6 @@ impl<S: Store + 'static> DocFetcher for LensedAutoCommitFetcher<S> {
         self.get_by_index_scan_impl(collection_name, params).await
     }
 
-    async fn indexes_match_documents(&self, collection_name: &str) -> query::error::Result<bool> {
-        let collection = self
-            .db
-            .get_collection(collection_name)
-            .map_err(|e| query::error::QueryError::execution(e.to_string()))?
-            .ok_or_else(|| query::error::QueryError::collection_not_found(collection_name))?;
-        Ok(!self.load_migration_context(&collection).await?.1)
-    }
-
     fn supports_index_queries(&self) -> bool {
         true
     }

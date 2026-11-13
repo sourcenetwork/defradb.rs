@@ -12,6 +12,27 @@ use crate::read::seek::apply_cursor_seek_to_iterator;
 
 use super::LensedAutoCommitFetcher;
 
+/// Fails with [`query::error::QueryError::IndexOwed`] when `collection` owes a
+/// reindex at the snapshot of `systemstore`. The query planned its index from
+/// the cached collection, and a merge may have owed the reindex since; the
+/// index then no longer holds what reads see, so the select re-plans as a
+/// collection scan.
+pub(super) async fn refuse_owed_index(
+    systemstore: &datastore::NamespaceView,
+    collection: &crate::collection::Collection,
+) -> query::error::Result<()> {
+    let collection_id = &collection.schema().collection_id;
+    let owed = crate::definition::migration::reindex_owed(systemstore, collection_id)
+        .await
+        .map_err(|e| query::error::QueryError::execution(format!("owed reindex read: {e}")))?;
+    if owed {
+        return Err(query::error::QueryError::IndexOwed(
+            collection.schema().name.clone(),
+        ));
+    }
+    Ok(())
+}
+
 impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
     /// Count the index entries `params` would visit, stopping at `cap`.
     pub(super) async fn estimate_index_scan_inner(
@@ -83,6 +104,7 @@ impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
         let systemstore = txn.systemstore().map_err(|e| {
             query::error::QueryError::execution(format!("failed to get systemstore: {}", e))
         })?;
+        refuse_owed_index(&systemstore, &collection).await?;
 
         let short_id = collection.resolved_root_id();
         let index_manager =

@@ -32,6 +32,7 @@ enum Inner {
         fetcher: Option<Arc<dyn DocFetcher>>,
         child_collection_name: String,
         child_fk_index_name: String,
+        child_fk_field_name: String,
     },
 }
 
@@ -65,6 +66,7 @@ impl OrphanNode {
         fetcher: Option<Arc<dyn DocFetcher>>,
         child_collection_name: String,
         child_fk_index_name: String,
+        child_fk_field_name: String,
         document_mapping: DocumentMapping,
     ) -> Self {
         Self {
@@ -74,6 +76,7 @@ impl OrphanNode {
                 fetcher,
                 child_collection_name,
                 child_fk_index_name,
+                child_fk_field_name,
             },
             document_mapping,
             current_doc: Doc::default(),
@@ -147,6 +150,7 @@ impl PlanNode for OrphanNode {
                 fetcher,
                 child_collection_name,
                 child_fk_index_name,
+                child_fk_field_name,
             } => loop {
                 if !parent_scan.next().await? {
                     return Ok(false);
@@ -162,6 +166,18 @@ impl PlanNode for OrphanNode {
                     let fetcher = fetcher.as_ref().ok_or_else(|| {
                         QueryError::internal("orphan scan: fetcher not initialized")
                     })?;
+                    // A select re-planned without indexes (one owed a reindex)
+                    // looks the children up by their stored foreign key.
+                    if !fetcher.supports_index_queries() {
+                        let children = fetcher
+                            .get_by_field_value(child_collection_name, child_fk_field_name, doc_id)
+                            .await?;
+                        if !children.is_empty() {
+                            continue;
+                        }
+                        self.current_doc = doc.deep_clone();
+                        return Ok(true);
+                    }
                     let scan_result = fetcher
                         .get_by_index_scan(
                             child_collection_name,

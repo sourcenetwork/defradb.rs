@@ -208,6 +208,9 @@ lean_lib TxnId where
 lean_lib LensListing where
 
 @[default_target]
+lean_lib LensId where
+
+@[default_target]
 lean_lib JsonSubPathCut where
 
 @[default_target]

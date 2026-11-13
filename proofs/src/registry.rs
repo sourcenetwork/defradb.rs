@@ -1772,6 +1772,35 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // #2378: a lens's ID is the CID of blocks that record every module and
+        // every argument value, as Go's lens store writes them; it used to
+        // hash the first module and only string arguments.
+        family: "Schema-evolution operations in the core",
+        name: "LensId.configBlock_injective / new_numbers_differ / new_keeps_later_modules / empty_lens_has_block",
+        axis: Lean,
+        anchor: "crates/defra-core/src/lens_block.rs build_lens_ipld_blocks, build_module_blocks; crates/db/src/definition/migration/committed_lenses.rs PreparedLens::new, module_arguments; crates/defra-core/src/lens_argument.rs encode_lens_argument",
+        model_ref: "LensId (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/defra-core/tests/lens_block_id.rs every_module_and_argument_value_counts, an_empty_lens_has_gos_config_block_cid",
+    },
+    Property {
+        // #2379: an index answers queries only while no reindex is owed;
+        // schema changes and merges that store a document off the active
+        // version across a lens owe a fresh record, and a rebuild clears only
+        // the record it started from. Main before the fix refused every index
+        // once a lens existed (Red_LensGate). A query's index scan reads the
+        // owed record again in its own transaction and re-plans to a
+        // collection scan when one stands, so a merge that commits between
+        // the plan and the scan cannot make it miss a document (Red_TrustPlan).
+        family: "Schema-evolution operations in the core",
+        name: "INV_IndexMatchesReads / INV_SettledIndexAnswers / INV_ScanMatchesReads",
+        axis: Tla,
+        anchor: "crates/db/src/definition/migration/reindex/owed.rs owe_reindex, clear_owed_reindex; crates/db/src/collection/mod.rs queryable, Collection::validate_write_definition_read; crates/db/src/merge/merge_handler/stale_version.rs DbMergeHandler::owe_reindex_off_active_version; crates/query/src/planner/builder/index_methods.rs try_select_index; crates/db/src/read/lensed/autocommit/scan.rs get_by_index_scan_inner; crates/query/src/runner/query/select.rs execute_select_internal",
+        model_ref: "MC_LensIndexAnswer_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/db/tests/merge/plan_scan_race.rs",
+    },
+    Property {
         // An explicit transaction's ID is `sequence * workers + worker`. The
         // owner is the ID modulo the worker count and the sequence is the
         // quotient, so the round trip is exact for every worker below the
