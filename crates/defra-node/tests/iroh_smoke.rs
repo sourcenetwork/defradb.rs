@@ -96,10 +96,8 @@ fn two_embedded_iroh_nodes_connect_and_replicate() -> Result<()> {
 
             wait_for_book_title(&node_b, REPLICATED_TITLE).await?;
 
-            p2p_a.shutdown().await;
-            p2p_b.shutdown().await;
-            node_a.database().close().await?;
-            node_b.database().close().await?;
+            node_a.shutdown().await.unwrap();
+            node_b.shutdown().await.unwrap();
 
             Ok(())
         })
@@ -153,10 +151,8 @@ fn an_explicit_allowlist_admits_the_peer_it_is_given() -> Result<()> {
             // that the listener sees the peer, not merely that the dial returned.
             wait_for_connected_peer(&listener_p2p, &dialer_peer).await?;
 
-            listener_p2p.shutdown().await;
-            dialer_p2p.shutdown().await;
-            listener.database().close().await?;
-            dialer.database().close().await?;
+            listener.shutdown().await.unwrap();
+            dialer.shutdown().await.unwrap();
             Ok(())
         })
         .unwrap()
@@ -205,10 +201,9 @@ fn an_apps_stream_protocol_round_trips_between_embedded_nodes() -> Result<()> {
             let client_peer = client_p2p.ops().local_peer_id().await?;
             assert_eq!(handler.peers.get(), Some(&client_peer));
 
-            server_p2p.shutdown().await;
-            client_p2p.shutdown().await;
-            server.database().close().await?;
-            client.database().close().await?;
+            // Each node's shutdown stops its transport and closes its database.
+            server.shutdown().await.unwrap();
+            client.shutdown().await.unwrap();
             Ok(())
         })
         .unwrap()

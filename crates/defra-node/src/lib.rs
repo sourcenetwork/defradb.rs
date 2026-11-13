@@ -66,6 +66,7 @@ mod peer_key;
 mod peer_keyring;
 pub mod search_chunks;
 mod signed_query;
+mod start_peer_key;
 mod transaction;
 #[cfg(feature = "vera")]
 mod vera_rs_config;
@@ -125,6 +126,7 @@ pub use query::owners::{DocumentAccessDecision, DocumentAccessMode};
 pub use query::QueryLimits;
 pub use query::{QueryExecutor, QueryRequest, QueryResponse, TransactionHandle};
 pub use schema::CollectionVersion;
+pub use start_peer_key::StartPeerKey;
 pub use telemetry::{ConflictMetricsSnapshot, RetryLayerSnapshot};
 #[cfg(feature = "otel")]
 pub use telemetry::{TelemetryConfig, TelemetryHandle};
@@ -270,6 +272,11 @@ pub struct Node {
     shutdown_notify: regolith::sync::Notify,
     #[cfg(feature = "otel")]
     telemetry: kovan_queue::seg_queue::SegQueue<TelemetryHandle>,
+    /// Keeps the key the node made or loaded in the signing store while the
+    /// node lives. Declared last, so it drops last: a node dropped without
+    /// [`Node::shutdown`] keeps its key until its workers, background tasks
+    /// and P2P are gone.
+    _signing_key_hold: Option<defra_core::signing::IdentityHold>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1550,7 +1557,8 @@ mod tests {
                         remote_signer: Some(Arc::new(TestRemoteSigner)),
                         signing_authorization: None,
                     },
-                );
+                )
+                .expect("the store takes the identity");
 
                 let node = Node::builder()
                     .with_node_identity_did(did)

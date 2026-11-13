@@ -418,6 +418,14 @@ impl NodeBuilder {
         self
     }
 
+    /// Use `key` as the transport identity for this start only, as Go's
+    /// `P2PPrivateKey`: it wins over the keyring and the store's key, and is
+    /// recorded in neither, so a later start without it uses the store's key.
+    pub fn with_start_peer_key(mut self, key: crate::StartPeerKey) -> Self {
+        self.config.start_peer_key = Some(key);
+        self
+    }
+
     /// Sign as a node identity the node creates from `key`.
     pub fn with_signing_key(mut self, key: SigningKey) -> Self {
         self.config.signing = NodeSigning::Enabled { key: Some(key) };

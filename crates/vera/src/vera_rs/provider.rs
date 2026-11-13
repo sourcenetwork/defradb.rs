@@ -756,7 +756,8 @@ mod tests {
                 remote_signer: None,
                 signing_authorization: None,
             },
-        );
+        )
+        .expect("the store takes the identity");
     }
 
     #[nuclei::test]
@@ -822,7 +823,8 @@ mod tests {
                 remote_signer: None,
                 signing_authorization: None,
             },
-        );
+        )
+        .expect("the store takes the identity");
 
         let resolved =
             resolve_registered_or_passthrough_bearer_token(&did, "did:key:submitter", 9001)

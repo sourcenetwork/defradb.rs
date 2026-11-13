@@ -1,5 +1,6 @@
 //! The node's signing identity, from its [`NodeSigning`].
 
+use defra_core::signing::IdentityHold;
 use identity::{Identity as _, IdentityKeyType, RawIdentity};
 
 use crate::config::{NodeSigning, SigningKey};
@@ -7,11 +8,22 @@ use crate::{Error, Result};
 
 /// The identity the node signs with and its DID. A registered identity with
 /// only a remote signer has a DID and no local key.
-pub(crate) fn create_node_identity(
-    config: &NodeSigning,
-) -> Result<(Option<RawIdentity>, Option<String>)> {
+pub(crate) struct NodeIdentity {
+    pub(crate) raw: Option<RawIdentity>,
+    pub(crate) did: Option<String>,
+    /// The node's hold on a key it made or loaded, so the key leaves the
+    /// signing store with the node. A registered identity belongs to whoever
+    /// registered it, so the node takes none.
+    pub(crate) hold: Option<IdentityHold>,
+}
+
+pub(crate) fn create_node_identity(config: &NodeSigning) -> Result<NodeIdentity> {
     match config {
-        NodeSigning::Disabled => Ok((None, None)),
+        NodeSigning::Disabled => Ok(NodeIdentity {
+            raw: None,
+            did: None,
+            hold: None,
+        }),
         NodeSigning::Enabled { key } => {
             let raw_identity = match key {
                 Some(SigningKey::Secp256k1(bytes)) => {
@@ -62,7 +74,7 @@ pub(crate) fn create_node_identity(
                 _ => defra_core::signing::SigningKeyType::Secp256k1,
             };
 
-            defra_core::signing::store_identity(
+            let hold = IdentityHold::new(
                 &did_str,
                 defra_core::signing::SigningConfig {
                     key_type,
@@ -75,14 +87,22 @@ pub(crate) fn create_node_identity(
                     remote_signer: None,
                     signing_authorization: None,
                 },
-            );
+            )?;
 
-            Ok((Some(raw_identity), Some(did_str)))
+            Ok(NodeIdentity {
+                raw: Some(raw_identity),
+                did: Some(did_str),
+                hold: Some(hold),
+            })
         }
         NodeSigning::RegisteredIdentity { did } => {
             let registered = resolve_registered_node_identity(did)?;
             let raw_identity = local_raw_identity_from_registered_config(did, &registered)?;
-            Ok((raw_identity, Some(did.clone())))
+            Ok(NodeIdentity {
+                raw: raw_identity,
+                did: Some(did.clone()),
+                hold: None,
+            })
         }
     }
 }

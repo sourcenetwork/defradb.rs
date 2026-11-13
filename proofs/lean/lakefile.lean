@@ -121,6 +121,9 @@ lean_lib EngineTickers where
 lean_lib CpuLedger where
 
 @[default_target]
+lean_lib IdentityStore where
+
+@[default_target]
 lean_lib DefaultPool where
 
 @[default_target]
@@ -269,3 +272,15 @@ lean_lib CursorToken where
 
 @[default_target]
 lean_lib ViewQuerySource where
+
+@[default_target]
+lean_lib PeerKeyLoad where
+
+@[default_target]
+lean_lib TxnTurns where
+
+@[default_target]
+lean_lib VectorIndexDefaults where
+
+@[default_target]
+lean_lib CatalogPin where

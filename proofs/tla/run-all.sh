@@ -686,6 +686,24 @@ RUNS=(
   "MC_CpuLedger_Red_RunOutsideHold.cfg CpuLedger.tla RED" # caller runs a thread on a CPU its hold does not cover (INV_AloneRunsAlone)
   "MC_CpuLedger_Red_DoubleRelease.cfg CpuLedger.tla RED" # caller gives its hold back twice: a counter drops below its holders (INV_CountExact)
   "MC_CpuLedger_Red_ForgetHold.cfg CpuLedger.tla RED" # caller never gives its hold back: CPUs stay held after every pool is gone (INV_DoneLeavesNothing)
+  "MC_IdentityStore_Green.cfg IdentityStore.tla GREEN" # holders hold, retain and release one DID while it is pinned and cleared: count exact, held keys found, no key outlives its holders, no holder re-routed to another signer, a hold with the held host context never refused
+  "MC_IdentityStore_Red_ReplaceOnHold.cfg IdentityStore.tla RED" # a second hold with another signer replaces the first's (INV_OwnSigner)
+  "MC_IdentityStore_Red_PinReplacesHeld.cfg IdentityStore.tla RED" # a pin replaces a held DID's signer (INV_OwnSigner)
+  "MC_IdentityStore_Red_RefuseSameContext.cfg IdentityStore.tla RED" # signers compared by registration, not host context: a second handle for one context is refused (INV_AcceptSame)
+  "MC_IdentityStore_Red_SplitSwap.cfg IdentityStore.tla RED" # swap split into read then write: two holds counted once (INV_CountExact)
+  "MC_IdentityStore_Red_DropCount.cfg IdentityStore.tla RED" # slot says held, not how many: one release drops the other's key (INV_KeyWhileHeld)
+  "MC_IdentityStore_Red_ClearRemoves.cfg IdentityStore.tla RED" # clear removes the slot from the map: a held DID answers no key (INV_KeyWhileHeld)
+  "MC_IdentityStore_Red_ClearDropsHeld.cfg IdentityStore.tla RED" # clear drops held keys too: a holder's key is gone (INV_KeyWhileHeld)
+  "MC_IdentityStore_Red_RetainAbsent.cfg IdentityStore.tla RED" # retain holds a key the store does not have (INV_KeyWhileHeld)
+  "MC_PeerKeyLoad_Green.cfg PeerKeyLoad.tla GREEN" # plain, keyring and start-key starts of one store: a start key always starts, leaves no mark, never moves the plain key
+  "MC_PeerKeyLoad_Red_StartKeyChecked.cfg PeerKeyLoad.tla RED" # a start key checked against the store as a keyring is: refused over a plaintext key (INV_StartKeyStarts)
+  "MC_PeerKeyLoad_Red_StartKeyRecorded.cfg PeerKeyLoad.tla RED" # a start key recorded as a keyring identity: the next plain start is refused (INV_StartKeyLeavesNoMark)
+  "MC_TxnTurns_Green.cfg TxnTurns.tla GREEN" # calls on one transaction take tickets, may drop them: one runs at a time, none overtakes an earlier ticket, no call waits forever
+  "MC_TxnTurns_Red_NoRecheck.cfg TxnTurns.tla RED" # a dropping call never looks again: a dropped ticket nobody skips stalls the transaction (Progress)
+  "MC_TxnTurns_Red_CancelSkipsNow.cfg TxnTurns.tla RED" # a dropped ticket serves the next at once: two calls run together (INV_OneRunning)
+  "MC_VersionPin_Green.cfg VersionPin.tla GREEN" # requests pin an old version, the active one or nothing while DDL changes the active version: pins stay in their turn, unpinned turns see the active version, old-version reads change nothing, writes land at the selected version
+  "MC_VersionPin_Red_PinLeaks.cfg VersionPin.tla RED" # a turn leaves its pin behind: the next request still sees the old version (INV_PinScoped)
+  "MC_VersionPin_Red_WriteBackOnPin.cfg VersionPin.tla RED" # a read through an old version stores the migrated document back (INV_ReadNoSideEffect)
   "MC_CpuLedger_Green_Edge.cfg CpuLedger.tla GREEN" # a network runtime claims cores alone beside a pool, or gives up holding nothing
   "MC_CpuLedger_Red_EdgeNoCap.cfg CpuLedger.tla RED" # network runtime claims alone forever: its start never ends (LIVE_StartEnds)
   "MC_DefaultPool_Green.cfg DefaultPool.tla GREEN" # the first registered pool that runs is the default, else one pool started once; never a closing pool, a stop's deadline goes elsewhere, every call returns

@@ -318,6 +318,13 @@ impl<S: Store + 'static> LensedDocFetcher<S> {
         _source_doc: &Document,
         migrated_doc: &Document,
     ) -> query::error::Result<()> {
+        // Only a read through the active version stores the migrated document
+        // back. A read through another version (a pinned, inactive one) must
+        // not rewrite the document at that version (proofs/tla/VersionPin.tla
+        // INV_ReadNoSideEffect).
+        if !collection.schema().is_active {
+            return Ok(());
+        }
         let txn = &*self.shared_txn()?;
         if txn.is_readonly().map_err(|e| {
             query::error::QueryError::execution(format!(

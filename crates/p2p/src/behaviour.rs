@@ -26,6 +26,12 @@
 //! IPFS block exchange protocol (1.0.0, 1.1.0, 1.2.0), enabling
 //! interoperability with Go DefraDB.
 
+// `#[derive(NetworkBehaviour)]` (libp2p-swarm-derive 0.35.1) matches on the
+// event of `libp2p_stream::Behaviour`, which is uninhabited, and code it
+// generates after that match is unreachable. The derive puts its impl in this
+// module, so only a module-level allow reaches it.
+#![allow(unreachable_code)]
+
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;

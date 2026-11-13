@@ -138,16 +138,14 @@ impl ReplicationFilter for CallbackFilter {
     }
 }
 
-/// `builder` with the replication filter `options` sets, if any.
-pub(crate) fn with_replication_filter(
-    builder: defra_node::NodeBuilder,
+/// The replication filter `options` sets, if any.
+pub(crate) fn from_options(
     options: &NodeInitOptions,
-) -> defra_node::NodeBuilder {
-    match options.replication_filter {
-        Some(callback) => builder.with_replication_filter(Arc::new(CallbackFilter {
+) -> Option<defra_node::ReplicationFilterHandle> {
+    options.replication_filter.map(|callback| {
+        defra_node::ReplicationFilterHandle(Arc::new(CallbackFilter {
             callback,
             context: options.replication_filter_context,
-        })),
-        None => builder,
-    }
+        }))
+    })
 }

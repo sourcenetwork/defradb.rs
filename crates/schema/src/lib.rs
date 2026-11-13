@@ -21,6 +21,7 @@ mod relation;
 mod selector;
 mod source;
 mod validation;
+mod vector_index_defaults;
 
 pub mod definition_validation;
 

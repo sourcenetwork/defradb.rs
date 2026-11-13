@@ -465,7 +465,7 @@ fn unified_access_matches_lean_and_validates_authority_at_commit() {
             key_type: defra_core::signing::SigningKeyType::Ed25519,
             private_key_bytes: key.raw().to_vec(), public_key_hex: hex::encode(&public),
             public_key_bytes: public, remote_signer: None, signing_authorization: None,
-        });
+        }).expect("the store takes the identity");
         let node = Node::builder().with_node_identity_did(&owner).with_node_acp_enabled().build().await.unwrap();
         let policy = node.add_dac_policy_as(&actor(&owner), POLICY).await.unwrap();
         node.add_collection(&format!("type Users @policy(id: \"{policy}\", resource: \"rows\") {{ name: String }}\ntype Other {{ name: String }}")).await.unwrap();

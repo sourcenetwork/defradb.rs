@@ -1851,7 +1851,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Transaction & merge-queue concurrency",
         name: "INV_FfiReaches / INV_HttpOwnerOnly / INV_ActsAsCaller: the embedder reaches its transactions as any identity, an HTTP caller only its own, and work runs as the request",
         axis: Tla,
-        anchor: "crates/db/src/txn/registry/mod.rs TxnOwnership, DbTransactionRegistry::caller, DbTransactionRegistry::in_txn; crates/db/src/txn/registry/lifecycle.rs run_as; crates/db/src/txn/owner/table.rs Table::admits; crates/ffi/src/node.rs build_node_state; crates/defra-node/src/node_builder.rs NodeBuilder::with_txn_ownership",
+        anchor: "crates/db/src/txn/registry/mod.rs TxnOwnership, DbTransactionRegistry::caller, DbTransactionRegistry::in_txn; crates/db/src/txn/registry/lifecycle.rs run_as; crates/db/src/txn/owner/table.rs Table::admits; crates/ffi/src/node/mod.rs build_node_state; crates/defra-node/src/node_builder.rs NodeBuilder::with_txn_ownership",
         model_ref: "MC_TxnAdmission_{Green,Red_IdentityOnFfi,Red_EmbedderOnHttp,Red_ActsAsOwner}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -1925,6 +1925,110 @@ pub const PROPERTIES: &[Property] = &[
         axis: Lean,
         anchor: "crates/workers/src/ledger.rs Ledger::hold, Ledger::share, Hold::drop",
         model_ref: "CpuLedger.{Hold,Count,Exclusive} (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // Every signing key lives in one process-wide store, one slot per
+        // DID. Holders (FFI identity handles, nodes) take and give back
+        // holds; the hold count, the pin and the key change together in one
+        // swap, a slot never leaves the map, and a clear only unpins and
+        // drops keys nothing holds. While a DID has a key its signer is
+        // fixed: a hold with another signer, or a pin over a held DID, is
+        // refused, so no holder is re-routed to a host context it did not
+        // bring.
+        family: "Signing identity store",
+        name: "INV_CountExact / INV_KeyWhileHeld / INV_KeyMatchesHolders / INV_OwnSigner / INV_AcceptSame: a DID's slot counts its holds exactly, a held DID always answers its key, no key outlives its holders unless pinned, no holder signs through a signer it did not bring, and a hold with the held host context is never refused",
+        axis: Tla,
+        anchor: "crates/defra-core/src/signing/identity_store.rs hold_identity, retain_identity, release_identity, store_identity, clear_identity_store, same_signer, IdentityHold; crates/defra-core/src/signing.rs RemoteSigner::host_context; crates/ffi/src/remote_signer/mod.rs FfiRemoteSigner::host_context; crates/ffi/src/remote_signer/register.rs store",
+        model_ref: "MC_IdentityStore_{Green,Red_SplitSwap,Red_DropCount,Red_ClearRemoves,Red_ClearDropsHeld,Red_RetainAbsent,Red_ReplaceOnHold,Red_PinReplacesHeld,Red_RefuseSameContext}.cfg",
+        tiers: &[Contract],
+        bound_by: "crates/defra-core/src/signing/identity_store_tests.rs the_last_hold_on_an_identity_removes_its_key, a_retained_identity_outlives_the_hold_it_was_taken_from, a_pinned_identity_survives_its_holds, a_clear_keeps_held_keys_and_their_count, a_held_did_refuses_another_signer, a_pin_replaces_only_an_unheld_signer, a_held_did_takes_a_signer_with_the_same_host_context; crates/ffi/src/remote_signer/registration_tests.rs a_second_registration_of_a_held_did_is_refused_until_the_first_is_freed, a_second_registration_with_the_same_context_shares_the_signer",
+    },
+    Property {
+        family: "Signing identity store",
+        name: "empty_keeps / hold_keeps / hold_keeps_signer / hold_accepts_same / hold_refuses_other / retain_keeps / retain_answers_key / release_keeps / pin_keeps / pin_keeps_held_signer / clear_keeps / held_has_key / free_has_no_key: every operation keeps the count exact and the key present exactly while pinned or held, a held DID's signer never changes, and a hold with its own signer is taken",
+        axis: Lean,
+        anchor: "crates/defra-core/src/signing/identity_store.rs Holders, same_signer, hold_identity, retain_identity, release_identity, store_identity, clear_identity_store",
+        model_ref: "IdentityStore (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A peer key the caller hands in for one start (Go's P2PPrivateKey)
+        // is used as given: never checked against the store and never
+        // recorded in it, so a later start without it carries on with the
+        // store's own key.
+        family: "Peer key loading",
+        name: "INV_StartKeyStarts / INV_StartKeyLeavesNoMark / INV_PlainKeyStable: a start with a start key always starts, leaves no mark that refuses a later plain start, and never changes the key plain starts use",
+        axis: Tla,
+        anchor: "crates/defra-node/src/peer_key.rs load_with_keyring, load_or_create; crates/defra-node/src/start_peer_key.rs StartPeerKey; crates/defra-node/src/libp2p_runtime.rs assemble_libp2p; crates/defra-node/src/p2p_runtime.rs setup_iroh; crates/ffi/src/node/mod.rs build_node_state",
+        model_ref: "MC_PeerKeyLoad_{Green,Red_StartKeyChecked,Red_StartKeyRecorded}.cfg",
+        tiers: &[Contract],
+        bound_by: "crates/defra-node/tests/unit/peer_keyring.rs a_start_key_is_used_as_given_and_leaves_a_plain_store_as_it_was, a_start_key_starts_a_keyring_store_without_changing_it",
+    },
+    Property {
+        family: "Peer key loading",
+        name: "start_key_is_used / start_key_leaves_store / plain_after_start_key: a start key is answered as given, the store comes back unchanged, and a plain start after it loads what it would have without it",
+        axis: Lean,
+        anchor: "crates/defra-node/src/peer_key.rs load_with_keyring, load_or_create",
+        model_ref: "PeerKeyLoad (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // Calls a C caller makes on one explicit transaction run one at a
+        // time, in call order, even when a call returns before its work runs
+        // (the asynchronous query): each takes a ticket as it names the
+        // transaction, and a ticket dropped before its turn is skipped once.
+        family: "FFI transaction turns",
+        name: "INV_OneRunning / INV_NoOvertake / Progress: calls on a transaction run one at a time, none overtakes an earlier ticket (a commit never lands before work asked for first), and no call waits forever on a dropped ticket",
+        axis: Tla,
+        anchor: "crates/ffi/src/state/turns.rs Turns::take, Turns::finish, Ticket::wait, Ticket; crates/ffi/src/target.rs resolve_target, TxnCall; crates/ffi/src/request.rs Request::resolve; crates/ffi/src/query/exec.rs Prepared::run, run_in_turn, defra_query_execute_async; crates/ffi/src/txn/lifecycle.rs defra_transaction_commit, defra_transaction_discard",
+        model_ref: "MC_TxnTurns_{Green,Red_NoRecheck,Red_CancelSkipsNow}.cfg",
+        tiers: &[Contract],
+        bound_by: "crates/ffi/src/state/turns_tests.rs tickets_are_served_in_the_order_they_were_taken, a_ticket_dropped_before_its_turn_is_skipped, a_ticket_dropped_on_its_turn_serves_the_next, calls_from_several_threads_never_run_at_once; crates/ffi/src/call/tests.rs an_async_query_in_a_transaction_returns_before_it_runs, calls_on_a_transaction_run_in_the_order_they_were_made",
+    },
+    Property {
+        family: "FFI transaction turns",
+        name: "take_hands_out_next / take_moves_next / skip_passes_only_dropped: tickets come out distinct and in call order, and skipping passes only dropped tickets",
+        axis: Lean,
+        anchor: "crates/ffi/src/state/turns.rs Turns::take, Turns::finish",
+        model_ref: "TxnTurns (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A vector index description's stored form is the normalized one:
+        // Go's defaults filled in, and an empty algorithm or metric read as
+        // the default. Normalizing is stable, so the stored form never drifts.
+        family: "Vector index defaults",
+        name: "normalize_idempotent / normalize_hnsw_fills / normalize_other_unchanged / empty_reads_default / nonempty_reads_itself: normalizing twice is normalizing once, an HNSW index is stored with every parameter set, any other index is untouched, and an empty string reads as the default",
+        axis: Lean,
+        anchor: "crates/schema/src/vector_index_defaults.rs VectorIndexDescription::normalized, empty_is_default",
+        model_ref: "VectorIndexDefaults (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A document call through a selected collection version (possibly
+        // inactive) pins that version in the transaction's catalog for its
+        // turn: every name lookup sees it, writes are recorded at it, reads
+        // through it store nothing back, and the pin ends with the turn.
+        family: "Selected collection version",
+        name: "INV_PinScoped / INV_UnpinnedSeesActive / INV_ReadNoSideEffect / INV_WriteAtSelected: a pin never outlives its turn, an unpinned turn sees the active version, a read through an inactive version changes nothing, and a write lands at the selected version",
+        axis: Tla,
+        anchor: "crates/db/src/txn/catalog.rs Catalog::pin, Catalog::get; crates/db/src/txn/registry/owned.rs OwnedTxn TxnTurn::pin_collection; crates/query/src/runner/turn.rs run_turn_with_delegation, pin_selected_version; crates/db/src/collection/provider.rs TxnCollectionProvider::get_collection; crates/db/src/txn/mod.rs DbTxn::validate_collection_for_write; crates/db/src/read/lensed/fetcher/migration.rs update_datastore; crates/ffi/src/document/run.rs DocumentCall",
+        model_ref: "MC_VersionPin_{Green,Red_PinLeaks,Red_WriteBackOnPin}.cfg",
+        tiers: &[Contract],
+        bound_by: "crates/ffi/src/document/version_tests.rs a_document_added_through_an_old_version_is_recorded_at_it, a_get_answers_the_fields_of_the_version_it_reads_through, a_selected_version_does_not_outlive_its_call_in_a_transaction",
+    },
+    Property {
+        family: "Selected collection version",
+        name: "pinned_name_answers_pin / other_name_answers_cache / cleared_answers_cache: a pin answers only for its own name, and clearing it leaves the catalog answering exactly what the cache holds",
+        axis: Lean,
+        anchor: "crates/db/src/txn/catalog.rs Catalog::get, Catalog::pin, Catalog::unpin",
+        model_ref: "CatalogPin (lake build)",
         tiers: &[Boundary],
         bound_by: "",
     },

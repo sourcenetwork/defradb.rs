@@ -30,7 +30,7 @@ fn selected_actor_signs_create_update_and_respects_transaction_finality() {
         let (node_did, node_key) = key();
         let (actor, actor_key) = key();
         let (other, other_key) = key();
-        defra_core::signing::store_identity(&node_did, node_key);
+        defra_core::signing::store_identity(&node_did, node_key).expect("the store takes the identity");
         let signer = EmbeddedSigner::from_config(actor_key).unwrap();
         let other_signer = EmbeddedSigner::from_config(other_key).unwrap();
         let node = Node::builder().with_node_identity_did(&node_did).build().await.unwrap();
@@ -94,7 +94,8 @@ fn a_context_carrying_a_callers_key_signs_as_that_actor() {
     workers::block_on(async {
         let (node_did, node_key) = key();
         let (actor, actor_key) = key();
-        defra_core::signing::store_identity(&node_did, node_key);
+        defra_core::signing::store_identity(&node_did, node_key)
+            .expect("the store takes the identity");
         let node = Node::builder()
             .with_node_identity_did(&node_did)
             .build()
@@ -161,7 +162,7 @@ fn selected_signer_does_not_bypass_document_acp() {
         let (node_did, node_key) = key();
         let (owner, owner_key) = key();
         let (other, other_key) = key();
-        defra_core::signing::store_identity(&node_did, node_key);
+        defra_core::signing::store_identity(&node_did, node_key).expect("the store takes the identity");
         let node = Node::builder().with_node_identity_did(&node_did).build().await.unwrap();
         let policy = node.add_dac_policy_as(
             &defra_core::RequestContext::default().with_identity(Some(owner.clone())),
@@ -199,7 +200,8 @@ fn native_admission_matches_executed_lean_model() {
         let (node_did, node_key) = key();
         let (actor, actor_key) = key();
         let (other, _) = key();
-        defra_core::signing::store_identity(&node_did, node_key);
+        defra_core::signing::store_identity(&node_did, node_key)
+            .expect("the store takes the identity");
         let node = Node::builder()
             .with_node_identity_did(&node_did)
             .build()

@@ -21,20 +21,22 @@ mod callback;
 mod pending;
 mod register;
 #[cfg(test)]
+mod registration_tests;
+#[cfg(test)]
 mod tests;
 
 use std::ffi::CString;
 use std::future::Future;
 use std::sync::Arc;
 
-use defra_core::signing::{RemoteSigner, SignFailure, SigningAuthorization};
+use defra_core::signing::{HostContext, RemoteSigner, SignFailure, SigningAuthorization};
 use defra_core::thread_bounds::MaybeBoxFuture;
 
 pub use callback::{DefraRemoteSignAsyncCallback, DefraRemoteSignCallback, DEFRA_SIGN_RETRYABLE};
 pub use pending::defra_remote_sign_complete;
 pub use register::{
-    register_remote_identity, register_remote_identity_async, register_remote_identity_bytes,
-    register_remote_identity_bytes_async,
+    defra_identity_new_remote, defra_identity_new_remote_async, defra_identity_new_remote_bytes,
+    defra_identity_new_remote_bytes_async,
 };
 
 use callback::{failed, signature, MAX_REMOTE_SIGNATURE_LEN};
@@ -145,6 +147,20 @@ impl Host {
 }
 
 impl RemoteSigner for FfiRemoteSigner {
+    /// The host's `signer_handle` and callback: two registrations naming
+    /// both are one signer, since the host keeps that context valid until
+    /// every identity handle naming it is freed.
+    fn host_context(&self) -> Option<HostContext> {
+        let callback = match self.host.callback {
+            HostCallback::Sync(callback) => callback as usize,
+            HostCallback::Async(callback) => callback as usize,
+        };
+        Some(HostContext {
+            handle: self.host.signer_handle,
+            callback,
+        })
+    }
+
     /// Signs `data` on the calling thread: the synchronous callback at once;
     /// the asynchronous one waiting for its result, at most the network
     /// runtime's deadline.
@@ -190,7 +206,7 @@ impl RemoteSigner for FfiRemoteSigner {
                 .map(|payload| host.sign_now(callback, payload))
                 .collect::<Vec<_>>()
         };
-        // Without the runtime (no `defra_init`) there are no blocking
+        // Without the runtime (it could not start) there are no blocking
         // threads: sign here, as a signer with only a synchronous call must.
         let Some(edge) = crate::runtime::edge() else {
             return Box::pin(std::future::ready(sign()));

@@ -378,6 +378,9 @@ pub enum Error {
     /// The DID of a node identity could not be derived.
     #[error("failed to derive node DID: {0}")]
     DidDerive(#[source] identity::Error),
+    /// The node's DID is already held with another signer.
+    #[error(transparent)]
+    IdentityConflict(#[from] defra_core::signing::IdentityConflict),
     /// A libp2p listen address did not parse.
     #[cfg(feature = "libp2p")]
     #[error("invalid multiaddr '{addr}': {source}")]
@@ -408,6 +411,9 @@ pub enum Error {
     #[cfg(feature = "libp2p")]
     #[error("failed to create KMS transport: {0}")]
     KmsTransport(#[source] kms::Error),
+    /// The caller's per-start peer key is not an Ed25519 private key.
+    #[error("invalid p2p private key: {0}")]
+    InvalidStartPeerKey(String),
     /// The store holds a plaintext peer key, which a keyring cannot take over.
     #[cfg(any(feature = "libp2p", feature = "p2p"))]
     #[error("plaintext peerstore /p2p/local-peer-key requires explicit keyring migration")]

@@ -79,6 +79,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Explicit transaction statement atomicity | TLA+ | query, db, storage |
 | Engine ticker export | TLA+ & Lean | telemetry, storage |
 | Worker pool CPU ledger | TLA+ & Lean | workers |
+| Signing identity store | TLA+ & Lean | defra-core, defra-node, ffi |
 | Worker default pool | TLA+ & Lean | workers |
 | Node shutdown order | TLA+ / Lean | defra-node, embedded, edge, acp, http, query, db, storage |
 | Inbound stream admission | TLA+, Lean | p2p |
@@ -128,6 +129,11 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Document save | TLA+ & Lean | query, defra-node |
 | Mutation value checks | Lean | document, defra-core, query |
 | Cursor tokens | Lean | cursor |
+| Peer key loading | TLA+ / Lean | defra-node, ffi |
+| FFI transaction turns | TLA+ / Lean | ffi |
+| Vector index defaults | Lean | schema |
+| Selected collection version | TLA+ / Lean | db, query, ffi |
+| Encrypted index changes outside a transaction | TLA+ | db, defra-node, cli |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is

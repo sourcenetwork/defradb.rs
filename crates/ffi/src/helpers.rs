@@ -5,16 +5,15 @@ use std::sync::Arc;
 use edge::{Edge, EdgeError};
 
 use crate::state::NODES;
-use crate::types::{c_str_to_string, FfiResult};
+use crate::types::{c_str_to_string, DefraResult};
 use crate::ERR_INVALID_NODE_HANDLE;
 
-/// What a call made before `defra_init` reports.
-pub(crate) const ERR_RUNTIME_NOT_INITIALIZED: &str =
-    "runtime not initialized - call defra_init() first";
+/// What a call reports when the network runtime could not start.
+pub(crate) const ERR_RUNTIME_NOT_INITIALIZED: &str = "the network runtime could not start";
 
-/// Get the network runtime's handle or return an FfiResult error.
-pub fn get_rt() -> Result<&'static Edge, FfiResult> {
-    crate::runtime::edge().ok_or_else(|| FfiResult::error(ERR_RUNTIME_NOT_INITIALIZED))
+/// Get the network runtime's handle or return an DefraResult error.
+pub fn get_rt() -> Result<&'static Edge, DefraResult> {
+    crate::runtime::edge().ok_or_else(|| DefraResult::error(ERR_RUNTIME_NOT_INITIALIZED))
 }
 
 /// Runs `future`, network work, on the network runtime, blocking the C
@@ -28,24 +27,24 @@ where
     rt.block_on(future)?
 }
 
-/// Parse a required C string, returning FfiResult error if null.
+/// Parse a required C string, returning DefraResult error if null.
 ///
 /// # Safety
 /// `ptr` must be null or a valid null-terminated UTF-8 string.
-pub unsafe fn require_c_str(ptr: *const c_char, name: &str) -> Result<String, FfiResult> {
-    c_str_to_string(ptr).ok_or_else(|| FfiResult::error(format!("{} is null", name)))
+pub unsafe fn require_c_str(ptr: *const c_char, name: &str) -> Result<String, DefraResult> {
+    c_str_to_string(ptr).ok_or_else(|| DefraResult::error(format!("{} is null", name)))
 }
 
 /// Extract the database handle from node state.
-pub fn get_node_database(node_ptr: usize) -> Result<Arc<crate::state::FfiDatabase>, FfiResult> {
+pub fn get_node_database(node_ptr: usize) -> Result<Arc<crate::state::FfiDatabase>, DefraResult> {
     NODES
         .get(node_ptr, |state| state.database.clone())
-        .ok_or_else(|| FfiResult::error(ERR_INVALID_NODE_HANDLE))
+        .ok_or_else(|| DefraResult::error(ERR_INVALID_NODE_HANDLE))
 }
 
 /// Extract the query runner from node state.
-pub fn get_node_runner(node_ptr: usize) -> Result<Arc<dyn query::QueryExecutor>, FfiResult> {
+pub fn get_node_runner(node_ptr: usize) -> Result<Arc<dyn query::QueryExecutor>, DefraResult> {
     NODES
         .get(node_ptr, |state| state.query_runner.clone())
-        .ok_or_else(|| FfiResult::error(ERR_INVALID_NODE_HANDLE))
+        .ok_or_else(|| DefraResult::error(ERR_INVALID_NODE_HANDLE))
 }
