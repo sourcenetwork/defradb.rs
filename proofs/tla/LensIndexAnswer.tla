@@ -29,6 +29,15 @@
 (* while a record stands; a rebuild clears only the record whose token it  *)
 (* started from.                                                           *)
 (*                                                                         *)
+(* A query plans and scans in two steps. It plans from what it can see at  *)
+(* the time (the cached collection), picking the index when the index      *)
+(* answers. Anything can commit before it scans: a merge can owe a reindex *)
+(* in between. So the scan reads the owed record again in its own          *)
+(* transaction, and when one stands it gives up the index and scans the    *)
+(* collection instead, which always reads what queries read. What must     *)
+(* never happen: a query that scans the index while the entry differs      *)
+(* from what it reads, because it trusted a plan made before the merge.    *)
+(*                                                                         *)
 (* Rust code modelled:                                                     *)
 (*   crates/db/src/definition/migration/reindex/owed.rs owe_reindex,       *)
 (*     clear_owed_reindex, settle_owed_reindex                             *)
@@ -49,6 +58,14 @@
 (*   crates/db/src/definition/migration/set.rs set_migration_as,           *)
 (*   crates/db/src/collection/ops/version.rs set_active_collection_version *)
 (*   crates/query/src/planner/builder/index_methods.rs try_select_index    *)
+(*     and crates/query/src/runner/query/simple.rs execute_simple_select   *)
+(*     (Plan: the index from the cached queryable indexes)                 *)
+(*   crates/db/src/read/lensed/autocommit/scan.rs get_by_index_scan_inner, *)
+(*     crates/db/src/read/lensed/autocommit/stream.rs                      *)
+(*     stream_index_scan_impl (Scan: the owed record read in the scan's    *)
+(*     own transaction, QueryError::IndexOwed when it stands), and         *)
+(*     crates/query/src/runner/query/select.rs execute_select_internal     *)
+(*     (that error re-plans the select without indexes: a collection scan) *)
 (* Go reference: internal/db/lens.go setMigration, internal/db/merge.go    *)
 (*   syncIndexedDoc (Go indexes the merged document as the active version  *)
 (*   reads it).                                                            *)
@@ -68,6 +85,9 @@ CONSTANTS
   SkipIfOwed,
   \* TRUE when a rebuild clears the record only if its token is unchanged.
   ClearChecksToken,
+  \* TRUE when a query's index scan reads the owed record again, in its own
+  \* transaction, and falls back to a collection scan when one stands.
+  ScanRechecksOwed,
   \* How many steps a behaviour may take, to keep the state space finite.
   MaxSteps
 
@@ -75,6 +95,7 @@ CONSTANTS
 ASSUME /\ Gate \in {"owed", "lens", "none"}
        /\ OweOnSchemaChange \in BOOLEAN /\ OweOnMerge \in BOOLEAN
        /\ SkipIfOwed \in BOOLEAN /\ ClearChecksToken \in BOOLEAN
+       /\ ScanRechecksOwed \in BOOLEAN
        /\ MaxSteps \in Nat
 
 \* The two versions of the collection.
@@ -109,9 +130,18 @@ VARIABLES
   \* The token a finished walk started from (NoWalk when none waits).
   walk,
   \* How many steps have been taken.
-  steps
+  steps,
+  \* The one query's progress: "idle" before it plans, "index" or "scan"
+  \* once it has planned which source to read, "done" after it scanned.
+  plan,
+  \* Whether the query's answer was right: "none" until it scans, then
+  \* "right" when it saw what reads see, "wrong" when it did not.
+  answer
 
-vars == <<active, lens, stored, entry, owed, token, walk, steps>>
+vars == <<active, lens, stored, entry, owed, token, walk, steps, plan, answer>>
+
+\* The variables the query's two steps leave alone.
+world == <<active, lens, stored, entry, owed, token, walk, steps>>
 
 \* What a query reads: the stored value, through the lens when the document
 \* sits at the version that is not active.
@@ -127,12 +157,16 @@ TypeOK == /\ active \in Versions /\ lens \in BOOLEAN
           /\ stored \in [ver : Versions, val : Vals] /\ entry \in Vals
           /\ owed \in BOOLEAN /\ token \in Nat /\ walk \in Nat
           /\ steps \in 0..MaxSteps
+          /\ plan \in {"idle", "index", "scan", "done"}
+          /\ answer \in {"none", "right", "wrong"}
 
 \* At the start: one document stored at "old" with value 0, indexed as 0,
 \* "old" active, no lens, no record.
 Init == /\ active = "old" /\ lens = FALSE
         /\ stored = [ver |-> "old", val |-> 0] /\ entry = 0
         /\ owed = FALSE /\ token = 1 /\ walk = NoWalk /\ steps = 0
+        \* The query has not planned yet and has no answer.
+        /\ plan = "idle" /\ answer = "none"
 
 \* Write a fresh owed record (a new token), in the acting transaction.
 Owe == owed' = TRUE /\ token' = token + 1
@@ -182,11 +216,34 @@ RebuildClear == /\ Step /\ walk # NoWalk /\ walk' = NoWalk
                      THEN owed' = FALSE ELSE UNCHANGED owed
                 /\ UNCHANGED <<active, lens, stored, entry, token>>
 
-\* Any one of the actions above.
-Next == \/ SetMigration \/ SwitchActive
-        \/ \E v \in Vals : LocalWrite(v)
-        \/ \E ver \in Versions, v \in Vals : Merge(ver, v)
-        \/ RebuildWalk \/ RebuildClear
+\* The query plans: it picks the index when the index answers right now
+\* (the cached collection it plans from), and a collection scan otherwise.
+\* Planning does not count as a step, so every world behaviour of MaxSteps
+\* steps can still happen between the plan and the scan.
+Plan == /\ plan = "idle"
+        /\ plan' = IF IndexAnswers THEN "index" ELSE "scan"
+        /\ UNCHANGED <<world, answer>>
+
+\* The query scans what it planned. A collection scan reads what reads see,
+\* so it is always right. An index scan first reads the owed record again,
+\* when the guard is on, and scans the collection instead when one stands;
+\* otherwise it answers from the entry, which is right only when the entry
+\* holds what reads see.
+Scan == /\ plan \in {"index", "scan"}
+        /\ plan' = "done"
+        \* Whether the scan gives up the index for a collection scan.
+        /\ LET fallsBack == ScanRechecksOwed /\ owed
+           IN answer' = IF plan = "scan" \/ fallsBack \/ entry = Read
+                          THEN "right" ELSE "wrong"
+        /\ UNCHANGED world
+
+\* Any one of the actions above. The world's actions leave the query alone.
+Next == \/ /\ \/ SetMigration \/ SwitchActive
+              \/ \E v \in Vals : LocalWrite(v)
+              \/ \E ver \in Versions, v \in Vals : Merge(ver, v)
+              \/ RebuildWalk \/ RebuildClear
+           /\ UNCHANGED <<plan, answer>>
+        \/ Plan \/ Scan
 
 \* The whole behaviour: start in Init, take Next steps (or stutter).
 Spec == Init /\ [][Next]_vars
@@ -197,4 +254,8 @@ INV_IndexMatchesReads == IndexAnswers => entry = Read
 \* Once nothing is owed or waiting and the entry matches, the index answers
 \* (nothing valid is refused: #2379).
 INV_SettledIndexAnswers == (~owed /\ walk = NoWalk /\ entry = Read) => IndexAnswers
+
+\* A query that planned before a merge and scanned after it still answers
+\* what reads see: no plan is trusted past a reindex owed in between.
+INV_ScanMatchesReads == answer # "wrong"
 ================================================================================

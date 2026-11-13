@@ -1746,14 +1746,17 @@ pub const PROPERTIES: &[Property] = &[
         // schema changes and merges that store a document off the active
         // version across a lens owe a fresh record, and a rebuild clears only
         // the record it started from. Main before the fix refused every index
-        // once a lens existed (Red_LensGate).
+        // once a lens existed (Red_LensGate). A query's index scan reads the
+        // owed record again in its own transaction and re-plans to a
+        // collection scan when one stands, so a merge that commits between
+        // the plan and the scan cannot make it miss a document (Red_TrustPlan).
         family: "Schema-evolution operations in the core",
-        name: "INV_IndexMatchesReads / INV_SettledIndexAnswers",
+        name: "INV_IndexMatchesReads / INV_SettledIndexAnswers / INV_ScanMatchesReads",
         axis: Tla,
-        anchor: "crates/db/src/definition/migration/reindex/owed.rs owe_reindex, clear_owed_reindex; crates/db/src/collection/mod.rs queryable, Collection::validate_write_definition_read; crates/db/src/merge/merge_handler/stale_version.rs DbMergeHandler::owe_reindex_off_active_version; crates/query/src/planner/builder/index_methods.rs try_select_index",
+        anchor: "crates/db/src/definition/migration/reindex/owed.rs owe_reindex, clear_owed_reindex; crates/db/src/collection/mod.rs queryable, Collection::validate_write_definition_read; crates/db/src/merge/merge_handler/stale_version.rs DbMergeHandler::owe_reindex_off_active_version; crates/query/src/planner/builder/index_methods.rs try_select_index; crates/db/src/read/lensed/autocommit/scan.rs get_by_index_scan_inner; crates/query/src/runner/query/select.rs execute_select_internal",
         model_ref: "MC_LensIndexAnswer_{Green,Red_*}.cfg",
         tiers: &[Boundary],
-        bound_by: "",
+        bound_by: "crates/db/tests/merge/plan_scan_race.rs",
     },
     Property {
         // An explicit transaction's ID is `sequence * workers + worker`. The
