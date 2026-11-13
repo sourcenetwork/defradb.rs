@@ -38,6 +38,7 @@ use super::peer_map::{parse_endpoint_id, SharedPeerMap};
 use super::protocols;
 use super::records::{RecordsHandle, RECORDS_TOPIC};
 use super::solicited::Solicited;
+use super::stream_protocols::{StreamProtocols, StreamRegistration};
 use super::task_registry::TaskRegistry;
 
 /// Events each dispatch class may queue before its senders wait.
@@ -64,6 +65,7 @@ pub(super) struct EndpointResources {
     pub(super) fetch_stats: Arc<FetchStats>,
     pub(super) records: RecordsHandle,
     pub(super) solicited: Arc<Solicited>,
+    pub(super) stream_protocols: StreamProtocols,
 }
 
 pub(super) type RawTopics = Arc<HopscotchMap<String, (), RandomState>>;
@@ -113,6 +115,23 @@ pub async fn spawn_endpoint(
     Arc<ReplicatorRegistry>,
     edge::Task<()>,
 )> {
+    spawn_endpoint_with_protocols(config, edge, Vec::new()).await
+}
+
+/// [`spawn_endpoint`], also serving an embedder's stream protocols on the same
+/// connections. Refuses to start on a protocol it could not serve, or a tag
+/// given twice.
+pub async fn spawn_endpoint_with_protocols(
+    config: IrohEndpointConfig,
+    edge: edge::Edge,
+    stream_protocols: Vec<StreamRegistration>,
+) -> crate::error::Result<(
+    CommandSender,
+    crate::sync::DispatchReceiver<TransportEvent<iroh::endpoint::SendStream>>,
+    Arc<ReplicatorRegistry>,
+    edge::Task<()>,
+)> {
+    let stream_protocols = StreamProtocols::new(stream_protocols)?;
     // Every Defra protocol, gossip included, is multiplexed over one ALPN. The
     // version before gossip moved onto it is still served, without gossip.
     let alpns: Vec<Vec<u8>> = vec![
@@ -156,6 +175,7 @@ pub async fn spawn_endpoint(
             endpoint,
             node_identity,
             admission,
+            stream_protocols,
             command_rx,
             running,
             event_tx,
@@ -177,6 +197,7 @@ async fn run_event_loop(
     endpoint: Endpoint,
     node_identity: Option<Arc<identity::RawIdentity>>,
     admission: Arc<PeerAdmission>,
+    stream_protocols: StreamProtocols,
     mut command_rx: mpsc::Receiver<IrohCommand>,
     running: oneshot::Sender<()>,
     event_tx: crate::sync::DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
@@ -205,6 +226,7 @@ async fn run_event_loop(
         fetch_stats: Arc::default(),
         records: records.clone(),
         solicited: Arc::new(Solicited::new()),
+        stream_protocols,
     };
     let _ = connection_cache
         .lifecycle

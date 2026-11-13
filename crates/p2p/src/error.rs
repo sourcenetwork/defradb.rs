@@ -57,6 +57,23 @@ pub enum Error {
     #[error("connection closed")]
     ConnectionClosed,
 
+    /// The peer reset or stopped a stream, with this QUIC code.
+    #[error("stream reset by the peer with code {0}")]
+    StreamReset(u64),
+
+    /// A request is larger than the stream protocol it is opened for accepts.
+    #[error(
+        "a request of {len} bytes is larger than stream protocol {tag:?} accepts ({max} bytes)"
+    )]
+    RequestTooLarge {
+        /// The protocol's tag.
+        tag: String,
+        /// The request's size in bytes.
+        len: usize,
+        /// The largest request the protocol accepts.
+        max: usize,
+    },
+
     /// Protocol negotiation failed.
     #[error("protocol negotiation failed: {0}")]
     ProtocolNegotiation(String),

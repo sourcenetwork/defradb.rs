@@ -13,6 +13,9 @@ use crate::replicator::ReplicatorInfo;
 use crate::transport::{MessageId, PeerAddr, PeerId};
 use crate::QueryId;
 
+use super::protocol_stream::{ProtocolRecvStream, ProtocolSendStream};
+use super::stream_protocols::StreamProtocol;
+
 /// Where the endpoint answers a command.
 pub type Reply<T> = oneshot::Sender<crate::error::Result<T>>;
 
@@ -170,6 +173,15 @@ pub enum IrohCommand {
     },
 
     // Messaging
+    /// Open a stream for an embedder's protocol, dialling the peer if no
+    /// connection is open, and write its request.
+    OpenStream {
+        peer_id: PeerId,
+        addrs: Vec<PeerAddr>,
+        protocol: StreamProtocol,
+        request: Vec<u8>,
+        reply: Reply<(ProtocolSendStream, ProtocolRecvStream)>,
+    },
     /// Write an encoded reply on its request's stream and finish it.
     ReplyOnStream {
         send_stream: SendStream,
