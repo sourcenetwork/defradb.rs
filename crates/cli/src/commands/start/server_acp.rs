@@ -113,43 +113,13 @@ impl Node {
                     "node identity required for vera.rs ACP (use --identity)".into(),
                 )
             })?;
-
-            let tuning = vera::AcpTuning {
-                request_timeout: std::time::Duration::from_secs(config.acp.request_timeout),
-                circuit_breaker_threshold: config.acp.circuit_breaker_threshold,
-                circuit_breaker_reset_timeout: std::time::Duration::from_secs(
-                    config.acp.circuit_breaker_reset_timeout,
-                ),
-                cache_ttl: std::time::Duration::from_secs(config.acp.cache_ttl),
-                receipt_timeout: std::time::Duration::from_secs(config.acp.receipt_timeout),
-            };
-
-            info!(
-                request_timeout_s = config.acp.request_timeout,
-                circuit_breaker_threshold = config.acp.circuit_breaker_threshold,
-                circuit_breaker_reset_timeout_s = config.acp.circuit_breaker_reset_timeout,
-                receipt_timeout_s = config.acp.receipt_timeout,
-                "Resolved ACP tuning (vera.rs; access decision cache disabled)"
-            );
-
+            let tuning = vera_rs_tuning(config);
             let deployment = config.acp.vera_deployment_id.ok_or_else(|| {
                 Error::InvalidConfig(
                     "vera_deployment_id is required for native Vera submissions".into(),
                 )
             })?;
-            let worker_config = config.clone();
-            let worker = edge
-                .spawn_blocking(move || {
-                    let keyring = crate::commands::open_keyring(&worker_config)?;
-                    vera::vera_rs::NativeWorker::open(
-                        &worker_config.rootdir.join("vera-worker"),
-                        keyring.as_ref(),
-                        deployment,
-                    )
-                    .map_err(|e| Error::InvalidConfig(format!("Vera worker: {e}")))
-                })
-                .await
-                .map_err(|e| Error::InvalidConfig(format!("Vera worker startup: {e}")))??;
+            let worker = open_vera_worker(config, edge, deployment).await?;
             let provider = Arc::new(
                 vera::VeraRsProvider::new(
                     config.acp.vera_rs_address.clone(),
@@ -164,19 +134,14 @@ impl Node {
                 .map_err(|e| Error::InvalidConfig(format!("vera.rs provider: {}", e)))?,
             );
 
-            let document_acp = Arc::new(
-                vera::VeraDocumentACP::without_access_cache(provider)
-                    .on_network(edge, tuning.request_timeout),
-            );
-            let dac_policies = db::DacPolicies::remote(document_acp.clone(), zanzibar_store);
-
             info!("Document ACP configured (vera.rs)");
-            return Ok(DocumentAcpSetup {
-                document_acp: gate_external_acp(document_acp, store, edge),
-                dac_policies: Arc::new(dac_policies),
-                #[cfg(feature = "embedded-vera")]
-                embedded_vera: None,
-            });
+            return Ok(vera_rs_setup(
+                provider,
+                &tuning,
+                store,
+                zanzibar_store,
+                edge,
+            ));
         }
 
         #[cfg(feature = "embedded-vera")]
@@ -233,7 +198,7 @@ impl Node {
 /// provider call that failed). Until settled, such a document is readable only
 /// by its creator.
 #[cfg(feature = "vera")]
-pub(super) fn gate_external_acp(
+fn gate_external_acp(
     provider: Arc<dyn acp::DocumentACP>,
     store: Arc<storage::DynStore>,
     edge: &edge::Edge,
@@ -255,4 +220,70 @@ pub(super) fn gate_external_acp(
         }
     }));
     gate
+}
+
+/// The timeouts of a vera.rs provider, from the ACP configuration.
+#[cfg(feature = "vera")]
+pub(super) fn vera_rs_tuning(config: &Config) -> vera::AcpTuning {
+    info!(
+        request_timeout_s = config.acp.request_timeout,
+        circuit_breaker_threshold = config.acp.circuit_breaker_threshold,
+        circuit_breaker_reset_timeout_s = config.acp.circuit_breaker_reset_timeout,
+        receipt_timeout_s = config.acp.receipt_timeout,
+        "Resolved ACP tuning (vera.rs; access decision cache disabled)"
+    );
+    vera::AcpTuning {
+        request_timeout: std::time::Duration::from_secs(config.acp.request_timeout),
+        circuit_breaker_threshold: config.acp.circuit_breaker_threshold,
+        circuit_breaker_reset_timeout: std::time::Duration::from_secs(
+            config.acp.circuit_breaker_reset_timeout,
+        ),
+        cache_ttl: std::time::Duration::from_secs(config.acp.cache_ttl),
+        receipt_timeout: std::time::Duration::from_secs(config.acp.receipt_timeout),
+    }
+}
+
+/// The worker that journals this node's vera.rs submissions under
+/// `<rootdir>/vera-worker`, with its key in the node's keyring.
+#[cfg(feature = "vera")]
+pub(super) async fn open_vera_worker(
+    config: &Config,
+    edge: &edge::Edge,
+    deployment: u64,
+) -> Result<vera::vera_rs::NativeWorker> {
+    let worker_config = config.clone();
+    edge.spawn_blocking(move || {
+        let keyring = crate::commands::open_keyring(&worker_config)?;
+        vera::vera_rs::NativeWorker::open(
+            &worker_config.rootdir.join("vera-worker"),
+            keyring.as_ref(),
+            deployment,
+        )
+        .map_err(|e| Error::InvalidConfig(format!("Vera worker: {e}")))
+    })
+    .await
+    .map_err(|e| Error::InvalidConfig(format!("Vera worker startup: {e}")))?
+}
+
+/// Document ACP over a vera.rs provider: verified decisions without an access
+/// cache, remote policies mirrored locally, owed registrations gated.
+#[cfg(feature = "vera")]
+pub(super) fn vera_rs_setup(
+    provider: Arc<vera::VeraRsProvider>,
+    tuning: &vera::AcpTuning,
+    store: Arc<storage::DynStore>,
+    zanzibar_store: Arc<dyn acp::ZanzibarStore>,
+    edge: &edge::Edge,
+) -> DocumentAcpSetup {
+    let document_acp = Arc::new(
+        vera::VeraDocumentACP::without_access_cache(provider)
+            .on_network(edge, tuning.request_timeout),
+    );
+    let dac_policies = db::DacPolicies::remote(document_acp.clone(), zanzibar_store);
+    DocumentAcpSetup {
+        document_acp: gate_external_acp(document_acp, store, edge),
+        dac_policies: Arc::new(dac_policies),
+        #[cfg(feature = "embedded-vera")]
+        embedded_vera: None,
+    }
 }

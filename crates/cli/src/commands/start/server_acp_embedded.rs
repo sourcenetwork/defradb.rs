@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use tracing::info;
 
-use super::server_acp::{gate_external_acp, DocumentAcpSetup};
+use super::server_acp::{open_vera_worker, vera_rs_setup, vera_rs_tuning, DocumentAcpSetup};
 use crate::config::Config;
 use crate::error::{Error, Result};
 
@@ -48,15 +48,7 @@ pub(super) async fn setup(
     }
     // vera.rs takes the keys in ascending order.
     operator_keys.sort();
-    let tuning = vera::AcpTuning {
-        request_timeout: Duration::from_secs(config.acp.request_timeout),
-        circuit_breaker_threshold: config.acp.circuit_breaker_threshold,
-        circuit_breaker_reset_timeout: Duration::from_secs(
-            config.acp.circuit_breaker_reset_timeout,
-        ),
-        cache_ttl: Duration::from_secs(config.acp.cache_ttl),
-        receipt_timeout: Duration::from_secs(config.acp.receipt_timeout),
-    };
+    let tuning = vera_rs_tuning(config);
 
     let node = vera_embedded::HostedNode::start(
         vera_embedded::HostConfig {
@@ -86,19 +78,7 @@ pub(super) async fn setup(
         "Embedded Vera node started"
     );
 
-    let worker_config = config.clone();
-    let worker = edge
-        .spawn_blocking(move || {
-            let keyring = crate::commands::open_keyring(&worker_config)?;
-            vera::vera_rs::NativeWorker::open(
-                &worker_config.rootdir.join("vera-worker"),
-                keyring.as_ref(),
-                chain_id,
-            )
-            .map_err(|e| Error::InvalidConfig(format!("Vera worker: {e}")))
-        })
-        .await
-        .map_err(|e| Error::InvalidConfig(format!("Vera worker startup: {e}")))??;
+    let worker = open_vera_worker(config, edge, chain_id).await?;
     let transport = Arc::new(node.transport(tuning.request_timeout));
     let provider = Arc::new(
         vera::VeraRsProvider::with_transport(
@@ -114,16 +94,8 @@ pub(super) async fn setup(
         .await
         .map_err(|error| invalid("provider", &error))?,
     );
-    let document_acp = Arc::new(
-        vera::VeraDocumentACP::without_access_cache(provider)
-            .on_network(edge, tuning.request_timeout),
-    );
-    let dac_policies = db::DacPolicies::remote(document_acp.clone(), zanzibar_store);
-
     info!("Document ACP configured (embedded vera.rs)");
-    Ok(DocumentAcpSetup {
-        document_acp: gate_external_acp(document_acp, store, edge),
-        dac_policies: Arc::new(dac_policies),
-        embedded_vera: Some(node),
-    })
+    let mut setup = vera_rs_setup(provider, &tuning, store, zanzibar_store, edge);
+    setup.embedded_vera = Some(node);
+    Ok(setup)
 }

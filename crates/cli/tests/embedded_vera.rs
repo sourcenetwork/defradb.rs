@@ -112,7 +112,14 @@ impl RunningNode {
             .expect("kill");
         assert!(sent.success());
         let exited = nuclei::time::timeout(Duration::from_secs(60), self.child.wait()).await;
-        assert!(exited.is_ok(), "node did not shut down: {}", self.logs());
+        let status = exited
+            .unwrap_or_else(|_| panic!("node did not shut down: {}", self.logs()))
+            .expect("wait");
+        assert!(
+            status.success(),
+            "node exited with {status}: {}",
+            self.logs()
+        );
         self.logs()
     }
 }

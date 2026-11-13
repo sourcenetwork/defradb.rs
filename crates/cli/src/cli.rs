@@ -148,7 +148,12 @@ pub struct Cli {
     /// Hex compressed secp256k1 keys, `did:key` for Ed25519 and P-256.
     /// Default: the node identity alone
     #[cfg(feature = "embedded-vera")]
-    #[arg(long = "vera-embedded-operator", global = true)]
+    #[arg(
+        long = "vera-embedded-operator",
+        global = true,
+        env = "DEFRA_VERA_EMBEDDED_OPERATORS",
+        value_delimiter = ','
+    )]
     pub vera_embedded_operators: Vec<String>,
 
     /// Operator approvals an administrative change of the embedded Vera
