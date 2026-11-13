@@ -1,26 +1,31 @@
-//! One call into the node's method table, under the caller's byte limit.
+//! One call into the node's method table, under the caller's deadline and
+//! byte limit.
+
+use std::time::Duration;
 
 use serde_json::Value;
-use vera_jsonrpc::LocalRpc;
 
+use crate::deadline::bounded;
 use crate::error::{EmbeddedError, Failure};
+use crate::EmbeddedTransport;
 
-/// Calls `method` and returns its `result`, refusing one whose JSON text is
-/// longer than `max_bytes`.
+/// Calls `method` and returns its `result`, waiting at most `deadline` and
+/// refusing a result whose JSON text is longer than `max_bytes`.
 ///
 /// The network transports apply the limit to the whole response body, which
 /// is this text inside its JSON-RPC envelope. A result they accept is
 /// therefore accepted here.
 pub(crate) async fn call(
-    rpc: &LocalRpc,
+    transport: &EmbeddedTransport,
     method: &str,
     params: Value,
     max_bytes: usize,
+    deadline: Duration,
 ) -> Result<Value, Failure> {
     let params = positional(method, params).map_err(Failure::Channel)?;
-    let result = rpc
-        .request_raw(method, params)
-        .await
+    let answer = transport.rpc.request_raw(method, params);
+    let result = bounded(&transport.edge, method, deadline, answer)
+        .await?
         .map_err(|error| Failure::from_node(method, error))?;
     decode(&result, max_bytes)
 }

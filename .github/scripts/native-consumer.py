@@ -16,7 +16,14 @@ import time
 SDK_MANIFESTS = ("crates/vera/Cargo.toml", "tools/integration-test/Cargo.toml")
 # Crates built against the unpublished Vera node crates the harness also uses.
 NODE_MANIFESTS = ("crates/vera-embedded/Cargo.toml",)
-VERA_GIT = 'git = "https://github.com/sourcenetwork/vera.rs"'
+# The `git` key of a Vera dependency and its `rev`, with any spacing TOML allows around `=`.
+VERA_GIT = re.compile(r"""(?<![\w-])git\s*=\s*["']https://github\.com/sourcenetwork/vera\.rs(?:\.git)?/?["']""")
+VERA_REV = re.compile(r"""(?<![\w-])rev\s*=\s*["']([0-9a-f]{40})["']""")
+# A `git` or `rev` key on a line of its own, after the dotted path that names its dependency, if any.
+KEY_PATH = r"""\s*((?:(?:[\w-]+|"[^"]*"|'[^']*')\s*\.\s*)*)"""
+OWN_GIT = re.compile(KEY_PATH + r"git\s*=")
+OWN_REV = re.compile(KEY_PATH + r"""rev\s*=\s*["']([0-9a-f]{40})["']\s*""")
+SDK_VERSION = re.compile(r'\s*vera-(?:client|domain|modules)\s*=\s*"(\d+\.\d+\.\d+)"\s*')
 UNIT_NAMES = (
     "abi::tests::delete_relationship_subject_userset_round_trips",
     "abi::tests::set_relationship_subject_object_edge_round_trips",
@@ -88,15 +95,47 @@ def panic_site(log):
     return None
 
 
-def git_pins(lines):
-    """Return the immutable revision of every Vera git dependency among `lines`."""
+def tables(text):
+    """Split a manifest into its tables: the lines between one `[header]` and the next, without comments."""
+    table = []
+    for line in text.splitlines():
+        line = line.split("#", 1)[0]
+        if line.lstrip().startswith("["):
+            yield table
+            table = []
+        else:
+            table.append(line)
+    yield table
+
+
+def own_revision(line, table):
+    """Return the revision of the dependency whose `git` key is `line`, from the same table."""
+    path = re.sub(r"\s", "", OWN_GIT.match(line)[1])
+    for sibling in table:
+        match = OWN_REV.fullmatch(sibling)
+        if match is not None and re.sub(r"\s", "", match[1]) == path:
+            return match[2]
+    return None
+
+
+def git_pins(text):
+    """Return the immutable revision of every Vera git dependency in a manifest."""
     pins = []
-    for line in lines:
-        if VERA_GIT in line:
-            match = re.search(r'rev = "([0-9a-f]{40})"', line)
-            if match is None:
+    for table in tables(text):
+        for line in table:
+            if VERA_GIT.search(line) is None:
+                continue
+            # An inline table carries its revision on the same line. A `git` key on a line of its own
+            # takes the `rev` key of the same dependency: the one with the same dotted path, which is
+            # empty inside a `[dependencies.name]` table. It never borrows another dependency's.
+            if "{" in line:
+                match = VERA_REV.search(line)
+                pin = None if match is None else match[1]
+            else:
+                pin = own_revision(line, table) if OWN_GIT.match(line) else None
+            if pin is None:
                 raise ValueError("SDK revision must be immutable")
-            pins.append(match[1])
+            pins.append(pin)
     return pins
 
 
@@ -104,10 +143,10 @@ def revision(root):
     """Return the pinned Vera harness revision after checking the SDK and node crate declarations."""
     pins, versions = [], []
     for name in SDK_MANIFESTS:
-        lines = (root / name).read_text().splitlines()
-        pins += git_pins(lines)
-        for line in lines:
-            match = re.fullmatch(r'vera-(?:client|domain|modules) = "(\d+\.\d+\.\d+)"', line)
+        text = (root / name).read_text()
+        pins += git_pins(text)
+        for line in text.splitlines():
+            match = SDK_VERSION.fullmatch(line.split("#", 1)[0])
             if match is not None:
                 versions.append(match[1])
     if len(versions) != 6 or len(set(versions)) != 1:
@@ -115,7 +154,7 @@ def revision(root):
     if len(pins) != 1:
         raise ValueError("native harness revision is missing or ambiguous")
     for name in NODE_MANIFESTS:
-        if set(git_pins((root / name).read_text().splitlines())) != {pins[0]}:
+        if set(git_pins((root / name).read_text())) != {pins[0]}:
             raise ValueError("node crates and the native harness pin different Vera revisions")
     return pins[0]
 
