@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use acp::{DocumentPermission, Identity};
-use defra_node::{EmbeddedVeraConfig, EmbeddedVeraDeployment, Node};
+use defra_node::{EmbeddedVeraActor, EmbeddedVeraConfig, EmbeddedVeraDeployment, Node};
 
 /// The compressed secp256k1 key of the account that administers the deployment.
 const ACCOUNT_KEY: &str = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
@@ -31,6 +31,10 @@ resources:
 ";
 
 async fn node(directory: &Path) -> Node {
+    node_as(directory, EmbeddedVeraActor::Secp256k1Key(vec![42; 32])).await
+}
+
+async fn node_as(directory: &Path, actor: EmbeddedVeraActor) -> Node {
     let keyring: Arc<dyn keyring::Keyring> = Arc::new(
         keyring::FileKeyring::open(directory.join("keys"), b"test-password").expect("keyring"),
     );
@@ -46,7 +50,7 @@ async fn node(directory: &Path) -> Node {
             listen: "127.0.0.1:0".parse().expect("address"),
             start_deadline: Duration::from_secs(60),
             stop_deadline: Duration::from_secs(30),
-            actor_key: vec![42; 32],
+            actor,
             worker_dir: directory.join("worker"),
             keyring,
             tuning: vera::AcpTuning::default(),
@@ -112,6 +116,46 @@ fn a_node_decides_document_access_through_its_own_vera_node_across_a_restart() {
         assert!(reads(&second, &owner, &policy).await);
         assert!(!reads(&second, &stranger, &policy).await);
         second.shutdown().await.expect("shutdown");
+    })
+    .unwrap();
+}
+
+/// The actor may be a key the node never sees: a signer for an Ed25519 or a
+/// P-256 identity owns the node's policies under that identity's DID.
+#[test]
+fn a_node_acts_for_a_signer_of_another_key_type() {
+    use vera::vera_rs::{DelegationSigner, Ed25519Signer, P256Signer};
+
+    workers::block_on(async {
+        let signers: [Arc<dyn DelegationSigner>; 2] = [
+            Arc::new(Ed25519Signer::from_slice(&[42; 32]).expect("key")),
+            Arc::new(P256Signer::from_slice(&[42; 32]).expect("key")),
+        ];
+        for signer in signers {
+            let directory = tempfile::tempdir().unwrap();
+            let actor = signer.did().to_owned();
+            let node = node_as(directory.path(), EmbeddedVeraActor::Signer(signer)).await;
+            let vera = node.vera_acp().expect("vera.rs document ACP").clone();
+            assert_eq!(vera.self_did().as_deref(), Some(actor.as_str()));
+
+            let owner = identity::Did::new(&actor).unwrap();
+            let policy = vera
+                .add_policy(owner.as_str(), POLICY)
+                .await
+                .expect("policy");
+            node.document_acp()
+                .register_doc_object(&owner, &policy, "users", "first")
+                .await
+                .expect("registration");
+            assert!(
+                reads(&node, &owner, &policy).await,
+                "{actor} reads its document"
+            );
+            let stranger = identity::Did::new(STRANGER).unwrap();
+            assert!(!reads(&node, &stranger, &policy).await);
+            drop(vera);
+            node.shutdown().await.expect("shutdown");
+        }
     })
     .unwrap();
 }
