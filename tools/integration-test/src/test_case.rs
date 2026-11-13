@@ -79,6 +79,15 @@ impl State {
             .expect("no client type: the Connect action did not run")
     }
 
+    /// Every running node, by name.
+    pub fn running(&self) -> Vec<(String, Arc<TestNode>)> {
+        self.nodes
+            .0
+            .iter()
+            .filter_map(|(name, slot)| Some((name.clone(), slot.node.clone()?)))
+            .collect()
+    }
+
     /// The running node `name`.
     pub fn node(&self, name: &str) -> Result<Arc<TestNode>, Failure> {
         self.slot(name)

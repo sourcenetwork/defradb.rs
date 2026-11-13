@@ -156,9 +156,9 @@ impl PeerStateTracker {
     /// Whether any connected peer is subscribed to `topic`; stops at the
     /// first one.
     pub fn has_subscriber(&self, topic: &str) -> bool {
-        self.peers.iter().any(|(_, info)| {
-            info.is_connected() && info.subscribed_collections.contains_key(topic)
-        })
+        self.peers
+            .iter()
+            .any(|(_, info)| info.is_connected() && info.subscribed_collections.contains_key(topic))
     }
 
     /// Get peers that DON'T have a CID (potential recipients for broadcast).

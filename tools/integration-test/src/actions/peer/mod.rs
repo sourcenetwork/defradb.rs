@@ -9,6 +9,7 @@ mod documents_add;
 mod documents_list;
 mod documents_remove;
 mod info;
+mod subscription_seen;
 pub(crate) mod support;
 mod sync_counters;
 mod wait_events;
