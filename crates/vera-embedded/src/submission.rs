@@ -5,7 +5,7 @@ use serde_json::Value;
 use vera::vera_rs::{ClientError, RpcTransport};
 
 use crate::call::call;
-use crate::error::Failure;
+use crate::error::{EmbeddedError, Failure};
 use crate::EmbeddedTransport;
 
 impl RpcTransport for EmbeddedTransport {
@@ -38,7 +38,7 @@ pub(crate) fn client_error(failure: Failure) -> ClientError {
         Failure::Malformed(error) => ClientError::Json(error),
         Failure::Elapsed { method, deadline } => ClientError::Transport {
             retryable: true,
-            message: Failure::elapsed(method, deadline).to_string(),
+            message: EmbeddedError::Elapsed { method, deadline }.to_string(),
         },
         Failure::Channel(error) => ClientError::Transport {
             retryable: false,
