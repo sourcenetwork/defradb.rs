@@ -489,7 +489,12 @@ where
 
     // GraphQL requests run on the database's worker pool, routed there once
     // at the boundary.
-    let runner = query::pooled::PooledExecutor::wrap(Arc::new(query_runner), pool.as_ref());
+    let query_runner = Arc::new(query_runner);
+    // The HTTP server's document routes, as `defradb start` serves them.
+    #[cfg(feature = "http")]
+    let rest: Arc<dyn query::rest::RestOperations> =
+        Arc::new(query::rest::RestOperationsImpl::new(query_runner.clone()));
+    let runner = query::pooled::PooledExecutor::wrap(query_runner, pool.as_ref());
 
     let local_zanzibar_store = acp_setup.local_zanzibar_store.clone();
     #[cfg(feature = "vera")]
@@ -565,6 +570,8 @@ where
         vera_acp,
         query_limits,
         runner,
+        #[cfg(feature = "http")]
+        rest,
         event_bus,
         schema_ops,
         block_ops,

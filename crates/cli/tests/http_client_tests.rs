@@ -48,6 +48,7 @@ fn test_graphql_response_has_errors() {
         data: None,
         errors: vec![GraphQLError {
             message: "error".to_string(),
+            extensions: None,
         }],
         extensions: None,
     };

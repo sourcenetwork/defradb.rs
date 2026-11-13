@@ -16,6 +16,11 @@ use crate::{QueryLimits, QueryResponse};
 
 type FragmentMap<'a> = RapidHashMap<String, &'a FragmentDefinition<'static, String>>;
 
+/// The error a valid subscription gets when run as a plain request. The HTTP
+/// server reads it to answer Go's `invalid subscription transport`.
+pub const SUBSCRIPTION_NEEDS_SSE: &str = "Subscriptions must be executed via Server-Sent \
+     Events (SSE). Send the request with Accept: text/event-stream header.";
+
 /// Check whether the provided request resolves to a subscription operation.
 pub fn is_subscription_operation(
     query: &str,

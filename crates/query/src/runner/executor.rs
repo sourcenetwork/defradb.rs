@@ -675,10 +675,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 }
                 ParsedOperation::Subscription { .. } => {
                     // Subscriptions require SSE transport - they cannot be executed via regular request/response
-                    Err(crate::error::QueryError::parse(
-                        "Subscriptions must be executed via Server-Sent Events (SSE). \
-                         Send the request with Accept: text/event-stream header.",
-                    ))
+                    Err(crate::error::QueryError::SubscriptionNeedsSse)
                 }
                 ParsedOperation::Introspection { query } => {
                     // Introspection queries are executed against the GraphQL schema
@@ -698,11 +695,16 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             }
             .with_warnings(warnings),
             Err(e) => {
-                tracing::error!(
-                    query = %request.query,
-                    error = %e,
-                    "Query execution failed"
-                );
+                // A subscription without SSE is the caller's mistake, answered with 406.
+                if matches!(e, crate::error::QueryError::SubscriptionNeedsSse) {
+                    tracing::debug!(query = %request.query, "subscription sent without SSE");
+                } else {
+                    tracing::error!(
+                        query = %request.query,
+                        error = %e,
+                        "Query execution failed"
+                    );
+                }
                 QueryResponse {
                     data: None,
                     errors: vec![QueryResponseError::from_query_error(e)],

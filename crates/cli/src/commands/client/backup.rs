@@ -83,7 +83,7 @@ impl BackupExportArgs {
 
         nuclei::fs::write(&self.file, &data)
             .await
-            .map_err(|e| Error::WriteConfig {
+            .map_err(|e| Error::CreateFile {
                 path: self.file.clone(),
                 source: e,
             })?;
@@ -100,7 +100,7 @@ impl BackupImportArgs {
 
         let data = nuclei::fs::read_to_string(&self.file)
             .await
-            .map_err(|e| Error::ReadFile {
+            .map_err(|e| Error::OpenFile {
                 path: self.file.clone(),
                 source: e,
             })?;

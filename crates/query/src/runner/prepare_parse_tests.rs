@@ -165,3 +165,23 @@ fn a_request_that_does_not_parse_answers_with_its_parse_error() {
     })
     .unwrap()
 }
+
+/// HTTP answers this code with 406, so the refusal is a code, not a sentence.
+#[test]
+fn a_subscription_without_sse_answers_with_its_error_code() {
+    workers::block_on(async {
+        let response = runner()
+            .execute(QueryRequest::new("subscription { User { name } }"))
+            .await;
+        assert_eq!(response.data, None);
+        let codes: Vec<_> = response.errors.iter().map(|error| error.code()).collect();
+        assert_eq!(
+            codes,
+            vec![Some(crate::executor::SUBSCRIPTION_NEEDS_SSE_ERROR_CODE)]
+        );
+        assert!(response.errors[0]
+            .message
+            .contains(crate::subscription::SUBSCRIPTION_NEEDS_SSE));
+    })
+    .unwrap()
+}

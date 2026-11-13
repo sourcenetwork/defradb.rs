@@ -123,9 +123,6 @@ impl IndexNewArgs {
         for field in &self.fields {
             validate_identifier(field)?;
         }
-        if let Some(ref name) = self.name {
-            validate_identifier(name)?;
-        }
 
         let client = HttpClient::new(&ctx.url, &ctx.edge)?
             .with_auth_token(ctx.auth_token.clone())

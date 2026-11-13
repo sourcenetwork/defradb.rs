@@ -72,6 +72,8 @@ pub struct GoIndexDescription {
 pub struct GoListIndexesResult {
     #[serde(rename = "Description")]
     pub description: GoIndexDescription,
+    #[serde(rename = "CollectionName")]
+    pub collection_name: String,
     #[serde(rename = "Execution")]
     pub execution: ActionExecution,
 }
@@ -82,13 +84,13 @@ fn index_kind(kind: Option<schema::IndexKind>, unique: bool) -> schema::IndexKin
     ))
 }
 
-fn ready_index(index: crate::router::IndexInfo) -> GoListIndexesResult {
-    let execution = ActionExecution {
+fn listed_index(index: crate::router::IndexInfo) -> GoListIndexesResult {
+    let execution = index.execution.unwrap_or_else(|| ActionExecution {
         collection_id: index.collection_id.clone(),
         subject: index.id.to_string(),
         status: ActionStatus::COMPLETED,
         ..Default::default()
-    };
+    });
     let description = GoIndexDescription {
         kind: index_kind(index.kind, index.unique),
         name: index.name,
@@ -105,6 +107,7 @@ fn ready_index(index: crate::router::IndexInfo) -> GoListIndexesResult {
     };
     GoListIndexesResult {
         description,
+        collection_name: index.collection,
         execution,
     }
 }
@@ -145,16 +148,6 @@ pub async fn go_create_index(
             HttpError::BadRequest(format!(
                 "invalid field name '{}': must match [A-Za-z_][A-Za-z0-9_]*",
                 field
-            ))
-        })?;
-    }
-
-    // Validate index name if provided
-    if let Some(ref name) = request.name {
-        validate_identifier(name).map_err(|_| {
-            HttpError::BadRequest(format!(
-                "invalid index name '{}': must match [A-Za-z_][A-Za-z0-9_]*",
-                name
             ))
         })?;
     }
@@ -210,7 +203,7 @@ pub async fn go_list_indexes(
         .map_err(HttpError::Internal)?;
 
     // Convert to Go-compatible response format
-    let response = indexes.into_iter().map(ready_index).collect();
+    let response = indexes.into_iter().map(listed_index).collect();
 
     Ok(Json(response))
 }
@@ -279,7 +272,7 @@ pub async fn go_list_all_indexes(
         grouped
             .entry(collection)
             .or_default()
-            .push(ready_index(idx));
+            .push(listed_index(idx));
     }
 
     Ok(Json(grouped))

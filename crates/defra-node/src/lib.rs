@@ -235,6 +235,8 @@ pub struct Node {
     vera_acp: Option<Arc<vera::VeraDocumentACP>>,
     query_limits: QueryLimits,
     runner: Arc<dyn QueryExecutor>,
+    #[cfg(feature = "http")]
+    rest: Arc<dyn query::rest::RestOperations>,
     event_bus: Arc<dyn events::Bus>,
     schema_ops: Arc<dyn SchemaOps>,
     block_ops: Arc<dyn BlockOps>,
