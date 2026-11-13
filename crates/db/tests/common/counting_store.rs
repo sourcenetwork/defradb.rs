@@ -37,6 +37,7 @@ struct Counts {
     point_keys: SegQueue<Vec<u8>>,
     scan_prefixes: SegQueue<Vec<u8>>,
     written_keys: SegQueue<Vec<u8>>,
+    on_commits: AtomicUsize,
 }
 
 impl Counts {
@@ -83,6 +84,11 @@ impl<S: Store> CountingStore<S> {
     /// The prefix (empty without one) of each scan opened since the last call.
     pub(crate) fn take_scan_prefixes(&self) -> Vec<Vec<u8>> {
         drain(&self.counts.scan_prefixes)
+    }
+
+    /// Commit callbacks registered on explicit transactions.
+    pub(crate) fn on_commits(&self) -> usize {
+        self.counts.on_commits.load(Ordering::SeqCst)
     }
 
     /// The keys put, merged into or deleted since the last call.
@@ -225,6 +231,7 @@ impl Txn for CountingTxn {
     }
 
     fn on_commit(&mut self, callback: storage::corekv::OnCommit) -> Result<()> {
+        self.counts.on_commits.fetch_add(1, Ordering::SeqCst);
         self.inner.on_commit(callback)
     }
 

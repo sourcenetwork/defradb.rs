@@ -17,6 +17,7 @@ use storage::keys::{IndexDataStoreKey, IndexedField};
 use storage::RegolithStore;
 
 mod drop_history;
+mod requests;
 mod upgrade;
 
 const COLLECTION: &str = "Tallies";
