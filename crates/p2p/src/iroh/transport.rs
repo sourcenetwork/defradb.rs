@@ -456,7 +456,7 @@ impl P2PTransport for IrohTransport {
     }
 
     fn max_raw_publish(&self) -> Option<usize> {
-        Some(super::gossip::MAX_BROADCAST)
+        Some(super::gossip::raw_origin::MAX_RAW_PAYLOAD)
     }
 
     async fn register_pubsub_rpc_topic(&self, topic: String) -> Result<()> {

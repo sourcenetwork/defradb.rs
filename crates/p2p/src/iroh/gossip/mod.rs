@@ -30,7 +30,7 @@ use delivery::Delivery;
 pub(super) use delivery::EventSender;
 use driver::Driver;
 use frame::ProtoMessage;
-pub(crate) use frame::MAX_BROADCAST;
+pub(super) use frame::MAX_BROADCAST;
 use inbox::Inbox;
 
 /// Messages from peers the driver may hold before more are dropped.

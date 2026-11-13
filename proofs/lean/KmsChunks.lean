@@ -4,13 +4,12 @@
 The story, in plain words. A node asks its peers for a batch of keys. Over
 iroh gossip one request can carry only so many keys, so the node cuts the
 batch into chunks of at most `n` keys, the way Rust's `slice::chunks(n)`
-does: the first `n`, then the next `n`, and a shorter last one. It sends
-the chunks a few at a time, in waves of `w` chunks, and glues the answers
-back together in the same order.
+does: the first `n`, then the next `n`, and a shorter last one. Each chunk
+is its own round trip, with its own retries, a few on the wire at once, and
+each answer lands in its key's place.
 
 What must never happen:
-* a key is asked for twice, left out, or moved (`chunks_flatten`,
-  `waves_flatten`);
+* a key is asked for twice, left out, or moved (`chunks_flatten`);
 * a chunk asks for more keys than a request carries (`chunk_size_le`);
 * the answers come back in another order than the keys, or with a key's
   answer missing, even when a whole chunk failed and answers each of its
@@ -18,8 +17,11 @@ What must never happen:
 
 Keys are any values; answers are any values of another type.
 
-Rust anchors: `RemoteKeys::fetch_batch` (`keys.chunks(per_request)`, waves
-of `CHUNKS_IN_FLIGHT`) in `crates/kms/src/remote.rs`.
+Rust anchors: `DefraKms::with_inputs` sets the remote service's `max_batch`
+to the smallest `max_keys_per_request` (`crates/kms/src/defra_kms.rs`); the
+service cuts a group's keys with `members.chunks(max_batch)` and answers a
+failed chunk's keys one error each (`Inner::inline`, `Inner::answers`,
+`crates/inputs/src/service.rs`).
 -/
 
 namespace KmsChunks
@@ -127,23 +129,5 @@ theorem answers_length {α β : Type} (n : Nat) (hn : 0 < n) (r : List α → Li
     (((chunks n xs).map r).flatten).length = xs.length := by
   -- Count the answers chunk by chunk, then the chunks glue back to the batch.
   rw [flatten_length_of_lengths r hr, chunks_flatten n hn]
-
--- Cutting each wave into chunks and gluing all the chunks gives the waves.
-theorem flatten_chunks_of_each {α : Type} (n : Nat) (hn : 0 < n) :
-    ∀ L : List (List α), ((L.map (chunks n)).flatten).flatten = L.flatten
-  -- No waves: nothing.
-  | [] => rfl
-  -- One wave then the rest: its chunks glue back to it.
-  | l :: L => by
-    simp only [List.map_cons, List.flatten_cons, List.flatten_append,
-      chunks_flatten n hn, flatten_chunks_of_each n hn L]
-
--- Promise: sending the chunks in waves of `w` chunks (waves of `n * w`
--- keys, each cut into chunks of `n`) still asks for every key once, in
--- order.
-theorem waves_flatten {α : Type} (n w : Nat) (hn : 0 < n) (hw : 0 < w) (xs : List α) :
-    (((chunks (n * w) xs).map (chunks n)).flatten).flatten = xs := by
-  -- Each wave's chunks glue back to the wave, and the waves to the batch.
-  rw [flatten_chunks_of_each n hn, chunks_flatten (n * w) (Nat.mul_pos hn hw)]
 
 end KmsChunks

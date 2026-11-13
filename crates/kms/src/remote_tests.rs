@@ -265,13 +265,9 @@ async fn a_split_batch_keeps_few_chunks_on_the_wire_at_once() {
     assert_eq!(transport.requests.load(Ordering::SeqCst), 10);
     assert_eq!(
         transport.most_in_flight.load(Ordering::SeqCst),
-        super::CHUNKS_IN_FLIGHT
+        crate::defra_kms::CHUNKS_IN_FLIGHT
     );
-    assert_eq!(
-        started.elapsed(),
-        3 * LATENCY,
-        "ten chunks in waves of four"
-    );
+    assert_eq!(started.elapsed(), 3 * LATENCY, "ten chunks, four at a time");
 }
 
 /// Fails its first `fail` sends the way a gossip publish does when the topic
@@ -293,7 +289,9 @@ impl KeyTransport for FlakyTransport {
     ) -> crate::Result<TransportReplyStream> {
         if self
             .fail
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(1))
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
             .is_ok()
         {
             return Err(crate::Error::Remote("publish: no neighbours yet".into()));

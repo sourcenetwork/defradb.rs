@@ -24,7 +24,7 @@ mod endpoint_streams;
 mod fetch_stats;
 mod gossip;
 #[cfg(test)]
-pub(crate) use gossip::MAX_BROADCAST;
+pub(crate) use gossip::raw_origin::MAX_RAW_PAYLOAD;
 #[cfg(test)]
 mod inbound_admission_tests;
 mod inbound_budget;
