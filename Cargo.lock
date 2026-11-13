@@ -3786,7 +3786,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c54e03a951783e8b327515db3f2a2fd0e3bed362a96b066f341ce66ed49b4ead"
 dependencies = [
  "data-encoding",
- "syn 3.0.9",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -12717,7 +12717,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.60.2",
@@ -14325,7 +14325,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "vinc"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vinc?rev=6f8ddb93230a3469f96dde80b754fd03b1e410dd#6f8ddb93230a3469f96dde80b754fd03b1e410dd"
+source = "git+https://github.com/sourcenetwork/vinc?rev=90f35285319a371d53da027a7bc01b17a3f338d6#90f35285319a371d53da027a7bc01b17a3f338d6"
 dependencies = [
  "rapidhash",
  "vinc-broadcast",
@@ -14341,7 +14341,7 @@ dependencies = [
 [[package]]
 name = "vinc-broadcast"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vinc?rev=6f8ddb93230a3469f96dde80b754fd03b1e410dd#6f8ddb93230a3469f96dde80b754fd03b1e410dd"
+source = "git+https://github.com/sourcenetwork/vinc?rev=90f35285319a371d53da027a7bc01b17a3f338d6#90f35285319a371d53da027a7bc01b17a3f338d6"
 dependencies = [
  "blake3",
  "vinc-crypto",
@@ -14352,7 +14352,7 @@ dependencies = [
 [[package]]
 name = "vinc-connect"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vinc?rev=6f8ddb93230a3469f96dde80b754fd03b1e410dd#6f8ddb93230a3469f96dde80b754fd03b1e410dd"
+source = "git+https://github.com/sourcenetwork/vinc?rev=90f35285319a371d53da027a7bc01b17a3f338d6#90f35285319a371d53da027a7bc01b17a3f338d6"
 dependencies = [
  "vinc-core",
  "vinc-crypto",
@@ -14364,7 +14364,7 @@ dependencies = [
 [[package]]
 name = "vinc-core"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vinc?rev=6f8ddb93230a3469f96dde80b754fd03b1e410dd#6f8ddb93230a3469f96dde80b754fd03b1e410dd"
+source = "git+https://github.com/sourcenetwork/vinc?rev=90f35285319a371d53da027a7bc01b17a3f338d6#90f35285319a371d53da027a7bc01b17a3f338d6"
 dependencies = [
  "vinc-crypto",
  "vinc-security",
@@ -14375,7 +14375,7 @@ dependencies = [
 [[package]]
 name = "vinc-crypto"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vinc?rev=6f8ddb93230a3469f96dde80b754fd03b1e410dd#6f8ddb93230a3469f96dde80b754fd03b1e410dd"
+source = "git+https://github.com/sourcenetwork/vinc?rev=90f35285319a371d53da027a7bc01b17a3f338d6#90f35285319a371d53da027a7bc01b17a3f338d6"
 dependencies = [
  "aes 0.9.4",
  "aes-gcm 0.11.1",
@@ -14397,7 +14397,7 @@ dependencies = [
 [[package]]
 name = "vinc-dag"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vinc?rev=6f8ddb93230a3469f96dde80b754fd03b1e410dd#6f8ddb93230a3469f96dde80b754fd03b1e410dd"
+source = "git+https://github.com/sourcenetwork/vinc?rev=90f35285319a371d53da027a7bc01b17a3f338d6#90f35285319a371d53da027a7bc01b17a3f338d6"
 dependencies = [
  "blake3",
  "sha2 0.11.1",
@@ -14407,7 +14407,7 @@ dependencies = [
 [[package]]
 name = "vinc-dtn"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vinc?rev=6f8ddb93230a3469f96dde80b754fd03b1e410dd#6f8ddb93230a3469f96dde80b754fd03b1e410dd"
+source = "git+https://github.com/sourcenetwork/vinc?rev=90f35285319a371d53da027a7bc01b17a3f338d6#90f35285319a371d53da027a7bc01b17a3f338d6"
 dependencies = [
  "vinc-crypto",
  "vinc-dag",
@@ -14418,7 +14418,7 @@ dependencies = [
 [[package]]
 name = "vinc-keystore"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vinc?rev=6f8ddb93230a3469f96dde80b754fd03b1e410dd#6f8ddb93230a3469f96dde80b754fd03b1e410dd"
+source = "git+https://github.com/sourcenetwork/vinc?rev=90f35285319a371d53da027a7bc01b17a3f338d6#90f35285319a371d53da027a7bc01b17a3f338d6"
 dependencies = [
  "getrandom 0.4.3",
  "vinc-crypto",
@@ -14429,7 +14429,7 @@ dependencies = [
 [[package]]
 name = "vinc-membership"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vinc?rev=6f8ddb93230a3469f96dde80b754fd03b1e410dd#6f8ddb93230a3469f96dde80b754fd03b1e410dd"
+source = "git+https://github.com/sourcenetwork/vinc?rev=90f35285319a371d53da027a7bc01b17a3f338d6#90f35285319a371d53da027a7bc01b17a3f338d6"
 dependencies = [
  "vinc-wire",
 ]
@@ -14437,7 +14437,7 @@ dependencies = [
 [[package]]
 name = "vinc-node"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vinc?rev=6f8ddb93230a3469f96dde80b754fd03b1e410dd#6f8ddb93230a3469f96dde80b754fd03b1e410dd"
+source = "git+https://github.com/sourcenetwork/vinc?rev=90f35285319a371d53da027a7bc01b17a3f338d6#90f35285319a371d53da027a7bc01b17a3f338d6"
 dependencies = [
  "blake3",
  "vinc-broadcast",
@@ -14457,7 +14457,7 @@ dependencies = [
 [[package]]
 name = "vinc-reconcile"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vinc?rev=6f8ddb93230a3469f96dde80b754fd03b1e410dd#6f8ddb93230a3469f96dde80b754fd03b1e410dd"
+source = "git+https://github.com/sourcenetwork/vinc?rev=90f35285319a371d53da027a7bc01b17a3f338d6#90f35285319a371d53da027a7bc01b17a3f338d6"
 dependencies = [
  "vinc-crypto",
  "vinc-wire",
@@ -14466,7 +14466,7 @@ dependencies = [
 [[package]]
 name = "vinc-security"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vinc?rev=6f8ddb93230a3469f96dde80b754fd03b1e410dd#6f8ddb93230a3469f96dde80b754fd03b1e410dd"
+source = "git+https://github.com/sourcenetwork/vinc?rev=90f35285319a371d53da027a7bc01b17a3f338d6#90f35285319a371d53da027a7bc01b17a3f338d6"
 dependencies = [
  "vinc-crypto",
  "vinc-wire",
@@ -14476,7 +14476,7 @@ dependencies = [
 [[package]]
 name = "vinc-transport"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vinc?rev=6f8ddb93230a3469f96dde80b754fd03b1e410dd#6f8ddb93230a3469f96dde80b754fd03b1e410dd"
+source = "git+https://github.com/sourcenetwork/vinc?rev=90f35285319a371d53da027a7bc01b17a3f338d6#90f35285319a371d53da027a7bc01b17a3f338d6"
 dependencies = [
  "vinc-crypto",
  "vinc-security",
@@ -14486,7 +14486,7 @@ dependencies = [
 [[package]]
 name = "vinc-values"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vinc?rev=6f8ddb93230a3469f96dde80b754fd03b1e410dd#6f8ddb93230a3469f96dde80b754fd03b1e410dd"
+source = "git+https://github.com/sourcenetwork/vinc?rev=90f35285319a371d53da027a7bc01b17a3f338d6#90f35285319a371d53da027a7bc01b17a3f338d6"
 dependencies = [
  "blake3",
  "vinc-dag",
@@ -14497,7 +14497,7 @@ dependencies = [
 [[package]]
 name = "vinc-wire"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vinc?rev=6f8ddb93230a3469f96dde80b754fd03b1e410dd#6f8ddb93230a3469f96dde80b754fd03b1e410dd"
+source = "git+https://github.com/sourcenetwork/vinc?rev=90f35285319a371d53da027a7bc01b17a3f338d6#90f35285319a371d53da027a7bc01b17a3f338d6"
 
 [[package]]
 name = "wait-timeout"
