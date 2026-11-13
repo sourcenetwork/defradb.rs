@@ -117,16 +117,7 @@ pub(crate) async fn resolve_registered_or_passthrough_bearer_token_as(
         }
     }
 
-    let token = context.bearer_token_for(did);
-    if let Some(Err((issuer, expected))) =
-        token.as_deref().map(super::did_spelling::issuer_spelling)
-    {
-        return Err(crate::provider::ProviderError::Config(format!(
-            "the request token for {did} names its issuer as {issuer}; \
-             this node records that key as {expected}, the uncompressed-key did:key"
-        )));
-    }
-    Ok(token)
+    Ok(context.bearer_token_for(did))
 }
 
 #[cfg(test)]

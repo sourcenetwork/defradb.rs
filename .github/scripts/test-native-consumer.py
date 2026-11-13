@@ -19,7 +19,7 @@ def success(names):
     return "".join("test " + n + " ... ok\n" for n in names) + f"test result: ok. {len(names)} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
 
 
-SDK = 'vera-client = "0.1.1"\nvera-domain = "0.1.1"\nvera-modules = "0.1.1"\n'
+SDK = 'vera-client = "0.1.2"\nvera-domain = "0.1.2"\nvera-modules = "0.1.2"\n'
 HARNESS = 'vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "' + 'a' * 40 + '" }\n'
 
 
@@ -74,7 +74,7 @@ class Tests(unittest.TestCase):
     def test_runtime_override_does_not_bypass_conflicting_sdk_declarations(self):
         self.sdk_fixture()
         path = self.root / driver.SDK_MANIFESTS[1]
-        path.write_text(path.read_text().replace('vera-domain = "0.1.1"', 'vera-domain = "0.1.2"'))
+        path.write_text(path.read_text().replace('vera-domain = "0.1.2"', 'vera-domain = "0.1.3"'))
         with patch.object(driver, 'source') as source, self.assertRaises(ValueError):
             driver.Runner(self.root, self.root / 'runtime', self.root, 'b' * 40)
         source.assert_not_called()
@@ -106,12 +106,12 @@ class Tests(unittest.TestCase):
         self.assertEqual(driver.revision(self.root), 'a' * 40)
         sdk, harness = (self.root / name for name in driver.SDK_MANIFESTS)
         changes = [
-            (sdk, SDK.replace('vera-domain = "0.1.1"', 'vera-domain = "0.1.2"')),
-            (sdk, SDK.replace('vera-modules = "0.1.1"\n', '')),
-            (sdk, SDK.replace('vera-client = "0.1.1"', 'vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "' + 'a' * 40 + '" }')),
+            (sdk, SDK.replace('vera-domain = "0.1.2"', 'vera-domain = "0.1.3"')),
+            (sdk, SDK.replace('vera-modules = "0.1.2"\n', '')),
+            (sdk, SDK.replace('vera-client = "0.1.2"', 'vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "' + 'a' * 40 + '" }')),
             (harness, SDK),
             (harness, SDK + HARNESS + HARNESS.replace('a' * 40, 'b' * 40)),
-            (harness, SDK + HARNESS.replace('rev = "' + 'a' * 40 + '"', 'tag = "v0.1.1"')),
+            (harness, SDK + HARNESS.replace('rev = "' + 'a' * 40 + '"', 'tag = "v0.1.2"')),
         ]
         for path, content in changes:
             original = path.read_text()
