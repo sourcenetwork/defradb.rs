@@ -27,10 +27,12 @@ except ModuleNotFoundError:
 SDK_MANIFESTS = ("crates/vera/Cargo.toml", "tools/integration-test/Cargo.toml")
 # Crates built against the unpublished Vera node crates the harness also uses.
 NODE_MANIFESTS = ("crates/vera-embedded/Cargo.toml",)
-# The vera.rs repository on github.com under every scheme, user and letter case: Cargo resolves those
-# spellings to the same source. Another host is another source.
+# The vera.rs repository on github.com under every scheme, user, port and letter case: Cargo resolves
+# those spellings to the same source. Another host is another source. Matching more spellings than
+# Cargo equates only adds declarations that must carry the pin.
 VERA_URL = re.compile(
-    r"(?:[a-z][a-z0-9+.-]*://)?(?:[^@/]*@)?(?:www\.)?github\.com[:/]+sourcenetwork/vera\.rs(?:\.git)?/?",
+    r"(?:[a-z][a-z0-9+.-]*://)?(?:[^@/]*@)?(?:www\.)?github\.com(?::\d+)?[:/]+sourcenetwork/vera\.rs(?:\.git)?/?"
+    r"(?:[?#].*)?",
     re.IGNORECASE)
 SDK_CRATES = ("vera-client", "vera-domain", "vera-modules")
 DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
