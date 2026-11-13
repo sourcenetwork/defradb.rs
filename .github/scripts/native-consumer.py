@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.parse import unquote, urlsplit
 
 try:
     import tomllib
@@ -27,13 +28,6 @@ except ModuleNotFoundError:
 SDK_MANIFESTS = ("crates/vera/Cargo.toml", "tools/integration-test/Cargo.toml")
 # Crates built against the unpublished Vera node crates the harness also uses.
 NODE_MANIFESTS = ("crates/vera-embedded/Cargo.toml",)
-# The vera.rs repository on github.com under every scheme, user, port and letter case: Cargo resolves
-# those spellings to the same source. Another host is another source. Matching more spellings than
-# Cargo equates only adds declarations that must carry the pin.
-VERA_URL = re.compile(
-    r"(?:[a-z][a-z0-9+.-]*://)?(?:[^@/]*@)?(?:www\.)?github\.com(?::\d+)?[:/]+sourcenetwork/vera\.rs(?:\.git)?/?"
-    r"(?:[?#].*)?",
-    re.IGNORECASE)
 SDK_CRATES = ("vera-client", "vera-domain", "vera-modules")
 DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
 UNIT_NAMES = (
@@ -123,12 +117,39 @@ def dependencies(text):
             yield from table.items() if isinstance(table, dict) else ()
 
 
+def names_vera(source):
+    """Say whether a git source is the vera.rs repository on github.com.
+
+    The source is normalised the way Cargo's URL parser does before it is compared: scheme, user, port,
+    query, fragment, letter case, a `www.` prefix, a `.git` suffix, percent-encoding and empty, `.` and
+    `..` path segments do not change the repository it names. Another host is another source. Matching
+    more spellings than Cargo equates only adds declarations that must carry the pin.
+    """
+    text = re.sub(r"[\t\r\n]", "", source.strip()).replace("\\", "/")
+    if re.match(r"[A-Za-z][A-Za-z0-9+.-]*://", text) is None:
+        text = "ssh://" + text.replace(":", "/", 1)
+    try:
+        parts = urlsplit(text)
+        host = (parts.hostname or "").lower().rstrip(".")
+    except ValueError:
+        return False
+    if host.removeprefix("www.") != "github.com":
+        return False
+    segments = []
+    for segment in unquote(parts.path).lower().split("/"):
+        if segment == "..":
+            del segments[-1:]
+        elif segment not in ("", "."):
+            segments.append(segment)
+    return segments in (["sourcenetwork", "vera.rs"], ["sourcenetwork", "vera.rs.git"])
+
+
 def git_pins(text):
     """Return the immutable revision of every Vera git dependency in a manifest."""
     pins = []
     for _, spec in dependencies(text):
         source = spec.get("git") if isinstance(spec, dict) else None
-        if not isinstance(source, str) or VERA_URL.fullmatch(source) is None:
+        if not isinstance(source, str) or not names_vera(source):
             continue
         pin = spec.get("rev")
         if not isinstance(pin, str) or re.fullmatch(r"[0-9a-f]{40}", pin) is None:
