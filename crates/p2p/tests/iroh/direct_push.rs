@@ -7,6 +7,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use iroh::SecretKey;
 
+use crate::iroh::gossip::raw_origin::MAX_RAW_PAYLOAD;
 use crate::iroh::gossip::MAX_BROADCAST;
 use crate::iroh::{spawn_endpoint, IrohDiscoveryConfig, IrohEndpointConfig, IrohTransport};
 use crate::message::{PushLogBroadcast, PushLogReply};
@@ -230,24 +231,24 @@ async fn a_peer_that_does_not_subscribe_is_not_owed_the_update() {
     stop(nodes).await;
 }
 
-/// A raw publish (a KMS reply) too large for gossip is refused with a typed
-/// error, and one that fits is taken.
+/// A raw publish (a KMS reply) too large for gossip once sealed is refused
+/// with a typed error, and one that fits is taken.
 #[nuclei::test(threads = 0)]
 async fn a_raw_publish_too_large_for_gossip_is_refused() {
     let (transport, _events, task) = node().await;
     let error = transport
-        .publish_raw("raw".to_string(), vec![0; MAX_BROADCAST + 1])
+        .publish_raw("raw".to_string(), vec![0; MAX_RAW_PAYLOAD + 1])
         .await
         .expect_err("over the budget");
     assert!(
         matches!(
             error,
-            Error::GossipTooLarge { size, limit } if size == MAX_BROADCAST + 1 && limit == MAX_BROADCAST
+            Error::GossipTooLarge { size, limit } if size == MAX_RAW_PAYLOAD + 1 && limit == MAX_RAW_PAYLOAD
         ),
         "{error:?}"
     );
     transport
-        .publish_raw("raw".to_string(), vec![0; MAX_BROADCAST])
+        .publish_raw("raw".to_string(), vec![0; MAX_RAW_PAYLOAD])
         .await
         .expect("at the budget");
     transport.shutdown().await.unwrap();

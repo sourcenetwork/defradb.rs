@@ -8,14 +8,18 @@ stream, so that budget leaves the topic out. Our frame carries the topic in
 every message: 32 more bytes. The frame limit stays at 4,096 bytes, the size
 every release reads, so gossip's `max_message_size` is set to 4,096 - 32 and
 the largest content gossip carries is 4,023 bytes. A publish larger than that
-is refused before it reaches gossip.
+is refused before it reaches gossip. A raw payload (a KMS request or reply)
+is sealed before it goes out, which adds 102 bytes, so the most a raw publish
+may carry is 4,023 - 102.
 
 What must never happen:
 * gossip sends a message that is over our frame limit, so the writer cannot
   send it (`broadcast_fits_frame`, `emitted_fits_frame`);
 * the content budget we check is not gossip's own: it lets through content
   gossip would drop, or refuses content gossip carries
-  (`max_broadcast_fits`, `over_max_broadcast_dropped`).
+  (`max_broadcast_fits`, `over_max_broadcast_dropped`);
+* a raw payload we accept grows past what gossip carries once it is sealed
+  (`sealed_raw_fits`).
 
 Sizes are bytes, as natural numbers. The encoding of a broadcast follows
 iroh-gossip 0.102's `plumtree::max_gossip_size`; the Rust test
@@ -24,7 +28,9 @@ protocol.
 
 Rust anchors: `MAX_MESSAGE_SIZE`, `TOPIC_ID_LEN`, `FRAME_LIMIT`,
 `BROADCAST_OVERHEAD`, `MAX_BROADCAST`, `varint_len`, `max_broadcast` in
-`crates/p2p/src/iroh/gossip/frame.rs`.
+`crates/p2p/src/iroh/gossip/frame.rs`; `HEADER_LEN`, `MAX_RAW_PAYLOAD` in
+`crates/p2p/src/iroh/gossip/raw_origin.rs`, checked by `publish_raw` in
+`crates/p2p/src/iroh/transport.rs`.
 -/
 
 namespace GossipFrame
@@ -120,6 +126,24 @@ theorem over_max_broadcast_dropped (n : Nat)
   -- so its size is at least 37 + 2 + 4024, past 4062.
   unfold gossipSends gossipSize overhead maxMessage frameLimit topicLen
   unfold maxBroadcast at h
+  omega
+
+-- What sealing puts in front of a raw payload, `HEADER_LEN`: the six-byte
+-- marker, the 32-byte key and the 64-byte signature.
+def sealOverhead : Nat := 6 + 32 + 64
+
+-- The largest raw payload a publish takes, `MAX_RAW_PAYLOAD`.
+def maxRawPayload : Nat := maxBroadcast - sealOverhead
+
+-- Promise: a raw payload no larger than `MAX_RAW_PAYLOAD` is, once sealed,
+-- content gossip carries.
+theorem sealed_raw_fits (payload : Nat)
+    -- Given a payload within the raw budget,
+    (h : payload ≤ maxRawPayload) :
+    -- its sealed form is within `MAX_BROADCAST`.
+    sealOverhead + payload ≤ maxBroadcast := by
+  -- 102 + 3921 is 4023.
+  unfold maxRawPayload sealOverhead maxBroadcast at *
   omega
 
 end GossipFrame

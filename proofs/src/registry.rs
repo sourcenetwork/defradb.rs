@@ -2407,12 +2407,12 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Gossip connection ownership",
-        name: "broadcast_fits_frame / emitted_fits_frame / max_broadcast_fits / over_max_broadcast_dropped",
+        name: "broadcast_fits_frame / emitted_fits_frame / max_broadcast_fits / over_max_broadcast_dropped / sealed_raw_fits",
         axis: Lean,
-        anchor: "crates/p2p/src/iroh/gossip/frame.rs MAX_MESSAGE_SIZE, TOPIC_ID_LEN, FRAME_LIMIT, BROADCAST_OVERHEAD, MAX_BROADCAST, max_broadcast; crates/p2p/src/iroh/gossip/driver.rs config",
+        anchor: "crates/p2p/src/iroh/gossip/frame.rs MAX_MESSAGE_SIZE, TOPIC_ID_LEN, FRAME_LIMIT, BROADCAST_OVERHEAD, MAX_BROADCAST, max_broadcast; crates/p2p/src/iroh/gossip/driver.rs config; crates/p2p/src/iroh/gossip/raw_origin.rs HEADER_LEN, MAX_RAW_PAYLOAD; crates/p2p/src/iroh/transport.rs publish_raw",
         model_ref: "GossipFrame.Budget (lake build)",
         tiers: &[Boundary],
-        bound_by: "",
+        bound_by: "crates/p2p/tests/iroh/direct_push.rs a_raw_publish_too_large_for_gossip_is_refused",
     },
     Property {
         family: "Gossip connection ownership",
