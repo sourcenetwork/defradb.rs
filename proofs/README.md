@@ -57,6 +57,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Order-preserving key encoding | Lean | storage |
 | vera.rs actor spelling | Lean | vera |
 | vera.rs delegation signing | Lean | vera |
+| vera.rs embedded transport | Lean | vera-embedded |
 | DiskANN resident code table | Lean | db-index |
 | DiskANN walk cutoff | Lean | db-index (vector) |
 | PQ distance four sums | Lean | db-index (vector) |
@@ -228,6 +229,7 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 | Order-preserving key encoding | Boundary | ordered query may sort in memory; consts `pub(crate)` |
 | vera.rs actor spelling | Boundary | over an abstract key; that distinct keys have distinct spellings is the `did:key` encoding's injectivity; unit tests in `crates/vera/src/vera_rs/did_spelling.rs`, live case `actor_spelling` |
 | vera.rs delegation signing | Boundary | over what the tests observe of a signature; that ECDSA verification is sound is assumed; unit tests in `crates/vera/src/vera_rs/signer/tests.rs` and `crates/vera/src/vera_rs/provider/signer_tests.rs`, token bytes pinned in `crates/vera/src/vera_rs/bearer/pinned.rs` |
+| vera.rs embedded transport | Boundary | over the outcome of a call; that the node's method table answers as its network server does is vera.rs's property; unit tests in `crates/vera-embedded/src`, in-process node tests in `crates/vera-embedded/tests/embedded_node.rs` |
 | DiskANN resident code table | Boundary | in-memory search cache, not observable on the wire; `DiskAnnCodes`; unit tests in `crates/db/tests/vector/diskann_resident.rs` |
 | P2P delivery liveness | Behavioral (trace) + Boundary | `model_trace.rs` replays recorded runs through `Trace_P2PDelivery.tla`; eventual connectivity, the bounded instance and the restart scenarios stay Boundary |
 | Cursor tokens | Boundary | `CursorToken`; tokens pinned by `crates/cursor/tests/go_fixtures.rs` |

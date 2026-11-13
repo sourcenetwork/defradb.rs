@@ -14,6 +14,9 @@ import tempfile
 import time
 
 SDK_MANIFESTS = ("crates/vera/Cargo.toml", "tools/integration-test/Cargo.toml")
+# Crates built against the unpublished Vera node crates the harness also uses.
+NODE_MANIFESTS = ("crates/vera-embedded/Cargo.toml",)
+VERA_GIT = 'git = "https://github.com/sourcenetwork/vera.rs"'
 UNIT_NAMES = (
     "abi::tests::delete_relationship_subject_userset_round_trips",
     "abi::tests::set_relationship_subject_object_edge_round_trips",
@@ -85,16 +88,25 @@ def panic_site(log):
     return None
 
 
+def git_pins(lines):
+    """Return the immutable revision of every Vera git dependency among `lines`."""
+    pins = []
+    for line in lines:
+        if VERA_GIT in line:
+            match = re.search(r'rev = "([0-9a-f]{40})"', line)
+            if match is None:
+                raise ValueError("SDK revision must be immutable")
+            pins.append(match[1])
+    return pins
+
+
 def revision(root):
-    """Return the pinned Vera harness revision after checking the published SDK declarations."""
+    """Return the pinned Vera harness revision after checking the SDK and node crate declarations."""
     pins, versions = [], []
     for name in SDK_MANIFESTS:
-        for line in (root / name).read_text().splitlines():
-            if 'git = "https://github.com/sourcenetwork/vera.rs"' in line:
-                match = re.search(r'rev = "([0-9a-f]{40})"', line)
-                if match is None:
-                    raise ValueError("SDK revision must be immutable")
-                pins.append(match[1])
+        lines = (root / name).read_text().splitlines()
+        pins += git_pins(lines)
+        for line in lines:
             match = re.fullmatch(r'vera-(?:client|domain|modules) = "(\d+\.\d+\.\d+)"', line)
             if match is not None:
                 versions.append(match[1])
@@ -102,6 +114,9 @@ def revision(root):
         raise ValueError("published native SDK declarations disagree or are missing")
     if len(pins) != 1:
         raise ValueError("native harness revision is missing or ambiguous")
+    for name in NODE_MANIFESTS:
+        if set(git_pins((root / name).read_text().splitlines())) != {pins[0]}:
+            raise ValueError("node crates and the native harness pin different Vera revisions")
     return pins[0]
 
 
