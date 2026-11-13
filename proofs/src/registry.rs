@@ -1573,6 +1573,23 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // The vera provider drives a journaled submission to its receipt:
+        // ask, send when no send is known to have arrived, ask again, under
+        // one deadline. A send that timed out may have been admitted, so it
+        // is sent again; the node spends a sequence once, so the request
+        // takes effect at most once. A call ends early only on a failure
+        // that cannot pass. The journal keeps the request until a receipt is
+        // acknowledged, so a later call confirms what an earlier one could
+        // not, also after the node dropped an admitted copy.
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "INV_AtMostOneEffect / INV_ConfirmedHasEffect / INV_NoEarlyGiveUp / INV_RetainedUntilConfirmed / LIVE_UndisturbedCallConfirms / LIVE_RecalledConfirms: a pending submission is resent until confirmed, takes effect once, is given up only at its deadline or on a failure that cannot pass, stays journaled until confirmed, and is confirmed by a later call when an earlier one was cut short",
+        axis: Tla,
+        anchor: "crates/vera/src/vera_rs/provider/submission.rs resolve_pending, recover_pending, send_tx_with_sequence; crates/vera/src/vera_rs/client.rs retryable; crates/vera/src/vera_rs/worker.rs acknowledge; crates/vera-embedded/src/submission.rs",
+        model_ref: "MC_PendingSubmission_{Green,Green_Recalled,Red_NoResend,Red_NoDedupe,Red_GivesUpEarly,Red_ForgetsOnTimeout,Red_Recalled_Forgets}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // Registrations of one document that race each write their own owner
         // key, so only the commit can refuse all but one. The deciding prefix
         // scan is a validated scan: a registration that commits under the
