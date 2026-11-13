@@ -5,7 +5,7 @@ use crate::provider::SubjectRef;
 pub(crate) fn subject_to_cmd_json(subject: &SubjectRef) -> serde_json::Value {
     match subject {
         SubjectRef::Actor(did) => {
-            serde_json::json!({ "Entity": super::did_spelling::defra(did) })
+            serde_json::json!({ "Entity": super::did_spelling::wire(did) })
         }
         SubjectRef::AllActors => serde_json::json!("Wildcard"),
     }
@@ -79,7 +79,8 @@ pub(crate) async fn resolve_registered_or_passthrough_bearer_token(
 }
 
 /// The bearer token `did` acts with in the request `context` serves: one
-/// built from its registered secp256k1 key when the node holds it, the token
+/// built from its registered secp256k1, Ed25519 or P-256 key when the node
+/// holds it, the token
 /// the request carries for it otherwise.
 pub(crate) async fn resolve_registered_or_passthrough_bearer_token_as(
     context: &defra_core::RequestContext,
@@ -87,33 +88,49 @@ pub(crate) async fn resolve_registered_or_passthrough_bearer_token_as(
     submitter: &str,
     deployment_id: u64,
 ) -> Result<Option<String>, crate::provider::ProviderError> {
-    use super::signer::Secp256k1Signer;
+    use defra_core::signing::SigningKeyType;
+
+    use super::signer::{DelegationSigner, Ed25519Signer, P256Signer, Secp256k1Signer};
 
     if let Some(signing_config) = defra_core::signing::get_identity(did) {
-        if signing_config.has_local_private_key()
-            && signing_config.key_type == defra_core::signing::SigningKeyType::Secp256k1
-        {
-            let signer =
-                Secp256k1Signer::from_slice(&signing_config.private_key_bytes).map_err(|e| {
+        if signing_config.has_local_private_key() {
+            let key = signing_config.private_key_bytes.as_slice();
+            let signer: Option<Result<Box<dyn DelegationSigner>, _>> = match signing_config.key_type
+            {
+                SigningKeyType::Secp256k1 => Some(
+                    Secp256k1Signer::from_slice(key)
+                        .map(|s| Box::new(s) as Box<dyn DelegationSigner>),
+                ),
+                SigningKeyType::Ed25519 => Some(
+                    Ed25519Signer::from_slice(key)
+                        .map(|s| Box::new(s) as Box<dyn DelegationSigner>),
+                ),
+                SigningKeyType::Secp256r1 => Some(
+                    P256Signer::from_slice(key).map(|s| Box::new(s) as Box<dyn DelegationSigner>),
+                ),
+                _ => None,
+            };
+            if let Some(signer) = signer {
+                let signer = signer.map_err(|e| {
                     crate::provider::ProviderError::Config(format!("invalid signing key: {}", e))
                 })?;
-
-            let issuer = super::did_spelling::defra(did);
-            return super::bearer::create_bearer_token(
-                &signer,
-                &issuer,
-                submitter,
-                deployment_id,
-                300,
-            )
-            .await
-            .map(Some)
-            .map_err(|e| {
-                crate::provider::ProviderError::Config(format!(
-                    "bearer token creation failed: {}",
-                    e
-                ))
-            });
+                let issuer = super::did_spelling::wire(did);
+                return super::bearer::create_bearer_token(
+                    signer.as_ref(),
+                    &issuer,
+                    submitter,
+                    deployment_id,
+                    300,
+                )
+                .await
+                .map(Some)
+                .map_err(|e| {
+                    crate::provider::ProviderError::Config(format!(
+                        "bearer token creation failed: {}",
+                        e
+                    ))
+                });
+            }
         }
     }
 

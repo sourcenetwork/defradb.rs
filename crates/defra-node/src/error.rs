@@ -178,6 +178,11 @@ pub enum Error {
     #[error("failed to create Vera provider: {0}")]
     VeraProvider(#[source] vera::ProviderError),
 
+    /// The Vera node this node runs did not start or did not stop.
+    #[cfg(feature = "embedded-vera")]
+    #[error(transparent)]
+    EmbeddedVera(#[from] vera_embedded::HostError),
+
     /// A call did not run on the worker pool.
     #[error("the call did not run on the worker pool: {0}")]
     WorkerPoolCall(#[source] workers::Error),

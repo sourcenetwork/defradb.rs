@@ -202,8 +202,9 @@ fn a_signer_must_name_a_secp256k1_key() {
         let refused = actor_key(&Named(did)).expect_err("not a secp256k1 key");
         assert!(matches!(refused, SignerError::Did { .. }));
         let said = refused.to_string();
-        assert!(said.starts_with(&format!("{did} is not a secp256k1 did:key")));
-        assert!(said.contains("an ES256K delegation needs"));
+        assert!(said.starts_with(&format!(
+            "{did} does not name a key an ES256K delegation is signed with"
+        )));
         assert!(said.contains(reason), "{said}");
     }
 }

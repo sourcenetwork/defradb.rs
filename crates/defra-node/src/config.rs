@@ -30,6 +30,9 @@ pub enum DocumentAcpConfig {
     /// Document ACP via a provider the host built.
     #[cfg(feature = "vera")]
     Provider(crate::DocumentAcpProvider),
+    /// Document ACP via a Vera node this node runs in its own process.
+    #[cfg(feature = "embedded-vera")]
+    EmbeddedVera(crate::EmbeddedVeraConfig),
 }
 
 /// Vera document ACP configuration.

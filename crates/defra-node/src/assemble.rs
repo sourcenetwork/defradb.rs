@@ -511,6 +511,8 @@ where
     let vera_acp = acp_setup.vera_acp.clone();
     #[cfg(all(feature = "vera", not(target_arch = "wasm32")))]
     let redrive = acp_setup.redrive;
+    #[cfg(feature = "embedded-vera")]
+    let embedded_vera = crate::single_slot(acp_setup.embedded_vera);
     database.set_dac_policies(acp_setup.dac_policies);
     let schema_ops: Arc<dyn SchemaOps> = Arc::new(db_impls::DbSchemaOps::new(
         database.clone(),
@@ -593,6 +595,8 @@ where
         _signing_key_hold: signing_key_hold,
         network,
         pool,
+        #[cfg(feature = "embedded-vera")]
+        embedded_vera,
         remote_acp,
         #[cfg(not(target_arch = "wasm32"))]
         transaction_stats,

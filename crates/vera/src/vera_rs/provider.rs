@@ -204,9 +204,9 @@ impl VeraRsProvider {
 
         let client = VeraRsClient::with_transport(rpc);
         let signer = actor.signer()?;
-        let actor_did = admission::actor_key(signer.as_ref())
-            .map(|key| bearer::did_from_key(&key, false))
+        admission::actor_key(signer.as_ref())
             .map_err(|e| ProviderError::Config(format!("actor signer: {e}")))?;
+        let actor_did = did_spelling::defra(signer.did()).into_owned();
         let worker_did = worker.did().to_owned();
         let deployment = worker.deployment_id();
 
@@ -239,7 +239,8 @@ impl VeraRsProvider {
     }
 }
 
-/// A relationship subject as vera.rs records it: an actor by its one DID.
+/// A relationship subject as vera.rs is sent it: an actor in the spelling
+/// vera.rs takes, which is the one an access check for it is sent in.
 fn vera_subject(
     kind: u8,
     resource: &str,
@@ -247,7 +248,7 @@ fn vera_subject(
     relation: &str,
 ) -> Result<zanzibar::Subject, ProviderError> {
     let object_id = if kind == 0 {
-        did_spelling::defra(object_id)
+        did_spelling::wire(object_id)
     } else {
         object_id.into()
     };
@@ -261,7 +262,7 @@ fn access_request(
     permission: &str,
     actor_did: &str,
 ) -> Result<acp_light_client::AccessRequest, ProviderError> {
-    let actor = did_spelling::defra(actor_did)
+    let actor = did_spelling::wire(actor_did)
         .parse()
         .map_err(|e| ProviderError::Query(format!("actor DID: {e}")))?;
     Ok(acp_light_client::AccessRequest {
@@ -362,7 +363,7 @@ impl VeraProvider for VeraRsProvider {
         if did_spelling::defra(did) == self.actor_did {
             return bearer::create_bearer_token(
                 self.signer.as_ref(),
-                &self.actor_did,
+                &did_spelling::wire(&self.actor_did),
                 &self.worker_did,
                 self.deployment,
                 300,
@@ -401,7 +402,7 @@ impl VeraProvider for VeraRsProvider {
     async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError> {
         let token = bearer::create_scoped_bearer_token(
             self.signer.as_ref(),
-            &self.actor_did,
+            &did_spelling::wire(&self.actor_did),
             &self.worker_did,
             self.deployment,
             300,
@@ -668,7 +669,7 @@ impl VeraProvider for VeraRsProvider {
             resources: vec![resource.to_string()],
             objectIds: vec![object_id.to_string()],
             permissions: vec![permission.to_string()],
-            actor: did_spelling::defra(actor_did).into_owned(),
+            actor: did_spelling::wire(actor_did).into_owned(),
         };
         let confirmed = self
             .send_tx_with_sequence(Bytes::from(call.abi_encode()))

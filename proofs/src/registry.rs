@@ -136,16 +136,16 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "vera.rs actor spelling",
-        name: "defra_idempotent / spellings_meet / other_unchanged / defra_same_actor / one_spelling_per_actor",
+        name: "defra_idempotent / spellings_meet / other_unchanged / defra_same_actor / one_spelling_per_actor / wire_is_taken / wire_same_actor / defra_of_wire / wire_secp256k1_is_defra",
         axis: Lean,
-        anchor: "crates/vera/src/vera_rs/did_spelling.rs defra, same_actor",
+        anchor: "crates/vera/src/vera_rs/did_spelling.rs defra, wire, same_actor",
         model_ref: "VeraActorSpelling (lake build)",
         tiers: &[Boundary],
         bound_by: "",
     },
     Property {
         family: "vera.rs delegation signing",
-        name: "admitted_iff_vera_accepts / sent_is_accepted / refused_is_not_sent / honest_answer_admitted / refusal_names_the_first_failure",
+        name: "admitted_iff_vera_accepts / sent_is_accepted / refused_is_not_sent / honest_answer_admitted / honest_ed25519_answer_admitted / ed25519_refusal_is_length_or_verification / refusal_names_the_first_failure / ed25519_refusal_names_the_first_failure",
         axis: Lean,
         anchor: "crates/vera/src/vera_rs/signer/admission.rs admit, actor_key; crates/vera/src/vera_rs/bearer.rs issue_at",
         model_ref: "VeraDelegationSigner (lake build)",
@@ -2268,6 +2268,20 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_NodeDrop_{Green,Red_SweepOutsideSet,Red_NoAbortOnDrop,Red_DropAwaits}.cfg",
         tiers: &[Boundary],
         bound_by: "crates/defra-node/tests/node_drop.rs a_dropped_http_node_releases_its_threads_and_descriptors",
+    },
+    Property {
+        // A node that runs its own Vera node stops it after the request
+        // drain, waits for it up to a deadline and closes its transports:
+        // no decision is given without it, and once it has ended its
+        // directory is free for the next node. A Vera node that hangs past
+        // the deadline keeps its directory.
+        family: "Node shutdown order",
+        name: "INV_NoDecisionWithoutVera / INV_AdmittedRequestsDecided / INV_StoppedNodeFreesDirectory / LIVE_ShutdownReturns / LIVE_NextStartReturns: no access decision is given while the embedded Vera node is not running, shutdown stops it under no admitted request but one the request drain gave up on, a node that shut down holds the directory of an ended Vera node no longer, shutdown returns, the next start over the directory starts or fails at its deadline",
+        axis: Tla,
+        anchor: "crates/defra-node/src/lib.rs Node::shutdown; crates/defra-node/src/embedded_vera.rs start; crates/defra-node/src/node_acp.rs verified_acp_setup; crates/vera-embedded/src/host.rs HostedNode::start, HostedNode::stop; crates/vera-embedded/src/link.rs Link; crates/vera-embedded/src/call.rs call",
+        model_ref: "MC_EmbeddedVeraStop_{Green,Red_DecisionCache,Red_StopBeforeRequests,Red_NoStopDeadline,Red_LinkStaysOpen,Red_NoStartDeadline}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/vera-embedded/tests/hosted_node.rs once_the_node_stops_no_access_decision_is_given",
     },
     Property {
         // A signed query or transformed route keeps a request-scope permit

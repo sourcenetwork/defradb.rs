@@ -14,6 +14,9 @@
 //! The node runs its calls on its own runtime. What this crate returns are
 //! plain futures that any executor can await.
 
+// The layout of the node's start future is deeper than the default limit.
+#![cfg_attr(feature = "node", recursion_limit = "256")]
+
 use std::time::Duration;
 
 use edge::Edge;
@@ -22,9 +25,14 @@ mod acp;
 mod call;
 mod deadline;
 mod error;
+#[cfg(feature = "node")]
+mod host;
+mod link;
 mod submission;
 
 pub use error::EmbeddedError;
+#[cfg(feature = "node")]
+pub use host::{Deployment, HostConfig, HostError, HostedNode, ThreadBudget};
 pub use vera_jsonrpc::LocalRpc;
 
 /// The in-process channel to one embedded Vera node.
@@ -40,7 +48,7 @@ pub use vera_jsonrpc::LocalRpc;
 /// with [`EmbeddedError::Elapsed`]; the node still finishes the method.
 #[derive(Clone, Debug)]
 pub struct EmbeddedTransport {
-    rpc: LocalRpc,
+    rpc: link::Link,
     request_timeout: Duration,
     edge: Edge,
 }
@@ -52,6 +60,10 @@ impl EmbeddedTransport {
     /// `request_timeout` bounds each submission call, as it does for the
     /// HTTP transport: the provider's `AcpTuning::request_timeout`.
     pub fn new(rpc: LocalRpc, request_timeout: Duration, edge: &Edge) -> Self {
+        Self::linked(link::Link::new(rpc), request_timeout, edge)
+    }
+
+    pub(crate) fn linked(rpc: link::Link, request_timeout: Duration, edge: &Edge) -> Self {
         Self {
             rpc,
             request_timeout,
