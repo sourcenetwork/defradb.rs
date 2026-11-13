@@ -33,6 +33,7 @@ fn config(directory: &Path) -> HostConfig {
             created: now(),
         },
         listen: "127.0.0.1:0".parse().expect("address"),
+        start_deadline: Duration::from_secs(60),
         stop_deadline: Duration::from_secs(30),
     }
 }
@@ -119,6 +120,35 @@ async fn a_stopped_nodes_deployment_is_reopened_by_the_next() {
         .expect("reopened node");
     assert_eq!(second.consensus_key(), key);
     second.stop().await.expect("stop");
+}
+
+#[nuclei::test]
+async fn a_start_over_a_held_directory_fails_at_its_deadline() {
+    let directory = tempfile::tempdir().unwrap();
+    let edge = edge::testing::edge();
+    let first = HostedNode::start(config(directory.path()), &edge)
+        .await
+        .expect("hosted node");
+
+    let mut held = config(directory.path());
+    held.start_deadline = Duration::from_secs(2);
+    let refused = HostedNode::start(held, &edge).await;
+    assert!(
+        matches!(
+            &refused,
+            Err(vera_embedded::HostError::StartElapsed { directory: named, .. })
+                if named == directory.path()
+        ),
+        "a start over a held directory fails at its deadline, got {refused:?}"
+    );
+
+    // The start that gave up left nothing behind: once the first node lets
+    // go, the directory opens again.
+    first.stop().await.expect("stop");
+    let third = HostedNode::start(config(directory.path()), &edge)
+        .await
+        .expect("the directory is free again");
+    third.stop().await.expect("stop");
 }
 
 #[test]

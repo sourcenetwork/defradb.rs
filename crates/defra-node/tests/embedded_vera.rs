@@ -44,6 +44,7 @@ async fn node(directory: &Path) -> Node {
                 created: now(),
             },
             listen: "127.0.0.1:0".parse().expect("address"),
+            start_deadline: Duration::from_secs(60),
             stop_deadline: Duration::from_secs(30),
             actor_key: vec![42; 32],
             worker_dir: directory.join("worker"),

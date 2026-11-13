@@ -1211,12 +1211,17 @@ impl Node {
         // No request and no peer asks for an access decision any more, and
         // the redrive has stopped: the Vera node stops while the network
         // runtime still times the wait.
+        // A failed stop is returned once the rest of the teardown has run: the
+        // Vera node may still hold its directory.
         #[cfg(feature = "embedded-vera")]
-        if let Some(vera) = self.embedded_vera.pop() {
-            match vera.stop().await {
-                Ok(()) => tracing::info!("embedded Vera node stopped"),
-                Err(error) => tracing::warn!(%error, "embedded Vera node did not stop cleanly"),
-            }
+        let vera_stopped = match self.embedded_vera.pop() {
+            Some(vera) => vera.stop().await,
+            None => Ok(()),
+        };
+        #[cfg(feature = "embedded-vera")]
+        match &vera_stopped {
+            Ok(()) => tracing::info!("embedded Vera node stopped"),
+            Err(error) => tracing::warn!(%error, "embedded Vera node did not stop cleanly"),
         }
 
         // Stop accepting the rest of the node's network work and drain what is
@@ -1303,7 +1308,10 @@ impl Node {
             .store(true, std::sync::atomic::Ordering::SeqCst);
         self.shutdown_notify.notify_waiters();
         tracing::info!("node shutdown: complete");
-        closed.map_err(Error::from)
+        closed.map_err(Error::from)?;
+        #[cfg(feature = "embedded-vera")]
+        vera_stopped?;
+        Ok(())
     }
 
     async fn wait_for_shutdown(&self) {

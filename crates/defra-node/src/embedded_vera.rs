@@ -29,6 +29,7 @@ where
             data_dir: config.data_dir.clone(),
             deployment: config.deployment.clone(),
             listen: config.listen,
+            start_deadline: config.start_deadline,
             stop_deadline: config.stop_deadline,
         },
         edge,

@@ -971,6 +971,7 @@ RUNS=(
   "MC_EmbeddedVeraStop_Red_StopBeforeRequests.cfg EmbeddedVeraStop.tla RED" # the Vera node stops under a request the node admitted
   "MC_EmbeddedVeraStop_Red_NoStopDeadline.cfg EmbeddedVeraStop.tla RED" # a Vera node that hangs while stopping keeps shutdown waiting forever
   "MC_EmbeddedVeraStop_Red_LinkStaysOpen.cfg EmbeddedVeraStop.tla RED" # a transport left open keeps the stopped Vera node's directory locked
+  "MC_EmbeddedVeraStop_Red_NoStartDeadline.cfg EmbeddedVeraStop.tla RED" # the next start waits forever for a directory a hung Vera node holds
   "MC_NodeStartup_Green.cfg NodeStartup.tla GREEN" # every config starts as asked or fails holding nothing; startup ends
   "MC_NodeStartup_Red_IrohDefaultLadder.cfg NodeStartup.tla RED" # iroh keeps the default retry ladder (INV_OneSchedule)
   "MC_NodeStartup_Red_ListenLeak.cfg NodeStartup.tla RED" # failed listen leaves the host running (INV_FailedHoldsNothing)

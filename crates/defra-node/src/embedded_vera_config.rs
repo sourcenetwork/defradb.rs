@@ -21,7 +21,12 @@ pub struct EmbeddedVeraConfig {
     /// The Vera node's consensus listener. `127.0.0.1:0` keeps it on
     /// loopback with a port the system picks.
     pub listen: SocketAddr,
-    /// How long shutdown waits for the Vera node to stop.
+    /// How long the build waits for the Vera node to start. A directory a
+    /// node stopped earlier still holds is waited for until then.
+    pub start_deadline: Duration,
+    /// How long shutdown waits for the Vera node to stop. Past it,
+    /// [`Node::shutdown`](crate::Node::shutdown) returns the failure and the
+    /// directory stays held until the Vera node's thread ends.
     pub stop_deadline: Duration,
     /// The 32-byte secp256k1 key of the actor that owns this node's policies.
     pub actor_key: Vec<u8>,
@@ -41,6 +46,7 @@ impl fmt::Debug for EmbeddedVeraConfig {
             .field("data_dir", &self.data_dir)
             .field("deployment", &self.deployment)
             .field("listen", &self.listen)
+            .field("start_deadline", &self.start_deadline)
             .field("stop_deadline", &self.stop_deadline)
             .field("worker_dir", &self.worker_dir)
             .field("tuning", &self.tuning)
@@ -53,6 +59,7 @@ impl PartialEq for EmbeddedVeraConfig {
         self.data_dir == other.data_dir
             && self.deployment == other.deployment
             && self.listen == other.listen
+            && self.start_deadline == other.start_deadline
             && self.stop_deadline == other.stop_deadline
             && self.actor_key == other.actor_key
             && self.worker_dir == other.worker_dir

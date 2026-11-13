@@ -47,6 +47,9 @@ pub struct HostConfig {
     /// Consensus listener. A lone validator dials no peer but still binds
     /// it; `127.0.0.1:0` keeps it on loopback with a port the system picks.
     pub listen: SocketAddr,
+    /// How long [`HostedNode::start`] waits for the node to serve requests.
+    /// A directory another node still holds is waited for until then.
+    pub start_deadline: Duration,
     /// How long [`HostedNode::stop`] waits for the node's thread to finish.
     pub stop_deadline: Duration,
 }
@@ -59,6 +62,15 @@ pub enum HostError {
     Operators(#[source] serde_json::Error),
     #[error("the embedded Vera node did not start: {0}")]
     Start(#[source] vera_node::EmbedError),
+    #[error(
+        "the embedded Vera node in {} did not start within {deadline:?}; another node may \
+         still hold the directory",
+        directory.display()
+    )]
+    StartElapsed {
+        directory: PathBuf,
+        deadline: Duration,
+    },
     #[error("the embedded Vera node stopped: {0}")]
     Stopped(#[source] vera_node::EmbedError),
     #[error("the embedded Vera node did not stop within {0:?}")]
@@ -85,8 +97,13 @@ impl HostedNode {
     /// requests. Its threads run on `edge`'s CPUs when `edge` holds cores of
     /// its own; a refused pin fails the start before the node builds its
     /// runtime.
+    ///
+    /// The wait ends at the start deadline. A node that has not started by
+    /// then, for one because a node stopped past its own deadline still
+    /// holds the directory, is told to stop and left to finish alone.
     pub async fn start(config: HostConfig, edge: &Edge) -> Result<Self, HostError> {
         let genesis = genesis(config.deployment)?;
+        let directory = config.data_dir.clone();
         let mut settings = EmbeddedConfig::new(config.data_dir, genesis, config.listen);
         let cores = edge.cpus().len();
         if cores > 0 {
@@ -104,7 +121,18 @@ impl HostedNode {
             }));
         }
         let threads = settings.thread_budget();
-        let node = launch(settings).await.map_err(HostError::Start)?;
+        // Dropping the start at the deadline drops its stop sender, so a node
+        // that gets its directory later stops by itself.
+        let node = match edge.timeout(config.start_deadline, launch(settings)).await {
+            Ok(started) => started.map_err(HostError::Start)?,
+            Err(edge::EdgeError::Deadline(_)) => {
+                return Err(HostError::StartElapsed {
+                    directory,
+                    deadline: config.start_deadline,
+                })
+            }
+            Err(error) => return Err(HostError::Runtime(error)),
+        };
         Ok(Self {
             link: Link::new(node.rpc().clone()),
             consensus_key: hex::encode(node.consensus_key().encode()),
