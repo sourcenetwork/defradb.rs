@@ -144,6 +144,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "vera.rs embedded transport",
+        name: "within_iff / network_accepted_is_accepted / longer_is_refused / node_error_keeps_its_code / busy_node_is_asked_again / stopped_node_is_not_asked_again / asked_again_iff / client_errors_stay_distinct / transport_errors_stay_distinct",
+        axis: Lean,
+        anchor: "crates/vera-embedded/src/call.rs within; crates/vera-embedded/src/submission.rs client_error; crates/vera-embedded/src/acp.rs transport_error; crates/vera/src/vera_rs/client.rs ClientError::retryable",
+        model_ref: "VeraEmbeddedTransport (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Explicit embedded signing",
         name: "admitted_binds",
         axis: Lean,
