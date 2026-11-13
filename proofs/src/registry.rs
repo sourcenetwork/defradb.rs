@@ -2018,7 +2018,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Selected collection version",
         name: "INV_PinScoped / INV_UnpinnedSeesActive / INV_ReadNoSideEffect / INV_WriteAtSelected: a pin never outlives its turn, an unpinned turn sees the active version, a read through an inactive version changes nothing, and a write lands at the selected version",
         axis: Tla,
-        anchor: "crates/db/src/txn/catalog.rs Catalog::pin, Catalog::get; crates/db/src/txn/registry/owned.rs OwnedTxn TxnTurn::pin_collection; crates/query/src/runner/turn.rs run_turn_with_delegation, pin_selected_version; crates/db/src/collection/provider.rs TxnCollectionProvider::get_collection; crates/db/src/txn/mod.rs Txn::validate_collection_for_write; crates/db/src/read/lensed/fetcher/migration.rs update_datastore; crates/ffi/src/document/run.rs DocumentCall",
+        anchor: "crates/db/src/txn/catalog.rs Catalog::pin, Catalog::get; crates/db/src/txn/registry/owned.rs OwnedTxn TxnTurn::pin_collection; crates/query/src/runner/turn.rs run_turn_with_delegation, pin_selected_version; crates/db/src/collection/provider.rs TxnCollectionProvider::get_collection; crates/db/src/txn/mod.rs DbTxn::validate_collection_for_write; crates/db/src/read/lensed/fetcher/migration.rs update_datastore; crates/ffi/src/document/run.rs DocumentCall",
         model_ref: "MC_VersionPin_{Green,Red_PinLeaks,Red_WriteBackOnPin}.cfg",
         tiers: &[Contract],
         bound_by: "crates/ffi/src/document/version_tests.rs a_document_added_through_an_old_version_is_recorded_at_it, a_get_answers_the_fields_of_the_version_it_reads_through, a_selected_version_does_not_outlive_its_call_in_a_transaction",
