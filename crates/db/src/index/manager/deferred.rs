@@ -1,5 +1,7 @@
 //! The writes of a deferred index (`crate::index::deferred`).
 
+use std::sync::atomic::Ordering;
+
 use datastore::NamespaceView;
 use document::NormalValue;
 use schema::{CollectionVersion, IndexDescription};
@@ -16,7 +18,8 @@ impl IndexManager {
     }
 
     /// Owes `index` an update of the document: a blind append, never a
-    /// conflict. The drain is asked for once the write commits.
+    /// conflict. The drain is asked for once the write commits, by one
+    /// callback however many documents the write owes.
     pub(crate) async fn owe(
         &self,
         datastore: &NamespaceView,
@@ -31,7 +34,7 @@ impl IndexManager {
             )
             .await
             .map_err(Error::Storage)?;
-        if let Some(drains) = &self.drains {
+        if let Some(drains) = self.drains.as_ref().filter(|_| self.first_owe(index.id)) {
             let (drains, target) = (drains.clone(), (self.collection_short_id, index.id));
             datastore
                 .on_commit(OnCommit::Sync(Box::new(move || drains.request(target))))
@@ -39,6 +42,15 @@ impl IndexManager {
                 .map_err(Error::Storage)?;
         }
         Ok(())
+    }
+
+    /// Whether this is the manager's first owe of `index`. An index it was
+    /// not built with always counts as first.
+    fn first_owe(&self, index: u32) -> bool {
+        self.asked
+            .iter()
+            .find(|(id, _)| *id == index)
+            .is_none_or(|(_, asked)| !asked.swap(true, Ordering::Relaxed))
     }
 
     /// The keys of the entries `index` holds for a document with these values.

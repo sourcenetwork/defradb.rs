@@ -15,6 +15,7 @@ use schema::{
     CollectionVersion, IndexDescription, IndexKind, IndexedFieldDescription,
     OrderedIndexDescription, VectorIndexDescription,
 };
+use std::sync::atomic::AtomicBool;
 use storage::corekv::Key;
 use storage::index::FullTextIndex;
 
@@ -129,6 +130,9 @@ pub struct IndexManager {
     crdts: crdt::Crdts,
     /// Where a commit that owes a deferred index asks for its drain.
     drains: Option<crate::index::deferred::DrainRequests>,
+    /// The indexes this manager already asked a drain for. A manager lives
+    /// for one transaction attempt, so one commit callback per index is enough.
+    asked: Box<[(u32, AtomicBool)]>,
 }
 
 impl IndexManager {
@@ -163,12 +167,21 @@ impl IndexManager {
             indexes: RapidHashMap::new(),
             crdts: crdt::Crdts::default(),
             drains: None,
+            asked: Box::default(),
         }
     }
 
     /// Asks `drains` for a drain of each deferred index a write owes.
     pub fn with_drains(mut self, drains: Option<&crate::index::deferred::DrainRequests>) -> Self {
         self.drains = drains.cloned();
+        self.asked = match drains {
+            Some(_) => self
+                .indexes
+                .values()
+                .map(|index| (index.description().id, AtomicBool::new(false)))
+                .collect(),
+            None => Box::default(),
+        };
         self
     }
 
