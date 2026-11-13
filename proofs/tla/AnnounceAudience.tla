@@ -18,23 +18,27 @@
 \*
 \* Correspondence with the Rust code (crates/p2p/src/sync):
 \*
-\*   | Model         | Rust                                                        |
-\*   |---------------|-------------------------------------------------------------|
-\*   | Commit        | coordinator/broadcast.rs broadcast_local_update_with_creator|
-\*   |               | is called for a committed write                             |
-\*   | connectedAt   | peer_state has_connected_peer() at that call                |
-\*   | Hold          | broadcast_coalescer.rs BroadcastCoalescer::run: the leader  |
-\*   |               | waits out its window (wait_for_quiet)                       |
-\*   | Announce      | Broadcaster::broadcast_update publishes to the topics; it   |
-\*   |               | reaches the peer if the peer subscribes by then             |
-\*   | SkipWhenAlone | the has_connected_peer() check that publishes at once       |
-\*   |               | (RED: FALSE, the window is always used, as before #2841)    |
-\*   | Join          | the peer connects and subscribes to the collection          |
+\*   | Model             | Rust                                                        |
+\*   |-------------------|-------------------------------------------------------------|
+\*   | Commit            | coordinator/broadcast.rs broadcast_local_update_with_creator|
+\*   |                   | is called for a committed write                             |
+\*   | connectedAtCommit | peer_state has_connected_peer() at that call                |
+\*   | Hold              | broadcast_coalescer.rs BroadcastCoalescer::run: the leader  |
+\*   |                   | waits out its window (wait_for_quiet)                       |
+\*   | Announce          | Broadcaster::broadcast_update publishes to the topics; it   |
+\*   |                   | reaches the peer if the peer subscribes by then             |
+\*   | SkipWhenAlone     | the has_connected_peer() check that publishes at once       |
+\*   |                   | (RED: FALSE, the window is always used, as before #2841)    |
+\*   | Join              | the peer connects and subscribes to the collection          |
 \*
 \* Gaps, explained:
 \*   * One write and one other peer: every write is announced on its own path.
 \*   * A peer connected at commit but not yet subscribed is the window's
 \*     ordinary case and is not what this model checks.
+\*   * The db crate's broadcast retry (merge/broadcast_mutator/broadcast.rs
+\*     broadcast_with_retry_with_creator) publishes again on InsufficientPeers
+\*     while a peer is connected, so it can reach a peer that subscribes after
+\*     the commit. Go never retries; the model leaves the retry out.
 
 CONSTANT SkipWhenAlone
 \* TRUE as written; a RED configuration sets it FALSE.
