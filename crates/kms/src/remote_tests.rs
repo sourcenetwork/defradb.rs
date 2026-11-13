@@ -273,3 +273,73 @@ async fn a_split_batch_keeps_few_chunks_on_the_wire_at_once() {
         "ten chunks in waves of four"
     );
 }
+
+/// Fails its first `fail` sends the way a gossip publish does when the topic
+/// has no neighbours yet, then forwards to the peer.
+struct FlakyTransport {
+    inner: Arc<PeerTransport>,
+    fail: AtomicUsize,
+}
+
+#[async_trait]
+impl KeyTransport for FlakyTransport {
+    fn name(&self) -> &'static str {
+        "flaky"
+    }
+
+    async fn send_request(
+        &self,
+        request: EncodedFetchRequest,
+    ) -> crate::Result<TransportReplyStream> {
+        if self
+            .fail
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(1))
+            .is_ok()
+        {
+            return Err(crate::Error::Remote("publish: no neighbours yet".into()));
+        }
+        self.inner.send_request(request).await
+    }
+
+    fn install_handler(&self, _: Arc<dyn IncomingHandler>) {}
+
+    fn max_keys_per_request(&self) -> Option<usize> {
+        self.inner.cap
+    }
+}
+
+/// A batch whose first send fails retryably: every key still resolves.
+async fn one_failed_send_is_retried(cap: Option<usize>) {
+    let (transport, _, cids) = peer_and_node_capped(5, true, cap).await;
+    let flaky = Arc::new(FlakyTransport {
+        inner: transport,
+        fail: AtomicUsize::new(1),
+    });
+    let kms = DefraKms::new(
+        Arc::new(MemoryKeyStore::new()),
+        vec![flaky],
+        Arc::new(AllowAll),
+        Arc::new(Owners(true)),
+        node(),
+    );
+    let keys = kms
+        .get_keys_each(&RequestContext::anonymous(), &cids)
+        .await
+        .unwrap();
+    let failed: Vec<_> = keys
+        .iter()
+        .enumerate()
+        .filter_map(|(index, key)| key.as_ref().err().map(|error| (index, error.to_string())))
+        .collect();
+    assert!(failed.is_empty(), "keys left failed: {failed:?}");
+}
+
+#[nuclei::test(start_paused = true)]
+async fn a_retryable_send_failure_is_retried_unsplit() {
+    one_failed_send_is_retried(None).await;
+}
+
+#[nuclei::test(start_paused = true)]
+async fn a_retryable_send_failure_of_one_chunk_is_retried() {
+    one_failed_send_is_retried(Some(2)).await;
+}
