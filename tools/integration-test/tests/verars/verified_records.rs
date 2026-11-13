@@ -97,10 +97,21 @@ pub(super) async fn archived_owner_record(provider: Arc<VeraRsProvider>) {
         .query_object_owner(&policy, "users/other", "archived-document")
         .await
         .is_err());
+    // A document delete no longer archives the shared object (a replica may
+    // still refuse the delete), so nothing changes for it.
     document_acp
         .unregister_doc_object(&policy, "users", "archived-document")
         .await
-        .expect("archive through verified owner lookup");
+        .expect("a document delete leaves the shared object alone");
+    assert!(document_acp
+        .is_doc_registered(&policy, "users", "archived-document")
+        .await
+        .unwrap());
+    // An operator archives it through the provider.
+    provider
+        .archive_object(&token, &policy, "users", "archived-document")
+        .await
+        .expect("archive");
     assert!(!document_acp
         .is_doc_registered(&policy, "users", "archived-document")
         .await

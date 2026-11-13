@@ -6252,6 +6252,7 @@ dependencies = [
  "vera",
  "vera-client",
  "vera-domain",
+ "vera-embedded",
  "vera-harness 0.1.2",
  "vera-modules",
  "workers",
