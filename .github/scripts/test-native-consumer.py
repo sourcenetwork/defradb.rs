@@ -19,7 +19,7 @@ def success(names):
     return "".join("test " + n + " ... ok\n" for n in names) + f"test result: ok. {len(names)} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
 
 
-SDK = 'vera-client = "0.1.2"\nvera-domain = "0.1.2"\nvera-modules = "0.1.2"\n'
+SDK = '[dependencies]\nvera-client = "0.1.2"\nvera-domain = "0.1.2"\nvera-modules = "0.1.2"\n'
 HARNESS = 'vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "' + 'a' * 40 + '" }\n'
 NODE = ''.join(name + ' = { git = "https://github.com/sourcenetwork/vera.rs", rev = "' + 'a' * 40 + '" }\n'
                for name in ('vera-jsonrpc', 'vera-node'))
@@ -217,6 +217,7 @@ class Tests(unittest.TestCase):
             'vera-node = { git = "git://www.github.com/sourcenetwork/vera.rs", "rev" = "%s" }\n',
             '[dev-dependencies.vera-node]\n"git" = "http://github.com/Sourcenetwork/Vera.rs"\n"rev" = "%s"\n',
             'vera-node."git" = "https://github.com/sourcenetwork/vera.rs"\nvera-node."rev" = "%s"\n',
+            'vera-node = { git = "https://user:token@github.com/sourcenetwork/vera.rs", rev = "%s" }\n',
         ):
             with self.subTest(second=second):
                 self.assertEqual(driver.git_pins(second % other), [other])
@@ -229,6 +230,9 @@ class Tests(unittest.TestCase):
             'other = { git = "https://github.com/sourcenetwork/vera.rs-tools", rev = "%s" }\n',
             'other = { git = "https://github.com/sourcenetwork/backbone.git", rev = "%s" }\n',
             'other = { git = "https://example.com/github.com.sourcenetwork/vera.rs", rev = "%s" }\n',
+            'other = { git = "https://example.com/github.com/sourcenetwork/vera.rs", rev = "%s" }\n',
+            'other = { git = "https://notgithub.com/sourcenetwork/vera.rs", rev = "%s" }\n',
+            'other = { git = "https://github.com.example.org/sourcenetwork/vera.rs", rev = "%s" }\n',
             'digit = "https://github.com/sourcenetwork/vera.rs"\n',
         ):
             node.write_text(inline + unrelated % other if '%s' in unrelated else inline + unrelated)
@@ -258,12 +262,26 @@ class Tests(unittest.TestCase):
             '[dev-dependencies]\nvera-client = { version = "0.1.1" }\n',
             '[dev-dependencies]\nvera-client.version = "0.1.1"\n',
             '[dev-dependencies.vera-client]\nversion = "0.1.1"\n',
+            "[target.'cfg(unix)'.dependencies]\nvera-client = { workspace = true }\n",
+            '[dev-dependencies]\nsdk = { package = "vera-client", version = "9.9.9" }\n',
+            '[dev-dependencies]\nsdk = { version = "0.1.2", "package" = \'vera-domain\' }\n',
+            '[dev-dependencies]\nsdk.package = "vera-modules"\nsdk.version = "9.9.9"\n',
+            '[dev-dependencies.sdk]\npackage = "vera-client"\nversion = "9.9.9"\n',
         ):
             sdk.write_text(SDK + extra)
             with self.subTest(extra=extra), self.assertRaises(ValueError):
                 driver.revision(self.root)
-        sdk.write_text(SDK + 'vera-client-extras = "9.9.9"\nnot-vera-client = "9.9.9"\n')
-        self.assertEqual(driver.revision(self.root), pin)
+        for unrelated in (
+            'vera-client-extras = "9.9.9"\nnot-vera-client = "9.9.9"\n',
+            'other = { package = "vera-client-extras", version = "9.9.9" }\n',
+            '[features]\nfull = [\n    "vera-client/serde",\n]\n',
+            '[features]\nfull = ["vera-client/serde"]\nvera-client = ["dep:vera-client"]\n',
+            '[package.metadata.docs]\nvera-client = "9.9.9"\npackage = "vera-client"\n',
+            '[dependencies.other]\nversion = "1.0.0"\nfeatures = [\n    "vera-domain",\n]\n',
+        ):
+            sdk.write_text(SDK + unrelated)
+            with self.subTest(unrelated=unrelated):
+                self.assertEqual(driver.revision(self.root), pin)
 
     def test_test_output_rejects_zero_extra_ignored_and_duplicate_passes(self):
         log = self.root / 'test.log'

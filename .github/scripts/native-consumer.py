@@ -17,19 +17,22 @@ SDK_MANIFESTS = ("crates/vera/Cargo.toml", "tools/integration-test/Cargo.toml")
 # Crates built against the unpublished Vera node crates the harness also uses.
 NODE_MANIFESTS = ("crates/vera-embedded/Cargo.toml",)
 # The `git` key of a Vera dependency and its `rev`. A key may be quoted and spaced as TOML allows. The
-# repository is recognised under every scheme, host prefix and letter case, because Cargo resolves
-# those spellings to the same source.
+# repository is recognised on github.com under every scheme, user and letter case, because Cargo
+# resolves those spellings to the same source. Another host is another source.
 KEY = r"""(?<![\w-])["']?%s["']?\s*=\s*"""
-VERA_GIT = re.compile(
-    KEY % "git" + r"""["'][^"']*github\.com[:/]+sourcenetwork/vera\.rs(?:\.git)?/?["']""", re.IGNORECASE)
+VERA_URL = r"""(?:[a-z][a-z0-9+.-]*://)?(?:[^"'@/]*@)?(?:www\.)?github\.com[:/]+sourcenetwork/vera\.rs(?:\.git)?/?"""
+VERA_GIT = re.compile(KEY % "git" + r"""["']""" + VERA_URL + r"""["']""", re.IGNORECASE)
 VERA_REV = re.compile(KEY % "rev" + r"""["']([0-9a-f]{40})["']""")
+# One segment of a dotted key or of a table name.
+SEGMENT = r"""(?:[\w-]+|"[^"]*"|'[^']*')"""
 # A `git` or `rev` key on a line of its own, after the dotted path that names its dependency, if any.
-KEY_PATH = r"""\s*((?:(?:[\w-]+|"[^"]*"|'[^']*')\s*\.\s*)*)"""
+KEY_PATH = r"\s*((?:" + SEGMENT + r"\s*\.\s*)*)"
 OWN_GIT = re.compile(KEY_PATH + r"""["']?git["']?\s*=""")
 OWN_REV = re.compile(KEY_PATH + r"""["']?rev["']?\s*=\s*["']([0-9a-f]{40})["']\s*""")
-# A published SDK crate named as a key or in a table header, and the one form its declaration may take.
-SDK_KEY = re.compile(r"""(?<![\w-])vera-(?:client|domain|modules)(?![\w-])""")
-SDK_VERSION = re.compile(r'\s*vera-(?:client|domain|modules)\s*=\s*"(\d+\.\d+\.\d+)"\s*')
+# A published SDK crate, the one form its declaration may take, and the same crate under another name.
+SDK_CRATE = r"vera-(?:client|domain|modules)"
+SDK_VERSION = re.compile(r"\s*" + SDK_CRATE + r'\s*=\s*"(\d+\.\d+\.\d+)"\s*')
+SDK_RENAMED = re.compile(KEY % "package" + r"""["']""" + SDK_CRATE + r"""["']""")
 UNIT_NAMES = (
     "abi::tests::delete_relationship_subject_userset_round_trips",
     "abi::tests::set_relationship_subject_object_edge_round_trips",
@@ -145,20 +148,48 @@ def git_pins(text):
     return pins
 
 
+def key_path(text):
+    """Return the segments of a dotted key or table name, without their quotes."""
+    return [segment.strip("\"'") for segment in re.findall(SEGMENT, text)]
+
+
+def sdk_versions(text):
+    """Return the version of every published SDK crate a manifest depends on.
+
+    Only dependency tables are read: a feature list or a metadata table may name the crates freely.
+    There, a crate must be declared as `name = "x.y.z"`; its own table, a dotted or quoted key, an
+    inline table or another name for it (`package = "..."`) is refused, not skipped.
+    """
+    versions, dependencies = [], False
+    for line in text.splitlines():
+        line = line.split("#", 1)[0]
+        if line.lstrip().startswith("["):
+            table = key_path(line.strip().strip("[]"))
+            own = len(table) > 1 and table[-2].endswith("dependencies")
+            dependencies = bool(table) and (table[-1].endswith("dependencies") or own)
+            declared = own and re.fullmatch(SDK_CRATE, table[-1]) is not None
+        elif dependencies and "=" in line:
+            match = SDK_VERSION.fullmatch(line)
+            if match is not None:
+                versions.append(match[1])
+                continue
+            named = key_path(line.split("=", 1)[0])[:1]
+            declared = SDK_RENAMED.search(line) is not None or (
+                bool(named) and re.fullmatch(SDK_CRATE, named[0]) is not None)
+        else:
+            continue
+        if declared:
+            raise ValueError("published native SDK declarations must be plain versions")
+    return versions
+
+
 def revision(root):
     """Return the pinned Vera harness revision after checking the SDK and node crate declarations."""
     pins, versions = [], []
     for name in SDK_MANIFESTS:
         text = (root / name).read_text()
         pins += git_pins(text)
-        for line in text.splitlines():
-            line = line.split("#", 1)[0]
-            if SDK_KEY.search(line.split("=", 1)[0]) is None:
-                continue
-            match = SDK_VERSION.fullmatch(line)
-            if match is None:
-                raise ValueError("published native SDK declarations must be plain versions")
-            versions.append(match[1])
+        versions += sdk_versions(text)
     if len(versions) != 6 or len(set(versions)) != 1:
         raise ValueError("published native SDK declarations disagree or are missing")
     if len(pins) != 1:
