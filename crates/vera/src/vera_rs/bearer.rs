@@ -71,16 +71,17 @@ async fn issue_at(
         .filter(|expiry| *expiry > now)
         .ok_or_else(|| BearerError::Time("invalid delegation lifetime".into()))?;
     let header = base64url_encode(header(signer.algorithm()));
-    let payload_json = serde_json::json!({
-        "iss": issuer,
-        "sub": subject,
-        "aud": format!("vera:{deployment_id}"),
-        "scope": scope,
-        "iat": now,
-        "nbf": now.saturating_sub(30),
-        "exp": expiry,
-    })
-    .to_string();
+    let claims = Claims {
+        aud: format!("vera:{deployment_id}"),
+        exp: expiry,
+        iat: now,
+        iss: issuer,
+        nbf: now.saturating_sub(30),
+        scope,
+        sub: subject,
+    };
+    let payload_json =
+        serde_json::to_string(&claims).map_err(|e| BearerError::Claims(e.to_string()))?;
     let payload = base64url_encode(payload_json.as_bytes());
 
     let message = format!("{}.{}", header, payload);
@@ -89,6 +90,23 @@ async fn issue_at(
     let sig_b64 = base64url_encode(&signature);
 
     Ok(format!("{}.{}", message, sig_b64))
+}
+
+/// The claims of a delegation, in the order they are written into the token.
+///
+/// A struct fixes that order. A `serde_json` map would order its keys by
+/// whether another crate in the build enabled `serde_json/preserve_order`,
+/// and the token's bytes would move with it. The order is the sorted one,
+/// which is what a map gives without that feature.
+#[derive(serde::Serialize)]
+struct Claims<'a> {
+    aud: String,
+    exp: u64,
+    iat: u64,
+    iss: &'a str,
+    nbf: u64,
+    scope: DelegationScope,
+    sub: &'a str,
 }
 
 fn header(algorithm: DelegationAlgorithm) -> &'static [u8] {
@@ -128,6 +146,9 @@ pub enum BearerError {
 
     #[error("system time error: {0}")]
     Time(String),
+
+    #[error("delegation claims could not be encoded: {0}")]
+    Claims(String),
 
     #[error(transparent)]
     Signer(#[from] SignerError),
