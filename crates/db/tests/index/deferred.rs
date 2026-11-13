@@ -464,16 +464,23 @@ fn a_drain_does_not_abort_a_transaction_that_read_through_the_index() {
     .unwrap();
 }
 
-/// A lens that multiplies `count` by ten.
+/// A lens that multiplies `count` by ten, and fails on the document named
+/// "poison" while `poison` is set.
 #[derive(Default)]
 struct TimesTen {
     ids: regolith::sync::HopscotchMap<lens::TransformId, (), rapidhash::fast::RandomState>,
+    poison: Arc<std::sync::atomic::AtomicBool>,
+    failures: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 #[async_trait::async_trait]
 impl lens::TransformStore for TimesTen {
     fn new_isolated_store(&self) -> Arc<dyn lens::TransformStore> {
-        Arc::new(Self::default())
+        Arc::new(Self {
+            poison: Arc::clone(&self.poison),
+            failures: Arc::clone(&self.failures),
+            ..Self::default()
+        })
     }
 
     async fn add(&self, config: lens::LensConfig) -> lens::Result<lens::TransformId> {
@@ -504,7 +511,14 @@ impl lens::TransformStore for TimesTen {
         if !self.has_transform(id) {
             return Err(lens::Error::TransformNotFound(id.to_string()));
         }
-        Ok(Box::pin(docs.map(|mut doc| {
+        let (poison, failures) = (Arc::clone(&self.poison), Arc::clone(&self.failures));
+        Ok(Box::pin(docs.map(move |mut doc| {
+            if poison.load(std::sync::atomic::Ordering::Relaxed)
+                && doc.get("name").and_then(serde_json::Value::as_str) == Some("poison")
+            {
+                failures.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                return Err(lens::Error::WasmExecution("poisoned".to_string()));
+            }
             if let Some(count) = doc.get("count").and_then(serde_json::Value::as_i64) {
                 doc.insert("count".to_string(), serde_json::json!(count * 10));
             }
@@ -620,6 +634,170 @@ fn a_drain_indexes_an_old_document_at_its_migrated_value() {
             (0, 1),
             "the drain indexes the value backfill would"
         );
+    })
+    .unwrap();
+}
+
+/// A node whose collection moved to a second version through [`TimesTen`],
+/// with that lens store, whose switch poisons the migration.
+async fn migrated(options: db::DbOptions) -> (Node, String, Arc<TimesTen>) {
+    let lenses = Arc::new(TimesTen::default());
+    let mut raw = DB::with_options(RegolithStore::in_memory().unwrap(), options).unwrap();
+    raw.set_lens_store(Arc::clone(&lenses) as Arc<dyn lens::TransformStore>);
+    let db = Arc::new(raw);
+    let node = Node::with(Arc::clone(&db), true).await;
+    let v1 = db
+        .require_collection(COLLECTION)
+        .unwrap()
+        .version_id()
+        .to_string();
+    let v2 = db
+        .patch_collection(
+            COLLECTION,
+            r#"[{"op":"add","path":"/Tallies/Fields/-","value":{"Name":"note","Kind":"String"}}]"#,
+            None,
+        )
+        .await
+        .unwrap()
+        .version_id;
+    db.set_migration(
+        lens::LensConfig::new(
+            &v1,
+            &v2,
+            lens::LensModule::from_bytes(b"\0asm\x01\0\0\0".to_vec()),
+        ),
+        None,
+    )
+    .await
+    .unwrap();
+    (node, v1, lenses)
+}
+
+impl Node {
+    /// Waits until one stored entry holds `value`.
+    async fn settled_at(&self, value: i64) {
+        let start = std::time::Instant::now();
+        while self.stored_at(value).await != 1 {
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(10),
+                "the write at {value} drained"
+            );
+            workers::sleep(std::time::Duration::from_millis(20))
+                .unwrap()
+                .await;
+        }
+    }
+
+    /// How many entries the index's log holds.
+    async fn owed_entries(&self) -> usize {
+        let short_id = self
+            .db
+            .require_collection(COLLECTION)
+            .unwrap()
+            .schema()
+            .resolved_root_id();
+        let log = storage::keys::index_pending_log(short_id, self.index_id);
+        count_keys(&self.db, log.entry_prefix().to_vec()).await
+    }
+}
+
+/// A document whose migration fails stays owed at the log's tail, and the
+/// documents planned with it drain. Once it migrates, it drains too.
+#[test]
+fn a_document_that_fails_to_migrate_does_not_hold_back_the_others() {
+    workers::block_on(async {
+        let (node, v1, lenses) = migrated(db::DbOptions::default()).await;
+        let poison = &lenses.poison;
+        seed_owed_at(&node.db, &v1, "poison", 1).await;
+        seed_owed_at(&node.db, &v1, "a", 2).await;
+        let b = node.create("b", 3).await;
+        node.increment(&b, 4).await;
+        poison.store(true, std::sync::atomic::Ordering::Relaxed);
+
+        let error = node
+            .db
+            .drain_deferred_indexes()
+            .await
+            .unwrap_err()
+            .to_string();
+
+        let poisoned = document::DocID::new_v0_from_seed("old-poison").to_string();
+        assert!(error.contains(&poisoned), "{error}");
+        assert_eq!(
+            (node.stored_at(2).await, node.stored_at(20).await),
+            (0, 1),
+            "the old document planned with it drained"
+        );
+        assert_eq!((node.stored_at(3).await, node.stored_at(7).await), (0, 1));
+        assert_eq!(node.stored_at(1).await, 1, "its stale entry stays");
+        assert_eq!(node.owed_entries().await, 1, "only it is owed");
+
+        assert!(node.db.drain_deferred_indexes().await.is_err());
+        assert_eq!(node.owed_entries().await, 1, "a retry keeps it owed once");
+
+        poison.store(false, std::sync::atomic::Ordering::Relaxed);
+        node.drain().await;
+        assert_eq!((node.stored_at(1).await, node.stored_at(10).await), (0, 1));
+        assert_eq!(node.owed_entries().await, 0);
+        assert_eq!(
+            node.names("{count: {_gt: 0}}", "{count: ASC}").await,
+            ["b", "poison", "a"]
+        );
+    })
+    .unwrap();
+}
+
+/// The drain task keeps draining the writes it is asked for while a document
+/// fails to migrate, and leaves that document to the sweep.
+#[test]
+fn the_task_leaves_a_document_that_fails_to_migrate_to_the_sweep() {
+    super::deferred_task::on_pool(|| async {
+        let options = db::DbOptions::default()
+            .with_pool(crate::common::worker_io::pool().clone())
+            .with_deferred_index_sweep(std::time::Duration::from_secs(3600));
+        let (node, v1, lenses) = migrated(options).await;
+        lenses
+            .poison
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        seed_owed_at(&node.db, &v1, "poison", 1).await;
+        let b = node.create("b", 3).await;
+        let task = Arc::clone(&node.db).start_deferred_index_task();
+        node.increment(&b, 4).await;
+        node.settled_at(7).await;
+        let tried = lenses.failures.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(tried > 0, "the settle at start tried it");
+        node.increment(&b, 1).await;
+        node.settled_at(8).await;
+
+        assert_eq!(
+            lenses.failures.load(std::sync::atomic::Ordering::Relaxed),
+            tried,
+            "a request does not try it again"
+        );
+        assert_eq!((node.stored_at(1).await, node.owed_entries().await), (1, 1));
+        task.abort();
+    });
+}
+
+/// A document that fails to migrate and is then deleted drains its removal.
+#[test]
+fn a_document_that_fails_to_migrate_drains_once_deleted() {
+    workers::block_on(async {
+        let (node, v1, lenses) = migrated(db::DbOptions::default()).await;
+        let poison = &lenses.poison;
+        seed_owed_at(&node.db, &v1, "poison", 1).await;
+        poison.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(node.db.drain_deferred_indexes().await.is_err());
+
+        // As a peer's delete lands, with no migration on its way.
+        AutoCommitMutator::new(Arc::clone(&node.db))
+            .delete(COLLECTION, &document::DocID::new_v0_from_seed("old-poison"))
+            .await
+            .unwrap();
+        node.drain().await;
+
+        assert_eq!(node.stored_at(1).await, 0);
+        assert_eq!(node.owed_entries().await, 0);
     })
     .unwrap();
 }
