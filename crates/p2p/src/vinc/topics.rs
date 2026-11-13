@@ -10,8 +10,12 @@
 //! file matches it:
 //!
 //! - **JOINED and LEFT.** vinc reports a topic's members this endpoint has a
-//!   session with (`NeighborUp`, `NeighborDown`), which is what a gossip mesh
-//!   reports: a connected peer that subscribed to a topic this node joined.
+//!   session with (`NeighborUp`, `NeighborDown`), but only on a topic it
+//!   joined. gossipsub tells a connected peer's subscriptions on every topic,
+//!   so a node that publishes on a document topic it never subscribed to
+//!   still hears who joins and leaves it. Here every publish holds its topic
+//!   joined for [`FANOUT_TTL`] after it, gossipsub's fanout time: the engine
+//!   hears JOINED and LEFT for it, but none of its messages.
 //! - **Reach.** A hub delivers to every member of the topic, connected to its
 //!   publisher or not; a gossip mesh reaches only peers it is connected to,
 //!   directly or through other peers. A node with no peer session is on no
@@ -21,7 +25,7 @@
 //!   of its messages is ever decoded as a PushLog.
 
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ed25519_dalek::Verifier as _;
 use tracing::{debug, warn};
@@ -39,27 +43,83 @@ use super::wire::vinc_error;
 /// How long a waiting publish holds for a member of its topic, as on iroh.
 const NEIGHBOR_WAIT: Duration = Duration::from_secs(10);
 
+/// How long a publish keeps its topic joined, gossipsub's default
+/// `fanout_ttl`.
+pub(super) const FANOUT_TTL: Duration = Duration::from_secs(60);
+
+/// The most topics held for publishes at once: half of vinc's default topic
+/// limit (`Limits::topics`, 128), the rest left to the engine's subscriptions.
+const MAX_FANOUT: usize = 64;
+
 impl<H: Hosted + 'static> Node<H> {
     pub(super) async fn subscribe(&self, topic: String, raw: bool, reply: Reply<bool>) {
         if raw {
             self.raw_topics.borrow_mut().insert(topic.clone());
         }
         // The engine's before the join, so no event of it is taken as foreign.
-        self.subscribed.borrow_mut().insert(topic.clone());
+        let new = self.subscribed.borrow_mut().insert(topic.clone());
         let joined = self
             .ep
             .join(topic.as_bytes(), &[])
             .await
+            .map(|_| new)
             .map_err(|error| vinc_error("topic join", error));
-        if joined.is_err() {
+        if joined.is_err() && new {
             self.subscribed.borrow_mut().remove(&topic);
         }
         let _ = reply.send(joined);
     }
 
+    /// Keep `topic` joined for [`FANOUT_TTL`] from now: a new hold joins it.
+    async fn hold_fanout(&self, topic: &str) {
+        let until = Instant::now() + FANOUT_TTL;
+        let held = {
+            let mut fanout = self.fanout.borrow_mut();
+            // ponytail: past MAX_FANOUT a publish is sent unheld (no JOINED or
+            // LEFT for its topic) so engine subscriptions keep their room in
+            // vinc's topic limit; evict the oldest hold if bursts need it.
+            if fanout.len() >= MAX_FANOUT && !fanout.contains_key(topic) {
+                return;
+            }
+            fanout.insert(topic.to_owned(), until)
+        };
+        if held.is_none() && !self.subscribed.borrow().contains(topic) {
+            if let Err(error) = self.ep.join(topic.as_bytes(), &[]).await {
+                debug!(topic, %error, "vinc fanout join failed");
+                self.fanout.borrow_mut().remove(topic);
+            }
+        }
+    }
+
+    /// Leave the fanout topics whose hold ended by `now`, unless the engine
+    /// subscribed to them.
+    pub(super) async fn expire_fanout(&self, now: Instant) {
+        let ended: Vec<String> = {
+            let mut fanout = self.fanout.borrow_mut();
+            let ended = fanout
+                .iter()
+                .filter(|(_, until)| **until <= now)
+                .map(|(topic, _)| topic.clone())
+                .collect::<Vec<_>>();
+            for topic in &ended {
+                fanout.remove(topic);
+            }
+            ended
+        };
+        for topic in ended {
+            if !self.subscribed.borrow().contains(&topic) {
+                self.ep.leave(topic.as_bytes()).await;
+            }
+        }
+    }
+
     pub(super) async fn unsubscribe(&self, topic: &str, reply: Reply<bool>) {
-        self.subscribed.borrow_mut().remove(topic);
-        let _ = reply.send(Ok(self.ep.leave(topic.as_bytes()).await));
+        let was = self.subscribed.borrow_mut().remove(topic);
+        // A fanout hold keeps the topic until it ends.
+        if !self.fanout.borrow().contains_key(topic) {
+            self.ep.leave(topic.as_bytes()).await;
+        }
+        let _ = reply.send(Ok(was));
     }
 
     pub(super) fn register_raw_topic(&self, topic: String) {
@@ -76,19 +136,15 @@ impl<H: Hosted + 'static> Node<H> {
         wait: bool,
         reply: Reply<MessageId>,
     ) {
+        // The hub tells a topic's members only to its members, so a waiting
+        // publish must be on the topic to see one arrive.
+        self.hold_fanout(&topic).await;
         if !wait {
             let _ = reply.send(self.publish_now(&topic, &payload, None).await);
             return;
         }
         let publisher = Rc::clone(self);
         let spawned = self.spawn(async move {
-            // The hub tells a topic's members to its members: a node that has
-            // not joined learns none, so it joins for the publish, as iroh does.
-            let ephemeral = publisher
-                .ep
-                .join(topic.as_bytes(), &[])
-                .await
-                .unwrap_or(false);
             let waited = publisher
                 .publish_now(&topic, &payload, Some(NEIGHBOR_WAIT))
                 .await;
@@ -101,11 +157,6 @@ impl<H: Hosted + 'static> Node<H> {
             };
             if let Err(error) = result {
                 debug!(topic, %error, "vinc waiting publish failed");
-            }
-            // Leave only a join this publish made, and not if the engine
-            // subscribed to the topic meanwhile.
-            if ephemeral && !publisher.subscribed.borrow().contains(&topic) {
-                publisher.ep.leave(topic.as_bytes()).await;
             }
         });
         let _ = reply.send(match spawned {
@@ -141,12 +192,16 @@ impl<H: Hosted + 'static> Node<H> {
     /// This is the endpoint's one reader of them.
     pub(super) async fn topic_events(self: Rc<Self>) {
         while let Some(event) = self.ep.event().await {
-            // Only a topic the engine subscribed to is the engine's: not one
-            // joined only to publish, nor one left while its events queued.
+            // Messages only of a topic the engine subscribed to: not one held
+            // only for its publishes, nor one left while its events queued.
+            // Who joins and leaves, of either.
             let foreign = match &event {
-                Event::NeighborUp { topic, .. }
-                | Event::NeighborDown { topic, .. }
-                | Event::Message { topic, .. } => !self
+                Event::NeighborUp { topic, .. } | Event::NeighborDown { topic, .. } => {
+                    let topic = topic_name(topic);
+                    !self.subscribed.borrow().contains(&topic)
+                        && !self.fanout.borrow().contains_key(&topic)
+                }
+                Event::Message { topic, .. } => !self
                     .subscribed
                     .borrow()
                     .contains(topic_name(topic).as_str()),

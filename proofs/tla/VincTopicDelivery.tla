@@ -19,14 +19,14 @@
 \* the topic it has a session with appeared (vinc's neighbours), not when the
 \* hub merely lists the peer as a member.
 \*
-\* A KMS reply is published on the requester's own topic, which the replier
-\* never subscribed to, and it must not go out before the requester is known.
-\* Only a node on a topic hears who is on it, so the replier joins the topic
-\* for the publish and leaves once it is sent, if the join was its own.
-\* Meanwhile the engine may subscribe to that same topic; then the topic is
-\* the engine's, and the publish must not leave it. The engine hears only of
-\* topics it subscribed to: not of one joined for a publish, nor of one it
-\* left while some of its messages were still on their way.
+\* gossipsub tells a node who subscribed to every topic, also one it only
+\* publishes to: a node that creates a document hears who subscribes to the
+\* document's topic. vinc tells members only, so every publish holds its topic
+\* joined for a while after it (gossipsub's fanout time, 60 seconds). While
+\* held, the engine hears who joins and leaves the topic, but none of its
+\* messages unless it subscribed. When the hold ends the node leaves the topic,
+\* unless the engine subscribed to it meanwhile; an engine that unsubscribes
+\* while a hold lasts leaves it to the hold's end.
 \*
 \* A tiny example. Nodes a and b subscribe and dial each other; node c
 \* subscribes but dials no one. a publishes. The hub pushes the message to b
@@ -42,8 +42,11 @@
 \*      that never joined - INV_JoinedOnlyLinkedMembers;
 \*   4. the engine subscribed to a topic and the node is not on it
 \*      - INV_EngineKeepsItsTopic;
-\*   5. the engine hears of a topic it is not subscribed to
-\*      - INV_OnlyEngineTopics.
+\*   5. the engine gets a message of a topic it is not subscribed to, or a
+\*      JOINED of a topic it neither subscribed to nor holds
+\*      - INV_OnlyEngineTopics;
+\*   6. a node holds a topic it is not on (so it would miss who joins)
+\*      - INV_HeldIsJoined.
 \*
 \* Correspondence with the Rust code (crates/p2p/src/vinc/):
 \*
@@ -51,25 +54,30 @@
 \*   |--------------------|----------------------------------------------------------|
 \*   | Subscribe          | Node::subscribe in topics.rs: mark raw, add to the       |
 \*   |                    | subscribed set, then ep.join                             |
-\*   | Unsubscribe        | Node::unsubscribe: out of the set, then ep.leave         |
+\*   | Unsubscribe        | Node::unsubscribe: out of the set, then ep.leave unless  |
+\*   |                    | the fanout map holds the topic                           |
 \*   | MarkRaw (RED)      | the raw mark made after the join                         |
-\*   | PublishJoin,       | Node::publish with wait: ep.join (new or not), the       |
-\*   | PublishLeave       | publish, then ep.leave if the join was new and the       |
-\*   |                    | subscribed set does not hold the topic                   |
+\*   | Hold               | Node::hold_fanout, called by Node::publish: the topic    |
+\*   |                    | into the fanout map, joined if new and not subscribed    |
+\*   | Expire             | Node::expire_fanout from sweep_loop in endpoint.rs: out  |
+\*   |                    | of the map, ep.leave unless subscribed                   |
 \*   | Link, Unlink       | Node::connected / Node::disconnected in endpoint.rs      |
 \*   | Publish            | ep.publish, and vinc's hub pushing to the members        |
 \*   | inflight           | what the hub pushed and vinc queued as events            |
 \*   | Deliver            | Node::topic_events and Node::delivery: the subscribed    |
 \*   |                    | filter, the peer-session gate, then raw or decoded       |
 \*   | Neighbor           | Node::topic_events: NeighborUp becomes PeerSubscribed    |
+\*   |                    | for a subscribed or held topic                           |
 \*   | Gate               | the `self.peers.borrow().is_empty()` check (RED: none)   |
 \*   | RawFirst           | raw marked before the join (RED: after)                  |
 \*   | SessionFilter      | vinc's neighbours, members with a session (RED: the      |
 \*   |                    | hub's member list as is)                                 |
-\*   | OwnerCheck         | leave only a join of its own the engine has not taken    |
-\*   |                    | (RED: leave always)                                      |
-\*   | EngineFilter       | events of a topic not in the subscribed set are skipped  |
-\*   |                    | (RED: handed on)                                         |
+\*   | OwnerCheck         | an ended hold leaves only a topic the engine is not      |
+\*   |                    | subscribed to (RED: leave always)                        |
+\*   | HoldKeep           | unsubscribe leaves no topic a hold still has (RED:       |
+\*   |                    | leave always)                                            |
+\*   | EngineFilter       | messages of a topic not subscribed, and JOINED of one    |
+\*   |                    | neither subscribed nor held, are skipped (RED: on)       |
 \*
 \* Gaps, explained:
 \*   * One topic and one hub: topics never interact, and every node names the
@@ -78,31 +86,33 @@
 \*     signature is vinc's to verify, and verified before Deliver.
 \*   * The gate is coarse: two meshes that share a hub hear each other. That
 \*     is a reach the code allows, not one this model forbids.
-\*   * One waiting publish per node at a time: two at once on one topic share
-\*     the first one's join, which only shortens the second's wait.
+\*   * Time is not modeled: a hold may end at any step, which covers every
+\*     length of the 60 seconds. A publish refreshing a hold is a Hold on a
+\*     node that holds already. The cap on holds (MAX_FANOUT) only leaves a
+\*     publish unheld, which is a Publish with no Hold.
 
 EXTENDS Naturals, FiniteSets
 \* Naturals gives the range 2..3; FiniteSets gives Cardinality.
 
-CONSTANTS Nodes, RawTopic, Gate, RawFirst, SessionFilter, OwnerCheck, EngineFilter
-\* Nodes: the nodes. RawTopic: whether the topic is raw. The five other
+CONSTANTS Nodes, RawTopic, Gate, RawFirst, SessionFilter, OwnerCheck, HoldKeep, EngineFilter
+\* Nodes: the nodes. RawTopic: whether the topic is raw. The six other
 \* switches are guards in the code: TRUE as written, and each RED turns one
 \* off.
 
 ASSUME /\ Cardinality(Nodes) \in 2..3
        \* two or three nodes;
-       /\ \A b \in {RawTopic, Gate, RawFirst, SessionFilter, OwnerCheck, EngineFilter} : b \in BOOLEAN
+       /\ \A b \in {RawTopic, Gate, RawFirst, SessionFilter, OwnerCheck, HoldKeep, EngineFilter} : b \in BOOLEAN
        \* and every switch is on or off.
 
-VARIABLES joined, engine, waiting, owns, raw, links, inflight, delivered, reported
+VARIABLES joined, engine, held, raw, links, inflight, delivered, reported
 \* joined: the nodes on the topic, as the hub knows them. engine: the nodes
-\* whose engine is subscribed. waiting: the nodes with a waiting publish under
-\* way. owns: those of them whose publish made the join. raw: the nodes that
-\* mark the topic raw. links: the peer sessions, as pairs. inflight: messages
-\* the hub pushed that the endpoint has not handled, as <<to, from>>.
-\* delivered: what each engine got. reported: the JOINED events each node made.
+\* whose engine is subscribed. held: the nodes whose publish holds the topic.
+\* raw: the nodes that mark the topic raw. links: the peer sessions, as
+\* pairs. inflight: messages the hub pushed that the endpoint has not
+\* handled, as <<to, from>>. delivered: what each engine got. reported: the
+\* JOINED events each node made.
 
-vars == <<joined, engine, waiting, owns, raw, links, inflight, delivered, reported>>
+vars == <<joined, engine, held, raw, links, inflight, delivered, reported>>
 \* Every variable, for the stuttering steps.
 
 Delivery == [decoded : BOOLEAN, onMesh : BOOLEAN, rawTopic : BOOLEAN, owned : BOOLEAN]
@@ -110,9 +120,10 @@ Delivery == [decoded : BOOLEAN, onMesh : BOOLEAN, rawTopic : BOOLEAN, owned : BO
 \* node held a peer session then, whether its topic is raw, and whether the
 \* engine was subscribed to it then.
 
-Report == [linked : BOOLEAN, member : BOOLEAN, owned : BOOLEAN]
+Report == [linked : BOOLEAN, member : BOOLEAN, heard : BOOLEAN]
 \* A JOINED event: whether, when it was made, the node held a session with the
-\* peer, the hub listed the peer as a member, and the engine was subscribed.
+\* peer, the hub listed the peer as a member, and the engine was subscribed
+\* to the topic or a publish held it.
 
 Linked(n, p) == {n, p} \in links
 \* Whether n and p hold a peer session.
@@ -120,15 +131,14 @@ Linked(n, p) == {n, p} \in links
 OnMesh(n) == \E p \in Nodes \ {n} : Linked(n, p)
 \* Whether n holds any peer session.
 
-Skipped(n) == EngineFilter /\ n \notin engine
-\* Whether n's endpoint skips the topic's events: its engine is not on it.
+Hears(n) == n \in engine \/ n \in held
+\* Whether n's engine may hear who joins the topic: it subscribed, or a
+\* publish holds the topic.
 
 TypeOK ==
   \* Every variable holds a value of its kind.
-  /\ joined \subseteq Nodes /\ engine \subseteq Nodes
-  \* some nodes are on the topic, some engines subscribed;
-  /\ owns \subseteq waiting /\ waiting \subseteq Nodes
-  \* some nodes have a publish waiting, some of which made their join;
+  /\ joined \subseteq Nodes /\ engine \subseteq Nodes /\ held \subseteq Nodes
+  \* some nodes are on the topic, some engines subscribed, some hold it;
   /\ raw \subseteq Nodes
   \* some nodes mark the topic raw;
   /\ links \subseteq {{x, y} : x, y \in Nodes}
@@ -142,8 +152,8 @@ TypeOK ==
 
 Init ==
   \* No one joined, no session, nothing sent.
-  /\ joined = {} /\ engine = {} /\ waiting = {} /\ owns = {}
-  \* no one is on the topic and nothing waits;
+  /\ joined = {} /\ engine = {} /\ held = {}
+  \* no one is on the topic and nothing is held;
   /\ raw = {}
   \* no topic is marked raw;
   /\ links = {}
@@ -166,19 +176,20 @@ Subscribe(n) ==
   \* the hub knows n (a second join is harmless);
   /\ raw' = IF RawTopic /\ RawFirst THEN raw \cup {n} ELSE raw
   \* and, for a raw topic, n marked it raw first;
-  /\ UNCHANGED <<waiting, owns, links, inflight, delivered, reported>>
+  /\ UNCHANGED <<held, links, inflight, delivered, reported>>
   \* The rest stays.
 
 Unsubscribe(n) ==
-  \* n's engine unsubscribes: the node leaves the topic. Messages the hub
-  \* already pushed stay on their way.
+  \* n's engine unsubscribes. The node leaves the topic unless a hold still
+  \* has it (RED: leaves whatever). Messages the hub already pushed stay on
+  \* their way.
   /\ n \in engine
   \* the engine is subscribed;
   /\ engine' = engine \ {n}
   \* now it is not;
-  /\ joined' = joined \ {n}
-  \* and the node is off the topic;
-  /\ UNCHANGED <<waiting, owns, raw, links, inflight, delivered, reported>>
+  /\ joined' = IF n \in held /\ HoldKeep THEN joined ELSE joined \ {n}
+  \* and the node is off the topic, unless held;
+  /\ UNCHANGED <<held, raw, links, inflight, delivered, reported>>
   \* The rest stays.
 
 MarkRaw(n) ==
@@ -189,36 +200,30 @@ MarkRaw(n) ==
   \* n subscribed and has not marked it;
   /\ raw' = raw \cup {n}
   \* now it has;
-  /\ UNCHANGED <<joined, engine, waiting, owns, links, inflight, delivered, reported>>
+  /\ UNCHANGED <<joined, engine, held, links, inflight, delivered, reported>>
   \* The rest stays.
 
-PublishJoin(n) ==
-  \* A waiting publish starts on n: it joins the topic, and the join is its
-  \* own if n was not on it.
-  /\ n \notin waiting
-  \* one waiting publish at a time;
-  /\ waiting' = waiting \cup {n}
-  \* this one is under way;
-  /\ owns' = IF n \in joined THEN owns ELSE owns \cup {n}
-  \* it owns the join only if it made it;
+Hold(n) ==
+  \* A publish on n holds the topic: n joins it, if it is not on it already.
+  \* A node that holds already only pushes the end of its hold back.
+  /\ held' = held \cup {n}
+  \* the topic is held;
   /\ joined' = joined \cup {n}
-  \* and n is on the topic;
+  \* and n is on it;
   /\ UNCHANGED <<engine, raw, links, inflight, delivered, reported>>
   \* The rest stays.
 
-PublishLeave(n) ==
-  \* The waiting publish is sent, and leaves the topic if the join was its own
-  \* and the engine has not subscribed since (RED: it leaves whatever happened).
-  /\ n \in waiting
-  \* a waiting publish is under way;
-  /\ waiting' = waiting \ {n}
-  \* it ends;
-  /\ owns' = owns \ {n}
-  \* and owns nothing any more;
-  /\ joined' = IF (n \in owns /\ n \notin engine) \/ ~OwnerCheck
+Expire(n) ==
+  \* n's hold ends, and n leaves the topic if its engine is not subscribed
+  \* (RED: it leaves whatever).
+  /\ n \in held
+  \* n holds the topic;
+  /\ held' = held \ {n}
+  \* now it does not;
+  /\ joined' = IF n \notin engine \/ ~OwnerCheck
                THEN joined \ {n}
                ELSE joined
-  \* n leaves only a join of the publish's own the engine has not taken;
+  \* n leaves only a topic its engine has not taken;
   /\ UNCHANGED <<engine, raw, links, inflight, delivered, reported>>
   \* The rest stays.
 
@@ -228,7 +233,7 @@ Link(n, p) ==
   \* two different nodes with no session yet;
   /\ links' = links \cup {{n, p}}
   \* now they hold one;
-  /\ UNCHANGED <<joined, engine, waiting, owns, raw, inflight, delivered, reported>>
+  /\ UNCHANGED <<joined, engine, held, raw, inflight, delivered, reported>>
   \* The rest stays.
 
 Unlink(n, p) ==
@@ -237,7 +242,7 @@ Unlink(n, p) ==
   \* they hold one;
   /\ links' = links \ {{n, p}}
   \* now they do not;
-  /\ UNCHANGED <<joined, engine, waiting, owns, raw, inflight, delivered, reported>>
+  /\ UNCHANGED <<joined, engine, held, raw, inflight, delivered, reported>>
   \* The rest stays.
 
 Publish(n) ==
@@ -246,48 +251,49 @@ Publish(n) ==
   \* one message per publisher in flight, to keep the states small;
   /\ inflight' = inflight \cup {<<m, n>> : m \in joined \ {n}}
   \* the hub pushes to every member but the publisher, linked or not;
-  /\ UNCHANGED <<joined, engine, waiting, owns, raw, links, delivered, reported>>
+  /\ UNCHANGED <<joined, engine, held, raw, links, delivered, reported>>
   \* The rest stays.
 
 Deliver(n, p) ==
   \* n's endpoint handles the message p published: skipped when the engine
-  \* is not subscribed (RED: not skipped), dropped off the mesh (RED: not
-  \* dropped), else handed on raw or decoded as the raw set says.
+  \* is not subscribed, a hold or not (RED: not skipped), dropped off the
+  \* mesh (RED: not dropped), else handed on raw or decoded as the raw set
+  \* says.
   /\ <<n, p>> \in inflight
   \* the hub pushed it to n;
   /\ inflight' = inflight \ {<<n, p>>}
   \* it is handled once;
-  /\ delivered' = IF ~Skipped(n) /\ (OnMesh(n) \/ ~Gate)
-                  \* neither skipped nor off the mesh,
+  /\ delivered' = IF (n \in engine \/ ~EngineFilter) /\ (OnMesh(n) \/ ~Gate)
+                  \* the engine subscribed and the node is on the mesh,
                   THEN [delivered EXCEPT ![n] = @ \cup
                          {[decoded |-> n \notin raw, onMesh |-> OnMesh(n),
                            rawTopic |-> RawTopic, owned |-> n \in engine]}]
                   \* so its engine gets it, decoded unless marked raw;
                   ELSE delivered
                   \* else it is dropped;
-  /\ UNCHANGED <<joined, engine, waiting, owns, raw, links, reported>>
+  /\ UNCHANGED <<joined, engine, held, raw, links, reported>>
   \* The rest stays.
 
 Neighbor(n, p) ==
   \* n reports p JOINED: vinc said a member with a session appeared (RED:
-  \* any member the hub lists, session or not). Skipped when the engine is
-  \* not subscribed.
+  \* any member the hub lists, session or not). Skipped when the engine
+  \* neither subscribed nor holds the topic (RED: whatever).
   /\ n # p /\ n \in joined /\ p \in joined
   \* both are on the topic;
   /\ Linked(n, p) \/ ~SessionFilter
   \* and they hold a session (RED: not needed);
-  /\ ~Skipped(n)
-  \* and the engine is subscribed (RED: whatever);
+  /\ Hears(n) \/ ~EngineFilter
+  \* and the topic is the engine's or held;
   /\ reported' = [reported EXCEPT ![n] = @ \cup
-                   {[linked |-> Linked(n, p), member |-> p \in joined, owned |-> n \in engine]}]
+                   {[linked |-> Linked(n, p), member |-> p \in joined, heard |-> Hears(n)]}]
   \* the event is made;
-  /\ UNCHANGED <<joined, engine, waiting, owns, raw, links, inflight, delivered>>
+  /\ UNCHANGED <<joined, engine, held, raw, links, inflight, delivered>>
   \* The rest stays.
 
 Next ==
   \* Any node may act; any message may be handled next.
   \/ \E n \in Nodes : \/ Subscribe(n) \/ Unsubscribe(n) \/ MarkRaw(n)
-                      \/ PublishJoin(n) \/ PublishLeave(n) \/ Publish(n)
+                      \/ Hold(n) \/ Expire(n) \/ Publish(n)
   \/ \E n, p \in Nodes : Link(n, p) \/ Unlink(n, p) \/ Deliver(n, p) \/ Neighbor(n, p)
 
 Spec == Init /\ [][Next]_vars
@@ -310,8 +316,13 @@ INV_EngineKeepsItsTopic ==
   engine \subseteq joined
 
 INV_OnlyEngineTopics ==
-  \* An engine gets messages and JOINED events only while it is subscribed.
+  \* An engine gets messages only while it is subscribed, and JOINED events
+  \* only while it is subscribed or a publish holds the topic.
   \A n \in Nodes : /\ \A d \in delivered[n] : d.owned
-                   /\ \A r \in reported[n] : r.owned
+                   /\ \A r \in reported[n] : r.heard
+
+INV_HeldIsJoined ==
+  \* A node whose publish holds the topic is on it.
+  held \subseteq joined
 
 ====
