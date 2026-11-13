@@ -126,6 +126,13 @@ pub trait NacManagerApi: defra_core::thread_bounds::MaybeSendSync {
     ) -> Option<Vec<Result<bool>>> {
         None
     }
+    /// A transaction on `view` may write NAC tuples without this manager (a
+    /// document projector writes them straight into the ACP store): withdraw
+    /// the edge snapshot now and rebuild it once the transaction commits, as
+    /// a write made through this manager does.
+    async fn refresh_edge_on_commit_of(&self, _view: &datastore::NamespaceView) -> Result<()> {
+        Ok(())
+    }
     async fn check_permission_in_txn(
         &self,
         _view: datastore::NamespaceView,

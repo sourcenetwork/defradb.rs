@@ -92,6 +92,9 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
             .map_err(|error| super::error::Error::Other(error.to_string()))
     }
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+    async fn refresh_edge_on_commit_of(&self, view: &datastore::NamespaceView) -> Result<()> {
+        self.refresh_edge_on_commit(view).await
+    }
     async fn change_source_permission_in_txn(
         &self,
         view: datastore::NamespaceView,
