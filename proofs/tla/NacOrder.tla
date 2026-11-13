@@ -30,7 +30,8 @@
 \*                                       crates/db/src/write/autocommit/batch.rs check_attempt_node_access;
 \*                                       crates/db/src/collection/ops/truncate/mod.rs DB::truncate_target;
 \*                                       crates/db/src/txn/registry/indexes.rs check_access_in
-\*                                       (an index created, listed or dropped in a transaction)
+\*                                       (an index or encrypted index created, listed or
+\*                                       dropped in a transaction)
 \*   - the caller with no identity       crates/defra-node/src/ops/request.rs Node::caller
 EXTENDS Naturals, Sequences, TLC
 

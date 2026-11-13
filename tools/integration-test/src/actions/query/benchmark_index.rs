@@ -1,7 +1,11 @@
-use crate::scenario::{Common, Op};
+use std::time::{Duration, Instant};
+
+use super::Request;
+use crate::client_type::ClientType;
+use crate::scenario::{Common, Failure, Op, Text};
 use crate::test_case::State;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use testo::prelude::*;
 
 /// The `query.benchmarkIndex` op.
@@ -29,6 +33,111 @@ impl Op for Benchmark {
 
     fn expected_error(&self) -> Option<&str> {
         self.expected_error.as_deref()
+    }
+
+    /// Go's `benchmarkAction`: run each query `repetitions` times through the
+    /// test's client, and pass when the base case takes more than `factor`
+    /// times the optimized one.
+    ///
+    /// Go compares the two totals. Here the cases alternate after one untimed
+    /// warm-up each, and their medians are compared: a burst of load from the
+    /// tests running alongside lands on both cases, and one slow repetition
+    /// cannot decide the result.
+    fn run(&self, state: &State) -> Result<Value, Failure> {
+        let (repetitions, factor) = self.settings()?;
+        self.query_once(state, &self.base_query)?;
+        self.query_once(state, &self.optimized_query)?;
+        let mut base = Vec::new();
+        let mut optimized = Vec::new();
+        for _ in 0..repetitions {
+            base.push(self.timed(state, &self.base_query)?);
+            optimized.push(self.timed(state, &self.optimized_query)?);
+        }
+        Ok(json!({
+            "passed": median(base).as_secs_f64() / factor > median(optimized).as_secs_f64(),
+            "repetitions": repetitions,
+            "factor": self.expected_settings()["factor"],
+        }))
+    }
+}
+
+/// The middle of `times`, the upper of the two middles for an even count.
+fn median(mut times: Vec<Duration>) -> Duration {
+    times.sort_unstable();
+    times.get(times.len() / 2).copied().unwrap_or_default()
+}
+
+impl Benchmark {
+    /// The repetitions and factor, which the corpus writes only in the
+    /// expected result.
+    fn settings(&self) -> Result<(u64, f64), Failure> {
+        let settings = self.expected_settings();
+        match (
+            settings["repetitions"].as_u64(),
+            settings["factor"].as_f64(),
+        ) {
+            (Some(repetitions), Some(factor)) if repetitions > 0 && factor > 0.0 => {
+                Ok((repetitions, factor))
+            }
+            _ => Err(Failure::operation(format!(
+                "Benchmark needs repetitions and factor in its expected data, got {settings}"
+            ))),
+        }
+    }
+
+    fn expected_settings(&self) -> &Value {
+        self.expected_data
+            .get("fields")
+            .unwrap_or(&self.expected_data)
+    }
+
+    /// How long one run of `query` takes; an error response fails the
+    /// benchmark.
+    fn timed(&self, state: &State, query: &str) -> Result<Duration, Failure> {
+        let started = Instant::now();
+        self.query_once(state, query)?;
+        Ok(started.elapsed())
+    }
+
+    /// Run `query` once through the test's client, as the action's client
+    /// identity on every client, as Go's `benchmarkAction` runs its `Request`.
+    fn query_once(&self, state: &State, query: &str) -> Result<(), Failure> {
+        let node = self.common.node();
+        let identity = self.common.client_identity(Self::name())?;
+        let errors = match state.client_type() {
+            ClientType::InProcess => {
+                let request = Request {
+                    request: Text::from(query),
+                    common: self.common.clone(),
+                    ..Default::default()
+                };
+                request.run(state)?.get("errors").cloned()
+            }
+            ClientType::RustHttp | ClientType::GoHttp => {
+                let query = query.to_owned();
+                let response = state
+                    .http_as(node, identity, |client| async move {
+                        client.graphql(&query, None, None).await
+                    })?
+                    .map_err(|e| Failure::operation(e.to_string()))?;
+                let messages: Vec<String> =
+                    response.errors.into_iter().map(|e| e.message).collect();
+                (!messages.is_empty()).then(|| json!(messages))
+            }
+            // Go benchmarks only its embedded client. A process per query
+            // costs more than the gap the benchmark measures.
+            ClientType::Cli => {
+                return Err(Failure::unsupported(
+                    "Benchmark over the CLI, whose process per query swamps the gap",
+                ))
+            }
+        };
+        match errors {
+            Some(errors) => Err(Failure::operation(format!(
+                "Benchmark query failed: {errors}"
+            ))),
+            None => Ok(()),
+        }
     }
 }
 

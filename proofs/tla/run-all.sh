@@ -414,6 +414,9 @@ RUNS=(
   "MC_IndexInTxn_Red_StaleCatalog.cfg IndexInTxn.tla RED" # stale cached definition in the txn (INV_SeesOwnChange)
   "MC_IndexInTxn_Red_NoAwait.cfg IndexInTxn.tla RED" # commit returns before the backfill (INV_BuiltWhenCommitReturns)
   "MC_IndexInTxn_Red_NoSavepoint.cfg IndexInTxn.tla RED" # a failed change keeps its partial writes and the commit lands them (INV_FailedChangeLeavesNothing)
+  "MC_EncryptedIndexAutocommit_Green.cfg EncryptedIndexAutocommit.tla GREEN" # #2755: an encrypted index add or delete outside a txn reads the definition in its txn and re-runs on a conflict
+  "MC_EncryptedIndexAutocommit_Red_CacheRead.cfg EncryptedIndexAutocommit.tla RED" # decides from the cache and blind-writes: a concurrent add is lost (INV_NoLostIndex)
+  "MC_EncryptedIndexAutocommit_Red_SingleAttempt.cfg EncryptedIndexAutocommit.tla RED" # one attempt: a valid add is refused with the conflict (INV_NoValidRefused)
   "MC_Truncate_Green.cfg Truncate.tla GREEN" # #2321: truncate checks nac, then for a filter branchable, txn and shape, before a delete that is durable at once
   "MC_Truncate_Red_Nac.cfg Truncate.tla RED" # permission check left out: a caller without CollectionTruncate removes documents (INV_NoRemovalWithoutPermission)
   "MC_Truncate_Red_Branchable.cfg Truncate.tla RED" # branchable check left out: a filtered truncate splits shared history (INV_FilteredNeverOnBranchable)
@@ -848,6 +851,12 @@ RUNS=(
   "MC_InboundAdmission_Red_NoDeadline.cfg MC_InboundAdmission_Common.tla RED" # no deadline: a stream waits for budget forever (LIVE_WaitEnds)
   "MC_InboundAdmission_Red_NoReadDeadline.cfg MC_InboundAdmission_Common.tla RED" # no read deadline: a stalled body holds control forever (LIVE_HealthyHandled)
   "MC_InboundAdmission_Red_IdleOnly.cfg MC_InboundAdmission_Common.tla RED" # idle deadline only: a trickling body holds control forever (LIVE_HealthyHandled)
+  "MC_EmbedderStream_Green.cfg MC_EmbedderStream_Common.tla GREEN" # an embedder's stream: registered tags only, room held only while the request is kept, deadline, revocation and shutdown end it
+  "MC_EmbedderStream_Red_AnyTag.cfg MC_EmbedderStream_Common.tla RED" # no tag check: an unregistered tag is read (INV_OnlyRegisteredServed)
+  "MC_EmbedderStream_Red_UntilReturn.cfg MC_EmbedderStream_Common.tla RED" # room held until the handler returns: a hung handler that dropped its request still locks its peer out (INV_RoomIsTheRequest)
+  "MC_EmbedderStream_Red_NoDeadline.cfg MC_EmbedderStream_Common.tla RED" # no deadline: a hung handler runs forever (LIVE_HandlerEnds)
+  "MC_EmbedderStream_Red_BarOnly.cfg MC_EmbedderStream_Common.tla RED" # revocation only bars new connections: the revoked peer stays connected (INV_RevokedIsCut)
+  "MC_EmbedderStream_Red_NoAbort.cfg MC_EmbedderStream_Common.tla RED" # shutdown leaves tasks running (INV_ShutdownLeavesNone)
   "MC_GossipOwnership_Green.cfg MC_GossipOwnership_Common.tla GREEN" # #2078: gossip rides the mux connection; a revoked peer has no gossip, gossip never closes a shared connection
   "MC_GossipOwnership_Red_OwnConnection.cfg MC_GossipOwnership_Common.tla RED" # former design: gossip dials its own connection and re-reaches a revoked peer (INV_RevokedHasNoGossip)
   "MC_GossipOwnership_Red_NoRecheck.cfg MC_GossipOwnership_Common.tla RED" # no admission check after connecting: a revoke during the dial is missed (INV_RevokedHasNoGossip)

@@ -113,6 +113,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Document topic ingress | TLA+ | p2p, p2p-adapter (#2545) |
 | Add collection | TLA+ | db |
 | Index changes in a transaction | TLA+ | db, defra-node, http, cli |
+| Encrypted index changes outside a transaction | TLA+ | db, defra-node, cli |
 | Collection truncate | TLA+ | db |
 | Relation-filtered mutation | TLA+ | query, datastore, db |
 | Add DAC policy | TLA+ | db, acp, vera, http, cli, ffi, defra-node |

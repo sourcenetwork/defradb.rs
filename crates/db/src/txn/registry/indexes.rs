@@ -92,6 +92,99 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         })
         .await
     }
+
+    /// Go's `AddEncryptedIndex` in transaction `txn_id`.
+    pub async fn add_encrypted_index_in_txn(
+        &self,
+        context: &RequestContext,
+        txn_id: &str,
+        collection: &str,
+        field: &str,
+    ) -> Result<()> {
+        let db = self.db.clone();
+        let acting = context.clone();
+        let (collection, field) = (collection.to_owned(), field.to_owned());
+        self.in_txn(context, txn_id, move |owned| {
+            Box::pin(async move {
+                let txn = owned.alone()?;
+                check_access_in(&db, &acting, txn, NodePermission::EncryptedIndexAdd).await?;
+                txn.set_statement_savepoint()?;
+                let added = db.add_encrypted_index_in(txn, &collection, &field).await;
+                finish_statement(txn, added)
+            })
+        })
+        .await
+    }
+
+    /// Go's `DeleteEncryptedIndex` in transaction `txn_id`.
+    pub async fn delete_encrypted_index_in_txn(
+        &self,
+        context: &RequestContext,
+        txn_id: &str,
+        collection: &str,
+        field: &str,
+    ) -> Result<()> {
+        let db = self.db.clone();
+        let acting = context.clone();
+        let (collection, field) = (collection.to_owned(), field.to_owned());
+        self.in_txn(context, txn_id, move |owned| {
+            Box::pin(async move {
+                let txn = owned.alone()?;
+                check_access_in(&db, &acting, txn, NodePermission::EncryptedIndexDelete).await?;
+                txn.set_statement_savepoint()?;
+                let deleted = db.delete_encrypted_index_in(txn, &collection, &field).await;
+                finish_statement(txn, deleted)
+            })
+        })
+        .await
+    }
+
+    /// Go's `ListEncryptedIndexes` in transaction `txn_id`: the fields with
+    /// an encrypted index, its own uncommitted changes included.
+    pub async fn encrypted_indexes_in_txn(
+        &self,
+        context: &RequestContext,
+        txn_id: &str,
+        collection: &str,
+    ) -> Result<Vec<String>> {
+        let db = self.db.clone();
+        let acting = context.clone();
+        let collection = collection.to_owned();
+        self.in_txn(context, txn_id, move |owned| {
+            Box::pin(async move {
+                let txn = owned.alone()?;
+                check_access_in(&db, &acting, txn, NodePermission::EncryptedIndexList).await?;
+                db.encrypted_indexes_in(txn, &collection).await
+            })
+        })
+        .await
+    }
+
+    /// Go's `ListAllEncryptedIndexes` in transaction `txn_id`: every
+    /// collection's encrypted index fields, by collection name, its own
+    /// uncommitted changes included. Node access is checked there, for
+    /// `list-all-encrypted-index` alone, as Go checks it.
+    pub async fn all_encrypted_indexes_in_txn(
+        &self,
+        context: &RequestContext,
+        txn_id: &str,
+    ) -> Result<Vec<(String, Vec<String>)>> {
+        let db = self.db.clone();
+        let acting = context.clone();
+        self.in_txn(context, txn_id, move |owned| {
+            Box::pin(async move {
+                let txn = owned.alone()?;
+                db.check_node_access_in_txn(
+                    &acting,
+                    txn.acpstore()?,
+                    NodePermission::EncryptedIndexListAll,
+                )
+                .await?;
+                db.all_encrypted_indexes_in(txn).await
+            })
+        })
+        .await
+    }
 }
 
 /// Node access for an operation on a collection, read in `txn`:
