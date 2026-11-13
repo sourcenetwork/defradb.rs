@@ -124,6 +124,7 @@ jobs:
           - { family: groupby, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: http_nac_create, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: identity, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { family: projected_create, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: introspection, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: memory, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: lens_index, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }

@@ -1,6 +1,7 @@
 //! Node Access Control state, factory and trait wiring.
 
 mod edge;
+pub(crate) use edge::EdgeRefreshOwed;
 pub mod error;
 pub mod factory;
 mod toggle;
@@ -126,12 +127,15 @@ pub trait NacManagerApi: defra_core::thread_bounds::MaybeSendSync {
     ) -> Option<Vec<Result<bool>>> {
         None
     }
-    /// A transaction on `view` may write NAC tuples without this manager (a
-    /// document projector writes them straight into the ACP store): withdraw
-    /// the edge snapshot now and rebuild it once the transaction commits, as
-    /// a write made through this manager does.
-    async fn refresh_edge_on_commit_of(&self, _view: &datastore::NamespaceView) -> Result<()> {
-        Ok(())
+    /// A database transaction wrote NAC tuples without this manager (a
+    /// document projector, or a source grant, writes them straight into the
+    /// ACP store): the commit work that rebuilds the edge snapshot, keyed so
+    /// it runs once per commit however many tuples were written.
+    fn edge_refresh_owed(&self) -> storage::corekv::OnCommit {
+        storage::corekv::OnCommit::AsyncOnce(
+            edge::EDGE_REFRESH,
+            storage::corekv::make_async_callback(|| async {}),
+        )
     }
     async fn check_permission_in_txn(
         &self,

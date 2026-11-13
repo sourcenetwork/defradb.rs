@@ -145,6 +145,10 @@ name = "http_nac_create"
 harness = false
 
 [[bench]]
+name = "projected_create"
+harness = false
+
+[[bench]]
 name = "identity"
 harness = false
 

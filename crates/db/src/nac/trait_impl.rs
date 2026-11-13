@@ -91,10 +91,10 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
             .map(Some)
             .map_err(|error| super::error::Error::Other(error.to_string()))
     }
-    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
-    async fn refresh_edge_on_commit_of(&self, view: &datastore::NamespaceView) -> Result<()> {
-        self.refresh_edge_on_commit(view).await
+    fn edge_refresh_owed(&self) -> storage::corekv::OnCommit {
+        self.refresh_edge_on_commit()
     }
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     async fn change_source_permission_in_txn(
         &self,
         view: datastore::NamespaceView,
@@ -104,7 +104,6 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
         if !self.transaction_store_bound || !self.nac.supports_transactions() {
             return Ok(None);
         }
-        self.refresh_edge_on_commit(&view).await?;
         let scoped = self.nac.scoped(std::sync::Arc::new(
             acp::zanzibar::store::TransactionZanzibarStore::new(view),
         ));

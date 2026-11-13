@@ -175,25 +175,10 @@ impl BoundProjection {
     }
 }
 
-impl BoundProjection {
-    /// A projector may grant or revoke NAC tuples in the transaction it runs
-    /// in, so the edge snapshot is rebuilt once that transaction commits.
-    async fn refresh_nac_edge(&self, view: &NamespaceView) -> Result<()> {
-        match &self.nac {
-            Some(nac) => nac
-                .refresh_edge_on_commit_of(view)
-                .await
-                .map_err(|error| storage::corekv::Error::Other(error.to_string())),
-            None => Ok(()),
-        }
-    }
-}
-
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl datastore::DocumentMutationProjector for BoundProjection {
     async fn source_changed(&self, view: &NamespaceView) -> Result<()> {
-        self.refresh_nac_edge(view).await?;
         self.projector
             .source_changed(&DocumentMutationContext {
                 view,
@@ -206,7 +191,6 @@ impl datastore::DocumentMutationProjector for BoundProjection {
     }
 
     async fn reconcile(&self, view: &NamespaceView) -> Result<()> {
-        self.refresh_nac_edge(view).await?;
         self.projector
             .reconcile(&DocumentMutationContext {
                 view,
@@ -219,7 +203,6 @@ impl datastore::DocumentMutationProjector for BoundProjection {
     }
 
     async fn project(&self, view: &NamespaceView, collection: &str, doc_id: &str) -> Result<()> {
-        self.refresh_nac_edge(view).await?;
         self.projector
             .project(
                 &DocumentMutationContext {

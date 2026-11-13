@@ -2954,10 +2954,24 @@ pub const PROPERTIES: &[Property] = &[
         family: "Node access control operations",
         name: "INV_NoEffectWithoutPermission / INV_RefusalNamesGoFirst / INV_EdgeSeesReturnedRevoke",
         axis: Tla,
-        anchor: "crates/acp/src/nac/permission.rs NodePermission::go_order; crates/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/db/src/write/autocommit/batch.rs check_attempt_node_access; crates/db/src/txn/registry/indexes.rs check_access_in; crates/query/src/runner/turn.rs lent, lent_node_permission; crates/defra-node/src/ops/request.rs caller, txn_owner; crates/http/src/auth_middleware.rs auth_middleware; crates/http/src/route_permissions.rs reads_collection_first, route_permission; crates/http/src/nac_guard.rs require_permissions; crates/http/src/nac_adapter.rs NacAdapter::check_permissions; crates/db/src/nac/mod.rs NacManager::check_permissions; crates/db/src/nac/edge.rs refresh_edge, refresh_edge_on_commit, refresh_guard, RefreshGuard, reload_after_commit, EdgeGrants::publish, EdgeSnapshot::check, check_all, decide; crates/acp/src/nac/node_acp/snapshot.rs copy_into; crates/db/src/nac/write.rs in_write; crates/db/src/nac/mod.rs initialize, enable, purge; crates/db/src/document_projection.rs refresh_nac_edge; crates/defra-node/src/node_builder.rs NodeBuilder::build",
+        anchor: "crates/acp/src/nac/permission.rs NodePermission::go_order; crates/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/db/src/write/autocommit/batch.rs check_attempt_node_access; crates/db/src/txn/registry/indexes.rs check_access_in; crates/query/src/runner/turn.rs lent, lent_node_permission; crates/defra-node/src/ops/request.rs caller, txn_owner; crates/http/src/auth_middleware.rs auth_middleware; crates/http/src/route_permissions.rs reads_collection_first, route_permission; crates/http/src/nac_guard.rs require_permissions; crates/http/src/nac_adapter.rs NacAdapter::check_permissions; crates/db/src/nac/mod.rs NacManager::check_permissions; crates/db/src/nac/edge.rs refresh_edge, refresh_edge_on_commit, refresh_guard, RefreshGuard, reload_after_commit, EdgeGrants::publish, EdgeSnapshot::check, check_all, decide; crates/acp/src/nac/node_acp/snapshot.rs copy_into; crates/db/src/nac/write.rs in_write; crates/db/src/nac/mod.rs initialize, enable, purge; crates/defra-node/src/node_builder.rs NodeBuilder::build",
         model_ref: "MC_NacOrder_{Green,Red_SkipGet,Red_OwnFirst,Red_AnonAsNode,Red_OutsideTxn,Red_EdgeOwnOnly,Red_StaleEdge,Red_NoWithdraw}.cfg",
         tiers: &[Boundary],
         bound_by: "crates/cli/src/nac_adapter_tests.rs a_returned_revocation_refuses_the_next_edge_check, the_snapshot_decides_every_permission_as_the_engine_does; crates/db/tests/nac/dropped_write.rs a_revoke_dropped_after_its_commit_still_checks_the_edge",
+    },
+    Property {
+        // A database transaction that writes NAC tuples (through a projector
+        // or a source grant) rebuilds the edge snapshot once when it commits;
+        // one that writes none rebuilds nothing. Each write registers the
+        // rebuild under one key, a savepoint rolled back drops only the
+        // registrations after it, and the commit runs each key once.
+        family: "Node access control operations",
+        name: "INV_RebuiltAfterNacWrite / INV_AtMostOneRebuild",
+        axis: Tla,
+        anchor: "crates/acp/src/zanzibar/store/transaction.rs written; crates/datastore/src/multistore.rs node_access_written, NodeAccessWrites; crates/db/src/nac/edge.rs EdgeRefreshOwed, refresh_edge_on_commit; crates/db/src/database/mod.rs new_db_txn; crates/storage/src/corekv/callbacks.rs TxnCallbacks::truncate, TxnCallbacks::into_ends",
+        model_ref: "MC_NacEdgeRefreshOnce_{Green,Red_PerDoc,Red_SkipAtRegister}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/storage/src/corekv/callbacks/tests.rs a_keyed_callback_runs_once_however_often_it_was_registered, a_rolled_back_savepoint_keeps_a_keyed_callback_made_before_it, a_keyed_callback_registered_again_after_a_rollback_runs; crates/acp/tests/node_access_writes.rs only_node_policy_writes_owe_the_edge_refresh",
     },
     Property {
         family: "Node access control operations",

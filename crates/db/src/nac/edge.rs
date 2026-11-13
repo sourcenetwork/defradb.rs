@@ -18,7 +18,6 @@ use std::sync::Arc;
 
 use acp::nac::{NacStatus, NodePermission};
 use acp::{MemoryZanzibarStore, ZanzibarStore};
-use datastore::NamespaceView;
 use defra_core::thread_bounds::MaybeSendSync;
 use identity::Did;
 use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
@@ -26,6 +25,22 @@ use regolith::sync::Atom;
 use storage::corekv::{make_async_callback, OnCommit};
 
 use super::{Error, NacManager, Result};
+
+/// The key of the commit work that rebuilds the edge snapshot: registered on
+/// every NAC tuple a database transaction writes, run once at its commit.
+pub(super) const EDGE_REFRESH: &str = "nac::edge::refresh";
+
+/// What a database transaction owes once it writes NAC tuples: the edge
+/// snapshot rebuilt at its commit. Installed on every transaction of a
+/// database with a NAC manager; a transaction that writes no NAC tuple never
+/// calls it.
+pub(crate) struct EdgeRefreshOwed(pub(crate) Arc<dyn super::NacManagerApi>);
+
+impl datastore::NodeAccessWrites for EdgeRefreshOwed {
+    fn written(&self) -> OnCommit {
+        self.0.edge_refresh_owed()
+    }
+}
 
 /// A published edge snapshot.
 pub(super) type Snapshot = Arc<EdgeSnapshot>;
@@ -285,11 +300,13 @@ where
     }
 
     /// A grant written inside a database transaction commits with it, not
-    /// here: withdraw the snapshot now, so checks read storage, and build a
-    /// new one once the transaction commits. The commit awaits the refresh
-    /// before it returns. An aborted transaction leaves the snapshot
+    /// here: withdraw the snapshot now, so checks read storage, and return
+    /// the commit work that builds a new one, keyed by [`EDGE_REFRESH`] so a
+    /// transaction that wrote many tuples rebuilds once. The commit awaits the
+    /// refresh before it returns. A transaction that ends without committing,
+    /// or a savepoint rolled back over the write, leaves the snapshot
     /// withdrawn, which only costs the storage read until the next write.
-    pub(super) async fn refresh_edge_on_commit(&self, view: &NamespaceView) -> Result<()>
+    pub(super) fn refresh_edge_on_commit(&self) -> OnCommit
     where
         S: MaybeSendSync,
     {
@@ -300,10 +317,10 @@ where
             transaction_store_bound: self.transaction_store_bound,
             edge: Arc::clone(&self.edge),
         };
-        let refresh = make_async_callback(move || async move { manager.refresh_edge().await });
-        view.on_commit(OnCommit::Async(refresh))
-            .await
-            .map_err(|error| Error::Other(error.to_string()))
+        OnCommit::AsyncOnce(
+            EDGE_REFRESH,
+            make_async_callback(move || async move { manager.refresh_edge().await }),
+        )
     }
 
     /// A manager over a copy of the committed NAC state, read in one scope.
