@@ -1773,16 +1773,19 @@ dependencies = [
  "db",
  "defra-core",
  "defra-http",
+ "defra-node",
  "defra-perf",
  "document",
  "edge",
  "events",
+ "hex",
  "identity",
  "lens",
  "libp2p-identity",
  "lru 0.19.0",
  "mimalloc",
  "multihash",
+ "net",
  "nuclei",
  "p2p",
  "query",
@@ -2320,6 +2323,18 @@ dependencies = [
  "serde",
  "wasm-bindgen",
  "windows-link",
+]
+
+[[package]]
+name = "chunk-split"
+version = "0.5.0"
+dependencies = [
+ "hex",
+ "proptest",
+ "rapidhash",
+ "sha2 0.10.9",
+ "thiserror 2.0.21",
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -3795,6 +3810,7 @@ dependencies = [
  "blst",
  "bytes",
  "chrono",
+ "chunk-split",
  "ciborium",
  "cid",
  "crdt",
@@ -10116,6 +10132,7 @@ dependencies = [
  "bm25",
  "bytes",
  "chrono",
+ "chunk-split",
  "ciborium",
  "cid",
  "crdt",

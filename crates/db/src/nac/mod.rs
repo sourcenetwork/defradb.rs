@@ -1,5 +1,7 @@
 //! Node Access Control state, factory and trait wiring.
 
+mod edge;
+pub(crate) use edge::EdgeRefreshOwed;
 pub mod error;
 pub mod factory;
 mod toggle;
@@ -96,6 +98,41 @@ pub trait NacManagerApi: defra_core::thread_bounds::MaybeSendSync {
     async fn owner(&self) -> Option<Did>;
     async fn is_enabled(&self) -> bool;
     async fn check_permission(&self, identity: &Did, permission: NodePermission) -> Result<bool>;
+    /// [`Self::check_permission`] for each of `permissions` in order, up to
+    /// and including the first that is not granted: one outcome per
+    /// permission checked. A provider may read them all at one snapshot.
+    async fn check_permissions(
+        &self,
+        identity: &Did,
+        permissions: &[NodePermission],
+    ) -> Vec<Result<bool>> {
+        let mut outcomes = Vec::with_capacity(permissions.len());
+        for &permission in permissions {
+            let outcome = self.check_permission(identity, permission).await;
+            let granted = matches!(outcome, Ok(true));
+            outcomes.push(outcome);
+            if !granted {
+                break;
+            }
+        }
+        outcomes
+    }
+    /// [`Self::check_permissions`] answered from memory, without reading
+    /// storage: `None` when this provider cannot. A caller off the
+    /// database's workers can take this answer in place.
+    async fn check_permissions_in_memory(
+        &self,
+        _identity: &Did,
+        _permissions: &[NodePermission],
+    ) -> Option<Vec<Result<bool>>> {
+        None
+    }
+    /// A database transaction wrote a NAC tuple without this manager (a
+    /// document projector, or a source grant, writes it straight into the
+    /// ACP store): the commit work that rebuilds the edge snapshot.
+    fn edge_refresh_owed(&self) -> storage::corekv::OnCommit {
+        storage::corekv::OnCommit::Async(storage::corekv::make_async_callback(|| async {}))
+    }
     async fn check_permission_in_txn(
         &self,
         _view: datastore::NamespaceView,
@@ -178,6 +215,25 @@ pub trait NacManagerApi: defra_core::thread_bounds::MaybeSendSync {
     }
 }
 
+/// `nac`'s check of each of `permissions` in order, up to and including the
+/// first that is not granted.
+async fn first_refusal(
+    nac: &dyn NacManagerApi,
+    identity: &Did,
+    permissions: &[NodePermission],
+) -> Vec<Result<bool>> {
+    let mut outcomes = Vec::with_capacity(permissions.len());
+    for &permission in permissions {
+        let outcome = nac.check_permission(identity, permission).await;
+        let granted = matches!(outcome, Ok(true));
+        outcomes.push(outcome);
+        if !granted {
+            break;
+        }
+    }
+    outcomes
+}
+
 /// NAC manager that provides config-aware NAC operations.
 ///
 /// The manager wraps the `NodeACP` and provides:
@@ -188,6 +244,8 @@ pub struct NacManager<S: ZanzibarStore + ?Sized + 'static> {
     nac: Arc<NodeACP<S>>,
     config: NacConfig,
     transaction_store_bound: bool,
+    /// The committed grants edge checks read; see [`edge`].
+    edge: Arc<edge::EdgeGrants>,
 }
 
 impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
@@ -197,6 +255,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
             nac: Arc::new(NodeACP::new(store)),
             config,
             transaction_store_bound: false,
+            edge: Arc::new(edge::EdgeGrants::new()),
         }
     }
 
@@ -206,11 +265,13 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
             nac: Arc::new(NodeACP::new(store)),
             config,
             transaction_store_bound: true,
+            edge: Arc::new(edge::EdgeGrants::new()),
         }
     }
 
     /// A manager over `store` (a transaction or a scope) that shares this
-    /// one's policy snapshot.
+    /// one's policy snapshot. It has no edge snapshot of its own: its checks
+    /// read `store`.
     fn scoped<T>(&self, store: Arc<T>) -> NacManager<T>
     where
         T: ZanzibarStore + ?Sized + 'static,
@@ -219,6 +280,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
             nac: Arc::new(self.nac.scoped(store)),
             config: self.config.clone(),
             transaction_store_bound: self.transaction_store_bound,
+            edge: Arc::new(edge::EdgeGrants::new()),
         }
     }
 
@@ -242,14 +304,12 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
             let scoped: Box<dyn NacManagerApi> = Box::new(scoped);
             scoped.initialize(owner_identity).await?;
             drop(scoped);
+            let guard = self.refresh_guard();
             scope
                 .commit()
                 .await
                 .map_err(|error| Error::Acp(error.to_string()))?;
-            self.nac
-                .load()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
+            self.reload_after_commit(guard).await?;
             return Ok(());
         }
 
@@ -319,6 +379,9 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
         identity: &Did,
         permission: NodePermission,
     ) -> Result<bool> {
+        if let Some(grants) = self.edge.current() {
+            return grants.check(identity, permission).await;
+        }
         if let Some(scope) = self
             .nac
             .begin_scope(true)
@@ -345,6 +408,38 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
             .check_permission(identity, permission)
             .await
             .map_err(|e| Error::Acp(format!("permission check failed: {}", e)))
+    }
+
+    /// [`Self::check_permission`] for each of `permissions` in order, read in
+    /// one scope, up to and including the first that is not granted.
+    pub async fn check_permissions(
+        &self,
+        identity: &Did,
+        permissions: &[NodePermission],
+    ) -> Vec<Result<bool>> {
+        if let Some(grants) = self.edge.current() {
+            return grants.check_all(identity, permissions).await;
+        }
+        let scope = match self.nac.begin_scope(true).await {
+            Ok(scope) => scope,
+            Err(error) => return vec![Err(Error::Acp(error.to_string()))],
+        };
+        let Some(scope) = scope else {
+            return first_refusal(self, identity, permissions).await;
+        };
+        let scoped = self.scoped(scope.store());
+        if let Err(error) = scoped.nac.load().await {
+            return vec![Err(Error::Acp(error.to_string()))];
+        }
+        let scoped: Box<dyn NacManagerApi> = Box::new(scoped);
+        let outcomes = first_refusal(scoped.as_ref(), identity, permissions).await;
+        drop(scoped);
+        // A scope that fails to commit fails the first check, as it does
+        // when each permission is read in a scope of its own.
+        if let Err(error) = scope.commit().await {
+            return vec![Err(Error::Acp(error.to_string()))];
+        }
+        outcomes
     }
 
     /// Check if an identity is an admin.
@@ -429,14 +524,12 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
             let scoped: Box<dyn NacManagerApi> = Box::new(scoped);
             scoped.enable(owner).await?;
             drop(scoped);
+            let guard = self.refresh_guard();
             scope
                 .commit()
                 .await
                 .map_err(|error| Error::Acp(error.to_string()))?;
-            self.nac
-                .load()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
+            self.reload_after_commit(guard).await?;
             return Ok(());
         }
 
@@ -463,14 +556,12 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
             let scoped: Box<dyn NacManagerApi> = Box::new(scoped);
             scoped.purge(requestor).await?;
             drop(scoped);
+            let guard = self.refresh_guard();
             scope
                 .commit()
                 .await
                 .map_err(|error| Error::Acp(error.to_string()))?;
-            self.nac
-                .load()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
+            self.reload_after_commit(guard).await?;
             return Ok(());
         }
 

@@ -28,6 +28,7 @@ regolith.workspace = true
 inputs = { path = "../inputs" }
 
 # Internal crates
+chunk-split = { path = "../chunk-split" }
 cursor = { path = "../cursor" }
 defra-core = { path = "../defra-core" }
 document = { path = "../document" }

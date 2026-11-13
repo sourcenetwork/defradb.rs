@@ -47,6 +47,7 @@ pub unsafe extern "C" fn defra_encrypted_index_new(
                 .ok_or_else(|| format!("collection '{}' not found", collection_name_str))?;
 
             let schema = collection.schema();
+            db::chunk::ensure_admin_changeable(schema).map_err(|e| e.to_string())?;
 
             // Check if field exists in the collection
             let field_exists = schema.fields.iter().any(|f| f.name == field_name_str);

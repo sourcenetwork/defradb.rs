@@ -20,9 +20,9 @@ use axum::{
 use defra_core::RequestContext;
 
 use crate::identity_extractor::{parse_identity_from_headers, ExtractIdentity, MiddlewareIdentity};
-use crate::nac_guard::require_permission;
-use crate::route_permissions::{route_permission, RoutePermission};
-use crate::router::AppState;
+use crate::nac_guard::require_permissions;
+use crate::route_permissions::{self, route_permission, RoutePermission};
+use crate::router::{AppState, NodePermission};
 
 /// Auth middleware that enforces route-level permissions.
 ///
@@ -45,6 +45,7 @@ pub async fn auth_middleware(
 
     let permission = route_permission(path, &method);
     let is_exempt = matches!(permission, RoutePermission::Exempt);
+    let reads_collection_first = route_permissions::reads_collection_first(path, &method);
 
     // Parse the caller's identity once. The same value is reused below both to
     // pre-populate the handler extension and to bind the request-scoped NAC
@@ -89,11 +90,22 @@ pub async fn auth_middleware(
         .with_bearer(scoped, bearer);
     request.extensions_mut().insert(context.clone());
     let execution = async move {
-        if let RoutePermission::Required(perm) = permission {
-            let identity = ExtractIdentity::from_did(acting_did);
-            if let Err(err) = require_permission(&state, &identity, perm).await {
-                return err.into_response();
+        let identity = ExtractIdentity::from_did(acting_did);
+        // `get-collection` first on the collection handler routes, then the
+        // route's own permission, decided in one call so the edge crosses
+        // onto the pool once.
+        let both;
+        let checks: &[NodePermission] = match (reads_collection_first, &permission) {
+            (true, RoutePermission::Required(own)) => {
+                both = [NodePermission::CollectionGet, *own];
+                &both
             }
+            (true, _) => &[NodePermission::CollectionGet],
+            (false, RoutePermission::Required(own)) => std::slice::from_ref(own),
+            (false, _) => &[],
+        };
+        if let Err(err) = require_permissions(&state, &identity, checks).await {
+            return err.into_response();
         }
         next.run(request).await
     };

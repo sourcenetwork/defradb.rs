@@ -2885,9 +2885,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Collection truncate",
-        name: "INV_NoRemovalWithoutPermission / INV_FilteredNeverOnBranchable / INV_FilteredRemovesOnlyCommittedMatches / INV_BadFilterRemovesNothing / INV_UnfilteredRemovesAll / INV_UnfilteredEmptiesView",
+        name: "INV_NoRemovalWithoutPermission / INV_NoRemovalFromChunks / INV_FilteredNeverOnBranchable / INV_FilteredRemovesOnlyCommittedMatches / INV_BadFilterRemovesNothing / INV_UnfilteredRemovesAll / INV_UnfilteredEmptiesView",
         axis: Tla,
-        anchor: "crates/db/src/collection/ops/truncate/mod.rs DB::truncate_collection_as, DB::truncate_parsed_as, DB::truncate_target, conditions, DB::truncate; crates/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::truncate_metadata_in; crates/db/src/collection/ops/truncate/filtered.rs DB::truncate_matching",
+        anchor: "crates/db/src/collection/ops/truncate/mod.rs DB::truncate_collection_as, DB::truncate_parsed_as, DB::truncate_target, conditions, DB::truncate; crates/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::truncate_metadata_in; crates/db/src/collection/ops/truncate/filtered.rs DB::truncate_matching; crates/db/src/chunk/user_writes.rs ensure_admin_changeable",
         model_ref: "MC_Truncate_{Green,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -2950,13 +2950,28 @@ pub const PROPERTIES: &[Property] = &[
         // A document write or a truncate checks `get-collection` and then
         // its own permission, in Go's order, inside its transaction, and a
         // call that names no identity acts as no one, never as the node.
+        // Over HTTP the edge checks first, in the same order, from a
+        // snapshot of the grants swapped in before any NAC write returns.
         family: "Node access control operations",
-        name: "INV_NoEffectWithoutPermission / INV_RefusalNamesGoFirst",
+        name: "INV_NoEffectWithoutPermission / INV_RefusalNamesGoFirst / INV_EdgeSeesReturnedRevoke",
         axis: Tla,
-        anchor: "crates/acp/src/nac/permission.rs NodePermission::go_order; crates/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/db/src/write/autocommit/batch.rs check_attempt_node_access; crates/db/src/txn/registry/indexes.rs check_access_in; crates/query/src/runner/turn.rs lent, lent_node_permission; crates/defra-node/src/ops/request.rs caller, txn_owner",
-        model_ref: "MC_NacOrder_{Green,Red_SkipGet,Red_OwnFirst,Red_AnonAsNode,Red_OutsideTxn}.cfg",
+        anchor: "crates/acp/src/nac/permission.rs NodePermission::go_order; crates/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/db/src/write/autocommit/batch.rs check_attempt_node_access; crates/db/src/txn/registry/indexes.rs check_access_in; crates/query/src/runner/turn.rs lent, lent_node_permission; crates/defra-node/src/ops/request.rs caller, txn_owner; crates/http/src/auth_middleware.rs auth_middleware; crates/http/src/route_permissions.rs reads_collection_first, route_permission; crates/http/src/nac_guard.rs require_permissions; crates/http/src/nac_adapter.rs NacAdapter::check_permissions; crates/db/src/nac/mod.rs NacManager::check_permissions; crates/db/src/nac/edge.rs refresh_edge, refresh_edge_on_commit, refresh_guard, RefreshGuard, reload_after_commit, EdgeGrants::publish, EdgeSnapshot::check, check_all, decide; crates/acp/src/nac/node_acp/snapshot.rs copy_into; crates/db/src/nac/write.rs in_write; crates/db/src/nac/mod.rs initialize, enable, purge; crates/defra-node/src/node_builder.rs NodeBuilder::build",
+        model_ref: "MC_NacOrder_{Green,Red_SkipGet,Red_OwnFirst,Red_AnonAsNode,Red_OutsideTxn,Red_EdgeOwnOnly,Red_StaleEdge,Red_NoWithdraw}.cfg",
         tiers: &[Boundary],
-        bound_by: "",
+        bound_by: "crates/cli/src/nac_adapter_tests.rs a_returned_revocation_refuses_the_next_edge_check, the_snapshot_decides_every_permission_as_the_engine_does; crates/db/tests/nac/dropped_write.rs a_revoke_dropped_after_its_commit_still_checks_the_edge",
+    },
+    Property {
+        // A database transaction that commits a NAC tuple write (through a
+        // projector or a source grant) rebuilds the edge snapshot at commit;
+        // one that writes none registers nothing and rebuilds nothing. A
+        // savepoint rolled back drops the registrations made after it.
+        family: "Node access control operations",
+        name: "INV_RebuiltAfterNacWrite / INV_NoRebuildWithoutNacWrite",
+        axis: Tla,
+        anchor: "crates/acp/src/zanzibar/store/transaction.rs written; crates/datastore/src/multistore.rs node_access_written, NodeAccessWrites; crates/db/src/nac/edge.rs EdgeRefreshOwed, refresh_edge_on_commit; crates/db/src/database/mod.rs new_db_txn; crates/storage/src/corekv/callbacks.rs TxnCallbacks::mark, TxnCallbacks::truncate",
+        model_ref: "MC_NacEdgeRefreshOnWrite_{Green,Red_EveryWrite,Red_KeepOnRollback}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/acp/tests/node_access_writes.rs only_node_policy_writes_owe_the_edge_refresh; crates/defra-node/tests/unit/document_projector.rs raw_document_mutations_stage_sources_in_the_same_transaction",
     },
     Property {
         family: "Node access control operations",
@@ -3010,6 +3025,37 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "ServiceRecord (lake build)",
         tiers: &[Boundary],
         bound_by: "",
+    },
+    Property {
+        family: "Text chunking",
+        name: "covers / bounded / pickPre_capped / deterministic / units_edit / local_edit / heading_keeps_text / unit_break_reads_only_headings / long_unit_fences",
+        axis: Lean,
+        anchor: "crates/chunk-split/src/split/mod.rs split, split_v1; version.rs SplitterVersion; segments.rs units, fence_before, segments; atoms.rs atoms, sentence_ends; pack.rs pack; overlap.rs with_overlap, borrow, REPEAT_SHARE",
+        model_ref: "ChunkSplit (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Text chunking",
+        name: "no_chunks_keeps_its_identity / different_settings_different_identity / field_order_does_not_change_identity / peer_holds_the_same_settings_as_the_author / buggy_identity_ignores_settings / decode_encode / default_splitter_keeps_the_old_bytes / old_bytes_read_as_the_default / encode_injective / splitter_reaches_the_identity",
+        axis: Lean,
+        anchor: "crates/schema/src/cid.rs build_collection_delta; crates/query/src/sdl_parse/chunk.rs synthesize_chunk_types; crates/db/src/merge/merge_handler/definition.rs process_collection_definition_delta; crates/defra-core/src/block_delta.rs ChunkedFieldDelta, DEFAULT_SPLITTER_VERSION, is_default_splitter_version; crates/defra-core/src/ipld/to_ipld.rs; crates/defra-core/src/ipld/from_ipld.rs",
+        model_ref: "ChunkSplit (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A peer's definition blocks arrive in any order and may be forged.
+        // A first version follows the SDL's rules, a patch keeps its previous
+        // version's settings, and activation refuses settings other than the
+        // first version's, even for a record stored before the merge checked.
+        family: "Text chunking",
+        name: "FirstValid / MergedMatchFirst / ActiveMatchesFirst / MergedKeepName / ActiveKeepsName: a synced version's @chunk settings are ones a schema could declare, and every merged or active version keeps its collection's first version's settings and name",
+        axis: Tla,
+        anchor: "crates/db/src/merge/merge_handler/definition.rs process_collection_definition_delta; crates/db/src/merge/merge_handler/definition_chunks.rs chunk_settings_error, chunk_parent_error; crates/schema/src/chunk_rules.rs chunk_settings_errors, chunk_settings_change, ensure_chunk_settings_kept; crates/db/src/chunk/user_writes.rs ensure_keeps_first_chunk_settings; crates/db/src/collection/ops/version.rs set_active_collection_version_as; crates/db/src/txn/registry/collections.rs set_collection_active_in_txn_as",
+        model_ref: "MC_ChunkSettingsSync_{Green,Green_Legacy}.cfg (GREEN) / MC_ChunkSettingsSync_{Red_NoFirstCheck,Red_NoMergeGuard,Red_NoActivateGuard,Red_NoNameCheck}.cfg (RED)",
+        tiers: &[Contract],
+        bound_by: "crates/db/tests/merge/chunk_definition_guard.rs a_patch_that_changes_max_chars_is_rejected, a_first_version_with_max_chars_below_the_minimum_is_rejected, an_honest_patch_that_keeps_the_chunk_settings_is_accepted, activating_a_version_with_other_chunk_settings_is_refused, a_patch_that_changes_the_splitter_version_is_rejected, activating_a_version_with_another_splitter_version_is_refused, a_patch_that_renames_the_parent_is_rejected, activating_a_renamed_version_is_refused; crates/schema/tests/chunk_validation_tests.rs renaming_the_parent_is_refused, renaming_the_chunk_collection_is_refused",
     },
     Property {
         // One task serves a pg-compat connection: one deadline read at the

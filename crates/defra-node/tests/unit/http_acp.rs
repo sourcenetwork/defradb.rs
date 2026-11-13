@@ -875,3 +875,211 @@ mod bound_caller {
         .unwrap();
     }
 }
+
+/// With node ACP on, the embedded server checks the routes that decide access
+/// at the edge, as `defradb start` does: a caller without `DocumentRead`
+/// cannot stream document updates.
+#[test]
+fn embedded_events_require_node_permission() {
+    edge::testing::edge()
+        .block_on(async {
+            let _serial = crate::tests::SIGNING_STORE_GUARD.lock().await;
+            let owner = identity();
+            let owner_did = store_signing_identity(&owner);
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let node = Node::builder()
+                .with_node_identity_did(&owner_did)
+                .with_node_acp_enabled()
+                .with_http(HttpConfig::with_listener(listener).unwrap())
+                .build()
+                .await
+                .unwrap();
+            node.add_collection("type Note { text: String }")
+                .await
+                .unwrap();
+            let client = http_client();
+            let events = format!("http://{address}/api/v0/events?event=update");
+            let anonymous = client.get(&events).send().await.unwrap();
+            assert_refused(anonymous, "read-document").await;
+            let owner_stream = client
+                .get(&events)
+                .header("Authorization", bearer(&owner, &address.to_string()))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                owner_stream.status().as_u16(),
+                200,
+                "the owner could not stream updates"
+            );
+            drop(owner_stream);
+            let peer_info = client
+                .get(format!("http://{address}/api/v0/p2p/info"))
+                .send()
+                .await
+                .unwrap();
+            assert_refused(peer_info, "get-p2p-peer-info").await;
+            node.shutdown().await.unwrap();
+        })
+        .unwrap();
+}
+
+/// Asserts the edge's node ACP refusal: 401, naming `permission` as Go does.
+async fn assert_refused(response: net::http::Response, permission: &str) {
+    assert_eq!(response.status().as_u16(), 401, "not refused by node ACP");
+    let body = response.text().await.unwrap();
+    assert!(
+        body.contains(&format!("Permission: {permission}")),
+        "the refusal does not name {permission}: {body}"
+    );
+}
+
+fn store_signing_identity(owner: &RawIdentity) -> String {
+    let owner_did = owner.did().unwrap();
+    let public = owner.public_key_bytes();
+    defra_core::signing::store_identity(
+        owner_did.as_str(),
+        SigningConfig {
+            key_type: SigningKeyType::Ed25519,
+            private_key_bytes: owner.private_key_bytes(),
+            public_key_bytes: public.clone(),
+            public_key_hex: hex::encode(public),
+            remote_signer: None,
+            signing_authorization: None,
+        },
+    )
+    .expect("the store takes the identity");
+    owner_did.as_str().to_owned()
+}
+
+fn http_client() -> net::http::Client {
+    net::http::Client::builder(edge::testing::edge())
+        .no_proxy()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap()
+}
+
+/// A store a previous run enabled node ACP in keeps it enabled on restart, so
+/// the embedded server keeps checking the edge routes even when this run did
+/// not ask for node ACP.
+#[test]
+fn embedded_edge_stays_checked_after_restart_without_the_flag() {
+    edge::testing::edge()
+        .block_on(async {
+            let _serial = crate::tests::SIGNING_STORE_GUARD.lock().await;
+            let owner_did = store_signing_identity(&identity());
+            let directory = tempfile::tempdir().unwrap();
+            let first = Node::builder()
+                .data_path(directory.path())
+                .with_node_identity_did(&owner_did)
+                .with_node_acp_enabled()
+                .build()
+                .await
+                .unwrap();
+            first.shutdown().await.unwrap();
+            drop(first);
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let reopened = Node::builder()
+                .data_path(directory.path())
+                .with_node_identity_did(&owner_did)
+                .with_http(HttpConfig::with_listener(listener).unwrap())
+                .build()
+                .await
+                .unwrap();
+            let response = http_client()
+                .get(format!("http://{address}/api/v0/p2p/info"))
+                .send()
+                .await
+                .unwrap();
+            assert_refused(response, "get-p2p-peer-info").await;
+            reopened.shutdown().await.unwrap();
+        })
+        .unwrap();
+}
+
+/// The encrypted index list route leaves its own permission to the operation,
+/// after `get-collection`: a caller holding only `get-collection` is refused
+/// with 401 naming `list-encrypted-index`, as the add and delete routes are.
+#[test]
+fn embedded_encrypted_index_list_refusal_is_unauthorized() {
+    edge::testing::edge()
+        .block_on(async {
+            let _serial = crate::tests::SIGNING_STORE_GUARD.lock().await;
+            let owner_did = store_signing_identity(&identity());
+            let reader = identity();
+            let reader_did = reader.did().unwrap();
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let node = Node::builder()
+                .with_node_identity_did(&owner_did)
+                .with_node_acp_enabled()
+                .with_http(HttpConfig::with_listener(listener).unwrap())
+                .build()
+                .await
+                .unwrap();
+            let owner = defra_core::RequestContext::default().with_identity(Some(owner_did));
+            node.add_collection_as(&owner, "type Note { text: String }")
+                .await
+                .unwrap();
+            node.add_nac_actor_relationship_as(
+                &owner,
+                acp::nac::NodePermission::CollectionGet.as_str(),
+                reader_did.as_str(),
+            )
+            .await
+            .unwrap();
+            let response = http_client()
+                .get(format!(
+                    "http://{address}/api/v0/collections/Note/encrypted-indexes"
+                ))
+                .header("Authorization", bearer(&reader, &address.to_string()))
+                .send()
+                .await
+                .unwrap();
+            assert_refused(response, "list-encrypted-index").await;
+            node.shutdown().await.unwrap();
+        })
+        .unwrap();
+}
+
+/// An embedder's own routes are not node routes: the edge's node ACP check,
+/// and its `DocumentRead` default for routes outside the table, stay off them.
+#[test]
+fn embedded_extra_routes_are_not_node_checked() {
+    edge::testing::edge()
+        .block_on(async {
+            let _serial = crate::tests::SIGNING_STORE_GUARD.lock().await;
+            let owner_did = store_signing_identity(&identity());
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let extra =
+                axum::Router::new().route("/app/hello", axum::routing::get(|| async { "hello" }));
+            let node = Node::builder()
+                .with_node_identity_did(&owner_did)
+                .with_node_acp_enabled()
+                .with_http(
+                    HttpConfig::with_listener(listener)
+                        .unwrap()
+                        .with_extra_routes(extra),
+                )
+                .build()
+                .await
+                .unwrap();
+            let response = http_client()
+                .get(format!("http://{address}/app/hello"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status().as_u16(),
+                200,
+                "an embedder route was gated"
+            );
+            assert_eq!(response.text().await.unwrap(), "hello");
+            node.shutdown().await.unwrap();
+        })
+        .unwrap();
+}

@@ -592,6 +592,8 @@ impl NodeBuilder {
         let query_limits = config.query_limits;
         #[cfg(feature = "http")]
         let identity_only = config.identity_only;
+        #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+        let node_acp_enabled = config.node_acp_enabled;
         query_limits.check_fragment_nesting()?;
         let workers = self.workers.take();
         let node = assemble(|pool| self.open_store(pool, crdts), config, workers, extras).await?;
@@ -632,6 +634,25 @@ impl NodeBuilder {
             let server = server.with_index_arc(defra_http::index_adapter::IndexAdapter::new_arc(
                 Arc::clone(node.database()),
             ));
+            // With node ACP configured, the routes that check permissions at
+            // the edge (events, P2P, `/node/*`) check them, as `defradb
+            // start` does. Configured covers a store a previous run enabled
+            // node ACP in: the adapter then follows its status, disabled and
+            // re-enabled included. A node never configured gets no adapter,
+            // so `/acp/node/enable` cannot hand an open node to its first
+            // caller.
+            #[cfg(not(target_arch = "wasm32"))]
+            let nac_configured = node_acp_enabled
+                || db::NacManagerApi::status(&**node.nac_manager()).await
+                    != acp::nac::NacStatus::NotConfigured;
+            #[cfg(not(target_arch = "wasm32"))]
+            let server = match nac_configured {
+                true => server.with_nac_arc(Arc::new(
+                    defra_http::nac_adapter::NacAdapter::new(Arc::clone(node.nac_manager()))
+                        .placed_on(node.pool.as_ref()),
+                )),
+                false => server,
+            };
 
             // A local document ACP is the node's own store: its routes run on
             // the pool, as the node's own calls do.

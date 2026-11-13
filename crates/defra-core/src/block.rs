@@ -12,11 +12,12 @@ use crate::cid_encoding::CidText;
 use crate::{Error, Result};
 
 // Re-export delta payload types
+pub use crate::block_delta::is_default_splitter_version;
 pub use crate::block_delta::{
-    CollectionDefinitionDeltaPayload, CollectionDeltaPayload, CollectionSetDeltaPayload,
-    CompositeDeltaPayload, CounterDeltaPayload, CustomDeltaPayload, FieldDefinitionDeltaPayload,
-    ImmutableDeltaPayload, JsonDeltaPayload, LwwDeltaPayload, TextDeltaPayload,
-    IMMUTABLE_LINK_NAME,
+    ChunkOfDelta, ChunkedFieldDelta, CollectionDefinitionDeltaPayload, CollectionDeltaPayload,
+    CollectionSetDeltaPayload, CompositeDeltaPayload, CounterDeltaPayload, CustomDeltaPayload,
+    FieldDefinitionDeltaPayload, ImmutableDeltaPayload, JsonDeltaPayload, LwwDeltaPayload,
+    TextDeltaPayload, DEFAULT_SPLITTER_VERSION, IMMUTABLE_LINK_NAME,
 };
 
 // Re-export signature/encryption types

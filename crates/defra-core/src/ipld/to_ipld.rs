@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 use ipld_core::ipld::Ipld;
 
 use crate::block::{
-    Block, CollectionDefinitionDeltaPayload, CollectionDeltaPayload, CompositeDeltaPayload,
+    is_default_splitter_version, Block, ChunkOfDelta, ChunkedFieldDelta,
+    CollectionDefinitionDeltaPayload, CollectionDeltaPayload, CompositeDeltaPayload,
     CounterDeltaPayload, CrdtDelta, CustomDeltaPayload, DAGLink, Encryption,
     FieldDefinitionDeltaPayload, ImmutableDeltaPayload, JsonDeltaPayload, LwwDeltaPayload,
     Signature, SignatureHeader, SignatureType, TextDeltaPayload,
@@ -338,7 +339,50 @@ impl TryFrom<&CollectionDefinitionDeltaPayload> for Ipld {
         if let Some(ref policy_cid) = payload.policy_cid {
             map.insert("policy".to_string(), Ipld::Link(*policy_cid));
         }
+        if !payload.chunked_fields.is_empty() {
+            map.insert(
+                "chunked".to_string(),
+                Ipld::List(payload.chunked_fields.iter().map(Ipld::from).collect()),
+            );
+        }
+        if let Some(ref chunk_of) = payload.chunk_of {
+            map.insert("chunkOf".to_string(), Ipld::from(chunk_of.as_ref()));
+        }
         Ok(Ipld::Map(map))
+    }
+}
+
+impl From<&ChunkedFieldDelta> for Ipld {
+    fn from(chunked: &ChunkedFieldDelta) -> Self {
+        let mut map = BTreeMap::new();
+        map.insert("field".to_string(), Ipld::String(chunked.field.clone()));
+        map.insert(
+            "maxChars".to_string(),
+            Ipld::Integer(chunked.max_chars as i128),
+        );
+        map.insert(
+            "overlap".to_string(),
+            Ipld::Integer(chunked.overlap as i128),
+        );
+        if !is_default_splitter_version(&chunked.splitter_version) {
+            map.insert(
+                "splitterVersion".to_string(),
+                Ipld::Integer(chunked.splitter_version as i128),
+            );
+        }
+        Ipld::Map(map)
+    }
+}
+
+impl From<&ChunkOfDelta> for Ipld {
+    fn from(chunk_of: &ChunkOfDelta) -> Self {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "collection".to_string(),
+            Ipld::String(chunk_of.collection.clone()),
+        );
+        map.insert("field".to_string(), Ipld::String(chunk_of.field.clone()));
+        Ipld::Map(map)
     }
 }
 
