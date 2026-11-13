@@ -7,6 +7,8 @@
 //! differently. Go keys its index the same way (`getDocumentsIndexKey`,
 //! `internal/db/index.go`) and returns that order.
 
+use std::future::Future;
+
 use rapidhash::RapidHashSet;
 
 use query::planner::index_selection::IndexScanType;
@@ -45,6 +47,49 @@ pub(crate) fn apply_exact_match_page(
     };
     doc_ids.truncate(end);
     doc_ids.drain(..start);
+}
+
+/// How many mapped DocIDs a scan needs resolved: an ExactMatch with a limit
+/// needs only its page, `offset + limit`; every other scan already paged
+/// while it scanned, so it needs all of them.
+pub(crate) fn resolve_bound(
+    scan_type: &IndexScanType,
+    offset: u64,
+    limit: Option<u64>,
+) -> Option<usize> {
+    if !matches!(scan_type, IndexScanType::ExactMatch { .. }) {
+        return None;
+    }
+    limit.map(|limit| {
+        (offset.saturating_add(limit))
+            .try_into()
+            .unwrap_or(usize::MAX)
+    })
+}
+
+/// Resolve short IDs to `(DocID, short ID)` in index order, skipping IDs with
+/// no mapping, and stop once `bound` of them are mapped. The page cut from
+/// the result is the one full resolution would give.
+pub(crate) async fn resolve_in_order<F, Fut, E>(
+    doc_short_ids: &[u64],
+    bound: Option<usize>,
+    mut lookup: F,
+) -> Result<Vec<(String, u64)>, E>
+where
+    F: FnMut(u64) -> Fut,
+    Fut: Future<Output = Result<Option<String>, E>>,
+{
+    let wanted = bound.unwrap_or(usize::MAX);
+    let mut pairs = Vec::with_capacity(doc_short_ids.len().min(wanted));
+    for &short_id in doc_short_ids {
+        if pairs.len() >= wanted {
+            break;
+        }
+        if let Some(doc_id) = lookup(short_id).await? {
+            pairs.push((doc_id, short_id));
+        }
+    }
+    Ok(pairs)
 }
 
 #[cfg(test)]
@@ -114,5 +159,62 @@ mod tests {
         extend_unique(&mut all, &mut seen, vec![entry(3, 7), entry(1, 7)]);
         extend_unique(&mut all, &mut seen, vec![entry(1, 8), entry(2, 8)]);
         assert_eq!(all, [3, 1, 2]);
+    }
+
+    /// Short IDs 1..=8 in index order; 2, 3 and 6 have no mapping.
+    fn lookup(short_id: u64) -> std::future::Ready<Result<Option<String>, ()>> {
+        let mapped = !matches!(short_id, 2 | 3 | 6);
+        std::future::ready(Ok(mapped.then(|| format!("bae-{short_id}"))))
+    }
+
+    fn resolved_page(bound: Option<usize>, offset: u64, limit: Option<u64>) -> Vec<String> {
+        let short_ids: Vec<u64> = (1..=8).collect();
+        let pairs = workers::block_on(resolve_in_order(&short_ids, bound, lookup))
+            .unwrap()
+            .unwrap();
+        let mut page: Vec<String> = pairs.into_iter().map(|(id, _)| id).collect();
+        apply_exact_match_page(&exact(), &mut page, offset, limit);
+        page
+    }
+
+    #[test]
+    fn bounded_resolution_gives_the_page_full_resolution_gives() {
+        for offset in 0..7 {
+            for limit in [None, Some(0), Some(1), Some(2), Some(3), Some(9)] {
+                let bound = resolve_bound(&exact(), offset, limit);
+                assert_eq!(
+                    resolved_page(bound, offset, limit),
+                    resolved_page(None, offset, limit),
+                    "offset {offset}, limit {limit:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bounded_resolution_stops_at_offset_plus_limit_mapped_ids() {
+        let short_ids: Vec<u64> = (1..=8).collect();
+        let mut looked_up = Vec::new();
+        let pairs = workers::block_on(resolve_in_order(&short_ids, Some(3), |id| {
+            looked_up.push(id);
+            lookup(id)
+        }))
+        .unwrap()
+        .unwrap();
+        assert_eq!(pairs.len(), 3);
+        assert_eq!(looked_up, [1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn only_a_limited_exact_match_is_bounded() {
+        assert_eq!(resolve_bound(&exact(), 2, Some(3)), Some(5));
+        assert_eq!(resolve_bound(&exact(), 2, None), None);
+        let range = IndexScanType::RangeScan {
+            prefix_values: vec![],
+            lower: Bound::Unbounded,
+            upper: Bound::Unbounded,
+            reverse: false,
+        };
+        assert_eq!(resolve_bound(&range, 0, Some(1)), None);
     }
 }

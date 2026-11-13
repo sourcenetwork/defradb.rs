@@ -20,8 +20,8 @@ DocID is new on every run, so a DocID order (the #1602 tie-break this
 replaces) puts the same documents in a different order from run to run
 (`docIdOrder_can_reverse_creation`).
 
-Rust anchors: `crates/db/src/read/index_order.rs` `apply_exact_match_page`
-and `extend_unique`; the ExactMatch and InScan arms of `get_by_index_scan` in
+Rust anchors: `crates/db/src/read/index_order.rs` `apply_exact_match_page`,
+`extend_unique`, `resolve_bound` and `resolve_in_order`; the ExactMatch and InScan arms of `get_by_index_scan` in
 `crates/db/src/read/doc.rs` and of `get_by_index_scan_inner` in
 `read/lensed/fetcher/scan.rs` and `read/lensed/autocommit/scan.rs`;
 `crates/db/src/docid/map.rs`
@@ -275,5 +275,36 @@ theorem inScan_scan_order_without_repeats (scans : List (List Nat)) :
 theorem inScan_example : inScan [[3, 1], [1, 2]] = [3, 1, 2] := by
   -- run the definition.
   decide
+
+/-!
+## Resolving only the page
+
+An ExactMatch scans its whole equal-key set (so `indexFetches` counts every
+entry), but `resolve_in_order` maps short IDs to DocIDs only until
+`offset + limit` of them are mapped (`resolve_bound`); IDs with no mapping
+are skipped and do not count. The page cut from that shorter list must be
+the page full resolution would give.
+-/
+
+-- Full resolution: every short ID with a mapping, in scan order.
+def resolveAll (lookup : Nat → Option Nat) (ids : List Nat) : List Nat :=
+  -- unmapped IDs drop out.
+  ids.filterMap lookup
+
+-- Bounded resolution: the first `bound` mapped IDs, none past them.
+def resolveUpTo (lookup : Nat → Option Nat) (ids : List Nat) (bound : Nat) :
+    List Nat :=
+  -- stopping after `bound` mapped IDs keeps exactly the first `bound`.
+  (resolveAll lookup ids).take bound
+
+-- Promise: resolving only `offset + limit` mapped IDs gives the same page as
+-- resolving them all, whatever IDs are unmapped.
+theorem resolveUpTo_same_page (lookup : Nat → Option Nat) (ids : List Nat)
+    (offset limit : Nat) :
+    page offset (some limit) (resolveUpTo lookup ids (offset + limit)) =
+      page offset (some limit) (resolveAll lookup ids) := by
+  -- dropping `offset` from the first `offset + limit` leaves the first
+  -- `limit` of the rest, and taking `limit` of that changes nothing.
+  simp [page, resolveUpTo, List.drop_take, Nat.add_sub_cancel_left, List.take_take]
 
 end IndexEqualKeyOrder

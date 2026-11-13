@@ -280,7 +280,8 @@ impl<S: Store + 'static> LensedDocFetcher<S> {
             .filter(|id| seen.insert(*id))
             .collect();
 
-        let resolved = crate::docid::map::resolve_doc_id_pairs(&systemstore, &doc_short_ids)
+        let bound = crate::read::index_order::resolve_bound(&params.scan_type, offset, limit);
+        let resolved = crate::docid::map::resolve_doc_id_pairs(&systemstore, &doc_short_ids, bound)
             .await
             .map_err(|e| {
                 query::error::QueryError::execution(format!("doc ID resolution error: {}", e))
