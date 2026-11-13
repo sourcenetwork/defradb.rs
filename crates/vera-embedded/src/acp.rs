@@ -7,7 +7,7 @@ use vera::vera_rs::{AcpTransport, HeaderStream, TransportError};
 
 use crate::call::call;
 use crate::deadline::{self, bounded};
-use crate::error::Failure;
+use crate::error::{EmbeddedError, Failure};
 use crate::EmbeddedTransport;
 
 const SUBSCRIBE_HEADERS: &str = "vera_subscribeHeaders";
@@ -76,7 +76,7 @@ pub(crate) fn transport_error(method: &'static str, failure: Failure) -> Transpo
         Failure::TooLarge => TransportError::ResponseTooLarge { method },
         Failure::Malformed(error) => TransportError::other(error),
         Failure::Elapsed { method, deadline } => {
-            TransportError::other(Failure::elapsed(method, deadline))
+            TransportError::other(EmbeddedError::Elapsed { method, deadline })
         }
         Failure::Channel(error) => TransportError::other(error),
     }

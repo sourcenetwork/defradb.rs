@@ -56,11 +56,6 @@ pub(crate) enum Failure {
 }
 
 impl Failure {
-    /// The error a caller reads when the wait ended, for either consumer.
-    pub(crate) fn elapsed(method: String, deadline: Duration) -> EmbeddedError {
-        EmbeddedError::Elapsed { method, deadline }
-    }
-
     pub(crate) fn from_node(method: &str, error: LocalRpcError) -> Self {
         let method = method.to_owned();
         match error {
