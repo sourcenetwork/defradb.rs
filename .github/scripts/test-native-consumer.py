@@ -21,6 +21,8 @@ def success(names):
 
 SDK = 'vera-client = "0.1.2"\nvera-domain = "0.1.2"\nvera-modules = "0.1.2"\n'
 HARNESS = 'vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "' + 'a' * 40 + '" }\n'
+NODE = ''.join(name + ' = { git = "https://github.com/sourcenetwork/vera.rs", rev = "' + 'a' * 40 + '" }\n'
+               for name in ('vera-jsonrpc', 'vera-node'))
 
 
 class Tests(unittest.TestCase):
@@ -34,6 +36,10 @@ class Tests(unittest.TestCase):
             path = self.root / file
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(SDK + (HARNESS if harness else ''))
+        for file in driver.NODE_MANIFESTS:
+            path = self.root / file
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(NODE)
 
     def test_runtime_revision_rejects_mutable_malformed_and_nonstring_values(self):
         for value in ('', 'main', 'a' * 7, 'A' * 40, 'a' * 40 + '\n',
@@ -120,6 +126,25 @@ class Tests(unittest.TestCase):
                 driver.revision(self.root)
             path.write_text(original)
         self.assertEqual(driver.revision(self.root), 'a' * 40)
+
+    def test_node_crates_must_pin_the_harness_revision_on_every_vera_dependency(self):
+        self.sdk_fixture()
+        node = self.root / driver.NODE_MANIFESTS[0]
+        one_line = NODE.splitlines(keepends=True)[1]
+        for content in (
+            NODE.replace('a' * 40, 'b' * 40),
+            NODE.replace('a' * 40, 'b' * 40, 1),
+            NODE.replace('rev = "' + 'a' * 40 + '"', 'tag = "v0.1.2"', 1),
+            NODE.replace('rev = "' + 'a' * 40 + '"', 'branch = "main"'),
+            'vera-jsonrpc = "0.1.2"\n',
+            '',
+        ):
+            node.write_text(content)
+            with self.subTest(content=content), self.assertRaises(ValueError):
+                driver.revision(self.root)
+        for content in (NODE, one_line):
+            node.write_text(content)
+            self.assertEqual(driver.revision(self.root), 'a' * 40)
 
     def test_test_output_rejects_zero_extra_ignored_and_duplicate_passes(self):
         log = self.root / 'test.log'
