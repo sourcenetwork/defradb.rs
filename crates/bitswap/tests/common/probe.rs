@@ -1,3 +1,9 @@
+// `#[derive(NetworkBehaviour)]` (libp2p-swarm-derive 0.35.1) matches on the
+// event of `libp2p_stream::Behaviour`, which is uninhabited, and code it
+// generates after that match is unreachable. The derive puts its impl in this
+// module, so only a module-level allow reaches it.
+#![allow(unreachable_code)]
+
 use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 use std::convert::Infallible;
 use std::future::{ready, Future, Ready};

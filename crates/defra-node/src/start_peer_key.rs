@@ -29,7 +29,8 @@ impl StartPeerKey {
         Ok(Self(Zeroizing::new(seed)))
     }
 
-    /// The key's 32-byte Ed25519 seed.
+    /// The key's 32-byte Ed25519 seed, which the P2P transports start with.
+    #[cfg(any(feature = "p2p", feature = "libp2p"))]
     pub(crate) fn seed(&self) -> &Zeroizing<[u8; 32]> {
         &self.0
     }
