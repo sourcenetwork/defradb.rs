@@ -304,11 +304,12 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
             let scoped: Box<dyn NacManagerApi> = Box::new(scoped);
             scoped.initialize(owner_identity).await?;
             drop(scoped);
+            let guard = self.refresh_guard();
             scope
                 .commit()
                 .await
                 .map_err(|error| Error::Acp(error.to_string()))?;
-            self.reload_after_commit().await?;
+            self.reload_after_commit(guard).await?;
             return Ok(());
         }
 
@@ -523,11 +524,12 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
             let scoped: Box<dyn NacManagerApi> = Box::new(scoped);
             scoped.enable(owner).await?;
             drop(scoped);
+            let guard = self.refresh_guard();
             scope
                 .commit()
                 .await
                 .map_err(|error| Error::Acp(error.to_string()))?;
-            self.reload_after_commit().await?;
+            self.reload_after_commit(guard).await?;
             return Ok(());
         }
 
@@ -554,11 +556,12 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
             let scoped: Box<dyn NacManagerApi> = Box::new(scoped);
             scoped.purge(requestor).await?;
             drop(scoped);
+            let guard = self.refresh_guard();
             scope
                 .commit()
                 .await
                 .map_err(|error| Error::Acp(error.to_string()))?;
-            self.reload_after_commit().await?;
+            self.reload_after_commit(guard).await?;
             return Ok(());
         }
 

@@ -211,10 +211,44 @@ impl EdgeGrants {
     }
 }
 
+/// Withdraws the edge snapshot when dropped before [`Self::refreshed`]. A NAC
+/// write holds one from before its commit until its refresh has published, so
+/// a caller that drops the write in between leaves checks reading storage,
+/// never the snapshot from before a commit that stands. Withdrawing at the
+/// drop also outranks every refresh that started before it, including one
+/// that read storage before the commit.
+pub(super) struct RefreshGuard<'edge> {
+    edge: &'edge EdgeGrants,
+    armed: bool,
+}
+
+impl RefreshGuard<'_> {
+    /// The refresh published, or nothing committed: leave the snapshot alone.
+    pub(super) fn refreshed(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for RefreshGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.edge.withdraw();
+        }
+    }
+}
+
 impl<S> NacManager<S>
 where
     S: ZanzibarStore + ?Sized + 'static,
 {
+    /// A guard to hold across a NAC write's commit and its refresh.
+    pub(super) fn refresh_guard(&self) -> RefreshGuard<'_> {
+        RefreshGuard {
+            edge: &self.edge,
+            armed: true,
+        }
+    }
+
     /// The published edge snapshot, if there is one.
     pub(super) fn edge_snapshot(&self) -> Option<Snapshot> {
         self.edge.current()
@@ -239,13 +273,14 @@ where
     /// snapshot whatever the reload's outcome. The refresh reads the committed
     /// state itself, so a failed reload never leaves the edge answering from
     /// the copy taken before the write.
-    pub(super) async fn reload_after_commit(&self) -> Result<()> {
+    pub(super) async fn reload_after_commit(&self, guard: RefreshGuard<'_>) -> Result<()> {
         let reloaded = self
             .nac
             .load()
             .await
             .map_err(|error| Error::Acp(error.to_string()));
         self.refresh_edge().await;
+        guard.refreshed();
         reloaded
     }
 

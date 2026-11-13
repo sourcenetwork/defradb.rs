@@ -29,6 +29,12 @@
 \* a request that starts after the revoke has returned is checked against the
 \* new grants.
 \*
+\* Whoever asked for the revoke may also give up on it after it committed and
+\* before the swap: their future is dropped, so the swap never runs. The
+\* write's guard then withdraws the copy, and the edge reads storage until
+\* the next write's swap. A request that starts after the drop is checked
+\* against the new grants too.
+\*
 \* While a request runs, the node owner may revoke a permission. defradb.rs
 \* reads both permissions inside the write's transaction, and regolith
 \* validates those reads at commit, so a revoke that lands first sends the
@@ -39,8 +45,9 @@
 \*      (INV_NoEffectWithoutPermission)
 \*   2. A refusal names any permission but the first one, in Go's order, the
 \*      caller lacks. (INV_RefusalNamesGoFirst)
-\*   3. An edge check that runs after a revoke has returned decides on
-\*      grants from before it. (INV_EdgeSeesReturnedRevoke)
+\*   3. An edge check that runs after a revoke has returned, or after its
+\*      caller dropped it, decides on grants from before it.
+\*      (INV_EdgeSeesReturnedRevoke)
 \*
 \* The Rust code this models:
 \*   - the order                         crates/acp/src/nac/permission.rs NodePermission::go_order
@@ -64,6 +71,10 @@
 \*                                       crates/db/src/nac/mod.rs NacManager::check_permissions
 \*   - the edge snapshot and its swap    crates/db/src/nac/edge.rs NacManager::refresh_edge,
 \*                                       EdgeGrants::publish, NacManager::refresh_edge_on_commit;
+\*   - the withdraw when a write is      crates/db/src/nac/edge.rs RefreshGuard (drop),
+\*     dropped after its commit            NacManager::refresh_guard, reload_after_commit;
+\*                                       crates/db/src/nac/mod.rs NacManager::initialize,
+\*                                       enable, purge;
 \*   - the edge's decision, one lookup   crates/db/src/nac/edge.rs EdgeSnapshot::check, check_all,
 \*     per permission                      decide (each identity's permissions, decided ahead by the
 \*                                       engine; the model's FirstMissingIn(snap, ...) is that lookup);
@@ -76,7 +87,8 @@ CONSTANTS
   anon,      \* a caller that names no identity
   node,      \* the node's own identity, which holds every permission
   Bug        \* "None" for the real code; otherwise the guard a RED config breaks
-             \* (RED StaleEdge: a revoke returns before the edge snapshot is swapped)
+             \* (RED StaleEdge: a revoke returns before the edge snapshot is swapped;
+             \*  RED NoWithdraw: a revoke dropped after its commit leaves the old copy)
 
 \* The two permissions a document write needs.
 Get == "get-collection"            \* reading the collection
@@ -107,13 +119,18 @@ VARIABLES
   grants,     \* what each requester holds now (anon: what the wildcard holds)
   snap,       \* the edge's in-memory copy of grants, swapped after a write
   acked,      \* TRUE once the revoke has returned to whoever asked for it
-  stale,      \* TRUE once an edge check after that return used old grants
+  dropped,    \* TRUE once whoever asked for the revoke gave up on it after its commit
+  live,       \* TRUE while the copy is withdrawn: the edge reads storage instead
+  stale,      \* TRUE once an edge check after that return, or that drop, used old grants
   checked,    \* per requester, the decision its attempt read: "idle", "ok" or a missing permission
   revoked,    \* how many revokes have happened, to keep the model finite
   bad,        \* TRUE once a write committed for a caller lacking a permission
   wrong       \* TRUE once a refusal named a permission Go would not
 
-vars == <<grants, snap, acked, stale, checked, revoked, bad, wrong>>
+vars == <<grants, snap, acked, dropped, live, stale, checked, revoked, bad, wrong>>
+
+\* What the edge decides on: storage while the copy is withdrawn, else the copy.
+EdgeView == IF live THEN grants ELSE snap
 
 \* Whether identity w holds permission p in grants g: the node holds everything.
 HoldsIn(g, w, p) == w = node \/ p \in g[w]
@@ -133,6 +150,8 @@ TypeOK ==
   /\ grants \in [Requesters -> SUBSET {Get, Own}]                    \* grants are sets of permissions
   /\ snap \in [Requesters -> SUBSET {Get, Own}]                      \* so is the edge's copy
   /\ acked \in BOOLEAN                                               \* the revoke returned
+  /\ dropped \in BOOLEAN                                             \* the revoke was given up on
+  /\ live \in BOOLEAN                                                \* the copy is withdrawn
   /\ stale \in BOOLEAN                                               \* the stale-edge flag
   /\ checked \in [Requesters -> {"idle", "ok", Get, Own}]            \* each attempt's decision
   /\ revoked \in 0..1                                                \* at most one revoke
@@ -143,7 +162,9 @@ Init ==
   /\ grants = (a :> {Get, Own}) @@ (b :> {Own}) @@ (c :> {}) @@ (anon :> {})  \* a has both, b the write's, c and the wildcard none
   /\ snap = grants                                                  \* startup builds the first copy
   /\ acked = FALSE                                                  \* no revoke has returned
-  /\ stale = FALSE                                                  \* no edge check used old grants
+  /\ dropped = FALSE                                                \* no revoke was given up on
+  /\ live = FALSE                                                   \* the edge reads its copy
+  /\ stale = FALSE                                                 \* no edge check used old grants
   /\ checked = [r \in Requesters |-> "idle"]                         \* no attempt running
   /\ revoked = 0                                                     \* nothing revoked yet
   /\ bad = FALSE                                                     \* nothing committed wrongly
@@ -155,7 +176,7 @@ Init ==
 Check(r, s) ==
   /\ checked[r] = "idle"                                             \* r has no attempt running
   /\ LET edge == IF s = "http"                                       \* only HTTP has an edge
-                   THEN FirstMissingIn(snap, r, EdgeOrder)           \* what the edge's copy finds missing
+                   THEN FirstMissingIn(EdgeView, r, EdgeOrder)       \* what the edge finds missing
                    ELSE "none"                                       \* in process: nothing checked here
          missing == IF edge # "none"                                 \* the edge refused first
                       THEN edge                                      \* so that is the refusal
@@ -163,9 +184,9 @@ Check(r, s) ==
      IN
        /\ checked' = [checked EXCEPT ![r] = IF missing = "none" THEN "ok" ELSE missing]  \* remember the decision
        /\ wrong' = (wrong \/ (missing # "none" /\ missing # FirstMissing(r, GoOrder)))  \* a refusal must name Go's first
-       /\ stale' = (stale \/ (s = "http" /\ acked                     \* after the revoke returned,
+       /\ stale' = (stale \/ (s = "http" /\ (acked \/ dropped)        \* after the revoke returned or was dropped,
                       /\ edge # FirstMissing(r, EdgeOrder)))         \* the edge must decide on the new grants
-  /\ UNCHANGED <<grants, snap, acked, revoked, bad>>
+  /\ UNCHANGED <<grants, snap, acked, dropped, live, revoked, bad>>
 
 \* Requester r's attempt commits. The reads were in the transaction, so a
 \* revoke since the check aborts the commit and the attempt checks again
@@ -177,13 +198,13 @@ Commit(r) ==
             /\ UNCHANGED bad                                         \* nothing written
        ELSE /\ checked' = [checked EXCEPT ![r] = "idle"]             \* the write lands; r may ask again
             /\ bad' = (bad \/ FirstMissing(r, GoOrder) # "none")    \* landing without Go's permissions is the bug
-  /\ UNCHANGED <<grants, snap, acked, stale, revoked, wrong>>
+  /\ UNCHANGED <<grants, snap, acked, dropped, live, stale, revoked, wrong>>
 
 \* A refused attempt ends; its caller may ask again.
 Refused(r) ==
   /\ checked[r] \in {Get, Own}                                       \* r was refused
   /\ checked' = [checked EXCEPT ![r] = "idle"]                       \* the attempt is over
-  /\ UNCHANGED <<grants, snap, acked, stale, revoked, bad, wrong>>
+  /\ UNCHANGED <<grants, snap, acked, dropped, live, stale, revoked, bad, wrong>>
 
 \* The node owner revokes permission p from requester r, once: the revoke
 \* commits to storage. The edge's copy is not swapped yet. RED StaleEdge
@@ -194,22 +215,37 @@ Revoke(r, p) ==
   /\ grants' = [grants EXCEPT ![r] = @ \ {p}]                        \* p is gone
   /\ revoked' = 1                                                    \* count it
   /\ acked' = (Bug = "StaleEdge")                                   \* RED: the revoke returns at once
-  /\ UNCHANGED <<snap, stale, checked, bad, wrong>>
+  /\ UNCHANGED <<snap, dropped, live, stale, checked, bad, wrong>>
 
 \* After a committed write, the node copies the grants into a new snapshot
 \* and swaps it in; only then does the revoke return (refresh_edge runs
-\* before in_write returns, or as a commit callback the commit awaits).
+\* before in_write returns, or as a commit callback the commit awaits). A
+\* revoke that was dropped never gets here: its refresh was dropped with it.
 Swap ==
+  /\ ~dropped                                                        \* the revoke is still running
   /\ snap # grants                                                  \* the copy is behind storage
   /\ snap' = grants                                                  \* the fresh copy goes in whole
   /\ acked' = TRUE                                                   \* and the revoke returns
-  /\ UNCHANGED <<grants, stale, checked, revoked, bad, wrong>>
+  /\ UNCHANGED <<grants, dropped, live, stale, checked, revoked, bad, wrong>>
+
+\* Whoever asked for the revoke gives up on it after its commit, before the
+\* swap (its future is dropped). The write's RefreshGuard withdraws the copy as
+\* it drops, so the edge reads storage. RED NoWithdraw has no guard: the old
+\* copy stays in place, and nothing is left to swap it.
+Drop ==
+  /\ revoked = 1                                                     \* the revoke has committed
+  /\ ~acked /\ ~dropped                                              \* and has neither returned nor been dropped
+  /\ snap # grants                                                  \* its swap has not run
+  /\ dropped' = TRUE                                                 \* the caller gave up on it
+  /\ live' = (Bug # "NoWithdraw")                                    \* the guard withdraws the copy
+  /\ UNCHANGED <<grants, snap, acked, stale, checked, revoked, bad, wrong>>
 
 Next ==
   \/ \E r \in Requesters, s \in Surfaces : Check(r, s)               \* a request arrives and is checked
   \/ \E r \in Requesters : Commit(r) \/ Refused(r)                   \* a request's later steps
   \/ \E r \in Requesters, p \in {Get, Own} : Revoke(r, p)            \* a concurrent revoke
   \/ Swap                                                            \* the edge's copy catches up
+  \/ Drop                                                            \* the revoke's caller gives up on it
 
 Spec == Init /\ [][Next]_vars
 
@@ -219,6 +255,7 @@ INV_NoEffectWithoutPermission == ~bad
 \* Promise 2: every refusal names the first permission, in Go's order, the caller lacks.
 INV_RefusalNamesGoFirst == ~wrong
 
-\* Promise 3: once a revoke has returned, every edge check uses the new grants.
+\* Promise 3: once a revoke has returned, or its caller has dropped it, every
+\* edge check uses the new grants.
 INV_EdgeSeesReturnedRevoke == ~stale
 ====

@@ -91,13 +91,20 @@ where
                 }
             })
         });
+        let guard = self.refresh_guard();
         let outcome = match self.nac.transact(self.config.attempts(), attempt).await {
             Ok(outcome) => outcome,
-            Err(error) if error.is_conflict() => return Err(Error::Conflict(error.to_string())),
+            Err(error) if error.is_conflict() => {
+                guard.refreshed();
+                return Err(Error::Conflict(error.to_string()));
+            }
             Err(error) => return Err(acp_error(error)),
         };
         match outcome {
-            None => Ok(None),
+            None => {
+                guard.refreshed();
+                Ok(None)
+            }
             Some(Ok(value)) => {
                 let (value, status, owner) = *value
                     .downcast::<Committed<T>>()
@@ -110,11 +117,15 @@ where
                     self.nac.publish(status, owner);
                 }
                 self.refresh_edge().await;
+                guard.refreshed();
                 Ok(Some(value))
             }
-            Some(Err(refusal)) => Err(*refusal
-                .downcast::<Error>()
-                .map_err(|_| Error::Acp("a NAC write refused with an unknown error".into()))?),
+            Some(Err(refusal)) => {
+                guard.refreshed();
+                Err(*refusal
+                    .downcast::<Error>()
+                    .map_err(|_| Error::Acp("a NAC write refused with an unknown error".into()))?)
+            }
         }
     }
 
