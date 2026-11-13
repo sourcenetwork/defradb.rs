@@ -59,6 +59,7 @@ impl<S: Store> crate::database::DB<S> {
                 })?;
             crate::collection::populate_collection_root_id(&systemstore, &mut target_schema)
                 .await?;
+            crate::chunk::ensure_admin_changeable(&target_schema)?;
             // A synced version binds its policy by CID. Rebuilt without the
             // reference, the record commits to less than its identity does,
             // and activating it would serve the collection unpoliced,
@@ -119,7 +120,17 @@ impl<S: Store> crate::database::DB<S> {
                             .await
                             .map_err(Error::Storage)?
                         {
-                            match serde_json::from_slice::<CollectionVersion>(&other_bytes) {
+                            let other = serde_json::from_slice::<CollectionVersion>(&other_bytes);
+                            if let Ok(other_schema) = &other {
+                                crate::chunk::user_writes::ensure_keeps_first_chunk_settings(
+                                    &target_schema,
+                                    other_schema,
+                                )?;
+                            }
+                            match other {
+                                Ok(other_schema) if other_schema.is_generated() => {
+                                    crate::chunk::ensure_admin_changeable(&other_schema)?;
+                                }
                                 Ok(mut other_schema) if other_schema.is_active => {
                                     other_schema.is_active = false;
                                     let other_data =
@@ -156,6 +167,11 @@ impl<S: Store> crate::database::DB<S> {
 
             (target_schema, name)
         };
+
+        txn.datastore()?
+            .project_document(&name, "")
+            .await
+            .map_err(Error::Storage)?;
 
         let collection =
             Collection::load_index_actions(target_schema.clone(), &txn.systemstore()?).await?;
@@ -197,8 +213,13 @@ impl<S: Store> crate::database::DB<S> {
         &self,
         version_id: &str,
     ) -> Result<Option<Collection>> {
-        // Check cache first
-        if let Some(c) = self.get_collection_by_version_id(version_id)? {
+        // The cache answers by the version's collection, which it holds at its
+        // active version: a hit is this version only when the IDs agree. An
+        // older version comes from the stored versions below.
+        if let Some(c) = self
+            .get_collection_by_version_id(version_id)?
+            .filter(|c| c.version_id() == version_id)
+        {
             return Ok(Some(c));
         }
         // Search all stored versions (including inactive)
@@ -342,6 +363,9 @@ impl<S: Store> crate::database::DB<S> {
         let mut deleting_versions: rapidhash::RapidHashSet<&str> =
             also_deleting.iter().map(String::as_str).collect();
         deleting_versions.insert(version_id);
+        crate::chunk::user_writes::ensure_removed_with_parent(&all_versions, |version| {
+            deleting_versions.contains(version.version_id.as_str())
+        })?;
         let is_deleting_last_local_version = all_versions.iter().all(|version| {
             version.collection_id != collection_id
                 || deleting_versions.contains(version.version_id.as_str())
@@ -384,6 +408,13 @@ impl<S: Store> crate::database::DB<S> {
                     .await
                     .map_err(Error::Storage)?;
             }
+        }
+
+        if target_schema.is_active {
+            txn.datastore()?
+                .project_document(&name, "")
+                .await
+                .map_err(Error::Storage)?;
         }
 
         // 4. Delete IPLD blocks from blockstore (collection CID + field CIDs)
@@ -517,6 +548,9 @@ impl<S: Store> crate::database::DB<S> {
                 "cannot remove a collection while another field references it".to_string(),
             ));
         }
+        crate::chunk::user_writes::ensure_removed_with_parent(&all_versions, |version| {
+            deleting_versions.contains(version.version_id.as_str())
+        })?;
 
         let mut sorted = Vec::with_capacity(version_ids.len());
         let mut remaining: rapidhash::RapidHashSet<String> = version_ids.iter().cloned().collect();

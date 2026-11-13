@@ -34,6 +34,60 @@ pub(super) enum Turned {
     NeedsInput(PreparedInputRequest, Option<Arc<dyn DocMutator>>),
 }
 
+/// Delegated observations must never fall back to a detached node check.
+pub(super) async fn turn_node_permission(
+    fetcher: &dyn DocFetcher,
+    identity: &Did,
+    permission: acp::nac::NodePermission,
+    require_bound: bool,
+) -> crate::error::Result<Option<bool>> {
+    if require_bound {
+        fetcher
+            .check_bound_node_permission(identity, permission, false)
+            .await
+    } else {
+        fetcher.check_node_permission(identity, permission).await
+    }
+}
+
+/// Node authorization for `permission` as a lent turn decides it: through
+/// the verified check when the request requires transactional authority,
+/// otherwise as [`turn_node_permission`] does.
+async fn lent_node_permission(
+    fetcher: &dyn DocFetcher,
+    identity: &Did,
+    permission: acp::nac::NodePermission,
+    require_authority: bool,
+    require_bound: bool,
+) -> crate::error::Result<Option<bool>> {
+    if require_authority {
+        fetcher
+            .check_verified_node_permission(identity, permission)
+            .await
+    } else {
+        turn_node_permission(fetcher, identity, permission, require_bound).await
+    }
+}
+
+/// A certified provider is already bound to the row transaction. Only ordinary
+/// queries may ask the fetcher to choose a provider on their behalf.
+pub(super) async fn turn_acp(
+    fetcher: &dyn DocFetcher,
+    original: Arc<dyn acp::DocumentACP>,
+    certified: Option<Arc<dyn acp::DocumentACP>>,
+) -> crate::error::Result<Arc<dyn acp::DocumentACP>> {
+    match certified {
+        Some(provider) => Ok(provider),
+        None => fetcher.scoped_acp(original).await,
+    }
+}
+
+/// The authenticated principal and certified ACP for a delegated read turn.
+pub(super) struct DelegatedAuthority {
+    pub identity: Did,
+    pub acp: Arc<dyn acp::DocumentACP>,
+}
+
 fn parse_error(message: String) -> QueryResponse {
     QueryResponse {
         data: None,
@@ -76,6 +130,11 @@ where
         let inputs = PreparedInputMemo::default();
         let context = self.context();
         loop {
+            if !request.context.authorization_valid_now() {
+                return Ok(QueryResponse::error(QueryResponseError::from_query_error(
+                    QueryError::permission_denied("request authorization expired before dispatch"),
+                )));
+            }
             let runner = self.scoped_runner(self.acp.clone());
             let attempt = request.clone();
             let memo = inputs.clone();
@@ -115,6 +174,18 @@ where
         inputs: PreparedInputMemo,
         parsed: Option<ParsedOperation>,
     ) -> Turned {
+        self.run_turn_with_delegation(turn, request, inputs, parsed, None)
+            .await
+    }
+
+    pub(super) async fn run_turn_with_delegation(
+        &self,
+        turn: &mut dyn TxnTurn,
+        request: QueryRequest,
+        inputs: PreparedInputMemo,
+        parsed: Option<ParsedOperation>,
+        delegation: Option<DelegatedAuthority>,
+    ) -> Turned {
         let variables = convert_variables(&request.variables);
         let parsed = match parsed {
             Some(parsed) => parsed,
@@ -132,10 +203,24 @@ where
                 )));
             }
         }
-        let turned = self
-            .lent(turn, parsed, request, variables, inputs)
-            .await
-            .unwrap_or_else(|error| Turned::Done(QueryResponse::error(error.to_string())));
+        // The collection version the request works through is pinned for
+        // this turn only, and cleared before the turn ends, so a later request
+        // on the transaction sees the active version (proofs/tla/VersionPin.tla).
+        let turned = match self.pin_selected_version(turn, &request).await {
+            Ok(pinned) => {
+                let turned = self
+                    .lent(turn, parsed, request, variables, inputs, delegation)
+                    .await
+                    .unwrap_or_else(|error| Turned::Done(QueryResponse::error(error.to_string())));
+                match pinned.then(|| turn.pin_collection(None)) {
+                    Some(Err(error)) => Turned::Done(QueryResponse::error(format!(
+                        "failed to clear the selected collection version: {error}"
+                    ))),
+                    _ => turned,
+                }
+            }
+            Err(refused) => Turned::Done(refused),
+        };
         if statement {
             let keep = matches!(&turned, Turned::Done(response) if response.errors.is_empty());
             if let Err(error) = turn.end_statement(keep) {
@@ -147,6 +232,30 @@ where
         turned
     }
 
+    /// Pins the collection version `request` works through, if it names one,
+    /// for this turn, and says whether it pinned; the response that refuses
+    /// the request when the version cannot be found or pinned.
+    async fn pin_selected_version(
+        &self,
+        turn: &mut dyn TxnTurn,
+        request: &QueryRequest,
+    ) -> std::result::Result<bool, QueryResponse> {
+        let Some(version_id) = request.context.collection_version() else {
+            return Ok(false);
+        };
+        let version = self
+            .collection_provider
+            .get_collection_by_version_id(version_id)
+            .await
+            .map_err(|error| QueryResponse::error(error.to_string()))?
+            .ok_or_else(|| {
+                QueryResponse::error(format!("collection version '{version_id}' not found"))
+            })?;
+        turn.pin_collection(Some((*version).clone()))
+            .map_err(|error| QueryResponse::error(error.to_string()))?;
+        Ok(true)
+    }
+
     /// The part of a run that holds the transaction: every handle it makes
     /// is dropped when it returns.
     async fn lent(
@@ -156,44 +265,137 @@ where
         request: QueryRequest,
         variables: Option<rapidhash::RapidHashMap<String, serde_json::Value>>,
         inputs: PreparedInputMemo,
+        delegation: Option<DelegatedAuthority>,
     ) -> std::result::Result<Turned, TransactionError> {
         let txn_ctx = turn.context()?;
+        let require_authority = request.context.transactional_authority_required();
         // The transaction's own provider, so its uncommitted schemas are visible.
-        let txn_provider = txn_ctx
-            .collection_provider()
-            .unwrap_or_else(|| self.collection_provider.clone());
+        let txn_provider = match txn_ctx.collection_provider() {
+            Some(provider) => provider,
+            None if require_authority => {
+                return Ok(Turned::Done(QueryResponse::error(
+                    "transaction-bound schema is unavailable for verified mutation",
+                )))
+            }
+            None => self.collection_provider.clone(),
+        };
 
         // Validate that all referenced collections exist before execution.
         if let Err(error) = validate_parsed_operation(&parsed, txn_provider.as_ref()).await {
             return Ok(Turned::Done(parse_error(error.to_string())));
         }
 
-        let nac_identity = request.identity.clone().unwrap_or_else(Did::wildcard);
-        match txn_ctx
-            .doc_fetcher()
-            .check_node_permission(&nac_identity, permission_for_operation(&parsed))
-            .await
-        {
+        let require_bound_nac = delegation.is_some();
+        let (nac_actor, bound_acp) = match delegation {
+            Some(delegation) => (Some(delegation.identity), Some(delegation.acp)),
+            None => (request.identity.clone(), None),
+        };
+        let nac_identity = nac_actor.clone().unwrap_or_else(Did::wildcard);
+        let fetcher = txn_ctx.doc_fetcher();
+        let permission = permission_for_operation(&parsed);
+        // Checked in Go's order, so a refused write names the first permission
+        // it lacks, as the same write outside a transaction does.
+        let mut nac_check = Ok(Some(true));
+        let mut denied = permission;
+        for needed in permission.go_order() {
+            nac_check = lent_node_permission(
+                fetcher.as_ref(),
+                &nac_identity,
+                needed,
+                require_authority,
+                require_bound_nac,
+            )
+            .await;
+            if !matches!(nac_check, Ok(Some(true))) {
+                denied = needed;
+                break;
+            }
+        }
+        match nac_check {
             Ok(Some(false)) => {
-                return Ok(Turned::Done(QueryResponse::success(serde_json::json!({}))))
+                // A refused read answers with no data; a refused write fails.
+                if !matches!(parsed, ParsedOperation::Mutation { .. }) {
+                    return Ok(Turned::Done(QueryResponse::success(serde_json::json!({}))));
+                }
+                return Ok(Turned::Done(QueryResponse::error(format!(
+                    "not authorized to perform operation. Permission: {}",
+                    denied.as_str()
+                ))));
             }
             Ok(Some(true)) => {}
+            Ok(None) if require_bound_nac || require_authority => {
+                return Ok(Turned::Done(QueryResponse::error(
+                    "transaction-bound node authorization is unavailable",
+                )));
+            }
             Ok(None) => {
-                if let Some(denial) = check_nac(self, &request.identity, &parsed).await {
+                if let Some(denial) = check_nac(self, &nac_actor, &parsed).await {
                     return Ok(Turned::Done(denial));
                 }
             }
             Err(error) => return Ok(Turned::Done(QueryResponse::error(error.to_string()))),
         }
 
+        let bound_acp = if require_authority {
+            let mut enforcing = false;
+            if let ParsedOperation::Mutation { mutations, .. } = &parsed {
+                for mutation in mutations {
+                    match txn_provider.get_collection(&mutation.collection_name).await {
+                        Ok(Some(collection)) => enforcing |= collection.policy.is_some(),
+                        Ok(None) => {
+                            return Ok(Turned::Done(QueryResponse::error(
+                                "transaction-bound collection is unavailable",
+                            )))
+                        }
+                        Err(error) => {
+                            return Ok(Turned::Done(QueryResponse::error(error.to_string())))
+                        }
+                    }
+                }
+            }
+            if enforcing {
+                match fetcher.transaction_acp(self.acp.clone()).await {
+                    Ok(Some(acp)) => Some(acp),
+                    Ok(None) => {
+                        return Ok(Turned::Done(QueryResponse::error(
+                            "transaction-bound document authorization is unavailable",
+                        )))
+                    }
+                    Err(error) => return Ok(Turned::Done(QueryResponse::error(error.to_string()))),
+                }
+            } else {
+                bound_acp
+            }
+        } else {
+            bound_acp
+        };
+        // Go's `canDACBypass`, read at this request's own snapshot: a caller
+        // node access control grants `bypass-dac` reads past document ACP.
+        let bypass = match request.identity.is_some() && !self.context().dac_bypass() {
+            true => match txn_ctx.doc_fetcher().dac_bypass(&nac_identity).await {
+                Ok(bypass) => bypass,
+                Err(error) => return Ok(Turned::Done(QueryResponse::error(error.to_string()))),
+            },
+            false => false,
+        };
+        let bypassed;
+        let this = match bypass {
+            true => {
+                bypassed = self.for_request(self.context().into_owned().with_dac_bypass(true));
+                &bypassed
+            }
+            false => self,
+        };
+
         let identity = self.resolve_identity(request.identity);
         let mut warnings: Vec<GqlWarning> = Vec::new();
 
-        let scoped_acp = match txn_ctx.doc_fetcher().scoped_acp(self.acp.clone()).await {
-            Ok(provider) => provider,
-            Err(error) => return Ok(Turned::Done(QueryResponse::error(error.to_string()))),
-        };
-        let mut scoped_runner = self.scoped_runner(scoped_acp);
+        let scoped_acp =
+            match turn_acp(txn_ctx.doc_fetcher().as_ref(), self.acp.clone(), bound_acp).await {
+                Ok(provider) => provider,
+                Err(error) => return Ok(Turned::Done(QueryResponse::error(error.to_string()))),
+            };
+        let mut scoped_runner = this.scoped_runner(scoped_acp);
         scoped_runner.collection_provider = txn_provider.clone();
         if !scoped_runner.acp.supports_transactions() {
             // Even transaction-context implementations without an ACP
@@ -271,10 +473,7 @@ where
                             .await
                     }
                 }
-                ParsedOperation::Subscription { .. } => Err(QueryError::parse(
-                    "Subscriptions must be executed via Server-Sent Events (SSE). \
-                     Send the request with Accept: text/event-stream header.",
-                )),
+                ParsedOperation::Subscription { .. } => Err(QueryError::SubscriptionNeedsSse),
                 ParsedOperation::Introspection { query } => {
                     scoped_runner.execute_introspection(&query).await
                 }

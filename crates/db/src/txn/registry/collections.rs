@@ -110,6 +110,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                         )
                     })?;
                 crate::collection::populate_collection_root_id(&systemstore, &mut target).await?;
+                crate::chunk::ensure_admin_changeable(&target)?;
                 let was_active = target.is_active;
 
                 // The exact CollectionKey read above is a commit dependency. Document
@@ -185,6 +186,10 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                         else {
                             continue;
                         };
+                        crate::chunk::ensure_admin_changeable(&other)?;
+                        crate::chunk::user_writes::ensure_keeps_first_chunk_settings(
+                            &target, &other,
+                        )?;
                         if other.is_active {
                             other.is_active = false;
                             systemstore
@@ -360,6 +365,9 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                         "cannot remove a collection while another field references it".to_string(),
                     ));
                 }
+                crate::chunk::user_writes::ensure_removed_with_parent(&versions, |version| {
+                    deleting.contains(&version.version_id)
+                })?;
 
                 // Deletion writes every selected CollectionKey and active name key;
                 // document writers read those same keys before staging their writes.

@@ -226,7 +226,20 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         doc_ids: &[String],
         identity: Option<identity::Did>,
     ) -> Result<Vec<crate::owners::DocumentOwnerObservation>> {
-        self.observe_owners(context, handle, collection, doc_ids, identity)
+        self.observe_owners(context, handle, collection, doc_ids, identity, false)
+            .await
+    }
+
+    async fn observe_document_access_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        collection: &str,
+        doc_ids: &[String],
+        actor: identity::Did,
+        mode: crate::owners::DocumentAccessMode,
+    ) -> Result<Vec<crate::owners::DocumentAccessDecision>> {
+        self.observe_access(context, handle, collection, doc_ids, actor, mode)
             .await
     }
 
@@ -302,6 +315,83 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
             .await
     }
 
+    async fn create_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: Option<&str>,
+        fields: Vec<schema::IndexedFieldDescription>,
+        kind: schema::IndexKind,
+    ) -> std::result::Result<schema::IndexDescription, TransactionError> {
+        self.registry
+            .create_index_in_txn_as(context, collection, name, fields, kind)
+            .await
+    }
+
+    async fn drop_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry
+            .drop_index_in_txn_as(context, collection, name)
+            .await
+    }
+
+    async fn indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> std::result::Result<
+        (
+            schema::CollectionVersion,
+            rapidhash::RapidHashMap<u32, defra_core::ActionExecution>,
+        ),
+        TransactionError,
+    > {
+        self.registry.indexes_in_txn_as(context, collection).await
+    }
+
+    async fn add_encrypted_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        field: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry
+            .add_encrypted_index_in_txn_as(context, collection, field)
+            .await
+    }
+
+    async fn delete_encrypted_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        field: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry
+            .delete_encrypted_index_in_txn_as(context, collection, field)
+            .await
+    }
+
+    async fn encrypted_indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> std::result::Result<Vec<String>, TransactionError> {
+        self.registry
+            .encrypted_indexes_in_txn_as(context, collection)
+            .await
+    }
+
+    async fn all_encrypted_indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<(String, Vec<String>)>, TransactionError> {
+        self.registry.all_encrypted_indexes_in_txn_as(context).await
+    }
+
     async fn set_active_collection_version_as(
         &self,
         context: &RequestContext,
@@ -320,6 +410,17 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
     ) -> std::result::Result<(), TransactionError> {
         self.registry
             .truncate_collection_as(context, name, filter)
+            .await
+    }
+
+    async fn purge_by_doc_ids_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        doc_ids: &[document::DocID],
+    ) -> std::result::Result<usize, TransactionError> {
+        self.registry
+            .purge_by_doc_ids_as(context, name, doc_ids)
             .await
     }
 
@@ -360,6 +461,14 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         self.registry.nac_status_as(context).await
     }
 
+    async fn explain_nac_subject_as(
+        &self,
+        context: &RequestContext,
+        subject: &str,
+    ) -> std::result::Result<Vec<acp::nac::PermissionProvenance>, TransactionError> {
+        self.registry.explain_nac_subject_as(context, subject).await
+    }
+
     async fn disable_nac_as(
         &self,
         context: &RequestContext,
@@ -382,6 +491,16 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
     ) -> std::result::Result<bool, TransactionError> {
         self.registry
             .add_nac_actor_relationship_as(context, relation, target_actor)
+            .await
+    }
+
+    async fn change_nac_source_permission_as(
+        &self,
+        context: &RequestContext,
+        edge: &crate::txn::SourcePermission,
+    ) -> std::result::Result<bool, TransactionError> {
+        self.registry
+            .change_nac_source_permission_as(context, edge)
             .await
     }
 
@@ -633,10 +752,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 }
                 ParsedOperation::Subscription { .. } => {
                     // Subscriptions require SSE transport - they cannot be executed via regular request/response
-                    Err(crate::error::QueryError::parse(
-                        "Subscriptions must be executed via Server-Sent Events (SSE). \
-                         Send the request with Accept: text/event-stream header.",
-                    ))
+                    Err(crate::error::QueryError::SubscriptionNeedsSse)
                 }
                 ParsedOperation::Introspection { query } => {
                     // Introspection queries are executed against the GraphQL schema
@@ -656,11 +772,16 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             }
             .with_warnings(warnings),
             Err(e) => {
-                tracing::error!(
-                    query = %request.query,
-                    error = %e,
-                    "Query execution failed"
-                );
+                // A subscription without SSE is the caller's mistake, answered with 406.
+                if matches!(e, crate::error::QueryError::SubscriptionNeedsSse) {
+                    tracing::debug!(query = %request.query, "subscription sent without SSE");
+                } else {
+                    tracing::error!(
+                        query = %request.query,
+                        error = %e,
+                        "Query execution failed"
+                    );
+                }
                 QueryResponse {
                     data: None,
                     errors: vec![QueryResponseError::from_query_error(e)],

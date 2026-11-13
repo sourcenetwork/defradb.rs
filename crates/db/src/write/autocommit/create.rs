@@ -135,7 +135,9 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         };
         let mut docs = docs;
         for doc in &mut docs {
-            mutator.seed_create_identity(collection_name, doc).await?;
+            mutator
+                .seed_create_identity(context, collection_name, doc)
+                .await?;
         }
         loop {
             match mutator
@@ -156,13 +158,15 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
 
     async fn seed_create_identity(
         &self,
+        context: &RequestContext,
         collection_name: &str,
         doc: &mut Document,
     ) -> query::error::Result<()> {
         if crate::write::prepare::prepared_identity(doc).is_some() {
             return Ok(());
         }
-        let (_collection_guard, collection) = self.guarded_collection(collection_name).await?;
+        let (_collection_guard, collection) =
+            self.guarded_collection(context, collection_name).await?;
         let identity = pipeline::identity(&self.db, &collection, doc).await?;
         pipeline::seed_identity(&self.db, doc, identity);
         Ok(())
@@ -184,7 +188,8 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             .await
             .map_err(|e| query::error::QueryError::permission_denied(e.to_string()))?;
 
-        let (_collection_guard, collection) = self.guarded_collection(collection_name).await?;
+        let (_collection_guard, collection) =
+            self.guarded_collection(context, collection_name).await?;
 
         // Embedding values affect the genesis CID. Every document's missing
         // embeddings join one wave.
@@ -302,6 +307,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let datastore = txn.datastore().map_err(|error| {
             query::error::QueryError::execution(format!("failed to get datastore: {error}"))
         })?;
+        let datastore = datastore.with_projection_actor(attempt.context.identity());
         let systemstore = txn.systemstore().map_err(|error| {
             query::error::QueryError::execution(format!("failed to get systemstore: {error}"))
         })?;

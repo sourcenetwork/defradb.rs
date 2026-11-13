@@ -12,6 +12,7 @@ mod composite_fields;
 mod composite_heads;
 pub mod composite_persist;
 mod definition;
+mod definition_chunks;
 mod dispatch;
 mod doc_identity;
 mod encryption;
@@ -30,6 +31,7 @@ mod protected_update;
 mod recovery;
 pub mod se_merge;
 mod signature;
+mod stale_version;
 pub(crate) use signature::verify_signature_data;
 
 pub use error::{HistoryRejection, MergeError};

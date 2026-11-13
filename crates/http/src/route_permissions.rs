@@ -48,6 +48,7 @@ pub fn route_permission(path: &str, method: &Method) -> RoutePermission {
         // =====================================================================
         // GraphQL
         // =====================================================================
+        "/api/v0/graphql/client-sign" => RoutePermission::Required(NodePermission::DocumentUpdate),
         "/api/v0/graphql" => match *method {
             // GET is always a read operation
             Method::GET => RoutePermission::Required(NodePermission::DocumentRead),
@@ -105,6 +106,10 @@ pub fn route_permission(path: &str, method: &Method) -> RoutePermission {
             RoutePermission::Required(NodePermission::CollectionGet)
         }
         "/api/v0/collections/{name}/truncate" => {
+            RoutePermission::Required(NodePermission::CollectionTruncate)
+        }
+        // A purge is checked against the node permission of a truncate.
+        "/api/v0/collections/{name}/documents/purge" => {
             RoutePermission::Required(NodePermission::CollectionTruncate)
         }
         "/api/v0/collections/{name}/document/{docID}" => match *method {
@@ -183,14 +188,18 @@ pub fn route_permission(path: &str, method: &Method) -> RoutePermission {
             Method::DELETE => RoutePermission::Required(NodePermission::DacRelationDelete),
             _ => RoutePermission::Required(NodePermission::DacRelationAdd),
         },
-        "/api/v0/acp/document/relationships" => {
-            RoutePermission::Required(NodePermission::DacRelationAdd)
-        }
+        // Listing is gated by the document's owner or managers in the core.
+        "/api/v0/acp/document/relationships" => match *method {
+            Method::GET => RoutePermission::Dynamic,
+            _ => RoutePermission::Required(NodePermission::DacRelationAdd),
+        },
 
         // =====================================================================
         // ACP Node (NAC via Go-compatible /acp/node/* routes)
         // =====================================================================
         "/api/v0/acp/node/status" => RoutePermission::Required(NodePermission::NacStatus),
+        // The subject itself, an admin or a `NacStatus` holder: decided in the core.
+        "/api/v0/acp/node/explain" => RoutePermission::Dynamic,
         "/api/v0/acp/node/enable" => RoutePermission::Dynamic,
         "/api/v0/acp/node/relationship" => match *method {
             Method::POST => RoutePermission::Required(NodePermission::NacRelationAdd),

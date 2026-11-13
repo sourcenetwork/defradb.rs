@@ -96,31 +96,55 @@ pub fn is_lens_block(bytes: &[u8]) -> bool {
 /// CBOR encoding overhead and Bitswap message framing.
 const MAX_BLOCK_SIZE: usize = 256 * 1024; // 256 KB
 
-/// Build the 3-level IPLD block hierarchy for a lens module.
+/// One module of a lens, as its blocks record it: the WASM bytes, whether its
+/// inverse runs, and its arguments as (key, JSON-encoded value) pairs.
+pub struct LensModuleParts<'module> {
+    pub wasm_bytes: &'module [u8],
+    pub inverse: bool,
+    pub arguments: &'module [(String, String)],
+}
+
+fn compute_cid(bytes: &[u8]) -> Result<Cid, String> {
+    use crate::{DAG_CBOR_CODEC, SHA2_256_CODE};
+    use multihash::Multihash;
+    use sha2::{Digest, Sha256};
+
+    let digest = Sha256::digest(bytes);
+    let mh =
+        Multihash::<64>::wrap(SHA2_256_CODE, &digest).map_err(|e| format!("multihash: {}", e))?;
+    Ok(Cid::new_v1(DAG_CBOR_CODEC, mh))
+}
+
+/// Build the IPLD blocks of a lens, as Go's lens store writes them: one
+/// config block linking a module block per module, in order, each linking
+/// the block of its WASM bytes. A lens with no modules is a config block with
+/// no links.
 ///
 /// For WASM files larger than MAX_BLOCK_SIZE, the bytes are chunked into
 /// multiple blocks and the `LensWasmBlock::Chunked` variant is used.
 ///
 /// Returns (config_block_cid, vec of CidBlock pairs for all blocks to store).
 pub fn build_lens_ipld_blocks(
-    wasm_bytes: &[u8],
-    inverse: bool,
-    arguments: &[(String, String)],
+    modules: &[LensModuleParts<'_>],
 ) -> Result<(Cid, Vec<CidBlock>), String> {
-    use crate::{DAG_CBOR_CODEC, SHA2_256_CODE};
-    use multihash::Multihash;
-    use sha2::{Digest, Sha256};
-
-    let compute_cid = |bytes: &[u8]| -> Result<Cid, String> {
-        let mut hasher = Sha256::new();
-        hasher.update(bytes);
-        let digest = hasher.finalize();
-        let mh = Multihash::<64>::wrap(SHA2_256_CODE, &digest)
-            .map_err(|e| format!("multihash: {}", e))?;
-        Ok(Cid::new_v1(DAG_CBOR_CODEC, mh))
-    };
-
     let mut blocks = Vec::new();
+    let modules = modules
+        .iter()
+        .map(|module| build_module_blocks(module, &mut blocks))
+        .collect::<Result<Vec<_>, _>>()?;
+    let config_bytes = serde_ipld_dagcbor::to_vec(&LensConfigBlock { modules })
+        .map_err(|e| format!("encode config block: {}", e))?;
+    let config_cid = compute_cid(&config_bytes)?;
+    blocks.push((config_cid, config_bytes));
+    Ok((config_cid, blocks))
+}
+
+/// Pushes the blocks of one module onto `blocks`, returning its module block's CID.
+fn build_module_blocks(
+    module: &LensModuleParts<'_>,
+    blocks: &mut Vec<CidBlock>,
+) -> Result<Cid, String> {
+    let wasm_bytes = module.wasm_bytes;
 
     // Level 3: LensBlock (WASM bytes, possibly chunked)
     let lens_cid = if wasm_bytes.len() <= MAX_BLOCK_SIZE {
@@ -155,8 +179,9 @@ pub fn build_lens_ipld_blocks(
 
     // Level 2: ModuleBlock
     let module_block = LensModuleBlock {
-        inverse,
-        arguments: arguments
+        inverse: module.inverse,
+        arguments: module
+            .arguments
             .iter()
             .map(|(k, v)| LensKeyValue {
                 key: k.clone(),
@@ -169,15 +194,5 @@ pub fn build_lens_ipld_blocks(
         .map_err(|e| format!("encode module block: {}", e))?;
     let module_cid = compute_cid(&module_bytes)?;
     blocks.push((module_cid, module_bytes));
-
-    // Level 1: ConfigBlock
-    let config_block = LensConfigBlock {
-        modules: vec![module_cid],
-    };
-    let config_bytes = serde_ipld_dagcbor::to_vec(&config_block)
-        .map_err(|e| format!("encode config block: {}", e))?;
-    let config_cid = compute_cid(&config_bytes)?;
-    blocks.push((config_cid, config_bytes));
-
-    Ok((config_cid, blocks))
+    Ok(module_cid)
 }

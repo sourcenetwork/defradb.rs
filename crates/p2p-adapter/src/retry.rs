@@ -796,12 +796,16 @@ mod pool_tests;
 #[path = "../tests/unit/retry_hints.rs"]
 mod hint_tests;
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "../tests/unit/selected_push_cancel.rs"]
+mod selected_push_cancel_tests;
+
 #[cfg(test)]
 #[path = "../tests/unit/retry_terminal.rs"]
 mod terminal_tests;
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -818,7 +822,7 @@ mod tests {
 
     /// Transport double for reconnect probes and receiver backpressure.
     #[derive(Clone)]
-    pub(super) struct FakeTransport {
+    pub(crate) struct FakeTransport {
         peer_id: PeerId,
         pubkey: Vec<u8>,
         /// `None` makes `connected_peers` fail, which is the observation
@@ -828,7 +832,10 @@ mod tests {
         dials: Arc<kovan::Atom<Vec<PeerId>>>,
         observations: Arc<AtomicUsize>,
         reply: Option<PushLogReply>,
-        pub(super) sends: Arc<AtomicUsize>,
+        reply_delay: Option<std::time::Duration>,
+        pub(crate) sends: Arc<AtomicUsize>,
+        pub(crate) connected_gate:
+            Option<(Arc<regolith::sync::Notify>, Arc<regolith::sync::Semaphore>)>,
     }
 
     impl FakeTransport {
@@ -841,11 +848,21 @@ mod tests {
                 dials: Arc::new(kovan::Atom::new(Vec::new())),
                 observations: Arc::new(AtomicUsize::new(0)),
                 reply: None,
+                reply_delay: None,
                 sends: Arc::new(AtomicUsize::new(0)),
+                connected_gate: None,
             }
         }
 
-        pub(super) fn with_hint(peer: PeerId) -> Self {
+        /// Connected to `peer`, acknowledging each PushLog after `delay`.
+        pub(super) fn slow(peer: PeerId, delay: std::time::Duration) -> Self {
+            Self {
+                reply_delay: Some(delay),
+                ..Self::new(Some(vec![peer]))
+            }
+        }
+
+        pub(crate) fn with_hint(peer: PeerId) -> Self {
             let mut reply = PushLogReply::error("hint", p2p::error::RATE_LIMITED_MESSAGE);
             reply.retry_after_ms = Some(45_000);
             Self {
@@ -902,6 +919,10 @@ mod tests {
         }
 
         async fn connected_peers(&self) -> P2PResult<Vec<PeerId>> {
+            if let Some((started, gate)) = &self.connected_gate {
+                started.notify_one();
+                gate.acquire(1).await.forget();
+            }
             self.observations.fetch_add(1, Ordering::SeqCst);
             match &self.connected {
                 Some(connected) => Ok(connected.clone()),
@@ -959,6 +980,9 @@ mod tests {
             _req: PushLogRequest,
         ) -> P2PResult<PushLogReply> {
             self.sends.fetch_add(1, Ordering::SeqCst);
+            if let Some(delay) = self.reply_delay {
+                p2p::rt::time::sleep(delay).await;
+            }
             Ok(self
                 .reply
                 .clone()

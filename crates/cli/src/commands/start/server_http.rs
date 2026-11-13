@@ -146,11 +146,16 @@ impl Node {
         let view_adapter = if config.acp.document_type != AcpDocumentType::None {
             crate::view_adapter::ViewAdapter::new_arc_with_acp(
                 database.clone(),
+                query_setup.registry.clone(),
                 query_limits,
                 acp_setup.document_acp.clone(),
             )
         } else {
-            crate::view_adapter::ViewAdapter::new_arc(database.clone(), query_limits)
+            crate::view_adapter::ViewAdapter::new_arc(
+                database.clone(),
+                query_setup.registry.clone(),
+                query_limits,
+            )
         };
         server = server.with_view_arc(view_adapter);
         info!("View HTTP endpoints enabled");
@@ -169,7 +174,10 @@ impl Node {
         info!("Index HTTP endpoints enabled");
 
         let encrypted_index_adapter =
-            crate::encrypted_index_adapter::EncryptedIndexAdapter::new_arc(database.clone());
+            crate::encrypted_index_adapter::EncryptedIndexAdapter::new_arc(
+                database.clone(),
+                query_setup.runner.clone(),
+            );
         server = server.with_encrypted_index_arc(encrypted_index_adapter);
         info!("Encrypted index HTTP endpoints enabled");
 

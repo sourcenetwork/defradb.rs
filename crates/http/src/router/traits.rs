@@ -65,6 +65,9 @@ pub struct IndexInfo {
     /// Kind-specific config, absent for an ordinary index.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<schema::IndexKind>,
+    /// The state of the action that builds the index; `None` reads as built.
+    #[serde(skip)]
+    pub execution: Option<defra_core::ActionExecution>,
 }
 
 /// Index field information.
@@ -266,6 +269,13 @@ pub trait CollectionManagementOperations: defra_core::thread_bounds::MaybeSendSy
 pub trait DocumentAcpOperations: defra_core::thread_bounds::MaybeSendSync {
     bind_request!(DocumentAcpOperations);
 
+    /// Whether a bound request stages relationship changes in its named
+    /// transaction. Backends must refuse the request if they cannot bind its
+    /// authorization provider to that transaction.
+    fn supports_transactional_relationships(&self) -> bool {
+        false
+    }
+
     /// Check whether an actor has a document permission.
     ///
     /// This is a read-only preview of the current document ACP decision and
@@ -293,6 +303,18 @@ pub trait DocumentAcpOperations: defra_core::thread_bounds::MaybeSendSync {
         doc_id: &str,
         relation: &str,
     ) -> Result<bool, String>;
+
+    /// Every relationship on a document, for its owner or a requester holding
+    /// a relation that manages one on that resource.
+    async fn list_doc_relationships(
+        &self,
+        requestor: &identity::Did,
+        collection: &str,
+        doc_id: &str,
+    ) -> Result<Vec<acp::DocumentRelationship>, String> {
+        let _ = (requestor, collection, doc_id);
+        Err(acp::Error::UnsupportedRelationshipListing.to_string())
+    }
 
     /// Delete an actor relationship from a document.
     ///

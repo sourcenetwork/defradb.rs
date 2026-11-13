@@ -45,12 +45,13 @@ impl Op for DeleteDACActorRelationship {
 }
 
 impl DeleteDACActorRelationship {
-    fn relationship(&self, _state: &State) -> Result<Relationship<'_>, Failure> {
+    fn relationship(&self, state: &State) -> Result<Relationship<'_>, Failure> {
         let target = crate::actions::nac::target_actor(
             Self::name(),
             self.target_actor.as_deref(),
             self.target_identity_seed,
             None,
+            state,
         )?;
         Ok(Relationship {
             change: Change::Delete,

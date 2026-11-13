@@ -69,6 +69,18 @@ fn chunk_takes_max_chars_and_overlap() {
 }
 
 #[test]
+fn chunk_fields_are_sorted_whatever_the_sdl_order() {
+    let collections =
+        parse_sdl("type Note { summary: String @chunk body: String @chunk }").unwrap();
+    let names: Vec<&str> = collections[0]
+        .chunked_fields
+        .iter()
+        .map(|field| field.field_name.as_str())
+        .collect();
+    assert_eq!(names, ["body", "summary"]);
+}
+
+#[test]
 fn chunk_ids_are_stable_across_parses() {
     let first = parse_sdl(SDL).unwrap();
     let second = parse_sdl(SDL).unwrap();
@@ -217,5 +229,32 @@ fn chunk_refuses_a_repeated_argument() {
     assert_eq!(
         refusal("type R { s: String @chunk(maxChars: 64, maxChars: 10) }"),
         "parse error: @chunk has maxChars twice. Field: R.s"
+    );
+}
+
+/// Definitions made before the splitter version existed keep their IDs.
+#[test]
+fn chunk_ids_match_the_ones_made_before_the_splitter_version() {
+    let ids: Vec<(String, String)> = parse_sdl(SDL)
+        .unwrap()
+        .into_iter()
+        .map(|c| (c.collection_id, c.version_id))
+        .collect();
+    let pinned = |id: &str| (id.to_string(), id.to_string());
+    assert_eq!(
+        ids,
+        vec![
+            pinned("bafyreig4d3ybunzta5bmevpw3gpzw3tlwrt7i3zaavl5cgxtbp2thn6pbi"),
+            pinned("bafyreibq7m5mock2yfemrorb7lwdxexm6v453xjy5vn6g3hdsmfxwggd3a"),
+        ]
+    );
+}
+
+#[test]
+fn chunk_declares_the_current_splitter_version() {
+    let article = &parse_sdl(SDL).unwrap()[0];
+    assert_eq!(
+        article.chunked_field("body").unwrap().splitter_version,
+        chunk_split::split::SplitterVersion::CURRENT.number()
     );
 }

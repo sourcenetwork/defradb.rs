@@ -7,6 +7,7 @@ mod async_backfill_migration;
 mod backfill_large;
 mod backfill_txn;
 mod backfill_unique;
+mod backfill_unique_txn;
 mod crdt;
 mod delete;
 mod get;
@@ -17,6 +18,10 @@ mod json_unique;
 mod json_unique_array;
 mod list_actions;
 mod list_collection_name;
+mod merged_field {
+    mod json;
+    mod text;
+}
 mod new;
 mod new_composite;
 mod new_get;
@@ -45,6 +50,7 @@ mod query_with_unique_composite_index_filter;
 mod query_with_unique_index_on_relation_filter;
 mod query_with_unique_index_only_filter;
 mod range_filter;
+mod resume_after_open;
 mod status;
 mod unique_writer;
 mod update_unique;

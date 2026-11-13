@@ -27,8 +27,9 @@
 \*   gossip/driver.rs         Driver::forget      (drops the send path, never the connection)
 \*   gossip/driver.rs         Driver::send        (asks for a dial; `dialing` is `asked` here)
 \*   gossip/mod.rs            GossipHandle::connected (an older mux answers the ask as a failure)
-\*   endpoint_rpc.rs          connect_with_cache  (admission before and after dialing)
+\*   endpoint_rpc.rs          connect_with_cache  (admission before dialing)
 \*   endpoint_streams.rs      handle_incoming     (admission on accept)
+\*   endpoint_streams.rs      adopt_new_connection (admission after publishing, then announce)
 \*   endpoint_commands.rs     handle_deny_peer    (revoke, then close the connection)
 EXTENDS Naturals
 

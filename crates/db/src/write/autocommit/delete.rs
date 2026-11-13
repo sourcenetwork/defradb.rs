@@ -144,7 +144,8 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             .await
             .map_err(|e| query::error::QueryError::permission_denied(e.to_string()))?;
 
-        let (_collection_guard, collection) = self.guarded_collection(collection_name).await?;
+        let (_collection_guard, collection) =
+            self.guarded_collection(context, collection_name).await?;
 
         let heads = super::base_heads::BaseHeads::read_if_signed(
             &self.db,
@@ -217,6 +218,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let datastore = txn.datastore().map_err(|error| {
             query::error::QueryError::execution(format!("failed to get datastore: {error}"))
         })?;
+        let datastore = datastore.with_projection_actor(attempt.context.identity());
         let systemstore = txn.systemstore().map_err(|error| {
             query::error::QueryError::execution(format!("failed to get systemstore: {error}"))
         })?;
@@ -248,9 +250,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             let existed = collection
                 .delete_with_indexes(&datastore, &canonical_doc_id, doc_short_id, &index_manager)
                 .await
-                .map_err(|error| {
-                    query::error::QueryError::execution(format!("delete error: {error}"))
-                })?;
+                .map_err(|error| crate::error::index_write_query_error("delete", error))?;
             if !existed {
                 return Ok((canonical_doc_id, None));
             }
@@ -383,7 +383,8 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 .map(|r| vec![r]);
         }
 
-        let (_collection_guard, collection) = self.guarded_collection(collection_name).await?;
+        let (_collection_guard, collection) =
+            self.guarded_collection(context, collection_name).await?;
         let heads =
             super::base_heads::BaseHeads::read_if_signed(&self.db, &collection, doc_ids, context)
                 .await?;
@@ -446,6 +447,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let datastore = txn.datastore().map_err(|e| {
             query::error::QueryError::execution(format!("failed to get datastore: {e}"))
         })?;
+        let datastore = datastore.with_projection_actor(attempt.context.identity());
         let systemstore = txn.systemstore().map_err(|e| {
             query::error::QueryError::execution(format!("failed to get systemstore: {e}"))
         })?;
@@ -482,9 +484,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 let existed = collection
                     .delete_with_indexes(&datastore, &canonical_id, doc_short_id, &index_manager)
                     .await
-                    .map_err(|e| {
-                        query::error::QueryError::execution(format!("delete error: {e}"))
-                    })?;
+                    .map_err(|error| crate::error::index_write_query_error("delete", error))?;
                 if !existed {
                     results.push((canonical_id, false, None));
                     continue;

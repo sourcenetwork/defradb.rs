@@ -22,13 +22,15 @@ use rand::seq::IteratorRandom;
 use rand::SeedableRng;
 use rapidhash::{HashMapExt, RapidHashMap};
 use std::time::Duration;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::error::{Error, Result};
 use crate::transport::PeerAddr;
 
 use super::delivery::{Closed, Delivery};
-use super::frame::{read_gossip_frame, write_gossip_frame, ProtoMessage};
+use super::frame::{
+    encode_gossip_frame, read_gossip_frame, ProtoMessage, FRAME_LIMIT, MAX_MESSAGE_SIZE,
+};
 use super::inbox::Inbox;
 use super::{protocols, spawn_task, topic_id, AddrInfo, Input, Network, SpawnedTasks, Subscribed};
 use crate::iroh::mailbox::{Mailbox, Wake};
@@ -137,12 +139,10 @@ where
         tasks: SpawnedTasks,
     ) -> Self {
         let own_addr = network.local_addr();
-        let config = proto::Config::default();
-        let limit = config.max_message_size;
         let state = proto::State::new(
             me,
             peer_data(&own_addr),
-            config,
+            config(),
             StdRng::from_rng(&mut rand::rng()),
         );
         Self {
@@ -158,7 +158,7 @@ where
             io: Io {
                 inbox,
                 tasks,
-                limit,
+                limit: FRAME_LIMIT,
                 next_writer: 0,
             },
             subscribed,
@@ -271,6 +271,7 @@ where
                     OutEvent::ScheduleTimer(delay, timer) => self.timers.insert(now + delay, timer),
                     OutEvent::DisconnectPeer(peer) => self.forget(peer),
                     OutEvent::PeerData(peer, data) => self.learn(peer, &data),
+                    _ => {}
                 }
             }
         }
@@ -380,7 +381,7 @@ where
         match event {
             Event::NeighborUp(_) => joined.neighbors += 1,
             Event::NeighborDown(_) => joined.neighbors = joined.neighbors.saturating_sub(1),
-            Event::Received(_) => {}
+            _ => {}
         }
         let neighbors = self.subscribed.get(&name);
         match event {
@@ -397,11 +398,10 @@ where
                     self.delivery.neighbor(&name, peer, false).await?;
                 }
             }
-            event @ Event::Received(_) => {
-                if neighbors.is_some() {
-                    self.delivery.received(&name, event).await?;
-                }
+            event @ Event::Received(_) if neighbors.is_some() => {
+                self.delivery.received(&name, event).await?;
             }
+            _ => {}
         }
         Ok(())
     }
@@ -537,9 +537,7 @@ impl Io {
         let limit = self.limit;
         let stream_queue = Arc::clone(&queue);
         let _ = spawn_task(&self.tasks, async move {
-            if let Err(error) = write_stream(&connection, &stream_queue, limit).await {
-                debug!(peer = %peer.fmt_short(), %error, "Gossip stream to peer ended");
-            }
+            write_stream(peer, &connection, &stream_queue, limit).await;
             inbox.push(Input::WriterDone { peer, writer: id });
         });
         Writer { id, queue }
@@ -566,7 +564,33 @@ impl Io {
     }
 }
 
+/// Writes the queue to one stream until the driver drops the writer. A
+/// message over `limit` is never written, so it cannot end the stream for the
+/// ones behind it. A stream that fails takes what is still queued with it,
+/// and that loss is reported; the next send opens a new stream.
 async fn write_stream(
+    peer: EndpointId,
+    connection: &Connection,
+    queue: &Mailbox<ProtoMessage>,
+    limit: usize,
+) {
+    if let Err(error) = write_queue(peer, connection, queue, limit).await {
+        queue.close();
+        let mut lost = 0usize;
+        while queue.pop().is_some() {
+            lost += 1;
+        }
+        warn!(
+            peer = %peer.fmt_short(),
+            %error,
+            lost,
+            "Gossip stream to peer failed; queued messages behind it were dropped"
+        );
+    }
+}
+
+async fn write_queue(
+    peer: EndpointId,
     connection: &Connection,
     queue: &Mailbox<ProtoMessage>,
     limit: usize,
@@ -577,7 +601,16 @@ async fn write_stream(
         .map_err(|e| Error::Transport(e.to_string()))?;
     protocols::write_stream_tag(&mut send, protocols::STREAM_GOSSIP).await?;
     while let Some(message) = queue.next().await {
-        write_gossip_frame(&mut send, &message, limit).await?;
+        let frame = match encode_gossip_frame(&message, limit) {
+            Ok(frame) => frame,
+            Err(error) => {
+                warn!(peer = %peer.fmt_short(), %error, "Skipping a gossip message too large to frame");
+                continue;
+            }
+        };
+        send.write_all(&frame)
+            .await
+            .map_err(|e| Error::Transport(e.to_string()))?;
     }
     let _ = send.finish();
     Ok(())
@@ -600,6 +633,14 @@ async fn read_stream(
         }
     }
     Ok(())
+}
+
+/// The protocol's configuration, sized from the same constant as our frames.
+pub(super) fn config() -> proto::Config {
+    proto::Config {
+        max_message_size: MAX_MESSAGE_SIZE,
+        ..proto::Config::default()
+    }
 }
 
 fn peer_data(addr: &AddrInfo) -> PeerData {

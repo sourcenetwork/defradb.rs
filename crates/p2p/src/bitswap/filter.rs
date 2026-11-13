@@ -475,11 +475,16 @@ mod tests {
     /// migrations converge across the network.
     #[nuclei::test]
     async fn lens_config_block_is_served_without_registry_check() {
-        use defra_core::{build_lens_ipld_blocks, CidBlock};
+        use defra_core::{build_lens_ipld_blocks, CidBlock, LensModuleParts};
 
         let wasm = b"wasm-bytes-test-payload".to_vec();
         let (_config_cid, blocks): (_, Vec<CidBlock>) =
-            build_lens_ipld_blocks(&wasm, false, &[]).unwrap();
+            build_lens_ipld_blocks(&[LensModuleParts {
+                wasm_bytes: &wasm,
+                inverse: false,
+                arguments: &[],
+            }])
+            .unwrap();
 
         let registry = Arc::new(ReplicatorRegistry::new());
         let store = InMemoryStore::default();

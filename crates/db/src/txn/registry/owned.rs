@@ -201,6 +201,21 @@ where
             })
             .map_err(Self::turn_error)
     }
+
+    fn pin_collection(
+        &mut self,
+        version: Option<schema::CollectionVersion>,
+    ) -> std::result::Result<(), TransactionError> {
+        let txn = self.alone().map_err(Self::turn_error)?;
+        match version {
+            Some(version) => txn.pin_collection(crate::collection::Collection::new(
+                version,
+                txn.crdts().clone(),
+            )),
+            None => txn.unpin_collection(),
+        }
+        Ok(())
+    }
 }
 
 impl<S> Drop for OwnedTxn<S>

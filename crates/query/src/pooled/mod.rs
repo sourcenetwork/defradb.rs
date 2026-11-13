@@ -172,6 +172,20 @@ impl QueryExecutor for PooledExecutor {
             .await
     }
 
+    async fn observe_document_access_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        collection: &str,
+        doc_ids: &[String],
+        actor: identity::Did,
+        mode: crate::owners::DocumentAccessMode,
+    ) -> Result<Vec<crate::owners::DocumentAccessDecision>> {
+        self.inner
+            .observe_document_access_in_txn(context, handle, collection, doc_ids, actor, mode)
+            .await
+    }
+
     async fn begin_txn(
         &self,
         readonly: bool,
@@ -244,6 +258,83 @@ impl QueryExecutor for PooledExecutor {
             .await
     }
 
+    async fn create_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: Option<&str>,
+        fields: Vec<schema::IndexedFieldDescription>,
+        kind: schema::IndexKind,
+    ) -> std::result::Result<schema::IndexDescription, TransactionError> {
+        self.inner
+            .create_index_in_txn_as(context, collection, name, fields, kind)
+            .await
+    }
+
+    async fn drop_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        self.inner
+            .drop_index_in_txn_as(context, collection, name)
+            .await
+    }
+
+    async fn indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> std::result::Result<
+        (
+            schema::CollectionVersion,
+            rapidhash::RapidHashMap<u32, defra_core::ActionExecution>,
+        ),
+        TransactionError,
+    > {
+        self.inner.indexes_in_txn_as(context, collection).await
+    }
+
+    async fn add_encrypted_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        field: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        self.inner
+            .add_encrypted_index_in_txn_as(context, collection, field)
+            .await
+    }
+
+    async fn delete_encrypted_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        field: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        self.inner
+            .delete_encrypted_index_in_txn_as(context, collection, field)
+            .await
+    }
+
+    async fn encrypted_indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> std::result::Result<Vec<String>, TransactionError> {
+        self.inner
+            .encrypted_indexes_in_txn_as(context, collection)
+            .await
+    }
+
+    async fn all_encrypted_indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<(String, Vec<String>)>, TransactionError> {
+        self.inner.all_encrypted_indexes_in_txn_as(context).await
+    }
+
     async fn set_active_collection_version_as(
         &self,
         context: &RequestContext,
@@ -263,6 +354,15 @@ impl QueryExecutor for PooledExecutor {
         self.inner
             .truncate_collection_as(context, name, filter)
             .await
+    }
+
+    async fn purge_by_doc_ids_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        doc_ids: &[document::DocID],
+    ) -> std::result::Result<usize, TransactionError> {
+        self.inner.purge_by_doc_ids_as(context, name, doc_ids).await
     }
 
     async fn add_dac_policy_as(
@@ -302,6 +402,14 @@ impl QueryExecutor for PooledExecutor {
         self.inner.nac_status_as(context).await
     }
 
+    async fn explain_nac_subject_as(
+        &self,
+        context: &RequestContext,
+        subject: &str,
+    ) -> std::result::Result<Vec<acp::nac::PermissionProvenance>, TransactionError> {
+        self.inner.explain_nac_subject_as(context, subject).await
+    }
+
     async fn disable_nac_as(
         &self,
         context: &RequestContext,
@@ -324,6 +432,16 @@ impl QueryExecutor for PooledExecutor {
     ) -> std::result::Result<bool, TransactionError> {
         self.inner
             .add_nac_actor_relationship_as(context, relation, target_actor)
+            .await
+    }
+
+    async fn change_nac_source_permission_as(
+        &self,
+        context: &RequestContext,
+        edge: &crate::txn::SourcePermission,
+    ) -> std::result::Result<bool, TransactionError> {
+        self.inner
+            .change_nac_source_permission_as(context, edge)
             .await
     }
 

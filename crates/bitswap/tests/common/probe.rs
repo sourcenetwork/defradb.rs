@@ -1,3 +1,9 @@
+// `#[derive(NetworkBehaviour)]` (libp2p-swarm-derive 0.35.1) matches on the
+// event of `libp2p_stream::Behaviour`, which is uninhabited, and code it
+// generates after that match is unreachable. The derive puts its impl in this
+// module, so only a module-level allow reaches it.
+#![allow(unreachable_code)]
+
 use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 use std::convert::Infallible;
 use std::future::{ready, Future, Ready};
@@ -197,10 +203,20 @@ impl ConnectionHandler for AcceptAllHandler {
     }
 }
 
-#[derive(NetworkBehaviour)]
-struct Probe {
-    stream: libp2p_stream::Behaviour,
-    accept: AcceptAll,
+use probe_behaviour::Probe;
+
+// libp2p's `NetworkBehaviour` derive emits a call per field handler event, unreachable for an
+// uninhabited one (`AcceptAll`, libp2p_stream); the lint fires in the derived impl, so it is
+// allowed on a module holding only the struct.
+#[allow(unreachable_code)]
+mod probe_behaviour {
+    use super::*;
+
+    #[derive(NetworkBehaviour)]
+    pub(super) struct Probe {
+        pub(super) stream: libp2p_stream::Behaviour,
+        pub(super) accept: AcceptAll,
+    }
 }
 
 fn probe_swarm(

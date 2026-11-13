@@ -2,6 +2,7 @@
 //! its length alone, as `proofs/lean/GossipFrame/Framing.lean` proves.
 
 use crate::rt::time::GossipInstant as Instant;
+use iroh::endpoint::SendStream;
 use iroh_gossip::proto::{self, Command, InEvent, OutEvent, PeerData, TopicId};
 use rand::SeedableRng;
 

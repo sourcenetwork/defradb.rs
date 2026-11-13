@@ -1,6 +1,8 @@
 //! `@chunk` settings, on the parent collection and on its chunk collection.
 
-use defra_core::{ChunkOfDelta, ChunkedFieldDelta};
+use defra_core::{
+    is_default_splitter_version, ChunkOfDelta, ChunkedFieldDelta, DEFAULT_SPLITTER_VERSION,
+};
 use serde::{Deserialize, Serialize};
 
 /// The relation field on a chunk that points at its parent.
@@ -34,6 +36,17 @@ pub struct ChunkedField {
     /// How many sentences each chunk repeats from the chunk before it.
     #[serde(rename = "Overlap")]
     pub overlap: u32,
+    /// The splitting rules its chunks are cut with.
+    #[serde(
+        rename = "SplitterVersion",
+        default = "default_splitter_version",
+        skip_serializing_if = "is_default_splitter_version"
+    )]
+    pub splitter_version: u32,
+}
+
+fn default_splitter_version() -> u32 {
+    DEFAULT_SPLITTER_VERSION
 }
 
 impl ChunkedField {
@@ -65,6 +78,7 @@ impl From<&ChunkedField> for ChunkedFieldDelta {
             field: chunked.field_name.clone(),
             max_chars: chunked.max_chars,
             overlap: chunked.overlap,
+            splitter_version: chunked.splitter_version,
         }
     }
 }
@@ -75,6 +89,7 @@ impl From<&ChunkedFieldDelta> for ChunkedField {
             field_name: delta.field.clone(),
             max_chars: delta.max_chars,
             overlap: delta.overlap,
+            splitter_version: delta.splitter_version,
         }
     }
 }

@@ -3,6 +3,8 @@ mod lifecycle;
 #[cfg(test)]
 mod identity_tests;
 #[cfg(test)]
-mod tests;
+mod lifecycle_tests;
 
-pub use lifecycle::{begin_txn, commit_txn, rollback_txn};
+pub use lifecycle::{
+    defra_transaction_commit, defra_transaction_create, defra_transaction_discard,
+};

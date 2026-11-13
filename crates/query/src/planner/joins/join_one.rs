@@ -223,6 +223,7 @@ impl Planner {
                         self.fetcher.clone(),
                         target_collection.name.clone(),
                         child_fk_index_name,
+                        child_fk_field_name,
                         mapping.clone(),
                     );
                     let direction = parent_order_for_child
@@ -339,6 +340,7 @@ impl Planner {
                 (self.fetcher.clone(), target_relation_field)
             {
                 if target_relation_field.is_primary
+                    && fetcher.supports_index_queries()
                     && can_use_direct_indexed_child_cache(nested_select)
                     && multi_level_paths_for_relation.is_empty()
                     && !target_collection.reads_are_gated()

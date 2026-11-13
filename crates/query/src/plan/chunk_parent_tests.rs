@@ -12,6 +12,7 @@ fn chunked() -> ChunkedField {
         field_name: "body".into(),
         max_chars: 64,
         overlap: 0,
+        splitter_version: defra_core::DEFAULT_SPLITTER_VERSION,
     }
 }
 

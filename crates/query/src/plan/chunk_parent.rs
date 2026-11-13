@@ -50,10 +50,13 @@ pub(crate) fn parent_hashes(
         // Text and list merge as separate fields, so concurrent writes can leave one
         // peer's text with the other's list. Split the text again to be sure.
         _ => {
-            let config = ChunkConfig {
-                max_chars: chunked.max_chars as usize,
-                overlap: chunked.overlap as usize,
-            };
+            // A splitter version this node lacks can't check the text, so nothing shows.
+            let config = ChunkConfig::new(
+                chunked.splitter_version,
+                chunked.max_chars as usize,
+                chunked.overlap as usize,
+            )
+            .ok()?;
             split(parent_text, &config)
                 .into_iter()
                 .map(|chunk| chunk.hash)

@@ -1,5 +1,6 @@
 //! Encrypted index HTTP client methods
 
+use net::http::Method;
 use serde::{Deserialize, Serialize};
 use urlencoding::encode;
 
@@ -16,48 +17,67 @@ pub struct EncryptedIndexInfo {
 }
 
 impl HttpClient {
-    /// Add an encrypted index on a collection field.
+    /// Add an encrypted index on a collection field, in transaction `txn`
+    /// when given.
     pub async fn encrypted_index_add(
         &self,
+        txn: Option<&str>,
         collection: &str,
         field: &str,
     ) -> Result<EncryptedIndexInfo> {
-        let url = format!(
-            "{}/api/v0/collections/{}/encrypted-indexes",
-            self.base_url,
-            encode(collection)
-        );
+        let path = format!("collections/{}/encrypted-indexes", encode(collection));
         let body = serde_json::to_string(&serde_json::json!({ "FieldName": field }))
             .map_err(|e| crate::error::Error::Server(e.to_string()))?;
-        self.request_json("POST", &url, Some(&body)).await
+        Ok(self
+            .send(Method::POST, &path, &[], Some(body), txn)
+            .await?
+            .json()
+            .await?)
     }
 
-    /// List encrypted indexes for a collection.
-    pub async fn encrypted_index_list(&self, collection: &str) -> Result<Vec<EncryptedIndexInfo>> {
-        let url = format!(
-            "{}/api/v0/collections/{}/encrypted-indexes",
-            self.base_url,
-            encode(collection)
-        );
-        self.request_json("GET", &url, None).await
+    /// List encrypted indexes for a collection, in transaction `txn` when
+    /// given.
+    pub async fn encrypted_index_list(
+        &self,
+        txn: Option<&str>,
+        collection: &str,
+    ) -> Result<Vec<EncryptedIndexInfo>> {
+        let path = format!("collections/{}/encrypted-indexes", encode(collection));
+        Ok(self
+            .send(Method::GET, &path, &[], None, txn)
+            .await?
+            .json()
+            .await?)
     }
 
-    /// Every collection's encrypted indexes, by collection name.
+    /// Every collection's encrypted indexes, by collection name, in
+    /// transaction `txn` when given.
     pub async fn encrypted_index_list_all(
         &self,
+        txn: Option<&str>,
     ) -> Result<std::collections::BTreeMap<String, Vec<EncryptedIndexInfo>>> {
-        let url = format!("{}/api/v0/encrypted-indexes", self.base_url);
-        self.request_json("GET", &url, None).await
+        Ok(self
+            .send(Method::GET, "encrypted-indexes", &[], None, txn)
+            .await?
+            .json()
+            .await?)
     }
 
-    /// Delete an encrypted index from a collection field.
-    pub async fn encrypted_index_delete(&self, collection: &str, field: &str) -> Result<()> {
-        let url = format!(
-            "{}/api/v0/collections/{}/encrypted-indexes/{}",
-            self.base_url,
+    /// Delete an encrypted index from a collection field, in transaction
+    /// `txn` when given.
+    pub async fn encrypted_index_delete(
+        &self,
+        txn: Option<&str>,
+        collection: &str,
+        field: &str,
+    ) -> Result<()> {
+        let path = format!(
+            "collections/{}/encrypted-indexes/{}",
             encode(collection),
             encode(field)
         );
-        self.request_void("DELETE", &url, None).await
+        self.send(Method::DELETE, &path, &[], None, txn)
+            .await
+            .map(drop)
     }
 }

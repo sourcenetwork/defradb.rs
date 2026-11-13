@@ -4,10 +4,11 @@ use std::sync::Arc;
 
 use acp::nac::NodePermission;
 use db::IndexManager;
-use defra_core::{ActionExecution, ActionStatus, RequestContext};
+use defra_core::{ActionExecution, RequestContext};
 use schema::{IndexDescription, IndexedFieldDescription};
 use serde::Serialize;
 
+use crate::ops::request::transaction_error;
 use crate::{Error, Node, Result};
 
 /// An index and the state of the action that builds it, as Go's
@@ -34,8 +35,46 @@ impl Node {
         fields: Vec<IndexedFieldDescription>,
         unique: bool,
     ) -> Result<IndexDescription> {
+        self.new_index_as(context, collection, name, fields, unique, true)
+            .await
+    }
+
+    /// [`Self::create_index_as`], returning once the index is defined: it is
+    /// listed as building until its backfill completes. Go's
+    /// `Collection.NewIndex`.
+    pub async fn start_index_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: Option<&str>,
+        fields: Vec<IndexedFieldDescription>,
+        unique: bool,
+    ) -> Result<IndexDescription> {
+        self.new_index_as(context, collection, name, fields, unique, false)
+            .await
+    }
+
+    async fn new_index_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: Option<&str>,
+        fields: Vec<IndexedFieldDescription>,
+        unique: bool,
+        wait_for_build: bool,
+    ) -> Result<IndexDescription> {
+        let caller = self.caller(context);
+        if caller.txn().is_some() {
+            let kind =
+                IndexManager::requested_kind(&fields, unique, None).map_err(db::Error::from)?;
+            return self
+                .runner()
+                .create_index_in_txn_as(&caller, collection, name, fields, kind)
+                .await
+                .map_err(transaction_error);
+        }
         let database = Arc::clone(self.database());
-        let context = self.caller(context);
+        let context = caller;
         let (collection, name) = (collection.to_owned(), name.map(str::to_owned));
         self.on_pool(move || async move {
             database
@@ -46,9 +85,18 @@ impl Node {
                 .await?;
             let kind =
                 IndexManager::requested_kind(&fields, unique, None).map_err(db::Error::from)?;
-            Ok(database
-                .create_index(&collection, name.as_deref(), fields, kind)
-                .await?)
+            Ok(match wait_for_build {
+                true => {
+                    database
+                        .create_index(&collection, name.as_deref(), fields, kind)
+                        .await?
+                }
+                false => {
+                    database
+                        .start_index(&collection, name.as_deref(), fields, kind)
+                        .await?
+                }
+            })
         })
         .await
     }
@@ -61,8 +109,17 @@ impl Node {
         context: &RequestContext,
         collection: &str,
     ) -> Result<Vec<IndexListing>> {
+        let caller = self.caller(context);
+        if caller.txn().is_some() {
+            let (version, actions) = self
+                .runner()
+                .indexes_in_txn_as(&caller, collection)
+                .await
+                .map_err(transaction_error)?;
+            return Ok(listings(&version, &actions));
+        }
         let database = Arc::clone(self.database());
-        let context = self.caller(context);
+        let context = caller;
         let name = collection.to_owned();
         self.on_pool(move || async move {
             database
@@ -77,24 +134,7 @@ impl Node {
             let actions = database
                 .list_index_actions_as(&context, collection.collection_id())
                 .await?;
-            Ok(collection
-                .get_indexes()
-                .iter()
-                .filter(|index| !is_hidden_relation_index(&collection, index))
-                .map(|index| IndexListing {
-                    description: index.clone(),
-                    collection_name: collection.name().to_string(),
-                    execution: actions
-                        .get(&index.id)
-                        .cloned()
-                        .unwrap_or_else(|| ActionExecution {
-                            collection_id: collection.collection_id().to_string(),
-                            subject: index.id.to_string(),
-                            status: ActionStatus::COMPLETED,
-                            ..Default::default()
-                        }),
-                })
-                .collect())
+            Ok(listings(collection.schema(), &actions))
         })
         .await
     }
@@ -115,8 +155,16 @@ impl Node {
         collection: &str,
         name: &str,
     ) -> Result<()> {
+        let caller = self.caller(context);
+        if caller.txn().is_some() {
+            return self
+                .runner()
+                .drop_index_in_txn_as(&caller, collection, name)
+                .await
+                .map_err(transaction_error);
+        }
         let database = Arc::clone(self.database());
-        let context = self.caller(context);
+        let context = caller;
         let (collection, name) = (collection.to_owned(), name.to_owned());
         self.on_pool(move || async move {
             database
@@ -137,30 +185,17 @@ impl Node {
     }
 }
 
-/// Whether `index` is the one the node adds for a primary relation's
-/// `_<name>ID` field, which Go does not list.
-fn is_hidden_relation_index(collection: &db::Collection, index: &IndexDescription) -> bool {
-    let [field] = index.fields.as_slice() else {
-        return false;
-    };
-    if index.unique {
-        return false;
-    }
-    let Some(relation) = field
-        .name
-        .strip_prefix('_')
-        .and_then(|name| name.strip_suffix("ID"))
-    else {
-        return false;
-    };
-    index.name == format!("{}__{relation}ID_ASC", collection.name())
-        && collection.schema().fields.iter().any(|candidate| {
-            candidate.name == field.name
-                && candidate.relation_name.is_some()
-                && candidate.is_primary
-                && matches!(
-                    candidate.kind,
-                    schema::FieldKind::Scalar(schema::ScalarKind::DocID)
-                )
+/// [`db::index_listing`], as the node returns it.
+fn listings(
+    version: &schema::CollectionVersion,
+    actions: &rapidhash::RapidHashMap<u32, ActionExecution>,
+) -> Vec<IndexListing> {
+    db::index_listing(version, actions)
+        .into_iter()
+        .map(|(index, execution)| IndexListing {
+            description: index.clone(),
+            collection_name: version.name.clone(),
+            execution,
         })
+        .collect()
 }

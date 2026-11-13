@@ -24,8 +24,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             ))
         })?;
 
-        collection
-            .validate_write_definition(datastore, false)
+        let (active_version, stored_definition) = collection
+            .validate_write_definition_read(datastore, false)
             .await
             .map_err(MergeError::Database)?;
         if self
@@ -162,6 +162,26 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .map_err(MergeError::Database)?;
         }
 
+        // A block whose every field lost to a stored state left the document
+        // as it was. A parked field lands later, with no merge of its own.
+        if !doc_is_tombstoned
+            && (state.any_field_stands || state.parked_fields)
+            && context
+                .block
+                .heads
+                .as_deref()
+                .is_some_and(|heads| !heads.is_empty())
+        {
+            crate::event::updates::record(
+                systemstore,
+                collection.resolved_root_id(),
+                context.doc_id_str,
+                &context.cid.to_string(),
+            )
+            .await
+            .map_err(MergeError::Database)?;
+        }
+
         let short_id = collection.resolved_root_id();
         match IndexManager::from_collection(short_id, collection.schema()) {
             Ok(index_manager) if !doc_is_tombstoned => {
@@ -172,7 +192,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 // forward history in permanent retry on both replicas (#1111).
                 // Both documents persist; the index converges to the same
                 // winner everywhere.
-                let index_result = match &old_doc {
+                let index_result = match state.indexed_before.as_ref().unwrap_or(&old_doc) {
                     Some(old_doc) => {
                         index_manager
                             .on_document_update_merge(
@@ -239,6 +259,24 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 );
             }
         }
+        // The version the document is stored at, which `collection` (resolved
+        // through the cache to the active collection) may not name.
+        if !doc_is_tombstoned
+            && active_version != context.payload.collection_version_id
+            && !state.reads.owes_reindex(collection.collection_id())
+        {
+            // Boxed so the rare path does not grow every merge's future.
+            let owed = Box::pin(self.owe_reindex_off_active_version(
+                systemstore,
+                collection,
+                &active_version,
+                &stored_definition,
+            ))
+            .await?;
+            if owed {
+                state.reads.owed_reindex(collection.collection_id());
+            }
+        }
 
         if let Some(enc_key) = self.se_enc_key() {
             if let Err(e) = se_merge::generate_merge_artifacts(
@@ -274,6 +312,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             );
         }
 
+        datastore
+            .project_document(collection.name(), context.doc_id_str)
+            .await
+            .map_err(|error| MergeError::Database(crate::error::Error::Storage(error)))?;
         Ok(None)
     }
 
@@ -331,6 +373,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let deleted_key = build_deleted_key(collection.collection_id(), context.doc_short_id);
         datastore
             .set(&deleted_key, &[DELETED_MARKER])
+            .await
+            .map_err(|e| MergeError::Database(crate::error::Error::Storage(e)))?;
+
+        datastore
+            .project_document(collection.name(), context.doc_id_str)
             .await
             .map_err(|e| MergeError::Database(crate::error::Error::Storage(e)))?;
 

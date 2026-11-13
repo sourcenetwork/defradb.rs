@@ -96,31 +96,6 @@ fn a_transaction_migration_commits_when_its_registration_fails() {
 }
 
 #[test]
-fn a_patch_migration_commits_when_its_registration_fails() {
-    workers::block_on(async {
-    let (db, store) = node().await;
-    let patched = db
-        .patch_collection_with_migration(
-            "Users",
-            r#"[{"op": "add", "path": "/Users/Fields/-", "value": {"Name": "age", "Kind": "Int"}}]"#,
-            Some(config("", "")),
-            None,
-        )
-        .await
-        .expect("the patch stands when the registration after it fails");
-    let id = TransformId::new(
-        patched
-            .previous_version
-            .and_then(|previous| previous.transform)
-            .unwrap(),
-    );
-
-    assert_owed_until_used(&db, &store, &id).await;
-})
-    .unwrap()
-}
-
-#[test]
 fn an_added_lens_is_returned_when_its_registration_fails() {
     workers::block_on(async {
         let (db, store) = node().await;

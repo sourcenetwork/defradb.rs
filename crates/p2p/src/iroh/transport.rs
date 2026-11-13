@@ -28,7 +28,9 @@ use crate::QueryId;
 use super::command::{CommandSender, EndpointStopped, IrohCommand};
 use super::endpoint_config::AdmissionAuthority;
 use super::peer_map::endpoint_id_to_peer_id;
+use super::protocol_stream::{ProtocolRecvStream, ProtocolSendStream};
 use super::records::{ServiceProfile, ServiceRecord};
+use super::stream_protocols::StreamProtocol;
 
 /// Iroh-backed P2P transport.
 ///
@@ -281,6 +283,39 @@ impl IrohTransport {
             .map_err(|error| Error::Transport(format!("peer identity DID failed: {error}")))?;
         Ok(Some(did))
     }
+
+    /// Open a stream to `peer_id` for `protocol` and write `request` as its
+    /// first message. Finish the send half once the protocol has nothing more
+    /// to send; dropping it unfinished resets the stream.
+    ///
+    /// The stream rides the connection every Defra protocol shares with the
+    /// peer. With none open, the peer is dialled as [`P2PTransport::dial`]
+    /// dials it: at `addrs`, else at an address this node already knows, else
+    /// through discovery.
+    pub async fn open_stream(
+        &self,
+        peer_id: &PeerId,
+        addrs: Vec<PeerAddr>,
+        protocol: &StreamProtocol,
+        request: Vec<u8>,
+    ) -> Result<(ProtocolSendStream, ProtocolRecvStream)> {
+        protocol.validate()?;
+        if request.len() > protocol.max_message {
+            return Err(Error::RequestTooLarge {
+                tag: String::from_utf8_lossy(protocol.tag).into_owned(),
+                len: request.len(),
+                max: protocol.max_message,
+            });
+        }
+        self.send_command(|reply| IrohCommand::OpenStream {
+            peer_id: peer_id.clone(),
+            addrs,
+            protocol: *protocol,
+            request,
+            reply,
+        })
+        .await
+    }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -407,6 +442,15 @@ impl P2PTransport for IrohTransport {
     }
 
     async fn publish_raw(&self, topic: String, data: Vec<u8>) -> Result<MessageId> {
+        let limit = super::gossip::raw_origin::MAX_RAW_PAYLOAD;
+        if data.len() > limit {
+            return Err(Error::GossipTooLarge {
+                size: data.len(),
+                limit,
+            });
+        }
+        // Sealed with our key: gossip relays name only themselves (#2773).
+        let data = super::gossip::raw_origin::seal(&self.secret_key, &topic, &data)?;
         self.send_command(|reply| IrohCommand::PublishRaw { topic, data, reply })
             .await
     }
@@ -652,6 +696,7 @@ impl P2PTransport for IrohTransport {
             providers,
             missing,
             max_depth: None,
+            haves: Vec::new(),
             reply,
         })
         .await
@@ -663,12 +708,14 @@ impl P2PTransport for IrohTransport {
         providers: Vec<PeerId>,
         missing: Vec<Cid>,
         max_depth: u32,
+        haves: Vec<Cid>,
     ) -> Result<QueryId> {
         self.send_command(|reply| IrohCommand::SyncBlocks {
             root,
             providers,
             missing,
             max_depth: Some(max_depth),
+            haves,
             reply,
         })
         .await
@@ -768,6 +815,10 @@ impl P2PTransport for IrohTransport {
 #[cfg(test)]
 #[path = "../../tests/iroh/transport_poll.rs"]
 mod poll_tests;
+
+#[cfg(test)]
+#[path = "../../tests/iroh/relayed_raw_request.rs"]
+mod relayed_raw_request_tests;
 
 /// Iroh writes every one of these replies on its request's stream, which
 /// every request carries; a reply without one has nowhere to go.
@@ -1334,7 +1385,7 @@ mod tests {
     async fn a_service_record_reaches_a_connected_peer() {
         let key0 = SecretKey::generate();
         let key1 = SecretKey::generate();
-        let (command_tx0, _events0, _replicators0, task0) =
+        let (command_tx0, mut events0, _replicators0, task0) =
             spawn_endpoint(test_config(key0.clone()), edge::testing::edge())
                 .await
                 .unwrap();
@@ -1351,14 +1402,19 @@ mod tests {
             )
             .await
             .unwrap();
-        loop {
-            let event = timeout(Duration::from_secs(5), events1.recv())
-                .await
-                .expect("timed out waiting for the records topic")
-                .expect("iroh event channel closed");
-            if matches!(&event, TransportEvent::PeerSubscribed { topic, .. } if topic == RECORDS_TOPIC)
-            {
-                break;
+        // Both sides must hold the other as a records-topic neighbour: an
+        // announcement sent before node 0 has one is lost, and the pointer
+        // lookup that recovers it runs only once per 10-second tick.
+        for events in [&mut events0, &mut events1] {
+            loop {
+                let event = timeout(Duration::from_secs(5), events.recv())
+                    .await
+                    .expect("timed out waiting for the records topic")
+                    .expect("iroh event channel closed");
+                if matches!(&event, TransportEvent::PeerSubscribed { topic, .. } if topic == RECORDS_TOPIC)
+                {
+                    break;
+                }
             }
         }
 

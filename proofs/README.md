@@ -23,17 +23,29 @@ section is the **diff**: what is proven vs. the accepted gap.
 ### Modeled families
 | Family | Tool | Crates it covers |
 |---|---|---|
+| Explicit embedded signing | TLA+ / Lean | defra-node, query, db |
+| Verified client graph transaction | TLA+ / Lean | defra-node, query, db |
+| HTTP client-signed create | TLA+ / Lean | http, query, db |
+| HTTP client-signed update | TLA+ / Lean | http, query, db |
+| HTTP client-signed conditional update | Lean | http, query |
+| SSE loss and error delivery | TLA+ / Lean | events, http, query |
 | Storage failure classification | TLA+ / Lean | storage, db, query, http |
 | B3 filtered replication | TLA+ | p2p, db-merge |
 | Explicit transactions in the request context | TLA+ / Lean | client, db, query, http, ffi, wasm, defra-node |
+| Transactional document relationships | TLA+ / Lean | acp, query, http, defra-node |
+| Transactional node source grants | TLA+ / Lean | acp, query, http, defra-node |
+| Held-bounded node permission delegation | Lean | acp, db, defra-node |
 | Schema-evolution operations in the core | TLA+ / Lean | client, db, lens, query, http, cli, ffi, defra-node |
 | DAG convergence (partition / eviction / restart) | TLA+ | p2p, db-merge, blockstore |
 | CRDT merge laws | Lean | crdt, defra-core |
+| Secondary index equal-key order | Lean | db, storage |
 | Replicator lifecycle (no-loss / resume) | TLA+ | p2p, db-merge, embedded |
-| Sync ownership transfer (head hint / receiver pull) | TLA+ | p2p, db-merge, storage, embedded, defra-node |
+| Sync ownership transfer (head hint / receiver pull) | TLA+ / Lean | p2p, db-merge, storage, embedded, defra-node |
+| Pull sync (doc-sync / sync-branchable) | TLA+ | p2p |
 | Multi-instance claim | TLA+ | gents |
 | Block integrity / signatures | TLA+ | db-merge, defra-core, blockstore |
 | KMS key distribution | TLA+ / Lean | kms, db, db-merge |
+| Node identity and signing | Lean | defra-node, http |
 | Encrypted LWW restart/replay | TLA+ + existing LWW Lean law | kms, p2p, db-merge, crdt |
 | Management-channel auth (NAC gate) | TLA+ | http, db-nac, pg-compat |
 | ACP soundness + revocation + dual-path commits | TLA+ & Lean | acp, zanzibar, vera, query, db |
@@ -46,6 +58,9 @@ section is the **diff**: what is proven vs. the accepted gap.
 | CID content-addressing determinism + Block canonicalization | Lean | defra-core |
 | Deferred-ACP overlay consistency | TLA+ | query |
 | Order-preserving key encoding | Lean | storage |
+| vera.rs actor spelling | Lean | vera |
+| vera.rs delegation signing | Lean | vera |
+| vera.rs embedded transport | Lean | vera-embedded |
 | DiskANN resident code table | Lean | db-index |
 | DiskANN walk cutoff | Lean | db-index (vector) |
 | PQ distance four sums | Lean | db-index (vector) |
@@ -53,6 +68,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Index-maintenance consistency | Lean + TLA+ | db-index, db-merge |
 | Concurrent collection-head transitions | TLA+ & Lean | db-block-builder, storage |
 | Commit-ordered document arrivals | TLA+ | db, storage (pinned regolith) |
+| Committed document update discovery | TLA+ & Lean | db, db-merge, query |
 | DiskANN pending cache | TLA+ & Lean | db-index (vector), storage |
 | DiskANN shared quantizer | TLA+ & Lean | db-index (vector), db-write |
 | RobustPrune blocked covered checks | Lean | db-index (vector), defra-core |
@@ -65,8 +81,9 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Explicit transaction statement atomicity | TLA+ | query, db, storage |
 | Engine ticker export | TLA+ & Lean | telemetry, storage |
 | Worker pool CPU ledger | TLA+ & Lean | workers |
+| Signing identity store | TLA+ & Lean | defra-core, defra-node, ffi |
 | Worker default pool | TLA+ & Lean | workers |
-| Node shutdown order | TLA+ / Lean | defra-node, embedded, edge, acp, http, query, db, storage |
+| Node shutdown order | TLA+ / Lean | defra-node, embedded, edge, vera-embedded, acp, http, query, db, storage |
 | Inbound stream admission | TLA+, Lean | p2p |
 | Vector index link maintenance | TLA+ | storage, db-index |
 | Peer fetch stats | Lean | p2p |
@@ -75,9 +92,12 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Gossip connection ownership | TLA+, Lean | p2p |
 | Iroh service records | TLA+, Lean | p2p |
 | Iroh solicited replies | TLA+ | p2p |
+| Pubsub RPC reply addressing | TLA+, Lean | p2p |
 | Reply-driven DAG fetch | TLA+ | p2p |
 | Depth-cut DAG fetch | TLA+, Lean | p2p |
+| Have-set DAG fetch | TLA+, Lean | p2p |
 | Index drop during backfill | TLA+ | db-index |
+| Index build gate and close | TLA+ | db-index, db |
 | Purge by DocID | TLA+ | db |
 | Replication filter | TLA+ | db-merge |
 | Node startup | TLA+, Lean | defra-node, storage |
@@ -85,17 +105,20 @@ section is the **diff**: what is proven vs. the accepted gap.
 | JSON CRDT per-path merge | TLA+ & Lean | crdt, db-merge (specified before the code, #2129) |
 | Custom CRDT types | TLA+ & Lean | crdt, schema, db-merge, p2p (#2183) |
 | Document write pipeline | TLA+ | db, db-block-builder |
-| Text chunking | TLA+ & Lean | chunk-split, db, query |
+| Text chunking | TLA+ / Lean | chunk-split, schema, db, query |
 | Postgres wire connection loop | TLA+ | pg-compat |
 | HTTP client redirects and body deadline | Lean | net |
 | Connect fallback race | TLA+ | net |
+| ActivePeers listen addresses | TLA+ | p2p |
 | Coordinator shutdown drain | TLA+ | p2p, edge |
 | Edge completion | TLA+ | edge |
 | Edge gate continuation | TLA+ | edge, net (#2546) |
 | Iroh dial outcome | TLA+ | p2p, p2p-adapter |
-| Server drain | TLA+ | net, pg-compat, edge |
+| Server drain | TLA+ | net, pg-compat, edge, http (#2779) |
 | Document topic ingress | TLA+ | p2p, p2p-adapter (#2545) |
 | Add collection | TLA+ | db |
+| Index changes in a transaction | TLA+ | db, defra-node, http, cli |
+| Encrypted index changes outside a transaction | TLA+ | db, defra-node, cli |
 | Collection truncate | TLA+ | db |
 | Relation-filtered mutation | TLA+ | query, datastore, db |
 | Add DAC policy | TLA+ | db, acp, vera, http, cli, ffi, defra-node |
@@ -110,6 +133,10 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Document save | TLA+ & Lean | query, defra-node |
 | Mutation value checks | Lean | document, defra-core, query |
 | Cursor tokens | Lean | cursor |
+| Peer key loading | TLA+ / Lean | defra-node, ffi |
+| FFI transaction turns | TLA+ / Lean | ffi |
+| Vector index defaults | Lean | schema |
+| Selected collection version | TLA+ / Lean | db, query, ffi |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is
@@ -214,6 +241,9 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 | P2P capability replay gate | Boundary | P2P-wire internal |
 | JWT issuer / algorithm binding | Boundary | DID-binding via `acp.rs`; forge unreachable via CLI |
 | Order-preserving key encoding | Boundary | ordered query may sort in memory; consts `pub(crate)` |
+| vera.rs actor spelling | Boundary | over an abstract key of a secp256k1 or P-256 curve; that distinct keys have distinct spellings is the `did:key` encoding's injectivity, and which spellings vera.rs takes is vera.rs's property; unit tests in `crates/vera/src/vera_rs/did_spelling.rs`, live case `actor_spelling`, in-process node test `crates/vera-embedded/tests/actor_keys.rs` |
+| vera.rs delegation signing | Boundary | over what the tests observe of a signature, per key kind (ECDSA or Ed25519); that ECDSA and Ed25519 verification are sound is assumed; unit tests in `crates/vera/src/vera_rs/signer/tests.rs`, `crates/vera/src/vera_rs/signer/key_type_tests.rs` and `crates/vera/src/vera_rs/provider/signer_tests.rs`, tokens checked by vera.rs's verifier in `crates/vera/src/vera_rs/bearer/key_types.rs`, token bytes pinned in `crates/vera/src/vera_rs/bearer/pinned.rs` |
+| vera.rs embedded transport | Boundary | over the outcome of a call and the moment its answer comes; that the node's method table answers as its network server does is vera.rs's property; unit tests in `crates/vera-embedded/src`, in-process node tests in `crates/vera-embedded/tests/embedded_node.rs` |
 | DiskANN resident code table | Boundary | in-memory search cache, not observable on the wire; `DiskAnnCodes`; unit tests in `crates/db/tests/vector/diskann_resident.rs` |
 | P2P delivery liveness | Behavioral (trace) + Boundary | `model_trace.rs` replays recorded runs through `Trace_P2PDelivery.tla`; eventual connectivity, the bounded instance and the restart scenarios stay Boundary |
 | Cursor tokens | Boundary | `CursorToken`; tokens pinned by `crates/cursor/tests/go_fixtures.rs` |

@@ -207,6 +207,53 @@ impl<S: Store + 'static> LensedDocFetcher<S> {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
+    #[allow(clippy::too_many_arguments)]
+    async fn change_node_admin_relationship(
+        &self,
+        provider: Arc<dyn acp::DocumentACP>,
+        actor: &identity::Did,
+        target: acp::Subject,
+        policy_id: &str,
+        resource: &str,
+        doc_id: &str,
+        relation: &str,
+        delete: bool,
+    ) -> acp::Result<bool> {
+        let txn = &*self
+            .shared_txn()
+            .map_err(|error| acp::Error::Storage(error.to_string()))?;
+        let view = txn
+            .acpstore()
+            .map_err(|error| acp::Error::Storage(error.to_string()))?;
+        provider
+            .change_node_admin_relationship(
+                view, actor, target, policy_id, resource, doc_id, relation, delete,
+            )
+            .await
+    }
+
+    async fn check_verified_node_permission(
+        &self,
+        identity: &identity::Did,
+        permission: acp::nac::NodePermission,
+    ) -> query::error::Result<Option<bool>> {
+        let Some(nac) = self.db.nac_manager() else {
+            return Ok(Some(true));
+        };
+        let txn = &*self.shared_txn()?;
+        let view = txn
+            .acpstore()
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+        let bound = nac
+            .check_bound_permission_in_txn(view, identity, permission, false)
+            .await
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+        if bound.is_none() && !nac.is_enabled().await {
+            return Ok(Some(true));
+        }
+        Ok(bound)
+    }
+
     async fn check_node_permission(
         &self,
         identity: &identity::Did,
@@ -225,6 +272,123 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
             .map_err(|error| query::error::QueryError::execution(error.to_string()))
     }
 
+    async fn check_bound_node_permission(
+        &self,
+        identity: &identity::Did,
+        permission: acp::nac::NodePermission,
+        require_active: bool,
+    ) -> query::error::Result<Option<bool>> {
+        let Some(nac) = self.db.nac_manager() else {
+            return Ok(None);
+        };
+        let txn = &*self.shared_txn()?;
+        let view = txn
+            .acpstore()
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+        nac.check_bound_permission_in_txn(view, identity, permission, require_active)
+            .await
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))
+    }
+
+    async fn change_source_node_permission(
+        &self,
+        requestor: &identity::Did,
+        permission: acp::nac::NodePermission,
+        parent_source: Option<&str>,
+        subject_kind: &str,
+        subject: &str,
+        delete: bool,
+    ) -> query::error::Result<Option<bool>> {
+        let Some(nac) = self.db.nac_manager() else {
+            return Ok(None);
+        };
+        let txn = &*self.shared_txn()?;
+        let view = txn
+            .acpstore()
+            .map_err(|error| query::QueryError::execution(error.to_string()))?;
+        nac.change_source_permission_in_txn(
+            view,
+            requestor,
+            &crate::nac::SourcePermissionChange {
+                permission,
+                parent_source,
+                subject_kind,
+                subject,
+                delete,
+            },
+        )
+        .await
+        .map_err(|error| match error {
+            crate::nac::Error::PermissionDenied => {
+                query::QueryError::permission_denied(error.to_string())
+            }
+            other => query::QueryError::execution(other.to_string()),
+        })
+    }
+
+    async fn source_node_permission_matches(
+        &self,
+        permission: acp::nac::NodePermission,
+        parent_source: Option<&str>,
+        subject_kind: &str,
+        subject: &str,
+        delete: bool,
+    ) -> query::error::Result<Option<bool>> {
+        let Some(nac) = self.db.nac_manager() else {
+            return Ok(None);
+        };
+        let txn = &*self.shared_txn()?;
+        let view = txn
+            .acpstore()
+            .map_err(|error| query::QueryError::execution(error.to_string()))?;
+        nac.source_permission_matches_in_txn(
+            view,
+            &crate::nac::SourcePermissionChange {
+                permission,
+                parent_source,
+                subject_kind,
+                subject,
+                delete,
+            },
+        )
+        .await
+        .map_err(|error| query::QueryError::execution(error.to_string()))
+    }
+
+    async fn project_host_source_change(
+        &self,
+        actor: &defra_core::RequestContext,
+    ) -> query::error::Result<()> {
+        let txn = &*self.shared_txn()?;
+        let view = txn
+            .datastore()
+            .map_err(|error| query::QueryError::execution(error.to_string()))?;
+        view.with_projection_actor(actor.identity())
+            .project_host_source_change()
+            .await
+            .map_err(|error| match error {
+                storage::corekv::Error::ProjectionPermissionDenied => {
+                    query::QueryError::permission_denied(error.to_string())
+                }
+                other => query::QueryError::execution(other.to_string()),
+            })
+    }
+
+    async fn dac_bypass(&self, identity: &identity::Did) -> query::error::Result<bool> {
+        // With NAC off every permission reads as held, and Go does not let
+        // that bypass DAC.
+        let Some(nac) = self.db.nac_manager() else {
+            return Ok(false);
+        };
+        if !nac.is_enabled().await {
+            return Ok(false);
+        }
+        Ok(self
+            .check_node_permission(identity, acp::nac::NodePermission::DacBypass)
+            .await?
+            .unwrap_or(false))
+    }
+
     async fn transaction_acp(
         &self,
         provider: Arc<dyn acp::DocumentACP>,
@@ -234,6 +398,18 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
             .acpstore()
             .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
         Ok(provider.bind_transaction(view))
+    }
+
+    async fn transaction_dac_policy(&self, id: &str) -> query::error::Result<Option<acp::Policy>> {
+        use acp::ZanzibarStore;
+        let txn = self.shared_txn()?;
+        let view = txn
+            .acpstore()
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+        acp::zanzibar::store::TransactionZanzibarStore::new(view)
+            .get_policy(id)
+            .await
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))
     }
 
     async fn scoped_acp(
@@ -334,6 +510,16 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
             .map_err(|e| query::error::QueryError::execution(e.to_string()))
     }
 
+    async fn get_document_updates(
+        &self,
+        options: &query::fetcher::DocumentUpdateOptions,
+        reader: &query::fetcher::DocumentReader<'_>,
+    ) -> query::error::Result<query::fetcher::DocumentUpdatePage> {
+        crate::event::updates::read(Some(&self.db), &*self.shared_txn()?, options, reader)
+            .await
+            .map_err(crate::event::updates::query_error)
+    }
+
     async fn get_json_conflicts(
         &self,
         options: &query::fetcher::JsonConflictOptions,
@@ -419,18 +605,6 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         params: &query::planner::index_selection::IndexScanParams,
     ) -> query::error::Result<query::fetcher::IndexScanResult> {
         self.get_by_index_scan_impl(collection_name, params).await
-    }
-
-    async fn indexes_match_documents(&self, collection_name: &str) -> query::error::Result<bool> {
-        let (collection, _, _) = crate::collection::loader::get_collection_with_lazy_load(
-            &*self.shared_txn()?,
-            collection_name,
-        )
-        .await?;
-        Ok(!self
-            .load_versions_and_check_migrations(&collection)
-            .await?
-            .1)
     }
 
     fn supports_index_queries(&self) -> bool {

@@ -37,6 +37,9 @@ pub enum Error {
     /// A transaction operation failed.
     #[error(transparent)]
     Transaction(#[from] query::TransactionError),
+    /// A transaction-scoped query operation failed.
+    #[error(transparent)]
+    Query(#[from] query::QueryError),
     /// The transaction does not exist, is finished, or belongs to another
     /// caller. Go's text for all three.
     #[error("transaction not found")]
@@ -44,6 +47,9 @@ pub enum Error {
     /// The commit lost a write conflict. Go's text.
     #[error("transaction conflict. Please retry")]
     TransactionConflict,
+    /// An HTTP server cannot expose transactions keyed only by embedder.
+    #[error("HTTP requires identity-owned transactions; embedder-only ownership is local")]
+    HttpEmbedderTransactionOwnership,
     /// A custom CRDT type could not be registered.
     #[error(transparent)]
     CustomCrdt(#[from] crdt::RegistryError),
@@ -172,6 +178,11 @@ pub enum Error {
     #[error("failed to create Vera provider: {0}")]
     VeraProvider(#[source] vera::ProviderError),
 
+    /// The Vera node this node runs did not start or did not stop.
+    #[cfg(feature = "embedded-vera")]
+    #[error(transparent)]
+    EmbeddedVera(#[from] vera_embedded::HostError),
+
     /// A call did not run on the worker pool.
     #[error("the call did not run on the worker pool: {0}")]
     WorkerPoolCall(#[source] workers::Error),
@@ -234,9 +245,16 @@ pub enum Error {
     /// The node identity DID given to the builder is invalid.
     #[error("invalid node identity DID: {0}")]
     InvalidNodeIdentityDid(#[source] identity::Error),
+    /// [`crate::NodeBuilder::with_identity_only`] on a node with no identity
+    /// to keep.
+    #[error("an identity-only node needs a node identity")]
+    IdentityOnlyNeedsIdentity,
     /// Node ACP needs a node identity.
     #[error("can not start nac without identity")]
     NodeAcpNeedsIdentity,
+    /// A trusted document projector needs the node's actual DID.
+    #[error("document projector requires a node identity DID")]
+    DocumentProjectorNeedsIdentity,
     /// The node identity given for node ACP is invalid.
     #[error("invalid node identity DID for node ACP: {0}")]
     InvalidNodeAcpIdentity(#[source] identity::Error),
@@ -336,6 +354,11 @@ pub enum Error {
     #[cfg(feature = "p2p")]
     #[error("access hooks require the iroh transport")]
     AccessHooksNeedIroh,
+    /// Stream protocols were given to, or opened from, a node whose transport
+    /// is not iroh.
+    #[cfg(feature = "p2p")]
+    #[error("stream protocols require the iroh transport")]
+    StreamProtocolsNeedIroh,
     /// The P2P assembly did not finish on the network runtime.
     #[cfg(feature = "libp2p")]
     #[error("P2P setup did not finish on the network runtime: {0}")]
@@ -364,6 +387,9 @@ pub enum Error {
     /// The DID of a node identity could not be derived.
     #[error("failed to derive node DID: {0}")]
     DidDerive(#[source] identity::Error),
+    /// The node's DID is already held with another signer.
+    #[error(transparent)]
+    IdentityConflict(#[from] defra_core::signing::IdentityConflict),
     /// A libp2p listen address did not parse.
     #[cfg(feature = "libp2p")]
     #[error("invalid multiaddr '{addr}': {source}")]
@@ -394,6 +420,9 @@ pub enum Error {
     #[cfg(feature = "libp2p")]
     #[error("failed to create KMS transport: {0}")]
     KmsTransport(#[source] kms::Error),
+    /// The caller's per-start peer key is not an Ed25519 private key.
+    #[error("invalid p2p private key: {0}")]
+    InvalidStartPeerKey(String),
     /// The store holds a plaintext peer key, which a keyring cannot take over.
     #[cfg(any(feature = "libp2p", feature = "p2p"))]
     #[error("plaintext peerstore /p2p/local-peer-key requires explicit keyring migration")]
@@ -486,36 +515,9 @@ pub enum Error {
     #[cfg(any(feature = "libp2p", feature = "p2p"))]
     #[error(transparent)]
     SeedLength(#[from] SeedLength),
-    /// The encrypted index names a field the collection lacks.
-    #[error("encrypted index on non-existent field. Field: {0}")]
-    EncryptedIndexFieldMissing(String),
-    /// The field already has an encrypted index.
-    #[error("encrypted index already exists on this field. Field: {0}")]
-    EncryptedIndexExists(String),
     /// No index has the name (Go: `NewErrIndexWithNameDoesNotExists`).
     #[error("index with name doesn't exists. Name: {0}")]
     IndexNameMissing(String),
-    /// No encrypted index is on the field (Go: `ErrEncryptedIndexNotFound`).
-    #[error("encrypted index does not exist on this field. Field: {0}")]
-    EncryptedIndexMissing(String),
-    /// The collection's schema did not serialize.
-    #[error("failed to serialize schema: {0}")]
-    SchemaSerialize(#[source] serde_json::Error),
-    /// The systemstore did not open.
-    #[error("failed to get systemstore: {0}")]
-    SystemstoreOpen(#[source] db::Error),
-    /// The schema did not save.
-    #[error("failed to save schema: {0}")]
-    SchemaSave(#[source] storage::corekv::Error),
-    /// The collection name mapping did not save.
-    #[error("failed to save name mapping: {0}")]
-    NameMappingSave(#[source] storage::corekv::Error),
-    /// The commit failed.
-    #[error("failed to commit: {0}")]
-    Commit(#[source] db::Error),
-    /// The collection cache did not reload.
-    #[error("failed to reload cache: {0}")]
-    CacheReload(#[source] db::Error),
     /// A transaction could not be created.
     #[error("failed to create transaction: {0}")]
     TxnCreate(#[source] db::Error),

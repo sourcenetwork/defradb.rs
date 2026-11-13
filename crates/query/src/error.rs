@@ -159,6 +159,10 @@ pub enum QueryError {
     #[error("Argument \"input\" has invalid value.\nIn field \"{0}\": Unknown field.")]
     SecondaryRelationInput(String),
 
+    /// A subscription sent as a plain request: it is served only over SSE.
+    #[error("parse error: {}", crate::subscription::SUBSCRIPTION_NEEDS_SSE)]
+    SubscriptionNeedsSse,
+
     /// Storage layer error
     #[error("storage error: {0}")]
     Storage(#[from] storage::corekv::Error),
@@ -176,6 +180,12 @@ pub enum QueryError {
     /// the response for the logical request, and execute again.
     #[error("external input required")]
     NeedsInput(crate::prepared::PreparedInputRequest),
+
+    /// An index scan found a reindex owed on the collection it planned from:
+    /// the index no longer holds what reads see, so the select re-plans as a
+    /// collection scan. It never reaches a client.
+    #[error("collection '{0}' owes a reindex since this query planned its index")]
+    IndexOwed(String),
 
     /// Schema validation error
     #[error("schema error: {0}")]

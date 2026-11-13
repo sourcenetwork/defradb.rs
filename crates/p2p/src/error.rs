@@ -57,6 +57,23 @@ pub enum Error {
     #[error("connection closed")]
     ConnectionClosed,
 
+    /// The peer reset or stopped a stream, with this QUIC code.
+    #[error("stream reset by the peer with code {0}")]
+    StreamReset(u64),
+
+    /// A request is larger than the stream protocol it is opened for accepts.
+    #[error(
+        "a request of {len} bytes is larger than stream protocol {tag:?} accepts ({max} bytes)"
+    )]
+    RequestTooLarge {
+        /// The protocol's tag.
+        tag: String,
+        /// The request's size in bytes.
+        len: usize,
+        /// The largest request the protocol accepts.
+        max: usize,
+    },
+
     /// Protocol negotiation failed.
     #[error("protocol negotiation failed: {0}")]
     ProtocolNegotiation(String),
@@ -125,6 +142,14 @@ pub enum Error {
     #[error("cbor deserialization error: {0}")]
     CborDeserialization(String),
 
+    /// A persisted replicator record did not decode.
+    #[error("failed to decode replicator: {0}")]
+    ReplicatorDecode(#[source] serde_json::Error),
+
+    /// A replicator record did not encode.
+    #[error("failed to encode replicator status: {0}")]
+    ReplicatorEncode(#[source] serde_json::Error),
+
     /// Noise protocol error.
     #[error("noise protocol error: {0}")]
     Noise(String),
@@ -156,6 +181,15 @@ pub enum Error {
     /// GossipSub subscription error.
     #[error("gossipsub subscription error: {0}")]
     GossipSubSubscription(String),
+
+    /// A broadcast too large for gossip: the protocol would drop it.
+    #[error("gossip broadcast of {size} bytes is over the {limit} byte limit")]
+    GossipTooLarge {
+        /// The broadcast's size.
+        size: usize,
+        /// The largest broadcast gossip carries.
+        limit: usize,
+    },
 
     /// GossipSub publish error.
     #[error("gossipsub publish error: {0}")]

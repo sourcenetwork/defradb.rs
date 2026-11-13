@@ -78,6 +78,15 @@ impl NacConfig {
     }
 }
 
+/// One source-scoped native permission relationship change.
+pub struct SourcePermissionChange<'a> {
+    pub permission: NodePermission,
+    pub parent_source: Option<&'a str>,
+    pub subject_kind: &'a str,
+    pub subject: &'a str,
+    pub delete: bool,
+}
+
 /// Trait for NAC manager operations, enabling dynamic dispatch over different store backends.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -94,6 +103,35 @@ pub trait NacManagerApi: defra_core::thread_bounds::MaybeSendSync {
         permission: NodePermission,
     ) -> Result<bool> {
         self.check_permission(identity, permission).await
+    }
+    /// Evaluate NAC through the given transaction. None means the provider
+    /// cannot bind, or NAC is inactive when active NAC is required. The view
+    /// must share this manager's store; this method does not verify identity.
+    async fn check_bound_permission_in_txn(
+        &self,
+        _view: datastore::NamespaceView,
+        _identity: &Did,
+        _permission: NodePermission,
+        _require_active: bool,
+    ) -> Result<Option<bool>> {
+        Ok(None)
+    }
+    /// Change a source relationship only through the caller's bound store.
+    async fn change_source_permission_in_txn(
+        &self,
+        _view: datastore::NamespaceView,
+        _requestor: &Did,
+        _change: &SourcePermissionChange<'_>,
+    ) -> Result<Option<bool>> {
+        Ok(None)
+    }
+    /// Observe whether a source edge already matches, on the bound transaction.
+    async fn source_permission_matches_in_txn(
+        &self,
+        _view: datastore::NamespaceView,
+        _change: &SourcePermissionChange<'_>,
+    ) -> Result<Option<bool>> {
+        Ok(None)
     }
     async fn is_admin(&self, identity: &Did) -> Result<bool>;
     async fn is_admin_persisted(&self, identity: &Did) -> Result<bool>;
@@ -126,6 +164,18 @@ pub trait NacManagerApi: defra_core::thread_bounds::MaybeSendSync {
         permission: NodePermission,
     ) -> Result<bool>;
     async fn info(&self) -> NacInfo;
+    /// Every way `subject` holds each node permission, for a requester who
+    /// is `subject`, an admin, or holds `NacStatus`. A refusal is
+    /// [`Error::PermissionDenied`].
+    async fn explain_subject(
+        &self,
+        _requestor: &Did,
+        _subject: &Did,
+    ) -> Result<Vec<acp::nac::PermissionProvenance>> {
+        Err(Error::Other(
+            "node permission explanations are unsupported by this provider".into(),
+        ))
+    }
 }
 
 /// NAC manager that provides config-aware NAC operations.
@@ -137,6 +187,7 @@ pub trait NacManagerApi: defra_core::thread_bounds::MaybeSendSync {
 pub struct NacManager<S: ZanzibarStore + ?Sized + 'static> {
     nac: Arc<NodeACP<S>>,
     config: NacConfig,
+    transaction_store_bound: bool,
 }
 
 impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
@@ -145,6 +196,16 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
         Self {
             nac: Arc::new(NodeACP::new(store)),
             config,
+            transaction_store_bound: false,
+        }
+    }
+
+    /// The caller supplies the same storage engine used by its database transactions.
+    pub fn new_bound(store: Arc<S>, config: NacConfig) -> Self {
+        Self {
+            nac: Arc::new(NodeACP::new(store)),
+            config,
+            transaction_store_bound: true,
         }
     }
 
@@ -157,6 +218,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
         NacManager {
             nac: Arc::new(self.nac.scoped(store)),
             config: self.config.clone(),
+            transaction_store_bound: self.transaction_store_bound,
         }
     }
 
@@ -473,6 +535,46 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
     }
 
     /// Grant a specific permission to an identity.
+    /// Every way `subject` holds each node permission, read in one snapshot.
+    pub async fn explain_subject(
+        &self,
+        requestor: &Did,
+        subject: &Did,
+    ) -> Result<Vec<acp::nac::PermissionProvenance>> {
+        let refused = |error: acp::error::Error| match error {
+            acp::error::Error::NotOwner { .. } => Error::PermissionDenied,
+            other => Error::Acp(other.to_string()),
+        };
+        if let Some(scope) = self
+            .nac
+            .begin_scope(true)
+            .await
+            .map_err(|error| Error::Acp(error.to_string()))?
+        {
+            let scoped = self.scoped(scope.store());
+            scoped
+                .nac
+                .load()
+                .await
+                .map_err(|error| Error::Acp(error.to_string()))?;
+            let result = scoped
+                .nac
+                .explain_subject(requestor, subject)
+                .await
+                .map_err(refused)?;
+            drop(scoped);
+            scope
+                .commit()
+                .await
+                .map_err(|error| Error::Acp(error.to_string()))?;
+            return Ok(result);
+        }
+        self.nac
+            .explain_subject(requestor, subject)
+            .await
+            .map_err(refused)
+    }
+
     pub async fn add_permission_grant(
         &self,
         requestor: &Did,

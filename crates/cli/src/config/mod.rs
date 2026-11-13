@@ -298,6 +298,18 @@ impl Config {
         if let Some(id) = cli.vera_deployment_id {
             self.acp.vera_deployment_id = Some(id);
         }
+        #[cfg(feature = "embedded-vera")]
+        {
+            if !cli.vera_embedded_operators.is_empty() {
+                self.acp.vera_embedded_operators = cli.vera_embedded_operators.clone();
+            }
+            if let Some(threshold) = cli.vera_embedded_threshold {
+                self.acp.vera_embedded_threshold = Some(threshold);
+            }
+            if let Some(ref listen) = cli.vera_embedded_listen {
+                self.acp.vera_embedded_listen = listen.clone();
+            }
+        }
 
         Ok(())
     }

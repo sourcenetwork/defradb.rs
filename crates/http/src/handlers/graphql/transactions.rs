@@ -9,9 +9,10 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     Json,
 };
+use query::error::TransactionError;
 use serde::{Deserialize, Serialize};
 
 use crate::error::HttpError;
@@ -104,9 +105,34 @@ pub async fn tx_commit(
         }
         Err(e) => {
             tracing::error!(txn_id = %handle, error = %e, "Failed to commit transaction");
-            Ok(HttpError::from(e).into_response())
+            Ok(commit_error_response(e))
         }
     }
+}
+
+/// A typed registry conflict is decided before the storage commit record.
+/// Text-classified conflicts do not carry this receipt.
+fn commit_error_response(error: TransactionError) -> Response {
+    if commit_has_abort_receipt(Some(&error)) {
+        #[derive(Serialize)]
+        struct ConfirmedConflict {
+            error: &'static str,
+            outcome: &'static str,
+        }
+        return (
+            StatusCode::CONFLICT,
+            Json(ConfirmedConflict {
+                error: query::executor::TXN_CONFLICT_MESSAGE,
+                outcome: "transaction_conflict_aborted",
+            }),
+        )
+            .into_response();
+    }
+    HttpError::from(error).into_response()
+}
+
+fn commit_has_abort_receipt(error: Option<&TransactionError>) -> bool {
+    matches!(error, Some(TransactionError::Conflict(_)))
 }
 
 /// Discard/rollback a transaction (Go-compatible).
@@ -145,3 +171,7 @@ pub async fn tx_discard(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/graphql_commit_receipt.rs"]
+mod commit_receipt_tests;

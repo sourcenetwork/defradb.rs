@@ -10,6 +10,7 @@ mod documents_list;
 mod documents_remove;
 mod info;
 pub(crate) mod support;
+mod sync_counters;
 mod wait_events;
 mod wait_sync;
 
@@ -24,5 +25,6 @@ pub use documents_add::AddDocumentSubscription;
 pub use documents_list::ListP2PDocuments;
 pub use documents_remove::DeleteDocumentSubscription;
 pub use info::PeerInfo;
+pub use sync_counters::SyncCounters;
 pub use wait_events::WaitForPeersEvents;
 pub use wait_sync::WaitForSync;

@@ -7,6 +7,7 @@ mod cross_runtime;
 pub mod export;
 mod feature_binaries;
 mod go_node;
+pub mod index_gate;
 pub mod introspection_sdl;
 pub mod nodes;
 mod purge;
@@ -67,7 +68,7 @@ pub mod wasm_lens {
     }
 }
 
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_workspace_root() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")

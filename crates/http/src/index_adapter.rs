@@ -31,6 +31,27 @@ impl<S: Store + 'static> IndexAdapter<S> {
         RequestContext::bound_or_ambient(self.context.as_ref())
     }
 
+    /// Node access control for `permission`, after `get-collection` when the
+    /// operation names a collection: Go's `CollectionMiddleware` reads the
+    /// collection before any of its routes runs.
+    async fn check_access(
+        &self,
+        names_collection: bool,
+        permission: acp::nac::NodePermission,
+    ) -> Result<(), String> {
+        let context = self.context();
+        if names_collection {
+            self.database
+                .check_node_access_as(&context, acp::nac::NodePermission::CollectionGet)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        self.database
+            .check_node_access_as(&context, permission)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
     pub fn new_arc(database: Arc<db::DB<S>>) -> Arc<dyn IndexOperations> {
         Arc::new(Self::new(database))
     }
@@ -53,10 +74,8 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
         unique: bool,
         vector: Option<schema::VectorIndexDescription>,
     ) -> Result<IndexInfo, String> {
-        self.database
-            .check_node_access_as(&self.context(), acp::nac::NodePermission::IndexCreate)
-            .await
-            .map_err(|e| format!("{}", e))?;
+        self.check_access(true, acp::nac::NodePermission::IndexCreate)
+            .await?;
 
         let indexed_fields: Vec<IndexedFieldDescription> = fields
             .iter()
@@ -98,14 +117,13 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
                 })
                 .collect(),
             unique: index_desc.unique,
+            execution: None,
         })
     }
 
     async fn list_indexes(&self, collection: Option<&str>) -> Result<Vec<IndexInfo>, String> {
-        self.database
-            .check_node_access_as(&self.context(), acp::nac::NodePermission::IndexList)
-            .await
-            .map_err(|e| format!("{}", e))?;
+        self.check_access(collection.is_some(), acp::nac::NodePermission::IndexList)
+            .await?;
 
         let collections = if let Some(name) = collection {
             let col = self
@@ -133,6 +151,11 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
 
         let mut result = Vec::new();
         for col in &collections {
+            let actions = self
+                .database
+                .list_index_actions_as(&self.context(), col.collection_id())
+                .await
+                .map_err(|e| format!("{}", e))?;
             for idx in col.get_indexes() {
                 result.push(IndexInfo {
                     kind: idx.kind,
@@ -153,6 +176,7 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
                         })
                         .collect(),
                     unique: idx.unique,
+                    execution: actions.get(&idx.id).cloned(),
                 });
             }
         }
@@ -161,15 +185,18 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
     }
 
     async fn delete_index(&self, collection: &str, name: &str) -> Result<(), String> {
-        self.database
-            .check_node_access_as(&self.context(), acp::nac::NodePermission::IndexDelete)
-            .await
-            .map_err(|e| format!("{}", e))?;
+        self.check_access(true, acp::nac::NodePermission::IndexDelete)
+            .await?;
 
         self.database
             .drop_index(collection, name)
             .await
-            .map_err(|e| format!("{}", e))
+            .map_err(|e| match e {
+                db::Error::IndexNotFound { index, .. } => {
+                    format!("index with name doesn't exists. Name: {index}")
+                }
+                other => format!("{}", other),
+            })
     }
 }
 

@@ -19,6 +19,10 @@ use crate::actions::shared::KeyType;
 use crate::client_type::{go_binary, network_edge, ClientType};
 use crate::go_node::{GoNode, GoOptions};
 
+mod action_events;
+
+pub use action_events::ActionEvents;
+
 /// How a node is started, kept so a restart starts it the same way.
 #[derive(Clone, Default)]
 pub struct NodeSpec {
@@ -35,15 +39,23 @@ pub struct NodeSpec {
     pub nac_owner: Option<u64>,
     /// The node's admission limits, if not the defaults.
     pub admission: Option<crate::actions::AdmissionSpec>,
+    /// The node's network is iroh rather than libp2p.
+    pub iroh_network: bool,
     /// The node's own identity, Go's `NodeIdentity(seed)`; the node signs as it.
     pub node_identity: Option<u64>,
     /// The key type the node signs with, when it signs.
     pub signing: Option<crate::actions::shared::KeyType>,
-    /// How long an idle HTTP transaction lives and the sweep interval.
+    /// How long an idle explicit transaction lives and the sweep interval.
     pub txn_ttl: Option<(Duration, Duration)>,
     /// The node's own searchable-encryption key, as Go's harness gives each
     /// node one under `EnableSearchableEncryption`.
     pub se_key: Option<[u8; 32]>,
+    /// The gate the node's index backfills pass before each batch; it lives
+    /// across a restart, as Go's package-level hook does.
+    pub index_gate: Option<Arc<crate::index_gate::TestIndexGate>>,
+    /// An in-process iroh node serving these stream protocols, in place of
+    /// the libp2p one `network` starts.
+    pub iroh: Option<crate::actions::stream::IrohSpec>,
 }
 
 /// A running node: the node itself for the in-process client, or the URL the
@@ -56,23 +68,44 @@ pub struct TestNode {
     embedded: Option<Arc<Node>>,
     _held: Vec<Arc<dyn Any + Send + Sync>>,
     events: Atom<Option<Arc<Events>>>,
+    /// The node's collection action events, once a `ListActions { listen }`
+    /// started recording them.
+    actions: Atom<Option<Arc<ActionEvents>>>,
 }
 
 impl TestNode {
+    /// Start the in-process iroh node `spec.iroh` describes.
+    pub fn start_iroh(spec: NodeSpec) -> Result<Self, String> {
+        let iroh = spec.iroh.clone().unwrap_or_default();
+        let node = crate::actions::stream::build(&iroh)?;
+        Ok(Self::new(
+            Some(node.clone()),
+            None,
+            spec,
+            Some(node),
+            Vec::new(),
+        ))
+    }
+
     pub fn start(client_type: ClientType, spec: NodeSpec) -> Self {
         Self::try_start(client_type, spec).unwrap_or_else(|error| panic!("start node: {error}"))
     }
 
     /// [`TestNode::start`], failing with the node builder's error.
     pub fn try_start(client_type: ClientType, spec: NodeSpec) -> Result<Self, String> {
+        if spec.iroh.is_some() {
+            return Self::start_iroh(spec);
+        }
         let listen = match spec.listen.first() {
             Some(address) => address.clone(),
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),
         };
-        // Admission limits are a Rust receiver's options: under go-http the
-        // node is a Rust node reached over HTTP, as rust-http does.
+        // Admission limits and iroh are a Rust node's options: under go-http
+        // the node is a Rust node reached over HTTP, as rust-http does.
         let client_type = match client_type {
-            ClientType::GoHttp if spec.admission.is_some() => ClientType::RustHttp,
+            ClientType::GoHttp if spec.admission.is_some() || spec.iroh_network => {
+                ClientType::RustHttp
+            }
             other => other,
         };
         match client_type {
@@ -143,12 +176,18 @@ impl TestNode {
             embedded,
             _held: held,
             events: Atom::new(None),
+            actions: Atom::new(None),
         }
     }
 
     /// The node runs Go's defradb in another process.
     pub fn is_go(&self) -> bool {
         self.embedded.is_none()
+    }
+
+    /// The Rust node behind any client; `None` for a Go node.
+    pub fn core(&self) -> Option<Arc<Node>> {
+        self.embedded.clone()
     }
 
     /// Stop the node through the core's shutdown; a Go node is stopped when
@@ -177,6 +216,27 @@ impl TestNode {
         Ok(())
     }
 
+    /// Start recording the node's collection action events, as Go's
+    /// `action.events.start` does; recording again keeps the first record.
+    pub fn listen_actions(&self) -> Result<Arc<ActionEvents>, String> {
+        if let Some(actions) = self.actions.load_clone() {
+            return Ok(actions);
+        }
+        let node = self
+            .embedded
+            .as_ref()
+            .ok_or("action events of a node in another process")?;
+        let subscription = node.event_bus().subscribe(&[EventName::ActionExecution]);
+        let actions = Arc::new(ActionEvents::new(subscription.into_receiver()));
+        self.actions.store(Some(actions.clone()));
+        Ok(actions)
+    }
+
+    /// The node's recorded action events, when recording started.
+    pub fn action_events(&self) -> Option<Arc<ActionEvents>> {
+        self.actions.load_clone()
+    }
+
     pub fn events(&self) -> Result<Arc<Events>, String> {
         self.events
             .load_clone()
@@ -202,6 +262,12 @@ impl TestNode {
             completed.recv(),
         )));
         Ok(done)
+    }
+
+    /// The Rust node behind whichever client the test runs through, for the
+    /// test's own view of it; `None` for a Go node.
+    pub fn embedded(&self) -> Option<&Arc<Node>> {
+        self.embedded.as_ref()
     }
 
     /// The node's P2P addresses, as Go's `PeerInfo` lists them: the test's
@@ -244,10 +310,17 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     if let Some(dir) = &spec.dir {
         builder = builder.data_path(dir.path());
     }
-    if spec.network {
+    if spec.network && spec.iroh_network {
+        builder = builder.with_p2p(defra_node::P2PConfig {
+            bind_addr: Some(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
+            relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
+            discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
+            ..Default::default()
+        });
+    } else if spec.network {
         builder = builder.with_libp2p(listen);
     }
-    if let (true, Some(limits)) = (spec.network, &spec.admission) {
+    if let (true, false, Some(limits)) = (spec.network, spec.iroh_network, &spec.admission) {
         let mut sync = defra_node::SyncTuning {
             max_pending_dags: limits.max_pending_dags,
             rate_limit_burst: limits.rate_limit_burst,
@@ -267,9 +340,19 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     }
     if let Some(config) = http {
         builder = builder.with_http(config);
+    } else if let Some((ttl, tick)) = spec.txn_ttl {
+        builder = builder.with_transaction_idle_timeout(ttl, tick);
+    }
+    if let Some(gate) = &spec.index_gate {
+        builder = builder.with_index_build_gate(gate.clone());
     }
     if spec.node_identity.is_some() || spec.signing.is_some() {
         builder = builder.with_signing_key(signing_key(spec));
+    }
+    // Go keeps the identity and the signing apart: a node with an identity
+    // signs only when the scenario turns signing on.
+    if spec.node_identity.is_some() && spec.signing.is_none() {
+        builder = builder.with_identity_only();
     }
     if spec.enable_nac {
         builder = match &spec.nac_owner {
@@ -325,9 +408,8 @@ fn go_node_key(spec: &NodeSpec) -> Option<crate::go_node::NodeKey> {
 /// The public key (hex) and key type a node started as `spec` signs blocks
 /// with, as their signature headers name it; `None` when it does not sign.
 pub fn signer_public_key(spec: &NodeSpec) -> Option<(String, KeyType)> {
-    if spec.node_identity.is_none() && spec.signing.is_none() {
-        return None;
-    }
+    // An identity alone signs nothing.
+    spec.signing?;
     let public = |key_type, key: Vec<u8>| {
         ::identity::RawIdentity::from_bytes(key_type, &key)
             .expect("a valid key")
@@ -340,6 +422,19 @@ pub fn signer_public_key(spec: &NodeSpec) -> Option<(String, KeyType)> {
         _ => unreachable!("a test node signs with secp256k1 or Ed25519"),
     };
     Some((hex::encode(public), spec.signing.unwrap_or_default()))
+}
+
+/// The named field links of the block `bytes` encode, as Go's harness reads
+/// `Block.Links`; none when the bytes are not a block.
+fn field_links(bytes: &[u8]) -> RapidHashMap<String, String> {
+    defra_core::block::Block::from_dag_cbor(bytes)
+        .ok()
+        .and_then(|block| block.links)
+        .into_iter()
+        .flatten()
+        .filter(|link| link.name != "_head")
+        .map(|link| (link.name, link.link.to_string()))
+        .collect()
 }
 
 /// What a node's events said, read in order by the waits.
@@ -357,6 +452,9 @@ struct EventLog {
     gossip_dropped: VecDeque<events::P2PGossipHeadDroppedData>,
     /// Every document a searchable-encryption artifact arrived for.
     se_synced: RapidHashSet<String>,
+    /// The field blocks each local update's head links to, by head: field
+    /// name to block CID, as Go's harness records `FieldCIDs`.
+    field_cids: RapidHashMap<String, RapidHashMap<String, String>>,
 }
 
 /// A node's recorded events.
@@ -396,8 +494,10 @@ impl Events {
                     false => update.doc_id,
                 };
                 let head = (key, update.cid.to_string());
+                let fields = field_links(&update.block);
                 self.update(|log| {
                     log.heads.insert(head.0.clone(), head.1.clone());
+                    log.field_cids.insert(head.1.clone(), fields);
                     log.updates.push_back(head);
                 });
             }
@@ -427,6 +527,16 @@ impl Events {
             _ => {}
         }
         Ok(())
+    }
+
+    /// The field blocks update head `cid` links to, by field name.
+    pub fn field_cids(&self, cid: &str) -> RapidHashMap<String, String> {
+        self.log
+            .load_clone()
+            .field_cids
+            .get(cid)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// The heads of the next local updates, one for each of `keys` (a

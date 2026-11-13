@@ -119,6 +119,7 @@ pub(crate) fn create_router_with_state_and_body_limits(
         .route("/{name}/describe", get(handlers::describe_collection))
         .route("/{name}/exists", get(handlers::collection_exists))
         .route("/{name}/truncate", delete(handlers::truncate_collection))
+        .route("/{name}/documents/purge", delete(handlers::purge_documents))
         .route("/{name}/document/{docID}", get(handlers::get_document))
         .route("/{name}/document/{docID}", patch(handlers::update_document))
         .route(
@@ -187,13 +188,14 @@ pub(crate) fn create_router_with_state_and_body_limits(
         .route("/policy", get(handlers::acp::list_policies))
         .route("/policy/{id}", get(handlers::acp::get_policy))
         .route("/document/decide", post(handlers::acp::decide_doc_access))
+        .route("/document/is-owner", post(handlers::acp::own_documents))
         .route(
             "/document/relationship",
             post(handlers::acp::add_doc_relationship),
         )
         .route(
             "/document/relationships",
-            post(handlers::acp::add_doc_relationships),
+            post(handlers::acp::add_doc_relationships).get(handlers::acp::list_doc_relationships),
         )
         .route(
             "/document/relationship",
@@ -233,9 +235,14 @@ pub(crate) fn create_router_with_state_and_body_limits(
     //   POST /acp/node/re-enable
     let acp_node_routes = Router::new()
         .route("/status", get(handlers::nac::get_status))
+        .route("/explain", get(handlers::nac::explain_subject))
         .route("/enable", post(handlers::nac::enable))
         .route("/relationship", post(handlers::nac::go_add_relationship))
         .route("/relationships", post(handlers::nac::go_add_relationships))
+        .route(
+            "/source-permission",
+            post(handlers::nac::change_source_permission),
+        )
         .route(
             "/relationship",
             delete(handlers::nac::go_remove_relationship),
@@ -255,6 +262,7 @@ pub(crate) fn create_router_with_state_and_body_limits(
 
     // Versioned API routes
     let api_routes = Router::new()
+        .route("/graphql/client-sign", get(crate::client_signing::upgrade))
         .route("/ccip", post(handlers::ccip::post))
         .route("/ccip/{sender}/{data}", get(handlers::ccip::get))
         // GraphQL endpoints

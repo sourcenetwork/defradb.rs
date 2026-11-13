@@ -8,6 +8,8 @@ use std::time::Duration;
 use crate::assemble::check_access_hooks;
 use crate::assemble::{assemble, Extras};
 use crate::config::{NodeConfig, NodeSigning, Persistence, SigningKey, TransportConfig};
+#[cfg(feature = "http")]
+use crate::HttpConfig;
 use crate::Node;
 #[cfg(feature = "otel")]
 use crate::TelemetryHandle;
@@ -16,8 +18,6 @@ use crate::{AccessHooks, P2PConfig};
 #[cfg(feature = "vera")]
 use crate::{DocumentAcpConfig, VeraConfig};
 use crate::{Error, QueryLimits, Result};
-#[cfg(feature = "http")]
-use crate::{HttpConfig, TransactionCleanupConfig};
 
 /// Selects which persistent storage backend to use when `data_path` is set.
 #[derive(Debug, Clone, Copy, Default)]
@@ -62,10 +62,17 @@ pub struct NodeBuilder {
     http_config: Option<HttpConfig>,
     #[cfg(feature = "p2p")]
     access_hooks: Option<AccessHooks>,
+    #[cfg(feature = "p2p")]
+    stream_protocols: Vec<p2p::iroh::StreamRegistration>,
     #[cfg(feature = "otel")]
     telemetry_handle: Option<TelemetryHandle>,
     crdts: Vec<crdt::Registration>,
     txn_ownership: db::TxnOwnership,
+    document_projector: Option<Arc<dyn db::DocumentMutationProjector>>,
+    /// How long an idle explicit transaction lives, and how often the sweep
+    /// looks; when set, it takes precedence over an HTTP config's setting.
+    #[cfg(not(target_arch = "wasm32"))]
+    transaction_idle: Option<(Duration, Duration)>,
 }
 
 /// Durability is a separate builder setting, so it is applied over the
@@ -98,6 +105,16 @@ fn with_at_rest_keys(
 }
 
 impl NodeBuilder {
+    /// Install a trusted in-process document projector. It stages its changes
+    /// through the mutation's transaction and cannot be selected over HTTP.
+    pub fn with_document_projector(
+        mut self,
+        projector: Arc<dyn db::DocumentMutationProjector>,
+    ) -> Self {
+        self.document_projector = Some(projector);
+        self
+    }
+
     /// The worker pool the node's data path runs on. Unset, the pool's own
     /// defaults (`workers::Config::default()`).
     pub fn with_workers(mut self, config: workers::Config) -> Self {
@@ -214,6 +231,38 @@ impl NodeBuilder {
         self
     }
 
+    /// Configure the node to use document ACP backed by a vera.rs node.
+    ///
+    /// Requires the `vera` feature (on by default).
+    #[cfg(feature = "vera")]
+    pub fn with_vera_rs(mut self, config: crate::VeraRsConfig) -> Self {
+        self.config.document_acp = DocumentAcpConfig::VeraRs(config);
+        self
+    }
+
+    /// Use a document ACP provider the host built, for example one over a
+    /// Vera node it runs itself. The node wires it as it wires
+    /// [`with_vera_rs`](Self::with_vera_rs): verified access decisions without
+    /// a cache, remote policies mirrored locally, owed registrations gated.
+    ///
+    /// Requires the `vera` feature (on by default).
+    #[cfg(feature = "vera")]
+    pub fn with_document_acp_provider(mut self, provider: crate::DocumentAcpProvider) -> Self {
+        self.config.document_acp = DocumentAcpConfig::Provider(provider);
+        self
+    }
+
+    /// Run a single-validator Vera node in this process and use it for
+    /// document ACP. The node starts before document ACP is set up and stops
+    /// in [`Node::shutdown`](crate::Node::shutdown).
+    ///
+    /// Requires the `embedded-vera` feature.
+    #[cfg(feature = "embedded-vera")]
+    pub fn with_embedded_vera(mut self, config: crate::EmbeddedVeraConfig) -> Self {
+        self.config.document_acp = DocumentAcpConfig::EmbeddedVera(config);
+        self
+    }
+
     /// Use an identity already registered in DefraDB's process-local signing registry.
     ///
     /// The caller must register the signer before calling [`NodeBuilder::build`].
@@ -272,6 +321,16 @@ impl NodeBuilder {
         filter: Arc<dyn db::replication_filter::ReplicationFilter>,
     ) -> Self {
         self.config.replication_filter = Some(crate::ReplicationFilterHandle(filter));
+        self
+    }
+
+    /// Hold every index backfill at `gate` before each of its batches, so a
+    /// test can watch a build half done. Go's `db.IndexBuildGate`.
+    pub fn with_index_build_gate(
+        mut self,
+        gate: Arc<dyn db::index::build_gate::IndexBuildGate>,
+    ) -> Self {
+        self.config.index_build_gate = Some(crate::IndexBuildGateHandle(gate));
         self
     }
 
@@ -370,6 +429,14 @@ impl NodeBuilder {
         self
     }
 
+    /// Use `key` as the transport identity for this start only, as Go's
+    /// `P2PPrivateKey`: it wins over the keyring and the store's key, and is
+    /// recorded in neither, so a later start without it uses the store's key.
+    pub fn with_start_peer_key(mut self, key: crate::StartPeerKey) -> Self {
+        self.config.start_peer_key = Some(key);
+        self
+    }
+
     /// Sign as a node identity the node creates from `key`.
     pub fn with_signing_key(mut self, key: SigningKey) -> Self {
         self.config.signing = NodeSigning::Enabled { key: Some(key) };
@@ -379,6 +446,27 @@ impl NodeBuilder {
     /// Sign as a node identity the node generates.
     pub fn enable_signing(mut self) -> Self {
         self.config.signing = NodeSigning::Enabled { key: None };
+        self
+    }
+
+    /// Keep the node identity [`NodeBuilder::with_signing_key`],
+    /// [`NodeBuilder::enable_signing`] or [`NodeBuilder::with_node_identity_did`]
+    /// gives the node, for P2P, the KMS and NAC, but write unsigned blocks and
+    /// run each request as its caller, never as the node: Go's `NodeIdentity`
+    /// with `EnableSigning` off.
+    ///
+    /// The node's own calls ([`Node::execute`], [`Node::add_collection`],
+    /// [`Node::begin_transaction`] and the rest that take no identity) then act
+    /// as no one. With node access control enabled they are checked as
+    /// anonymous, as Go checks a call that names no identity; a request that
+    /// names the node's DID keeps the node's full access. The transactions the
+    /// node begins are owned by no one, so requests that name no identity run
+    /// in them. A trusted document projector still acts as the node's DID.
+    ///
+    /// [`NodeBuilder::build`] fails with [`Error::IdentityOnlyNeedsIdentity`]
+    /// when nothing gives the node an identity.
+    pub fn with_identity_only(mut self) -> Self {
+        self.config.identity_only = true;
         self
     }
 
@@ -396,6 +484,25 @@ impl NodeBuilder {
         self
     }
 
+    /// Serve `protocol` on the node's iroh connections: a stream a peer opens
+    /// with its tag is admitted as Defra's own are, then handed to `handler`
+    /// on the network runtime. The handler reaches the database through the
+    /// node's request path ([`Node::execute_request`]); see
+    /// [`p2p::iroh::StreamHandler`]. A handler made before the node holds a
+    /// `Weak<Node>` set once `build` returns, and resets streams that arrive
+    /// before then by dropping them. `build` fails unless the transport is
+    /// iroh, for a protocol [`p2p::iroh::StreamProtocol::validate`] refuses,
+    /// and for a tag given twice.
+    #[cfg(feature = "p2p")]
+    pub fn with_stream_protocol(
+        mut self,
+        protocol: p2p::iroh::StreamProtocol,
+        handler: Arc<dyn p2p::iroh::StreamHandler>,
+    ) -> Self {
+        self.stream_protocols.push((protocol, handler));
+        self
+    }
+
     /// Which requests may reach a transaction this node began. Unset, only
     /// requests acting as the identity that began it;
     /// [`db::TxnOwnership::Embedder`] suits a node whose embedding process is
@@ -405,41 +512,73 @@ impl NodeBuilder {
         self
     }
 
+    /// End explicit transactions no request has used for `idle`, checking
+    /// every `sweep`, on a node with or without an HTTP server: the sweep is
+    /// a job on a worker's deadline queue, read through the Env clock. A zero
+    /// `idle` keeps transactions until they are committed or discarded. This
+    /// setting takes precedence over an HTTP config's idle timeout, which
+    /// applies only when this is not called.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_transaction_idle_timeout(mut self, idle: Duration, sweep: Duration) -> Self {
+        self.transaction_idle = Some((idle, sweep));
+        self
+    }
+
     /// Build and start the embedded DefraDB node.
     pub async fn build(mut self) -> Result<Node> {
         let crdts = crdt::Crdts::new(std::mem::take(&mut self.crdts))?;
         #[cfg(feature = "p2p")]
         check_access_hooks(&self.config, self.access_hooks.as_ref())?;
+        #[cfg(feature = "p2p")]
+        if !self.stream_protocols.is_empty()
+            && !matches!(self.config.transport, TransportConfig::Iroh(_))
+        {
+            return Err(Error::StreamProtocolsNeedIroh);
+        }
 
         #[cfg(feature = "http")]
-        let (serves_http, transaction_cleanup) = match self.http_config.as_ref() {
-            Some(config) if config.transaction_idle_timeout.is_zero() => (true, None),
-            Some(config) => {
-                if config.transaction_cleanup_interval.is_zero() {
-                    return Err(Error::ZeroCleanupInterval);
-                }
-                (
-                    true,
-                    Some(TransactionCleanupConfig {
-                        max_idle_age: config.transaction_idle_timeout,
-                        sweep_interval: config.transaction_cleanup_interval,
-                    }),
-                )
-            }
+        let (serves_http, http_idle) = match self.http_config.as_ref() {
+            Some(config) => (
+                true,
+                Some((
+                    config.transaction_idle_timeout,
+                    config.transaction_cleanup_interval,
+                )),
+            ),
             None => (false, None),
         };
+        #[cfg(all(not(feature = "http"), not(target_arch = "wasm32")))]
+        let http_idle: Option<(Duration, Duration)> = None;
+        #[cfg(not(target_arch = "wasm32"))]
+        let transaction_cleanup = match self.transaction_idle.or(http_idle) {
+            Some((idle, _)) if idle.is_zero() => None,
+            Some((_, sweep)) if sweep.is_zero() => return Err(Error::ZeroCleanupInterval),
+            Some((idle, sweep)) => Some(crate::TransactionCleanupConfig {
+                max_idle_age: idle,
+                sweep_interval: sweep,
+            }),
+            None => None,
+        };
+
+        #[cfg(feature = "http")]
+        if serves_http && self.txn_ownership == db::TxnOwnership::Embedder {
+            return Err(crate::Error::HttpEmbedderTransactionOwnership);
+        }
 
         let extras = Extras {
             embedding_url: self.embedding_url.take(),
             embedding_model: self.embedding_model.take(),
             embedding_api_key: self.embedding_api_key.take(),
             txn_ownership: self.txn_ownership,
-            #[cfg(feature = "http")]
+            document_projector: self.document_projector.take(),
+            #[cfg(not(target_arch = "wasm32"))]
             transaction_cleanup,
             #[cfg(feature = "http")]
             serves_http,
             #[cfg(feature = "p2p")]
             access_hooks: self.access_hooks.take(),
+            #[cfg(feature = "p2p")]
+            stream_protocols: std::mem::take(&mut self.stream_protocols),
             #[cfg(feature = "otel")]
             telemetry: self.telemetry_handle.take(),
         };
@@ -451,6 +590,8 @@ impl NodeBuilder {
         };
         let config = self.config.clone();
         let query_limits = config.query_limits;
+        #[cfg(feature = "http")]
+        let identity_only = config.identity_only;
         query_limits.check_fragment_nesting()?;
         let workers = self.workers.take();
         let node = assemble(|pool| self.open_store(pool, crdts), config, workers, extras).await?;
@@ -463,6 +604,7 @@ impl NodeBuilder {
                 address: http_cfg.address,
                 request_timeout: crate::timeout_secs(http_cfg.request_timeout),
                 query_limits,
+                no_signing: identity_only,
                 ..Default::default()
             };
             let server = defra_http::Server::from_arc_with_config(
@@ -471,6 +613,7 @@ impl NodeBuilder {
                 network.requests().clone(),
             )
             .with_event_bus_arc(node.event_bus.clone())
+            .with_rest_arc(node.rest.clone())
             .with_pool(node.pool.clone())
             .with_dev_mode(http_cfg.dev_mode)
             .with_schema_arc(Arc::new(crate::HttpSchemaOps {

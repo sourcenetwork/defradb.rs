@@ -50,14 +50,27 @@ impl Op for NewIndex {
                 descending: field.descending,
             })
             .collect();
-        state
-            .block_on(state.node_on(self.common.node())?.create_index_as(
-                &state.context_as(None, self.common.identity_seed),
+        let node = state.node_on(self.common.node())?;
+        let context = state.context_as(self.txn, self.common.identity_seed);
+        // Go's NewIndex always returns before the build; its harness waits
+        // for the build unless the scenario sets `async`.
+        let created = match self.r#async {
+            true => state.block_on(node.start_index_as(
+                &context,
                 &self.collection,
                 self.index_name(),
                 fields,
                 self.unique(),
-            ))
+            )),
+            false => state.block_on(node.create_index_as(
+                &context,
+                &self.collection,
+                self.index_name(),
+                fields,
+                self.unique(),
+            )),
+        };
+        created
             .map(|_| json!({}))
             .map_err(|e| Failure::operation(e.to_string()))
     }
@@ -102,20 +115,20 @@ impl NewIndex {
                 "index request has more than one kind config".to_owned(),
             ));
         }
-        let unsupported = [
-            ("async", self.r#async),
-            ("txn", self.txn.is_some()),
-            ("index.vector", self.index.vector.is_some()),
-        ];
+        let unsupported = [("index.vector", self.index.vector.is_some())];
         unsupported_argument(&unsupported)
     }
 
     /// [`NewIndex::check_arguments`], plus the descending fields the HTTP and
-    /// CLI clients cannot send.
+    /// CLI clients cannot send, and `async`: an index created over HTTP is
+    /// built before the response.
     fn check_remote_arguments(&self) -> Result<(), Failure> {
         self.check_arguments()?;
         let descending = self.index.fields.iter().any(|field| field.descending);
-        unsupported_argument(&[("index.fields.descending", descending)])
+        unsupported_argument(&[
+            ("index.fields.descending", descending),
+            ("async", self.r#async),
+        ])
     }
 
     fn name_of() -> &'static str {
@@ -154,18 +167,30 @@ impl HttpRun for NewIndex {
             let name = action.index_name().map(str::to_owned);
             let unique = action.unique();
             let created = collection.clone();
+            let txn = state.txn_id(action.txn);
+            let in_txn = txn.is_some();
             state
                 .http_as(
                     action.common.node(),
                     action.common.identity_seed,
                     |client| async move {
                         client
-                            .index_create(&created, &fields, name.as_deref(), unique, None)
+                            .index_create(
+                                txn.as_deref(),
+                                &created,
+                                &fields,
+                                name.as_deref(),
+                                unique,
+                                None,
+                            )
                             .await
                     },
                 )?
                 .map_err(|e| Failure::operation(e.to_string()))?;
-            wait_until_built(state, action, &collection)?;
+            // In a transaction the backfill runs once it commits.
+            if !in_txn {
+                wait_until_built(state, action, &collection)?;
+            }
             Ok(json!({}))
         });
     }
@@ -189,7 +214,7 @@ fn wait_until_built(state: &State, action: &NewIndex, collection: &str) -> Resul
                 action.common.node(),
                 action.common.identity_seed,
                 |client| async move {
-                    workers::timeout(remaining, client.index_listing(&collection))
+                    workers::timeout(remaining, client.index_listing(None, &collection))
                         .await
                         .map_err(|e| e.to_string())?
                         .map_err(|e| e.to_string())
@@ -214,7 +239,7 @@ fn wait_until_built(state: &State, action: &NewIndex, collection: &str) -> Resul
 }
 
 /// Go's building state: `BackfillIndexAction` (3) and `InProgressActionStatus` (1).
-fn building(index: &Value) -> bool {
+pub(crate) fn building(index: &Value) -> bool {
     let execution = &index["Execution"];
     execution["Action"] == 3 && execution["Status"] == 1
 }
@@ -241,7 +266,7 @@ impl CliRun for NewIndex {
             state
                 .defra_client_as(
                     action.common.node(),
-                    None,
+                    action.txn,
                     action.common.identity_seed,
                     &args,
                 )

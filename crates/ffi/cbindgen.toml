@@ -1,17 +1,18 @@
-# cbindgen configuration for defra FFI crate
-# Generate headers with: cbindgen --config cbindgen.toml --crate ffi --output defra.h
+# cbindgen configuration for the C API.
+# Generate the header with: just build-ffi-header
 
 language = "C"
 header = """
 /*
- * DefraDB Rust FFI - Auto-generated header
+ * DefraDB C API - generated header.
  *
- * This header provides C bindings for the DefraDB Rust implementation.
- * Use with CGO to integrate with Go code.
- *
- * Usage:
- *   1. Build library: cargo build --release -p ffi
- *   2. Link with: -L target/release -lffi
+ * The functions cover the calls of Go DefraDB's cbindings (libdefradb.h),
+ * named defra_<noun>_<verb>. Names and types are prefixed and
+ * NodeInitOptions adds fields after Go's, so this header is not a drop-in
+ * for libdefradb.h. A call that works on a store takes a handle
+ * naming a node or one of its transactions, and an identity handle naming
+ * the caller (0 for none). Free every result a call returns with its free
+ * function: defra_result_free, or defra_new_<kind>_result_free.
  */
 """
 include_guard = "DEFRA_H"
@@ -25,9 +26,11 @@ include = [
     "DefraRemoteSignCallback",
     "DefraReplicationFilterCallback",
     "DefraResultCallback",
-    "FfiResult",
-    "NewNodeResult",
-    "NewTxnResult",
+    "CollectionOptions",
+    "DefraResult",
+    "DefraNewIdentityResult",
+    "DefraNewNodeResult",
+    "DefraNewTxnResult",
     "NodeInitOptions",
 ]
 

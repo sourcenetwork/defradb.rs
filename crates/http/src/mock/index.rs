@@ -57,6 +57,7 @@ impl MockIndexOperations {
                 collection_id: collection.to_string(),
                 fields: fields.clone(),
                 unique,
+                execution: None,
             })
         });
         self
@@ -95,6 +96,7 @@ impl IndexOperations for MockIndexOperations {
                 })
                 .collect(),
             unique,
+            execution: None,
         };
 
         update_vec(&self.indexes, |indexes| indexes.push(index.clone()));

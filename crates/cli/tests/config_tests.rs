@@ -44,6 +44,12 @@ fn cli_with_defaults() -> Cli {
         vera_consensus_key: None,
         #[cfg(feature = "vera")]
         vera_deployment_id: None,
+        #[cfg(feature = "embedded-vera")]
+        vera_embedded_operators: Vec::new(),
+        #[cfg(feature = "embedded-vera")]
+        vera_embedded_threshold: None,
+        #[cfg(feature = "embedded-vera")]
+        vera_embedded_listen: None,
         secret_file: None,
         no_telemetry: None,
         development: None,

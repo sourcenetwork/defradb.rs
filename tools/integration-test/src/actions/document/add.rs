@@ -54,7 +54,7 @@ impl Op for AddDoc {
     }
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
-        let identity = self.check_arguments()?;
+        let identity = self.check_arguments(state)?;
         let (node, context, options) = (
             state.node_on(self.common.node())?,
             state.context_as(self.txn, identity),
@@ -90,8 +90,8 @@ impl Op for AddDoc {
 
 impl AddDoc {
     /// Fails on the arguments no client supports yet.
-    fn check_arguments(&self) -> Result<Option<u64>, Failure> {
-        let identity = self.common.client_identity(Self::name())?;
+    fn check_arguments(&self, state: &State) -> Result<Option<u64>, Failure> {
+        let identity = self.common.acting_identity(Self::name(), state)?;
         if self.enable_signing.is_some() {
             return Err(Failure::unsupported(format!(
                 "{} argument enableSigning",
@@ -131,7 +131,7 @@ impl Action for AddDoc {
 impl HttpRun for AddDoc {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            let identity = action.check_arguments()?;
+            let identity = action.check_arguments(state)?;
             let (txn, options) = (state.txn_id(action.txn), action.options());
             let collection = action.collection.clone();
             let failed = |e: cli::error::Error| Failure::operation(e.to_string());
@@ -181,7 +181,7 @@ impl HttpRun for AddDoc {
 impl CliRun for AddDoc {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
-            let identity = action.check_arguments()?;
+            let identity = action.check_arguments(state)?;
             if action.upsert {
                 return Err(Failure::unsupported(format!(
                     "{} upsert: the CLI has no save command",

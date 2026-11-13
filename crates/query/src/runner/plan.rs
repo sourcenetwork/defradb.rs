@@ -558,21 +558,6 @@ pub(crate) fn doc_to_json(doc: &Doc, mapping: &DocumentMapping) -> Result<JsonVa
     Ok(JsonValue::Object(obj))
 }
 
-/// Hide physical indexes from planning when a fetcher transforms their values.
-pub(crate) async fn indexes_for_documents(
-    fetcher: &dyn crate::fetcher::DocFetcher,
-    mut collections: Vec<schema::CollectionVersion>,
-) -> crate::error::Result<Vec<schema::CollectionVersion>> {
-    for collection in &mut collections {
-        if !collection.indexes.is_empty()
-            && !fetcher.indexes_match_documents(&collection.name).await?
-        {
-            collection.indexes.clear();
-        }
-    }
-    Ok(collections)
-}
-
 #[cfg(test)]
 #[path = "plan_tests.rs"]
 mod tests;

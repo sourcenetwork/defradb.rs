@@ -37,19 +37,11 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         }
 
         // Get collection schema
-        let mut collection = self
+        let collection = self
             .effective_provider()
             .get_collection(&select.collection_name)
             .await?
             .ok_or_else(|| QueryError::collection_not_found(&select.collection_name))?;
-
-        if !self
-            .fetcher
-            .indexes_match_documents(&select.collection_name)
-            .await?
-        {
-            std::sync::Arc::make_mut(&mut collection).indexes.clear();
-        }
 
         // Check if this query has nested selections (relations)
         let has_nested = select
@@ -166,10 +158,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             }
         }
 
-        let mut planner = Planner::new(
-            crate::runner::plan::indexes_for_documents(self.fetcher.as_ref(), collections).await?,
-        )
-        .with_query_limits(self.query_limits);
+        let mut planner = Planner::new(collections).with_query_limits(self.query_limits);
         if let Some(ref lens_store) = self.lens_store {
             planner = planner.with_lens_store(lens_store.clone());
         }

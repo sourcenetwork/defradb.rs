@@ -139,6 +139,32 @@ impl IndexScanResult {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait DocFetcher: MaybeSendSync {
+    /// Apply native node-administrator authority in this exact transaction.
+    #[allow(clippy::too_many_arguments)]
+    async fn change_node_admin_relationship(
+        &self,
+        _provider: std::sync::Arc<dyn acp::DocumentACP>,
+        _actor: &identity::Did,
+        _target: acp::Subject,
+        _policy_id: &str,
+        _resource: &str,
+        _doc_id: &str,
+        _relation: &str,
+        _delete: bool,
+    ) -> acp::Result<bool> {
+        Err(acp::Error::UnsupportedAdministrativeRelationship)
+    }
+
+    /// An active NAC must make its decision in this fetcher's transaction.
+    /// None means that an enforcing provider cannot bind to that transaction.
+    async fn check_verified_node_permission(
+        &self,
+        _identity: &identity::Did,
+        _permission: acp::nac::NodePermission,
+    ) -> Result<Option<bool>> {
+        Ok(None)
+    }
+
     async fn check_node_permission(
         &self,
         _identity: &identity::Did,
@@ -147,12 +173,66 @@ pub trait DocFetcher: MaybeSendSync {
         Ok(None)
     }
 
+    /// Evaluate node authorization only when bound to this transaction.
+    async fn check_bound_node_permission(
+        &self,
+        _identity: &identity::Did,
+        _permission: acp::nac::NodePermission,
+        _require_active: bool,
+    ) -> Result<Option<bool>> {
+        Ok(None)
+    }
+
+    /// Stage a source-scoped node grant in this transaction, when supported.
+    async fn change_source_node_permission(
+        &self,
+        _requestor: &identity::Did,
+        _permission: acp::nac::NodePermission,
+        _parent_source: Option<&str>,
+        _subject_kind: &str,
+        _subject: &str,
+        _delete: bool,
+    ) -> Result<Option<bool>> {
+        Ok(None)
+    }
+
+    /// Check a host source edge on this transaction, including its read fence.
+    async fn source_node_permission_matches(
+        &self,
+        _permission: acp::nac::NodePermission,
+        _parent_source: Option<&str>,
+        _subject_kind: &str,
+        _subject: &str,
+        _delete: bool,
+    ) -> Result<Option<bool>> {
+        Ok(None)
+    }
+
+    /// Reconcile a trusted host source change on the same transaction view.
+    async fn project_host_source_change(&self, _actor: &defra_core::RequestContext) -> Result<()> {
+        Err(crate::error::QueryError::execution(
+            "transaction-bound host projection is unavailable",
+        ))
+    }
+
+    /// Whether `identity` reads past document access control: node access
+    /// control is on and grants it `bypass-dac`, read in this fetcher's
+    /// transaction (Go's `canDACBypass`).
+    async fn dac_bypass(&self, _identity: &identity::Did) -> Result<bool> {
+        Ok(false)
+    }
+
     /// An authorization provider actually bound to this fetcher's transaction.
     /// A capability flag or an unbound provider cannot certify a row snapshot.
     async fn transaction_acp(
         &self,
         _provider: std::sync::Arc<dyn acp::DocumentACP>,
     ) -> Result<Option<std::sync::Arc<dyn acp::DocumentACP>>> {
+        Ok(None)
+    }
+
+    /// Read a DAC policy through the same transaction as its relationships.
+    async fn transaction_dac_policy(&self, _id: &str) -> Result<Option<acp::Policy>> {
         Ok(None)
     }
 
@@ -311,6 +391,22 @@ pub trait DocFetcher: MaybeSendSync {
         ))
     }
 
+    /// Read committed updates in local commit order, as `reader` may see
+    /// them. The rows, their documents' deletion state and the access decision
+    /// are read in one transaction: this fetcher's own, or one opened for the
+    /// page. A provider that cannot read in that transaction decides on live
+    /// state, and a document deleted by then is hidden.
+    async fn get_document_updates(
+        &self,
+        options: &DocumentUpdateOptions,
+        reader: &DocumentReader<'_>,
+    ) -> Result<DocumentUpdatePage> {
+        let _ = (options, reader);
+        Err(crate::error::QueryError::execution(
+            "document update queries are unsupported",
+        ))
+    }
+
     /// The conflicts of a Json field of one document: for each path, the
     /// concurrent edits its winner beat.
     async fn get_json_conflicts(&self, options: &JsonConflictOptions) -> Result<Vec<JsonConflict>> {
@@ -384,12 +480,6 @@ pub trait DocFetcher: MaybeSendSync {
     /// Returns true if `get_by_index_scan` is implemented and functional.
     fn supports_index_queries(&self) -> bool {
         false
-    }
-
-    /// Whether stored index entries describe the documents this fetcher returns.
-    /// Read-time lens transforms may change indexed values without persisting them.
-    async fn indexes_match_documents(&self, _collection_name: &str) -> Result<bool> {
-        Ok(true)
     }
 
     /// Estimate the index entries `params` would visit, bounded by `cap`.
@@ -687,4 +777,53 @@ pub struct DocumentArrivalPage {
 pub struct DocumentArrival {
     pub cursor: u64,
     pub doc_id: String,
+}
+
+/// A node-local update cursor, scoped to one collection. Updates made before
+/// the journal was installed are not reconstructed from historical blocks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentUpdateOptions {
+    /// Collection whose local update journal is read.
+    pub collection: String,
+    /// Exclusive checkpoint in the local journal.
+    pub after: u64,
+    /// Maximum raw rows examined before authorization filtering.
+    pub limit: u64,
+}
+
+/// Who reads a page of the update journal, and what decides for them.
+pub struct DocumentReader<'request> {
+    /// The request the page serves.
+    pub context: &'request defra_core::RequestContext,
+    /// The provider that decides document access. The fetcher binds it to
+    /// the page's transaction when it can be bound.
+    pub acp: &'request dyn acp::DocumentACP,
+    /// Registrations the page's transaction still owes the provider.
+    pub projection: Option<&'request crate::txn::AcpRegistrationProjection>,
+    /// The caller.
+    pub identity: &'request acp::Identity,
+}
+
+/// A page observed in one transaction snapshot. `next` includes rows hidden
+/// by authorization or by a deleted document, and an empty page therefore
+/// need not mean an empty log.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DocumentUpdatePage {
+    /// Highest committed cursor in this snapshot.
+    pub head: u64,
+    /// Last scanned cursor, including rows not visible to the caller.
+    pub next: u64,
+    /// Updates the caller is permitted to read.
+    pub entries: Vec<DocumentUpdate>,
+}
+
+/// Identity of one locally committed document update.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentUpdate {
+    /// Local commit-order position.
+    pub cursor: u64,
+    /// The updated document.
+    pub doc_id: String,
+    /// Composite block identifying this update.
+    pub cid: String,
 }

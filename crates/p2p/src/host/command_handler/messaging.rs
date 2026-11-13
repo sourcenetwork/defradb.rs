@@ -299,11 +299,12 @@ impl<S: Store> P2PHost<S> {
         &mut self,
         peer_id: PeerId,
         root_cid: Cid,
+        haves: Vec<Cid>,
         response: crate::rt::oneshot::Sender<Result<()>>,
     ) {
         let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
-            let result = h.send_car_request(peer_id, root_cid).await;
+            let result = h.send_car_request(peer_id, root_cid, haves).await;
             if response.send(result).is_err() {
                 debug!(peer_id = %peer_id, "SendCarRequest command response dropped");
             }

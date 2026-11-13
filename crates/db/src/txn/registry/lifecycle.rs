@@ -31,6 +31,24 @@ async fn within<F: std::future::Future>(
         .map_err(TransactionError::execution)
 }
 
+impl<S: Store + 'static> DbTransactionRegistry<S> {
+    /// Trusted embedded-host only: the owner admits the transaction turn and
+    /// native NAC checks that owner on the same view. Never expose this
+    /// capability as an HTTP or GraphQL request parameter.
+    pub async fn change_host_nac_source_permission(
+        &self,
+        owner: &RequestContext,
+        edge: query::txn::SourcePermission,
+    ) -> std::result::Result<bool, TransactionError> {
+        let id = owner
+            .txn()
+            .ok_or_else(|| TransactionError::operation("an explicit transaction is required"))?;
+        let handle = TransactionHandle::new(id.to_string());
+        let job = query::txn::host_source_permission_job(owner.clone(), edge)?;
+        self.run_as(owner, &handle, None, job).await?
+    }
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
@@ -242,7 +260,95 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             ));
         }
         self.db
-            .patch_collections_as(context, patch, migration)
+            .patch_collection(context, patch, migration)
+            .await
+            .map_err(operation_error)
+    }
+
+    async fn create_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: Option<&str>,
+        fields: Vec<schema::IndexedFieldDescription>,
+        kind: schema::IndexKind,
+    ) -> std::result::Result<schema::IndexDescription, TransactionError> {
+        let id = context_txn(context)?;
+        self.create_index_in_txn(context, &id, collection, name, fields, kind)
+            .await
+            .map_err(operation_error)
+    }
+
+    async fn drop_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let id = context_txn(context)?;
+        self.drop_index_in_txn(context, &id, collection, name)
+            .await
+            .map_err(operation_error)
+    }
+
+    async fn indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> std::result::Result<
+        (
+            schema::CollectionVersion,
+            rapidhash::RapidHashMap<u32, defra_core::ActionExecution>,
+        ),
+        TransactionError,
+    > {
+        let id = context_txn(context)?;
+        self.indexes_in_txn(context, &id, collection)
+            .await
+            .map_err(operation_error)
+    }
+
+    async fn add_encrypted_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        field: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let id = context_txn(context)?;
+        self.add_encrypted_index_in_txn(context, &id, collection, field)
+            .await
+            .map_err(operation_error)
+    }
+
+    async fn delete_encrypted_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        field: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let id = context_txn(context)?;
+        self.delete_encrypted_index_in_txn(context, &id, collection, field)
+            .await
+            .map_err(operation_error)
+    }
+
+    async fn encrypted_indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> std::result::Result<Vec<String>, TransactionError> {
+        let id = context_txn(context)?;
+        self.encrypted_indexes_in_txn(context, &id, collection)
+            .await
+            .map_err(operation_error)
+    }
+
+    async fn all_encrypted_indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<(String, Vec<String>)>, TransactionError> {
+        let id = context_txn(context)?;
+        self.all_encrypted_indexes_in_txn(context, &id)
             .await
             .map_err(operation_error)
     }
@@ -255,6 +361,17 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
     ) -> std::result::Result<(), TransactionError> {
         self.db
             .truncate_collection_as(context, name, filter)
+            .await
+            .map_err(|error| TransactionError::operation(error.to_string()))
+    }
+
+    async fn purge_by_doc_ids_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        doc_ids: &[document::DocID],
+    ) -> std::result::Result<usize, TransactionError> {
+        DbTransactionRegistry::purge_by_doc_ids_as(self, context, name, doc_ids)
             .await
             .map_err(|error| TransactionError::operation(error.to_string()))
     }
@@ -311,6 +428,17 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .map_err(|error| TransactionError::operation(error.to_string()))
     }
 
+    async fn explain_nac_subject_as(
+        &self,
+        context: &RequestContext,
+        subject: &str,
+    ) -> std::result::Result<Vec<acp::nac::PermissionProvenance>, TransactionError> {
+        self.db
+            .explain_nac_subject_as(context, subject)
+            .await
+            .map_err(|error| TransactionError::operation(error.to_string()))
+    }
+
     async fn disable_nac_as(
         &self,
         context: &RequestContext,
@@ -335,6 +463,19 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .add_nac_actor_relationship_as(context, relation, target_actor)
             .await
             .map_err(nac_error)
+    }
+
+    async fn change_nac_source_permission_as(
+        &self,
+        context: &RequestContext,
+        edge: &query::txn::SourcePermission,
+    ) -> std::result::Result<bool, TransactionError> {
+        let id = context
+            .txn()
+            .ok_or_else(|| TransactionError::operation("an explicit transaction is required"))?;
+        let handle = TransactionHandle::new(id.to_string());
+        let job = query::txn::source_permission_job(context.clone(), edge.clone())?;
+        self.run_as(context, &handle, None, job).await?
     }
 
     async fn delete_nac_actor_relationship_as(

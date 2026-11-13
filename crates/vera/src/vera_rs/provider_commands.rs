@@ -4,7 +4,9 @@ use crate::provider::SubjectRef;
 
 pub(crate) fn subject_to_cmd_json(subject: &SubjectRef) -> serde_json::Value {
     match subject {
-        SubjectRef::Actor(did) => serde_json::json!({ "Entity": did }),
+        SubjectRef::Actor(did) => {
+            serde_json::json!({ "Entity": super::did_spelling::wire(did) })
+        }
         SubjectRef::AllActors => serde_json::json!("Wildcard"),
     }
 }
@@ -62,7 +64,7 @@ pub(crate) fn encode_delete_relationship_cmd(
 /// [`resolve_registered_or_passthrough_bearer_token_as`] in
 /// [`defra_core::RequestContext::ambient`].
 #[cfg(test)]
-pub(crate) fn resolve_registered_or_passthrough_bearer_token(
+pub(crate) async fn resolve_registered_or_passthrough_bearer_token(
     did: &str,
     submitter: &str,
     deployment_id: u64,
@@ -73,28 +75,54 @@ pub(crate) fn resolve_registered_or_passthrough_bearer_token(
         submitter,
         deployment_id,
     )
+    .await
 }
 
 /// The bearer token `did` acts with in the request `context` serves: one
-/// built from its registered secp256k1 key when the node holds it, the token
+/// built from its registered secp256k1, Ed25519 or P-256 key when the node
+/// holds it, the token
 /// the request carries for it otherwise.
-pub(crate) fn resolve_registered_or_passthrough_bearer_token_as(
+pub(crate) async fn resolve_registered_or_passthrough_bearer_token_as(
     context: &defra_core::RequestContext,
     did: &str,
     submitter: &str,
     deployment_id: u64,
 ) -> Result<Option<String>, crate::provider::ProviderError> {
-    use vera_client::Secp256k1SigningKey as SigningKey;
+    use defra_core::signing::SigningKeyType;
+
+    use super::signer::{DelegationSigner, Ed25519Signer, P256Signer, Secp256k1Signer};
 
     if let Some(signing_config) = defra_core::signing::get_identity(did) {
-        if signing_config.has_local_private_key()
-            && signing_config.key_type == defra_core::signing::SigningKeyType::Secp256k1
-        {
-            let key = SigningKey::from_slice(&signing_config.private_key_bytes).map_err(|e| {
-                crate::provider::ProviderError::Config(format!("invalid signing key: {}", e))
-            })?;
-
-            return super::bearer::create_bearer_token(&key, did, submitter, deployment_id, 300)
+        if signing_config.has_local_private_key() {
+            let key = signing_config.private_key_bytes.as_slice();
+            let signer: Option<Result<Box<dyn DelegationSigner>, _>> = match signing_config.key_type
+            {
+                SigningKeyType::Secp256k1 => Some(
+                    Secp256k1Signer::from_slice(key)
+                        .map(|s| Box::new(s) as Box<dyn DelegationSigner>),
+                ),
+                SigningKeyType::Ed25519 => Some(
+                    Ed25519Signer::from_slice(key)
+                        .map(|s| Box::new(s) as Box<dyn DelegationSigner>),
+                ),
+                SigningKeyType::Secp256r1 => Some(
+                    P256Signer::from_slice(key).map(|s| Box::new(s) as Box<dyn DelegationSigner>),
+                ),
+                _ => None,
+            };
+            if let Some(signer) = signer {
+                let signer = signer.map_err(|e| {
+                    crate::provider::ProviderError::Config(format!("invalid signing key: {}", e))
+                })?;
+                let issuer = super::did_spelling::wire(did);
+                return super::bearer::create_bearer_token(
+                    signer.as_ref(),
+                    &issuer,
+                    submitter,
+                    deployment_id,
+                    300,
+                )
+                .await
                 .map(Some)
                 .map_err(|e| {
                     crate::provider::ProviderError::Config(format!(
@@ -102,6 +130,7 @@ pub(crate) fn resolve_registered_or_passthrough_bearer_token_as(
                         e
                     ))
                 });
+            }
         }
     }
 
@@ -125,6 +154,36 @@ mod tests {
                 "RegisterObject": { "resource": "users", "id": "doc-1" }
             })
         );
+    }
+
+    #[test]
+    fn an_actor_subject_is_sent_under_one_spelling() {
+        let key = vera_client::Secp256k1SigningKey::from_slice(&[42; 32]).unwrap();
+        let compressed = crate::vera_rs::bearer::did_from_signing_key(&key, true);
+        let uncompressed = crate::vera_rs::bearer::did_from_signing_key(&key, false);
+        for did in [&compressed, &uncompressed] {
+            for cmd in [
+                encode_set_relationship_cmd(
+                    "users",
+                    "doc",
+                    "reader",
+                    &SubjectRef::Actor(did.clone()),
+                ),
+                encode_delete_relationship_cmd(
+                    "users",
+                    "doc",
+                    "reader",
+                    &SubjectRef::Actor(did.clone()),
+                ),
+            ] {
+                let value: Value = serde_json::from_slice(&cmd).unwrap();
+                let subject = value
+                    .as_object()
+                    .and_then(|command| command.values().next())
+                    .map(|body| body["subject"]["Entity"].clone());
+                assert_eq!(subject, Some(json!(uncompressed)));
+            }
+        }
     }
 
     #[test]
@@ -173,8 +232,8 @@ mod tests {
 mod request_bearer_tests {
     use super::*;
 
-    #[test]
-    fn a_remote_identity_acts_with_the_token_its_request_carries() {
+    #[nuclei::test]
+    async fn a_remote_identity_acts_with_the_token_its_request_carries() {
         let did = "did:key:z6MkVeraRsRequestBearer";
         defra_core::signing::set_request_bearer_token(did, "stored");
         let request = defra_core::RequestContext::default()
@@ -186,6 +245,7 @@ mod request_bearer_tests {
             "did:key:submitter",
             9001,
         )
+        .await
         .unwrap();
         let unscoped = resolve_registered_or_passthrough_bearer_token_as(
             &defra_core::RequestContext::default(),
@@ -193,6 +253,7 @@ mod request_bearer_tests {
             "did:key:submitter",
             9001,
         )
+        .await
         .unwrap();
         defra_core::signing::clear_request_bearer_token(did);
 

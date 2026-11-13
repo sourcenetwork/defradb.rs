@@ -49,6 +49,9 @@ native = ["db/native", "defra-p2p-adapter?/native"]
 # Vera / vera.rs on-chain document ACP. Default-on; omit for local-only ACP.
 vera = ["dep:vera"]
 sourcehub = ["vera"]
+# Run a single-validator Vera node in this process for document ACP. Native
+# only. The Vera node builds a runtime of its own; see AGENTS.md.
+embedded-vera = ["vera", "native", "dep:vera-embedded"]
 # Lens WASM execution. Default-on; without it set_migration fails explicitly.
 wasmtime-runtime = [
     "db/wasmtime-runtime",
@@ -63,6 +66,10 @@ otel = ["telemetry/otlp"]
 
 [lib]
 bench = false
+
+[[test]]
+name = "embedded_vera"
+required-features = ["embedded-vera"]
 
 [dependencies]
 rapidhash.workspace = true
@@ -79,6 +86,7 @@ query = { path = "../query" }
 events = { path = "../events" }
 acp = { path = "../acp" }
 vera = { path = "../vera", optional = true }
+vera-embedded = { path = "../vera-embedded", optional = true, features = ["node"] }
 identity = { path = "../identity" }
 defra-core = { path = "../defra-core" }
 edge = { path = "../edge" }
@@ -116,6 +124,9 @@ net = { path = "../net" }
 mimalloc.workspace = true
 
 [dev-dependencies]
+async-tungstenite = "0.35.0"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio-tungstenite = "0.30.0"
 zanzibar = { path = "../zanzibar" }
 document = { path = "../document" }
 defra-core = { path = "../defra-core", features = ["ambient"] }
@@ -125,6 +136,7 @@ axum.workspace = true
 defra-http = { path = "../http" }
 defra-p2p-adapter = { path = "../p2p-adapter", default-features = false }
 futures.workspace = true
+mantra-macros = "0.9"
 kovan.workspace = true
 crypto = { path = "../crypto" }
 tempfile = "3"

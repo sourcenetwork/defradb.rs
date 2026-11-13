@@ -87,6 +87,8 @@ pub(crate) struct DbSchemaOps<S: storage::corekv::Store + 'static> {
     database: Arc<db::DB<S>>,
     query_limits: query::QueryLimits,
     document_acp: Arc<dyn acp::DocumentACP>,
+    /// Runs the operations a request makes inside its transaction.
+    transaction_registry: Arc<db::DbTransactionRegistry<S>>,
 }
 
 impl<S: storage::corekv::Store + 'static> DbSchemaOps<S> {
@@ -94,11 +96,13 @@ impl<S: storage::corekv::Store + 'static> DbSchemaOps<S> {
         database: Arc<db::DB<S>>,
         query_limits: query::QueryLimits,
         document_acp: Arc<dyn acp::DocumentACP>,
+        transaction_registry: Arc<db::DbTransactionRegistry<S>>,
     ) -> Self {
         Self {
             database,
             query_limits,
             document_acp,
+            transaction_registry,
         }
     }
 
@@ -178,10 +182,20 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
             .await
             .map_err(Error::from)?;
 
-        let known_types: rapidhash::RapidHashSet<String> = db::DB::list_collections(&self.database)
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
+        let mut known_types: rapidhash::RapidHashSet<String> =
+            db::DB::list_collections(&self.database)
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+        // A type the transaction created is known to the view's SDL too.
+        if let Some(txn) = context.txn() {
+            let in_txn = self
+                .transaction_registry
+                .get_collections_in_txn_as(context, &txn.to_string())
+                .await
+                .map_err(Error::from)?;
+            known_types.extend(in_txn.into_iter().map(|version| version.name));
+        }
 
         let mut collections = query::parse_sdl_with_known_types(target_sdl, known_types)
             .map_err(Error::ViewSchemaParse)?;
@@ -219,10 +233,7 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
                     .map_err(Error::InvalidDownsample)?;
             }
 
-            if collection.query.is_some()
-                && collection.is_materialized
-                && !collection.is_embedded_only
-            {
+            if db::is_refreshable_view(collection) {
                 materialized_names.push(collection.name.clone());
             }
 
@@ -234,12 +245,30 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
         self.validate_policies(&collections).await?;
 
         let creator = Self::creator(context)?;
+        if let Some(txn) = context.txn() {
+            return self
+                .transaction_registry
+                .add_view_in_txn(
+                    context,
+                    &txn.to_string(),
+                    collections,
+                    Some(self.document_acp.clone()),
+                    creator,
+                    materialized_names,
+                    downsample_names,
+                )
+                .await
+                .map_err(|error| match error {
+                    db::Error::ViewTransformMissing(cid) => Error::ViewTransformMissing(cid),
+                    error => Error::ViewCollectionCreate(error),
+                });
+        }
         let created = self
             .database
-            .create_collections_atomic_with_acp_registration_as(
+            .create_view_collections_as(
                 context,
                 collections,
-                self.document_acp.clone(),
+                Some(self.document_acp.clone()),
                 creator,
             )
             .await
@@ -274,6 +303,13 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
             .check_node_access_as(context, acp::nac::NodePermission::ViewRefresh)
             .await
             .map_err(Error::from)?;
+        if let Some(txn) = context.txn() {
+            return self
+                .transaction_registry
+                .refresh_views_in_txn(context, &txn.to_string(), selector)
+                .await
+                .map_err(Error::MaterializedViewRefresh);
+        }
         self.database
             .refresh_views(selector)
             .await

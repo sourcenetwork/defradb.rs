@@ -6,28 +6,34 @@ use crate::provider::{
     AcpLightClientStatus, ProviderError, ProviderPolicyInfo, SubjectRef, VeraProvider,
 };
 use crate::tuning::AcpTuning;
-use acp_light_client::AcpLightClient;
+use acp_light_client::{AcpLightClient, AcpTransport, FreshnessPolicy, HttpWsTransport};
 use alloy_primitives::{Bytes, FixedBytes};
 use alloy_sol_types::{SolCall, SolEvent};
 use async_trait::async_trait;
 use commonware_codec::DecodeExt as _;
 use events::{AcpCacheInvalidatedData, AcpHeightAdvancedData, Bus, Message};
-use vera_client::Secp256k1SigningKey as SigningKey;
 use vera_domain::ConsensusPublicKey;
 use vera_modules::acp::types::PolicyRecord;
 
 use super::abi::{IAcp, ACP_ADDRESS};
 use super::bearer;
-use super::client::VeraRsClient;
+use super::client::{HttpTransport, VeraRsClient};
+use super::did_spelling;
 #[cfg(test)]
 use super::provider_commands::resolve_registered_or_passthrough_bearer_token;
 use super::provider_commands::{
     encode_archive_object_cmd, encode_delete_relationship_cmd, encode_register_object_cmd,
     encode_set_relationship_cmd, resolve_registered_or_passthrough_bearer_token_as,
 };
+use super::signer::{admission, DelegationSigner, Secp256k1Signer};
+use super::transport::RpcTransport;
 use super::worker::NativeWorker;
 
+#[cfg(test)]
+mod signer_tests;
 mod submission;
+#[cfg(test)]
+mod transport_tests;
 mod verified;
 
 use verified::verified;
@@ -40,7 +46,7 @@ pub struct VeraRsProvider {
     actor_did: String,
     deployment: u64,
     trusted: ConsensusPublicKey,
-    signing_key: SigningKey,
+    signer: Arc<dyn DelegationSigner>,
     sync_timeout: Duration,
     light_client_observability: Arc<AtomicU64>,
     _light_client_observer: edge::Service,
@@ -53,9 +59,35 @@ fn derive_ws_url(rpc_url: &str) -> String {
         .replacen("https://", "wss://", 1)
 }
 
+fn trusted_key(encoded: &str) -> Result<ConsensusPublicKey, ProviderError> {
+    let encoded = hex::decode(encoded.strip_prefix("0x").unwrap_or(encoded))
+        .map_err(|e| ProviderError::Config(format!("invalid trusted consensus key: {e}")))?;
+    ConsensusPublicKey::decode(encoded)
+        .map_err(|e| ProviderError::Config(format!("invalid trusted consensus key: {e}")))
+}
+
+/// Who a provider acts as: a secp256k1 key it is given, or a signer for a key
+/// held elsewhere.
+enum Actor<'a> {
+    Key(&'a [u8]),
+    Signer(Arc<dyn DelegationSigner>),
+}
+
+impl Actor<'_> {
+    fn signer(self) -> Result<Arc<dyn DelegationSigner>, ProviderError> {
+        match self {
+            Self::Key(private_key) => Secp256k1Signer::from_slice(private_key)
+                .map(|signer| Arc::new(signer) as Arc<dyn DelegationSigner>)
+                .map_err(|e| ProviderError::Config(format!("actor key: {e}"))),
+            Self::Signer(signer) => Ok(signer),
+        }
+    }
+}
+
 impl VeraRsProvider {
-    /// A provider whose connections, light client observer and worker calls
-    /// run on `edge`.
+    /// A provider of the node at `rpc_url`, reached over HTTP and, for
+    /// finalized headers, the WebSocket at the same address. Its connections,
+    /// light client observer and worker calls run on `edge`.
     pub async fn new(
         rpc_url: String,
         trusted_consensus_key: &str,
@@ -65,20 +97,101 @@ impl VeraRsProvider {
         event_bus: Option<Arc<dyn Bus>>,
         edge: &edge::Edge,
     ) -> Result<Self, ProviderError> {
-        let encoded = hex::decode(
-            trusted_consensus_key
-                .strip_prefix("0x")
-                .unwrap_or(trusted_consensus_key),
+        // A bad key is reported before either client is built.
+        trusted_key(trusted_consensus_key)?;
+        let acp = HttpWsTransport::new(&rpc_url, &derive_ws_url(&rpc_url))
+            .map_err(|e| ProviderError::Config(format!("light client: {e}")))?;
+        let rpc = HttpTransport::new(rpc_url, tuning.request_timeout, edge)
+            .map_err(|e| ProviderError::Config(format!("HTTP client: {e}")))?;
+        Self::with_transport(
+            Arc::new(rpc),
+            Arc::new(acp),
+            trusted_consensus_key,
+            private_key,
+            worker,
+            tuning,
+            event_bus,
+            edge,
         )
-        .map_err(|e| ProviderError::Config(format!("invalid trusted consensus key: {e}")))?;
-        let trusted = ConsensusPublicKey::decode(encoded)
-            .map_err(|e| ProviderError::Config(format!("invalid trusted consensus key: {e}")))?;
-        let ws_url = derive_ws_url(&rpc_url);
+        .await
+    }
+
+    /// A provider that reaches the node through the transports it is given:
+    /// `rpc` carries submissions and receipt reads, `acp` the light client's
+    /// proof reads and finalized headers. Neither is trusted: every receipt,
+    /// proof and header is checked against `trusted_consensus_key`.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn with_transport(
+        rpc: Arc<dyn RpcTransport>,
+        acp: Arc<dyn AcpTransport>,
+        trusted_consensus_key: &str,
+        private_key: &[u8],
+        worker: NativeWorker,
+        tuning: &AcpTuning,
+        event_bus: Option<Arc<dyn Bus>>,
+        edge: &edge::Edge,
+    ) -> Result<Self, ProviderError> {
+        Self::connect(
+            rpc,
+            acp,
+            trusted_consensus_key,
+            Actor::Key(private_key),
+            worker,
+            tuning,
+            event_bus,
+            edge,
+        )
+        .await
+    }
+
+    /// As [`with_transport`](Self::with_transport), for an actor whose key
+    /// `signer` holds. The provider builds each delegation token itself and
+    /// sends one only when `signer`'s signature verifies under its DID's key.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn with_signer(
+        rpc: Arc<dyn RpcTransport>,
+        acp: Arc<dyn AcpTransport>,
+        trusted_consensus_key: &str,
+        signer: Arc<dyn DelegationSigner>,
+        worker: NativeWorker,
+        tuning: &AcpTuning,
+        event_bus: Option<Arc<dyn Bus>>,
+        edge: &edge::Edge,
+    ) -> Result<Self, ProviderError> {
+        Self::connect(
+            rpc,
+            acp,
+            trusted_consensus_key,
+            Actor::Signer(signer),
+            worker,
+            tuning,
+            event_bus,
+            edge,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn connect(
+        rpc: Arc<dyn RpcTransport>,
+        acp: Arc<dyn AcpTransport>,
+        trusted_consensus_key: &str,
+        actor: Actor<'_>,
+        worker: NativeWorker,
+        tuning: &AcpTuning,
+        event_bus: Option<Arc<dyn Bus>>,
+        edge: &edge::Edge,
+    ) -> Result<Self, ProviderError> {
+        let trusted = trusted_key(trusted_consensus_key)?;
         let light_client = edge::compat(async {
             let light_client = Arc::new(
-                AcpLightClient::new(&rpc_url, &ws_url, trusted_consensus_key, 10)
-                    .await
-                    .map_err(|e| ProviderError::Config(format!("light client: {}", e)))?,
+                AcpLightClient::with_transport(
+                    acp,
+                    trusted_consensus_key,
+                    10,
+                    FreshnessPolicy::default(),
+                )
+                .map_err(|e| ProviderError::Config(format!("light client: {}", e)))?,
             );
             light_client
                 .wait_for_height(1, tuning.receipt_timeout)
@@ -89,11 +202,11 @@ impl VeraRsProvider {
         .await?;
         let light_client_observability = Arc::new(AtomicU64::new(0));
 
-        let client = VeraRsClient::new(rpc_url, tuning.request_timeout, edge)
-            .map_err(|e| ProviderError::Config(format!("HTTP client: {e}")))?;
-        let signing_key = SigningKey::from_slice(private_key)
-            .map_err(|e| ProviderError::Config(format!("actor key: {e}")))?;
-        let actor_did = bearer::did_from_signing_key(&signing_key, true);
+        let client = VeraRsClient::with_transport(rpc);
+        let signer = actor.signer()?;
+        admission::actor_key(signer.as_ref())
+            .map_err(|e| ProviderError::Config(format!("actor signer: {e}")))?;
+        let actor_did = did_spelling::defra(signer.did()).into_owned();
         let worker_did = worker.did().to_owned();
         let deployment = worker.deployment_id();
 
@@ -111,7 +224,7 @@ impl VeraRsProvider {
             actor_did,
             deployment,
             trusted,
-            signing_key,
+            signer,
             sync_timeout: tuning.receipt_timeout,
             light_client_observability,
             _light_client_observer,
@@ -126,13 +239,30 @@ impl VeraRsProvider {
     }
 }
 
+/// A relationship subject as vera.rs is sent it: an actor in the spelling
+/// vera.rs takes, which is the one an access check for it is sent in.
+fn vera_subject(
+    kind: u8,
+    resource: &str,
+    object_id: &str,
+    relation: &str,
+) -> Result<zanzibar::Subject, ProviderError> {
+    let object_id = if kind == 0 {
+        did_spelling::wire(object_id)
+    } else {
+        object_id.into()
+    };
+    zanzibar::decode_subject(kind, resource, &object_id, relation)
+        .map_err(|e| ProviderError::Config(format!("relationship subject: {e}")))
+}
+
 fn access_request(
     resource: &str,
     object_id: &str,
     permission: &str,
     actor_did: &str,
 ) -> Result<acp_light_client::AccessRequest, ProviderError> {
-    let actor = actor_did
+    let actor = did_spelling::wire(actor_did)
         .parse()
         .map_err(|e| ProviderError::Query(format!("actor DID: {e}")))?;
     Ok(acp_light_client::AccessRequest {
@@ -230,14 +360,15 @@ impl VeraProvider for VeraRsProvider {
         context: &defra_core::RequestContext,
         did: &str,
     ) -> Result<String, ProviderError> {
-        if Some(did.to_string()) == self.self_did() {
+        if did_spelling::defra(did) == self.actor_did {
             return bearer::create_bearer_token(
-                &self.signing_key,
-                did,
+                self.signer.as_ref(),
+                &did_spelling::wire(&self.actor_did),
                 &self.worker_did,
                 self.deployment,
                 300,
             )
+            .await
             .map_err(|e| {
                 ProviderError::Config(format!("node bearer token creation failed: {}", e))
             });
@@ -248,7 +379,9 @@ impl VeraProvider for VeraRsProvider {
             did,
             &self.worker_did,
             self.deployment,
-        )? {
+        )
+        .await?
+        {
             return Ok(token);
         }
 
@@ -267,19 +400,15 @@ impl VeraProvider for VeraRsProvider {
     }
 
     async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| ProviderError::Config(e.to_string()))?
-            .as_secs();
-        let token = vera_client::create_scoped_bearer_token(
-            &self.signing_key,
+        let token = bearer::create_scoped_bearer_token(
+            self.signer.as_ref(),
+            &did_spelling::wire(&self.actor_did),
             &self.worker_did,
             self.deployment,
-            now,
-            now.checked_add(300)
-                .ok_or_else(|| ProviderError::Config("invalid clock".into()))?,
+            300,
             vera_client::DelegationScope::CreatePolicy,
         )
+        .await
         .map_err(|e| ProviderError::Config(e.to_string()))?;
         let call = IAcp::bearerCreatePolicyCall {
             bearerToken: token,
@@ -299,7 +428,7 @@ impl VeraProvider for VeraRsProvider {
             &log.data.data,
         )
         .map_err(|e| ProviderError::Query(format!("creation event: {e}")))?;
-        if events.next().is_some() || event.creator != self.actor_did {
+        if events.next().is_some() || !did_spelling::same_actor(&event.creator, &self.actor_did) {
             return Err(ProviderError::Query(
                 "creation event does not match the actor".into(),
             ));
@@ -317,7 +446,7 @@ impl VeraProvider for VeraRsProvider {
         .map_err(|e| ProviderError::Query(format!("created policy record: {e}")))?;
         if record.policy.id != id
             || record.raw_policy != policy_yaml
-            || record.metadata.owner_did != self.actor_did
+            || !did_spelling::same_actor(&record.metadata.owner_did, &self.actor_did)
             || record.metadata.tx_signer != self.worker_did
             || record.metadata.tx_hash != confirmed.receipt.tx_hash.as_slice()
             || record.metadata.creation_ts.block_height != confirmed.revision
@@ -430,9 +559,7 @@ impl VeraProvider for VeraRsProvider {
         subject_object_id: &str,
         subject_relation: &str,
     ) -> Result<bool, ProviderError> {
-        let subject =
-            zanzibar::decode_subject(kind, subject_resource, subject_object_id, subject_relation)
-                .map_err(|e| ProviderError::Config(format!("relationship subject: {e}")))?;
+        let subject = vera_subject(kind, subject_resource, subject_object_id, subject_relation)?;
         let cmd = serde_json::to_vec(&serde_json::json!({
             "SetRelationship": { "resource": resource, "object_id": object_id, "relation": relation, "subject": subject }
         })).map_err(|e| ProviderError::Config(e.to_string()))?;
@@ -456,9 +583,7 @@ impl VeraProvider for VeraRsProvider {
         subject_object_id: &str,
         subject_relation: &str,
     ) -> Result<bool, ProviderError> {
-        let subject =
-            zanzibar::decode_subject(kind, subject_resource, subject_object_id, subject_relation)
-                .map_err(|e| ProviderError::Config(format!("relationship subject: {e}")))?;
+        let subject = vera_subject(kind, subject_resource, subject_object_id, subject_relation)?;
         let cmd = serde_json::to_vec(&serde_json::json!({
             "DeleteRelationship": { "resource": resource, "object_id": object_id, "relation": relation, "subject": subject }
         })).map_err(|e| ProviderError::Config(e.to_string()))?;
@@ -511,7 +636,7 @@ impl VeraProvider for VeraRsProvider {
             .await
             .map_err(|e| ProviderError::Query(format!("owner proof: {e}")))?;
         Ok(match owner {
-            Some(owner) => (true, owner.0.as_str().into()),
+            Some(owner) => (true, did_spelling::defra(owner.0.as_str()).into_owned()),
             None => (false, String::new()),
         })
     }
@@ -544,7 +669,7 @@ impl VeraProvider for VeraRsProvider {
             resources: vec![resource.to_string()],
             objectIds: vec![object_id.to_string()],
             permissions: vec![permission.to_string()],
-            actor: actor_did.to_string(),
+            actor: did_spelling::wire(actor_did).into_owned(),
         };
         let confirmed = self
             .send_tx_with_sequence(Bytes::from(call.abi_encode()))
@@ -562,10 +687,15 @@ impl VeraProvider for VeraRsProvider {
         Ok(Some(decision.id))
     }
 
+    /// The state decisions are remembered under, while it is fresh. Once the
+    /// light client's newest state is older than its freshness limit there
+    /// is none, so no decision made at it is given again: the check goes to
+    /// the light client, which refuses a stale state.
     fn decision_state(&self) -> Option<String> {
         self.light_client
             .header_chain()
-            .state()
+            .fresh_state()
+            .ok()
             .map(|state| format_root(state.module_state_root))
     }
 
@@ -590,6 +720,7 @@ mod tests {
     use super::*;
     use crypto::PrivateKey;
     use identity::Identity;
+    use vera_client::Secp256k1SigningKey as SigningKey;
 
     #[nuclei::test]
     async fn trusted_consensus_key_is_required_before_connecting() {
@@ -631,11 +762,13 @@ mod tests {
                 remote_signer: None,
                 signing_authorization: None,
             },
-        );
+        )
+        .expect("the store takes the identity");
     }
 
-    #[test]
-    fn resolve_registered_or_passthrough_bearer_token_uses_request_token_for_remote_identity() {
+    #[nuclei::test]
+    async fn resolve_registered_or_passthrough_bearer_token_uses_request_token_for_remote_identity()
+    {
         let did = "did:key:zRemoteVeraRsToken";
         let token = "device.jwt.token".to_string();
         defra_core::signing::clear_request_bearer_token(did);
@@ -645,6 +778,7 @@ mod tests {
 
         let resolved =
             resolve_registered_or_passthrough_bearer_token(did, "did:key:submitter", 9001)
+                .await
                 .expect("resolution should succeed")
                 .expect("token should resolve");
         assert_eq!(resolved, token);
@@ -652,8 +786,32 @@ mod tests {
         defra_core::signing::clear_request_bearer_token(did);
     }
 
-    #[test]
-    fn resolve_registered_or_passthrough_bearer_token_builds_local_secp256k1_token() {
+    #[nuclei::test]
+    async fn a_request_token_under_either_issuer_spelling_is_passed_through() {
+        use base64::Engine;
+        let key = SigningKey::from_slice(&[42; 32]).expect("valid key");
+        let did = bearer::did_from_signing_key(&key, false);
+        let token = |issuer: &str| {
+            let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(serde_json::json!({ "iss": issuer }).to_string());
+            format!("header.{payload}.signature")
+        };
+        store_remote_secp256r1_identity(&did);
+
+        for compressed in [true, false] {
+            let carried = token(&bearer::did_from_signing_key(&key, compressed));
+            defra_core::signing::set_request_bearer_token(&did, carried.clone());
+            let passed = resolve_registered_or_passthrough_bearer_token(&did, "did:key:w", 9001)
+                .await
+                .expect("resolution should succeed");
+            assert_eq!(passed, Some(carried));
+        }
+
+        defra_core::signing::clear_request_bearer_token(&did);
+    }
+
+    #[nuclei::test]
+    async fn resolve_registered_or_passthrough_bearer_token_builds_local_secp256k1_token() {
         let private_key = crypto::generate_secp256k1().expect("should generate secp256k1 key");
         let raw_identity =
             identity::RawIdentity::from_secp256k1(private_key).expect("identity should build");
@@ -671,10 +829,12 @@ mod tests {
                 remote_signer: None,
                 signing_authorization: None,
             },
-        );
+        )
+        .expect("the store takes the identity");
 
         let resolved =
             resolve_registered_or_passthrough_bearer_token(&did, "did:key:submitter", 9001)
+                .await
                 .expect("resolution should succeed")
                 .expect("token should resolve");
         use base64::Engine;

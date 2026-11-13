@@ -222,7 +222,19 @@ impl P2PTransport for Libp2pTransport {
 
     async fn send_car_request(&self, peer_id: &PeerId, root_cid: Cid) -> Result<()> {
         let pid = parse_libp2p_peer_id(peer_id)?;
-        self.handle.send_car_request(pid, root_cid).await
+        self.handle
+            .send_car_request(pid, root_cid, Vec::new())
+            .await
+    }
+
+    async fn send_car_request_with_haves(
+        &self,
+        peer_id: &PeerId,
+        root_cid: Cid,
+        haves: Vec<Cid>,
+    ) -> Result<()> {
+        let pid = parse_libp2p_peer_id(peer_id)?;
+        self.handle.send_car_request(pid, root_cid, haves).await
     }
 
     async fn send_car_response(&self, peer_id: &PeerId, car_data: Vec<u8>) -> Result<()> {
@@ -407,11 +419,13 @@ pub fn convert_host_event(event: crate::host::HostEvent) -> TransportEvent<Respo
         },
         HostEvent::GossipRawMessage {
             propagation_source,
+            source,
             message_id,
             topic,
             data,
         } => TransportEvent::GossipRawMessage {
             propagation_source: PeerId::from(propagation_source),
+            source: PeerId::from(source),
             message_id: MessageId::from(message_id),
             topic,
             data,
@@ -484,9 +498,13 @@ pub fn convert_host_event(event: crate::host::HostEvent) -> TransportEvent<Respo
             peer_id: PeerId::from(peer_id),
             reply,
         },
-        HostEvent::CarFetchRequest { peer_id, root_cid } => TransportEvent::CarFetchRequest {
+        HostEvent::CarFetchRequest {
+            peer_id,
+            root_cid,
+            haves,
+        } => TransportEvent::CarFetchRequest {
             peer_id: PeerId::from(peer_id),
-            request: crate::message::CarFetchRequest::full_dag(root_cid),
+            request: crate::message::CarFetchRequest::full_dag(root_cid).with_haves(haves),
             token: None,
         },
         HostEvent::CarFetchResponse {

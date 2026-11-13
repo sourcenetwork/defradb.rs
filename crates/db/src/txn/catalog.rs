@@ -9,8 +9,16 @@
 //! owner writes, one request at a time, so a swap never races another. A
 //! statement savepoint is a snapshot of both, taken and put back while the
 //! transaction is held alone.
+//!
+//! The collection map and the created set each sit behind an `Arc`, so a
+//! clone of the snapshot (a read, a savepoint, the start of a swap) is a
+//! reference. A change copies only the table it changes, whose entries are
+//! shared pointers. A replaced snapshot waits for kovan's deferred
+//! reclamation, so what it holds alone is what a load leaves behind.
 
-use rapidhash::{HashSetExt, RapidHashSet};
+use std::sync::Arc;
+
+use rapidhash::RapidHashSet;
 use regolith::sync::{Atom, SegQueue};
 
 use super::OwedAcpRegistration;
@@ -20,12 +28,17 @@ use crate::collection::Collection;
 #[derive(Clone, Default)]
 struct Collections {
     cache: CollectionCache,
-    created: RapidHashSet<String>,
+    created: Arc<RapidHashSet<String>>,
 }
 
 pub(super) struct Catalog {
     collections: Atom<Collections>,
     owed: SegQueue<OwedAcpRegistration>,
+    /// The collection version the running request works through, if it
+    /// names one: it answers lookups of its own name ahead of the cache,
+    /// which it never changes, so clearing it puts every lookup back
+    /// (`proofs/lean/CatalogPin.lean`, `proofs/tla/VersionPin.tla`).
+    pinned: Atom<Option<Collection>>,
 }
 
 /// What a statement savepoint puts back.
@@ -37,12 +50,40 @@ pub(super) struct Snapshot {
 impl Catalog {
     pub(super) fn new() -> Self {
         Self {
-            collections: Atom::new(Collections {
-                cache: CollectionCache::new(),
-                created: RapidHashSet::new(),
-            }),
+            collections: Atom::new(Collections::default()),
             owed: SegQueue::new(),
+            pinned: Atom::new(None),
         }
+    }
+
+    /// Pins `collection` for the running request: lookups of its name answer
+    /// it until [`unpin`](Self::unpin).
+    pub(super) fn pin(&self, collection: Collection) {
+        self.pinned.store(Some(collection));
+    }
+
+    /// Clears the pin, so lookups answer the cache again.
+    pub(super) fn unpin(&self) {
+        self.pinned.store(None);
+    }
+
+    /// The pinned collection, when it carries the name `name`.
+    pub(super) fn pinned(&self, name: &str) -> Option<Collection> {
+        self.pinned.peek(|pinned| {
+            pinned
+                .as_ref()
+                .filter(|collection| collection.name() == name)
+                .cloned()
+        })
+    }
+
+    /// Whether the pinned collection is version `version_id`.
+    pub(super) fn pins(&self, version_id: &str) -> bool {
+        self.pinned.peek(|pinned| {
+            pinned
+                .as_ref()
+                .is_some_and(|collection| collection.version_id() == version_id)
+        })
     }
 
     fn update(&self, mut change: impl FnMut(&mut Collections)) {
@@ -53,9 +94,13 @@ impl Catalog {
         });
     }
 
+    /// The collection named `name`: the pinned version when it carries that
+    /// name, otherwise what the cache holds.
     pub(super) fn get(&self, name: &str) -> Option<Collection> {
-        self.collections
-            .peek(|collections| collections.cache.get(name).cloned())
+        self.pinned(name).or_else(|| {
+            self.collections
+                .peek(|collections| collections.cache.get(name).cloned())
+        })
     }
 
     pub(super) fn add(&self, collection: Collection) {
@@ -85,7 +130,7 @@ impl Catalog {
 
     pub(super) fn mark_created(&self, collection_id: String) {
         self.update(|collections| {
-            collections.created.insert(collection_id.clone());
+            Arc::make_mut(&mut collections.created).insert(collection_id.clone());
         });
     }
 

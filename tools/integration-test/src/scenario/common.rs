@@ -69,9 +69,22 @@ impl Common {
         }
     }
 
+    /// [`Common::client_identity`], with a node's identity (`identityNode`)
+    /// as the client seed that acts as it.
+    pub fn acting_identity(
+        &self,
+        op: &str,
+        state: &crate::test_case::State,
+    ) -> Result<Option<u64>, Failure> {
+        match &self.identity_node {
+            Some(node) => state.node_as_client(op, node).map(Some),
+            None => Ok(self.identity_seed),
+        }
+    }
+
     /// The seed of the client identity the action runs as, `None` for the
     /// ambient identity. Fails with `unsupported` for a node's identity,
-    /// which the clients do not offer yet.
+    /// which only the actions that take [`Common::acting_identity`] offer.
     pub fn client_identity(&self, op: &str) -> Result<Option<u64>, Failure> {
         match self.identity_node.is_some() {
             true => Err(Failure::unsupported(format!("{op} argument identityNode"))),

@@ -39,9 +39,20 @@ pub(crate) struct FetcherWrapper {
     // PhantomData to express the logical lifetime relationship, even though
     // we can't enforce it at compile time due to the pointer erasure
     _phantom: PhantomData<*const dyn DocFetcher>,
+    /// Whether the wrapped fetcher's indexes are offered to the planner.
+    indexes: bool,
 }
 
 impl FetcherWrapper {
+    /// A wrapper that offers no indexes, so a select planned through it scans
+    /// its collections. Same safety contract as [`Self::new`].
+    pub(crate) fn without_indexes(fetcher: &dyn DocFetcher) -> Self {
+        Self {
+            indexes: false,
+            ..Self::new(fetcher)
+        }
+    }
+
     /// Create a new FetcherWrapper from a borrowed DocFetcher reference.
     ///
     /// # Safety contract (enforced by caller, not compiler)
@@ -62,6 +73,7 @@ impl FetcherWrapper {
             data_ptr,
             vtable,
             _phantom: PhantomData,
+            indexes: true,
         }
     }
 
@@ -225,22 +237,17 @@ impl DocFetcher for FetcherWrapper {
         self.get_fetcher()
             .get_by_index_scan(collection_name, params)
             .await
-            .map_err(|e| {
-                QueryError::execution(format!(
+            .map_err(|e| match e {
+                QueryError::IndexOwed(_) => e,
+                e => QueryError::execution(format!(
                     "fetcher error during planner execution for collection '{}' (index scan on '{}'): {}",
                     collection_name, params.index_name, e
-                ))
+                )),
             })
     }
 
-    async fn indexes_match_documents(&self, collection_name: &str) -> Result<bool> {
-        self.get_fetcher()
-            .indexes_match_documents(collection_name)
-            .await
-    }
-
     fn supports_index_queries(&self) -> bool {
-        self.get_fetcher().supports_index_queries()
+        self.indexes && self.get_fetcher().supports_index_queries()
     }
 
     async fn get_document_arrivals(
@@ -248,6 +255,16 @@ impl DocFetcher for FetcherWrapper {
         options: &crate::fetcher::DocumentArrivalOptions,
     ) -> Result<crate::fetcher::DocumentArrivalPage> {
         self.get_fetcher().get_document_arrivals(options).await
+    }
+
+    async fn get_document_updates(
+        &self,
+        options: &crate::fetcher::DocumentUpdateOptions,
+        reader: &crate::fetcher::DocumentReader<'_>,
+    ) -> Result<crate::fetcher::DocumentUpdatePage> {
+        self.get_fetcher()
+            .get_document_updates(options, reader)
+            .await
     }
 
     async fn get_json_conflicts(

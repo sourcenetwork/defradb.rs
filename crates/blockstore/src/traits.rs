@@ -72,6 +72,18 @@ pub trait Blockstore: MaybeSendSync {
     /// Check if a block exists
     async fn has(&self, cid: &Cid) -> Result<bool>;
 
+    /// Check which of `cids` exist, one answer per CID in order.
+    ///
+    /// Default implementation calls `has` per CID. Implementations can
+    /// override to read every CID from one snapshot.
+    async fn has_many(&self, cids: &[Cid]) -> Result<Vec<bool>> {
+        let mut present = Vec::with_capacity(cids.len());
+        for cid in cids {
+            present.push(self.has(cid).await?);
+        }
+        Ok(present)
+    }
+
     /// Delete a block
     ///
     /// Also removes any merge tracking for this block.

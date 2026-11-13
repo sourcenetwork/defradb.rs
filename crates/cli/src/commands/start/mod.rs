@@ -8,6 +8,8 @@ mod pool_args;
 mod run;
 mod server;
 mod server_acp;
+#[cfg(feature = "embedded-vera")]
+mod server_acp_embedded;
 mod server_http;
 mod server_p2p;
 mod server_query;
@@ -424,7 +426,8 @@ impl StartArgs {
                 remote_signer: Some(std::sync::Arc::new(client)),
                 signing_authorization: None,
             },
-        );
+        )
+        .map_err(|e| Error::InvalidConfig(format!("Orbis signer setup failed: {}", e)))?;
 
         tracing::info!(
             signer_did = %signer_did,

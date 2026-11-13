@@ -124,7 +124,8 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             .await
             .map_err(|error| query::error::QueryError::permission_denied(error.to_string()))?;
 
-        let (_collection_guard, collection) = self.guarded_collection(collection_name).await?;
+        let (_collection_guard, collection) =
+            self.guarded_collection(context, collection_name).await?;
         crate::chunk::user_writes::refuse_list_writes(
             collection.schema(),
             &doc,
@@ -334,6 +335,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let datastore = txn.datastore().map_err(|error| {
             query::error::QueryError::execution(format!("failed to get datastore: {error}"))
         })?;
+        let datastore = datastore.with_projection_actor(attempt.context.identity());
         let systemstore = txn.systemstore().map_err(|error| {
             query::error::QueryError::execution(format!("failed to get systemstore: {error}"))
         })?;

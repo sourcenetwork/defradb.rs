@@ -15,6 +15,13 @@ Index behaviour beyond what Go's integration suite checks.
 
 With a unique index on `User.name` and a stored `{"name":"alice","age":1}`, adding `{"name":"alice","age":2}` fails with `can not index a doc's field(s) that violates unique index. DocID: <new document's DocID>, name: alice`. Updating another document's `name` to `alice` fails with `failed to update index: can not index a doc's field(s) that violates unique index. DocID: <updated document's DocID>, name: alice. IndexName: User_name_ASC`. The error never contains the DocID of the document already holding the value, which the writer may not be allowed to read. Go develop builds the same text (`NewErrCanNotIndexNonUniqueFields`, `NewErrUpdateIndex`).
 
+# `defra.index.merged_field`: An index on a merged field follows the merged value
+
+- **Parents:** ["defra.index"]
+- **Scenarios:** ["index::merged_field::text::a_text_index_follows_local_edits", "index::merged_field::text::a_text_index_follows_merged_edits", "index::merged_field::json::a_json_index_follows_merged_edits"]
+
+For a field whose CRDT merges by value (text, JSON), the index holds only the current value. After a local edit, or after two nodes edit the field concurrently and replicate to each other, a filter on the merged value fetches one index entry and one document, and a filter on any earlier value fetches none.
+
 # `defra.collection`: Collection-wide operations
 
 - **Parents:** ["defra"]
@@ -307,6 +314,13 @@ A node with a replication filter also asks it in the P2P receive path. On arriva
 - **Scenarios:** ["net::gossip_admission::a_gossip_burst_over_the_admission_limits_loses_no_document", "net::gossip_admission::a_gossip_head_past_the_deferral_budget_is_reported"]
 
 Gossip has no reply and no retry, so a gossip head a node refuses for its per-peer rate limit or its pending-DAG capacity is kept as a durable pending record that takes no slot, and is fetched once a slot frees: a burst over both limits loses no document. These records are bounded by bytes, per source peer (`gossip_deferral_peer_bytes`) and in all (`gossip_deferral_total_bytes`). Past a budget the head is dropped, and the node reports a `p2p-gossip-head-dropped` event naming the peer and the root, so the application can resync it.
+
+# `defra.p2p.iroh_large_update`: An update too large for gossip still replicates over iroh
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["net::iroh_large_update::a_document_too_large_for_gossip_replicates_over_iroh", "net::iroh_large_update::an_update_too_large_for_gossip_replicates_over_iroh"]
+
+Over iroh, a create or an update whose head block is larger than one gossip broadcast holds (4,023 bytes of payload) reaches the same peers a small one would, every subscriber of the collection connected to the writer: a document of a 160-field collection, created with every field set or updated in every field on one node, is queried with the same values on the other. Such an update goes to every connected peer as a direct PushLog request instead of a broadcast; a peer that does not subscribe declines it, and the write's broadcast reports any subscriber that did not take it.
 
 # `defra.commits`: Commit history queries beyond Go
 

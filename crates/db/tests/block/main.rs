@@ -10,6 +10,7 @@ mod builder_write_kms_tests;
 mod builder_write_priority_tests;
 mod builder_write_update_tests;
 mod cleanup;
+mod client_create_graph;
 mod document_heads;
 mod head_conformance;
 mod head_set_migration;

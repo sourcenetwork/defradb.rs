@@ -9,7 +9,7 @@ use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
 use crate::helpers::require_c_str;
-use crate::types::FfiResult;
+use crate::types::DefraResult;
 use crate::{ffi_entry, try_ffi};
 
 static PROFILING_GUARD: OnceCell<SegQueue<FlushGuard>> = OnceCell::new();
@@ -61,7 +61,7 @@ fn install_chrome_layer(output_path: &str) -> Result<FlushGuard, String> {
 
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[no_mangle]
-pub extern "C" fn defra_profiling_start(output_path: *const c_char) -> FfiResult {
+pub extern "C" fn defra_profiling_start(output_path: *const c_char) -> DefraResult {
     ffi_entry! {
         let output_path = try_ffi!(unsafe { require_c_str(output_path, "output_path") });
 
@@ -69,31 +69,31 @@ pub extern "C" fn defra_profiling_start(output_path: *const c_char) -> FfiResult
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
-            return FfiResult::error("profiling is already running");
+            return DefraResult::error("profiling is already running");
         }
 
         match install_chrome_layer(&output_path) {
             Ok(flush_guard) => {
                 guard_slot().push(flush_guard);
-                FfiResult::ok()
+                DefraResult::ok()
             }
             Err(error) => {
                 PROFILING_RUNNING.store(false, Ordering::Release);
-                FfiResult::error(error)
+                DefraResult::error(error)
             }
         }
     }
 }
 
 #[no_mangle]
-pub extern "C" fn defra_profiling_stop() -> FfiResult {
+pub extern "C" fn defra_profiling_stop() -> DefraResult {
     ffi_entry! {
         let Some(flush_guard) = guard_slot().pop() else {
-            return FfiResult::error("profiling is not running");
+            return DefraResult::error("profiling is not running");
         };
 
         drop(flush_guard);
         PROFILING_RUNNING.store(false, Ordering::Release);
-        FfiResult::ok()
+        DefraResult::ok()
     }
 }

@@ -126,26 +126,35 @@ impl<S: Store + 'static> BatchMutator<S> {
             .identity()
             .and_then(|value| identity::Did::new(value).ok())
             .unwrap_or_else(identity::Did::wildcard);
-        let exact_request = serde_json::to_vec(&(identity.to_string(), permission.as_str()))
-            .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
-        let request = query::prepared::PreparedInputRequest::new(
-            query::prepared::PreparedInputKind::NodePermission,
-            exact_request,
-        );
-        let Some(bytes) = inputs.get(&request) else {
-            return Err(query::error::QueryError::NeedsInput(request));
-        };
-        let allowed: bool = serde_json::from_slice(&bytes).map_err(|_| {
-            query::error::QueryError::execution("invalid prepared node permission response")
-        })?;
-        if allowed {
-            Ok(())
-        } else {
-            Err(query::error::QueryError::permission_denied(format!(
-                "not authorized for node permission {}",
-                permission.as_str()
-            )))
+        let mut checks = Vec::new();
+        for permission in permission.go_order() {
+            let exact_request = serde_json::to_vec(&(identity.to_string(), permission.as_str()))
+                .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+            let request = query::prepared::PreparedInputRequest::new(
+                query::prepared::PreparedInputKind::NodePermission,
+                exact_request,
+            );
+            checks.push((permission, inputs.get(&request), request));
         }
+        // Every unanswered permission goes in the one wave the first asks for.
+        let mut unanswered = checks.iter().filter(|(_, answer, _)| answer.is_none());
+        if let Some((_, _, first)) = unanswered.next() {
+            unanswered.for_each(|(_, _, request)| inputs.want(request.clone()));
+            return Err(query::error::QueryError::NeedsInput(first.clone()));
+        }
+        for (permission, answer, _) in checks {
+            let bytes = answer.unwrap_or_default();
+            let allowed: bool = serde_json::from_slice(&bytes).map_err(|_| {
+                query::error::QueryError::execution("invalid prepared node permission response")
+            })?;
+            if !allowed {
+                return Err(query::error::QueryError::permission_denied(format!(
+                    "not authorized for node permission {}",
+                    permission.as_str()
+                )));
+            }
+        }
+        Ok(())
     }
 
     async fn register_created_doc_with_acp(
@@ -338,6 +347,16 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         Some(self.acp_registration_projection.clone())
     }
 
+    /// Pins `version` in this attempt's transaction, so every lookup of its
+    /// name answers it and its writes are recorded at it. The transaction is
+    /// this attempt's own, so the pin ends with it.
+    fn pin_collection(&self, version: schema::CollectionVersion) -> query::error::Result<()> {
+        let txn = self.shared_txn()?;
+        let crdts = txn.crdts().clone();
+        txn.pin_collection(crate::collection::Collection::new(version, crdts));
+        Ok(())
+    }
+
     async fn register_ordered_async_hook(
         &self,
         callback: storage::corekv::CommitHook,
@@ -367,6 +386,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
 
         let (collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
+        let datastore = datastore.with_projection_actor(context.identity());
         self.db
             .check_node_access_in_txn(
                 context,
@@ -474,6 +494,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
 
         let (collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
+        let datastore = datastore.with_projection_actor(context.identity());
         self.db
             .check_node_access_in_txn(
                 context,
@@ -626,6 +647,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
 
         let (collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&*self.shared_txn()?, collection_name).await?;
+        let datastore = datastore.with_projection_actor(context.identity());
         self.db
             .check_node_access_in_txn(
                 context,
@@ -649,7 +671,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         let existed = collection
             .delete_with_indexes(&datastore, &canonical_doc_id, doc_short_id, &index_manager)
             .await
-            .map_err(|e| query::error::QueryError::execution(format!("delete error: {}", e)))?;
+            .map_err(|error| crate::error::index_write_query_error("delete", error))?;
 
         if !existed {
             return Ok(DeleteResult::new(canonical_doc_id, existed));

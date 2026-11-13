@@ -1,360 +1,71 @@
 use std::ffi::c_char;
 
-use crate::ffi_entry;
 use acp::nac::NodePermission;
-
-use crate::helpers::{get_rt, require_c_str};
-use crate::nac_check::check_nac_for_node;
-use crate::state::NODES;
-use crate::try_ffi;
-use crate::types::FfiResult;
-
 use defra_p2p_adapter::peer;
 
-use super::{into_ffi_ok, into_ffi_result, FfiP2PError};
+use super::{admit, drive, json, ok, run};
+use crate::ffi_entry;
+use crate::target::{go_string, split_comma_separated};
+use crate::types::DefraResult;
 
-/// Get local P2P peer info.
+/// Connects to the comma-separated peer multiaddrs `peer_addresses`.
 ///
 /// # Safety
 ///
-/// `identity_did` must be a valid null-terminated UTF-8 string when non-null. `node_ptr` must
-/// reference a live node handle created by this library.
+/// `peer_addresses` must be null or a valid null-terminated string.
 #[no_mangle]
-pub unsafe extern "C" fn p2p_peer_info(node_ptr: usize, identity_did: *const c_char) -> FfiResult {
-    ffi_entry! {
-        let rt = try_ffi!(get_rt());
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::P2pPeerInfo
-        ));
-
-        // The caller acts in the call's context, so the NAC checks the body
-        // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty()));
-
-        let result = NODES
-            .get(node_ptr, |state| {
-                let p2p = match &state.p2p {
-                    Some(p2p) => p2p,
-                    None => return Ok("[]".to_string()),
-                };
-
-                crate::helpers::block_on(rt, async {
-                    let full_addrs = peer::peer_info(&*p2p.system.ops_for(&context)).await?;
-                    serde_json::to_string(&full_addrs)
-                        .map_err(|error| {
-                            FfiP2PError::internal(format!(
-                                "failed to serialize peer info: {}",
-                                error
-                            ))
-                        })
-                })
-            })
-            .ok_or_else(FfiP2PError::invalid_node_handle)
-            .and_then(|result| result);
-
-        into_ffi_result(result)
-    }
-}
-
-/// Get the node's best shareable P2P address as a JSON value.
-///
-/// Returns the address another node can dial (a `p2p_connect` / replicator
-/// target) as a JSON string, or JSON `null` when the node has no P2P transport
-/// or the transport has no shareable address yet (e.g. an iroh endpoint before
-/// relay/direct-address discovery completes — an identity-only ticket is not
-/// shareable because a dialing peer resolves it to zero transport addresses).
-///
-/// This is a stronger contract than `p2p_peer_info`: callers get the one
-/// address selected for remote sharing instead of guessing among the formatted
-/// listen addresses.
-///
-/// # Safety
-///
-/// `identity_did` must be a valid null-terminated UTF-8 string when non-null. `node_ptr` must
-/// reference a live node handle created by this library.
-#[no_mangle]
-pub unsafe extern "C" fn p2p_shareable_address(
+pub unsafe extern "C" fn defra_p2p_connect(
     node_ptr: usize,
-    identity_did: *const c_char,
-) -> FfiResult {
+    peer_addresses: *const c_char,
+    identity_ptr: usize,
+) -> DefraResult {
     ffi_entry! {
-        let rt = try_ffi!(get_rt());
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::P2pPeerInfo
-        ));
-
-        // The caller acts in the call's context, so the NAC checks the body
-        // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty()));
-
-        let result = NODES
-            .get(node_ptr, |state| {
-                let p2p = match &state.p2p {
-                    Some(p2p) => p2p,
-                    None => return Ok("null".to_string()),
-                };
-
-                crate::helpers::block_on(rt, async {
-                    let address = p2p
-                        .system
-                        .ops_for(&context)
-                        .shareable_address()
-                        .await
-                        .map_err(FfiP2PError::from)?;
-
-                    serde_json::to_string(&address)
-                        .map_err(|error| {
-                            FfiP2PError::internal(format!(
-                                "failed to serialize shareable address: {}",
-                                error
-                            ))
-                        })
-                })
-            })
-            .ok_or_else(FfiP2PError::invalid_node_handle)
-            .and_then(|result| result);
-
-        into_ffi_result(result)
+        let addresses = split_comma_separated(&go_string(peer_addresses));
+        ok(run(node_ptr, identity_ptr, NodePermission::P2pPeerConnect, None, |ops| async move {
+            peer::connect(&*ops, &addresses).await
+        }))
     }
 }
 
-/// Notify the active P2P transport that the network may have changed.
+/// Disconnects from the comma-separated peer multiaddrs `peer_addresses`.
 ///
 /// # Safety
 ///
-/// `identity_did` must be a valid null-terminated UTF-8 string when non-null.
-/// `node_ptr` must reference a live node handle created by this library.
+/// `peer_addresses` must be null or a valid null-terminated string.
 #[no_mangle]
-pub unsafe extern "C" fn p2p_notify_network_change(
+pub unsafe extern "C" fn defra_p2p_disconnect(
     node_ptr: usize,
-    identity_did: *const c_char,
-) -> FfiResult {
+    peer_addresses: *const c_char,
+    identity_ptr: usize,
+) -> DefraResult {
     ffi_entry! {
-        let rt = try_ffi!(get_rt());
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::P2pPeerConnect
-        ));
-
-        // The caller acts in the call's context, so the NAC checks the body
-        // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty()));
-
-        let result = NODES
-            .get(node_ptr, |state| {
-                let p2p = match &state.p2p {
-                    Some(p2p) => p2p,
-                    None => return Err(FfiP2PError::no_p2p_system()),
-                };
-
-                crate::helpers::block_on(rt, async {
-                    p2p.system
-                        .ops_for(&context)
-                        .notify_network_change()
-                        .await
-                        .map_err(FfiP2PError::from)
-                })
-            })
-            .ok_or_else(FfiP2PError::invalid_node_handle)
-            .and_then(|result| result);
-
-        into_ffi_ok(result)
+        let addresses = split_comma_separated(&go_string(peer_addresses));
+        ok(run(node_ptr, identity_ptr, NodePermission::P2pPeerDisconnect, None, |ops| async move {
+            peer::disconnect(&*ops, &addresses).await
+        }))
     }
 }
 
-/// Get connected peers.
-///
-/// # Safety
-///
-/// `identity_did` must be a valid null-terminated UTF-8 string when non-null.
-/// `node_ptr` must reference a live node handle created by this library.
+/// Answers with the addresses other peers reach this node at, as a JSON
+/// array: each multiaddr with this node's peer ID appended. A node without
+/// P2P answers `null`, as Go's does, rather than an error.
 #[no_mangle]
-pub unsafe extern "C" fn p2p_active_peers(
-    node_ptr: usize,
-    identity_did: *const c_char,
-) -> FfiResult {
+pub extern "C" fn defra_p2p_info(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
-        let rt = try_ffi!(get_rt());
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::P2pPeerActive
-        ));
-
-        // The caller acts in the call's context, so the NAC checks the body
-        // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty()));
-
-        let result = NODES
-            .get(node_ptr, |state| {
-                let p2p = match &state.p2p {
-                    Some(p2p) => p2p,
-                    None => return Err(FfiP2PError::no_p2p_system()),
-                };
-
-                crate::helpers::block_on(rt, async {
-                    let peers = peer::active_peers(&*p2p.system.ops_for(&context)).await?;
-                    serde_json::to_string(&peers)
-                        .map_err(|error| {
-                            FfiP2PError::internal(format!(
-                                "failed to serialize peer list: {}",
-                                error
-                            ))
-                        })
-                })
-            })
-            .ok_or_else(FfiP2PError::invalid_node_handle)
-            .and_then(|result| result);
-
-        into_ffi_result(result)
+        match admit(node_ptr, identity_ptr, NodePermission::P2pPeerInfo) {
+            Ok(Some(ops)) => json(drive(ops, None, |ops| async move { peer::peer_info(&*ops).await })),
+            Ok(None) => DefraResult::success("null"),
+            Err(error) => error,
+        }
     }
 }
 
-/// Connect to a peer address.
-///
-/// # Safety
-///
-/// `identity_did` and `addr` must be valid null-terminated UTF-8 strings when non-null.
-/// `node_ptr` must reference a live node handle created by this library.
+/// Answers with the peers the node is connected to as a JSON array.
 #[no_mangle]
-pub unsafe extern "C" fn p2p_connect(
-    node_ptr: usize,
-    identity_did: *const c_char,
-    addr: *const c_char,
-) -> FfiResult {
+pub extern "C" fn defra_p2p_peer_list(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
-        let rt = try_ffi!(get_rt());
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::P2pPeerConnect
-        ));
-
-        // The caller acts in the call's context, so the NAC checks the body
-        // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty()));
-
-        let addr_str = try_ffi!(require_c_str(addr, "addr"));
-
-        let result = NODES
-            .get(node_ptr, |state| {
-                let p2p = match &state.p2p {
-                    Some(p2p) => p2p,
-                    None => return Err(FfiP2PError::no_p2p_system()),
-                };
-
-                crate::helpers::block_on(rt, async {
-                    peer::connect(&*p2p.system.ops_for(&context), &[addr_str])
-                        .await
-                        .map_err(FfiP2PError::from)
-                })
-            })
-            .ok_or_else(FfiP2PError::invalid_node_handle)
-            .and_then(|result| result);
-
-        into_ffi_ok(result)
-    }
-}
-
-/// Disconnect from a peer address.
-///
-/// # Safety
-///
-/// `identity_did` and `addr` must be valid null-terminated UTF-8 strings when non-null.
-/// `node_ptr` must reference a live node handle created by this library.
-#[no_mangle]
-pub unsafe extern "C" fn p2p_disconnect(
-    node_ptr: usize,
-    identity_did: *const c_char,
-    addr: *const c_char,
-) -> FfiResult {
-    ffi_entry! {
-        let rt = try_ffi!(get_rt());
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::P2pPeerDisconnect
-        ));
-
-        // The caller acts in the call's context, so the NAC checks the body
-        // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty()));
-
-        let addr_str = try_ffi!(require_c_str(addr, "addr"));
-
-        let result = NODES
-            .get(node_ptr, |state| {
-                let p2p = match &state.p2p {
-                    Some(p2p) => p2p,
-                    None => return Err(FfiP2PError::no_p2p_system()),
-                };
-
-                crate::helpers::block_on(rt, async {
-                    peer::disconnect(&*p2p.system.ops_for(&context), &[addr_str])
-                        .await
-                        .map_err(FfiP2PError::from)
-                })
-            })
-            .ok_or_else(FfiP2PError::invalid_node_handle)
-            .and_then(|result| result);
-
-        into_ffi_ok(result)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::ffi::CStr;
-    use std::ptr;
-
-    use crate::node::{new_node, node_close};
-    use crate::types::{defra_free_string, NodeInitOptions};
-
-    use super::*;
-
-    #[test]
-    fn p2p_disconnect_exports_connect_style_ffi_signature() {
-        let symbol: unsafe extern "C" fn(usize, *const c_char, *const c_char) -> FfiResult =
-            p2p_disconnect;
-        let _ = symbol;
-    }
-
-    #[test]
-    fn p2p_shareable_address_exports_peer_info_style_ffi_signature() {
-        let symbol: unsafe extern "C" fn(usize, *const c_char) -> FfiResult = p2p_shareable_address;
-        let _ = symbol;
-    }
-
-    /// A node without a P2P transport has no shareable address: the call must
-    /// succeed with JSON `null`, not error, so callers can poll it while the
-    /// transport (or address discovery) is still coming up.
-    #[test]
-    fn p2p_shareable_address_without_transport_is_json_null() {
-        assert!(crate::runtime::init_runtime(), "runtime init must succeed");
-        let result = new_node(NodeInitOptions::default());
-        assert_eq!(result.status, 0, "new_node must succeed");
-        let node = result.node_ptr;
-
-        let result = unsafe { p2p_shareable_address(node, ptr::null()) };
-        assert_eq!(result.status, 0, "no-transport lookup must succeed");
-        assert!(!result.value.is_null());
-        let value = unsafe { CStr::from_ptr(result.value).to_string_lossy().to_string() };
-        assert_eq!(value, "null");
-        unsafe { defra_free_string(result.value) };
-        node_close(node);
-    }
-
-    #[test]
-    fn p2p_shareable_address_invalid_handle_is_error() {
-        assert!(crate::runtime::init_runtime(), "runtime init must succeed");
-        let result = unsafe { p2p_shareable_address(usize::MAX, ptr::null()) };
-        assert_eq!(result.status, 1, "invalid handle must be an error");
-        assert!(!result.error.is_null());
-        unsafe { defra_free_string(result.error) };
+        json(run(node_ptr, identity_ptr, NodePermission::P2pPeerActive, None, |ops| async move {
+            peer::active_peers(&*ops).await
+        }))
     }
 }

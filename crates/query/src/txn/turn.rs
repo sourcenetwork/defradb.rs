@@ -33,6 +33,22 @@ pub trait TxnTurn: MaybeSend {
     /// Ends the statement, keeping its writes if `keep`, undoing them
     /// otherwise.
     fn end_statement(&mut self, keep: bool) -> Result<(), TransactionError>;
+
+    /// Pins `version`, a collection version the request selected (possibly
+    /// inactive), for this turn, so every lookup of its name answers it; or
+    /// clears the pin with `None`. A transaction that cannot pin refuses,
+    /// rather than run the request against the active version.
+    fn pin_collection(
+        &mut self,
+        version: Option<schema::CollectionVersion>,
+    ) -> Result<(), TransactionError> {
+        match version {
+            None => Ok(()),
+            Some(_) => Err(TransactionError::not_supported(
+                "working through a selected collection version is not supported here",
+            )),
+        }
+    }
 }
 
 /// The work of one request on a transaction, run where the transaction lives.
