@@ -130,7 +130,7 @@ impl Op for NewNode {
             dir,
             listen: Vec::new(),
             admission: self.admission.clone(),
-            iroh: self.iroh,
+            iroh_network: self.iroh,
             node_identity,
             signing,
             txn_ttl,
