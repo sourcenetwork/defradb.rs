@@ -31,6 +31,7 @@ use query::subscription::{
 use query::{parse_request_with_limits, ParsedOperation, QueryLimits};
 
 use crate::error::{pool_failure, HttpError};
+use crate::handlers::closing::next_unless_closing;
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
 use crate::query_context::{
@@ -364,7 +365,8 @@ pub async fn graphql_transactional(
 ///
 /// SSE event format:
 /// - `event: next` + `data: {json}` for each result
-/// - `event: complete` + `data: {}` when the stream ends
+/// - `event: complete` + `data: {}` when the stream ends, which it also does
+///   once the server's edge stops admitting requests
 async fn graphql_sse(
     state: AppState,
     identity: ExtractIdentity,
@@ -399,9 +401,11 @@ async fn graphql_sse(
 
     let query_limits = state.query_limits;
     let executor = state.executor.clone();
+    let closing = state.edge.closing();
 
     let stream = async_stream::stream! {
-        while let Some(message) = subscription.recv().await {
+        let mut closing = std::pin::pin!(closing);
+        while let Some(message) = next_unless_closing(closing.as_mut(), subscription.recv()).await {
             let dropped = subscription.check_and_reset_dropped();
             if dropped != 0 {
                 tracing::warn!(dropped, "GraphQL subscription lost updates; ending stream for resynchronization");
