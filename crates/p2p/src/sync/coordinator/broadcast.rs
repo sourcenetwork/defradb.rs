@@ -140,11 +140,14 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         let origin_bytes = broadcast.origin_signing_bytes()?;
         broadcast.origin_signature = Some(self.runtime.transport.sign(&origin_bytes)?);
         let broadcaster = self.runtime.broadcaster.clone();
-        // Go announces a write when it commits, to whoever is there then
-        // (SendUpdate). With no peer connected there is no one to coalesce
-        // for, and holding the write for the window would hand it to a peer
-        // that connects meanwhile, which Go never does (#2841).
-        if !self.access.peer_state.has_connected_peer() {
+        // Go announces a write once, when it commits, to the peers subscribed
+        // to its topics then (internal/db/p2p/p2p.go SendUpdate). With no
+        // subscriber there is no one to coalesce for, and holding the write
+        // for the window would hand it to a peer that subscribes meanwhile,
+        // which Go never does (#2841). A connected peer is not yet a
+        // subscriber: its subscription lands 90 to 130 ms later.
+        let peers = &self.access.peer_state;
+        if !peers.has_subscriber(collection_id) && !peers.has_subscriber(doc_id) {
             let Some(_slot) = self.publish_slot().await else {
                 return Err(crate::error::Error::GossipSubPublish(
                     crate::error::BROADCAST_SLOT_ELAPSED.to_string(),

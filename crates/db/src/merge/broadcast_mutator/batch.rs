@@ -291,7 +291,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport + 'static>
             field_cids: vec![],
             encryption_cids: vec![],
         };
-        let broadcast_status = super::broadcast::broadcast_with_retry_with_creator(
+        let broadcast_status = super::broadcast::broadcast_with_creator(
             sync,
             bus,
             &block_result,
@@ -318,7 +318,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport + 'static>
                 field_cids: vec![],
                 encryption_cids: vec![],
             };
-            let collection_broadcast_status = super::broadcast::broadcast_with_retry_with_creator(
+            let collection_broadcast_status = super::broadcast::broadcast_with_creator(
                 sync,
                 bus,
                 &col_block_result,

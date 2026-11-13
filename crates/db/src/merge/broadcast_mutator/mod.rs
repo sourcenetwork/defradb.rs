@@ -35,7 +35,7 @@ use zeroize::Zeroizing;
 
 use self::batch::BroadcastBatchMutator;
 use self::broadcast::{
-    broadcast_with_retry_with_creator, log_broadcast_failure, spawn_gossip_or_report, AnnouncedRoot,
+    broadcast_with_creator, log_broadcast_failure, spawn_gossip_or_report, AnnouncedRoot,
 };
 use crate::block::builder::{build_blocks_from_document, BlockResult};
 use crate::block::reader::read_latest_composite_block;
@@ -431,7 +431,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
                 )
                 .await;
                 log_broadcast_failure(
-                    &broadcast_with_retry_with_creator(
+                    &broadcast_with_creator(
                         &sync,
                         bus.as_ref(),
                         &block_result,
@@ -444,7 +444,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
 
                 if let Some(col_block_result) = branchable_data {
                     log_broadcast_failure(
-                        &broadcast_with_retry_with_creator(
+                        &broadcast_with_creator(
                             &sync,
                             bus.as_ref(),
                             &col_block_result,
@@ -774,9 +774,9 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                 )
                 .await;
 
-                // Broadcast composite via GossipSub with retry for InsufficientPeers
+                // Announce the composite via GossipSub, once, as Go does
                 log_broadcast_failure(
-                    &broadcast_with_retry_with_creator(
+                    &broadcast_with_creator(
                         &sync,
                         bus.as_ref(),
                         &block_result,
@@ -790,7 +790,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                 // For branchable collections, also broadcast the collection block.
                 if let Some(col_block_result) = branchable_data {
                     log_broadcast_failure(
-                        &broadcast_with_retry_with_creator(
+                        &broadcast_with_creator(
                             &sync,
                             bus.as_ref(),
                             &col_block_result,
@@ -1016,7 +1016,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                                 .await;
 
                                 log_broadcast_failure(
-                                    &broadcast_with_retry_with_creator(
+                                    &broadcast_with_creator(
                                         sync,
                                         bus.as_ref(),
                                         block_result,
@@ -1029,7 +1029,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
 
                                 if let Some(col_block_result) = branchable_data {
                                     log_broadcast_failure(
-                                        &broadcast_with_retry_with_creator(
+                                        &broadcast_with_creator(
                                             sync,
                                             bus.as_ref(),
                                             col_block_result,
@@ -1287,9 +1287,9 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             async move {
                 let creator_ref = creator_did.as_deref();
 
-                // Broadcast via GossipSub with retry for InsufficientPeers
+                // Announce via GossipSub, once, as Go does
                 log_broadcast_failure(
-                    &broadcast_with_retry_with_creator(
+                    &broadcast_with_creator(
                         &sync,
                         bus.as_ref(),
                         &block_result,
@@ -1303,7 +1303,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
                 // For branchable collections, also broadcast the collection block.
                 if let Some(col_block_result) = branchable_data {
                     log_broadcast_failure(
-                        &broadcast_with_retry_with_creator(
+                        &broadcast_with_creator(
                             &sync,
                             bus.as_ref(),
                             &col_block_result,

@@ -3120,9 +3120,12 @@ async fn rapid_collection_commits_publish_only_the_current_head() {
         let cid = block.generate_cid().unwrap();
         (cid, data)
     };
-    // A peer is connected: with none, a write is announced at once and
+    // A peer is subscribed: with none, a write is announced at once and
     // never coalesced (#2841).
     coordinator.peer_state().peer_connected("remote-peer");
+    coordinator
+        .peer_state()
+        .peer_subscribed("remote-peer", "collection".to_string());
     let first = head(1);
     let second = head(2);
     let current = head(3);

@@ -307,3 +307,46 @@ async fn a_write_with_no_peer_connected_is_not_held_for_a_peer_that_joins() {
     );
     assert!(transport.published().is_empty());
 }
+
+/// A write committed while a peer is connected but not yet subscribed is
+/// announced at once, to no one, as Go's `SendUpdate`: a connected peer
+/// subscribes 90 to 130 ms later, inside the coalescing window, and holding
+/// the write for the window would hand it to that peer (#2841).
+#[nuclei::test]
+async fn a_write_with_no_peer_subscribed_is_not_held_for_a_peer_that_subscribes() {
+    let transport = NoopTransport::new();
+    transport.set_publish_open(false);
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let (coordinator, _events) = SyncCoordinator::new(
+        transport.clone(),
+        blockstore,
+        crate::network::Network::on(edge::testing::edge()),
+        SyncConfig::default(),
+    )
+    .await
+    .unwrap();
+    coordinator.access.peer_state.peer_connected("joiner");
+    let (cid, block) = head_block();
+
+    // The write's announcement is polled first; then, before the window
+    // would close, the connected peer subscribes to the collection.
+    let (announced, ()) = futures::join!(
+        coordinator.broadcast_local_update(&cid, &block, "doc", "collection"),
+        async {
+            coordinator
+                .access
+                .peer_state
+                .peer_subscribed("joiner", "collection".to_string());
+            transport.set_publish_open(true);
+        },
+    );
+
+    assert!(
+        announced
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("InsufficientPeers")),
+        "the write was announced to the peer that subscribed after it: {announced:?}"
+    );
+    assert!(transport.published().is_empty());
+}
