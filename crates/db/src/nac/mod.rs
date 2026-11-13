@@ -301,11 +301,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
                 .commit()
                 .await
                 .map_err(|error| Error::Acp(error.to_string()))?;
-            self.nac
-                .load()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
-            self.refresh_edge().await;
+            self.reload_after_commit().await?;
             return Ok(());
         }
 
@@ -524,11 +520,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
                 .commit()
                 .await
                 .map_err(|error| Error::Acp(error.to_string()))?;
-            self.nac
-                .load()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
-            self.refresh_edge().await;
+            self.reload_after_commit().await?;
             return Ok(());
         }
 
@@ -559,11 +551,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
                 .commit()
                 .await
                 .map_err(|error| Error::Acp(error.to_string()))?;
-            self.nac
-                .load()
-                .await
-                .map_err(|error| Error::Acp(error.to_string()))?;
-            self.refresh_edge().await;
+            self.reload_after_commit().await?;
             return Ok(());
         }
 

@@ -235,6 +235,20 @@ where
         self.edge.publish(generation, grants);
     }
 
+    /// Reload the manager after a write it committed, and refresh the edge
+    /// snapshot whatever the reload's outcome. The refresh reads the committed
+    /// state itself, so a failed reload never leaves the edge answering from
+    /// the copy taken before the write.
+    pub(super) async fn reload_after_commit(&self) -> Result<()> {
+        let reloaded = self
+            .nac
+            .load()
+            .await
+            .map_err(|error| Error::Acp(error.to_string()));
+        self.refresh_edge().await;
+        reloaded
+    }
+
     /// A grant written inside a database transaction commits with it, not
     /// here: withdraw the snapshot now, so checks read storage, and build a
     /// new one once the transaction commits. The commit awaits the refresh
