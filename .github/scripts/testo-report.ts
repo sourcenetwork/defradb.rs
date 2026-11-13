@@ -19,10 +19,10 @@
 // or when a listed test it selected left no result. `summary` fails on a line
 // without an issue or whose issue is closed, on a test a shard reported as an
 // unexpected failure or as selected but left no result, on a listed test no
-// shard selected
-// (renamed, removed or filtered out: "missing"), and on a client with a shard
-// that never reported; it compares each list's size with the base branch's
-// copy, and warns on every entry the pull request adds.
+// shard selected (renamed, removed or filtered out: "missing"), and on a
+// client with a shard that never reported. It warns on a listed test that
+// passed ("fixed"), compares each list's size with the base branch's copy,
+// and warns on every entry the pull request adds.
 
 import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -315,10 +315,12 @@ interface Merged {
   shards: number;
   reported: Set<number>;
   selectedKnown: Set<string>;
-  /// Failing tests no known-failures list names, and listed tests a shard
-  /// selected but got no result for, as `<binary> <test>`.
+  /// Failing tests no known-failures list names, as `<binary> <test>`.
   unexpected: string[];
+  /// Listed tests a shard selected but got no result for, and listed tests
+  /// that passed, as `<binary> <test> #<issue>`.
   missing: string[];
+  fixed: string[];
 }
 
 /// Why a client's totals are partial, or `null` when every shard reported.
@@ -358,6 +360,7 @@ function summary(directory: string, knownDir: string): number {
         selectedKnown: new Set(),
         unexpected: [],
         missing: [],
+        fixed: [],
       });
     }
     const merged = clients.get(report.client)!;
@@ -366,6 +369,7 @@ function summary(directory: string, knownDir: string): number {
     for (const id of report.selected_known) merged.selectedKnown.add(id);
     merged.unexpected.push(...report.unexpected);
     merged.missing.push(...report.missing);
+    merged.fixed.push(...report.fixed);
     for (const [binary, counts] of Object.entries(report.binaries)) {
       merged.binaries[binary] ??= {};
       for (const [name, count] of Object.entries(counts)) bump(merged.binaries[binary], name, count);
@@ -380,6 +384,9 @@ function summary(directory: string, knownDir: string): number {
     for (const test of merged.unexpected) console.log(`::error::${client}: ${test} failed and is not in its known-failures list`);
     for (const test of merged.missing) console.log(`::error::${client}: ${test} was selected but left no result`);
     errors += merged.unexpected.length + merged.missing.length;
+    // A known failure that passed fails its shard, but not the summary: a
+    // flip must not block the queue. The warning keeps the list shrinking.
+    for (const test of merged.fixed) console.log(`::warning::${client}: ${test} passed. fixed: remove it from its known-failures list`);
   }
   write(
     "`fail` is unexpected, `known` is listed in `.github/testo/known-failures/<client>.txt`, " +
