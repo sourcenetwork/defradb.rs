@@ -65,6 +65,9 @@ pub struct NewNode {
     /// A Rust node with the given admission limits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission: Option<AdmissionSpec>,
+    /// A Rust node whose network is iroh rather than libp2p.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub iroh: bool,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -95,6 +98,7 @@ impl Op for NewNode {
         probe.network = false;
         probe.database_dir = None;
         probe.admission = None;
+        probe.iroh = false;
         probe.node_identity_seed = None;
         probe.enable_signing = false;
         probe.key_type = None;
@@ -131,6 +135,7 @@ impl Op for NewNode {
             dir,
             listen: Vec::new(),
             admission: self.admission.clone(),
+            iroh_network: self.iroh,
             node_identity,
             signing,
             txn_ttl,

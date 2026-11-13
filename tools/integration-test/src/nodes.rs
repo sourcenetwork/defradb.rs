@@ -39,6 +39,8 @@ pub struct NodeSpec {
     pub nac_owner: Option<u64>,
     /// The node's admission limits, if not the defaults.
     pub admission: Option<crate::actions::AdmissionSpec>,
+    /// The node's network is iroh rather than libp2p.
+    pub iroh_network: bool,
     /// The node's own identity, Go's `NodeIdentity(seed)`; the node signs as it.
     pub node_identity: Option<u64>,
     /// The key type the node signs with, when it signs.
@@ -98,10 +100,12 @@ impl TestNode {
             Some(address) => address.clone(),
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),
         };
-        // Admission limits are a Rust receiver's options: under go-http the
-        // node is a Rust node reached over HTTP, as rust-http does.
+        // Admission limits and iroh are a Rust node's options: under go-http
+        // the node is a Rust node reached over HTTP, as rust-http does.
         let client_type = match client_type {
-            ClientType::GoHttp if spec.admission.is_some() => ClientType::RustHttp,
+            ClientType::GoHttp if spec.admission.is_some() || spec.iroh_network => {
+                ClientType::RustHttp
+            }
             other => other,
         };
         match client_type {
@@ -301,10 +305,17 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     if let Some(dir) = &spec.dir {
         builder = builder.data_path(dir.path());
     }
-    if spec.network {
+    if spec.network && spec.iroh_network {
+        builder = builder.with_p2p(defra_node::P2PConfig {
+            bind_addr: Some(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
+            relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
+            discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
+            ..Default::default()
+        });
+    } else if spec.network {
         builder = builder.with_libp2p(listen);
     }
-    if let (true, Some(limits)) = (spec.network, &spec.admission) {
+    if let (true, false, Some(limits)) = (spec.network, spec.iroh_network, &spec.admission) {
         let mut sync = defra_node::SyncTuning {
             max_pending_dags: limits.max_pending_dags,
             rate_limit_burst: limits.rate_limit_burst,

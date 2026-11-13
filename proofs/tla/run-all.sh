@@ -894,6 +894,12 @@ RUNS=(
   "MC_GossipInbox_Green.cfg GossipInbox.tla GREEN" # control input never waits and received gossip is dropped when full: every endpoint request is answered
   "MC_GossipInbox_Red_Shared.cfg GossipInbox.tla RED" # one bounded inbox: peers fill it while the driver waits on events, the endpoint loop stalls (LIVE_RequestAnswered)
   "MC_GossipInbox_Red_LossyShared.cfg GossipInbox.tla RED" # received dropped when full but control waits in the same queue: same stall (LIVE_RequestAnswered)
+  "MC_GossipDelivery_Green.cfg MC_GossipDelivery_Common.tla GREEN" # #2820: every gossip broadcast fits a frame; a publish over the budget goes by direct push; no message is lost unreported
+  "MC_GossipDelivery_Red_LimitMismatch.cfg MC_GossipDelivery_Common.tla RED" # gossip sized at the frame limit, forgetting the topic: an accepted broadcast cannot be framed (INV_BroadcastFits)
+  "MC_GossipDelivery_Red_NoFallback.cfg MC_GossipDelivery_Common.tla RED" # a publish over the budget goes to gossip, which drops it silently (INV_NoSilentLoss)
+  "MC_GossipDelivery_Red_NeighboursOnly.cfg MC_GossipDelivery_Common.tla RED" # the direct push reaches only gossip's neighbours, not a connected subscriber beyond them (INV_NoSilentLoss)
+  "MC_GossipDelivery_Red_EndStream.cfg MC_GossipDelivery_Common.tla RED" # an unsendable frame ends the stream and the queue behind it (INV_NoSilentLoss)
+  "MC_GossipDelivery_Red_SilentFailure.cfg MC_GossipDelivery_Common.tla RED" # a failed stream drops its queue without a report (INV_NoSilentLoss)
   "MC_ServiceRecords_Green.cfg ServiceRecords.tla GREEN" # #2080: a record replaces only a lower seq, an expired record is never used, a stale pointer triggers a query
   "MC_ServiceRecords_Red_AnySeq.cfg ServiceRecords.tla RED" # the last record in wins: a late older record replaces a newer one (INV_SeqNeverGoesBack)
   "MC_ServiceRecords_Red_NoExpiryCheck.cfg ServiceRecords.tla RED" # peers picked from an expired record (INV_NoExpiredChosen)

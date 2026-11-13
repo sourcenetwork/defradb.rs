@@ -315,6 +315,13 @@ A node with a replication filter also asks it in the P2P receive path. On arriva
 
 Gossip has no reply and no retry, so a gossip head a node refuses for its per-peer rate limit or its pending-DAG capacity is kept as a durable pending record that takes no slot, and is fetched once a slot frees: a burst over both limits loses no document. These records are bounded by bytes, per source peer (`gossip_deferral_peer_bytes`) and in all (`gossip_deferral_total_bytes`). Past a budget the head is dropped, and the node reports a `p2p-gossip-head-dropped` event naming the peer and the root, so the application can resync it.
 
+# `defra.p2p.iroh_large_update`: An update too large for gossip still replicates over iroh
+
+- **Parents:** ["defra"]
+- **Scenarios:** ["net::iroh_large_update::a_document_too_large_for_gossip_replicates_over_iroh", "net::iroh_large_update::an_update_too_large_for_gossip_replicates_over_iroh"]
+
+Over iroh, a create or an update whose head block is larger than one gossip broadcast holds (4,023 bytes of payload) reaches the same peers a small one would, every subscriber of the collection connected to the writer: a document of a 160-field collection, created with every field set or updated in every field on one node, is queried with the same values on the other. Such an update goes to every connected peer as a direct PushLog request instead of a broadcast; a peer that does not subscribe declines it, and the write's broadcast reports any subscriber that did not take it.
+
 # `defra.commits`: Commit history queries beyond Go
 
 - **Parents:** ["defra"]
