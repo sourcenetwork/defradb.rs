@@ -948,7 +948,8 @@ fn store_signing_identity(owner: &RawIdentity) -> String {
             remote_signer: None,
             signing_authorization: None,
         },
-    );
+    )
+    .expect("the store takes the identity");
     owner_did.as_str().to_owned()
 }
 
