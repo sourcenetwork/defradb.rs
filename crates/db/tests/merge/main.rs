@@ -28,6 +28,7 @@ mod off_version_reindex;
 mod parked_encrypted;
 mod parked_errors;
 mod peer_identity;
+mod plan_scan_race;
 mod push_docs_common;
 mod push_docs_creator;
 mod push_docs_replay;
