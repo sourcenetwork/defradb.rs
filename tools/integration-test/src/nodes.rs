@@ -32,6 +32,9 @@ pub struct NodeSpec {
     pub dir: Option<Arc<TempDir>>,
     /// The P2P addresses a restarted node listens on again.
     pub listen: Vec<String>,
+    /// A stopped Go node's `listen` ports, held so nothing else binds them
+    /// before it starts again.
+    pub reserved: Vec<Arc<crate::reserved_port::ReservedPort>>,
     /// Start with node access control enabled, as Go's `Start { EnableNAC }`.
     pub enable_nac: bool,
     /// The client identity seed starting the node, which owns its NAC when

@@ -207,6 +207,9 @@ impl State {
                     .iter()
                     .map(|address| address.split("/p2p/").next().unwrap_or(address).to_owned())
                     .collect();
+                if node.is_go() {
+                    spec.reserved = crate::reserved_port::hold_all(&spec.listen);
+                }
             }
             self.block_on(node.stop());
         }

@@ -6263,6 +6263,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serial_test",
+ "socket2 0.6.5",
  "tempfile",
  "testo",
  "thiserror 2.0.21",
