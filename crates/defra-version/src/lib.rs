@@ -22,7 +22,7 @@ pub const GO_COMPAT_TAG: &str = "";
 /// client: it moves only when we retarget the parity claim or the client
 /// changes with the FFI. CI fails when the pinned commit does not resolve on
 /// sourcenetwork/defradb.
-pub const GO_FFI_CLIENT_COMMIT: &str = "78c9877816ac2f4fd78df0e4b746ff1505d6b398";
+pub const GO_FFI_CLIENT_COMMIT: &str = "b6d62a10442e6cbbe4f7850e4054034d019a1ce1";
 
 /// Go compatibility metadata.
 #[derive(Debug, Clone, Serialize)]
