@@ -30,7 +30,7 @@ use super::endpoint_config::{
 };
 use super::endpoint_records::EndpointNet;
 use super::endpoint_rpc::{new_connection_cache, ConnectionCache};
-use super::endpoint_streams::handle_incoming;
+use super::endpoint_streams::{handle_incoming, ConnectionLifecycle};
 use super::fetch_stats::FetchStats;
 use super::gossip::GossipHandle;
 use super::inbound_budget::InboundBudget;
@@ -206,6 +206,9 @@ async fn run_event_loop(
         records: records.clone(),
         solicited: Arc::new(Solicited::new()),
     };
+    let _ = connection_cache
+        .lifecycle
+        .set(ConnectionLifecycle::new(&resources, event_tx.clone()));
     gossip.start(
         endpoint.id(),
         GossipDialer::new(&resources, &event_tx),

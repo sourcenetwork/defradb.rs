@@ -125,6 +125,14 @@ pub enum Error {
     #[error("cbor deserialization error: {0}")]
     CborDeserialization(String),
 
+    /// A persisted replicator record did not decode.
+    #[error("failed to decode replicator: {0}")]
+    ReplicatorDecode(#[source] serde_json::Error),
+
+    /// A replicator record did not encode.
+    #[error("failed to encode replicator status: {0}")]
+    ReplicatorEncode(#[source] serde_json::Error),
+
     /// Noise protocol error.
     #[error("noise protocol error: {0}")]
     Noise(String),
