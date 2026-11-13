@@ -198,7 +198,8 @@ pub struct SyncStatus {
     pub car_filtered_cids: u64,
     /// Block bytes served in CAR responses.
     pub car_served_bytes: u64,
-    /// Blocks fetched CAR responses brought that were already held here.
+    /// Blocks fetched CAR responses brought that were already held here,
+    /// other than the root each fetch asked for by name.
     pub car_received_already_held: u64,
     /// `car_served_cids` over `car_requested_cids`; 0 before any request.
     pub car_served_per_requested: f64,

@@ -170,7 +170,8 @@ pub struct SyncDiagnosticsSnapshot {
     pub car_filtered_cids: u64,
     /// Block bytes this node served in CAR responses.
     pub car_served_bytes: u64,
-    /// Blocks CAR responses brought that this node already held.
+    /// Blocks CAR responses brought that this node already held, other than
+    /// the root each fetch asked for by name.
     pub car_received_already_held: u64,
     pub provider_rotations: u64,
     pub provider_demotions: u64,

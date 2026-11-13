@@ -539,7 +539,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             return Ok(CarIngestDisposition::Completed);
         }
 
-        let blocks = self.drop_held_blocks(blocks).await;
+        let blocks = self.drop_held_blocks(&root_cid, blocks).await;
 
         // Share the same CID ownership boundary as PushLog processing and
         // merge. Go holds its root sync owner across CAR ingest and merge;
@@ -594,8 +594,17 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// block loses nothing: its put would find it and write nothing, and if
     /// it is deleted before the merge, the merge's missing-link check sees it
     /// missing and the fetch asks for it again.
-    async fn drop_held_blocks(&self, blocks: Vec<(Cid, Vec<u8>)>) -> Vec<(Cid, Vec<u8>)> {
-        let received = blocks.len();
+    ///
+    /// `car_received_already_held` counts the held blocks other than
+    /// `root_cid`. The fetch asked for the root by name, so every rooted
+    /// response carries it, and the gossip that started the fetch has usually
+    /// stored it already: counting it would count gossip deliveries, not
+    /// history sent again (ExactDagFetch.tla `sentHeld`).
+    async fn drop_held_blocks(
+        &self,
+        root_cid: &Cid,
+        blocks: Vec<(Cid, Vec<u8>)>,
+    ) -> Vec<(Cid, Vec<u8>)> {
         let cids: Vec<Cid> = blocks.iter().map(|(cid, _)| *cid).collect();
         let present = self
             .manager
@@ -603,16 +612,21 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             .has_many(&cids)
             .await
             .unwrap_or_default();
-        let fresh: Vec<_> = blocks
-            .into_iter()
+        let held = |idx: usize| present.get(idx).copied().unwrap_or(false);
+        let resent = cids
+            .iter()
             .enumerate()
-            .filter(|(idx, _)| !present.get(*idx).copied().unwrap_or(false))
-            .map(|(_, block)| block)
-            .collect();
+            .filter(|(idx, cid)| held(*idx) && *cid != root_cid)
+            .count();
         self.manager
             .diagnostics
-            .record_car_received_already_held(received - fresh.len());
-        fresh
+            .record_car_received_already_held(resent);
+        blocks
+            .into_iter()
+            .enumerate()
+            .filter(|(idx, _)| !held(*idx))
+            .map(|(_, block)| block)
+            .collect()
     }
 
     async fn car_size_limit_disposition(
