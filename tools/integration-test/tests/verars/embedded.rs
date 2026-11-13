@@ -25,7 +25,21 @@ pub struct Embedded {
 }
 
 impl Embedded {
+    /// Starts the node, on a new port and directory each try: the RPC port
+    /// is picked before the node binds it, and another process may take it
+    /// in between.
     pub async fn start() -> Self {
+        let mut last = None;
+        for _ in 0..3 {
+            match Self::start_once().await {
+                Ok(node) => return node,
+                Err(error) => last = Some(error),
+            }
+        }
+        panic!("embedded Vera node: {last:?}");
+    }
+
+    async fn start_once() -> Result<Self, vera_embedded::HostError> {
         let directory = tempfile::tempdir().expect("directory");
         // A port that was free a moment ago; the node binds it next.
         let rpc = std::net::TcpListener::bind("127.0.0.1:0")
@@ -50,13 +64,12 @@ impl Embedded {
             Some(rpc),
             &edge::testing::edge(),
         )
-        .await
-        .expect("embedded Vera node");
-        Self {
+        .await?;
+        Ok(Self {
             node,
             rpc,
             _directory: directory,
-        }
+        })
     }
 
     /// The node's HTTP JSON-RPC address.

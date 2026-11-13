@@ -67,13 +67,17 @@ async fn measure(setup: &str, provider: Arc<VeraRsProvider>) -> serde_json::Valu
     })
 }
 
-#[nuclei::test]
-#[serial_test::serial]
-#[ignore = "a measurement, not a check: run it by name"]
-async fn transport_latency() {
-    edge::compat(async {
-        let mut rows = Vec::new();
+/// The setups, in the order a round measures them.
+const SETUPS: [&str; 3] = [
+    "daemon over HTTP",
+    "embedded over HTTP",
+    "embedded in process",
+];
 
+/// Starts the node of `setup`, measures it and stops the node.
+async fn measured(setup: &'static str) -> serde_json::Value {
+    let root = tempfile::tempdir().unwrap();
+    if setup == SETUPS[0] {
         let hub = helpers::start_hub_cluster().await;
         let keys = vera_harness::cluster::KeySet::builder()
             .nodes(1)
@@ -81,7 +85,6 @@ async fn transport_latency() {
             .build()
             .expect("bootstrap keys");
         let consensus_key = hex::encode(keys.epoch_info().output.public().public().encode());
-        let root = tempfile::tempdir().unwrap();
         let owner = helpers::funded_identity();
         let daemon = VeraRsProvider::new(
             hub.node(0).rpc_url(),
@@ -94,23 +97,36 @@ async fn transport_latency() {
         )
         .await
         .expect("provider");
-        rows.push(measure("daemon over HTTP", Arc::new(daemon)).await);
-        drop(hub);
+        return measure(setup, Arc::new(daemon)).await;
+    }
+    let node = Embedded::start().await;
+    let worker = embedded::worker(root.path());
+    let provider = if setup == SETUPS[1] {
+        node.over_http(worker).await
+    } else {
+        node.in_process(worker).await
+    };
+    let row = measure(setup, Arc::new(provider.expect("provider"))).await;
+    node.stop().await;
+    row
+}
 
-        let node = Embedded::start().await;
-        let root = tempfile::tempdir().unwrap();
-        let provider = node.over_http(embedded::worker(root.path())).await;
-        rows.push(measure("embedded over HTTP", Arc::new(provider.expect("provider"))).await);
-        node.stop().await;
-
-        let node = Embedded::start().await;
-        let root = tempfile::tempdir().unwrap();
-        let provider = node.in_process(embedded::worker(root.path())).await;
-        rows.push(measure("embedded in process", Arc::new(provider.expect("provider"))).await);
-        node.stop().await;
-
-        for row in rows {
-            println!("{row}");
+#[nuclei::test]
+#[serial_test::serial]
+#[ignore = "a measurement, not a check: run it by name"]
+async fn transport_latency() {
+    edge::compat(async {
+        // Two rounds, the second in the opposite order, so a setup is not
+        // always the one measured on a cold or a warm machine.
+        let forward = SETUPS.to_vec();
+        let backward: Vec<_> = SETUPS.iter().rev().copied().collect();
+        for (round, order) in [forward, backward].into_iter().enumerate() {
+            for (position, setup) in order.into_iter().enumerate() {
+                let mut row = measured(setup).await;
+                row["round"] = (round + 1).into();
+                row["position"] = (position + 1).into();
+                println!("{row}");
+            }
         }
     })
     .await;
