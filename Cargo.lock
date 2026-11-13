@@ -13874,6 +13874,7 @@ name = "vera-embedded"
 version = "0.5.0"
 dependencies = [
  "acp",
+ "acp-light-client",
  "commonware-codec",
  "defra-core",
  "edge",

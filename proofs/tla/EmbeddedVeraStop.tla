@@ -55,7 +55,7 @@
 \*                     Regressions:
 \*                     a_remembered_decision_is_not_given_past_the_freshness_limit
 \*                     in crates/vera-embedded/tests/stopped_node_decisions.rs
-\*                     and once_the_node_stops_no_access_decision_is_given in
+\*                     and once_the_node_stops_the_provider_verifies_no_new_decision in
 \*                     crates/vera-embedded/tests/hosted_node.rs;
 \*   StopAfterRequests crates/defra-node/src/lib.rs Node::shutdown, which
 \*                     stops the Vera node after the request drain and P2P's

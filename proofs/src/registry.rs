@@ -2282,7 +2282,7 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/defra-node/src/lib.rs Node::shutdown; crates/defra-node/src/embedded_vera.rs start; crates/vera/src/vera_rs/provider.rs decision_state; crates/vera-embedded/src/host.rs HostedNode::start, HostedNode::stop; crates/vera-embedded/src/link.rs Link; crates/vera-embedded/src/call.rs call",
         model_ref: "MC_EmbeddedVeraStop_{Green,Red_StaleDecision,Red_StopBeforeRequests,Red_NoStopDeadline,Red_LinkStaysOpen,Red_NoStartDeadline}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/vera-embedded/tests/hosted_node.rs once_the_node_stops_no_access_decision_is_given; crates/vera-embedded/tests/stopped_node_decisions.rs a_remembered_decision_is_not_given_past_the_freshness_limit",
+        bound_by: "crates/vera-embedded/tests/hosted_node.rs once_the_node_stops_the_provider_verifies_no_new_decision; crates/vera-embedded/tests/stopped_node_decisions.rs a_remembered_decision_is_not_given_past_the_freshness_limit",
     },
     Property {
         // A signed query or transformed route keeps a request-scope permit

@@ -36,9 +36,6 @@ resources:
           - actor
 ";
 
-/// The light client refuses a state older than this; the provider's default.
-const FRESHNESS: Duration = Duration::from_secs(30);
-
 #[nuclei::test]
 async fn a_remembered_decision_is_not_given_past_the_freshness_limit() {
     let directory = tempfile::tempdir().unwrap();
@@ -118,7 +115,9 @@ async fn a_remembered_decision_is_not_given_past_the_freshness_limit() {
     // The decision made at the last verified state is exact for that state,
     // and no later than the freshness limit that state is no longer one to
     // answer from: the owner admitted a moment ago is not admitted again.
-    nuclei::time::sleep((FRESHNESS + Duration::from_secs(2)).saturating_sub(stopped.elapsed()))
+    // The limit is the light client's own default, which the provider uses.
+    let freshness = acp_light_client::FreshnessPolicy::default().max_age;
+    nuclei::time::sleep((freshness + Duration::from_secs(2)).saturating_sub(stopped.elapsed()))
         .await;
     let late = reads("asked").await;
     assert!(
