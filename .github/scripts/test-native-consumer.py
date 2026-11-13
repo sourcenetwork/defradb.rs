@@ -202,6 +202,39 @@ class Tests(unittest.TestCase):
             with self.subTest(borrowed=borrowed), self.assertRaises(ValueError):
                 driver.revision(self.root)
 
+    def test_vera_is_recognised_under_every_spelling_cargo_resolves_to_it(self):
+        self.sdk_fixture()
+        node = self.root / driver.NODE_MANIFESTS[0]
+        pin, other = 'a' * 40, 'b' * 40
+        inline = NODE.splitlines(keepends=True)[0]
+        for second in (
+            'vera-node = { git = "https://github.com/SourceNetwork/vera.rs", rev = "%s" }\n',
+            'vera-node = { git = "http://github.com/sourcenetwork/vera.rs", rev = "%s" }\n',
+            'vera-node = { "git" = "https://github.com/sourcenetwork/vera.rs", rev = "%s" }\n',
+            "vera-node = { 'git' = 'HTTPS://GITHUB.COM/SOURCENETWORK/VERA.RS.GIT/', 'rev' = '%s' }\n",
+            'vera-node = { git = "ssh://git@github.com/sourcenetwork/vera.rs.git", rev = "%s" }\n',
+            'vera-node = { git = "git@github.com:sourcenetwork/vera.rs", rev = "%s" }\n',
+            'vera-node = { git = "git://www.github.com/sourcenetwork/vera.rs", "rev" = "%s" }\n',
+            '[dev-dependencies.vera-node]\n"git" = "http://github.com/Sourcenetwork/Vera.rs"\n"rev" = "%s"\n',
+            'vera-node."git" = "https://github.com/sourcenetwork/vera.rs"\nvera-node."rev" = "%s"\n',
+        ):
+            with self.subTest(second=second):
+                self.assertEqual(driver.git_pins(second % other), [other])
+                node.write_text(inline + second % pin)
+                self.assertEqual(driver.revision(self.root), pin)
+                node.write_text(inline + second % other)
+                with self.assertRaises(ValueError):
+                    driver.revision(self.root)
+        for unrelated in (
+            'other = { git = "https://github.com/sourcenetwork/vera.rs-tools", rev = "%s" }\n',
+            'other = { git = "https://github.com/sourcenetwork/backbone.git", rev = "%s" }\n',
+            'other = { git = "https://example.com/github.com.sourcenetwork/vera.rs", rev = "%s" }\n',
+            'digit = "https://github.com/sourcenetwork/vera.rs"\n',
+        ):
+            node.write_text(inline + unrelated % other if '%s' in unrelated else inline + unrelated)
+            with self.subTest(unrelated=unrelated):
+                self.assertEqual(driver.revision(self.root), pin)
+
     def test_harness_pin_and_sdk_versions_are_read_whatever_the_spacing(self):
         self.sdk_fixture()
         sdk, harness = (self.root / name for name in driver.SDK_MANIFESTS)
@@ -219,9 +252,18 @@ class Tests(unittest.TestCase):
         harness.write_text(SDK + HARNESS)
         sdk.write_text(SDK.replace('vera-domain = "0.1.2"', 'vera-domain="0.1.2"  # published'))
         self.assertEqual(driver.revision(self.root), pin)
-        sdk.write_text(SDK + '[dev-dependencies]\nvera-client="0.1.1"\n')
-        with self.assertRaises(ValueError):
-            driver.revision(self.root)
+        for extra in (
+            '[dev-dependencies]\nvera-client="0.1.1"\n',
+            '[dev-dependencies]\n"vera-client" = "0.1.1"\n',
+            '[dev-dependencies]\nvera-client = { version = "0.1.1" }\n',
+            '[dev-dependencies]\nvera-client.version = "0.1.1"\n',
+            '[dev-dependencies.vera-client]\nversion = "0.1.1"\n',
+        ):
+            sdk.write_text(SDK + extra)
+            with self.subTest(extra=extra), self.assertRaises(ValueError):
+                driver.revision(self.root)
+        sdk.write_text(SDK + 'vera-client-extras = "9.9.9"\nnot-vera-client = "9.9.9"\n')
+        self.assertEqual(driver.revision(self.root), pin)
 
     def test_test_output_rejects_zero_extra_ignored_and_duplicate_passes(self):
         log = self.root / 'test.log'

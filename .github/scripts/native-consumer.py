@@ -16,13 +16,19 @@ import time
 SDK_MANIFESTS = ("crates/vera/Cargo.toml", "tools/integration-test/Cargo.toml")
 # Crates built against the unpublished Vera node crates the harness also uses.
 NODE_MANIFESTS = ("crates/vera-embedded/Cargo.toml",)
-# The `git` key of a Vera dependency and its `rev`, with any spacing TOML allows around `=`.
-VERA_GIT = re.compile(r"""(?<![\w-])git\s*=\s*["']https://github\.com/sourcenetwork/vera\.rs(?:\.git)?/?["']""")
-VERA_REV = re.compile(r"""(?<![\w-])rev\s*=\s*["']([0-9a-f]{40})["']""")
+# The `git` key of a Vera dependency and its `rev`. A key may be quoted and spaced as TOML allows. The
+# repository is recognised under every scheme, host prefix and letter case, because Cargo resolves
+# those spellings to the same source.
+KEY = r"""(?<![\w-])["']?%s["']?\s*=\s*"""
+VERA_GIT = re.compile(
+    KEY % "git" + r"""["'][^"']*github\.com[:/]+sourcenetwork/vera\.rs(?:\.git)?/?["']""", re.IGNORECASE)
+VERA_REV = re.compile(KEY % "rev" + r"""["']([0-9a-f]{40})["']""")
 # A `git` or `rev` key on a line of its own, after the dotted path that names its dependency, if any.
 KEY_PATH = r"""\s*((?:(?:[\w-]+|"[^"]*"|'[^']*')\s*\.\s*)*)"""
-OWN_GIT = re.compile(KEY_PATH + r"git\s*=")
-OWN_REV = re.compile(KEY_PATH + r"""rev\s*=\s*["']([0-9a-f]{40})["']\s*""")
+OWN_GIT = re.compile(KEY_PATH + r"""["']?git["']?\s*=""")
+OWN_REV = re.compile(KEY_PATH + r"""["']?rev["']?\s*=\s*["']([0-9a-f]{40})["']\s*""")
+# A published SDK crate named as a key or in a table header, and the one form its declaration may take.
+SDK_KEY = re.compile(r"""(?<![\w-])vera-(?:client|domain|modules)(?![\w-])""")
 SDK_VERSION = re.compile(r'\s*vera-(?:client|domain|modules)\s*=\s*"(\d+\.\d+\.\d+)"\s*')
 UNIT_NAMES = (
     "abi::tests::delete_relationship_subject_userset_round_trips",
@@ -146,9 +152,13 @@ def revision(root):
         text = (root / name).read_text()
         pins += git_pins(text)
         for line in text.splitlines():
-            match = SDK_VERSION.fullmatch(line.split("#", 1)[0])
-            if match is not None:
-                versions.append(match[1])
+            line = line.split("#", 1)[0]
+            if SDK_KEY.search(line.split("=", 1)[0]) is None:
+                continue
+            match = SDK_VERSION.fullmatch(line)
+            if match is None:
+                raise ValueError("published native SDK declarations must be plain versions")
+            versions.append(match[1])
     if len(versions) != 6 or len(set(versions)) != 1:
         raise ValueError("published native SDK declarations disagree or are missing")
     if len(pins) != 1:
