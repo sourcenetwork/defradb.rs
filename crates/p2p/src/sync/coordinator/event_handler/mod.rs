@@ -476,6 +476,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             }
             TransportEvent::GossipRawMessage {
                 propagation_source,
+                source,
                 topic,
                 data,
                 ..
@@ -485,8 +486,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     &propagation_source,
                     "GossipRawMessage",
                 )?;
-                self.handle_gossip_raw_message(propagation_source, topic, data)
-                    .await?;
+                self.handle_gossip_raw_message(source, topic, data).await?;
             }
             TransportEvent::PushLogRequest {
                 peer_id,
@@ -757,13 +757,19 @@ mod tests {
     pub(super) struct TestTransport {
         peer_id: PeerId,
         pubkey: Vec<u8>,
+        published_raw: Arc<kovan_queue::seg_queue::SegQueue<String>>,
     }
 
     impl TestTransport {
         pub(super) fn new() -> Self {
+            Self::with_peer_id(PeerId::new("local-peer".to_string()))
+        }
+
+        fn with_peer_id(peer_id: PeerId) -> Self {
             Self {
-                peer_id: PeerId::new("local-peer".to_string()),
+                peer_id,
                 pubkey: vec![1, 2, 3],
+                published_raw: Arc::new(kovan_queue::seg_queue::SegQueue::new()),
             }
         }
     }
@@ -823,6 +829,15 @@ mod tests {
 
         async fn unsubscribe(&self, _topic: DefraTopic) -> P2PResult<bool> {
             Ok(true)
+        }
+
+        async fn subscribe_raw(&self, _topic: String) -> P2PResult<bool> {
+            Ok(true)
+        }
+
+        async fn publish_raw(&self, topic: String, _data: Vec<u8>) -> P2PResult<MessageId> {
+            self.published_raw.push(topic);
+            Ok(MessageId::new("noop".to_string()))
         }
 
         async fn publish(
@@ -1617,6 +1632,134 @@ mod tests {
             Ok(SyncEvent::DagNeedsFetch { .. })
         ));
         assert!(events.try_recv().is_err());
+    }
+
+    /// A sync-branchable request a neighbour relayed is answered on its
+    /// publisher's `_response` topic (`source`), never the relay's
+    /// (`propagation_source`): the relay asked nothing and drops it (#2773).
+    #[cfg(feature = "libp2p-transport")]
+    #[test]
+    fn relayed_pubsub_rpc_request_is_answered_on_its_publishers_topic() {
+        workers::block_on(async {
+            let local = PeerId::new(libp2p::PeerId::random().to_string());
+            let asker = PeerId::new(libp2p::PeerId::random().to_string());
+            let relay = PeerId::new(libp2p::PeerId::random().to_string());
+            let transport = TestTransport::with_peer_id(local);
+            let published = Arc::clone(&transport.published_raw);
+            let store = Arc::new(RegolithStore::in_memory().unwrap());
+            let blockstore = Arc::new(DefraBlockstore::new(store, true));
+            let (coordinator, _events) = SyncCoordinator::new(
+                transport,
+                blockstore,
+                crate::network::test_network(),
+                SyncConfig::default(),
+            )
+            .await
+            .expect("coordinator");
+
+            let request = crate::message::pubsub::BranchableSyncRequest::new("c1".to_string());
+            coordinator
+                .handle_transport_event(TransportEvent::GossipRawMessage {
+                    propagation_source: relay,
+                    source: asker.clone(),
+                    message_id: MessageId::new("m".to_string()),
+                    topic: "sync-branchable".to_string(),
+                    data: defra_core::cbor::to_vec(&request).unwrap(),
+                })
+                .await
+                .expect("handled");
+
+            assert_eq!(
+                published.pop(),
+                Some(format!("sync-branchable/{asker}/_response"))
+            );
+            assert_eq!(published.pop(), None);
+        })
+        .unwrap();
+    }
+
+    /// A KMS request a neighbour relayed is authorized and answered as its
+    /// publisher (`source`), never as the relay (`propagation_source`), #2773.
+    #[cfg(feature = "kms")]
+    #[test]
+    fn relayed_kms_request_reaches_the_handler_as_its_publisher() {
+        workers::block_on(relayed_kms_request()).unwrap();
+    }
+
+    #[cfg(feature = "kms")]
+    async fn relayed_kms_request() {
+        use kms::{
+            FetchEncryptionKeyReply, FetchEncryptionKeyRequest, IncomingHandler, KeyTransport,
+        };
+        use kovan::AtomOption;
+
+        struct NoIdentity;
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl crate::peer_identity::PeerIdentityResolver for NoIdentity {
+            async fn resolve(&self, _peer_id: &PeerId) -> Option<identity::Did> {
+                None
+            }
+        }
+
+        struct SeenBy(Arc<AtomOption<String>>);
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl IncomingHandler for SeenBy {
+            async fn handle(
+                &self,
+                from: kms::PeerIdentity,
+                _req: FetchEncryptionKeyRequest,
+            ) -> kms::Result<FetchEncryptionKeyReply> {
+                self.0.store_some(from.peer_id);
+                Ok(FetchEncryptionKeyReply {
+                    links: Vec::new(),
+                    blocks: Vec::new(),
+                    ephemeral_public_key: vec![1; 32],
+                })
+            }
+        }
+
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(DefraBlockstore::new(store, true));
+        let (coordinator, _events) = SyncCoordinator::new(
+            TestTransport::new(),
+            blockstore,
+            crate::network::test_network(),
+            SyncConfig::default(),
+        )
+        .await
+        .expect("coordinator");
+        let kms_transport = crate::kms::PubsubKeyTransport::new(
+            TestTransport::new(),
+            Arc::new(NoIdentity),
+            edge::testing::edge(),
+        )
+        .await
+        .expect("kms transport");
+        let seen = Arc::new(AtomOption::none());
+        kms_transport.install_handler(Arc::new(SeenBy(seen.clone())));
+        coordinator.install_kms_transport(kms_transport);
+
+        let request = FetchEncryptionKeyRequest {
+            identity: Vec::new(),
+            links: vec![vec![1]],
+            ephemeral_public_key: vec![2; 32],
+            explicit_replay_capability: None,
+        };
+        coordinator
+            .handle_transport_event(TransportEvent::GossipRawMessage {
+                propagation_source: PeerId::new("relay-peer".to_string()),
+                source: PeerId::new("asker-peer".to_string()),
+                message_id: MessageId::new("m".to_string()),
+                topic: crate::topics::ENCRYPTION_TOPIC.to_string(),
+                data: defra_core::cbor::to_vec(&request).unwrap(),
+            })
+            .await
+            .expect("handled");
+
+        let seen_by = seen.load().map(|peer| (*peer).clone());
+        assert_eq!(seen_by.as_deref(), Some("asker-peer"));
     }
 }
 

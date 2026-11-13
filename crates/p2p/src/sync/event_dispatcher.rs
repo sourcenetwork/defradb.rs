@@ -429,6 +429,7 @@ mod tests {
     fn remote_raw_gossip_is_admission_and_peer_lifecycle_is_completion() {
         let raw = crate::transport::TransportEvent::<()>::GossipRawMessage {
             propagation_source: crate::transport::PeerId::new("peer".to_string()),
+            source: crate::transport::PeerId::new("peer".to_string()),
             message_id: crate::transport::MessageId::new("message".to_string()),
             topic: "topic".to_string(),
             data: Vec::new(),

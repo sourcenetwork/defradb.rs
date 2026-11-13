@@ -407,6 +407,8 @@ impl P2PTransport for IrohTransport {
     }
 
     async fn publish_raw(&self, topic: String, data: Vec<u8>) -> Result<MessageId> {
+        // Sealed with our key: gossip relays name only themselves (#2773).
+        let data = super::gossip::raw_origin::seal(&self.secret_key, &topic, &data)?;
         self.send_command(|reply| IrohCommand::PublishRaw { topic, data, reply })
             .await
     }
@@ -771,6 +773,10 @@ impl P2PTransport for IrohTransport {
 #[cfg(test)]
 #[path = "../../tests/iroh/transport_poll.rs"]
 mod poll_tests;
+
+#[cfg(test)]
+#[path = "../../tests/iroh/relayed_raw_request.rs"]
+mod relayed_raw_request_tests;
 
 /// Iroh writes every one of these replies on its request's stream, which
 /// every request carries; a reply without one has nowhere to go.
