@@ -15,6 +15,9 @@ pub(super) struct DocumentAcpSetup {
     pub(super) document_acp: Arc<dyn acp::DocumentACP>,
     /// The node's DAC policies, installed on the database.
     pub(super) dac_policies: Arc<db::DacPolicies>,
+    /// The Vera node started for document ACP; shutdown stops it.
+    #[cfg(feature = "embedded-vera")]
+    pub(super) embedded_vera: Option<vera_embedded::HostedNode>,
 }
 
 impl Node {
@@ -92,6 +95,8 @@ impl Node {
             return Ok(DocumentAcpSetup {
                 document_acp: gate_external_acp(document_acp, store, edge),
                 dac_policies: Arc::new(dac_policies),
+                #[cfg(feature = "embedded-vera")]
+                embedded_vera: None,
             });
         }
 
@@ -169,7 +174,22 @@ impl Node {
             return Ok(DocumentAcpSetup {
                 document_acp: gate_external_acp(document_acp, store, edge),
                 dac_policies: Arc::new(dac_policies),
+                #[cfg(feature = "embedded-vera")]
+                embedded_vera: None,
             });
+        }
+
+        #[cfg(feature = "embedded-vera")]
+        if config.acp.document_type == AcpDocumentType::VeraRsEmbedded {
+            return super::server_acp_embedded::setup(
+                config,
+                identity_key_bytes,
+                store,
+                zanzibar_store,
+                event_bus,
+                edge,
+            )
+            .await;
         }
 
         info!("Document ACP configured (local)");
@@ -177,6 +197,8 @@ impl Node {
         Ok(DocumentAcpSetup {
             document_acp,
             dac_policies: Arc::new(db::DacPolicies::local(zanzibar_store)),
+            #[cfg(feature = "embedded-vera")]
+            embedded_vera: None,
         })
     }
 
@@ -211,7 +233,7 @@ impl Node {
 /// provider call that failed). Until settled, such a document is readable only
 /// by its creator.
 #[cfg(feature = "vera")]
-fn gate_external_acp(
+pub(super) fn gate_external_acp(
     provider: Arc<dyn acp::DocumentACP>,
     store: Arc<storage::DynStore>,
     edge: &edge::Edge,

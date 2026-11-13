@@ -144,6 +144,24 @@ pub struct Cli {
     #[arg(long, global = true, env = "DEFRA_VERA_DEPLOYMENT_ID")]
     pub vera_deployment_id: Option<u64>,
 
+    /// Operator key of the embedded Vera deployment; repeat for several.
+    /// Hex compressed secp256k1 keys, `did:key` for Ed25519 and P-256.
+    /// Default: the node identity alone
+    #[cfg(feature = "embedded-vera")]
+    #[arg(long = "vera-embedded-operator", global = true)]
+    pub vera_embedded_operators: Vec<String>,
+
+    /// Operator approvals an administrative change of the embedded Vera
+    /// deployment needs (default: 1)
+    #[cfg(feature = "embedded-vera")]
+    #[arg(long, global = true, env = "DEFRA_VERA_EMBEDDED_THRESHOLD")]
+    pub vera_embedded_threshold: Option<u16>,
+
+    /// Consensus listener of the embedded Vera node (default: 127.0.0.1:0)
+    #[cfg(feature = "embedded-vera")]
+    #[arg(long, global = true, env = "DEFRA_VERA_EMBEDDED_LISTEN")]
+    pub vera_embedded_listen: Option<String>,
+
     /// Path to the file containing secrets. Relative paths use the working directory.
     #[arg(long, global = true, env = "DEFRA_SECRET_FILE")]
     pub secret_file: Option<String>,

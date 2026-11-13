@@ -20,6 +20,9 @@
 \*      store.
 \* A Vera node told to stop may never finish: its runtime can hang while it
 \* is dropped.
+\* The `defradb` binary runs the same order in its own shutdown
+\* (crates/cli/src/commands/start/run.rs run): its servers drain and P2P
+\* stops, then its Vera node stops, then the database closes.
 \*
 \* After a shutdown the host may build the next node over the same directory.
 \* Its Vera node waits for the directory's lock. While the earlier Vera node
