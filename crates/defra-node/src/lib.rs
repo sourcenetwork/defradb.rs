@@ -117,7 +117,7 @@ pub use defra_p2p_adapter::{
 pub use dense_search::{DenseHybridSearchHit, DenseHybridSearchRequest, DenseHybridSearchResponse};
 pub use embedded_signer::{EmbeddedSigner, EmbeddedSignerError};
 #[cfg(feature = "embedded-vera")]
-pub use embedded_vera_config::{EmbeddedVeraConfig, EmbeddedVeraDeployment};
+pub use embedded_vera_config::{EmbeddedVeraActor, EmbeddedVeraConfig, EmbeddedVeraDeployment};
 pub use error::{Error, Result};
 pub use events::EventName;
 pub use keyring;

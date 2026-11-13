@@ -28,8 +28,8 @@ pub struct EmbeddedVeraConfig {
     /// [`Node::shutdown`](crate::Node::shutdown) returns the failure and the
     /// directory stays held until the Vera node's thread ends.
     pub stop_deadline: Duration,
-    /// The 32-byte secp256k1 key of the actor that owns this node's policies.
-    pub actor_key: Vec<u8>,
+    /// The actor that owns this node's policies.
+    pub actor: EmbeddedVeraActor,
     /// Where the worker journals a submission until Vera confirms it. It must
     /// survive restarts, or a pending submission is lost.
     pub worker_dir: PathBuf,
@@ -38,6 +38,43 @@ pub struct EmbeddedVeraConfig {
     /// Timeouts for requests and receipts.
     pub tuning: vera::AcpTuning,
 }
+
+/// Who an embedded Vera node's policies belong to: the key that signs the
+/// delegations this node's worker acts under.
+#[derive(Clone)]
+pub enum EmbeddedVeraActor {
+    /// A 32-byte secp256k1 private key this process holds.
+    Secp256k1Key(Vec<u8>),
+    /// A signer for a key of any type vera.rs accepts (secp256k1, Ed25519,
+    /// P-256), which may be held outside the process. The node builds every
+    /// delegation itself and sends one only when the signer's signature
+    /// verifies under its DID's key.
+    Signer(Arc<dyn vera::vera_rs::DelegationSigner>),
+}
+
+impl fmt::Debug for EmbeddedVeraActor {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Secp256k1Key(_) => formatter.write_str("Secp256k1Key(..)"),
+            Self::Signer(signer) => formatter
+                .debug_tuple("Signer")
+                .field(&signer.did())
+                .finish(),
+        }
+    }
+}
+
+impl PartialEq for EmbeddedVeraActor {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Secp256k1Key(a), Self::Secp256k1Key(b)) => a == b,
+            (Self::Signer(a), Self::Signer(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for EmbeddedVeraActor {}
 
 impl fmt::Debug for EmbeddedVeraConfig {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -48,6 +85,7 @@ impl fmt::Debug for EmbeddedVeraConfig {
             .field("listen", &self.listen)
             .field("start_deadline", &self.start_deadline)
             .field("stop_deadline", &self.stop_deadline)
+            .field("actor", &self.actor)
             .field("worker_dir", &self.worker_dir)
             .field("tuning", &self.tuning)
             .finish_non_exhaustive()
@@ -61,7 +99,7 @@ impl PartialEq for EmbeddedVeraConfig {
             && self.listen == other.listen
             && self.start_deadline == other.start_deadline
             && self.stop_deadline == other.stop_deadline
-            && self.actor_key == other.actor_key
+            && self.actor == other.actor
             && self.worker_dir == other.worker_dir
             && Arc::ptr_eq(&self.keyring, &other.keyring)
             && self.tuning == other.tuning

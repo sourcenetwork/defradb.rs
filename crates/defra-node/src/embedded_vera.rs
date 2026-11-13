@@ -58,20 +58,37 @@ where
         .map_err(Error::VeraProvider)?
     };
     let transport = Arc::new(node.transport(config.tuning.request_timeout));
-    let provider = Arc::new(
-        vera::VeraRsProvider::with_transport(
-            transport.clone(),
-            transport,
-            node.consensus_key(),
-            &config.actor_key,
-            worker,
-            &config.tuning,
-            event_bus,
-            edge,
-        )
-        .await
-        .map_err(Error::VeraProvider)?,
-    );
+    let consensus_key = node.consensus_key();
+    let tuning = &config.tuning;
+    let provider = match &config.actor {
+        crate::EmbeddedVeraActor::Secp256k1Key(key) => {
+            vera::VeraRsProvider::with_transport(
+                transport.clone(),
+                transport,
+                consensus_key,
+                key,
+                worker,
+                tuning,
+                event_bus,
+                edge,
+            )
+            .await
+        }
+        crate::EmbeddedVeraActor::Signer(signer) => {
+            vera::VeraRsProvider::with_signer(
+                transport.clone(),
+                transport,
+                consensus_key,
+                Arc::clone(signer),
+                worker,
+                tuning,
+                event_bus,
+                edge,
+            )
+            .await
+        }
+    };
+    let provider = Arc::new(provider.map_err(Error::VeraProvider)?);
     let mut setup = verified_acp_setup(provider, edge, config.tuning.request_timeout, store);
     setup.embedded_vera = Some(node);
     Ok(setup)
