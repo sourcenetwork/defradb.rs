@@ -78,8 +78,6 @@ testo signature::commit::signature_with_deleted_doc_and_commit_query_should_incl
 testo signature::commit::signature_with_ed25519_key_type_should_include_signature_data #2701
 testo signature::peer::doc_signature_with_peers_an_different_key_types_should_sync #2701
 testo signature::peer::doc_signature_with_peers_an_different_key_types_updating_same_doc_should_sync #2701
-testo txn::delete_encrypted_index::txn_delete_encrypted_index_without_commit_does_not_delete #2708
-testo txn::delete_encrypted_index::txn_delete_encrypted_index_with_commit_succeeds #2708
 testo txn::refresh_view::txn_refresh_view_with_commit_succeeds #2708
 testo issues::t_2569::p2_p_update_with_pn_counter_float_overflow_decrement_prevents_querying #2711
 testo issues::t_2569::p2_p_update_with_pn_counter_float_overflow_increment_prevents_querying #2711

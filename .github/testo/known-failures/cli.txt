@@ -88,13 +88,6 @@ testo subscription::subscription::subscription_with_counter_crdt_should_succeed 
 testo signature::peer::doc_signature_with_peers_an_different_key_types_should_sync #2708
 testo signature::peer::doc_signature_with_peers_an_different_key_types_updating_same_doc_should_sync #2701
 testo txn::add_view::txn_add_view_without_commit_fails #2708
-testo txn::delete_encrypted_index::txn_delete_encrypted_index_with_commit_succeeds #2708
-testo txn::delete_encrypted_index::txn_delete_encrypted_index_without_commit_does_not_delete #2708
-testo txn::delete_encrypted_index::txn_delete_encrypted_index_exhibits_transactional_isolation_succeeds #2708
-testo txn::list_encrypted_indexes::txn_add_encrypted_index_exhibits_transactional_isolation_succeeds #2708
-testo txn::new_encrypted_index::txn_list_encrypted_indexes_inside_txn_succeeds #2708
-testo txn::new_encrypted_index::txn_new_encrypted_index_with_commit_succeeds #2708
-testo txn::new_encrypted_index::txn_new_encrypted_index_without_commit_no_indexes #2708
 testo issues::t_2569::p2_p_update_with_pn_counter_float_overflow_decrement_prevents_querying #2711
 testo issues::t_2569::p2_p_update_with_pn_counter_float_overflow_increment_prevents_querying #2711
 testo issues::t_2569::p2_p_update_with_pn_counter_float_overflow_prevents_collection_get #2711

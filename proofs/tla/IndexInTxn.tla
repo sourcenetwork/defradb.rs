@@ -34,6 +34,24 @@
 \*   crates/db/src/index/in_txn.rs                DB::create_index_in,
 \*                                                 DB::drop_index_in
 \*   crates/http/src/handlers/index/go_api.rs     the x-defradb-tx branches
+\* Encrypted indexes follow the same steps with no backfill: the change is
+\* staged in the caller's transaction and the shared cache takes it once the
+\* commit is durable, before the commit call returns (the "work" here). A
+\* failed add or delete is rolled back to its savepoint the same way. Listing
+\* one collection's encrypted indexes, or every collection's, in the
+\* transaction is List: both read the definitions from the transaction's
+\* store, never a cached copy, so they see the change as RefreshCatalog does:
+\*   crates/db/src/collection/encrypted_index.rs  DB::add_encrypted_index_in,
+\*                                                 DB::delete_encrypted_index_in,
+\*                                                 DB::encrypted_indexes_in,
+\*                                                 DB::all_encrypted_indexes_in
+\*   crates/db/src/txn/registry/indexes.rs        add_encrypted_index_in_txn,
+\*                                                 delete_encrypted_index_in_txn,
+\*                                                 encrypted_indexes_in_txn,
+\*                                                 all_encrypted_indexes_in_txn
+\*   crates/defra-node/src/ops/encrypted_index.rs NodeOps (routes a txn)
+\*   crates/cli/src/encrypted_index_adapter.rs    EncryptedIndexAdapter (routes a txn)
+\*   crates/http/src/handlers/encrypted_index.rs  the x-defradb-tx context
 EXTENDS Naturals
 
 CONSTANTS

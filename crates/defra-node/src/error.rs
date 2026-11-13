@@ -495,36 +495,9 @@ pub enum Error {
     #[cfg(any(feature = "libp2p", feature = "p2p"))]
     #[error(transparent)]
     SeedLength(#[from] SeedLength),
-    /// The encrypted index names a field the collection lacks.
-    #[error("encrypted index on non-existent field. Field: {0}")]
-    EncryptedIndexFieldMissing(String),
-    /// The field already has an encrypted index.
-    #[error("encrypted index already exists on this field. Field: {0}")]
-    EncryptedIndexExists(String),
     /// No index has the name (Go: `NewErrIndexWithNameDoesNotExists`).
     #[error("index with name doesn't exists. Name: {0}")]
     IndexNameMissing(String),
-    /// No encrypted index is on the field (Go: `ErrEncryptedIndexNotFound`).
-    #[error("encrypted index does not exist on this field. Field: {0}")]
-    EncryptedIndexMissing(String),
-    /// The collection's schema did not serialize.
-    #[error("failed to serialize schema: {0}")]
-    SchemaSerialize(#[source] serde_json::Error),
-    /// The systemstore did not open.
-    #[error("failed to get systemstore: {0}")]
-    SystemstoreOpen(#[source] db::Error),
-    /// The schema did not save.
-    #[error("failed to save schema: {0}")]
-    SchemaSave(#[source] storage::corekv::Error),
-    /// The collection name mapping did not save.
-    #[error("failed to save name mapping: {0}")]
-    NameMappingSave(#[source] storage::corekv::Error),
-    /// The commit failed.
-    #[error("failed to commit: {0}")]
-    Commit(#[source] db::Error),
-    /// The collection cache did not reload.
-    #[error("failed to reload cache: {0}")]
-    CacheReload(#[source] db::Error),
     /// A transaction could not be created.
     #[error("failed to create transaction: {0}")]
     TxnCreate(#[source] db::Error),
