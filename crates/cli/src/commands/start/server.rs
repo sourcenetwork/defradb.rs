@@ -364,6 +364,8 @@ impl Node {
             http_scope,
             #[cfg(feature = "postgres")]
             pg_server,
+            #[cfg(feature = "embedded-vera")]
+            embedded_vera: acp_setup.embedded_vera,
         })
     }
 }

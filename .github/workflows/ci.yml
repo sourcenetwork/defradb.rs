@@ -178,6 +178,7 @@ jobs:
               cargo clippy -p defra-node --features p2p --all-targets -- -D warnings
               cargo clippy -p vera-embedded --features node --all-targets -- -D warnings
               cargo clippy -p defra-node --features embedded-vera --all-targets -- -D warnings
+              cargo clippy -p cli --features embedded-vera --all-targets -- -D warnings
               cargo clippy -p db --features p2p --all-targets -- -D warnings
               cargo clippy -p cli --features iroh,model-trace --all-targets -- -D warnings
           - group: minimal
@@ -438,6 +439,7 @@ jobs:
       - run: cargo nextest run --cargo-profile super-dev -p defra-node --features p2p
       - run: cargo nextest run --cargo-profile super-dev -p vera-embedded --features node --test hosted_node --test node_placement
       - run: cargo nextest run --cargo-profile super-dev -p defra-node --features embedded-vera --test embedded_vera
+      - run: cargo nextest run --cargo-profile super-dev -p cli --features embedded-vera --test embedded_vera --test embedded_vera_config
 
   wasm-check:
     name: WASM Build Check

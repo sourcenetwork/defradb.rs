@@ -2489,6 +2489,7 @@ dependencies = [
  "url",
  "urlencoding",
  "vera",
+ "vera-embedded",
  "workers",
  "zeroize",
 ]
