@@ -74,6 +74,8 @@ vera-modules = "0.1.2"
 alloy-sol-types.workspace = true
 acp = { path = "../../crates/acp" }
 vera = { path = "../../crates/vera" }
+# The Vera node the in-process provider tests host themselves.
+vera-embedded = { path = "../../crates/vera-embedded", features = ["node"] }
 libc = "0.2"
 ciborium = { workspace = true }
 serial_test = "4"
