@@ -76,6 +76,9 @@ lean_lib DocKeyScopes where
 lean_lib DocumentUpdateJournal where
 
 @[default_target]
+lean_lib NodeSigningChoice where
+
+@[default_target]
 lean_lib DefraConvergence where
 
 @[default_target]
@@ -208,6 +211,9 @@ lean_lib TxnId where
 lean_lib LensListing where
 
 @[default_target]
+lean_lib LensId where
+
+@[default_target]
 lean_lib JsonSubPathCut where
 
 @[default_target]
@@ -287,3 +293,6 @@ lean_lib VectorIndexDefaults where
 
 @[default_target]
 lean_lib CatalogPin where
+
+@[default_target]
+lean_lib IndexEqualKeyOrder where

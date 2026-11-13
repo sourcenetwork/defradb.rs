@@ -4,12 +4,14 @@
 //! With NAC enabled, a node whose ambient identity were the wildcard would be
 //! denied every operation. This test registers a node identity, enables NAC
 //! with that identity as owner, and asserts schema + document operations all
-//! succeed because the node operates as itself.
+//! succeed because the node operates as itself. An identity-only node keeps
+//! its identity but does not act as it, so NAC checks its own calls as
+//! anonymous.
 
 use crypto::Key;
 use defra_core::signing::{SigningConfig, SigningKeyType};
-use defra_node::Node;
-use identity::{Identity as _, RawIdentity};
+use defra_node::{Node, QueryRequest};
+use identity::{Did, Identity as _, RawIdentity};
 use regolith::sync::Mutex;
 
 /// Both tests mutate the process-global signing identity store, so they must
@@ -160,6 +162,90 @@ fn embedded_multi_mutation_and_multi_doc_create_under_nac() {
                 "expected document {name:?} to be present: {rendered}"
             );
         }
+
+        node.shutdown().await.unwrap();
+        defra_core::signing::clear_identity_store();
+    })
+    .unwrap()
+}
+
+/// An identity-only node with NAC enabled checks its own calls as anonymous,
+/// as Go checks a call that names no identity: they are denied. A request that
+/// names the node's DID keeps full access, in a transaction the node began
+/// too, and an anonymous request in that transaction is denied.
+#[test]
+fn an_identity_only_node_is_checked_as_its_caller_under_nac() {
+    workers::block_on(async {
+        let _serial = SIGNING_STORE_GUARD.lock().await;
+        defra_core::signing::clear_identity_store();
+        let did = register_local_node_identity();
+        let node = Node::builder()
+            .with_node_identity_did(&did)
+            .with_identity_only()
+            .with_node_acp_enabled()
+            .build()
+            .await
+            .expect("an identity-only node with NAC enabled should build");
+        let as_node = |query: &str| {
+            QueryRequest::new(query).with_identity(Some(Did::new(did.clone()).unwrap()))
+        };
+        let add = |name: &str| {
+            format!(r#"mutation {{ add_Widget(input: {{name: "{name}"}}) {{ _docID }} }}"#)
+        };
+
+        assert!(
+            node.add_collection("type Widget { name: String }")
+                .await
+                .is_err(),
+            "an anonymous schema change must be denied"
+        );
+        let owner = defra_core::RequestContext::default().with_identity(Some(did.clone()));
+        node.add_collection_as(&owner, "type Widget { name: String }")
+            .await
+            .expect("the node's DID keeps full access");
+
+        let anonymous = node.execute(&add("anonymous")).await;
+        assert!(
+            anonymous
+                .data
+                .as_ref()
+                .and_then(|data| data.get("add_Widget"))
+                .is_none()
+                && anonymous.errors.iter().any(|error| error
+                    .message
+                    .contains("not authorized to perform operation")),
+            "an anonymous create must be denied: {anonymous:?}"
+        );
+
+        let handle = node.begin_transaction(false).await.unwrap();
+        let named = node
+            .execute_request_in_txn(as_node(&add("node")), &handle)
+            .await;
+        assert!(named.errors.is_empty(), "{:?}", named.errors);
+        let anonymous = node
+            .execute_request_in_txn(QueryRequest::new(add("anonymous in txn")), &handle)
+            .await;
+        assert!(
+            anonymous
+                .data
+                .as_ref()
+                .and_then(|data| data.get("add_Widget"))
+                .is_none()
+                && anonymous.errors.iter().any(|error| error
+                    .message
+                    .contains("not authorized to perform operation")),
+            "an anonymous create in the transaction must be denied: {anonymous:?}"
+        );
+        node.commit_transaction(&handle).await.unwrap();
+
+        let read = node
+            .execute_request(as_node("query { Widget { name } }"))
+            .await;
+        assert!(read.errors.is_empty(), "{:?}", read.errors);
+        assert_eq!(
+            read.data.expect("query returns data")["Widget"],
+            serde_json::json!([{ "name": "node" }])
+        );
 
         node.shutdown().await.unwrap();
         defra_core::signing::clear_identity_store();

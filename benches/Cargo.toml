@@ -41,6 +41,7 @@ defra-http = { path = "../crates/http", features = ["test-utils"] }
 edge = { path = "../crates/edge", features = ["testing"] }
 document = { path = "../crates/document" }
 query = { path = "../crates/query" }
+lens = { path = "../crates/lens" }
 schema = { path = "../crates/schema" }
 storage = { path = "../crates/storage" }
 workers = { path = "../crates/workers" }
@@ -172,6 +173,10 @@ harness = false
 
 [[bench]]
 name = "parsing"
+harness = false
+
+[[bench]]
+name = "lens_index"
 harness = false
 
 [[bench]]

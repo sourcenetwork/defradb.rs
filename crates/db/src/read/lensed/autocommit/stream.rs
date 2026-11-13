@@ -212,6 +212,12 @@ impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
             .new_txn(true)
             .await
             .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
+        super::scan::refuse_owed_index(
+            &txn.systemstore()
+                .map_err(|e| query::error::QueryError::execution(e.to_string()))?,
+            &collection,
+        )
+        .await?;
         let inner = IndexDocStream::open(
             collection.clone(),
             txn.datastore()

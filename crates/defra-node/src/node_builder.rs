@@ -252,6 +252,17 @@ impl NodeBuilder {
         self
     }
 
+    /// Run a single-validator Vera node in this process and use it for
+    /// document ACP. The node starts before document ACP is set up and stops
+    /// in [`Node::shutdown`](crate::Node::shutdown).
+    ///
+    /// Requires the `embedded-vera` feature.
+    #[cfg(feature = "embedded-vera")]
+    pub fn with_embedded_vera(mut self, config: crate::EmbeddedVeraConfig) -> Self {
+        self.config.document_acp = DocumentAcpConfig::EmbeddedVera(config);
+        self
+    }
+
     /// Use an identity already registered in DefraDB's process-local signing registry.
     ///
     /// The caller must register the signer before calling [`NodeBuilder::build`].
@@ -438,6 +449,27 @@ impl NodeBuilder {
         self
     }
 
+    /// Keep the node identity [`NodeBuilder::with_signing_key`],
+    /// [`NodeBuilder::enable_signing`] or [`NodeBuilder::with_node_identity_did`]
+    /// gives the node, for P2P, the KMS and NAC, but write unsigned blocks and
+    /// run each request as its caller, never as the node: Go's `NodeIdentity`
+    /// with `EnableSigning` off.
+    ///
+    /// The node's own calls ([`Node::execute`], [`Node::add_collection`],
+    /// [`Node::begin_transaction`] and the rest that take no identity) then act
+    /// as no one. With node access control enabled they are checked as
+    /// anonymous, as Go checks a call that names no identity; a request that
+    /// names the node's DID keeps the node's full access. The transactions the
+    /// node begins are owned by no one, so requests that name no identity run
+    /// in them. A trusted document projector still acts as the node's DID.
+    ///
+    /// [`NodeBuilder::build`] fails with [`Error::IdentityOnlyNeedsIdentity`]
+    /// when nothing gives the node an identity.
+    pub fn with_identity_only(mut self) -> Self {
+        self.config.identity_only = true;
+        self
+    }
+
     /// Replicas' bytes per block chunk; the database default when unset.
     pub fn with_chunk_size(mut self, bytes: usize) -> Self {
         self.config.chunk_size = Some(bytes);
@@ -558,6 +590,8 @@ impl NodeBuilder {
         };
         let config = self.config.clone();
         let query_limits = config.query_limits;
+        #[cfg(feature = "http")]
+        let identity_only = config.identity_only;
         query_limits.check_fragment_nesting()?;
         let workers = self.workers.take();
         let node = assemble(|pool| self.open_store(pool, crdts), config, workers, extras).await?;
@@ -570,6 +604,7 @@ impl NodeBuilder {
                 address: http_cfg.address,
                 request_timeout: crate::timeout_secs(http_cfg.request_timeout),
                 query_limits,
+                no_signing: identity_only,
                 ..Default::default()
             };
             let server = defra_http::Server::from_arc_with_config(

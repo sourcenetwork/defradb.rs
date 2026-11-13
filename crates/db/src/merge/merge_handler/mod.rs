@@ -31,6 +31,7 @@ mod protected_update;
 mod recovery;
 pub mod se_merge;
 mod signature;
+mod stale_version;
 pub(crate) use signature::verify_signature_data;
 
 pub use error::{HistoryRejection, MergeError};

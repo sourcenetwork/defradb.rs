@@ -40,6 +40,10 @@ mod dac_api_tests;
 mod db_impls;
 pub mod dense_search;
 mod embedded_signer;
+#[cfg(feature = "embedded-vera")]
+mod embedded_vera;
+#[cfg(feature = "embedded-vera")]
+mod embedded_vera_config;
 mod error;
 #[cfg(feature = "libp2p")]
 mod libp2p_recovery;
@@ -112,6 +116,8 @@ pub use defra_p2p_adapter::{
 };
 pub use dense_search::{DenseHybridSearchHit, DenseHybridSearchRequest, DenseHybridSearchResponse};
 pub use embedded_signer::{EmbeddedSigner, EmbeddedSignerError};
+#[cfg(feature = "embedded-vera")]
+pub use embedded_vera_config::{EmbeddedVeraConfig, EmbeddedVeraDeployment};
 pub use error::{Error, Result};
 pub use events::EventName;
 pub use keyring;
@@ -245,12 +251,24 @@ pub struct Node {
     document_acp: Arc<dyn acp::DocumentACP>,
     embedding_config: db::EmbeddingClientConfig,
     node_identity_did: Option<String>,
+    /// Whether the node signs the blocks it writes with its identity; false
+    /// for an identity-only node ([`NodeBuilder::with_identity_only`]).
+    node_signs: bool,
+    /// The identity the node acts as when a caller names none: its own DID
+    /// when it signs with it, `None` on an identity-only node. It is the
+    /// default query actor, the principal of [`Node::node_context`] and so the
+    /// owner of the transactions the node begins.
     node_query_identity: Option<identity::Did>,
     /// The node's share of the network runtime; `None` when the node has
     /// no network work and was given no runtime.
     network: Option<NodeEdge>,
     /// The database's worker pool: the node's data-path calls run there.
     pool: Option<workers::Pool>,
+    /// The Vera node this node runs for document ACP, until shutdown takes
+    /// it. A node dropped without [`Node::shutdown`] drops it here, which
+    /// tells it to stop and waits for nothing.
+    #[cfg(feature = "embedded-vera")]
+    embedded_vera: kovan_queue::seg_queue::SegQueue<vera_embedded::HostedNode>,
     /// Document ACP is a remote provider: its calls reach the network, so
     /// they stay where they are made.
     remote_acp: bool,
@@ -285,7 +303,7 @@ struct TransactionCleanupConfig {
     sweep_interval: Duration,
 }
 
-#[cfg(feature = "otel")]
+#[cfg(any(feature = "otel", feature = "embedded-vera"))]
 fn single_slot<T>(value: Option<T>) -> kovan_queue::seg_queue::SegQueue<T>
 where
     T: 'static,
@@ -357,7 +375,8 @@ impl Node {
 
     /// Execute a GraphQL query or mutation.
     ///
-    /// A configured node identity is used as the document ACP actor. Prepared
+    /// A configured node identity is used as the document ACP actor, except on
+    /// an identity-only node, where the request acts as no one. Prepared
     /// requests with an explicit identity retain that actor instead.
     pub async fn execute(&self, query_str: &str) -> QueryResponse {
         self.execute_request_once(QueryRequest::new(query_str))
@@ -371,9 +390,9 @@ impl Node {
     ///
     /// A caller's key on the request ([`EmbeddedSigner::attach`]) signs in
     /// place of the node's. The request must name that key's DID as its actor,
-    /// native ACP authorizes that actor, and the node stays the transaction
-    /// principal. This trusted embedded capability does not authenticate an
-    /// HTTP caller.
+    /// native ACP authorizes that actor, and the node's principal (its DID, or
+    /// no one on an identity-only node) stays the transaction principal. This
+    /// trusted embedded capability does not authenticate an HTTP caller.
     pub async fn execute_request(&self, request: QueryRequest) -> QueryResponse {
         self.execute_prepared_request(request, None).await
     }
@@ -496,7 +515,7 @@ impl Node {
                 request,
                 Some(handle.clone()),
                 signing_config,
-                node_did.to_owned(),
+                self.node_principal(),
             )
             .await;
             if response.has_errors() {
@@ -538,7 +557,16 @@ impl Node {
             Err(error) => return QueryResponse::error(error.to_string()),
         };
         let request = self.with_default_query_identity(request);
-        let Some(node_identity_did) = self.node_identity_did.as_deref() else {
+        // A request is signed when the node signs with its identity, or when
+        // the caller brings its own key. Otherwise an identity-only node runs
+        // it unsigned, as its caller, as Go's `NodeIdentity` without
+        // `EnableSigning` does. Either way it runs under the node's principal
+        // (`node_principal`), the owner of the transactions the node begins.
+        let signing_identity = self
+            .node_identity_did
+            .as_deref()
+            .filter(|_| self.node_signs || caller_signer.is_some());
+        let Some(node_identity_did) = signing_identity else {
             if caller_signer.is_some() {
                 return QueryResponse::error(
                     "explicit embedded signing requires a configured node identity",
@@ -586,7 +614,7 @@ impl Node {
             request,
             txn_handle,
             signing_config,
-            node_identity_did.to_string(),
+            self.node_principal(),
         )
         .await
     }
@@ -640,18 +668,31 @@ impl Node {
         self.ops().on_acp(make).await
     }
 
-    /// The context the node's own operations run in: the node's identity acts
-    /// in it, so DB-layer NAC checks resolve to the node itself (which holds
-    /// full access). Without a node identity it is [`RequestContext::ambient`].
+    /// The context the node's own operations run in, and the owner of the
+    /// transactions it begins: the node's principal ([`Self::node_principal`])
+    /// acts in it. On a node that acts as its identity, DB-layer NAC checks
+    /// resolve to the node itself (which holds full access). Without a node
+    /// identity, or on an identity-only node, it is [`RequestContext::ambient`]
+    /// and NAC checks the node's own operations as anonymous, as Go's node
+    /// checks a call that names no identity.
     fn node_context(&self) -> RequestContext {
         let context = RequestContext::ambient();
-        match &self.node_identity_did {
-            Some(did) => context.with_identity(Some(did.clone())),
+        match self.node_principal() {
+            Some(did) => context.with_identity(Some(did)),
             None => context,
         }
     }
 
-    /// DID used as the node identity for signing, when configured.
+    /// The identity the node acts as when a caller names none: its DID on a
+    /// node that signs with it, no one on an identity-only node or a node
+    /// without an identity.
+    fn node_principal(&self) -> Option<String> {
+        self.node_query_identity.as_ref().map(ToString::to_string)
+    }
+
+    /// The node's identity DID, when configured: the DID it signs with, or
+    /// on an identity-only node the DID it keeps for P2P, the KMS and NAC
+    /// without signing.
     pub fn node_identity_did(&self) -> Option<&str> {
         self.node_identity_did.as_deref()
     }
@@ -746,7 +787,7 @@ impl Node {
         transform: Option<&str>,
     ) -> Result<Vec<CollectionVersion>> {
         self.ops()
-            .add_view(context, source_query, target_sdl, transform)
+            .add_view(&self.caller(context), source_query, target_sdl, transform)
             .await
     }
 
@@ -757,7 +798,9 @@ impl Node {
         context: &RequestContext,
         selector: db::CollectionSelector,
     ) -> Result<()> {
-        self.ops().refresh_views(context, selector).await
+        self.ops()
+            .refresh_views(&self.caller(context), selector)
+            .await
     }
 
     /// Eagerly migrate and cache every known-version document in a collection.
@@ -1165,7 +1208,10 @@ impl Node {
     /// with no error surfaced. Drop the node after shutdown completes.
     ///
     /// Every step of the teardown runs; the database close error, if any, is
-    /// returned once it has. Only the first caller gets that outcome: a
+    /// returned once it has. With `embedded-vera`, a Vera node that did not
+    /// stop is returned when the database closed cleanly; when both fail the
+    /// database error is returned and the Vera one is logged. Only the first
+    /// caller gets that outcome: a
     /// concurrent or later caller waits for the teardown and returns `Ok`.
     pub async fn shutdown(&self) -> Result<()> {
         // The first caller tears the node down; a concurrent caller waits for
@@ -1194,6 +1240,22 @@ impl Node {
         #[cfg(feature = "managed-p2p")]
         if let Some(p2p) = &self.p2p {
             p2p.stop_transport().await;
+        }
+
+        // No request and no peer asks for an access decision any more, and
+        // the redrive has stopped: the Vera node stops while the network
+        // runtime still times the wait.
+        // A failed stop is returned once the rest of the teardown has run: the
+        // Vera node may still hold its directory.
+        #[cfg(feature = "embedded-vera")]
+        let vera_stopped = match self.embedded_vera.pop() {
+            Some(vera) => vera.stop().await,
+            None => Ok(()),
+        };
+        #[cfg(feature = "embedded-vera")]
+        match &vera_stopped {
+            Ok(()) => tracing::info!("embedded Vera node stopped"),
+            Err(error) => tracing::warn!(%error, "embedded Vera node did not stop cleanly"),
         }
 
         // Stop accepting the rest of the node's network work and drain what is
@@ -1280,7 +1342,10 @@ impl Node {
             .store(true, std::sync::atomic::Ordering::SeqCst);
         self.shutdown_notify.notify_waiters();
         tracing::info!("node shutdown: complete");
-        closed.map_err(Error::from)
+        closed.map_err(Error::from)?;
+        #[cfg(feature = "embedded-vera")]
+        vera_stopped?;
+        Ok(())
     }
 
     async fn wait_for_shutdown(&self) {
@@ -1590,6 +1655,9 @@ mod p2p_bench;
 
 #[cfg(all(test, feature = "p2p"))]
 mod p2p_tests;
+
+#[cfg(all(test, feature = "p2p"))]
+mod p2p_line_tests;
 
 #[cfg(test)]
 mod owner_observation_tests;

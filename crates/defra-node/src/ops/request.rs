@@ -122,8 +122,10 @@ impl Node {
     }
 
     /// Who owns the transaction `context` begins or ends: the identity it
-    /// names, or the node, as a request that names none runs as the node
-    /// inside a transaction ([`Node::execute_request_in_txn`]).
+    /// names, or else the node's principal, which a request that names none
+    /// runs under inside a transaction ([`Node::execute_request_in_txn`]): the
+    /// node on a node that acts as its identity, no one on an identity-only
+    /// node.
     fn txn_owner(&self, context: &RequestContext) -> RequestContext {
         match context.identity() {
             Some(_) => context.clone(),

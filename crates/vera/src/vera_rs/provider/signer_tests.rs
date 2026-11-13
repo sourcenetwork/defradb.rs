@@ -17,11 +17,12 @@ use vera_domain::NativeTx;
 
 use super::transport_tests::{Silent, Workers};
 use super::{trusted_key, IAcp, ProviderError, VeraProvider, VeraRsProvider};
-use crate::vera_rs::bearer;
 use crate::vera_rs::client::tests::{Recorded, TRUSTED_KEY};
 use crate::vera_rs::client::VeraRsClient;
+use crate::vera_rs::did_spelling;
 use crate::vera_rs::signer::admission;
 use crate::vera_rs::signer::tests::{Recording, Returns};
+use crate::vera_rs::signer::DelegationSigner as _;
 
 async fn provider(
     signer: Arc<Recording>,
@@ -40,14 +41,14 @@ async fn provider(
     })
     .await;
     let worker = workers.next();
-    let key = admission::actor_key(signer.as_ref()).expect("secp256k1 actor");
+    admission::actor_key(signer.as_ref()).expect("secp256k1 actor");
     VeraRsProvider {
         light_client: Arc::new(light_client),
         client: VeraRsClient::with_transport(rpc),
         worker_did: worker.did().to_owned(),
         deployment: worker.deployment_id(),
         worker: Arc::new(regolith::sync::Mutex::new(worker)),
-        actor_did: bearer::did_from_key(&key, false),
+        actor_did: did_spelling::defra(signer.did()).into_owned(),
         trusted: trusted_key(TRUSTED_KEY).expect("trusted key"),
         signer,
         sync_timeout: Duration::from_secs(5),

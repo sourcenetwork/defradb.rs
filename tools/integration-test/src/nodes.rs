@@ -39,6 +39,8 @@ pub struct NodeSpec {
     pub nac_owner: Option<u64>,
     /// The node's admission limits, if not the defaults.
     pub admission: Option<crate::actions::AdmissionSpec>,
+    /// The node's network is iroh rather than libp2p.
+    pub iroh_network: bool,
     /// The node's own identity, Go's `NodeIdentity(seed)`; the node signs as it.
     pub node_identity: Option<u64>,
     /// The key type the node signs with, when it signs.
@@ -98,10 +100,12 @@ impl TestNode {
             Some(address) => address.clone(),
             None => "/ip4/127.0.0.1/tcp/0".to_owned(),
         };
-        // Admission limits are a Rust receiver's options: under go-http the
-        // node is a Rust node reached over HTTP, as rust-http does.
+        // Admission limits and iroh are a Rust node's options: under go-http
+        // the node is a Rust node reached over HTTP, as rust-http does.
         let client_type = match client_type {
-            ClientType::GoHttp if spec.admission.is_some() => ClientType::RustHttp,
+            ClientType::GoHttp if spec.admission.is_some() || spec.iroh_network => {
+                ClientType::RustHttp
+            }
             other => other,
         };
         match client_type {
@@ -306,10 +310,17 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     if let Some(dir) = &spec.dir {
         builder = builder.data_path(dir.path());
     }
-    if spec.network {
+    if spec.network && spec.iroh_network {
+        builder = builder.with_p2p(defra_node::P2PConfig {
+            bind_addr: Some(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
+            relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
+            discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
+            ..Default::default()
+        });
+    } else if spec.network {
         builder = builder.with_libp2p(listen);
     }
-    if let (true, Some(limits)) = (spec.network, &spec.admission) {
+    if let (true, false, Some(limits)) = (spec.network, spec.iroh_network, &spec.admission) {
         let mut sync = defra_node::SyncTuning {
             max_pending_dags: limits.max_pending_dags,
             rate_limit_burst: limits.rate_limit_burst,
@@ -337,6 +348,11 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     }
     if spec.node_identity.is_some() || spec.signing.is_some() {
         builder = builder.with_signing_key(signing_key(spec));
+    }
+    // Go keeps the identity and the signing apart: a node with an identity
+    // signs only when the scenario turns signing on.
+    if spec.node_identity.is_some() && spec.signing.is_none() {
+        builder = builder.with_identity_only();
     }
     if spec.enable_nac {
         builder = match &spec.nac_owner {
@@ -392,9 +408,8 @@ fn go_node_key(spec: &NodeSpec) -> Option<crate::go_node::NodeKey> {
 /// The public key (hex) and key type a node started as `spec` signs blocks
 /// with, as their signature headers name it; `None` when it does not sign.
 pub fn signer_public_key(spec: &NodeSpec) -> Option<(String, KeyType)> {
-    if spec.node_identity.is_none() && spec.signing.is_none() {
-        return None;
-    }
+    // An identity alone signs nothing.
+    spec.signing?;
     let public = |key_type, key: Vec<u8>| {
         ::identity::RawIdentity::from_bytes(key_type, &key)
             .expect("a valid key")

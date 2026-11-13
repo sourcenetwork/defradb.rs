@@ -11,9 +11,14 @@ use identity::Did;
 use schema::CollectionVersion;
 use storage::corekv::Store;
 
-/// Adapter that implements ViewOperations using the database.
-pub struct ViewAdapter<S: Store> {
+/// Adapter that implements ViewOperations using the database. A request in a
+/// transaction runs in it, through `registry`.
+pub struct ViewAdapter<S>
+where
+    S: Store + 'static,
+{
     database: Arc<db::DB<S>>,
+    registry: Arc<db::DbTransactionRegistry<S>>,
     query_limits: query::QueryLimits,
     document_acp: Option<Arc<dyn acp::DocumentACP>>,
     /// The request this adapter serves, for one bound to it.
@@ -22,9 +27,14 @@ pub struct ViewAdapter<S: Store> {
 
 impl<S: Store + 'static> ViewAdapter<S> {
     /// Create a new adapter wrapping the given database and query limits.
-    pub fn new(database: Arc<db::DB<S>>, query_limits: query::QueryLimits) -> Self {
+    pub fn new(
+        database: Arc<db::DB<S>>,
+        registry: Arc<db::DbTransactionRegistry<S>>,
+        query_limits: query::QueryLimits,
+    ) -> Self {
         Self {
             database,
+            registry,
             query_limits,
             document_acp: None,
             context: None,
@@ -34,14 +44,13 @@ impl<S: Store + 'static> ViewAdapter<S> {
     /// Create a new adapter with document ACP registration support.
     pub fn new_with_acp(
         database: Arc<db::DB<S>>,
+        registry: Arc<db::DbTransactionRegistry<S>>,
         query_limits: query::QueryLimits,
         document_acp: Arc<dyn acp::DocumentACP>,
     ) -> Self {
         Self {
-            database,
-            query_limits,
             document_acp: Some(document_acp),
-            context: None,
+            ..Self::new(database, registry, query_limits)
         }
     }
 
@@ -52,18 +61,25 @@ impl<S: Store + 'static> ViewAdapter<S> {
     /// Create an Arc-wrapped adapter.
     pub fn new_arc(
         database: Arc<db::DB<S>>,
+        registry: Arc<db::DbTransactionRegistry<S>>,
         query_limits: query::QueryLimits,
     ) -> Arc<dyn ViewOperations> {
-        Arc::new(Self::new(database, query_limits))
+        Arc::new(Self::new(database, registry, query_limits))
     }
 
     /// Create an Arc-wrapped adapter with document ACP registration support.
     pub fn new_arc_with_acp(
         database: Arc<db::DB<S>>,
+        registry: Arc<db::DbTransactionRegistry<S>>,
         query_limits: query::QueryLimits,
         document_acp: Arc<dyn acp::DocumentACP>,
     ) -> Arc<dyn ViewOperations> {
-        Arc::new(Self::new_with_acp(database, query_limits, document_acp))
+        Arc::new(Self::new_with_acp(
+            database,
+            registry,
+            query_limits,
+            document_acp,
+        ))
     }
 }
 
@@ -72,6 +88,7 @@ impl<S: Store + 'static> ViewOperations for ViewAdapter<S> {
     fn bind_request(&self, context: &RequestContext) -> Option<Arc<dyn ViewOperations>> {
         Some(Arc::new(Self {
             database: Arc::clone(&self.database),
+            registry: Arc::clone(&self.registry),
             query_limits: self.query_limits,
             document_acp: self.document_acp.clone(),
             context: Some(context.clone()),
@@ -89,12 +106,21 @@ impl<S: Store + 'static> ViewOperations for ViewAdapter<S> {
             .await
             .map_err(|e| format!("{}", e))?;
 
-        let known_types: rapidhash::RapidHashSet<String> = self
+        let mut known_types: rapidhash::RapidHashSet<String> = self
             .database
             .list_collections()
             .unwrap_or_default()
             .into_iter()
             .collect();
+        let txn = self.context().txn().map(|txn| txn.to_string());
+        if let Some(txn) = &txn {
+            let in_txn = self
+                .registry
+                .get_collections_in_txn_as(&self.context(), txn)
+                .await
+                .map_err(|e| format!("{}", e))?;
+            known_types.extend(in_txn.into_iter().map(|version| version.name));
+        }
 
         let collections = query::parse_sdl_with_known_types(sdl, known_types)
             .map_err(|e| format!("failed to parse view SDL: {}", e))?;
@@ -156,25 +182,45 @@ impl<S: Store + 'static> ViewOperations for ViewAdapter<S> {
             }
             None => None,
         };
-        let created_versions = if let Some(document_acp) = &self.document_acp {
-            self.database
-                .create_collections_atomic_with_acp_registration_as(
+        if let Some(txn) = &txn {
+            let materialized = view_collections
+                .iter()
+                .filter(|col| db::is_refreshable_view(col))
+                .map(|col| col.name.clone())
+                .collect();
+            let downsample = view_collections
+                .iter()
+                .filter(|col| col.downsample_interval.is_some())
+                .map(|col| col.name.clone())
+                .collect();
+            return self
+                .registry
+                .add_view_in_txn(
                     &context,
+                    txn,
                     view_collections,
-                    document_acp.clone(),
+                    self.document_acp.clone(),
                     creator,
+                    materialized,
+                    downsample,
                 )
                 .await
-        } else {
-            self.database
-                .create_collections_atomic_as(&context, view_collections)
-                .await
+                .map_err(|e| format!("failed to create view collection: {}", e));
         }
-        .map_err(|e| format!("failed to create view collection: {}", e))?;
+        let created_versions = self
+            .database
+            .create_view_collections_as(
+                &context,
+                view_collections,
+                self.document_acp.clone(),
+                creator,
+            )
+            .await
+            .map_err(|e| format!("failed to create view collection: {}", e))?;
 
         let materialized_names: Vec<String> = created_versions
             .iter()
-            .filter(|col| col.query.is_some() && col.is_materialized && !col.is_embedded_only)
+            .filter(|col| db::is_refreshable_view(col))
             .map(|col| col.name.clone())
             .collect();
         let downsample_names: Vec<String> = created_versions
@@ -206,6 +252,14 @@ impl<S: Store + 'static> ViewOperations for ViewAdapter<S> {
             .await
             .map_err(|e| format!("{}", e))?;
 
+        let context = self.context();
+        if let Some(txn) = context.txn() {
+            return self
+                .registry
+                .refresh_views_in_txn(&context, &txn.to_string(), options)
+                .await
+                .map_err(|e| format!("failed to refresh views: {}", e));
+        }
         self.database
             .refresh_views(options)
             .await
@@ -225,3 +279,7 @@ impl<S: Store + 'static> ViewOperations for ViewAdapter<S> {
             .map_err(|e| format!("failed to GC downsample histories: {}", e))
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/view_adapter.rs"]
+mod tests;

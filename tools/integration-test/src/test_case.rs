@@ -28,6 +28,8 @@ pub struct State {
     pub subscriptions: crate::actions::Subscriptions,
     /// Stream-protocol streams the test keeps open across actions.
     pub streams: crate::actions::stream::KeptStreams,
+    /// How many nodes the test has started, Go's next node index.
+    pub go_nodes_started: u64,
 }
 
 /// The transactions a test has begun. Shared by every clone of the state, and
@@ -105,6 +107,28 @@ impl State {
     /// The node identity seed node `name` was started with, if any.
     pub fn node_identity_of(&self, name: &str) -> Option<u64> {
         self.slot(name).and_then(|slot| slot.spec.node_identity)
+    }
+
+    /// The index Go's harness gives the next node the test starts, which
+    /// names its `NodeIdentity`: how many it started before, an unnamed one
+    /// included, closed ones still counted. The default node every test
+    /// begins with is not one of them, as Go has no counterpart of it.
+    pub fn next_go_node_index(&mut self) -> u64 {
+        let index = self.go_nodes_started;
+        self.go_nodes_started += 1;
+        index
+    }
+
+    /// The client seed that acts as node `name`'s identity, as an
+    /// `identityNode` argument asks.
+    pub fn node_as_client(&self, op: &str, name: &str) -> Result<u64, Failure> {
+        self.node_identity_of(name)
+            .and_then(|seed| crate::scenario::identity::NODE_IDENTITY_BASE.checked_add(seed))
+            .ok_or_else(|| {
+                Failure::unsupported(format!(
+                    "{op} argument identityNode: node {name} was started with no identity"
+                ))
+            })
     }
 
     /// The public key (hex) and key type node `name` signs blocks with, if it

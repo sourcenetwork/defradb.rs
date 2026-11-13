@@ -43,6 +43,7 @@ mod lifecycle;
 pub(crate) mod owned;
 mod purge;
 mod schemas;
+mod views;
 
 use owned::OwnedTxn;
 

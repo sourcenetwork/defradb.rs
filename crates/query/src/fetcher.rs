@@ -482,12 +482,6 @@ pub trait DocFetcher: MaybeSendSync {
         false
     }
 
-    /// Whether stored index entries describe the documents this fetcher returns.
-    /// Read-time lens transforms may change indexed values without persisting them.
-    async fn indexes_match_documents(&self, _collection_name: &str) -> Result<bool> {
-        Ok(true)
-    }
-
     /// Estimate the index entries `params` would visit, bounded by `cap`.
     ///
     /// Index selection uses this to prefer the most selective usable index.

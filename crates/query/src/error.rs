@@ -181,6 +181,12 @@ pub enum QueryError {
     #[error("external input required")]
     NeedsInput(crate::prepared::PreparedInputRequest),
 
+    /// An index scan found a reindex owed on the collection it planned from:
+    /// the index no longer holds what reads see, so the select re-plans as a
+    /// collection scan. It never reaches a client.
+    #[error("collection '{0}' owes a reindex since this query planned its index")]
+    IndexOwed(String),
+
     /// Schema validation error
     #[error("schema error: {0}")]
     Schema(#[from] schema::SchemaError),

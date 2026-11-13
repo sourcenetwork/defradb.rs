@@ -178,6 +178,11 @@ pub enum Error {
     #[error("failed to create Vera provider: {0}")]
     VeraProvider(#[source] vera::ProviderError),
 
+    /// The Vera node this node runs did not start or did not stop.
+    #[cfg(feature = "embedded-vera")]
+    #[error(transparent)]
+    EmbeddedVera(#[from] vera_embedded::HostError),
+
     /// A call did not run on the worker pool.
     #[error("the call did not run on the worker pool: {0}")]
     WorkerPoolCall(#[source] workers::Error),
@@ -240,6 +245,10 @@ pub enum Error {
     /// The node identity DID given to the builder is invalid.
     #[error("invalid node identity DID: {0}")]
     InvalidNodeIdentityDid(#[source] identity::Error),
+    /// [`crate::NodeBuilder::with_identity_only`] on a node with no identity
+    /// to keep.
+    #[error("an identity-only node needs a node identity")]
+    IdentityOnlyNeedsIdentity,
     /// Node ACP needs a node identity.
     #[error("can not start nac without identity")]
     NodeAcpNeedsIdentity,

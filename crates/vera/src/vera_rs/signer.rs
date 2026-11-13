@@ -11,8 +11,14 @@ use std::fmt;
 use defra_core::thread_bounds::{MaybeBoxFuture, MaybeSendSync};
 
 pub(super) mod admission;
+mod der;
+mod ed25519;
+mod p256;
 mod secp256k1;
 
+pub use der::signature_from_der;
+pub use ed25519::Ed25519Signer;
+pub use p256::P256Signer;
 pub use secp256k1::Secp256k1Signer;
 
 /// The JWS algorithm of a delegation token.
@@ -21,6 +27,10 @@ pub use secp256k1::Secp256k1Signer;
 pub enum DelegationAlgorithm {
     /// ECDSA over secp256k1 with SHA-256.
     Es256k,
+    /// Ed25519.
+    EdDsa,
+    /// ECDSA over P-256 with SHA-256.
+    Es256,
 }
 
 impl DelegationAlgorithm {
@@ -28,6 +38,8 @@ impl DelegationAlgorithm {
     pub fn name(self) -> &'static str {
         match self {
             Self::Es256k => "ES256K",
+            Self::EdDsa => "EdDSA",
+            Self::Es256 => "ES256",
         }
     }
 }
@@ -40,17 +52,19 @@ impl fmt::Display for DelegationAlgorithm {
 
 /// Signs delegation tokens for one actor.
 pub trait DelegationSigner: MaybeSendSync + 'static {
-    /// The actor's `did:key`. For a secp256k1 key the provider names the
-    /// actor by the uncompressed spelling, whichever one this returns.
+    /// The actor's `did:key`, of the key type the algorithm signs with. For
+    /// a secp256k1 or P-256 key the provider names the actor by the
+    /// uncompressed spelling, whichever one this returns.
     fn did(&self) -> &str;
 
     /// The algorithm [`sign`](Self::sign) signs with.
     fn algorithm(&self) -> DelegationAlgorithm;
 
     /// Signs `signing_input`, a token's `header.payload`, and returns the JWS
-    /// signature. For ES256K that is the 64 bytes `r || s`, with `s` in the
-    /// lower half of the curve order, over the SHA-256 digest of
-    /// `signing_input`.
+    /// signature. For ES256K and ES256 that is the 64 bytes `r || s`, with
+    /// `s` in the lower half of the curve order, over the SHA-256 digest of
+    /// `signing_input`; [`signature_from_der`] gives it from a DER signature.
+    /// For EdDSA it is the 64-byte Ed25519 signature of `signing_input`.
     fn sign<'a>(
         &'a self,
         signing_input: &'a [u8],
@@ -65,11 +79,20 @@ pub enum SignerError {
     #[error("signing failed: {0}")]
     Failed(String),
 
-    /// The bytes are not a secp256k1 private key.
+    /// The bytes are not a private key of the curve.
     #[error(transparent)]
     Key(#[from] k256::ecdsa::Error),
 
-    #[error("{did} is not a secp256k1 did:key, which an {algorithm} delegation needs: {reason}")]
+    #[error("an {algorithm} private key is 32 bytes, or 64 with its public key, not {length}")]
+    KeyLength {
+        algorithm: DelegationAlgorithm,
+        length: usize,
+    },
+
+    #[error("the signature is not an {algorithm} signature in ASN.1 DER")]
+    Der { algorithm: DelegationAlgorithm },
+
+    #[error("{did} does not name a key an {algorithm} delegation is signed with: {reason}")]
     Did {
         did: String,
         algorithm: DelegationAlgorithm,
@@ -88,7 +111,7 @@ pub enum SignerError {
 
     #[error(
         "the signer for {did} returned a signature whose r or s is not a scalar of the \
-         secp256k1 order"
+         curve order"
     )]
     Scalar { did: String },
 
@@ -102,5 +125,7 @@ pub enum SignerError {
     Unverified { did: String },
 }
 
+#[cfg(test)]
+mod key_type_tests;
 #[cfg(test)]
 pub(super) mod tests;

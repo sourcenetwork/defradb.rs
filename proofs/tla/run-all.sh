@@ -420,6 +420,8 @@ RUNS=(
   "MC_IndexInTxn_Red_StaleCatalog.cfg IndexInTxn.tla RED" # stale cached definition in the txn (INV_SeesOwnChange)
   "MC_IndexInTxn_Red_NoAwait.cfg IndexInTxn.tla RED" # commit returns before the backfill (INV_BuiltWhenCommitReturns)
   "MC_IndexInTxn_Red_NoSavepoint.cfg IndexInTxn.tla RED" # a failed change keeps its partial writes and the commit lands them (INV_FailedChangeLeavesNothing)
+  "MC_IndexInTxn_Red_StaleSnapshot.cfg IndexInTxn.tla RED" # follow-up work reads a pre-commit snapshot: a txn refresh misses its own document (INV_WorkSeesTxnWrites)
+  "MC_IndexInTxn_Red_RefreshAtRequest.cfg IndexInTxn.tla RED" # refresh rebuilt when asked, outside the txn (INV_WorkSeesTxnWrites)
   "MC_EncryptedIndexAutocommit_Green.cfg EncryptedIndexAutocommit.tla GREEN" # #2755: an encrypted index add or delete outside a txn reads the definition in its txn and re-runs on a conflict
   "MC_EncryptedIndexAutocommit_Red_CacheRead.cfg EncryptedIndexAutocommit.tla RED" # decides from the cache and blind-writes: a concurrent add is lost (INV_NoLostIndex)
   "MC_EncryptedIndexAutocommit_Red_SingleAttempt.cfg EncryptedIndexAutocommit.tla RED" # one attempt: a valid add is refused with the conflict (INV_NoValidRefused)
@@ -458,6 +460,14 @@ RUNS=(
   "MC_AddViewTransform_Red_SyncMemoryOnly_Restart.cfg AddViewTransform.tla RED" # before the fix: memory-only sync and a memory check store a lens a restart loses (INV_StoredTransformExists)
   "MC_AddViewTransform_Green_NacBefore.cfg AddViewTransform.tla GREEN" # the code as it is: lenses from either path decided in the transaction; NAC still before it, every other promise holds
   "MC_AddViewTransform_Red_KnownGap_NacBefore.cfg AddViewTransform.tla RED" # known gap (#2736): NAC ViewAdd read before the view's transaction (INV_NoViewWithoutPermission)
+  "MC_LensIndexAnswer_Green.cfg LensIndexAnswer.tla GREEN" # #2379: an index answers only when no reindex is owed; schema changes and off-version merges owe a fresh record; a rebuild clears only its own
+  "MC_LensIndexAnswer_Red_NoGate.cfg LensIndexAnswer.tla RED" # index answers while owed (INV_IndexMatchesReads)
+  "MC_LensIndexAnswer_Red_LensGate.cfg LensIndexAnswer.tla RED" # main before #2379: no index once any lens exists (INV_SettledIndexAnswers)
+  "MC_LensIndexAnswer_Red_NoSchemaOwe.cfg LensIndexAnswer.tla RED" # schema change owes nothing (INV_IndexMatchesReads)
+  "MC_LensIndexAnswer_Red_NoMergeOwe.cfg LensIndexAnswer.tla RED" # off-version merge owes nothing (INV_IndexMatchesReads)
+  "MC_LensIndexAnswer_Red_SkipIfOwed.cfg LensIndexAnswer.tla RED" # merge skips owing while a record stands (INV_IndexMatchesReads)
+  "MC_LensIndexAnswer_Red_NoTokenCheck.cfg LensIndexAnswer.tla RED" # rebuild clears a newer record (INV_IndexMatchesReads)
+  "MC_LensIndexAnswer_Red_TrustPlan.cfg LensIndexAnswer.tla RED" # scan trusts a plan made before an owing merge (INV_ScanMatchesReads)
   "MC_VerifySignature_Green_Pool.cfg VerifySignature.tla GREEN" # #2724: with no transaction, NAC, block and document ACP read one read-only view
   "MC_VerifySignature_Green_Txn.cfg VerifySignature.tla GREEN" # #2724: in the caller's transaction, all three read its view, pending writes included
   "MC_VerifySignature_Red_NoNac.cfg VerifySignature.tla RED" # NAC check left out (INV_VerifiedAtOnePoint)
@@ -899,6 +909,12 @@ RUNS=(
   "MC_GossipInbox_Green.cfg GossipInbox.tla GREEN" # control input never waits and received gossip is dropped when full: every endpoint request is answered
   "MC_GossipInbox_Red_Shared.cfg GossipInbox.tla RED" # one bounded inbox: peers fill it while the driver waits on events, the endpoint loop stalls (LIVE_RequestAnswered)
   "MC_GossipInbox_Red_LossyShared.cfg GossipInbox.tla RED" # received dropped when full but control waits in the same queue: same stall (LIVE_RequestAnswered)
+  "MC_GossipDelivery_Green.cfg MC_GossipDelivery_Common.tla GREEN" # #2820: every gossip broadcast fits a frame; a publish over the budget goes by direct push; no message is lost unreported
+  "MC_GossipDelivery_Red_LimitMismatch.cfg MC_GossipDelivery_Common.tla RED" # gossip sized at the frame limit, forgetting the topic: an accepted broadcast cannot be framed (INV_BroadcastFits)
+  "MC_GossipDelivery_Red_NoFallback.cfg MC_GossipDelivery_Common.tla RED" # a publish over the budget goes to gossip, which drops it silently (INV_NoSilentLoss)
+  "MC_GossipDelivery_Red_NeighboursOnly.cfg MC_GossipDelivery_Common.tla RED" # the direct push reaches only gossip's neighbours, not a connected subscriber beyond them (INV_NoSilentLoss)
+  "MC_GossipDelivery_Red_EndStream.cfg MC_GossipDelivery_Common.tla RED" # an unsendable frame ends the stream and the queue behind it (INV_NoSilentLoss)
+  "MC_GossipDelivery_Red_SilentFailure.cfg MC_GossipDelivery_Common.tla RED" # a failed stream drops its queue without a report (INV_NoSilentLoss)
   "MC_ServiceRecords_Green.cfg ServiceRecords.tla GREEN" # #2080: a record replaces only a lower seq, an expired record is never used, a stale pointer triggers a query
   "MC_ServiceRecords_Red_AnySeq.cfg ServiceRecords.tla RED" # the last record in wins: a late older record replaces a newer one (INV_SeqNeverGoesBack)
   "MC_ServiceRecords_Red_NoExpiryCheck.cfg ServiceRecords.tla RED" # peers picked from an expired record (INV_NoExpiredChosen)
@@ -980,6 +996,12 @@ RUNS=(
   "MC_NodeDrop_Red_SweepOutsideSet.cfg NodeDrop.tla RED" # the sweep in a slot of its own outlives a dropped node and keeps its pool alive
   "MC_NodeDrop_Red_NoAbortOnDrop.cfg NodeDrop.tla RED" # a shutdown set that does not abort on drop leaves every task holding the database
   "MC_NodeDrop_Red_DropAwaits.cfg NodeDrop.tla RED" # the dropping thread waits for an aborted task to end
+  "MC_EmbeddedVeraStop_Green.cfg EmbeddedVeraStop.tla GREEN" # requests drain before the embedded Vera node stops; the stop has a deadline and frees the directory
+  "MC_EmbeddedVeraStop_Red_DecisionCache.cfg EmbeddedVeraStop.tla RED" # a remembered decision is given after the Vera node stopped
+  "MC_EmbeddedVeraStop_Red_StopBeforeRequests.cfg EmbeddedVeraStop.tla RED" # the Vera node stops under a request the node admitted
+  "MC_EmbeddedVeraStop_Red_NoStopDeadline.cfg EmbeddedVeraStop.tla RED" # a Vera node that hangs while stopping keeps shutdown waiting forever
+  "MC_EmbeddedVeraStop_Red_LinkStaysOpen.cfg EmbeddedVeraStop.tla RED" # a transport left open keeps the stopped Vera node's directory locked
+  "MC_EmbeddedVeraStop_Red_NoStartDeadline.cfg EmbeddedVeraStop.tla RED" # the next start waits forever for a directory a hung Vera node holds
   "MC_NodeStartup_Green.cfg NodeStartup.tla GREEN" # every config starts as asked or fails holding nothing; startup ends
   "MC_NodeStartup_Red_IrohDefaultLadder.cfg NodeStartup.tla RED" # iroh keeps the default retry ladder (INV_OneSchedule)
   "MC_NodeStartup_Red_ListenLeak.cfg NodeStartup.tla RED" # failed listen leaves the host running (INV_FailedHoldsNothing)
@@ -1018,6 +1040,9 @@ RUNS=(
   "MC_PubsubRpcReply_Green.cfg PubsubRpcReply.tla GREEN" # three peers, each request copy direct or relayed in every order: every answer reaches the asker, the deadline cuts off only an answer not yet sent or still on its way, the asker stops
   "MC_PubsubRpcReply_Red_AnswerRelay.cfg PubsubRpcReply.tla RED" # a peer answers the relay that handed it the request (INV_NoAnswerLost)
   "MC_PubsubRpcReply_Red_DeadlineCutsOff.cfg PubsubRpcReply.tla RED" # the same: every peer answered, one answer lost, the asker stops at its deadline (INV_AllAnswered)
+  "MC_ActivePeersIdentify_Green.cfg ActivePeersIdentify.tla GREEN" # two peers dial in around an ActivePeers call: never a waiting peer at its source port, never held by a later peer, every call answered
+  "MC_ActivePeersIdentify_Red_AnswerAtOnce.cfg ActivePeersIdentify.tla RED" # ActivePeers answers at once, before the Identify (INV_ListenAddress)
+  "MC_ActivePeersIdentify_Red_WaitOnLater.cfg ActivePeersIdentify.tla RED" # the answer waits on peers that dialed in after the call (INV_NotHeldByLater)
   "MC_CoordinatorShutdown_Green.cfg CoordinatorShutdown.tla GREEN" # two callers, a late spawn racing the drain, the edge closing and the runtime torn down at any moment: one drain, no task left in the set, every caller returns
   "MC_CoordinatorShutdown_Green_TwoSpawns.cfg CoordinatorShutdown.tla GREEN" # two late spawns whose pruners race the drain and each other: no task left in the set, the caller returns
   "MC_CoordinatorShutdown_Red_DropRefused.cfg CoordinatorShutdown.tla RED" # the old code, a refused drain dropped: the tracked task leaks (INV_NoLeak)

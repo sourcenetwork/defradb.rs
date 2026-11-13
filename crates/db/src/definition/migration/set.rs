@@ -6,6 +6,7 @@ use storage::corekv::{Key, OnCommit, Store};
 use storage::keys::systemstore::{CollectionKey, CollectionVersionKey};
 use tracing::instrument;
 
+use super::committed_lenses::PreparedLens;
 use super::helpers::{create_orphan_placeholder, create_placeholder_with_source};
 use crate::error::{Error, Result};
 use crate::txn::DbTxn;
@@ -52,7 +53,7 @@ impl<S: Store> DB<S> {
             .await?;
         let dest_version_id = config.destination_collection_version_id.clone();
         let source_version_id = config.source_collection_version_id.clone();
-        let config_for_persistence = config.clone();
+        let lens = PreparedLens::new(config.clone(), self.pool()).await?;
 
         let txn = self.new_txn(false).await?;
 
@@ -171,9 +172,9 @@ impl<S: Store> DB<S> {
             }
         }
 
-        let transform_id = self
-            .lens_store
-            .add(config)
+        let transform_id = lens.id.clone();
+        self.lens_store
+            .add_with_id(transform_id.clone(), config)
             .await
             .map_err(|e| Error::Lens(e.to_string()))?;
 
@@ -226,12 +227,7 @@ impl<S: Store> DB<S> {
                     .map_err(Error::Storage)?;
             }
 
-            super::committed_lenses::write_lens_config(
-                &systemstore,
-                &transform_id,
-                &config_for_persistence,
-            )
-            .await?;
+            lens.write(&txn.blockstore()?, &systemstore).await?;
             if !dst_col.name.is_empty() {
                 super::owe_reindex(
                     &systemstore,
@@ -318,7 +314,7 @@ impl<S: Store> DB<S> {
     ) -> Result<SetMigrationInTxnOutcome> {
         let dest_version_id = config.destination_collection_version_id.clone();
         let source_version_id = config.source_collection_version_id.clone();
-        let config_for_persistence = config.clone();
+        let lens = PreparedLens::new(config.clone(), self.pool()).await?;
 
         let (source_col, mut dst_col) = {
             let systemstore = txn.systemstore()?;
@@ -435,7 +431,11 @@ impl<S: Store> DB<S> {
             }
         }
 
-        let transform_id = lens_store.add(config).await.map_err(Error::from)?;
+        let transform_id = lens.id.clone();
+        lens_store
+            .add_with_id(transform_id.clone(), config)
+            .await
+            .map_err(Error::from)?;
 
         dst_col.previous_version = Some(CollectionSource {
             source_collection_id: source_col.version_id.clone(),
@@ -485,12 +485,7 @@ impl<S: Store> DB<S> {
                     .map_err(Error::Storage)?;
             }
 
-            super::committed_lenses::write_lens_config(
-                &systemstore,
-                &transform_id,
-                &config_for_persistence,
-            )
-            .await?;
+            lens.write(&txn.blockstore()?, &systemstore).await?;
             if !dst_col.name.is_empty() {
                 super::owe_reindex(
                     &systemstore,

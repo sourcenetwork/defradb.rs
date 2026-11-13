@@ -81,6 +81,31 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A node's identity and its signing are separate choices, as in Go:
+        // an identity-only node runs each request as its caller and never
+        // signs, and a node built without `with_identity_only` runs requests
+        // exactly as before.
+        family: "Node identity and signing",
+        name: "NodeSigningChoice.default_build_unchanged / identity_only_runs_as_caller / identity_only_never_signs / identity_only_never_refused",
+        axis: Lean,
+        anchor: "crates/defra-node/src/lib.rs Node::execute_prepared_request; crates/defra-node/src/assemble.rs assemble; crates/defra-node/src/node_builder.rs NodeBuilder::with_identity_only",
+        model_ref: "NodeSigningChoice (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A transaction the node begins and every request the node runs in it
+        // agree on its owner: the node's principal, which is no one on an
+        // identity-only node. The tests run that agreement on the live node.
+        family: "Node identity and signing",
+        name: "NodeSigningChoice.begin_and_execute_agree / owner_before_disagreed / default_owner_unchanged",
+        axis: Lean,
+        anchor: "crates/defra-node/src/lib.rs Node::node_principal, Node::node_context, Node::execute_prepared_request; crates/defra-node/src/signed_query/mod.rs execute_with_signing_context; crates/defra-node/src/ops/request.rs txn_owner",
+        model_ref: "NodeSigningChoice (lake build)",
+        tiers: &[Boundary, Contract],
+        bound_by: "crates/defra-node/tests/embedded_signer.rs an_identity_only_node_runs_requests_in_the_transactions_it_begins; crates/defra-node/tests/nac_embedded_test.rs an_identity_only_node_is_checked_as_its_caller_under_nac",
+    },
+    Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "LocalFetchPermit.released_before_send / release_preserves_queue",
         axis: Lean,
@@ -136,16 +161,16 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "vera.rs actor spelling",
-        name: "defra_idempotent / spellings_meet / other_unchanged / defra_same_actor / one_spelling_per_actor",
+        name: "defra_idempotent / spellings_meet / other_unchanged / defra_same_actor / one_spelling_per_actor / wire_is_taken / wire_same_actor / defra_of_wire / wire_secp256k1_is_defra",
         axis: Lean,
-        anchor: "crates/vera/src/vera_rs/did_spelling.rs defra, same_actor",
+        anchor: "crates/vera/src/vera_rs/did_spelling.rs defra, wire, same_actor",
         model_ref: "VeraActorSpelling (lake build)",
         tiers: &[Boundary],
         bound_by: "",
     },
     Property {
         family: "vera.rs delegation signing",
-        name: "admitted_iff_vera_accepts / sent_is_accepted / refused_is_not_sent / honest_answer_admitted / refusal_names_the_first_failure",
+        name: "admitted_iff_vera_accepts / sent_is_accepted / refused_is_not_sent / honest_answer_admitted / honest_ed25519_answer_admitted / ed25519_refusal_is_length_or_verification / refusal_names_the_first_failure / ed25519_refusal_names_the_first_failure",
         axis: Lean,
         anchor: "crates/vera/src/vera_rs/signer/admission.rs admit, actor_key; crates/vera/src/vera_rs/bearer.rs issue_at",
         model_ref: "VeraDelegationSigner (lake build)",
@@ -1747,6 +1772,35 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // #2378: a lens's ID is the CID of blocks that record every module and
+        // every argument value, as Go's lens store writes them; it used to
+        // hash the first module and only string arguments.
+        family: "Schema-evolution operations in the core",
+        name: "LensId.configBlock_injective / new_numbers_differ / new_keeps_later_modules / empty_lens_has_block",
+        axis: Lean,
+        anchor: "crates/defra-core/src/lens_block.rs build_lens_ipld_blocks, build_module_blocks; crates/db/src/definition/migration/committed_lenses.rs PreparedLens::new, module_arguments; crates/defra-core/src/lens_argument.rs encode_lens_argument",
+        model_ref: "LensId (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/defra-core/tests/lens_block_id.rs every_module_and_argument_value_counts, an_empty_lens_has_gos_config_block_cid",
+    },
+    Property {
+        // #2379: an index answers queries only while no reindex is owed;
+        // schema changes and merges that store a document off the active
+        // version across a lens owe a fresh record, and a rebuild clears only
+        // the record it started from. Main before the fix refused every index
+        // once a lens existed (Red_LensGate). A query's index scan reads the
+        // owed record again in its own transaction and re-plans to a
+        // collection scan when one stands, so a merge that commits between
+        // the plan and the scan cannot make it miss a document (Red_TrustPlan).
+        family: "Schema-evolution operations in the core",
+        name: "INV_IndexMatchesReads / INV_SettledIndexAnswers / INV_ScanMatchesReads",
+        axis: Tla,
+        anchor: "crates/db/src/definition/migration/reindex/owed.rs owe_reindex, clear_owed_reindex; crates/db/src/collection/mod.rs queryable, Collection::validate_write_definition_read; crates/db/src/merge/merge_handler/stale_version.rs DbMergeHandler::owe_reindex_off_active_version; crates/query/src/planner/builder/index_methods.rs try_select_index; crates/db/src/read/lensed/autocommit/scan.rs get_by_index_scan_inner; crates/query/src/runner/query/select.rs execute_select_internal",
+        model_ref: "MC_LensIndexAnswer_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/db/tests/merge/plan_scan_race.rs",
+    },
+    Property {
         // An explicit transaction's ID is `sequence * workers + worker`. The
         // owner is the ID modulo the worker count and the sequence is the
         // quotient, so the round trip is exact for every worker below the
@@ -2217,6 +2271,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "proofs/tests/behavioral/index.rs index_no_stale_no_missing",
     },
     Property {
+        family: "Secondary index equal-key order",
+        name: "IndexEqualKeyOrder.exactMatch_ascending / exactMatch_creation_order / later_create_larger / docIdOrder_can_reverse_creation / inScan_scan_order_without_repeats / resolveUpTo_same_page: equal index keys come back in this node's short-ID order, which follows when each document was first stored on this node (created, or first received from a peer) rather than when its source created it, as Go returns them, paged without a reorder; an InScan lists each document once, at its first encounter; resolving only the page gives the page full resolution gives",
+        axis: Lean,
+        anchor: "crates/db/src/read/index_order.rs apply_exact_match_page, extend_unique, resolve_bound, resolve_in_order; crates/db/src/read/doc.rs get_by_index_scan; crates/db/src/read/lensed/fetcher/scan.rs get_by_index_scan_inner; crates/db/src/read/lensed/autocommit/scan.rs get_by_index_scan_inner; crates/db/src/docid/map.rs DocShortIdAllocator::next",
+        model_ref: "IndexEqualKeyOrder (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/db/tests/read/index_composite_in_order.rs partial_in_over_a_composite_index_keeps_secondary_field_order; tools/integration-test/tests/testo/encryption/peer_sec_index.rs doc_encryption_peer_if_encrypted_doc_has_indexed_field_should_index_after_decryption",
+    },
+    Property {
         // `index::index_reconciles_lww_merge_after_restart` drives a restart
         // partition where two replicas write different values for the same indexed
         // LWW field. Once the DAG converges, indexed filters must expose exactly
@@ -2268,6 +2331,20 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_NodeDrop_{Green,Red_SweepOutsideSet,Red_NoAbortOnDrop,Red_DropAwaits}.cfg",
         tiers: &[Boundary],
         bound_by: "crates/defra-node/tests/node_drop.rs a_dropped_http_node_releases_its_threads_and_descriptors",
+    },
+    Property {
+        // A node that runs its own Vera node stops it after the request
+        // drain, waits for it up to a deadline and closes its transports:
+        // no decision is given without it, and once it has ended its
+        // directory is free for the next node. A Vera node that hangs past
+        // the deadline keeps its directory.
+        family: "Node shutdown order",
+        name: "INV_NoDecisionWithoutVera / INV_AdmittedRequestsDecided / INV_StoppedNodeFreesDirectory / LIVE_ShutdownReturns / LIVE_NextStartReturns: no access decision is given while the embedded Vera node is not running, shutdown stops it under no admitted request but one the request drain gave up on, a node that shut down holds the directory of an ended Vera node no longer, shutdown returns, the next start over the directory starts or fails at its deadline",
+        axis: Tla,
+        anchor: "crates/defra-node/src/lib.rs Node::shutdown; crates/defra-node/src/embedded_vera.rs start; crates/cli/src/commands/start/run.rs Node::run; crates/cli/src/commands/start/server_acp_embedded.rs setup; crates/defra-node/src/node_acp.rs verified_acp_setup; crates/vera-embedded/src/host.rs HostedNode::start, HostedNode::stop; crates/vera-embedded/src/link.rs Link; crates/vera-embedded/src/call.rs call",
+        model_ref: "MC_EmbeddedVeraStop_{Green,Red_DecisionCache,Red_StopBeforeRequests,Red_NoStopDeadline,Red_LinkStaysOpen,Red_NoStartDeadline}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/vera-embedded/tests/hosted_node.rs once_the_node_stops_no_access_decision_is_given",
     },
     Property {
         // A signed query or transformed route keeps a request-scope permit
@@ -2527,6 +2604,24 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "Gossip connection ownership",
+        name: "broadcast_fits_frame / emitted_fits_frame / max_broadcast_fits / over_max_broadcast_dropped / sealed_raw_fits",
+        axis: Lean,
+        anchor: "crates/p2p/src/iroh/gossip/frame.rs MAX_MESSAGE_SIZE, TOPIC_ID_LEN, FRAME_LIMIT, BROADCAST_OVERHEAD, MAX_BROADCAST, max_broadcast; crates/p2p/src/iroh/gossip/driver.rs config; crates/p2p/src/iroh/gossip/raw_origin.rs HEADER_LEN, MAX_RAW_PAYLOAD; crates/p2p/src/iroh/transport.rs publish_raw",
+        model_ref: "GossipFrame.Budget (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/p2p/tests/iroh/direct_push.rs a_raw_publish_too_large_for_gossip_is_refused",
+    },
+    Property {
+        family: "Gossip connection ownership",
+        name: "INV_NoSilentLoss / INV_BroadcastFits",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/gossip/mod.rs GossipHandle::publish; crates/p2p/src/iroh/gossip/driver.rs write_stream, write_queue; crates/p2p/src/iroh/endpoint_commands.rs handle_command; crates/p2p/src/iroh/direct_push.rs peers, push, push_one, FANOUT",
+        model_ref: "MC_GossipDelivery_Green.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Iroh service records",
         name: "INV_SeqNeverGoesBack / INV_NoExpiredChosen / LIVE_NewestReached",
         axis: Tla,
@@ -2764,16 +2859,16 @@ pub const PROPERTIES: &[Property] = &[
         family: "Add collection",
         name: "INV_NoCollectionUnlessAllChecksPass / INV_AllOrNone",
         axis: Tla,
-        anchor: "crates/db/src/collection/ops/add/mod.rs DB::add_collection, prepare_new_collections, check_policies, check_collection_patch; crates/db/src/txn/registry/schemas.rs add_collection_in_txn_as; crates/db/src/collection/ops/create.rs create_collections_atomic_inner",
+        anchor: "crates/db/src/collection/ops/add/mod.rs DB::add_collection, prepare_new_collections, check_policies, check_collection_patch; crates/db/src/txn/registry/schemas.rs add_collection_in_txn_as; crates/db/src/txn/registry/views.rs DbTransactionRegistry::add_view_in_txn; crates/db/src/collection/ops/create.rs create_collections_atomic_inner",
         model_ref: "MC_AddCollection_{Green,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },
     Property {
         family: "Index changes in a transaction",
-        name: "INV_WorkOnlyAfterCommit / INV_IsolatedUntilCommit / INV_SeesOwnChange / INV_BuiltWhenCommitReturns / INV_FailedChangeLeavesNothing",
+        name: "INV_WorkOnlyAfterCommit / INV_IsolatedUntilCommit / INV_SeesOwnChange / INV_BuiltWhenCommitReturns / INV_WorkSeesTxnWrites / INV_FailedChangeLeavesNothing",
         axis: Tla,
-        anchor: "crates/db/src/index/in_txn.rs DB::create_index_in, DB::drop_index_in; crates/db/src/txn/registry/indexes.rs DbTransactionRegistry::create_index_in_txn, DbTransactionRegistry::drop_index_in_txn, DbTransactionRegistry::indexes_in_txn; crates/db/src/txn/registry/mod.rs finish_statement; crates/defra-node/src/ops/index.rs Node::create_index_as, Node::delete_index_as, Node::list_indexes_as; crates/http/src/handlers/index/go_api.rs go_create_index, go_list_indexes, go_delete_index; crates/db/src/collection/encrypted_index.rs DB::add_encrypted_index_in, DB::delete_encrypted_index_in, DB::encrypted_indexes_in, DB::all_encrypted_indexes_in; crates/db/src/txn/registry/indexes.rs DbTransactionRegistry::add_encrypted_index_in_txn, DbTransactionRegistry::delete_encrypted_index_in_txn, DbTransactionRegistry::encrypted_indexes_in_txn, DbTransactionRegistry::all_encrypted_indexes_in_txn; crates/cli/src/encrypted_index_adapter.rs EncryptedIndexAdapter",
+        anchor: "crates/db/src/index/in_txn.rs DB::create_index_in, DB::drop_index_in; crates/db/src/txn/registry/indexes.rs DbTransactionRegistry::create_index_in_txn, DbTransactionRegistry::drop_index_in_txn, DbTransactionRegistry::indexes_in_txn; crates/db/src/txn/registry/mod.rs finish_statement; crates/defra-node/src/ops/index.rs Node::create_index_as, Node::delete_index_as, Node::list_indexes_as; crates/http/src/handlers/index/go_api.rs go_create_index, go_list_indexes, go_delete_index; crates/db/src/collection/encrypted_index.rs DB::add_encrypted_index_in, DB::delete_encrypted_index_in, DB::encrypted_indexes_in, DB::all_encrypted_indexes_in; crates/db/src/txn/registry/indexes.rs DbTransactionRegistry::add_encrypted_index_in_txn, DbTransactionRegistry::delete_encrypted_index_in_txn, DbTransactionRegistry::encrypted_indexes_in_txn, DbTransactionRegistry::all_encrypted_indexes_in_txn; crates/cli/src/encrypted_index_adapter.rs EncryptedIndexAdapter; crates/db/src/collection/ops/create.rs DB::stage_new_collections; crates/db/src/txn/registry/views.rs DbTransactionRegistry::add_view_in_txn, DbTransactionRegistry::refresh_views_in_txn",
         model_ref: "MC_IndexInTxn_{Green,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -2857,7 +2952,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Node access control operations",
         name: "INV_NoEffectWithoutPermission / INV_RefusalNamesGoFirst",
         axis: Tla,
-        anchor: "crates/acp/src/nac/permission.rs NodePermission::go_order; crates/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/db/src/write/autocommit/batch.rs check_attempt_node_access; crates/db/src/txn/registry/indexes.rs check_access_in; crates/defra-node/src/ops/request.rs caller, txn_owner",
+        anchor: "crates/acp/src/nac/permission.rs NodePermission::go_order; crates/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/db/src/write/autocommit/batch.rs check_attempt_node_access; crates/db/src/txn/registry/indexes.rs check_access_in; crates/query/src/runner/turn.rs lent, lent_node_permission; crates/defra-node/src/ops/request.rs caller, txn_owner",
         model_ref: "MC_NacOrder_{Green,Red_SkipGet,Red_OwnFirst,Red_AnonAsNode,Red_OutsideTxn}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -2866,7 +2961,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Node access control operations",
         name: "goOrder_collection_write / goOrder_alone / firstMissing_none_iff / firstMissing_some / allowed_needs_both / refused_get_collection_first / no_bypass_when_off / no_bypass_anonymous / bypass_iff_held",
         axis: Lean,
-        anchor: "crates/acp/src/nac/permission.rs NodePermission::go_order; crates/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/db/src/read/lensed/fetcher/mod.rs dac_bypass",
+        anchor: "crates/acp/src/nac/permission.rs NodePermission::go_order; crates/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/query/src/runner/turn.rs lent, lent_node_permission; crates/db/src/read/lensed/fetcher/mod.rs dac_bypass",
         model_ref: "NacOrder (lake build)",
         tiers: &[Boundary],
         bound_by: "",
@@ -3004,6 +3099,15 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "GossipFrame (lake build)",
         tiers: &[Boundary],
         bound_by: "crates/p2p/tests/iroh/gossip_raw_origin.rs sealed_payload_opens_to_its_origin, a_truncated_seal_is_refused_not_passed_through, an_unsealed_cbor_payload_passes_through",
+    },
+    Property {
+        family: "ActivePeers listen addresses",
+        name: "INV_ListenAddress / INV_NotHeldByLater / LIVE_Answered: ActivePeers never lists a peer that was waiting at the call at its source port while its Identify may still come, a peer that dials in after the call never holds it, and every call is answered",
+        axis: Tla,
+        anchor: "crates/p2p/src/host/command_handler/network.rs handle_peer_addresses, on_identify_settled, answer_peer_addresses; crates/p2p/src/host/p2p_host/swarm.rs handle_swarm_event, handle_connection_closed; crates/p2p/src/host/p2p_host/protocols.rs handle_identify_event",
+        model_ref: "MC_ActivePeersIdentify_{Green,Red_AnswerAtOnce,Red_WaitOnLater}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/p2p/src/host/active_peers_tests.rs active_peers_lists_a_dialer_at_its_listen_address_before_its_identify, active_peers_is_not_held_by_a_peer_that_dials_in_after_the_call",
     },
     Property {
         // The first shutdown caller to swap the flag builds the one drain,

@@ -67,12 +67,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             ScanSource::Fetcher(Arc::new(FetcherWrapper::new(fetcher)))
         } else if let Some(ref filter) = select.filter {
             // Try to use an index if available
-            if fetcher.supports_index_queries()
-                && fetcher
-                    .indexes_match_documents(&select.collection_name)
-                    .await?
-                && !collection.indexes.is_empty()
-            {
+            if fetcher.supports_index_queries() && !collection.indexes.is_empty() {
                 let estimates = estimate_select(fetcher, collection, select)
                     .await?
                     .map(|estimates| estimates.estimates)

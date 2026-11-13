@@ -29,8 +29,10 @@ async-trait.workspace = true
 # Error handling
 thiserror.workspace = true
 
-# Cryptography (secp256k1 signing key)
+# Cryptography (the actor keys a delegation is signed with)
 k256.workspace = true
+p256 = { version = "0.14", features = ["ecdsa"] }
+ed25519-dalek.workspace = true
 hex.workspace = true
 
 # Internal crates
@@ -100,6 +102,8 @@ edge = { path = "../edge", features = ["testing"] }
 # pinned ones, so a signed or hashed encoding that depends on this feature fails here and not only in a wider build.
 serde_json = { workspace = true, features = ["preserve_order"] }
 kovan-queue.workspace = true
+# vera.rs's own token verifier, which the tokens built here must pass.
+vera-crypto = "0.1.2"
 
 [lints]
 workspace = true

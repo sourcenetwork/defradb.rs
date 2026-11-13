@@ -55,6 +55,9 @@ pub struct NewNode {
     pub client_type: Option<NodeClient>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub index_gate: Option<IndexGate>,
+    /// Kept so corpus scenarios that set it still parse. It changes nothing:
+    /// every node gets Go's `NodeIdentity(i)` and runs identity-only unless
+    /// it signs.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub with_identity: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -62,6 +65,9 @@ pub struct NewNode {
     /// A Rust node with the given admission limits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission: Option<AdmissionSpec>,
+    /// A Rust node whose network is iroh rather than libp2p.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub iroh: bool,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -92,6 +98,7 @@ impl Op for NewNode {
         probe.network = false;
         probe.database_dir = None;
         probe.admission = None;
+        probe.iroh = false;
         probe.node_identity_seed = None;
         probe.enable_signing = false;
         probe.key_type = None;
@@ -108,9 +115,11 @@ impl Op for NewNode {
             return Err(Failure::unsupported(format!("{} {options}", Self::name())));
         }
         self.check_client(state.client_type())?;
-        let node_identity = self
-            .node_identity_seed
-            .or(self.with_identity.then_some(u64::MAX - 1));
+        // Go gives node `i` its `NodeIdentity(i)` whether or not it signs,
+        // and counts every node it starts, one with its own seed included.
+        // `withIdentity` asks for no more than that.
+        let go_index = state.next_go_node_index();
+        let node_identity = self.node_identity_seed.or(Some(go_index));
         let signing = (self.enable_signing || self.key_type.is_some())
             .then(|| self.key_type.unwrap_or_default());
         let txn_ttl = self.txn_ttl(state.client_type())?;
@@ -126,6 +135,7 @@ impl Op for NewNode {
             dir,
             listen: Vec::new(),
             admission: self.admission.clone(),
+            iroh_network: self.iroh,
             node_identity,
             signing,
             txn_ttl,

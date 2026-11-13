@@ -192,6 +192,7 @@ impl std::str::FromStr for TransportType {
 /// - `Local`: Local Zanzibar-based ACP
 /// - `Vera`: Remote Vera ACP (Cosmos SDK / Go verad), named `remote` in Go
 /// - `VeraRs`: Native Vera ACP
+/// - `VeraRsEmbedded`: Native Vera ACP from a Vera node this process runs
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 #[non_exhaustive]
@@ -205,6 +206,23 @@ pub enum AcpDocumentType {
     #[cfg(feature = "vera")]
     #[serde(rename = "verars", alias = "vera-rs")]
     VeraRs,
+    #[cfg(feature = "embedded-vera")]
+    #[serde(rename = "verars-embedded", alias = "vera-rs-embedded")]
+    VeraRsEmbedded,
+}
+
+impl AcpDocumentType {
+    /// Whether document ACP is decided by vera.rs, by a node reached over
+    /// the network or by one this process runs.
+    pub fn is_vera_rs(self) -> bool {
+        match self {
+            #[cfg(feature = "vera")]
+            AcpDocumentType::VeraRs => true,
+            #[cfg(feature = "embedded-vera")]
+            AcpDocumentType::VeraRsEmbedded => true,
+            _ => false,
+        }
+    }
 }
 
 impl std::fmt::Display for AcpDocumentType {
@@ -216,6 +234,8 @@ impl std::fmt::Display for AcpDocumentType {
             AcpDocumentType::Vera => write!(f, "vera"),
             #[cfg(feature = "vera")]
             AcpDocumentType::VeraRs => write!(f, "verars"),
+            #[cfg(feature = "embedded-vera")]
+            AcpDocumentType::VeraRsEmbedded => write!(f, "verars-embedded"),
         }
     }
 }
@@ -231,6 +251,8 @@ impl std::str::FromStr for AcpDocumentType {
             "vera" | "sourcehub" | "remote" => Ok(AcpDocumentType::Vera),
             #[cfg(feature = "vera")]
             "verars" => Ok(AcpDocumentType::VeraRs),
+            #[cfg(feature = "embedded-vera")]
+            "verarsembedded" => Ok(AcpDocumentType::VeraRsEmbedded),
             _ => Err(Error::InvalidAcpType(s.to_string())),
         }
     }

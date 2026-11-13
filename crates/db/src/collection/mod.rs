@@ -409,14 +409,28 @@ impl Collection {
         self.def.indexes.iter().find(|idx| idx.name == name)
     }
 
-    /// Record the definition and active-name mapping in the writer's read set.
-    /// Historical merge inputs may name an older version, but still validate
-    /// both that definition and the current mapping against concurrent DDL.
+    /// Record the definition and active-name mapping in the writer's read set,
+    /// and return the active version ID that mapping names. Historical merge
+    /// inputs may name an older version, but still validate both that
+    /// definition and the current mapping against concurrent DDL.
     pub(crate) async fn validate_write_definition(
         &self,
         datastore: &NamespaceView,
         require_current: bool,
-    ) -> Result<()> {
+    ) -> Result<String> {
+        self.validate_write_definition_read(datastore, require_current)
+            .await
+            .map(|(active, _)| active)
+    }
+
+    /// [`Self::validate_write_definition`], also returning the stored
+    /// definition of this collection's version that the validated read
+    /// returned, so a decision on it reads it once.
+    pub(crate) async fn validate_write_definition_read(
+        &self,
+        datastore: &NamespaceView,
+        require_current: bool,
+    ) -> Result<(String, bytes::Bytes)> {
         use storage::corekv::Key;
         use storage::keys::systemstore::{CollectionKey, CollectionNameKey};
         let system = datastore.sibling(storage::namespace::Namespace::Systemstore);
@@ -430,15 +444,16 @@ impl Collection {
         if require_current && active.as_ref() != self.version_id().as_bytes() {
             return Err(Error::Storage(storage::Error::TxnConflict));
         }
-        if system
+        let Some(definition) = system
             .get(&CollectionKey::new(self.version_id()).bytes())
             .await
             .map_err(Error::Storage)?
-            .is_none()
-        {
+        else {
             return Err(Error::CollectionNotFound(self.name().to_string()));
-        }
-        Ok(())
+        };
+        let active = String::from_utf8(active.into())
+            .map_err(|_| Error::CollectionNotFound(self.name().to_string()))?;
+        Ok((active, definition))
     }
 
     /// Generate the storage key for a document blob.

@@ -11,7 +11,10 @@
 //! each puts the value it wrote into the cached read, so a read kept here is
 //! what a fresh read would return. A head write applies its exact operand to the
 //! decoded snapshot, so subsequent blocks in the same page reuse that state.
-//! Neither cache outlives the engine attempt.
+//! It also keeps the collection the attempt has already owed a reindex: the
+//! record is one key the transaction commits once, so a later block of the
+//! walk owing it again would only replace the token this commit writes.
+//! Nothing here outlives the engine attempt.
 
 use datastore::NamespaceView;
 use document::{DocID, Document, NormalValue};
@@ -26,9 +29,21 @@ pub(crate) struct BlockReads {
     heads: Option<(u64, Set)>,
     /// The value read, with the version and short ID it was read for.
     document: Option<(String, u64, Option<Document>)>,
+    /// The collection this attempt has written an owed-reindex record for.
+    reindex_owed: Option<String>,
 }
 
 impl BlockReads {
+    /// Whether this attempt has already owed `collection_id` a reindex.
+    pub(crate) fn owes_reindex(&self, collection_id: &str) -> bool {
+        self.reindex_owed.as_deref() == Some(collection_id)
+    }
+
+    /// Records that this attempt has owed `collection_id` a reindex.
+    pub(crate) fn owed_reindex(&mut self, collection_id: &str) {
+        self.reindex_owed = Some(collection_id.to_owned());
+    }
+
     /// The document's head set.
     pub(crate) async fn heads(
         &mut self,

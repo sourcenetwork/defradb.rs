@@ -232,12 +232,6 @@ fn estimation_work_shrinks_after_a_selective_candidate() {
         };
         let db = seeded_db().await;
         let fetcher = LensedAutoCommitFetcher::new(db.clone());
-        // Resolve lens/index eligibility separately from the index-probe budget.
-        assert!(
-            query::DocFetcher::indexes_match_documents(&fetcher, "Events")
-                .await
-                .unwrap()
-        );
         let mut collection = schema();
         // Put the selective equality first so it establishes the competing budget.
         collection.indexes.reverse();

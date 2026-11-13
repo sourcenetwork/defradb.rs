@@ -114,15 +114,13 @@ pub unsafe extern "C" fn defra_view_add(
 
             // Create all view collections atomically (all-or-nothing)
             let created_versions = database
-                .create_collections_atomic_with_acp_registration_as(&context, view_collections, document_acp.clone(), creator)
+                .create_view_collections_as(&context, view_collections, Some(document_acp.clone()), creator)
                 .await
                 .map_err(|e| format!("failed to create view collection: {}", e))?;
 
-            // Auto-refresh materialized views after creation
-            // Exclude embedded-only types (interfaces) - they can't be queried
             let materialized_names: Vec<String> = created_versions
                 .iter()
-                .filter(|col| col.query.is_some() && col.is_materialized && !col.is_embedded_only)
+                .filter(|col| db::is_refreshable_view(col))
                 .map(|col| col.name.clone())
                 .collect();
             let downsample_names: Vec<String> = created_versions

@@ -176,6 +176,9 @@ jobs:
               cargo clippy -p cli --features otel --all-targets -- -D warnings
               cargo clippy -p defra-node --features otel --all-targets -- -D warnings
               cargo clippy -p defra-node --features p2p --all-targets -- -D warnings
+              cargo clippy -p vera-embedded --features node --all-targets -- -D warnings
+              cargo clippy -p defra-node --features embedded-vera --all-targets -- -D warnings
+              cargo clippy -p cli --features embedded-vera --all-targets -- -D warnings
               cargo clippy -p db --features p2p --all-targets -- -D warnings
               cargo clippy -p cli --features iroh,model-trace --all-targets -- -D warnings
           - group: minimal
@@ -434,6 +437,9 @@ jobs:
       - run: cargo nextest run --cargo-profile super-dev -p telemetry --features otlp
       - run: cargo nextest run --cargo-profile super-dev -p cli --features otel --test telemetry_dedup
       - run: cargo nextest run --cargo-profile super-dev -p defra-node --features p2p
+      - run: cargo nextest run --cargo-profile super-dev -p vera-embedded --features node --test hosted_node --test node_placement
+      - run: cargo nextest run --cargo-profile super-dev -p defra-node --features embedded-vera --test embedded_vera
+      - run: cargo nextest run --cargo-profile super-dev -p cli --features embedded-vera --test embedded_vera --test embedded_vera_config
 
   wasm-check:
     name: WASM Build Check
@@ -874,11 +880,7 @@ jobs:
       DEFRA_E2E_KEEP: '1'
       # A failing scenario shows its in-process nodes' P2P trace.
       DEFRA_TEST_TRACE: p2p=debug,defra_p2p_adapter=debug,warn
-      # One scenario flips between runs (#2712), so a known-failure entry would
-      # fail the runs it passes; it stays out until #2712 is fixed.
-      TESTO_FILTER: >-
-        binary(testo)
-        & not test(=encryption::peer_sec_index::doc_encryption_peer_if_encrypted_doc_has_indexed_field_should_index_after_decryption)
+      TESTO_FILTER: binary(testo)
       # Not run anywhere: p2p_interop_bench, whose one test is an ignored
       # benchmark that prints latencies, and verars, whose cluster needs the
       # verad validator binary from vera.rs, which CI does not build.
