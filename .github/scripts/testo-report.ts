@@ -17,7 +17,9 @@
 // `#` is a comment. A shard fails when a test fails that is not listed, when a
 // listed test passes ("fixed: remove from the list"), so a list only shrinks,
 // or when a listed test it selected left no result. `summary` fails on a line
-// without an issue or whose issue is closed, on a listed test no shard selected
+// without an issue or whose issue is closed, on a test a shard reported as an
+// unexpected failure or as selected but left no result, on a listed test no
+// shard selected
 // (renamed, removed or filtered out: "missing"), and on a client with a shard
 // that never reported; it compares each list's size with the base branch's
 // copy, and warns on every entry the pull request adds.
@@ -313,6 +315,10 @@ interface Merged {
   shards: number;
   reported: Set<number>;
   selectedKnown: Set<string>;
+  /// Failing tests no known-failures list names, and listed tests a shard
+  /// selected but got no result for, as `<binary> <test>`.
+  unexpected: string[];
+  missing: string[];
 }
 
 /// Why a client's totals are partial, or `null` when every shard reported.
@@ -344,12 +350,22 @@ function summary(directory: string, knownDir: string): number {
     const report = JSON.parse(readFileSync(path, "utf8")) as Report;
     if (typeof report !== "object" || Array.isArray(report) || !report.client) continue;
     if (!clients.has(report.client)) {
-      clients.set(report.client, { binaries: {}, ops: {}, shards: report.shards, reported: new Set(), selectedKnown: new Set() });
+      clients.set(report.client, {
+        binaries: {},
+        ops: {},
+        shards: report.shards,
+        reported: new Set(),
+        selectedKnown: new Set(),
+        unexpected: [],
+        missing: [],
+      });
     }
     const merged = clients.get(report.client)!;
     merged.shards = Math.max(merged.shards, report.shards);
     merged.reported.add(report.shard);
     for (const id of report.selected_known) merged.selectedKnown.add(id);
+    merged.unexpected.push(...report.unexpected);
+    merged.missing.push(...report.missing);
     for (const [binary, counts] of Object.entries(report.binaries)) {
       merged.binaries[binary] ??= {};
       for (const [name, count] of Object.entries(counts)) bump(merged.binaries[binary], name, count);
@@ -358,6 +374,13 @@ function summary(directory: string, knownDir: string): number {
   }
   const lists = checkLists(knownDir);
   let errors = lists.errors + checkMissing(clients, knownDir);
+  // A known failure is fine; a failure no list names fails the summary, the
+  // one testo check the merge queue requires.
+  for (const [client, merged] of clients) {
+    for (const test of merged.unexpected) console.log(`::error::${client}: ${test} failed and is not in its known-failures list`);
+    for (const test of merged.missing) console.log(`::error::${client}: ${test} was selected but left no result`);
+    errors += merged.unexpected.length + merged.missing.length;
+  }
   write(
     "`fail` is unexpected, `known` is listed in `.github/testo/known-failures/<client>.txt`, " +
       "`unsupported` stopped at an action the client does not implement; `list` is that file's size " +
