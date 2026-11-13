@@ -80,6 +80,11 @@ impl<S> NacManager<S>
 where
     S: ZanzibarStore + ?Sized + 'static,
 {
+    /// The published edge snapshot, if there is one.
+    pub(super) fn edge_snapshot(&self) -> Option<Snapshot> {
+        self.edge.current()
+    }
+
     /// Read the committed NAC state into a new snapshot and publish it. When
     /// the read fails the snapshot is withdrawn, and checks read storage again
     /// until the next refresh.

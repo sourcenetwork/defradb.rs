@@ -71,7 +71,17 @@ async fn first_missing(
     identity: &Did,
     permissions: &[NodePermission],
 ) -> PermissionCheck {
-    let outcomes = nac.check_permissions(identity, permissions).await;
+    first_outcome(
+        permissions,
+        nac.check_permissions(identity, permissions).await,
+    )
+}
+
+/// The first refusal or failure among `outcomes`, one per permission checked.
+fn first_outcome(
+    permissions: &[NodePermission],
+    outcomes: Vec<db::nac::Result<bool>>,
+) -> PermissionCheck {
     for (&permission, outcome) in permissions.iter().zip(outcomes) {
         match outcome {
             Ok(true) => {}
@@ -97,6 +107,13 @@ impl NodeAcpOperations for NacAdapter {
                 .await
                 .map_err(|e| e.to_string());
         }
+        if let Some(mut outcomes) = self
+            .nac
+            .check_permissions_in_memory(identity, &[permission])
+            .await
+        {
+            return outcomes.remove(0).map_err(|e| e.to_string());
+        }
         let identity = identity.clone();
         self.on_pool(move |nac| async move { nac.check_permission(&identity, permission).await })
             .await
@@ -112,6 +129,15 @@ impl NodeAcpOperations for NacAdapter {
         };
         if self.pool.is_none() || workers::on_worker() {
             return first_missing(self.nac.as_ref(), identity, permissions).await;
+        }
+        // Answered from the manager's snapshot of the grants, the check reads
+        // no storage, so it needs no worker: it runs here, on the edge.
+        if let Some(outcomes) = self
+            .nac
+            .check_permissions_in_memory(identity, permissions)
+            .await
+        {
+            return first_outcome(permissions, outcomes);
         }
         // One placed call decides them all: the edge crosses onto the pool
         // once per request, not once per permission.

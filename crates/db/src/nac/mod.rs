@@ -116,6 +116,16 @@ pub trait NacManagerApi: defra_core::thread_bounds::MaybeSendSync {
         }
         outcomes
     }
+    /// [`Self::check_permissions`] answered from memory, without reading
+    /// storage: `None` when this provider cannot. A caller off the
+    /// database's workers can take this answer in place.
+    async fn check_permissions_in_memory(
+        &self,
+        _identity: &Did,
+        _permissions: &[NodePermission],
+    ) -> Option<Vec<Result<bool>>> {
+        None
+    }
     async fn check_permission_in_txn(
         &self,
         _view: datastore::NamespaceView,
