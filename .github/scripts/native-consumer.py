@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Qualify the native consumer; raw output and fixture state stay in RUNNER_TEMP."""
+"""Qualify the native consumer; raw output and fixture state stay in RUNNER_TEMP.
+
+Reading the manifests needs Python 3.11+ or the tomli package; so does test-native-consumer.py.
+"""
 import argparse
 import hashlib
 import json
@@ -13,26 +16,24 @@ import sys
 import tempfile
 import time
 
+try:
+    import tomllib
+except ModuleNotFoundError:
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        sys.exit("native-consumer.py needs Python 3.11+ or the tomli package to read Cargo manifests")
+
 SDK_MANIFESTS = ("crates/vera/Cargo.toml", "tools/integration-test/Cargo.toml")
 # Crates built against the unpublished Vera node crates the harness also uses.
 NODE_MANIFESTS = ("crates/vera-embedded/Cargo.toml",)
-# The `git` key of a Vera dependency and its `rev`. A key may be quoted and spaced as TOML allows. The
-# repository is recognised on github.com under every scheme, user and letter case, because Cargo
-# resolves those spellings to the same source. Another host is another source.
-KEY = r"""(?<![\w-])["']?%s["']?\s*=\s*"""
-VERA_URL = r"""(?:[a-z][a-z0-9+.-]*://)?(?:[^"'@/]*@)?(?:www\.)?github\.com[:/]+sourcenetwork/vera\.rs(?:\.git)?/?"""
-VERA_GIT = re.compile(KEY % "git" + r"""["']""" + VERA_URL + r"""["']""", re.IGNORECASE)
-VERA_REV = re.compile(KEY % "rev" + r"""["']([0-9a-f]{40})["']""")
-# One segment of a dotted key or of a table name.
-SEGMENT = r"""(?:[\w-]+|"[^"]*"|'[^']*')"""
-# A `git` or `rev` key on a line of its own, after the dotted path that names its dependency, if any.
-KEY_PATH = r"\s*((?:" + SEGMENT + r"\s*\.\s*)*)"
-OWN_GIT = re.compile(KEY_PATH + r"""["']?git["']?\s*=""")
-OWN_REV = re.compile(KEY_PATH + r"""["']?rev["']?\s*=\s*["']([0-9a-f]{40})["']\s*""")
-# A published SDK crate, the one form its declaration may take, and the same crate under another name.
-SDK_CRATE = r"vera-(?:client|domain|modules)"
-SDK_VERSION = re.compile(r"\s*" + SDK_CRATE + r'\s*=\s*"(\d+\.\d+\.\d+)"\s*')
-SDK_RENAMED = re.compile(KEY % "package" + r"""["']""" + SDK_CRATE + r"""["']""")
+# The vera.rs repository on github.com under every scheme, user and letter case: Cargo resolves those
+# spellings to the same source. Another host is another source.
+VERA_URL = re.compile(
+    r"(?:[a-z][a-z0-9+.-]*://)?(?:[^@/]*@)?(?:www\.)?github\.com[:/]+sourcenetwork/vera\.rs(?:\.git)?/?",
+    re.IGNORECASE)
+SDK_CRATES = ("vera-client", "vera-domain", "vera-modules")
+DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
 UNIT_NAMES = (
     "abi::tests::delete_relationship_subject_userset_round_trips",
     "abi::tests::set_relationship_subject_object_edge_round_trips",
@@ -104,82 +105,50 @@ def panic_site(log):
     return None
 
 
-def tables(text):
-    """Split a manifest into its tables: the lines between one `[header]` and the next, without comments."""
-    table = []
-    for line in text.splitlines():
-        line = line.split("#", 1)[0]
-        if line.lstrip().startswith("["):
-            yield table
-            table = []
-        else:
-            table.append(line)
-    yield table
+def dependencies(text):
+    """Yield the name and specification of every dependency a manifest declares.
 
-
-def own_revision(line, table):
-    """Return the revision of the dependency whose `git` key is `line`, from the same table."""
-    path = re.sub(r"\s", "", OWN_GIT.match(line)[1])
-    for sibling in table:
-        match = OWN_REV.fullmatch(sibling)
-        if match is not None and re.sub(r"\s", "", match[1]) == path:
-            return match[2]
-    return None
+    The manifest is parsed as TOML, so a dependency is read the same however it is written: inline, as
+    its own table, with dotted or quoted keys. Only Cargo's dependency tables are read: the package's,
+    the workspace's and each target's. Features and metadata may name anything.
+    """
+    manifest = tomllib.loads(text)
+    targets = manifest.get("target", {})
+    scopes = [manifest, manifest.get("workspace", {}), *(targets.values() if isinstance(targets, dict) else ())]
+    for scope in scopes:
+        for kind in DEPENDENCY_TABLES:
+            table = scope.get(kind, {}) if isinstance(scope, dict) else {}
+            yield from table.items() if isinstance(table, dict) else ()
 
 
 def git_pins(text):
     """Return the immutable revision of every Vera git dependency in a manifest."""
     pins = []
-    for table in tables(text):
-        for line in table:
-            if VERA_GIT.search(line) is None:
-                continue
-            # An inline table carries its revision on the same line. A `git` key on a line of its own
-            # takes the `rev` key of the same dependency: the one with the same dotted path, which is
-            # empty inside a `[dependencies.name]` table. It never borrows another dependency's.
-            if "{" in line:
-                match = VERA_REV.search(line)
-                pin = None if match is None else match[1]
-            else:
-                pin = own_revision(line, table) if OWN_GIT.match(line) else None
-            if pin is None:
-                raise ValueError("SDK revision must be immutable")
-            pins.append(pin)
+    for _, spec in dependencies(text):
+        source = spec.get("git") if isinstance(spec, dict) else None
+        if not isinstance(source, str) or VERA_URL.fullmatch(source) is None:
+            continue
+        pin = spec.get("rev")
+        if not isinstance(pin, str) or re.fullmatch(r"[0-9a-f]{40}", pin) is None:
+            raise ValueError("SDK revision must be immutable")
+        pins.append(pin)
     return pins
-
-
-def key_path(text):
-    """Return the segments of a dotted key or table name, without their quotes."""
-    return [segment.strip("\"'") for segment in re.findall(SEGMENT, text)]
 
 
 def sdk_versions(text):
     """Return the version of every published SDK crate a manifest depends on.
 
-    Only dependency tables are read: a feature list or a metadata table may name the crates freely.
-    There, a crate must be declared as `name = "x.y.z"`; its own table, a dotted or quoted key, an
-    inline table or another name for it (`package = "..."`) is refused, not skipped.
+    A crate must be declared as `name = "x.y.z"`. Any other form, and the crate under another name
+    (`package = "..."`), is refused, not skipped.
     """
-    versions, dependencies = [], False
-    for line in text.splitlines():
-        line = line.split("#", 1)[0]
-        if line.lstrip().startswith("["):
-            table = key_path(line.strip().strip("[]"))
-            own = len(table) > 1 and table[-2].endswith("dependencies")
-            dependencies = bool(table) and (table[-1].endswith("dependencies") or own)
-            declared = own and re.fullmatch(SDK_CRATE, table[-1]) is not None
-        elif dependencies and "=" in line:
-            match = SDK_VERSION.fullmatch(line)
-            if match is not None:
-                versions.append(match[1])
-                continue
-            named = key_path(line.split("=", 1)[0])[:1]
-            declared = SDK_RENAMED.search(line) is not None or (
-                bool(named) and re.fullmatch(SDK_CRATE, named[0]) is not None)
-        else:
+    versions = []
+    for name, spec in dependencies(text):
+        crate = spec.get("package", name) if isinstance(spec, dict) else name
+        if crate not in SDK_CRATES:
             continue
-        if declared:
+        if not isinstance(spec, str) or re.fullmatch(r"\d+\.\d+\.\d+", spec) is None:
             raise ValueError("published native SDK declarations must be plain versions")
+        versions.append(spec)
     return versions
 
 
