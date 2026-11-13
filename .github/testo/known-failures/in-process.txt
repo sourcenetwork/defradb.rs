@@ -45,4 +45,3 @@ testo signature::acp_branchable::signature_acp_with_branchable_collection_if_has
 testo acp::nac::verify_signature::nac_gates_verify_signature_go_client_authorized_identity_allow_access #2723
 testo acp::nac::relation_admin::verify_signature::nac_admin_relation_go_client_can_verify_signature #2723
 testo searchable_encryption::truncate::truncate_removes_searchable_encryption_artifacts #2728
-testo encryption::peer_sec_index::doc_encryption_peer_if_encrypted_doc_has_indexed_field_should_index_after_decryption #2742
