@@ -2253,6 +2253,19 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/defra-node/tests/node_drop.rs a_dropped_http_node_releases_its_threads_and_descriptors",
     },
     Property {
+        // A node that runs its own Vera node stops it after the request
+        // drain, waits for it up to a deadline and closes its transports:
+        // no decision is given without it, and its directory is free for
+        // the next node.
+        family: "Node shutdown order",
+        name: "INV_NoDecisionWithoutVera / INV_AdmittedRequestsDecided / INV_StoppedNodeFreesDirectory / LIVE_ShutdownReturns: no access decision is given while the embedded Vera node is not running, shutdown stops it under no admitted request, a node that shut down holds its directory no longer, shutdown returns",
+        axis: Tla,
+        anchor: "crates/defra-node/src/lib.rs Node::shutdown; crates/defra-node/src/embedded_vera.rs start; crates/defra-node/src/node_acp.rs verified_acp_setup; crates/vera-embedded/src/host.rs HostedNode::stop; crates/vera-embedded/src/link.rs Link; crates/vera-embedded/src/call.rs call",
+        model_ref: "MC_EmbeddedVeraStop_{Green,Red_DecisionCache,Red_StopBeforeRequests,Red_NoStopDeadline,Red_LinkStaysOpen}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/vera-embedded/tests/hosted_node.rs once_the_node_stops_no_access_decision_is_given",
+    },
+    Property {
         // A signed query or transformed route keeps a request-scope permit
         // while its started worker writes, so P2P cannot stop first.
         family: "Node shutdown order",

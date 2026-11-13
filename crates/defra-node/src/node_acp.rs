@@ -14,6 +14,9 @@ pub(crate) struct DocumentAcpSetup {
     /// pool given; the node stops it with its other background tasks.
     #[cfg(feature = "vera")]
     pub redrive: Option<StartRedrive>,
+    /// The Vera node started for document ACP; the node stops it on shutdown.
+    #[cfg(feature = "embedded-vera")]
+    pub embedded_vera: Option<vera_embedded::HostedNode>,
 }
 
 #[cfg(feature = "vera")]
@@ -56,6 +59,8 @@ where
                 dac_policies,
                 vera_acp: Some(sh_acp),
                 redrive: Some(redrive),
+                #[cfg(feature = "embedded-vera")]
+                embedded_vera: None,
             })
         }
         #[cfg(feature = "vera")]
@@ -85,6 +90,8 @@ where
                 dac_policies,
                 vera_acp: Some(vera_acp),
                 redrive: Some(redrive),
+                #[cfg(feature = "embedded-vera")]
+                embedded_vera: None,
             })
         }
         #[cfg(feature = "vera")]
@@ -130,6 +137,11 @@ where
             host.request_timeout,
             store,
         )),
+        #[cfg(feature = "embedded-vera")]
+        crate::DocumentAcpConfig::EmbeddedVera(config) => {
+            let edge = remote_edge(network)?;
+            crate::embedded_vera::start(config, event_bus, &edge, store).await
+        }
         crate::DocumentAcpConfig::Local => {
             // Memory and disk profiles both share the engine with document rows.
             let zanzibar_store = Arc::new(acp::PersistentZanzibarStore::from_store(store));
@@ -153,7 +165,7 @@ fn remote_edge(network: Option<&edge::Edge>) -> Result<edge::Edge> {
 /// run on `edge` and are not cached, the provider's policies are mirrored into
 /// `store`, and owed registrations are gated and redriven.
 #[cfg(feature = "vera")]
-fn verified_acp_setup<S>(
+pub(crate) fn verified_acp_setup<S>(
     provider: Arc<dyn vera::VeraProvider>,
     edge: &edge::Edge,
     request_timeout: std::time::Duration,
@@ -173,6 +185,8 @@ where
         dac_policies,
         vera_acp: Some(vera_acp),
         redrive: Some(redrive),
+        #[cfg(feature = "embedded-vera")]
+        embedded_vera: None,
     }
 }
 
@@ -256,6 +270,8 @@ fn local_document_acp_setup(
         vera_acp: None,
         #[cfg(feature = "vera")]
         redrive: None,
+        #[cfg(feature = "embedded-vera")]
+        embedded_vera: None,
     }
 }
 

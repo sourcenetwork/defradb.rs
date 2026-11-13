@@ -40,6 +40,10 @@ mod dac_api_tests;
 mod db_impls;
 pub mod dense_search;
 mod embedded_signer;
+#[cfg(feature = "embedded-vera")]
+mod embedded_vera;
+#[cfg(feature = "embedded-vera")]
+mod embedded_vera_config;
 mod error;
 #[cfg(feature = "libp2p")]
 mod libp2p_recovery;
@@ -113,6 +117,8 @@ pub use defra_p2p_adapter::{
 };
 pub use dense_search::{DenseHybridSearchHit, DenseHybridSearchRequest, DenseHybridSearchResponse};
 pub use embedded_signer::{EmbeddedSigner, EmbeddedSignerError};
+#[cfg(feature = "embedded-vera")]
+pub use embedded_vera_config::{EmbeddedVeraConfig, EmbeddedVeraDeployment};
 pub use error::{Error, Result};
 pub use events::EventName;
 pub use keyring;
@@ -252,6 +258,11 @@ pub struct Node {
     network: Option<NodeEdge>,
     /// The database's worker pool: the node's data-path calls run there.
     pool: Option<workers::Pool>,
+    /// The Vera node this node runs for document ACP, until shutdown takes
+    /// it. A node dropped without [`Node::shutdown`] drops it here, which
+    /// tells it to stop and waits for nothing.
+    #[cfg(feature = "embedded-vera")]
+    embedded_vera: kovan_queue::seg_queue::SegQueue<vera_embedded::HostedNode>,
     /// Document ACP is a remote provider: its calls reach the network, so
     /// they stay where they are made.
     remote_acp: bool,
@@ -286,7 +297,7 @@ struct TransactionCleanupConfig {
     sweep_interval: Duration,
 }
 
-#[cfg(feature = "otel")]
+#[cfg(any(feature = "otel", feature = "embedded-vera"))]
 fn single_slot<T>(value: Option<T>) -> kovan_queue::seg_queue::SegQueue<T>
 where
     T: 'static,
@@ -1195,6 +1206,17 @@ impl Node {
         #[cfg(feature = "managed-p2p")]
         if let Some(p2p) = &self.p2p {
             p2p.stop_transport().await;
+        }
+
+        // No request and no peer asks for an access decision any more, and
+        // the redrive has stopped: the Vera node stops while the network
+        // runtime still times the wait.
+        #[cfg(feature = "embedded-vera")]
+        if let Some(vera) = self.embedded_vera.pop() {
+            match vera.stop().await {
+                Ok(()) => tracing::info!("embedded Vera node stopped"),
+                Err(error) => tracing::warn!(%error, "embedded Vera node did not stop cleanly"),
+            }
         }
 
         // Stop accepting the rest of the node's network work and drain what is

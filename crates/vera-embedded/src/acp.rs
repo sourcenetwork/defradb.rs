@@ -34,9 +34,12 @@ impl AcpTransport for EmbeddedTransport {
 
     fn subscribe_headers(&self) -> BoxFuture<'_, Result<HeaderStream, TransportError>> {
         async move {
-            let accepted = self
-                .rpc
-                .subscribe(SUBSCRIBE_HEADERS, Vec::new(), HEADER_BUFFER);
+            let Some(rpc) = self.rpc.rpc() else {
+                return Err(header_error(Failure::Channel(EmbeddedError::Stopped {
+                    method: SUBSCRIBE_HEADERS.to_owned(),
+                })));
+            };
+            let accepted = rpc.subscribe(SUBSCRIBE_HEADERS, Vec::new(), HEADER_BUFFER);
             let subscription = bounded(
                 &self.edge,
                 SUBSCRIBE_HEADERS,

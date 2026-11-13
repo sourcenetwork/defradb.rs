@@ -4046,6 +4046,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "vera",
+ "vera-embedded",
  "workers",
  "zanzibar",
  "zeroize",
@@ -13876,12 +13877,14 @@ dependencies = [
  "hex",
  "keyring 0.5.0",
  "nuclei",
+ "regolith",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
  "vera",
  "vera-jsonrpc",
  "vera-node",
+ "workers",
 ]
 
 [[package]]

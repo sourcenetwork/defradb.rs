@@ -28,6 +28,9 @@ use crate::shared::Shared;
 pub(crate) struct Rt {
     handle: RuntimeHandle,
     pub(crate) cpus: CpuSet,
+    /// The hold on those CPUs, kept while a handle can still place a thread
+    /// on them.
+    pub(crate) cores: Arc<workers::EdgeCores>,
 }
 
 impl Rt {
@@ -241,6 +244,7 @@ fn own(config: EdgeConfig, gate: Arc<Gate>, control: Arc<Control>, started: Star
         Rt {
             handle: runtime.handle(),
             cpus: cores.cpus().clone(),
+            cores: Arc::clone(&cores),
         },
         config.deadline,
     );
