@@ -7,7 +7,7 @@ use std::ptr;
 
 use serde_json::Value;
 
-use super::defra_document_add;
+use super::{defra_document_add, defra_document_save_many};
 use crate::identities::{defra_identity_free, defra_identity_new};
 use crate::test_support::{
     add_collection, close, cstr, local_options, node_with, ok, ok_json, query,
@@ -83,6 +83,28 @@ fn opting_out_leaves_the_blocks_unsigned_on_a_signing_node() {
     let node = widgets(true);
     let doc_id = add_widget(node, -1, 0);
     let signatures = signatures(node, &doc_id);
+    assert!(none_signed(&signatures), "{signatures:?}");
+    close(node);
+}
+
+/// save_many runs its documents as one typed write, which must keep the
+/// call's opt-out rather than sign as the node does.
+#[test]
+fn opting_out_of_a_save_many_leaves_the_blocks_unsigned_on_a_signing_node() {
+    let node = widgets(true);
+    let name = cstr("Widget");
+    let json = cstr(r#"[{"name": "w"}]"#);
+    let options = CollectionOptions {
+        name: name.as_ptr(),
+        enable_signing: -1,
+        ..CollectionOptions::default()
+    };
+    let ids = ok_json(unsafe {
+        defra_document_save_many(node, json.as_ptr(), 0, ptr::null(), options, 0)
+    });
+    let doc_id = ids[0].as_str().expect("save_many answers with an ID");
+
+    let signatures = signatures(node, doc_id);
     assert!(none_signed(&signatures), "{signatures:?}");
     close(node);
 }
