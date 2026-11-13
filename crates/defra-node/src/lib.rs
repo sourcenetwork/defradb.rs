@@ -557,15 +557,17 @@ impl Node {
             Err(error) => return QueryResponse::error(error.to_string()),
         };
         let request = self.with_default_query_identity(request);
-        // A request is signed when the node signs with its identity, or when
-        // the caller brings its own key. Otherwise an identity-only node runs
-        // it unsigned, as its caller, as Go's `NodeIdentity` without
-        // `EnableSigning` does. Either way it runs under the node's principal
-        // (`node_principal`), the owner of the transactions the node begins.
-        let signing_identity = self
-            .node_identity_did
-            .as_deref()
-            .filter(|_| self.node_signs || caller_signer.is_some());
+        // A request is signed when the node signs with its identity, when the
+        // caller brings its own key, or when the write asks for signing with
+        // `enableSigning: true`, as Go's `EnableSigning` does on a node that
+        // does not sign. Otherwise an identity-only node runs it unsigned, as
+        // its caller, as Go's `NodeIdentity` without `EnableSigning` does.
+        // Either way it runs under the node's principal (`node_principal`),
+        // the owner of the transactions the node begins.
+        let signs = self.node_signs
+            || caller_signer.is_some()
+            || request.context.signing_override() == Some(true);
+        let signing_identity = self.node_identity_did.as_deref().filter(|_| signs);
         let Some(node_identity_did) = signing_identity else {
             if caller_signer.is_some() {
                 return QueryResponse::error(

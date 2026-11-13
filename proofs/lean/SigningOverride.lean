@@ -19,7 +19,8 @@ What must never happen:
 Rust anchors: `crates/defra-core/src/request_context.rs`
 `RequestContext::signing`; `crates/defra-core/src/signing.rs`
 `resolve_signing_config_with_flag`; `crates/http/src/query_context.rs`
-`request_context`; `crates/ffi/src/document/run.rs` `DocumentCall::begin`.
+`request_context`; `crates/ffi/src/document/run.rs` `DocumentCall::begin`;
+`crates/defra-node/src/lib.rs` `execute_prepared_request`.
 -/
 
 namespace SigningOverride
