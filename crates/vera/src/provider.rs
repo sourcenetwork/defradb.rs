@@ -218,8 +218,10 @@ pub trait VeraProvider: MaybeSendSync {
     }
 
     /// The verified ACP state a decision is read at, when the provider
-    /// proves one (the vera.rs light client's module state root). A decision
-    /// cached under it is exact: a new state is a new key.
+    /// proves one and it is still fresh (the vera.rs light client's module
+    /// state root, within its freshness limit). A decision cached under it
+    /// is exact: a new state is a new key, and a state that aged out is no
+    /// key at all.
     fn decision_state(&self) -> Option<String> {
         None
     }

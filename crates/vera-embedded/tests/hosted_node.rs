@@ -39,7 +39,7 @@ fn config(directory: &Path) -> HostConfig {
 }
 
 #[nuclei::test]
-async fn once_the_node_stops_no_access_decision_is_given() {
+async fn once_the_node_stops_the_provider_verifies_no_new_decision() {
     let directory = tempfile::tempdir().unwrap();
     let edge = edge::testing::edge();
     let node = HostedNode::start(config(&directory.path().join("vera")), &edge)
@@ -83,7 +83,8 @@ async fn once_the_node_stops_no_access_decision_is_given() {
     node.stop().await.expect("stop");
 
     // The owner was admitted a moment ago. With the node gone the provider
-    // has nothing to verify a decision against, and gives none.
+    // has nothing to verify a decision against and reads none. What document
+    // ACP may still repeat from memory is `stopped_node_decisions.rs`'s.
     assert!(provider
         .verify_access(&policy, "document", "first", "read", &owner)
         .await

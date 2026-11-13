@@ -13,8 +13,10 @@ use crate::{EmbeddedVeraConfig, Error, Result};
 /// The provider trusts the consensus key of the deployment this process
 /// created or reopened, and verifies every receipt, proof and header against
 /// it as it does over the network. Once the node stops, by shutdown or on
-/// its own, its transport refuses every call, so access decisions fail and
-/// none is served from memory.
+/// its own, its transport refuses every call, so a decision that was not
+/// asked before fails. Document ACP remembers a decision under the verified
+/// state it was read at and may repeat it while that state is fresh, which
+/// is at most the light client's freshness limit after the node stopped.
 pub(crate) async fn start<S>(
     config: &EmbeddedVeraConfig,
     event_bus: Option<Arc<dyn events::Bus>>,
