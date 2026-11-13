@@ -1,6 +1,11 @@
 //! A DAG fetch names the heads the receiver holds, so the provider sends only
 //! the blocks the receiver is missing, at any branch depth. Rust nodes only:
 //! the counters read are defradb.rs's `p2p status`.
+//!
+//! `car_received_already_held` leaves out the root a fetch asks for by name,
+//! which gossip delivered first: how many heads gossip delivers depends on
+//! when a writer's coalesced announcement lands, so only history sent again
+//! is counted, and every scenario expects none.
 
 use std::collections::BTreeMap;
 
@@ -212,7 +217,7 @@ fn case(id: &'static str, actions: Vec<Actions>) {
 /// Steady state: `db1` holds the history and is told of each new head in
 /// turn. Every update is at most three blocks (a composite and two fields),
 /// so `db0` serves at most that per update, however long the history grows,
-/// and `db1` is sent no block it already holds beyond the head it was told of.
+/// and `db1` is sent no block it already holds.
 #[test]
 #[mantra_macros::req_test("defra.net.sync.exact_fetch.steady_state")]
 fn each_new_head_over_held_history_is_served_alone() {
@@ -225,10 +230,7 @@ fn each_new_head_over_held_history_is_served_alone() {
         actions.push(holds("db1", &format!("n{}", idx + 1)));
     }
     actions.push(car_served_within("db0", u64::from(3 * (UPDATES + 1))));
-    actions.push(at_most(
-        "db1",
-        &[("car_received_already_held", u64::from(UPDATES + 1))],
-    ));
+    actions.push(at_most("db1", &[("car_received_already_held", 0)]));
     case(integration_test::scenario_id!(), actions);
 }
 
@@ -263,14 +265,14 @@ fn a_deep_concurrent_branch_is_served_without_shared_history() {
     ));
     actions.push(at_most(
         "db1",
-        &[("car_received_already_held", 3), ("car_served_cids", 3)],
+        &[("car_received_already_held", 0), ("car_served_cids", 3)],
     ));
-    actions.push(at_most("db0", &[("car_received_already_held", 2)]));
+    actions.push(at_most("db0", &[("car_received_already_held", 0)]));
     case(integration_test::scenario_id!(), actions);
 }
 
 /// `db1` holds none of a document with a long history: it is served the
-/// whole DAG and converges, sent again only the head gossip delivered.
+/// whole DAG and converges, sent no block it already holds.
 #[test]
 #[mantra_macros::req_test("defra.net.sync.exact_fetch.empty_receiver")]
 fn a_receiver_holding_nothing_still_gets_the_whole_document() {
@@ -279,6 +281,6 @@ fn a_receiver_holding_nothing_still_gets_the_whole_document() {
     actions.extend(connect());
     actions.push(update("db0", json!({ "name": "last" })));
     actions.push(holds("db1", "last"));
-    actions.push(at_most("db1", &[("car_received_already_held", 1)]));
+    actions.push(at_most("db1", &[("car_received_already_held", 0)]));
     case(integration_test::scenario_id!(), actions);
 }
