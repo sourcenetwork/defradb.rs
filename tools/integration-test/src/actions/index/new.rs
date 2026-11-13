@@ -50,14 +50,27 @@ impl Op for NewIndex {
                 descending: field.descending,
             })
             .collect();
-        state
-            .block_on(state.node_on(self.common.node())?.create_index_as(
-                &state.context_as(None, self.common.identity_seed),
+        let node = state.node_on(self.common.node())?;
+        let context = state.context_as(None, self.common.identity_seed);
+        // Go's NewIndex always returns before the build; its harness waits
+        // for the build unless the scenario sets `async`.
+        let created = match self.r#async {
+            true => state.block_on(node.start_index_as(
+                &context,
                 &self.collection,
                 self.index_name(),
                 fields,
                 self.unique(),
-            ))
+            )),
+            false => state.block_on(node.create_index_as(
+                &context,
+                &self.collection,
+                self.index_name(),
+                fields,
+                self.unique(),
+            )),
+        };
+        created
             .map(|_| json!({}))
             .map_err(|e| Failure::operation(e.to_string()))
     }
@@ -103,7 +116,6 @@ impl NewIndex {
             ));
         }
         let unsupported = [
-            ("async", self.r#async),
             ("txn", self.txn.is_some()),
             ("index.vector", self.index.vector.is_some()),
         ];
@@ -111,11 +123,15 @@ impl NewIndex {
     }
 
     /// [`NewIndex::check_arguments`], plus the descending fields the HTTP and
-    /// CLI clients cannot send.
+    /// CLI clients cannot send, and `async`: an index created over HTTP is
+    /// built before the response.
     fn check_remote_arguments(&self) -> Result<(), Failure> {
         self.check_arguments()?;
         let descending = self.index.fields.iter().any(|field| field.descending);
-        unsupported_argument(&[("index.fields.descending", descending)])
+        unsupported_argument(&[
+            ("index.fields.descending", descending),
+            ("async", self.r#async),
+        ])
     }
 
     fn name_of() -> &'static str {
@@ -214,7 +230,7 @@ fn wait_until_built(state: &State, action: &NewIndex, collection: &str) -> Resul
 }
 
 /// Go's building state: `BackfillIndexAction` (3) and `InProgressActionStatus` (1).
-fn building(index: &Value) -> bool {
+pub(crate) fn building(index: &Value) -> bool {
     let execution = &index["Execution"];
     execution["Action"] == 3 && execution["Status"] == 1
 }

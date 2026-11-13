@@ -57,6 +57,42 @@ impl<S: Store> DB<S> {
         self.backfill_defined_index(index, lease, plan).await
     }
 
+    /// [`Self::create_index`], returning once the definition has committed:
+    /// the index is listed as building until its backfill, a job of its
+    /// own, completes or fails. Go's `Collection.NewIndex`, which never waits
+    /// for the build.
+    pub async fn start_index(
+        self: &Arc<Self>,
+        collection_name: &str,
+        name: Option<&str>,
+        fields: Vec<IndexedFieldDescription>,
+        kind: IndexKind,
+    ) -> Result<IndexDescription>
+    where
+        S: 'static,
+    {
+        let (index, lease, plan) = self
+            .define_index(collection_name, name, fields, kind)
+            .await?;
+        let db = Arc::clone(self);
+        let collection = collection_name.to_owned();
+        let index_id = index.id;
+        spawn_task(self.pool(), "db::index_backfill", async move {
+            // The build's outcome is on the index's action record. An error
+            // here comes from settling that record or reloading the cache
+            // after it, and nothing else reports it.
+            if let Err(error) = db.backfill_index(lease, plan).await {
+                tracing::error!(
+                    collection = %collection,
+                    index_id,
+                    %error,
+                    "index backfill could not be settled"
+                );
+            }
+        });
+        Ok(index)
+    }
+
     /// Reconcile a named nonunique ordered index without changing collection
     /// identity. Concurrent calls either observe the completed index or report
     /// its existing backfill; they never start another backfill or claim that

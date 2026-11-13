@@ -212,6 +212,22 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
         ))
     }
 
+    /// Hard-delete the documents of collection `name` named by `doc_ids`, in
+    /// the transaction `context` carries when it carries one; how many were
+    /// purged. Their block history is pruned unless the collection is
+    /// branchable. Go shinzo's `Collection.PurgeByDocIDs`.
+    async fn purge_by_doc_ids_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        doc_ids: &[document::DocID],
+    ) -> std::result::Result<usize, TransactionError> {
+        let _ = (context, name, doc_ids);
+        Err(TransactionError::not_supported(
+            "document purge is not supported in this configuration",
+        ))
+    }
+
     /// Add the YAML DAC `policy` with the identity acting in `context` as its
     /// creator; its ID. Go's `AddDACPolicy`, which is not transactional.
     async fn add_dac_policy_as(

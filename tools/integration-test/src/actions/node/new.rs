@@ -102,6 +102,7 @@ impl Op for NewNode {
         // harness sets up for them.
         probe.kms = false;
         (probe.ttl_millis, probe.tick_millis, probe.buckets) = (None, None, None);
+        probe.index_gate = None;
         if probe != Self::default() {
             let options = serde_json::to_string(&probe).unwrap_or_default();
             return Err(Failure::unsupported(format!("{} {options}", Self::name())));
@@ -113,6 +114,7 @@ impl Op for NewNode {
         let signing = (self.enable_signing || self.key_type.is_some())
             .then(|| self.key_type.unwrap_or_default());
         let txn_ttl = self.txn_ttl(state.client_type())?;
+        let index_gate = self.index_gate(state.client_type())?;
         let dir = match self.database_dir {
             Some(_) => Some(Arc::new(tempfile::tempdir().map_err(|e| {
                 Failure::operation(format!("could not make the node's directory: {e}"))
@@ -128,6 +130,7 @@ impl Op for NewNode {
             signing,
             txn_ttl,
             se_key: self.searchable_encryption_key()?,
+            index_gate,
             ..Default::default()
         };
         state.start_node(self.common.node(), spec);
@@ -149,16 +152,35 @@ impl NewNode {
             .map_err(|_| Failure::operation("an AES-256 key is 32 bytes".into()))
     }
 
-    /// How long an idle HTTP transaction lives and how often the node sweeps
-    /// for idle ones, Go's `TxnTTL` and `TxnTTLTick`. Rust sweeps on its
-    /// tick, so Go's bucket count has nothing to set.
+    /// The gate the node's index backfills pass, Go's `db.IndexBuildGate`. It
+    /// is a hook in the node's process, so a Go node cannot take one.
+    fn index_gate(
+        &self,
+        client: ClientType,
+    ) -> Result<Option<Arc<crate::index_gate::TestIndexGate>>, Failure> {
+        let Some(kind) = self.index_gate else {
+            return Ok(None);
+        };
+        if client == ClientType::GoHttp {
+            return Err(Failure::unsupported(format!(
+                "{} argument indexGate under {client:?}: the gate is a hook in the node's process",
+                Self::name()
+            )));
+        }
+        Ok(Some(Arc::new(crate::index_gate::TestIndexGate::new(kind))))
+    }
+
+    /// How long an idle explicit transaction lives and how often the node
+    /// sweeps for idle ones, Go's `TxnTTL` and `TxnTTLTick`. Rust sweeps on
+    /// its tick, so Go's bucket count has nothing to set. Every Rust node
+    /// sweeps, with or without an HTTP server.
     fn txn_ttl(&self, client: ClientType) -> Result<Option<(Duration, Duration)>, Failure> {
         let Some(ttl) = self.ttl_millis else {
             return Ok(None);
         };
-        if !matches!(client, ClientType::RustHttp | ClientType::Cli) {
+        if client == ClientType::GoHttp {
             return Err(Failure::unsupported(format!(
-                "{} argument ttlMillis under {client:?}: only a node serving HTTP times out transactions",
+                "{} argument ttlMillis under {client:?}",
                 Self::name()
             )));
         }

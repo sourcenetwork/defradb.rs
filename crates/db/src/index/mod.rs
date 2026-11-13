@@ -1,6 +1,7 @@
 //! Secondary index management: maintenance, vector engines and value extraction.
 
 pub mod backfill;
+pub mod build_gate;
 pub mod create;
 pub mod drop;
 pub mod error;

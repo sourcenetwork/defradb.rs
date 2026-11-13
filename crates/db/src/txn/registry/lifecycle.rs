@@ -277,6 +277,17 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .map_err(|error| TransactionError::operation(error.to_string()))
     }
 
+    async fn purge_by_doc_ids_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        doc_ids: &[document::DocID],
+    ) -> std::result::Result<usize, TransactionError> {
+        DbTransactionRegistry::purge_by_doc_ids_as(self, context, name, doc_ids)
+            .await
+            .map_err(|error| TransactionError::operation(error.to_string()))
+    }
+
     async fn add_dac_policy_as(
         &self,
         context: &RequestContext,

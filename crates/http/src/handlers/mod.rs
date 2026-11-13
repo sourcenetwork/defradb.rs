@@ -42,8 +42,9 @@ pub use graphql::{
 // Re-export REST handlers
 pub use collections::{
     collection_exists, delete_collection_versions, delete_collections_by_names,
-    describe_collection, get_collection_doc_ids, list_collections, patch_collection, set_active,
-    truncate_collection, CollectionDocIdsResponse,
+    describe_collection, get_collection_doc_ids, list_collections, patch_collection,
+    purge_documents, set_active, truncate_collection, CollectionDocIdsResponse,
+    PurgeDocumentsResponse,
 };
 pub use documents::{
     add_document, delete_document, delete_documents_with_filter, get_document, update_document,
