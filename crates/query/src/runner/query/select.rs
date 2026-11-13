@@ -17,7 +17,36 @@ use super::super::{DocFetcher, QueryRunner};
 
 impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     /// Execute a single Select operation with a specific fetcher and identity.
+    ///
+    /// The select plans its indexes from the cached collections, and each index
+    /// scan reads in a transaction of its own. A scan that finds a reindex owed
+    /// since the plan answers [`QueryError::IndexOwed`]; the select then runs
+    /// once more planned without indexes, so it scans its collections and reads
+    /// what queries read. A select writes nothing, so running it again is safe.
     pub(crate) async fn execute_select_internal(
+        &self,
+        select: &Select,
+        fetcher: &dyn DocFetcher,
+        caller_identity: Option<Did>,
+        warnings: &mut Vec<GqlWarning>,
+    ) -> Result<JsonValue> {
+        let warnings_before = warnings.len();
+        match self
+            .execute_select_attempt(select, fetcher, caller_identity.clone(), warnings)
+            .await
+        {
+            Err(QueryError::IndexOwed(collection)) => {
+                tracing::debug!(%collection, "index owes a reindex since planning; scanning instead");
+                warnings.truncate(warnings_before);
+                let unindexed = super::super::fetcher::FetcherWrapper::without_indexes(fetcher);
+                self.execute_select_attempt(select, &unindexed, caller_identity, warnings)
+                    .await
+            }
+            outcome => outcome,
+        }
+    }
+
+    async fn execute_select_attempt(
         &self,
         select: &Select,
         fetcher: &dyn DocFetcher,
