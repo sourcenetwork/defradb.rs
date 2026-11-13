@@ -1,5 +1,6 @@
 //! Node Access Control state, factory and trait wiring.
 
+mod edge;
 pub mod error;
 pub mod factory;
 mod toggle;
@@ -226,6 +227,8 @@ pub struct NacManager<S: ZanzibarStore + ?Sized + 'static> {
     nac: Arc<NodeACP<S>>,
     config: NacConfig,
     transaction_store_bound: bool,
+    /// The committed grants edge checks read; see [`edge`].
+    edge: Arc<edge::EdgeGrants>,
 }
 
 impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
@@ -235,6 +238,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
             nac: Arc::new(NodeACP::new(store)),
             config,
             transaction_store_bound: false,
+            edge: Arc::new(edge::EdgeGrants::new()),
         }
     }
 
@@ -244,11 +248,13 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
             nac: Arc::new(NodeACP::new(store)),
             config,
             transaction_store_bound: true,
+            edge: Arc::new(edge::EdgeGrants::new()),
         }
     }
 
     /// A manager over `store` (a transaction or a scope) that shares this
-    /// one's policy snapshot.
+    /// one's policy snapshot. It has no edge snapshot of its own: its checks
+    /// read `store`.
     fn scoped<T>(&self, store: Arc<T>) -> NacManager<T>
     where
         T: ZanzibarStore + ?Sized + 'static,
@@ -257,6 +263,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
             nac: Arc::new(self.nac.scoped(store)),
             config: self.config.clone(),
             transaction_store_bound: self.transaction_store_bound,
+            edge: Arc::new(edge::EdgeGrants::new()),
         }
     }
 
@@ -288,6 +295,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
                 .load()
                 .await
                 .map_err(|error| Error::Acp(error.to_string()))?;
+            self.refresh_edge().await;
             return Ok(());
         }
 
@@ -357,6 +365,9 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
         identity: &Did,
         permission: NodePermission,
     ) -> Result<bool> {
+        if let Some(grants) = self.edge.current() {
+            return grants.check_permission(identity, permission).await;
+        }
         if let Some(scope) = self
             .nac
             .begin_scope(true)
@@ -392,6 +403,9 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
         identity: &Did,
         permissions: &[NodePermission],
     ) -> Vec<Result<bool>> {
+        if let Some(grants) = self.edge.current() {
+            return first_refusal(grants.as_ref(), identity, permissions).await;
+        }
         let scope = match self.nac.begin_scope(true).await {
             Ok(scope) => scope,
             Err(error) => return vec![Err(Error::Acp(error.to_string()))],
@@ -504,6 +518,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
                 .load()
                 .await
                 .map_err(|error| Error::Acp(error.to_string()))?;
+            self.refresh_edge().await;
             return Ok(());
         }
 
@@ -538,6 +553,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
                 .load()
                 .await
                 .map_err(|error| Error::Acp(error.to_string()))?;
+            self.refresh_edge().await;
             return Ok(());
         }
 

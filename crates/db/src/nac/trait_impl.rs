@@ -93,6 +93,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
         if !self.transaction_store_bound || !self.nac.supports_transactions() {
             return Ok(None);
         }
+        self.refresh_edge_on_commit(&view).await?;
         let scoped = self.nac.scoped(std::sync::Arc::new(
             acp::zanzibar::store::TransactionZanzibarStore::new(view),
         ));

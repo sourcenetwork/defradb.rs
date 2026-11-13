@@ -115,3 +115,60 @@ fn batched_check_names_the_first_missing_permission() {
     .unwrap();
     pool.shutdown_blocking().unwrap();
 }
+
+/// The edge answers from a snapshot of the grants, and a revocation that has
+/// returned is in it: the next check is refused, through the adapter and
+/// through the manager itself.
+#[test]
+fn a_returned_revocation_refuses_the_next_edge_check() {
+    use acp::nac::NodePermission::{CollectionGet, DocumentUpdate};
+    use defra_http::router::{NodeAcpOperations, PermissionCheck};
+
+    let pool = workers::Pool::start(storage::with_worker_io(workers::Config::unplaced(1))).unwrap();
+    let options = storage::RegolithStoreOptions::memory().placed_on(&pool);
+    let store =
+        Arc::new(storage::RegolithStore::open_with_options("regolith-memory", options).unwrap());
+    let nac: Arc<dyn db::NacManagerApi> = Arc::new(db::NacManager::new(
+        Arc::new(acp::PersistentZanzibarStore::from_store(Arc::clone(&store))),
+        db::NacConfig::new().with_enabled(),
+    ));
+    let owner = identity::Did::new(OWNER).unwrap();
+    let reader = identity::Did::wildcard();
+    let adapter = NacAdapter::new(Arc::clone(&nac)).placed_on(Some(&pool));
+    workers::block_on(async {
+        nac.initialize(Some(&owner)).await.unwrap();
+        let both = [CollectionGet, DocumentUpdate];
+        for permission in both {
+            nac.add_permission_grant(&owner, &reader, permission)
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            adapter.check_permissions(&reader, &both).await,
+            PermissionCheck::Granted
+        );
+
+        nac.remove_permission_grant(&owner, &reader, DocumentUpdate)
+            .await
+            .unwrap();
+        assert_eq!(
+            adapter.check_permissions(&reader, &both).await,
+            PermissionCheck::Denied(DocumentUpdate),
+            "the edge still granted a permission whose revocation had returned"
+        );
+        assert!(!nac.check_permission(&reader, DocumentUpdate).await.unwrap());
+        assert!(nac.check_permission(&reader, CollectionGet).await.unwrap());
+        // Disabling NAC is a write too: every check passes once it returns.
+        let caller = db::NacCaller {
+            identity: Some(owner.clone()),
+            node: None,
+        };
+        nac.disable_as(&caller).await.unwrap();
+        assert_eq!(
+            adapter.check_permissions(&reader, &both).await,
+            PermissionCheck::Granted
+        );
+    })
+    .unwrap();
+    pool.shutdown_blocking().unwrap();
+}

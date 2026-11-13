@@ -10,6 +10,7 @@
 mod explain;
 mod lifecycle;
 mod operations;
+mod snapshot;
 mod source;
 
 use std::sync::Arc;

@@ -76,6 +76,7 @@ where
                 nac: Arc::new(nac.scoped(store)),
                 config: config.clone(),
                 transaction_store_bound,
+                edge: Arc::new(super::edge::EdgeGrants::new()),
             });
             let op = Arc::clone(&op);
             Box::pin(async move {
@@ -108,6 +109,7 @@ where
                     tracing::warn!(%error, "NAC reload after a committed write failed");
                     self.nac.publish(status, owner);
                 }
+                self.refresh_edge().await;
                 Ok(Some(value))
             }
             Some(Err(refusal)) => Err(*refusal
