@@ -66,6 +66,7 @@ mod dac {
         mod replicator;
         mod replicator_with_doc_actor_relationship;
         mod subscribe;
+        mod subscribe_denied_doc;
         mod subscribe_grant_race;
         mod subscribe_with_doc_actor_relationship;
         mod sync_shared_field;

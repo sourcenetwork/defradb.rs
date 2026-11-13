@@ -116,6 +116,9 @@ where
                 stream_timeout: config
                     .stream_timeout_secs
                     .unwrap_or(p2p::P2PHostConfig::default().stream_timeout),
+                // Bitswap serves a block only under the same replicator and
+                // document ACP gate as the coordinator's CAR responses below.
+                access_mode: p2p::bitswap::AccessMode::Controlled,
                 ..Default::default()
             },
             database.node_identity(),
