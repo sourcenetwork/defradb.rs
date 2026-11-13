@@ -90,7 +90,9 @@ pub(crate) async fn setup_iroh<S>(
     document_acp: Arc<dyn acp::DocumentACP>,
     strict_replicated_doc_access: bool,
     peer_keyring: Option<&crate::PeerKeyring>,
+    start_peer_key: Option<&crate::StartPeerKey>,
     scope: edge::Scope,
+    stream_protocols: Vec<p2p::iroh::StreamRegistration>,
 ) -> Result<P2PSetup>
 where
     S: storage::corekv::Store + 'static,
@@ -102,15 +104,17 @@ where
     let max_txn_retries = database.options().max_txn_retries();
     let retry_schedule = config.sync.retry_schedule()?;
 
-    let secret_key = match config.peer_key {
-        PeerKeySource::File => {
+    let secret_key = match (start_peer_key, &config.peer_key) {
+        (Some(start_key), _) => p2p::iroh::SecretKey::from_bytes(start_key.seed()),
+        (None, PeerKeySource::File) => {
             p2p::iroh::load_or_generate_secret_key(config.secret_key_path.as_deref()).await?
         }
-        PeerKeySource::Store => {
+        (None, PeerKeySource::Store) => {
             let seed = crate::peer_key::load_with_keyring(
                 &Peerstore::new(store.clone()).with_max_txn_retries(max_txn_retries),
                 config.secret_key_path.as_deref(),
                 peer_keyring,
+                None,
             )
             .await?;
             p2p::iroh::SecretKey::from_bytes(&seed)
@@ -135,6 +139,7 @@ where
     peer_config.retry_schedule = retry_schedule.clone();
     peer_config.rebroadcast_on_merge = config.rebroadcast_on_merge;
     peer_config.load_persisted_collections = config.load_persisted_collections;
+    peer_config.stream_protocols = stream_protocols;
     if !config.load_persisted_collections {
         tracing::info!(target: "defra_node", "skipping persisted P2P collection subscriptions");
     }
@@ -190,6 +195,7 @@ where
         })
     }));
     system.set_manage_requester(Arc::clone(&peer.manage.requester));
+    system.set_iroh_transport(peer.transport.clone());
 
     let merge_handler_for_kms = Arc::clone(&peer.replication.merge_handler_inner);
     Ok(P2PSetup {

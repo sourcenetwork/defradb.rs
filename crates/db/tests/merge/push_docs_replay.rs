@@ -293,6 +293,10 @@ fn unfinished_replay_uses_configured_schedule_and_marks_replicator_inactive() {
             .await
             .unwrap();
 
+        let incarnation = peerstore
+            .get_replicator_incarnation(peer.as_str())
+            .await
+            .unwrap();
         let before = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -300,6 +304,7 @@ fn unfinished_replay_uses_configured_schedule_and_marks_replicator_inactive() {
         persist_replay_failures(
             &peerstore,
             &peer,
+            incarnation.unwrap(),
             &[ReplayDocumentFailure {
                 doc_id: "doc-1".to_string(),
                 collection_id: "collection".to_string(),
@@ -308,6 +313,14 @@ fn unfinished_replay_uses_configured_schedule_and_marks_replicator_inactive() {
         .await
         .unwrap();
 
+        assert_eq!(
+            peerstore
+                .get_replicator_incarnation(peer.as_str())
+                .await
+                .unwrap(),
+            incarnation,
+            "deferring a replay must preserve the install incarnation"
+        );
         let retries = peerstore.get_retry_documents(peer.as_str()).await.unwrap();
         assert_eq!(retries.len(), 1);
         assert_eq!(retries[0].doc_id, "doc-1");
@@ -332,6 +345,290 @@ fn unfinished_replay_uses_configured_schedule_and_marks_replicator_inactive() {
 }
 
 #[test]
+fn stale_replay_does_not_mark_reconfigured_peer_inactive() {
+    workers::block_on(async {
+        let peerstore =
+            storage::stores::Peerstore::new(Arc::new(storage::RegolithStore::in_memory().unwrap()));
+        let peer = PeerId::new("peer-reconfigured".to_owned());
+        let info = p2p::ReplicatorInfo::from_raw(peer.to_string(), vec!["old".into()], Vec::new());
+        peerstore
+            .create_replicator(peer.as_str(), &info.to_bytes().unwrap())
+            .await
+            .unwrap();
+        let old_incarnation = peerstore
+            .get_replicator_incarnation(peer.as_str())
+            .await
+            .unwrap()
+            .unwrap();
+        let replacement =
+            p2p::ReplicatorInfo::from_raw(peer.to_string(), vec!["new".into()], Vec::new());
+        let replacement_bytes = replacement.to_bytes().unwrap();
+        peerstore
+            .create_replicator(peer.as_str(), &replacement_bytes)
+            .await
+            .unwrap();
+        let replacement_incarnation = peerstore
+            .get_replicator_incarnation(peer.as_str())
+            .await
+            .unwrap();
+        persist_replay_failures(
+            &peerstore,
+            &peer,
+            old_incarnation,
+            &[ReplayDocumentFailure {
+                doc_id: "old-doc".into(),
+                collection_id: "old".into(),
+            }],
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            peerstore
+                .get_replicator(peer.as_str())
+                .await
+                .unwrap()
+                .unwrap()
+                .as_ref(),
+            replacement_bytes.as_slice()
+        );
+        assert_eq!(
+            peerstore
+                .get_replicator_incarnation(peer.as_str())
+                .await
+                .unwrap(),
+            replacement_incarnation
+        );
+        assert!(
+            peerstore
+                .get_retry_documents(peer.as_str())
+                .await
+                .unwrap()
+                .is_empty(),
+            "a replay for the old install must leave no retry marker for its replacement"
+        );
+    })
+    .unwrap()
+}
+
+/// A live push can commit a newer marker for one failed document between this
+/// replay's generation allocation and its transaction. That leaves the install
+/// current: the replay must still record the documents after it and mark the
+/// peer inactive (`ReplicatorIncarnation.tla` INV_FailuresRecorded).
+#[test]
+fn a_newer_marker_on_one_failed_document_does_not_stop_the_rest() {
+    workers::block_on(async {
+        use storage::corekv::{Key as _, Store as _, Writer as _};
+
+        let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
+        let peerstore = storage::stores::Peerstore::new(store.clone());
+        let peer = PeerId::new("peer-live".to_owned());
+        let info =
+            p2p::ReplicatorInfo::from_raw(peer.to_string(), vec!["notes".into()], Vec::new());
+        peerstore
+            .create_replicator(peer.as_str(), &info.to_bytes().unwrap())
+            .await
+            .unwrap();
+        let incarnation = peerstore
+            .get_replicator_incarnation(peer.as_str())
+            .await
+            .unwrap()
+            .unwrap();
+        // The live push's marker carries a generation allocated after the
+        // replay's, so the replay's transaction finds a newer one holding it.
+        let raw = storage::namespace::NamespacedStore::new(
+            store.clone(),
+            storage::namespace::Namespace::Peerstore,
+        );
+        let mut txn = raw.new_txn(false).await.unwrap();
+        txn.set(
+            &storage::keys::peerstore::ReplicatorRetryDocIDKey::new(peer.as_str(), "doc-1").bytes(),
+            &storage::stores::peerstore::encode_retry_marker_generation(u64::MAX),
+        )
+        .await
+        .unwrap();
+        txn.commit().await.unwrap();
+
+        let failures: Vec<_> = ["doc-1", "doc-2", "doc-3"]
+            .into_iter()
+            .map(|doc_id| ReplayDocumentFailure {
+                doc_id: doc_id.to_owned(),
+                collection_id: "notes".to_owned(),
+            })
+            .collect();
+        persist_replay_failures(&peerstore, &peer, incarnation, &failures)
+            .await
+            .unwrap();
+
+        let markers = peerstore.get_retry_documents(peer.as_str()).await.unwrap();
+        let generation = |doc_id: &str| {
+            markers
+                .iter()
+                .find(|marker| marker.doc_id == doc_id)
+                .map(|marker| marker.generation)
+        };
+        assert_eq!(
+            generation("doc-1"),
+            Some(u64::MAX),
+            "the newer marker stays"
+        );
+        assert!(generation("doc-2").is_some(), "doc-2 lost its retry marker");
+        assert!(generation("doc-3").is_some(), "doc-3 lost its retry marker");
+        let saved = peerstore
+            .get_replicator(peer.as_str())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            p2p::ReplicatorInfo::from_bytes(&saved).unwrap().status,
+            p2p::ReplicatorStatus::Inactive
+        );
+    })
+    .unwrap()
+}
+
+/// Removing a collection mid-replay rewrites the peer under a new incarnation
+/// (`ReplicatorIncarnation.tla` ReplayMark). The replay that began under the
+/// old one must register no marker and send nothing for the removed
+/// collection after that, so the new install's retry sweep has nothing of it
+/// to send.
+#[test]
+fn a_replay_outlived_by_a_collection_removal_registers_nothing_for_it() {
+    workers::block_on(async {
+        let db = Arc::new(
+            db::DB::from_arc(Arc::new(storage::RegolithStore::in_memory().unwrap())).unwrap(),
+        );
+        db.set_network(edge::testing::edge());
+        let mut removed_docs = Vec::new();
+        for (name, id) in [("Kept", "col-kept"), ("Removed", "col-removed")] {
+            db.create_collection(schema::CollectionVersion::new(
+                name,
+                format!("{id}-v1"),
+                id,
+                vec![
+                    schema::FieldDescription::new(
+                        "1",
+                        "_docID",
+                        schema::FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    ),
+                    schema::FieldDescription::new(
+                        "2",
+                        "body",
+                        schema::FieldKind::string(),
+                        schema::CType::LwwRegister,
+                    ),
+                ],
+            ))
+            .await
+            .unwrap();
+            let schema = db.get_collection(name).unwrap().unwrap().schema_arc();
+            let mutator = db::AutoCommitMutator::new(db.clone());
+            for index in 0..3 {
+                let mut doc = document::Document::new(schema.clone());
+                doc.set("body", format!("{name}-{index}")).unwrap();
+                let created = query::mutator::DocMutator::create(&mutator, name, doc)
+                    .await
+                    .unwrap();
+                if name == "Removed" {
+                    removed_docs.push(created.doc_id.to_string());
+                }
+            }
+        }
+        let peer = PeerId::new("peer-reconfigured".to_owned());
+        let peerstore = Arc::new(db.peerstore());
+        let installed = p2p::ReplicatorInfo::from_raw(
+            peer.to_string(),
+            vec!["col-kept".into(), "col-removed".into()],
+            Vec::new(),
+        );
+        peerstore
+            .create_replicator(peer.as_str(), &installed.to_bytes().unwrap())
+            .await
+            .unwrap();
+        let install_incarnation = peerstore
+            .get_replicator_incarnation(peer.as_str())
+            .await
+            .unwrap()
+            .unwrap();
+
+        // The first PushLog lands while the replay is still in the kept
+        // collection; the receiver refuses every head, so each one stays a
+        // retry obligation of whichever install the replay writes it for.
+        let removed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reconfigure = {
+            let (peerstore, peer, removed) = (peerstore.clone(), peer.clone(), removed.clone());
+            Arc::new(move |_doc: String| {
+                let (peerstore, peer, removed) = (peerstore.clone(), peer.clone(), removed.clone());
+                Box::pin(async move {
+                    if !removed.swap(true, Ordering::SeqCst) {
+                        let kept = p2p::ReplicatorInfo::from_raw(
+                            peer.to_string(),
+                            vec!["col-kept".into()],
+                            Vec::new(),
+                        );
+                        peerstore
+                            .create_replicator(peer.as_str(), &kept.to_bytes().unwrap())
+                            .await
+                            .unwrap();
+                    }
+                }) as futures::future::BoxFuture<'static, ()>
+            })
+        };
+        let (sent, received) = regolith::sync::bounded(64);
+        let transport = ConnectedPeerTransport::new("local", peer.as_str())
+            .with_replies(false, sent)
+            .with_reply_hook(reconfigure);
+
+        let result = db::merge::push_existing_docs_with_config(
+            &transport,
+            &db,
+            None,
+            &peer,
+            &["Kept".to_owned(), "Removed".to_owned()],
+            &p2p::ReplicationFilters::new(),
+            db::merge::PushExistingDocsSeOptions::default(),
+            ReplayPushConfig {
+                install_incarnation: Some(install_incarnation),
+                max_concurrent_document_tasks: 1,
+                max_concurrent_outbound_pushes: 1,
+                ..Default::default()
+            },
+            &p2p::EqOnlyFilterMatcher,
+            &p2p::sync::HeadHintCarAuthority::default(),
+        )
+        .await;
+
+        assert!(removed.load(Ordering::SeqCst));
+        assert_ne!(
+            peerstore
+                .get_replicator_incarnation(peer.as_str())
+                .await
+                .unwrap(),
+            Some(install_incarnation)
+        );
+        let error = result.expect_err("a replay outlived by its install must report it");
+        assert!(error.contains("reconfigured"), "{error}");
+        assert_eq!(removed_docs.len(), 3);
+        while let Some(request) = received.try_recv() {
+            assert!(
+                !removed_docs.contains(&request.doc_id),
+                "the outlived replay sent removed document {}",
+                request.doc_id
+            );
+        }
+        let markers = peerstore.get_retry_documents(peer.as_str()).await.unwrap();
+        for marker in &markers {
+            assert!(
+                !removed_docs.contains(&marker.doc_id) && marker.collection_id != "col-removed",
+                "the outlived replay left a retry marker for the removed collection: {}",
+                marker.doc_id
+            );
+        }
+    })
+    .unwrap()
+}
+
+#[test]
 fn forgotten_peer_cannot_be_resurrected_by_unfinished_replay() {
     workers::block_on(async {
         use storage::RegolithStore;
@@ -349,6 +646,11 @@ fn forgotten_peer_cannot_be_resurrected_by_unfinished_replay() {
             .await
             .unwrap();
 
+        let incarnation = peerstore
+            .get_replicator_incarnation(peer.as_str())
+            .await
+            .unwrap()
+            .unwrap();
         let persistence_peer = peer.clone();
         let persistence_store = storage::stores::Peerstore::new(store.clone());
         let failures = [ReplayDocumentFailure {
@@ -356,7 +658,12 @@ fn forgotten_peer_cannot_be_resurrected_by_unfinished_replay() {
             collection_id: "collection".to_string(),
         }];
         let (persisted, deleted) = futures::join!(
-            persist_replay_failures(&persistence_store, &persistence_peer, &failures),
+            persist_replay_failures(
+                &persistence_store,
+                &persistence_peer,
+                incarnation,
+                &failures
+            ),
             peerstore.delete_replicator(peer.as_str()),
         );
         persisted.unwrap();
@@ -405,6 +712,11 @@ fn a_first_replay_hint_seeds_the_missing_retry_schedule() {
         persist_replay_failures(
             &peerstore,
             &peer,
+            peerstore
+                .get_replicator_incarnation(peer.as_str())
+                .await
+                .unwrap()
+                .unwrap(),
             &[ReplayDocumentFailure {
                 doc_id: "doc-seed".into(),
                 collection_id: "collection-seed".into(),
@@ -436,6 +748,14 @@ fn a_first_replay_hint_seeds_the_missing_retry_schedule() {
     .unwrap()
 }
 
+/// Overrides the reply to the request with this 0-based arrival index; `None`
+/// leaves the configured reply.
+pub(super) type ReplyScript = Arc<
+    dyn Fn(usize) -> futures::future::BoxFuture<'static, Option<p2p::Result<PushLogReply>>>
+        + Send
+        + Sync,
+>;
+
 #[derive(Clone)]
 pub(super) struct ConnectedPeerTransport {
     local: PeerId,
@@ -446,6 +766,8 @@ pub(super) struct ConnectedPeerTransport {
     before_reply:
         Option<Arc<dyn Fn(String) -> futures::future::BoxFuture<'static, ()> + Send + Sync>>,
     retry_after_ms: Option<u64>,
+    script: Option<ReplyScript>,
+    arrivals: Arc<kovan::Atom<Vec<Instant>>>,
 }
 
 impl ConnectedPeerTransport {
@@ -458,7 +780,19 @@ impl ConnectedPeerTransport {
             require_selected_authority: None,
             before_reply: None,
             retry_after_ms: None,
+            script: None,
+            arrivals: Arc::new(kovan::Atom::new(Vec::new())),
         }
+    }
+
+    pub(super) fn with_reply_script(mut self, script: ReplyScript) -> Self {
+        self.script = Some(script);
+        self
+    }
+
+    /// When each PushLog reached this transport, in arrival order.
+    pub(super) fn arrivals(&self) -> Vec<Instant> {
+        self.arrivals.load_clone()
     }
 
     pub(super) fn with_replies(
@@ -598,8 +932,20 @@ impl p2p::P2PTransport for ConnectedPeerTransport {
         requests
             .try_send(req)
             .expect("bounded test request capture");
+        let mut index = 0;
+        self.arrivals.rcu(|arrivals| {
+            index = arrivals.len();
+            let mut next = arrivals.clone();
+            next.push(Instant::now());
+            next
+        });
         if let Some(hook) = &self.before_reply {
             hook(doc_id).await;
+        }
+        if let Some(script) = &self.script {
+            if let Some(reply) = script(index).await {
+                return reply;
+            }
         }
         if let Some(store) = &self.remove_on_reply {
             store.delete_replicator(self.remote.as_str()).await.unwrap();
@@ -765,6 +1111,137 @@ fn replay_without_a_replicator_row_is_an_error_not_a_completion() {
         assert!(
             error.contains("removed before existing-document replay"),
             "unexpected error: {error}"
+        );
+    })
+    .unwrap()
+}
+
+/// Rewrites one replicator row, keeping its incarnation, just before the
+/// second peerstore transaction: after the replay's retry marker, before its
+/// status flip.
+struct RewriteBeforeSecondTransact {
+    inner: Arc<storage::RegolithStore>,
+    transactions: AtomicUsize,
+    peer_id: String,
+    rewritten: Vec<u8>,
+}
+
+impl storage::corekv::private::Sealed for RewriteBeforeSecondTransact {}
+
+#[async_trait::async_trait]
+impl storage::corekv::Store for RewriteBeforeSecondTransact {
+    fn crdts(&self) -> &storage::Crdts {
+        self.inner.crdts()
+    }
+
+    async fn allocate(
+        &self,
+        key: &[u8],
+        count: u64,
+    ) -> storage::corekv::Result<std::ops::Range<u64>> {
+        self.inner.allocate(key, count).await
+    }
+
+    async fn new_txn(
+        &self,
+        readonly: bool,
+    ) -> storage::corekv::Result<Box<dyn storage::corekv::Txn>> {
+        self.inner.new_txn(readonly).await
+    }
+
+    async fn transact_retry(
+        &self,
+        options: storage::corekv::RetryOptions,
+        attempt: storage::corekv::RetryAttempt,
+    ) -> std::result::Result<storage::corekv::RetryAttemptValue, storage::corekv::RetryAttemptError>
+    {
+        if self.transactions.fetch_add(1, Ordering::SeqCst) == 1 {
+            use storage::corekv::{Key as _, Writer as _};
+            let peerstore = storage::namespace::NamespacedStore::new(
+                self.inner.clone(),
+                storage::namespace::Namespace::Peerstore,
+            );
+            let mut txn = peerstore.new_txn(false).await.unwrap();
+            txn.set(
+                &storage::keys::ReplicatorKey::new(self.peer_id.as_str()).bytes(),
+                &self.rewritten,
+            )
+            .await
+            .unwrap();
+            txn.commit().await.unwrap();
+        }
+        self.inner.transact_retry(options, attempt).await
+    }
+
+    async fn close(&self) -> storage::corekv::Result<()> {
+        self.inner.close().await
+    }
+}
+
+/// Another writer rewrites the row under the same incarnation (here, a new
+/// address) after the replay read it and before its status flip. The flip
+/// must still land, on top of that rewrite: the install is still current.
+#[test]
+fn a_same_incarnation_rewrite_does_not_skip_the_inactive_flip() {
+    workers::block_on(async {
+        let peer = PeerId::new("peer-rewritten".to_string());
+        let info = p2p::ReplicatorInfo::from_raw(
+            peer.to_string(),
+            vec!["collection".to_string()],
+            Vec::new(),
+        );
+        let mut rewritten = info.clone();
+        rewritten
+            .addresses
+            .push("/ip4/127.0.0.1/tcp/9171".to_string());
+        let store = Arc::new(RewriteBeforeSecondTransact {
+            inner: Arc::new(storage::RegolithStore::in_memory().unwrap()),
+            transactions: AtomicUsize::new(0),
+            peer_id: peer.to_string(),
+            rewritten: rewritten.to_bytes().unwrap(),
+        });
+        let setup = storage::stores::Peerstore::new(store.inner.clone());
+        setup
+            .create_replicator(peer.as_str(), &info.to_bytes().unwrap())
+            .await
+            .unwrap();
+        let incarnation = setup
+            .get_replicator_incarnation(peer.as_str())
+            .await
+            .unwrap()
+            .unwrap();
+
+        let peerstore = storage::stores::Peerstore::new(store.clone());
+        persist_replay_failures(
+            &peerstore,
+            &peer,
+            incarnation,
+            &[ReplayDocumentFailure {
+                doc_id: "doc-1".to_string(),
+                collection_id: "collection".to_string(),
+            }],
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            store.transactions.load(Ordering::SeqCst) >= 2,
+            "the rewrite must have run between the marker and the flip"
+        );
+        let saved = peerstore
+            .get_replicator(peer.as_str())
+            .await
+            .unwrap()
+            .unwrap();
+        let saved = p2p::ReplicatorInfo::from_bytes(&saved).unwrap();
+        assert_eq!(
+            saved.addresses, rewritten.addresses,
+            "the other writer's rewrite stands"
+        );
+        assert_eq!(
+            saved.status,
+            p2p::ReplicatorStatus::Inactive,
+            "a same-incarnation rewrite must not skip the replay's Inactive flip"
         );
     })
     .unwrap()

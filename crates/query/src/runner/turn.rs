@@ -184,10 +184,24 @@ where
                 )));
             }
         }
-        let turned = self
-            .lent(turn, parsed, request, variables, inputs, delegation)
-            .await
-            .unwrap_or_else(|error| Turned::Done(QueryResponse::error(error.to_string())));
+        // The collection version the request works through is pinned for
+        // this turn only, and cleared before the turn ends, so a later request
+        // on the transaction sees the active version (proofs/tla/VersionPin.tla).
+        let turned = match self.pin_selected_version(turn, &request).await {
+            Ok(pinned) => {
+                let turned = self
+                    .lent(turn, parsed, request, variables, inputs, delegation)
+                    .await
+                    .unwrap_or_else(|error| Turned::Done(QueryResponse::error(error.to_string())));
+                match pinned.then(|| turn.pin_collection(None)) {
+                    Some(Err(error)) => Turned::Done(QueryResponse::error(format!(
+                        "failed to clear the selected collection version: {error}"
+                    ))),
+                    _ => turned,
+                }
+            }
+            Err(refused) => Turned::Done(refused),
+        };
         if statement {
             let keep = matches!(&turned, Turned::Done(response) if response.errors.is_empty());
             if let Err(error) = turn.end_statement(keep) {
@@ -197,6 +211,30 @@ where
             }
         }
         turned
+    }
+
+    /// Pins the collection version `request` works through, if it names one,
+    /// for this turn, and says whether it pinned; the response that refuses
+    /// the request when the version cannot be found or pinned.
+    async fn pin_selected_version(
+        &self,
+        turn: &mut dyn TxnTurn,
+        request: &QueryRequest,
+    ) -> std::result::Result<bool, QueryResponse> {
+        let Some(version_id) = request.context.collection_version() else {
+            return Ok(false);
+        };
+        let version = self
+            .collection_provider
+            .get_collection_by_version_id(version_id)
+            .await
+            .map_err(|error| QueryResponse::error(error.to_string()))?
+            .ok_or_else(|| {
+                QueryResponse::error(format!("collection version '{version_id}' not found"))
+            })?;
+        turn.pin_collection(Some((*version).clone()))
+            .map_err(|error| QueryResponse::error(error.to_string()))?;
+        Ok(true)
     }
 
     /// The part of a run that holds the transaction: every handle it makes
@@ -403,10 +441,7 @@ where
                             .await
                     }
                 }
-                ParsedOperation::Subscription { .. } => Err(QueryError::parse(
-                    "Subscriptions must be executed via Server-Sent Events (SSE). \
-                     Send the request with Accept: text/event-stream header.",
-                )),
+                ParsedOperation::Subscription { .. } => Err(QueryError::SubscriptionNeedsSse),
                 ParsedOperation::Introspection { query } => {
                     scoped_runner.execute_introspection(&query).await
                 }

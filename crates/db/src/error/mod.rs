@@ -37,6 +37,18 @@ pub enum Error {
     #[error("index '{index}' not found on collection '{collection}'")]
     IndexNotFound { collection: String, index: String },
 
+    /// Go's `NewErrEncryptedIndexOnNonExistentField`.
+    #[error("encrypted index on non-existent field. Field: {0}")]
+    EncryptedIndexFieldMissing(String),
+
+    /// Go's `NewErrEncryptedIndexAlreadyExists`.
+    #[error("encrypted index already exists on this field. Field: {0}")]
+    EncryptedIndexExists(String),
+
+    /// Go's `NewErrEncryptedIndexDoesNotExist`.
+    #[error("encrypted index does not exist on this field. Field: {0}")]
+    EncryptedIndexMissing(String),
+
     #[error("collection version ID can't be empty")]
     CollectionVersionIDEmpty,
 

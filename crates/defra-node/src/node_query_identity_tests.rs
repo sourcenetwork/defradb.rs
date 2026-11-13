@@ -86,7 +86,8 @@ fn register_test_remote_node_identity(did: &str) {
             remote_signer: Some(Arc::new(TestRemoteSigner)),
             signing_authorization: None,
         },
-    );
+    )
+    .expect("the store takes the identity");
 }
 
 async fn signed_node_with_executor(did: &str, executor: Arc<IdentityRecordingExecutor>) -> Node {

@@ -3,6 +3,7 @@
 mod common;
 
 mod guard;
+mod index_statement;
 mod lifecycle;
 mod registry_suite;
 mod requests;

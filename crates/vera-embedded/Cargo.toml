@@ -1,0 +1,42 @@
+[package]
+name = "vera-embedded"
+description = "Transports that reach a Vera node hosted in the same process"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+bench = false
+
+[dependencies]
+# The two transports the vera.rs provider is built on, and their errors.
+vera = { path = "../vera" }
+# `MaybeBoxFuture`, the future type of the submission transport.
+defra-core = { path = "../defra-core" }
+# The deadline of each wait for the node, on the network runtime's clock.
+edge = { path = "../edge" }
+
+# The embedded node's in-process method table. The revision is the one
+# `tools/integration-test` pins for `vera-harness`; the native consumer check
+# refuses a difference.
+vera-jsonrpc = { git = "https://github.com/sourcenetwork/vera.rs", rev = "a9ce2e431d6f43786f94946dfc5c8a3405a9a8f6" }
+
+futures.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# The node the tests host in their own process.
+vera-node = { git = "https://github.com/sourcenetwork/vera.rs", rev = "a9ce2e431d6f43786f94946dfc5c8a3405a9a8f6" }
+commonware-codec = "=2026.10.0"
+edge = { path = "../edge", features = ["testing"] }
+hex.workspace = true
+keyring = { path = "../keyring" }
+nuclei.workspace = true
+tempfile = "3"
+
+[lints]
+workspace = true

@@ -6,17 +6,25 @@ use bytes::Bytes;
 use p2p::message::PushLogRequest;
 use p2p::transport::PeerId;
 use p2p::P2PTransport;
-use storage::corekv::{IterOptions, Reader, Store};
+use storage::corekv::{Reader, Store};
+use storage::stores::peerstore::ReplayMarkerWrite;
+
+mod selected;
+mod selection;
+mod stop;
+
+pub use stop::{SelectedPushStop, StopOnDrop};
 
 use crate::database::DB;
 use crate::merge::push_docs_common::load_latest_composite_head_cids;
 use crate::merge::push_docs_creator::resolve_push_creator;
 use crate::merge::push_docs_replay::{
     persist_replay_failures, ReplayDocumentFailure, ReplayPushConfig, ReplayPushGate,
+    ReplayPushSendError,
 };
 
 enum PushOwnership {
-    Replicator,
+    Replicator(u64),
     Selected(RapidHashSet<(String, String)>),
 }
 
@@ -127,9 +135,23 @@ pub async fn push_existing_docs<S: Store + 'static, T: P2PTransport>(
 }
 
 /// Push an explicit `(collection_name, doc_id)` set without adding a subscription.
-/// Success requires acknowledgements for every selected document's unchanged
-/// heads, independently of continuous replication to the same peer.
-/// Subscription filters and retry deadlines do not apply to explicit selections.
+///
+/// Every call sends every selected document's current heads and succeeds only
+/// when the peer acknowledged all of them, unchanged, in this call, independently
+/// of continuous replication to the same peer. Acknowledgements are recorded as
+/// they arrive; an earlier call's never lets a document be skipped. Subscription
+/// filters, retry markers and retry deadlines neither apply nor change.
+///
+/// Each selected head gets one `send_timeout` deadline starting at its first
+/// actual send after initial pacing. Receiver pauses and retries spend that same
+/// deadline; a fresh ACK advances to the next head with a new deadline.
+/// Pacing, slot counts and the per-send deadline come from `replay_config`. The
+/// first send deadline, lost connection or expired current-head deadline raises `stop`, as
+/// does dropping this future or the caller raising it: no further document
+/// starts and no started task sends again. Sends already on the wire end on
+/// their own deadline and are joined, and what they acknowledge is kept. A
+/// stopped or partial call returns an error naming its cause and the
+/// unacknowledged documents.
 #[allow(clippy::too_many_arguments)]
 pub async fn push_existing_docs_by_id<S: Store + 'static, T: P2PTransport>(
     transport: &T,
@@ -142,6 +164,7 @@ pub async fn push_existing_docs_by_id<S: Store + 'static, T: P2PTransport>(
     replay_config: ReplayPushConfig,
     matcher: &dyn p2p::replicator::ReplicationFilterMatcher,
     car_authority: &p2p::sync::HeadHintCarAuthority,
+    stop: &SelectedPushStop,
 ) -> Result<(), String> {
     let collections = unique_collection_names(docs);
     push_existing_docs_with_config_and_allowlist(
@@ -156,6 +179,7 @@ pub async fn push_existing_docs_by_id<S: Store + 'static, T: P2PTransport>(
         matcher,
         car_authority,
         Some(docs),
+        stop,
     )
     .await
 }
@@ -186,13 +210,14 @@ pub async fn push_existing_docs_with_config<S: Store + 'static, T: P2PTransport>
         matcher,
         car_authority,
         None,
+        &SelectedPushStop::new(),
     )
     .await
 }
 
 /// Push existing documents, optionally restricted to an allowlist of
 /// `(collection_name, doc_id)` pairs. `None` scans every document in
-/// `collections`.
+/// `collections`. Only an allowlisted (selected) call raises or reads `stop`.
 #[allow(clippy::too_many_arguments)]
 async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2PTransport>(
     transport: &T,
@@ -206,9 +231,55 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
     matcher: &dyn p2p::replicator::ReplicationFilterMatcher,
     car_authority: &p2p::sync::HeadHintCarAuthority,
     allowlist: Option<&[(String, String)]>,
+    stop: &SelectedPushStop,
 ) -> Result<(), String> {
+    // Dropped unfinished, this call's started tasks see the stop at their next
+    // block instead of sending the rest of an abandoned selection. A call that
+    // returns has joined every task it started.
+    let stop_on_drop = allowlist.is_some().then(|| stop.stop_on_drop());
+    let result = push_existing_docs_owned(
+        transport,
+        db,
+        document_acp,
+        peer_id,
+        collections,
+        filters,
+        se_options,
+        replay_config,
+        matcher,
+        car_authority,
+        allowlist,
+        stop,
+    )
+    .await;
+    if let Some(guard) = stop_on_drop {
+        guard.disarm();
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn push_existing_docs_owned<S, T>(
+    transport: &T,
+    db: &DB<S>,
+    document_acp: Option<&dyn DocumentACP>,
+    peer_id: &PeerId,
+    collections: &[String],
+    filters: &p2p::ReplicationFilters,
+    se_options: PushExistingDocsSeOptions<'_>,
+    replay_config: ReplayPushConfig,
+    matcher: &dyn p2p::replicator::ReplicationFilterMatcher,
+    car_authority: &p2p::sync::HeadHintCarAuthority,
+    allowlist: Option<&[(String, String)]>,
+    stop: &SelectedPushStop,
+) -> Result<(), String>
+where
+    S: Store + 'static,
+    T: P2PTransport,
+{
+    let selected = allowlist.is_some();
     let network = db.network().map_err(|error| error.to_string())?;
-    super::push_docs_network::wait_for_peer(&network, transport, peer_id).await?;
+    super::push_docs_network::wait_for_peer(&network, transport, peer_id, stop).await?;
 
     let local_peer_id = transport.local_peer_id().to_string();
     let peerstore = db
@@ -217,17 +288,20 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
     let mut ownership = if let Some(docs) = allowlist {
         PushOwnership::Selected(docs.iter().cloned().collect())
     } else {
-        if peerstore
-            .get_replicator(peer_id.as_str())
+        let current = peerstore
+            .get_replicator_incarnation(peer_id.as_str())
             .await
             .map_err(|error| format!("failed to load replicator: {error}"))?
-            .is_none()
-        {
+            .ok_or_else(|| {
+                format!("replicator {peer_id} removed before existing-document replay")
+            })?;
+        let incarnation = replay_config.install_incarnation.unwrap_or(current);
+        if incarnation != current {
             return Err(format!(
-                "replicator {peer_id} removed before existing-document replay"
+                "replicator {peer_id} changed before existing-document replay"
             ));
         }
-        PushOwnership::Replicator
+        PushOwnership::Replicator(incarnation)
     };
     let txn = db
         .new_txn(true)
@@ -248,14 +322,18 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
         .map_err(|e| format!("failed to get systemstore: {}", e))?;
 
     car_authority.bind_peerstore(db.peerstore());
-    let selected = matches!(&ownership, PushOwnership::Selected(_));
+    let selected_count = match &ownership {
+        PushOwnership::Selected(pending) => pending.len(),
+        PushOwnership::Replicator(_) => 0,
+    };
     let mut failures: RapidHashMap<(String, String), String> = RapidHashMap::new();
     let mut push_handles = Vec::new();
+    let head_timeout = replay_config.send_timeout;
     let replay_gate = Arc::new(ReplayPushGate::new(replay_config, network.clone()));
     let allowlist_by_collection = allowlist_index(allowlist);
 
     let preparation: Result<(), String> = async {
-        for col_name in collections {
+        'collections: for col_name in collections {
             if let Some(ref allowed) = allowlist_by_collection {
                 if !allowed.contains_key(col_name.as_str()) {
                     continue;
@@ -280,43 +358,18 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                 }
             };
 
-            let col_prefix = format!("/d/{}/", collection.collection_id()).into_bytes();
-            let doc_prefix_len = col_prefix.len();
-            let opts = IterOptions::new()
-                .with_prefix(col_prefix)
-                .with_keys_only(true);
-            let mut doc_iter = datastore
-                .iterator(opts)
-                .await
-                .map_err(|e| format!("failed to iterate datastore: {}", e))?;
-
-            let mut doc_short_ids = Vec::new();
-            while let Some(pair) = doc_iter
-                .next()
-                .await
-                .map_err(|e| format!("datastore iteration error: {}", e))?
-            {
-                if let Ok(short_id) =
-                    storage::keys::doc_id_index::decode_doc_short_id(&pair.key[doc_prefix_len..])
-                {
-                    doc_short_ids.push(short_id);
-                }
-            }
-            doc_iter
-                .close()
-                .await
-                .map_err(|e| format!("datastore close error: {}", e))?;
-
-            let mut doc_ids = Vec::new();
-            for short_id in doc_short_ids {
-                match crate::docid::map::get_doc_id(&systemstore, short_id).await {
-                    Ok(Some(doc_id)) => doc_ids.push((short_id, doc_id)),
-                    Ok(None) => {}
-                    Err(e) => return Err(format!("doc-ID mapping lookup failed: {}", e)),
-                }
-            }
+            let doc_ids = selection::document_ids(
+                &collection,
+                &datastore,
+                &systemstore,
+                allowlist_by_collection.as_ref().and_then(|ids| ids.get(col_name.as_str())),
+            )
+            .await?;
 
             'documents: for (doc_short_id, doc_id) in &doc_ids {
+                if selected && stop.is_stopped() {
+                    break 'collections;
+                }
                 if !document_is_allowlisted(col_name, doc_id, allowlist_by_collection.as_ref()) {
                     continue;
                 }
@@ -363,20 +416,30 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
 
                 // Tracked replay registers before the fallible serving capability,
                 // so a refused grant or signature leaves its durable retry owner intact.
-                let marker_generation = if matches!(&ownership, PushOwnership::Replicator) {
-                    let Some(generation) = peerstore
-                        .observe_push_head_with_generation(
+                // The marker belongs to this replay's install: once the peer is
+                // removed or rewritten (a removed collection takes a new
+                // incarnation), the replay writes nothing more and stops. A
+                // document a live push already holds with a newer marker is
+                // owed by that marker, so the replay leaves it to it.
+                let marker_generation = if let PushOwnership::Replicator(incarnation) = &ownership {
+                    match peerstore
+                        .observe_push_head_for_incarnation(
                             peer_id.as_str(),
                             doc_id,
                             collection.collection_id(),
+                            *incarnation,
                         )
                         .await
                         .map_err(|error| format!("failed to register replay marker: {error}"))?
-                    else {
-                        let error = format!("replicator {peer_id} removed during existing-document replay");
-                        return Err(error);
-                    };
-                    Some(generation)
+                    {
+                        ReplayMarkerWrite::Written(generation) => Some(generation),
+                        ReplayMarkerWrite::Superseded => continue 'documents,
+                        ReplayMarkerWrite::InstallReplaced => {
+                            return Err(format!(
+                                "replicator {peer_id} removed or reconfigured during existing-document replay"
+                            ));
+                        }
+                    }
                 } else {
                     None
                 };
@@ -433,6 +496,13 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                         .acquire_document_task()
                         .await
                         .map_err(|e| format!("replay gate closed before scheduling push: {e}"))?;
+                    // A task raises the stop before releasing its slot, so a
+                    // slot freed by a failure never starts another document.
+                    if selected && stop.is_stopped() {
+                        break 'collections;
+                    }
+                    let task_stop = stop.clone();
+                    let head_network = network.clone();
                     push_handles.push((
                         col_name.clone(),
                         replay_doc_id,
@@ -444,23 +514,23 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                             let _permit = permit;
                             let mut completed_blocks = 0usize;
                             for (_car_grant, req) in requests {
+                                if selected && task_stop.is_stopped() {
+                                    return Err(ReplayPushSendError::Stopped.to_string());
+                                }
                                 let cid = req.cid.clone();
-                                match gate
-                                    .send_pushlog_with_admission(
+                                let sent = if selected {
+                                    let deadline = selected::HeadDeadline::new(head_timeout, head_network.clone());
+                                    selected::send(
+                                        &t, &gate, &deadline, &task_stop, &peer_key, &req,
+                                    ).await
+                                } else {
+                                    gate.send_pushlog_with_admission(
                                         &peer_key,
-                                        async {
-                                            if selected {
-                                                Ok(())
-                                            } else {
-                                                super::push_docs_replay::check_retry_admission(
-                                                    &retry_store, &pid,
-                                                ).await
-                                            }
-                                        },
+                                        super::push_docs_replay::check_retry_admission(&retry_store, &pid),
                                         t.send_two_stream_request(&pid, req),
-                                    )
-                                    .await
-                                {
+                                    ).await
+                                };
+                                match sent {
                                     Ok(reply) if reply.err_message.is_some() => {
                                         if !selected {
                                             if let Err(error) = super::push_docs_replay::persist_retry_after(
@@ -487,6 +557,9 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                                         completed_blocks += 1;
                                     }
                                     Err(e) => {
+                                        if selected && stop::stops_selected_transfer(&e) {
+                                            task_stop.stop(e.to_string());
+                                        }
                                         if e.is_connection_like() {
                                             tracing::debug!(
                                                 peer_id = %pid,
@@ -634,8 +707,8 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
     }
     tracing::debug!("all push tasks completed");
     match &ownership {
-        PushOwnership::Replicator => {
-            persist_replay_failures(&peerstore, peer_id, &replay_failures).await?;
+        PushOwnership::Replicator(incarnation) => {
+            persist_replay_failures(&peerstore, peer_id, *incarnation, &replay_failures).await?;
         }
         PushOwnership::Selected(pending) if !pending.is_empty() => {
             let mut reasons: Vec<_> = pending
@@ -644,6 +717,8 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                     let reason = failures.get(scope).map(String::as_str).unwrap_or(
                         if preparation.is_err() {
                             "not sent because preparation failed"
+                        } else if stop.is_stopped() {
+                            "not sent because the push stopped"
                         } else {
                             "document not found in collection"
                         },
@@ -652,11 +727,16 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                 })
                 .collect();
             reasons.sort_unstable();
+            if let Some(cause) = stop.cause() {
+                reasons.insert(0, format!("stopped: {cause}"));
+            }
             if let Err(error) = preparation {
                 reasons.push(error);
             }
             return Err(format!(
-                "selected document push incomplete: {}",
+                "selected document push incomplete ({} of {} acknowledged): {}",
+                selected_count - pending.len(),
+                selected_count,
                 reasons.join("; ")
             ));
         }
@@ -696,41 +776,16 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
 
             tracing::debug!(collection = %col_name, index_count = encrypted_indexes.len(), "generating SE artifacts");
 
-            let col_prefix = format!("/d/{}/", collection.collection_id()).into_bytes();
-            let doc_prefix_len = col_prefix.len();
-            let opts = IterOptions::new()
-                .with_prefix(col_prefix)
-                .with_keys_only(true);
-            let mut doc_iter = datastore
-                .iterator(opts)
-                .await
-                .map_err(|e| format!("SE: failed to iterate datastore: {}", e))?;
-
-            let mut se_doc_short_ids = Vec::new();
-            while let Some(pair) = doc_iter
-                .next()
-                .await
-                .map_err(|e| format!("SE: datastore iteration error: {}", e))?
-            {
-                if let Ok(short_id) =
-                    storage::keys::doc_id_index::decode_doc_short_id(&pair.key[doc_prefix_len..])
-                {
-                    se_doc_short_ids.push(short_id);
-                }
-            }
-            doc_iter
-                .close()
-                .await
-                .map_err(|e| format!("SE: datastore close error: {}", e))?;
-
-            let mut se_doc_ids = Vec::new();
-            for short_id in se_doc_short_ids {
-                match crate::docid::map::get_doc_id(&systemstore, short_id).await {
-                    Ok(Some(doc_id)) => se_doc_ids.push((short_id, doc_id)),
-                    Ok(None) => {}
-                    Err(e) => return Err(format!("SE: doc-ID mapping lookup failed: {}", e)),
-                }
-            }
+            let se_doc_ids = selection::document_ids(
+                &collection,
+                &datastore,
+                &systemstore,
+                allowlist_by_collection
+                    .as_ref()
+                    .and_then(|ids| ids.get(col_name.as_str())),
+            )
+            .await
+            .map_err(|error| format!("SE: {error}"))?;
 
             let mut all_artifacts = Vec::new();
             for (doc_short_id, doc_id) in &se_doc_ids {

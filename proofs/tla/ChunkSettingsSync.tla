@@ -45,8 +45,6 @@
 \*   `set_active_collection_version_as` and
 \*   `crates/db/src/txn/registry/collections.rs`
 \*   `set_collection_active_in_txn_as` (ActivateGuard). Modeled by `Activate`.
-\* * `crates/ffi/src/mobile_schema.rs` `plan_bootstrap` holds a mobile SDL to
-\*   the stored first version with the same `ensure_chunk_settings_kept`.
 EXTENDS Naturals
 
 \* N: how many versions the collection has; the highest is a patch.

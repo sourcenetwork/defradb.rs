@@ -25,6 +25,7 @@ members = [
     "crates/acp",
     "crates/defra-version",
     "crates/vera",
+    "crates/vera-embedded",
     "crates/events",
     "crates/ffi",
     "crates/lens",
@@ -120,7 +121,6 @@ n0-future = "0.3"
 libp2p = { version = "0.56", features = ["tcp", "noise", "yamux", "gossipsub", "kad", "identify", "relay", "dns", "quic", "websocket", "secp256k1"] }
 asynchronous-codec = "0.7"
 libp2p-stream = "0.4.0-alpha"
-multiaddr = "0.19"
 
 # Iroh P2P transport (alternative to libp2p)
 iroh = "1.3.0"
@@ -153,11 +153,6 @@ base64 = "0.23"
 # EVM / Alloy (vera.rs ACP backend)
 alloy-sol-types = "1"
 alloy-primitives = { version = "1", features = ["serde"] }
-alloy-consensus = { version = "1", features = ["k256"] }
-alloy-eips = "1"
-alloy-signer = "1"
-alloy-signer-local = { version = "1", default-features = false }
-alloy-rlp = "0.3.15"
 bs58 = "0.5"
 
 # IPLD
@@ -321,8 +316,6 @@ opt-level = "z"
 opt-level = "z"
 [profile.release.package."hickory-resolver"]
 opt-level = "z"
-[profile.release.package."hickory-net"]
-opt-level = "z"
 
 [patch.crates-io]
 iroh = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274d38fe3b41617a20f9bb7a10072" }
@@ -330,13 +323,13 @@ iroh-base = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274
 iroh-dns = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274d38fe3b41617a20f9bb7a10072" }
 iroh-relay = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274d38fe3b41617a20f9bb7a10072" }
 
-# Resolve the Vera git crates' internal dependencies to the published 0.1.1 packages.
+# Resolve the Vera git crates' internal dependencies to the published 0.1.2 packages.
 [patch."https://github.com/sourcenetwork/vera.rs"]
-vera-acp = "0.1.1"
-vera-client = "0.1.1"
-vera-crypto = "0.1.1"
-vera-domain = "0.1.1"
-vera-identity = "0.1.1"
-vera-modules = "0.1.1"
-vera-permission = "0.1.1"
-vera-zanzibar = "0.1.1"
+vera-acp = "0.1.2"
+vera-client = "0.1.2"
+vera-crypto = "0.1.2"
+vera-domain = "0.1.2"
+vera-identity = "0.1.2"
+vera-modules = "0.1.2"
+vera-permission = "0.1.2"
+vera-zanzibar = "0.1.2"

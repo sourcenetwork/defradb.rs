@@ -739,12 +739,12 @@ fn stale_scope_registration_cannot_replace_newer_marker_or_schedule() {
             generation: current_generation.saturating_sub(1),
         };
 
-        let result: Option<u64> = peerstore
+        let result: ReplayMarkerWrite = peerstore
             .transact_conflicts(Box::new(stale_attempt))
             .await
             .unwrap();
 
-        assert_eq!(result, None);
+        assert_eq!(result, ReplayMarkerWrite::Superseded);
         let marker = peerstore.get_retry_documents("peer").await.unwrap();
         assert_eq!(marker.len(), 1);
         assert_eq!(marker[0].generation, current_generation);
@@ -792,7 +792,7 @@ fn stale_scope_registration_cannot_cross_peer_forget_and_readd() {
         new_txn.discard();
         assert!(new_incarnation > old_incarnation);
 
-        let result: Option<u64> = peerstore
+        let result: ReplayMarkerWrite = peerstore
             .transact_conflicts(Box::new(RegisterScopeMarkerAttempt {
                 peer_id: "peer".to_string(),
                 expected_incarnation: old_incarnation,
@@ -805,7 +805,7 @@ fn stale_scope_registration_cannot_cross_peer_forget_and_readd() {
             .await
             .unwrap();
 
-        assert_eq!(result, None);
+        assert_eq!(result, ReplayMarkerWrite::InstallReplaced);
         assert!(peerstore
             .get_retry_documents("peer")
             .await

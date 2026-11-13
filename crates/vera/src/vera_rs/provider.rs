@@ -12,7 +12,6 @@ use alloy_sol_types::{SolCall, SolEvent};
 use async_trait::async_trait;
 use commonware_codec::DecodeExt as _;
 use events::{AcpCacheInvalidatedData, AcpHeightAdvancedData, Bus, Message};
-use vera_client::Secp256k1SigningKey as SigningKey;
 use vera_domain::ConsensusPublicKey;
 use vera_modules::acp::types::PolicyRecord;
 
@@ -26,9 +25,12 @@ use super::provider_commands::{
     encode_archive_object_cmd, encode_delete_relationship_cmd, encode_register_object_cmd,
     encode_set_relationship_cmd, resolve_registered_or_passthrough_bearer_token_as,
 };
+use super::signer::{admission, DelegationSigner, Secp256k1Signer};
 use super::transport::RpcTransport;
 use super::worker::NativeWorker;
 
+#[cfg(test)]
+mod signer_tests;
 mod submission;
 #[cfg(test)]
 mod transport_tests;
@@ -44,7 +46,7 @@ pub struct VeraRsProvider {
     actor_did: String,
     deployment: u64,
     trusted: ConsensusPublicKey,
-    signing_key: SigningKey,
+    signer: Arc<dyn DelegationSigner>,
     sync_timeout: Duration,
     light_client_observability: Arc<AtomicU64>,
     _light_client_observer: edge::Service,
@@ -62,6 +64,24 @@ fn trusted_key(encoded: &str) -> Result<ConsensusPublicKey, ProviderError> {
         .map_err(|e| ProviderError::Config(format!("invalid trusted consensus key: {e}")))?;
     ConsensusPublicKey::decode(encoded)
         .map_err(|e| ProviderError::Config(format!("invalid trusted consensus key: {e}")))
+}
+
+/// Who a provider acts as: a secp256k1 key it is given, or a signer for a key
+/// held elsewhere.
+enum Actor<'a> {
+    Key(&'a [u8]),
+    Signer(Arc<dyn DelegationSigner>),
+}
+
+impl Actor<'_> {
+    fn signer(self) -> Result<Arc<dyn DelegationSigner>, ProviderError> {
+        match self {
+            Self::Key(private_key) => Secp256k1Signer::from_slice(private_key)
+                .map(|signer| Arc::new(signer) as Arc<dyn DelegationSigner>)
+                .map_err(|e| ProviderError::Config(format!("actor key: {e}"))),
+            Self::Signer(signer) => Ok(signer),
+        }
+    }
 }
 
 impl VeraRsProvider {
@@ -111,6 +131,57 @@ impl VeraRsProvider {
         event_bus: Option<Arc<dyn Bus>>,
         edge: &edge::Edge,
     ) -> Result<Self, ProviderError> {
+        Self::connect(
+            rpc,
+            acp,
+            trusted_consensus_key,
+            Actor::Key(private_key),
+            worker,
+            tuning,
+            event_bus,
+            edge,
+        )
+        .await
+    }
+
+    /// As [`with_transport`](Self::with_transport), for an actor whose key
+    /// `signer` holds. The provider builds each delegation token itself and
+    /// sends one only when `signer`'s signature verifies under its DID's key.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn with_signer(
+        rpc: Arc<dyn RpcTransport>,
+        acp: Arc<dyn AcpTransport>,
+        trusted_consensus_key: &str,
+        signer: Arc<dyn DelegationSigner>,
+        worker: NativeWorker,
+        tuning: &AcpTuning,
+        event_bus: Option<Arc<dyn Bus>>,
+        edge: &edge::Edge,
+    ) -> Result<Self, ProviderError> {
+        Self::connect(
+            rpc,
+            acp,
+            trusted_consensus_key,
+            Actor::Signer(signer),
+            worker,
+            tuning,
+            event_bus,
+            edge,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn connect(
+        rpc: Arc<dyn RpcTransport>,
+        acp: Arc<dyn AcpTransport>,
+        trusted_consensus_key: &str,
+        actor: Actor<'_>,
+        worker: NativeWorker,
+        tuning: &AcpTuning,
+        event_bus: Option<Arc<dyn Bus>>,
+        edge: &edge::Edge,
+    ) -> Result<Self, ProviderError> {
         let trusted = trusted_key(trusted_consensus_key)?;
         let light_client = edge::compat(async {
             let light_client = Arc::new(
@@ -132,9 +203,10 @@ impl VeraRsProvider {
         let light_client_observability = Arc::new(AtomicU64::new(0));
 
         let client = VeraRsClient::with_transport(rpc);
-        let signing_key = SigningKey::from_slice(private_key)
-            .map_err(|e| ProviderError::Config(format!("actor key: {e}")))?;
-        let actor_did = bearer::did_from_signing_key(&signing_key, false);
+        let signer = actor.signer()?;
+        let actor_did = admission::actor_key(signer.as_ref())
+            .map(|key| bearer::did_from_key(&key, false))
+            .map_err(|e| ProviderError::Config(format!("actor signer: {e}")))?;
         let worker_did = worker.did().to_owned();
         let deployment = worker.deployment_id();
 
@@ -152,7 +224,7 @@ impl VeraRsProvider {
             actor_did,
             deployment,
             trusted,
-            signing_key,
+            signer,
             sync_timeout: tuning.receipt_timeout,
             light_client_observability,
             _light_client_observer,
@@ -289,12 +361,13 @@ impl VeraProvider for VeraRsProvider {
     ) -> Result<String, ProviderError> {
         if did_spelling::defra(did) == self.actor_did {
             return bearer::create_bearer_token(
-                &self.signing_key,
+                self.signer.as_ref(),
                 &self.actor_did,
                 &self.worker_did,
                 self.deployment,
                 300,
             )
+            .await
             .map_err(|e| {
                 ProviderError::Config(format!("node bearer token creation failed: {}", e))
             });
@@ -305,7 +378,9 @@ impl VeraProvider for VeraRsProvider {
             did,
             &self.worker_did,
             self.deployment,
-        )? {
+        )
+        .await?
+        {
             return Ok(token);
         }
 
@@ -325,13 +400,14 @@ impl VeraProvider for VeraRsProvider {
 
     async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError> {
         let token = bearer::create_scoped_bearer_token(
-            &self.signing_key,
+            self.signer.as_ref(),
             &self.actor_did,
             &self.worker_did,
             self.deployment,
             300,
             vera_client::DelegationScope::CreatePolicy,
         )
+        .await
         .map_err(|e| ProviderError::Config(e.to_string()))?;
         let call = IAcp::bearerCreatePolicyCall {
             bearerToken: token,
@@ -351,7 +427,7 @@ impl VeraProvider for VeraRsProvider {
             &log.data.data,
         )
         .map_err(|e| ProviderError::Query(format!("creation event: {e}")))?;
-        if events.next().is_some() || event.creator != self.actor_did {
+        if events.next().is_some() || !did_spelling::same_actor(&event.creator, &self.actor_did) {
             return Err(ProviderError::Query(
                 "creation event does not match the actor".into(),
             ));
@@ -369,7 +445,7 @@ impl VeraProvider for VeraRsProvider {
         .map_err(|e| ProviderError::Query(format!("created policy record: {e}")))?;
         if record.policy.id != id
             || record.raw_policy != policy_yaml
-            || record.metadata.owner_did != self.actor_did
+            || !did_spelling::same_actor(&record.metadata.owner_did, &self.actor_did)
             || record.metadata.tx_signer != self.worker_did
             || record.metadata.tx_hash != confirmed.receipt.tx_hash.as_slice()
             || record.metadata.creation_ts.block_height != confirmed.revision
@@ -638,6 +714,7 @@ mod tests {
     use super::*;
     use crypto::PrivateKey;
     use identity::Identity;
+    use vera_client::Secp256k1SigningKey as SigningKey;
 
     #[nuclei::test]
     async fn trusted_consensus_key_is_required_before_connecting() {
@@ -679,11 +756,13 @@ mod tests {
                 remote_signer: None,
                 signing_authorization: None,
             },
-        );
+        )
+        .expect("the store takes the identity");
     }
 
-    #[test]
-    fn resolve_registered_or_passthrough_bearer_token_uses_request_token_for_remote_identity() {
+    #[nuclei::test]
+    async fn resolve_registered_or_passthrough_bearer_token_uses_request_token_for_remote_identity()
+    {
         let did = "did:key:zRemoteVeraRsToken";
         let token = "device.jwt.token".to_string();
         defra_core::signing::clear_request_bearer_token(did);
@@ -693,6 +772,7 @@ mod tests {
 
         let resolved =
             resolve_registered_or_passthrough_bearer_token(did, "did:key:submitter", 9001)
+                .await
                 .expect("resolution should succeed")
                 .expect("token should resolve");
         assert_eq!(resolved, token);
@@ -700,8 +780,8 @@ mod tests {
         defra_core::signing::clear_request_bearer_token(did);
     }
 
-    #[test]
-    fn a_request_token_under_the_compressed_issuer_spelling_is_refused() {
+    #[nuclei::test]
+    async fn a_request_token_under_either_issuer_spelling_is_passed_through() {
         use base64::Engine;
         let key = SigningKey::from_slice(&[42; 32]).expect("valid key");
         let did = bearer::did_from_signing_key(&key, false);
@@ -712,23 +792,20 @@ mod tests {
         };
         store_remote_secp256r1_identity(&did);
 
-        let compressed = token(&bearer::did_from_signing_key(&key, true));
-        defra_core::signing::set_request_bearer_token(&did, compressed);
-        let refused = resolve_registered_or_passthrough_bearer_token(&did, "did:key:w", 9001);
-        assert!(matches!(refused, Err(ProviderError::Config(ref message))
-                if message.contains(&bearer::did_from_signing_key(&key, true))
-                    && message.contains(&format!("records that key as {did}"))));
-
-        defra_core::signing::set_request_bearer_token(&did, token(&did));
-        let accepted = resolve_registered_or_passthrough_bearer_token(&did, "did:key:w", 9001)
-            .expect("resolution should succeed");
-        assert_eq!(accepted, Some(token(&did)));
+        for compressed in [true, false] {
+            let carried = token(&bearer::did_from_signing_key(&key, compressed));
+            defra_core::signing::set_request_bearer_token(&did, carried.clone());
+            let passed = resolve_registered_or_passthrough_bearer_token(&did, "did:key:w", 9001)
+                .await
+                .expect("resolution should succeed");
+            assert_eq!(passed, Some(carried));
+        }
 
         defra_core::signing::clear_request_bearer_token(&did);
     }
 
-    #[test]
-    fn resolve_registered_or_passthrough_bearer_token_builds_local_secp256k1_token() {
+    #[nuclei::test]
+    async fn resolve_registered_or_passthrough_bearer_token_builds_local_secp256k1_token() {
         let private_key = crypto::generate_secp256k1().expect("should generate secp256k1 key");
         let raw_identity =
             identity::RawIdentity::from_secp256k1(private_key).expect("identity should build");
@@ -746,10 +823,12 @@ mod tests {
                 remote_signer: None,
                 signing_authorization: None,
             },
-        );
+        )
+        .expect("the store takes the identity");
 
         let resolved =
             resolve_registered_or_passthrough_bearer_token(&did, "did:key:submitter", 9001)
+                .await
                 .expect("resolution should succeed")
                 .expect("token should resolve");
         use base64::Engine;

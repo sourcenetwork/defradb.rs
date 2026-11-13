@@ -378,6 +378,9 @@ impl Default for P2PConfig {
 pub struct NodeConfig {
     /// Optional application-owned keyring for the transport identity.
     pub peer_keyring: Option<crate::PeerKeyring>,
+    /// A transport identity for this start only, used ahead of the keyring
+    /// and the store, and recorded in neither.
+    pub start_peer_key: Option<crate::StartPeerKey>,
     pub persistence: Persistence,
     pub transport: TransportConfig,
     /// The network runtime the node's networking runs on: its transport,
@@ -404,6 +407,27 @@ pub struct NodeConfig {
     pub introspection_cache: Option<bool>,
     /// The embedder's check on replicated documents; `None` keeps them all.
     pub replication_filter: Option<ReplicationFilterHandle>,
+    /// The gate index backfills pass before each batch; `None` holds none.
+    pub index_build_gate: Option<IndexBuildGateHandle>,
+}
+
+/// An embedder's [`db::index::build_gate::IndexBuildGate`], compared by
+/// identity.
+#[derive(Clone)]
+pub struct IndexBuildGateHandle(pub Arc<dyn db::index::build_gate::IndexBuildGate>);
+
+impl std::fmt::Debug for IndexBuildGateHandle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("IndexBuildGateHandle")
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for IndexBuildGateHandle {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
 }
 
 /// An embedder's [`db::replication_filter::ReplicationFilter`], compared by

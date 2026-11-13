@@ -21,7 +21,8 @@ fn register_local_node_identity() -> (String, String) {
             remote_signer: None,
             signing_authorization: None,
         },
-    );
+    )
+    .expect("the store takes the identity");
 
     (did, public_key_hex)
 }

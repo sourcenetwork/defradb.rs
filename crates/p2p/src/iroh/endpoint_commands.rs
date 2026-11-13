@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use futures::FutureExt;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::bitswap::ReplicatorRegistry;
 use crate::sync::DispatchSender;
@@ -16,16 +16,18 @@ use super::addr::{endpoint_addr_from_parts, endpoint_ticket_string};
 use super::command::IrohCommand;
 use super::endpoint::{peer_direct_addr, spawn_task, ActiveSync, EndpointResources, RawTopics};
 use super::endpoint_rpc::{
-    close_peer_connections, connect_mux, handle_block_sync, handle_car_request_response,
-    handle_fire_and_forget, handle_reply_on_stream, handle_request_response,
-    handle_two_stream_request, remember_connection, reply_on_stream, BlockSyncResources,
-    REQUEST_RESPONSE_TIMEOUT,
+    cached_connection, close_peer_connections, connect_mux, handle_block_sync,
+    handle_car_request_response, handle_fire_and_forget, handle_reply_on_stream,
+    handle_request_response, handle_two_stream_request, open_protocol_stream, reply_on_stream,
+    BlockSyncResources, REQUEST_RESPONSE_TIMEOUT,
 };
-use super::endpoint_streams::ConnectionStreamContext;
+use super::endpoint_streams::{adopt_new_connection, ConnectionDirection, ConnectionLifecycle};
 use super::gossip::{AddrInfo, EventSender, Network};
 use super::peer_map::{endpoint_id_to_peer_id, parse_endpoint_id};
+use super::protocol_stream::{ProtocolRecvStream, ProtocolSendStream};
 use super::protocols;
 use super::records::Input as RecordsInput;
+use super::stream_protocols::StreamProtocol;
 
 /// Handle a command from `IrohTransport`.
 ///
@@ -242,6 +244,21 @@ pub(super) async fn handle_command(
         }
         IrohCommand::TopicPeers { topic, reply } => {
             let _ = reply.send(Ok(gossip.topic_peers(&topic.to_string())));
+        }
+        IrohCommand::OpenStream {
+            peer_id,
+            addrs,
+            protocol,
+            request,
+            reply,
+        } => {
+            let ctx = DialContext {
+                resources: resources.clone(),
+                event_tx: event_tx.clone(),
+            };
+            let _ = spawn_task(spawned_tasks, async move {
+                let _ = reply.send(open_stream(ctx, peer_id, addrs, protocol, request).await);
+            });
         }
         IrohCommand::ReplyOnStream {
             send_stream,
@@ -677,6 +694,34 @@ impl Network for GossipDialer {
     }
 }
 
+/// Open a stream for an embedder's protocol on the peer's shared connection.
+/// A peer with no open connection is dialled at `addrs` the way `connect_peer`
+/// dials it, so the connection also serves the streams the peer opens back.
+async fn open_stream(
+    ctx: DialContext,
+    peer_id: PeerId,
+    addrs: Vec<PeerAddr>,
+    protocol: StreamProtocol,
+    request: Vec<u8>,
+) -> crate::error::Result<(ProtocolSendStream, ProtocolRecvStream)> {
+    // ponytail: two first opens racing may both dial; the peer map counts both
+    // connections and the cache keeps one.
+    if cached_connection(&ctx.resources.connection_cache, &peer_id)?.is_none() {
+        handle_dial(ctx.clone(), &peer_id, addrs).await?;
+    }
+    let resources = &ctx.resources;
+    open_protocol_stream(
+        &resources.endpoint,
+        &peer_id,
+        &protocol,
+        &request,
+        peer_direct_addr(&resources.peer_map, &peer_id),
+        &resources.connection_cache,
+        &resources.admission,
+    )
+    .await
+}
+
 /// Dial a peer by EndpointId.
 ///
 /// Keeps the connection alive by spawning a stream handler task.
@@ -721,77 +766,26 @@ async fn handle_dial(
     let direct_addresses: Vec<std::net::SocketAddr> = endpoint_addr.ip_addrs().copied().collect();
 
     let connection = connect_mux(&ctx.resources.endpoint, endpoint_addr).await?;
+    let probe = connection.clone();
 
-    // Send over the connection we just opened instead of dialling a second one
-    // on the first message.
-    remember_connection(&ctx.resources.connection_cache, &connection);
-
-    let is_new = ctx.resources.peer_map.increment_connections(
-        endpoint_id,
+    let lifecycle = ConnectionLifecycle::new(&ctx.resources, ctx.event_tx.clone());
+    adopt_new_connection(
+        &lifecycle,
+        &ctx.resources.connection_cache,
+        connection,
         direct_addresses.first().copied(),
-        connection.clone(),
-    );
-
-    // Re-check AFTER registering. The dial above can run for many seconds, and
-    // a revoke landing inside that window read `peer_map` and the connection
-    // cache before this connection was in either, so it closed nothing.
-    // Registering first and re-checking second means one of the two always
-    // sees the other.
-    let admitted = ctx.resources.admission.admits_outbound(&endpoint_id);
-    if !admitted {
-        close_peer_connections(
-            &ctx.resources.peer_map,
-            &ctx.resources.connection_cache,
-            &endpoint_id,
-        );
-        connection.close(0u32.into(), b"peer revoked");
-    }
-
-    if admitted
-        && is_new
-        && ctx
-            .event_tx
-            .send(TransportEvent::PeerConnected(peer_id.clone()))
-            .await
-            .is_err()
-    {
-        warn!("Event channel closed, cannot emit PeerConnected");
-    }
-
-    if admitted {
-        ctx.resources.gossip.connected(endpoint_id, &connection);
-        crate::model_trace!(Reconnect {
-            peer: peer_id.to_string(),
-            mode: crate::model_trace::ConnMode::Full,
-        });
-    }
-
-    // Keep connection alive by spawning a handler for incoming streams.
-    //
-    // Spawned even when the re-check above refused the peer, and deliberately:
-    // `increment_connections` has already counted this connection, and it is
-    // this task's cleanup that decrements it. Returning early instead would
-    // leave the count stuck above zero, which is worse than the race it was
-    // meant to close: the revoked peer would sit in `connected_peers` forever,
-    // looking connected when it holds nothing.
-    let refused = super::endpoint_streams::closed_by_refusal(&connection);
-    let stream_context =
-        ConnectionStreamContext::new(&ctx.resources, endpoint_id, ctx.event_tx.clone());
-    let _ = spawn_task(&ctx.resources.spawned_tasks, async move {
-        super::endpoint_streams::handle_connection_streams(connection, endpoint_id, stream_context)
-            .await;
+        ConnectionDirection::Outbound,
+    )
+    .await?;
+    crate::model_trace!(Reconnect {
+        peer: peer_id.to_string(),
+        mode: crate::model_trace::ConnMode::Full,
     });
-
-    if !admitted {
-        return Err(crate::error::Error::Dial(format!(
-            "dial to {peer_id} raced a revoke: connection closed"
-        )));
-    }
 
     // The peer's allowlist may refuse this node right after the handshake. A
     // refusal that already arrived is the answer; one that arrives later
     // stays the disconnect path's.
-    if refused {
+    if super::endpoint_streams::closed_by_refusal(&probe) {
         return Err(crate::error::Error::Unauthorized(
             "peer refused the connection: not authorized".into(),
         ));
@@ -833,7 +827,7 @@ fn handle_disconnect(peer_id: PeerId, resources: &EndpointResources) -> crate::e
 /// visible to `handle_disconnect` when it looked. The accept and dial paths
 /// therefore re-check the bar after publishing their connection handle, so
 /// that a connection racing this call is closed by whichever side observes
-/// the other. See `endpoint_streams::handle_incoming` and `handle_dial`.
+/// the other. See `endpoint_streams::adopt_new_connection`.
 ///
 /// Unlike the old allowlist-only withdrawal this is meaningful under
 /// `AcceptAll`: the bar is a separate set, so one peer can be revoked

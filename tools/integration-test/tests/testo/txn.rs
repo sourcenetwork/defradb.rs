@@ -6,6 +6,8 @@ mod delete_doc;
 mod delete_encrypted_index;
 mod delete_index;
 mod get_collections;
+mod index_nac;
+mod list_all_encrypted_indexes;
 mod list_encrypted_indexes;
 mod list_indexes;
 mod list_lenses;

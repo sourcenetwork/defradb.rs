@@ -19,6 +19,12 @@ lean_lib EmbeddedSigner where
 lean_lib VeraActorSpelling where
 
 @[default_target]
+lean_lib VeraDelegationSigner where
+
+@[default_target]
+lean_lib VeraEmbeddedTransport where
+
+@[default_target]
 lean_lib DelegatedRelationship where
 
 @[default_target]
@@ -115,6 +121,9 @@ lean_lib EngineTickers where
 lean_lib CpuLedger where
 
 @[default_target]
+lean_lib IdentityStore where
+
+@[default_target]
 lean_lib DefaultPool where
 
 @[default_target]
@@ -128,6 +137,9 @@ lean_lib PeerConnection where
 
 @[default_target]
 lean_lib ByteBudget where
+
+@[default_target]
+lean_lib StreamProtocols where
 
 @[default_target]
 lean_lib FetchStats where
@@ -263,3 +275,15 @@ lean_lib CursorToken where
 
 @[default_target]
 lean_lib ViewQuerySource where
+
+@[default_target]
+lean_lib PeerKeyLoad where
+
+@[default_target]
+lean_lib TxnTurns where
+
+@[default_target]
+lean_lib VectorIndexDefaults where
+
+@[default_target]
+lean_lib CatalogPin where

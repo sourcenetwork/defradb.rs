@@ -155,6 +155,7 @@ impl<S: Store> P2PHost<S> {
                     if !self
                         .forward_event(HostEvent::GossipRawMessage {
                             propagation_source,
+                            source: message.source.unwrap_or(propagation_source),
                             message_id: message_id.clone(),
                             topic: topic.clone(),
                             data: message.data,

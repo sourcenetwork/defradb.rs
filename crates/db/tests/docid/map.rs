@@ -110,6 +110,37 @@ fn mapping_roundtrip() {
 }
 
 #[test]
+fn a_peek_resolves_what_a_get_resolves() {
+    workers::block_on(async {
+        let store = systemstore().await;
+        let short_id = next_doc_short_id(&store).await.unwrap();
+        set_doc_id_mapping(&store, 7, short_id, "bae-x")
+            .await
+            .unwrap();
+
+        for doc_id in ["bae-x", "bae-unknown"] {
+            assert_eq!(
+                peek_doc_ref(&store, doc_id).await.unwrap(),
+                get_doc_ref(&store, doc_id).await.unwrap(),
+                "{doc_id}"
+            );
+            for collection in [7, 8] {
+                assert_eq!(
+                    peek_doc_short_id(&store, collection, doc_id).await.unwrap(),
+                    get_doc_short_id(&store, collection, doc_id).await.unwrap(),
+                    "{doc_id} in {collection}"
+                );
+            }
+        }
+        assert_eq!(
+            peek_doc_short_id(&store, 7, "bae-x").await.unwrap(),
+            Some(short_id)
+        );
+    })
+    .unwrap()
+}
+
+#[test]
 fn allocator_reserves_ranges_across_instances_and_restarts() {
     workers::block_on(async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());

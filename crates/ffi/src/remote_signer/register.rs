@@ -1,6 +1,8 @@
 //! Registering an identity whose private key the host keeps: with a
 //! synchronous or an asynchronous signing callback, and its public key as hex
-//! or as raw bytes. Every form shares one body per key encoding.
+//! or as raw bytes. Every form shares one body per key encoding, and answers
+//! with the identity's handle, which calls take as `identity_ptr` like one
+//! from `defra_identity_new`.
 
 use std::ffi::{c_char, CString};
 use std::sync::Arc;
@@ -9,7 +11,8 @@ use crate::acp::identity_ops::{
     decode_and_validate_public_key, parse_signing_key_type, validate_public_key_bytes,
 };
 use crate::ffi_entry;
-use crate::types::{c_str_to_string, FfiResult};
+use crate::state::{IdentityState, IDENTITIES};
+use crate::types::{c_str_to_string, DefraNewIdentityResult};
 
 use super::{DefraRemoteSignAsyncCallback, DefraRemoteSignCallback, FfiRemoteSigner, HostCallback};
 
@@ -21,15 +24,24 @@ use super::{DefraRemoteSignAsyncCallback, DefraRemoteSignCallback, FfiRemoteSign
 ///
 /// Swift can import this symbol directly from the generated Apple package.
 /// The callback is required and uses a plain C function-pointer ABI.
+///
+/// While a DID has live identity handles, its signer is fixed: registering
+/// the DID again with another `signer_handle` or callback fails until every
+/// handle for it is freed; with the same `signer_handle` and callback it
+/// gives another handle for the same signer. `signer_handle` must stay
+/// valid, and `callback` callable, until every identity handle naming them
+/// is freed and every node started with one (or given one as its identity)
+/// is closed or given another identity: a node keeps signing through them
+/// after the handle is freed.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[no_mangle]
-pub extern "C" fn register_remote_identity(
+pub extern "C" fn defra_identity_new_remote(
     did: *const c_char,
     public_key_hex: *const c_char,
     key_type: *const c_char,
     signer_handle: usize,
     callback: DefraRemoteSignCallback,
-) -> FfiResult {
+) -> DefraNewIdentityResult {
     ffi_entry! {
         // SAFETY: the strings are null or valid C strings from the caller.
         unsafe { register_hex(did, public_key_hex, key_type, signer_handle, HostCallback::Sync(callback)) }
@@ -40,21 +52,21 @@ pub extern "C" fn register_remote_identity(
 ///
 /// This is intended for Swift and Objective-C callers that already have the
 /// device public key as `Data` or `UnsafePointer<UInt8>`. The callback contract
-/// matches [`register_remote_identity`].
+/// matches [`defra_identity_new_remote`].
 ///
 /// Public key format:
 /// - `secp256r1` / `secp256k1`: uncompressed SEC1 / X9.63 bytes
 /// - `ed25519`: raw 32-byte public key
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[no_mangle]
-pub extern "C" fn register_remote_identity_bytes(
+pub extern "C" fn defra_identity_new_remote_bytes(
     did: *const c_char,
     public_key_ptr: *const u8,
     public_key_len: usize,
     key_type: *const c_char,
     signer_handle: usize,
     callback: DefraRemoteSignCallback,
-) -> FfiResult {
+) -> DefraNewIdentityResult {
     ffi_entry! {
         // SAFETY: the strings are null or valid C strings, and the key is
         // null or `public_key_len` readable bytes, from the caller.
@@ -71,40 +83,40 @@ pub extern "C" fn register_remote_identity_bytes(
     }
 }
 
-/// [`register_remote_identity`] for a host whose signer answers later: the
+/// [`defra_identity_new_remote`] for a host whose signer answers later: the
 /// callback starts each signature and returns at once, and the host reports
 /// the result with `defra_remote_sign_complete`. No DefraDB thread waits
 /// while the host signs, so this is the form for a host that signs on its
 /// own queue or over the network, and for a node running a single worker.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[no_mangle]
-pub extern "C" fn register_remote_identity_async(
+pub extern "C" fn defra_identity_new_remote_async(
     did: *const c_char,
     public_key_hex: *const c_char,
     key_type: *const c_char,
     signer_handle: usize,
     callback: DefraRemoteSignAsyncCallback,
-) -> FfiResult {
+) -> DefraNewIdentityResult {
     ffi_entry! {
         // SAFETY: the strings are null or valid C strings from the caller.
         unsafe { register_hex(did, public_key_hex, key_type, signer_handle, HostCallback::Async(callback)) }
     }
 }
 
-/// [`register_remote_identity_bytes`] with an asynchronous callback, as
-/// [`register_remote_identity_async`].
+/// [`defra_identity_new_remote_bytes`] with an asynchronous callback, as
+/// [`defra_identity_new_remote_async`].
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[no_mangle]
-pub extern "C" fn register_remote_identity_bytes_async(
+pub extern "C" fn defra_identity_new_remote_bytes_async(
     did: *const c_char,
     public_key_ptr: *const u8,
     public_key_len: usize,
     key_type: *const c_char,
     signer_handle: usize,
     callback: DefraRemoteSignAsyncCallback,
-) -> FfiResult {
+) -> DefraNewIdentityResult {
     ffi_entry! {
-        // SAFETY: as for `register_remote_identity_bytes`.
+        // SAFETY: as for `defra_identity_new_remote_bytes`.
         unsafe {
             register_bytes(
                 did,
@@ -128,7 +140,7 @@ unsafe fn register_hex(
     key_type: *const c_char,
     signer_handle: usize,
     callback: HostCallback,
-) -> FfiResult {
+) -> DefraNewIdentityResult {
     let result = (|| {
         let did_str = c_str_to_string(did).ok_or("invalid did parameter")?;
         let pub_hex = c_str_to_string(public_key_hex).ok_or("invalid public_key_hex parameter")?;
@@ -147,7 +159,10 @@ unsafe fn register_hex(
             callback,
         )
     })();
-    FfiResult::from(result)
+    match result {
+        Ok(handle) => DefraNewIdentityResult::success(handle),
+        Err(error) => DefraNewIdentityResult::error(error),
+    }
 }
 
 /// The registration of an identity whose public key is raw bytes.
@@ -162,7 +177,7 @@ unsafe fn register_bytes(
     key_type: *const c_char,
     signer_handle: usize,
     callback: HostCallback,
-) -> FfiResult {
+) -> DefraNewIdentityResult {
     let result = (|| {
         let did_str = c_str_to_string(did).ok_or("invalid did parameter")?;
         if public_key_ptr.is_null() || public_key_len == 0 {
@@ -192,7 +207,10 @@ unsafe fn register_bytes(
             callback,
         )
     })();
-    FfiResult::from(result)
+    match result {
+        Ok(handle) => DefraNewIdentityResult::success(handle),
+        Err(error) => DefraNewIdentityResult::error(error),
+    }
 }
 
 /// Stores `did`'s signing configuration, which signs through the host's
@@ -204,7 +222,7 @@ fn store(
     key_type: defra_core::signing::SigningKeyType,
     signer_handle: usize,
     callback: HostCallback,
-) -> Result<String, String> {
+) -> Result<usize, String> {
     let signer = FfiRemoteSigner::new(
         CString::new(did.clone()).map_err(|_| "did contains an embedded null byte".to_string())?,
         CString::new(key_type.to_string())
@@ -213,17 +231,25 @@ fn store(
         callback,
     );
 
-    defra_core::signing::store_identity(
+    let hold = defra_core::signing::IdentityHold::new(
         &did,
         defra_core::signing::SigningConfig {
             key_type,
             private_key_bytes: Vec::new(),
             public_key_bytes,
-            public_key_hex,
+            public_key_hex: public_key_hex.clone(),
             remote_signer: Some(Arc::new(signer)),
             signing_authorization: None,
         },
-    );
+    )
+    .map_err(|error| error.to_string())?;
 
-    Ok("{}".to_string())
+    Ok(IDENTITIES.insert(IdentityState {
+        did,
+        key_type: Some(key_type),
+        private_key: None,
+        public_key_hex,
+        hold: Some(hold),
+        bearer_token: None,
+    }))
 }

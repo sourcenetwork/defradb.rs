@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Qualify the native consumer; raw output and fixture state stay in RUNNER_TEMP."""
+"""Qualify the native consumer; raw output and fixture state stay in RUNNER_TEMP.
+
+Reading the manifests needs Python 3.11+ or the tomli package; so does test-native-consumer.py.
+"""
 import argparse
 import hashlib
 import json
@@ -13,10 +16,30 @@ import sys
 import tempfile
 import time
 
+try:
+    import tomllib
+except ModuleNotFoundError:
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        sys.exit("native-consumer.py needs Python 3.11+ or the tomli package to read Cargo manifests")
+
 SDK_MANIFESTS = ("crates/vera/Cargo.toml", "tools/integration-test/Cargo.toml")
+# Crates built against the unpublished Vera node crates the harness also uses.
+NODE_MANIFESTS = ("crates/vera-embedded/Cargo.toml",)
+# The vera.rs repository on github.com under every scheme, user, port and letter case: Cargo resolves
+# those spellings to the same source. Another host is another source. Matching more spellings than
+# Cargo equates only adds declarations that must carry the pin.
+VERA_URL = re.compile(
+    r"(?:[a-z][a-z0-9+.-]*://)?(?:[^@/]*@)?(?:www\.)?github\.com(?::\d+)?[:/]+sourcenetwork/vera\.rs(?:\.git)?/?"
+    r"(?:[?#].*)?",
+    re.IGNORECASE)
+SDK_CRATES = ("vera-client", "vera-domain", "vera-modules")
+DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
 UNIT_NAMES = (
     "abi::tests::delete_relationship_subject_userset_round_trips",
     "abi::tests::set_relationship_subject_object_edge_round_trips",
+    "bearer::pinned::a_delegation_token_is_these_exact_bytes",
     "bearer::tests::a_scoped_token_keeps_the_issuer_spelling_it_was_given",
     "bearer::tests::bearer_token_uses_vera_rs_es256k_shape",
     "bearer::tests::invalid_lifetime_is_rejected",
@@ -26,11 +49,13 @@ UNIT_NAMES = (
     "client::tests::stalled_transport_times_out_and_transient_rpc_errors_are_retryable",
     "client::tests::submission_id_must_match_locally_signed_bytes",
     "client::tests::transport_failures_say_whether_the_call_may_be_sent_again",
-    "did_spelling::tests::a_token_must_name_its_secp256k1_issuer_in_the_uncompressed_spelling",
+    "did_spelling::tests::an_actor_vera_rs_names_in_the_compressed_spelling_is_the_same_actor",
     "did_spelling::tests::both_spellings_of_a_secp256k1_key_meet_at_the_uncompressed_did",
     "did_spelling::tests::other_identifiers_pass_through_unchanged",
     "did_spelling::tests::the_uncompressed_spelling_is_the_one_defradb_derives",
-    "provider::tests::a_request_token_under_the_compressed_issuer_spelling_is_refused",
+    "provider::signer_tests::a_signature_vera_rs_would_refuse_is_never_sent",
+    "provider::signer_tests::the_provider_signs_its_delegations_through_its_signer",
+    "provider::tests::a_request_token_under_either_issuer_spelling_is_passed_through",
     "provider::tests::resolve_registered_or_passthrough_bearer_token_builds_local_secp256k1_token",
     "provider::tests::resolve_registered_or_passthrough_bearer_token_uses_request_token_for_remote_identity",
     "provider::tests::trusted_consensus_key_is_required_before_connecting",
@@ -44,6 +69,9 @@ UNIT_NAMES = (
     "provider_commands::tests::encodes_register_object_as_vera_rs_policy_cmd",
     "provider_commands::tests::encodes_relationship_subjects_as_vera_rs_policy_cmds",
     "provider_commands::request_bearer_tests::a_remote_identity_acts_with_the_token_its_request_carries",
+    "signer::tests::a_signature_is_admitted_exactly_when_vera_rs_would_verify_it",
+    "signer::tests::a_signer_must_name_a_secp256k1_key",
+    "signer::tests::the_secp256k1_signer_names_its_actor_in_the_uncompressed_spelling",
     "worker::tests::pending_request_and_identity_survive_reopen",
 )
 UNIT_TESTS = tuple("vera_rs::" + name for name in UNIT_NAMES)
@@ -79,23 +107,67 @@ def panic_site(log):
     return None
 
 
+def dependencies(text):
+    """Yield the name and specification of every dependency a manifest declares.
+
+    The manifest is parsed as TOML, so a dependency is read the same however it is written: inline, as
+    its own table, with dotted or quoted keys. Only Cargo's dependency tables are read: the package's,
+    the workspace's and each target's. Features and metadata may name anything.
+    """
+    manifest = tomllib.loads(text)
+    targets = manifest.get("target", {})
+    scopes = [manifest, manifest.get("workspace", {}), *(targets.values() if isinstance(targets, dict) else ())]
+    for scope in scopes:
+        for kind in DEPENDENCY_TABLES:
+            table = scope.get(kind, {}) if isinstance(scope, dict) else {}
+            yield from table.items() if isinstance(table, dict) else ()
+
+
+def git_pins(text):
+    """Return the immutable revision of every Vera git dependency in a manifest."""
+    pins = []
+    for _, spec in dependencies(text):
+        source = spec.get("git") if isinstance(spec, dict) else None
+        if not isinstance(source, str) or VERA_URL.fullmatch(source) is None:
+            continue
+        pin = spec.get("rev")
+        if not isinstance(pin, str) or re.fullmatch(r"[0-9a-f]{40}", pin) is None:
+            raise ValueError("SDK revision must be immutable")
+        pins.append(pin)
+    return pins
+
+
+def sdk_versions(text):
+    """Return the version of every published SDK crate a manifest depends on.
+
+    A crate must be declared as `name = "x.y.z"`. Any other form, and the crate under another name
+    (`package = "..."`), is refused, not skipped.
+    """
+    versions = []
+    for name, spec in dependencies(text):
+        crate = spec.get("package", name) if isinstance(spec, dict) else name
+        if crate not in SDK_CRATES:
+            continue
+        if not isinstance(spec, str) or re.fullmatch(r"\d+\.\d+\.\d+", spec) is None:
+            raise ValueError("published native SDK declarations must be plain versions")
+        versions.append(spec)
+    return versions
+
+
 def revision(root):
-    """Return the pinned Vera harness revision after checking the published SDK declarations."""
+    """Return the pinned Vera harness revision after checking the SDK and node crate declarations."""
     pins, versions = [], []
     for name in SDK_MANIFESTS:
-        for line in (root / name).read_text().splitlines():
-            if 'git = "https://github.com/sourcenetwork/vera.rs"' in line:
-                match = re.search(r'rev = "([0-9a-f]{40})"', line)
-                if match is None:
-                    raise ValueError("SDK revision must be immutable")
-                pins.append(match[1])
-            match = re.fullmatch(r'vera-(?:client|domain|modules) = "(\d+\.\d+\.\d+)"', line)
-            if match is not None:
-                versions.append(match[1])
+        text = (root / name).read_text()
+        pins += git_pins(text)
+        versions += sdk_versions(text)
     if len(versions) != 6 or len(set(versions)) != 1:
         raise ValueError("published native SDK declarations disagree or are missing")
     if len(pins) != 1:
         raise ValueError("native harness revision is missing or ambiguous")
+    for name in NODE_MANIFESTS:
+        if set(git_pins((root / name).read_text())) != {pins[0]}:
+            raise ValueError("node crates and the native harness pin different Vera revisions")
     return pins[0]
 
 

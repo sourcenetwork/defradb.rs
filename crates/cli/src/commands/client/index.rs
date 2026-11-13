@@ -2,7 +2,6 @@
 
 use clap::{Args, Subcommand};
 
-use super::http_client::HttpClient;
 use super::{validate_identifier, ClientContext};
 use crate::error::{Error, Result};
 
@@ -123,16 +122,12 @@ impl IndexNewArgs {
         for field in &self.fields {
             validate_identifier(field)?;
         }
-        if let Some(ref name) = self.name {
-            validate_identifier(name)?;
-        }
 
-        let client = HttpClient::new(&ctx.url, &ctx.edge)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
+        let (client, txn) = super::document::write_client(ctx)?;
 
         let response = client
             .index_create(
+                txn.as_deref(),
                 &self.collection,
                 &self.fields,
                 self.name.as_deref(),
@@ -153,13 +148,11 @@ impl IndexListArgs {
             validate_identifier(col)?;
         }
 
-        let client = HttpClient::new(&ctx.url, &ctx.edge)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
+        let (client, txn) = super::document::write_client(ctx)?;
 
         // A collection's indexes print as Go's do, with each one's build state.
         let printed = match &self.collection {
-            Some(collection) => client.index_listing(collection).await?,
+            Some(collection) => client.index_listing(txn.as_deref(), collection).await?,
             None => serde_json::to_value(client.index_list(None).await?)?,
         };
         println!("{}", serde_json::to_string_pretty(&printed)?);
@@ -173,11 +166,11 @@ impl IndexDeleteArgs {
         validate_identifier(&self.collection)?;
         validate_identifier(&self.name)?;
 
-        let client = HttpClient::new(&ctx.url, &ctx.edge)?
-            .with_auth_token(ctx.auth_token.clone())
-            .with_verbose(ctx.verbose);
+        let (client, txn) = super::document::write_client(ctx)?;
 
-        client.index_delete(&self.collection, &self.name).await?;
+        client
+            .index_delete(txn.as_deref(), &self.collection, &self.name)
+            .await?;
         println!(
             "Index '{}' deleted from collection '{}'",
             self.name, self.collection

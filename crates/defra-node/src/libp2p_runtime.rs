@@ -32,6 +32,7 @@ pub(crate) async fn setup_libp2p<S>(
     sync_config: SyncConfig,
     retry_schedule: storage::stores::RetrySchedule,
     peer_keyring: Option<&crate::PeerKeyring>,
+    start_peer_key: Option<&crate::StartPeerKey>,
     edge: &edge::Edge,
 ) -> Result<P2PSetup>
 where
@@ -45,6 +46,7 @@ where
         sync_config,
         retry_schedule,
         peer_keyring.cloned(),
+        start_peer_key.cloned(),
         edge.clone(),
     ))
     .await
@@ -60,6 +62,7 @@ async fn assemble_libp2p<S>(
     sync_config: SyncConfig,
     retry_schedule: storage::stores::RetrySchedule,
     peer_keyring: Option<crate::PeerKeyring>,
+    start_peer_key: Option<crate::StartPeerKey>,
     edge: edge::Edge,
 ) -> Result<P2PSetup>
 where
@@ -94,6 +97,7 @@ where
         &Peerstore::new(store.clone()).with_max_txn_retries(max_txn_retries),
         None,
         peer_keyring,
+        start_peer_key.as_ref(),
     )
     .await?;
     let p2p_keypair =

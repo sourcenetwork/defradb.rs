@@ -26,6 +26,12 @@
 //! IPFS block exchange protocol (1.0.0, 1.1.0, 1.2.0), enabling
 //! interoperability with Go DefraDB.
 
+// `#[derive(NetworkBehaviour)]` (libp2p-swarm-derive 0.35.1) matches on the
+// event of `libp2p_stream::Behaviour`, which is uninhabited, and code it
+// generates after that match is unreachable. The derive puts its impl in this
+// module, so only a module-level allow reaches it.
+#![allow(unreachable_code)]
+
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
@@ -87,49 +93,59 @@ pub fn go_compatible_gossipsub_message_id(message: &gossipsub::Message) -> Messa
     MessageId::from(id)
 }
 
-/// Composite network behaviour for DefraDB nodes.
-#[derive(NetworkBehaviour)]
-#[behaviour(to_swarm = "DefraEvent")]
-pub struct DefraBehaviour<S: Store> {
-    /// Peer identification protocol.
-    pub identify: identify::Behaviour,
+pub use derived::DefraBehaviour;
 
-    /// LAN and WAN Kademlia DHTs for peer discovery and content routing.
-    pub kademlia: DualKademlia,
+// libp2p's `NetworkBehaviour` derive emits a call per field handler event, unreachable for an
+// uninhabited one (libp2p_stream, connection limits); the lint fires in the derived impl, so it
+// is allowed on a module holding only the struct.
+#[allow(unreachable_code)]
+mod derived {
+    use super::*;
 
-    /// Bitswap block exchange protocol (Go compatibility).
-    pub bitswap: Bitswap<S>,
+    /// Composite network behaviour for DefraDB nodes.
+    #[derive(NetworkBehaviour)]
+    #[behaviour(to_swarm = "DefraEvent")]
+    pub struct DefraBehaviour<S: Store> {
+        /// Peer identification protocol.
+        pub identify: identify::Behaviour,
 
-    /// Request-response protocol for PushLog messages.
-    pub pushlog: request_response::Behaviour<PushLogCodec>,
+        /// LAN and WAN Kademlia DHTs for peer discovery and content routing.
+        pub kademlia: DualKademlia,
 
-    /// GossipSub for pubsub messaging (optional, controlled by `pubsub_enabled` config).
-    pub gossipsub: Toggle<gossipsub::Behaviour>,
+        /// Bitswap block exchange protocol (Go compatibility).
+        pub bitswap: Bitswap<S>,
 
-    /// Relay client for circuit relay (optional, controlled by `relay_enabled` config).
-    /// Initialized as disabled; the SwarmBuilder injects the client when relay is enabled.
-    pub relay: Toggle<relay::client::Behaviour>,
+        /// Request-response protocol for PushLog messages.
+        pub pushlog: request_response::Behaviour<PushLogCodec>,
 
-    /// Raw stream protocol for Go two-stream compatibility.
-    /// Go's DefraDB uses separate streams for request and response.
-    pub stream: stream::Behaviour,
+        /// GossipSub for pubsub messaging (optional, controlled by `pubsub_enabled` config).
+        pub gossipsub: Toggle<gossipsub::Behaviour>,
 
-    /// Hard connection limits for pending handshakes and per-peer fan-out.
-    /// Total established connection pruning is handled by `P2PHost` so new
-    /// peers are not rejected before the Go-compatible low/high-water pruner
-    /// can trim older connections.
-    pub connection_limits: connection_limits::Behaviour,
+        /// Relay client for circuit relay (optional, controlled by `relay_enabled` config).
+        /// Initialized as disabled; the SwarmBuilder injects the client when relay is enabled.
+        pub relay: Toggle<relay::client::Behaviour>,
 
-    /// Process-memory guard approximating Go's ResourceManager system scope.
-    ///
-    /// rust-libp2p does not expose go-libp2p ResourceManager scopes for
-    /// transient, per-peer, service, or protocol memory/FD accounting. This
-    /// behaviour can only refuse new connections once process physical memory
-    /// exceeds the Go-compatible system budget. Existing connection count
-    /// limits cover pending/per-peer counts, but the Go transient 25% byte
-    /// scope and service/protocol/peer byte scopes have no Rust equivalent
-    /// here.
-    pub memory_connection_limits: memory_connection_limits::Behaviour,
+        /// Raw stream protocol for Go two-stream compatibility.
+        /// Go's DefraDB uses separate streams for request and response.
+        pub stream: stream::Behaviour,
+
+        /// Hard connection limits for pending handshakes and per-peer fan-out.
+        /// Total established connection pruning is handled by `P2PHost` so new
+        /// peers are not rejected before the Go-compatible low/high-water pruner
+        /// can trim older connections.
+        pub connection_limits: connection_limits::Behaviour,
+
+        /// Process-memory guard approximating Go's ResourceManager system scope.
+        ///
+        /// rust-libp2p does not expose go-libp2p ResourceManager scopes for
+        /// transient, per-peer, service, or protocol memory/FD accounting. This
+        /// behaviour can only refuse new connections once process physical memory
+        /// exceeds the Go-compatible system budget. Existing connection count
+        /// limits cover pending/per-peer counts, but the Go transient 25% byte
+        /// scope and service/protocol/peer byte scopes have no Rust equivalent
+        /// here.
+        pub memory_connection_limits: memory_connection_limits::Behaviour,
+    }
 }
 
 /// Events emitted by the DefraDB network behaviour.

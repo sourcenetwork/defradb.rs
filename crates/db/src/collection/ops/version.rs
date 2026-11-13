@@ -213,8 +213,13 @@ impl<S: Store> crate::database::DB<S> {
         &self,
         version_id: &str,
     ) -> Result<Option<Collection>> {
-        // Check cache first
-        if let Some(c) = self.get_collection_by_version_id(version_id)? {
+        // The cache answers by the version's collection, which it holds at its
+        // active version: a hit is this version only when the IDs agree. An
+        // older version comes from the stored versions below.
+        if let Some(c) = self
+            .get_collection_by_version_id(version_id)?
+            .filter(|c| c.version_id() == version_id)
+        {
             return Ok(Some(c));
         }
         // Search all stored versions (including inactive)

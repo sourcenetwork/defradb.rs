@@ -159,6 +159,10 @@ pub enum QueryError {
     #[error("Argument \"input\" has invalid value.\nIn field \"{0}\": Unknown field.")]
     SecondaryRelationInput(String),
 
+    /// A subscription sent as a plain request: it is served only over SSE.
+    #[error("parse error: {}", crate::subscription::SUBSCRIPTION_NEEDS_SSE)]
+    SubscriptionNeedsSse,
+
     /// Storage layer error
     #[error("storage error: {0}")]
     Storage(#[from] storage::corekv::Error),

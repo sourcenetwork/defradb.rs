@@ -1,5 +1,4 @@
-//! A provider that decides only once it is bound to a transaction, and counts
-//! the bindings and the read decisions made through them.
+//! Providers that show where and when a page asks for its access decisions.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -8,6 +7,8 @@ use acp::{DocumentACP, DocumentPermission, Identity};
 use async_trait::async_trait;
 use identity::Did;
 
+/// A provider that decides only once it is bound to a transaction, and counts
+/// the bindings and the read decisions made through them.
 pub(super) struct Decisions {
     inner: Arc<dyn DocumentACP>,
     pub(super) bound: Arc<AtomicUsize>,
@@ -85,6 +86,124 @@ impl DocumentACP for Decisions {
             return self.unbound();
         }
         self.checks.fetch_add(1, Ordering::SeqCst);
+        self.inner
+            .check_doc_access(actor, permission, policy, resource, doc)
+            .await
+    }
+
+    async fn add_actor_relationship(
+        &self,
+        requestor: &Did,
+        target: &Did,
+        policy: &str,
+        collection: &str,
+        doc: &str,
+        relation: &str,
+        managing: &[String],
+    ) -> acp::Result<bool> {
+        self.inner
+            .add_actor_relationship(
+                requestor, target, policy, collection, doc, relation, managing,
+            )
+            .await
+    }
+
+    async fn delete_actor_relationship(
+        &self,
+        requestor: &Did,
+        target: &Did,
+        policy: &str,
+        collection: &str,
+        doc: &str,
+        relation: &str,
+        managing: &[String],
+    ) -> acp::Result<bool> {
+        self.inner
+            .delete_actor_relationship(
+                requestor, target, policy, collection, doc, relation, managing,
+            )
+            .await
+    }
+
+    async fn unregister_doc_object(
+        &self,
+        policy: &str,
+        resource: &str,
+        doc: &str,
+    ) -> acp::Result<()> {
+        self.inner
+            .unregister_doc_object(policy, resource, doc)
+            .await
+    }
+}
+
+/// A provider outside every transaction that reads an unregistered document
+/// as public. The first time it is asked about `doc`, a delete of `doc`
+/// commits and unregisters it, as one that lands while a page is being read.
+pub(super) struct DeletesMidPage {
+    inner: Arc<dyn DocumentACP>,
+    db: Arc<db::DB<storage::RegolithStore>>,
+    doc: String,
+    deleted: AtomicUsize,
+}
+
+impl DeletesMidPage {
+    pub(super) fn new(
+        inner: Arc<dyn DocumentACP>,
+        db: Arc<db::DB<storage::RegolithStore>>,
+        doc: String,
+    ) -> Self {
+        Self {
+            inner,
+            db,
+            doc,
+            deleted: AtomicUsize::new(0),
+        }
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl DocumentACP for DeletesMidPage {
+    async fn register_doc_object(
+        &self,
+        actor: &Did,
+        policy: &str,
+        resource: &str,
+        doc: &str,
+    ) -> acp::Result<()> {
+        self.inner
+            .register_doc_object(actor, policy, resource, doc)
+            .await
+    }
+
+    async fn is_doc_registered(
+        &self,
+        policy: &str,
+        resource: &str,
+        doc: &str,
+    ) -> acp::Result<bool> {
+        if doc == self.doc && self.deleted.fetch_add(1, Ordering::SeqCst) == 0 {
+            use query::DocMutator as _;
+            db::AutoCommitMutator::new(self.db.clone())
+                .delete("Users", &doc.parse().expect("a DocID"))
+                .await
+                .expect("the delete to commit");
+            self.inner
+                .unregister_doc_object(policy, resource, doc)
+                .await?;
+        }
+        self.inner.is_doc_registered(policy, resource, doc).await
+    }
+
+    async fn check_doc_access(
+        &self,
+        actor: &Identity,
+        permission: DocumentPermission,
+        policy: &str,
+        resource: &str,
+        doc: &str,
+    ) -> acp::Result<bool> {
         self.inner
             .check_doc_access(actor, permission, policy, resource, doc)
             .await

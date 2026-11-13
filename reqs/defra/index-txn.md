@@ -270,3 +270,10 @@ A collection patch that adds, removes or modifies a secondary index, or changes 
 - **Scenarios:** ["signature::txn_acp::an_anonymous_caller_cannot_verify_a_block_the_txn_created"]
 
 `VerifySignature` inside a transaction checks NAC `SignatureVerify`, reads the block and checks document access as the caller, all at the transaction's view, its own writes included. With a `users` policy whose `read` is `reader`, a document that identity 1 creates in a transaction begun anonymously is registered to identity 1 there, before the transaction commits, so it is not public: the anonymous caller verifying the signature of its composite block in that transaction gets `missing permission`.
+
+# `defra.txn.indexes.list-all-encrypted`: Listing every encrypted index inside a transaction
+
+- **Parents:** ["go.txn.indexes"]
+- **Scenarios:** ["txn::list_all_encrypted_indexes::txn_list_all_encrypted_indexes_sees_its_own_changes_until_commit"]
+
+`ListAllEncryptedIndexes` given a transaction (the embedded node's request context, the HTTP `x-defradb-tx` header on `GET /api/v0/encrypted-indexes`, the CLI's `encrypted-index list --tx` without `--collection`) lists every collection's encrypted indexes as that transaction sees them, as Go's `ensureContextTxn` does: an index added in the transaction is listed and one deleted in it is gone, while a listing outside the transaction still returns the committed indexes until it commits. The answer is Go's: an object keyed by collection name, each a list of `{FieldName, Type: "equality"}`, with collections that have no encrypted index left out. NAC checks `list-all-encrypted-index` in the transaction; a caller without it gets `not authorized to perform operation. Permission: list-all-encrypted-index`.

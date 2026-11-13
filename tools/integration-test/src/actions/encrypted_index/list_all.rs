@@ -9,6 +9,8 @@ use testo::prelude::*;
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListAllEncryptedIndexes {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub txn: Option<usize>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub expected_data: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -36,16 +38,17 @@ impl Op for ListAllEncryptedIndexes {
         match state.client_type() {
             ClientType::InProcess => {}
             ClientType::RustHttp | ClientType::GoHttp => {
+                let txn = state.txn_id(self.txn);
                 let all = state
                     .http_as(node, identity, |client| async move {
-                        client.encrypted_index_list_all().await
+                        client.encrypted_index_list_all(txn.as_deref()).await
                     })?
                     .map_err(|e| Failure::operation(e.to_string()))?;
                 return Ok(json!({ "indexes": all }));
             }
             ClientType::Cli => {
                 let all = state
-                    .defra_client_as(node, None, identity, &["encrypted-index", "list"])
+                    .defra_client_as(node, self.txn, identity, &["encrypted-index", "list"])
                     .map_err(Failure::operation)?;
                 return Ok(json!({ "indexes": all }));
             }
@@ -54,7 +57,7 @@ impl Op for ListAllEncryptedIndexes {
             .block_on(
                 state
                     .node_on(self.common.node())?
-                    .list_all_encrypted_indexes_as(&state.context_as(None, identity)),
+                    .list_all_encrypted_indexes_as(&state.context_as(self.txn, identity)),
             )
             .map_err(|e| Failure::operation(e.to_string()))?;
         let by_collection: serde_json::Map<String, Value> = all

@@ -12,12 +12,14 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 # event l next (past the end when l = events + 1).
 RUNS=(
   "MC_DocumentUpdateJournal_Green.cfg DocumentUpdateJournal.tla GREEN"
+  "MC_DocumentUpdateJournal_Green_Outside.cfg DocumentUpdateJournal.tla GREEN"
   "MC_DocumentUpdateJournal_Red_Detached.cfg DocumentUpdateJournal.tla RED"
   "MC_DocumentUpdateJournal_Red_Duplicate.cfg DocumentUpdateJournal.tla RED"
   "MC_DocumentUpdateJournal_Red_Superseded.cfg DocumentUpdateJournal.tla RED"
   "MC_DocumentUpdateJournal_Red_Authorization.cfg DocumentUpdateJournal.tla RED"
   "MC_DocumentUpdateJournal_Red_Deleted.cfg DocumentUpdateJournal.tla RED"
   "MC_DocumentUpdateJournal_Red_Stale.cfg DocumentUpdateJournal.tla RED"
+  "MC_DocumentUpdateJournal_Red_Unordered.cfg DocumentUpdateJournal.tla RED"
   "MC_DocumentUpdateJournal_Red_Skip.cfg DocumentUpdateJournal.tla RED"
   "MC_UsersetRelationManager_Green.cfg UsersetRelationManager.tla GREEN"
   "MC_UsersetRelationManager_Red_Owner.cfg UsersetRelationManager.tla RED"
@@ -55,6 +57,12 @@ RUNS=(
   "MC_HostNoopProjection_Red_Rollback.cfg HostNoopProjection.tla RED"
   "MC_LocalFetchPermit_Green.cfg LocalFetchPermit.tla GREEN"
   "MC_LocalFetchPermit_Red_Hold.cfg LocalFetchPermit.tla RED"
+  "MC_HeldPubsubRequest_Green.cfg HeldPubsubRequest.tla GREEN"
+  "MC_HeldPubsubRequest_Red_NoHold.cfg HeldPubsubRequest.tla RED" # a refused publish fails the sync at once (Delivered)
+  "MC_HeldPubsubRequest_Red_NoResend.cfg HeldPubsubRequest.tla RED" # a later subscriber is never sent the request (Delivered)
+  "MC_HeldPubsubRequest_Red_LateWatch.cfg HeldPubsubRequest.tla RED" # the wake-up is armed after the publish (Delivered)
+  "MC_HeldPubsubRequest_Red_NoDedupe.cfg HeldPubsubRequest.tla RED" # a resend's duplicate reply reaches the caller (OneReplyEach)
+  "MC_HeldPubsubRequest_Red_ResendLate.cfg HeldPubsubRequest.tla RED" # a resend goes out after the deadline (NoResendAfterDeadline)
   "MC_VerifiedClientGraph_Green.cfg VerifiedClientGraph.tla GREEN"
   "MC_VerifiedClientGraph_Red_SingleMutation.cfg VerifiedClientGraph.tla RED" # a multi-mutation request is accepted (INV_SingleMutation)
   "MC_VerifiedClientGraph_Red_Unencrypted.cfg VerifiedClientGraph.tla RED" # the request adds encryption outside the approved graph (INV_Unencrypted)
@@ -163,6 +171,10 @@ RUNS=(
   "MC_HistoryDriver_Red_SwallowedAbort.cfg HistoryDriver.tla RED"
   "MC_ContinuationSlot_Green.cfg ContinuationSlot.tla GREEN"
   "MC_ContinuationSlot_Red_LateClaim.cfg ContinuationSlot.tla RED"
+  "MC_PendingDagOwner_Green.cfg PendingDagOwner.tla GREEN" # only an owner's own generation releases its pending-DAG slot, and a release wakes the retry clock
+  "MC_PendingDagOwner_Red_NoGeneration.cfg PendingDagOwner.tla RED" # a losing claimant's drop frees the winner's slot: more roots work than slots (INV_Capacity)
+  "MC_PendingDagOwner_Red_NoWake.cfg PendingDagOwner.tla RED" # a release does not wake the clock: a due root waits for the tick beside a free slot (INV_NoIdleCapacity)
+  "MC_PendingDagOwner_Red_RollbackWake.cfg PendingDagOwner.tla RED" # a full-lane rollback wakes the clock itself: it spins through dispatches that cannot progress (INV_RollbackNeedsCause)
   "MC_HistoryTurns_Green.cfg HistoryTurns.tla GREEN"
   "MC_HistoryTurns_Red_Admission.cfg HistoryTurns.tla RED"
   "MC_HistoryTurns_Red_Atomic.cfg HistoryTurns.tla RED"
@@ -173,6 +185,12 @@ RUNS=(
   "MC_ReplicatorIncarnation_Green.cfg ReplicatorIncarnation.tla GREEN"
   "MC_ReplicatorIncarnation_Red_Error.cfg ReplicatorIncarnation.tla RED"
   "MC_ReplicatorIncarnation_Red_Rollback.cfg ReplicatorIncarnation.tla RED"
+  "MC_ReplicatorIncarnation_Red_ReplayIdentity.cfg ReplicatorIncarnation.tla RED"
+  "MC_ReplicatorIncarnation_Red_ReplayResurrect.cfg ReplicatorIncarnation.tla RED"
+  "MC_ReplicatorIncarnation_Red_ReplayStale.cfg ReplicatorIncarnation.tla RED"
+  "MC_ReplicatorIncarnation_Red_ReplayMarker.cfg ReplicatorIncarnation.tla RED"
+  "MC_ReplicatorIncarnation_Red_ReplaySuperseded.cfg ReplicatorIncarnation.tla RED"
+  "MC_ReplicatorIncarnation_Red_ReplayCompare.cfg ReplicatorIncarnation.tla RED" # a read-then-compare flip skips after a same-incarnation rewrite (ACT_FlipNotSkipped)
   "MC_ReplicatorInstall_Green.cfg ReplicatorInstall.tla GREEN"
   "MC_ReplicatorInstall_Red_Validation.cfg ReplicatorInstall.tla RED"
   "MC_ReplicatorInstall_Red_Active.cfg ReplicatorInstall.tla RED"
@@ -192,10 +210,18 @@ RUNS=(
   "MC_SelectedCarAuthority_Red_scope.cfg SelectedCarAuthority.tla RED"
   "MC_SelectedCarAuthority_Red_revoke.cfg SelectedCarAuthority.tla RED"
   "MC_SelectedPushIsolation_Green.cfg SelectedPushIsolation.tla GREEN"
+  "MC_SelectedPushIsolation_Red_shared_budget.cfg SelectedPushIsolation.tla RED"
+  "MC_SelectedPushIsolation_Red_pause.cfg SelectedPushIsolation.tla RED"
   "MC_SelectedPushIsolation_Red_filter.cfg SelectedPushIsolation.tla RED"
   "MC_SelectedPushIsolation_Red_backoff.cfg SelectedPushIsolation.tla RED"
   "MC_SelectedPushIsolation_Red_hint.cfg SelectedPushIsolation.tla RED"
   "MC_SelectedPushIsolation_Red_drain.cfg SelectedPushIsolation.tla RED"
+  "MC_SelectedPushIsolation_Red_stall.cfg SelectedPushIsolation.tla RED"
+  "MC_SelectedPushIsolation_Red_cancel.cfg SelectedPushIsolation.tla RED"
+  "MC_SelectedPushIsolation_Red_schedule.cfg SelectedPushIsolation.tla RED"
+  "MC_SelectedPushIsolation_Red_admission.cfg SelectedPushIsolation.tla RED"
+  "MC_SelectedPushIsolation_Red_partial.cfg SelectedPushIsolation.tla RED"
+  "MC_SelectedPushIsolation_Red_expiry_stop.cfg SelectedPushIsolation.tla RED"
   "MC_DocumentPush_Red_Admission.cfg DocumentPush.tla RED"
   "MC_PeerStreamCap_Green.cfg PeerStreamCap.tla GREEN"
   "MC_PeerStreamCap_Red_NoCheck.cfg PeerStreamCap.tla RED"
@@ -271,6 +297,16 @@ RUNS=(
   "MC_SharedRpcConnection_Red_StaleEviction.cfg SharedRpcConnection.tla RED"
   "MC_SharedRpcConnection_Red_WrongMux.cfg SharedRpcConnection.tla RED"
   "MC_SharedRpcConnection_Red_RetainedClosed.cfg SharedRpcConnection.tla RED"
+  "MC_ConnectionAdoption_Green.cfg ConnectionAdoption.tla GREEN"
+  "MC_ConnectionAdoption_Red_OpenUncounted.cfg ConnectionAdoption.tla RED"
+  "MC_ConnectionAdoption_Red_RevokeCacheOnly.cfg ConnectionAdoption.tla RED"
+  "MC_ConnectionAdoption_Red_NoRpcAdoption.cfg ConnectionAdoption.tla RED"
+  "MC_ConnectionAdoption_Red_PumpLate.cfg ConnectionAdoption.tla RED"
+  "MC_ConnectionAdoption_Red_NoCleanup.cfg ConnectionAdoption.tla RED"
+  "MC_ConnectionAdoption_Red_HitAdopts.cfg ConnectionAdoption.tla RED"
+  "MC_ConnectionAdoption_Red_PeerWide.cfg ConnectionAdoption.tla RED"
+  "MC_ConnectionAdoption_Red_NoRestore.cfg ConnectionAdoption.tla RED"
+  "MC_ConnectionAdoption_Red_AdoptAnnounces.cfg ConnectionAdoption.tla RED"
   "MC_PeerDisconnect_Green.cfg PeerDisconnect.tla GREEN" # Disconnect answers only once the peer's last connection closed
   "MC_PeerDisconnect_Red_EarlyAck.cfg PeerDisconnect.tla RED" # answering before the closes (INV_AnsweredMeansClosed)
   "MC_SchemaPublication_Green.cfg SchemaPublication.tla GREEN"
@@ -362,6 +398,11 @@ RUNS=(
   "MC_IndexDropBackfill_Red_SameTxn.cfg IndexDropBackfill.tla RED" # entries deleted from an unvalidated scan in the drop commit (INV_NoOrphanEntries)
   "MC_IndexDropBackfill_Red_Forget.cfg IndexDropBackfill.tla RED" # a restart ignores an unfinished drop (LIVE_DropFinishes)
   "MC_IndexDropBackfill_Red_ReuseId.cfg IndexDropBackfill.tla RED" # a new index gets the dropped id and the drop deletes its entries (INV_NewIndexIntact)
+  "MC_IndexBuildGateClose_Green.cfg IndexBuildGateClose.tla GREEN" # a close while a build waits at its gate finishes, and the reopen returns before the node resumes the build, which is then built
+  "MC_IndexBuildGateClose_Red_NoRace.cfg IndexBuildGateClose.tla RED" # the gate wait ignores the close and the close hangs (LIVE_CloseFinishes)
+  "MC_IndexBuildGateClose_Red_FailOnClose.cfg IndexBuildGateClose.tla RED" # the close marks the build failed and it is never built (LIVE_BuildFinishes)
+  "MC_IndexBuildGateClose_Red_Forget.cfg IndexBuildGateClose.tla RED" # the reopen forgets the stopped build (LIVE_BuildFinishes)
+  "MC_IndexBuildGateClose_Red_OpenAwaits.cfg IndexBuildGateClose.tla RED" # the reopen waits for the resumed build held at the shut gate, so it is never built (LIVE_BuildFinishes)
   "MC_WritePipeline_Green.cfg WritePipeline.tla GREEN" # #1890: creates and updates store blocks once the composite exists, one short ID and one key mint per field across attempts
   "MC_WritePipeline_Red_AsComputed.cfg WritePipeline.tla RED" # each block stored as made (INV_NoStoreBeforeComposite)
   "MC_WritePipeline_Red_PerAttempt.cfg WritePipeline.tla RED" # fresh short ID per attempt: a key minted twice (INV_OneKeyPerField)
@@ -373,12 +414,22 @@ RUNS=(
   "MC_AddCollection_Red_Validate.cfg AddCollection.tla RED" # schema validation left out (INV_NoCollectionUnlessAllChecksPass)
   "MC_AddCollection_Red_Policy.cfg AddCollection.tla RED" # @policy check left out (INV_NoCollectionUnlessAllChecksPass)
   "MC_AddCollection_Red_OneByOne.cfg AddCollection.tla RED" # collections created one at a time: a later failure leaves earlier ones (INV_AllOrNone)
-  "MC_Truncate_Green.cfg Truncate.tla GREEN" # #2321: truncate checks nac and chunk, then for a filter branchable, txn and shape, before a delete that is durable at once
+  "MC_IndexInTxn_Green.cfg IndexInTxn.tla GREEN" # #2374 follow-up: an index created or dropped in a txn is staged in it, listed in it, built after commit before the commit returns
+  "MC_IndexInTxn_Red_WriteOutside.cfg IndexInTxn.tla RED" # the change commits on its own (INV_IsolatedUntilCommit)
+  "MC_IndexInTxn_Red_EarlyBackfill.cfg IndexInTxn.tla RED" # backfill at create, before commit (INV_WorkOnlyAfterCommit)
+  "MC_IndexInTxn_Red_StaleCatalog.cfg IndexInTxn.tla RED" # stale cached definition in the txn (INV_SeesOwnChange)
+  "MC_IndexInTxn_Red_NoAwait.cfg IndexInTxn.tla RED" # commit returns before the backfill (INV_BuiltWhenCommitReturns)
+  "MC_IndexInTxn_Red_NoSavepoint.cfg IndexInTxn.tla RED" # a failed change keeps its partial writes and the commit lands them (INV_FailedChangeLeavesNothing)
+  "MC_EncryptedIndexAutocommit_Green.cfg EncryptedIndexAutocommit.tla GREEN" # #2755: an encrypted index add or delete outside a txn reads the definition in its txn and re-runs on a conflict
+  "MC_EncryptedIndexAutocommit_Red_CacheRead.cfg EncryptedIndexAutocommit.tla RED" # decides from the cache and blind-writes: a concurrent add is lost (INV_NoLostIndex)
+  "MC_EncryptedIndexAutocommit_Red_SingleAttempt.cfg EncryptedIndexAutocommit.tla RED" # one attempt: a valid add is refused with the conflict (INV_NoValidRefused)
+  "MC_Truncate_Green.cfg Truncate.tla GREEN" # #2321: truncate checks nac and chunk, then for a filter branchable, txn and shape, before a delete that is durable at once and empties a view's cache
   "MC_Truncate_Red_Chunk.cfg Truncate.tla RED" # chunk check left out: a truncate empties a chunk collection its parents still list (INV_NoRemovalFromChunks)
   "MC_Truncate_Red_Nac.cfg Truncate.tla RED" # permission check left out: a caller without CollectionTruncate removes documents (INV_NoRemovalWithoutPermission)
   "MC_Truncate_Red_Branchable.cfg Truncate.tla RED" # branchable check left out: a filtered truncate splits shared history (INV_FilteredNeverOnBranchable)
   "MC_Truncate_Red_Txn.cfg Truncate.tla RED" # transaction check left out, as before: a filter on the txn view removes an uncommitted match (INV_FilteredRemovesOnlyCommittedMatches)
   "MC_Truncate_Red_Shape.cfg Truncate.tla RED" # filter shape check left out: a non-filter removes everything (INV_BadFilterRemovesNothing)
+  "MC_Truncate_Red_ViewCache.cfg Truncate.tla RED" # #2703: view cache clear left out: a truncated view still shows its rows (INV_UnfilteredEmptiesView)
   "MC_NacOrder_Green.cfg NacOrder.tla GREEN" # #2680/#2700: a document write checks get-collection then its own permission, in its transaction, and a call with no identity acts as no one
   "MC_NacOrder_Red_SkipGet.cfg NacOrder.tla RED" # get-collection left out: a caller without it writes (INV_NoEffectWithoutPermission)
   "MC_NacOrder_Red_OwnFirst.cfg NacOrder.tla RED" # the write's own permission checked first: the refusal names it, not get-collection (INV_RefusalNamesGoFirst)
@@ -482,6 +533,13 @@ RUNS=(
   "MC_VerifiedRead_Red_AcceptStale.cfg VerifiedRead.tla RED" # light client skips the root check: a stale answer is accepted (INV_NeverStale)
   "MC_VerifiedRead_Red_NoRetry.cfg VerifiedRead.tla RED" # refused read never asked again: errors with asks left (INV_FailsOnlyWhenEveryAskOvertaken)
   "MC_VerifiedRead_Red_Uncapped.cfg VerifiedRead.tla RED" # retry without a cap asks past ATTEMPTS (INV_AttemptsBounded)
+  "MC_PendingSubmission_Green.cfg PendingSubmission.tla GREEN" # a pending submission is resent until confirmed, takes effect once and stays journaled
+  "MC_PendingSubmission_Green_Recalled.cfg PendingSubmission.tla GREEN" # a caller that keeps calling is confirmed though calls end early and the node drops the request
+  "MC_PendingSubmission_Red_NoResend.cfg PendingSubmission.tla RED" # a lost send taken as sent waits for a receipt that cannot come
+  "MC_PendingSubmission_Red_NoDedupe.cfg PendingSubmission.tla RED" # a node that executes every copy runs a resent request twice
+  "MC_PendingSubmission_Red_GivesUpEarly.cfg PendingSubmission.tla RED" # a failure that may pass ends the loop before its deadline
+  "MC_PendingSubmission_Red_ForgetsOnTimeout.cfg PendingSubmission.tla RED" # the journal drops the request when the deadline passes
+  "MC_PendingSubmission_Red_Recalled_Forgets.cfg PendingSubmission.tla RED" # with the journal emptied at a deadline, a later call has nothing to send again
   "MC_RegisterDocOnce_Green.cfg RegisterDocOnce.tla GREEN" # racing registrations of one document: one owner, the winner owns it, one wins
   "MC_RegisterDocOnce_Red_NoValidation.cfg RegisterDocOnce.tla RED" # deciding scan not validated: two owners (INV_OneOwner)
   "MC_RegisterDocOnce_Red_Sentinel.cfg RegisterDocOnce.tla RED" # main before the fix: the identical sentinel write commits, two owners (INV_OneOwner)
@@ -642,6 +700,24 @@ RUNS=(
   "MC_CpuLedger_Red_RunOutsideHold.cfg CpuLedger.tla RED" # caller runs a thread on a CPU its hold does not cover (INV_AloneRunsAlone)
   "MC_CpuLedger_Red_DoubleRelease.cfg CpuLedger.tla RED" # caller gives its hold back twice: a counter drops below its holders (INV_CountExact)
   "MC_CpuLedger_Red_ForgetHold.cfg CpuLedger.tla RED" # caller never gives its hold back: CPUs stay held after every pool is gone (INV_DoneLeavesNothing)
+  "MC_IdentityStore_Green.cfg IdentityStore.tla GREEN" # holders hold, retain and release one DID while it is pinned and cleared: count exact, held keys found, no key outlives its holders, no holder re-routed to another signer, a hold with the held host context never refused
+  "MC_IdentityStore_Red_ReplaceOnHold.cfg IdentityStore.tla RED" # a second hold with another signer replaces the first's (INV_OwnSigner)
+  "MC_IdentityStore_Red_PinReplacesHeld.cfg IdentityStore.tla RED" # a pin replaces a held DID's signer (INV_OwnSigner)
+  "MC_IdentityStore_Red_RefuseSameContext.cfg IdentityStore.tla RED" # signers compared by registration, not host context: a second handle for one context is refused (INV_AcceptSame)
+  "MC_IdentityStore_Red_SplitSwap.cfg IdentityStore.tla RED" # swap split into read then write: two holds counted once (INV_CountExact)
+  "MC_IdentityStore_Red_DropCount.cfg IdentityStore.tla RED" # slot says held, not how many: one release drops the other's key (INV_KeyWhileHeld)
+  "MC_IdentityStore_Red_ClearRemoves.cfg IdentityStore.tla RED" # clear removes the slot from the map: a held DID answers no key (INV_KeyWhileHeld)
+  "MC_IdentityStore_Red_ClearDropsHeld.cfg IdentityStore.tla RED" # clear drops held keys too: a holder's key is gone (INV_KeyWhileHeld)
+  "MC_IdentityStore_Red_RetainAbsent.cfg IdentityStore.tla RED" # retain holds a key the store does not have (INV_KeyWhileHeld)
+  "MC_PeerKeyLoad_Green.cfg PeerKeyLoad.tla GREEN" # plain, keyring and start-key starts of one store: a start key always starts, leaves no mark, never moves the plain key
+  "MC_PeerKeyLoad_Red_StartKeyChecked.cfg PeerKeyLoad.tla RED" # a start key checked against the store as a keyring is: refused over a plaintext key (INV_StartKeyStarts)
+  "MC_PeerKeyLoad_Red_StartKeyRecorded.cfg PeerKeyLoad.tla RED" # a start key recorded as a keyring identity: the next plain start is refused (INV_StartKeyLeavesNoMark)
+  "MC_TxnTurns_Green.cfg TxnTurns.tla GREEN" # calls on one transaction take tickets, may drop them: one runs at a time, none overtakes an earlier ticket, no call waits forever
+  "MC_TxnTurns_Red_NoRecheck.cfg TxnTurns.tla RED" # a dropping call never looks again: a dropped ticket nobody skips stalls the transaction (Progress)
+  "MC_TxnTurns_Red_CancelSkipsNow.cfg TxnTurns.tla RED" # a dropped ticket serves the next at once: two calls run together (INV_OneRunning)
+  "MC_VersionPin_Green.cfg VersionPin.tla GREEN" # requests pin an old version, the active one or nothing while DDL changes the active version: pins stay in their turn, unpinned turns see the active version, old-version reads change nothing, writes land at the selected version
+  "MC_VersionPin_Red_PinLeaks.cfg VersionPin.tla RED" # a turn leaves its pin behind: the next request still sees the old version (INV_PinScoped)
+  "MC_VersionPin_Red_WriteBackOnPin.cfg VersionPin.tla RED" # a read through an old version stores the migrated document back (INV_ReadNoSideEffect)
   "MC_CpuLedger_Green_Edge.cfg CpuLedger.tla GREEN" # a network runtime claims cores alone beside a pool, or gives up holding nothing
   "MC_CpuLedger_Red_EdgeNoCap.cfg CpuLedger.tla RED" # network runtime claims alone forever: its start never ends (LIVE_StartEnds)
   "MC_DefaultPool_Green.cfg DefaultPool.tla GREEN" # the first registered pool that runs is the default, else one pool started once; never a closing pool, a stop's deadline goes elsewhere, every call returns
@@ -807,6 +883,12 @@ RUNS=(
   "MC_InboundAdmission_Red_NoDeadline.cfg MC_InboundAdmission_Common.tla RED" # no deadline: a stream waits for budget forever (LIVE_WaitEnds)
   "MC_InboundAdmission_Red_NoReadDeadline.cfg MC_InboundAdmission_Common.tla RED" # no read deadline: a stalled body holds control forever (LIVE_HealthyHandled)
   "MC_InboundAdmission_Red_IdleOnly.cfg MC_InboundAdmission_Common.tla RED" # idle deadline only: a trickling body holds control forever (LIVE_HealthyHandled)
+  "MC_EmbedderStream_Green.cfg MC_EmbedderStream_Common.tla GREEN" # an embedder's stream: registered tags only, room held only while the request is kept, deadline, revocation and shutdown end it
+  "MC_EmbedderStream_Red_AnyTag.cfg MC_EmbedderStream_Common.tla RED" # no tag check: an unregistered tag is read (INV_OnlyRegisteredServed)
+  "MC_EmbedderStream_Red_UntilReturn.cfg MC_EmbedderStream_Common.tla RED" # room held until the handler returns: a hung handler that dropped its request still locks its peer out (INV_RoomIsTheRequest)
+  "MC_EmbedderStream_Red_NoDeadline.cfg MC_EmbedderStream_Common.tla RED" # no deadline: a hung handler runs forever (LIVE_HandlerEnds)
+  "MC_EmbedderStream_Red_BarOnly.cfg MC_EmbedderStream_Common.tla RED" # revocation only bars new connections: the revoked peer stays connected (INV_RevokedIsCut)
+  "MC_EmbedderStream_Red_NoAbort.cfg MC_EmbedderStream_Common.tla RED" # shutdown leaves tasks running (INV_ShutdownLeavesNone)
   "MC_GossipOwnership_Green.cfg MC_GossipOwnership_Common.tla GREEN" # #2078: gossip rides the mux connection; a revoked peer has no gossip, gossip never closes a shared connection
   "MC_GossipOwnership_Red_OwnConnection.cfg MC_GossipOwnership_Common.tla RED" # former design: gossip dials its own connection and re-reaches a revoked peer (INV_RevokedHasNoGossip)
   "MC_GossipOwnership_Red_NoRecheck.cfg MC_GossipOwnership_Common.tla RED" # no admission check after connecting: a revoke during the dial is missed (INV_RevokedHasNoGossip)
@@ -881,11 +963,12 @@ RUNS=(
   "MC_IrohDialOutcome_Green_Admitted.cfg IrohDialOutcome.tla GREEN" # an admitted dial answers ok
   "MC_IrohDialOutcome_Red_Poll.cfg IrohDialOutcome.tla RED" # the code before: connect_peer polls the connected set and misses a refused connection (LIVE_DialAnswered)
   "MC_IrohDialOutcome_Red_NoCheck.cfg IrohDialOutcome.tla RED" # the dial answers ok without the close reason (INV_RefusalKnownIsSaid)
-  "MC_ServerDrain_Green.cfg ServerDrain.tla GREEN" # requests in flight finish, idle connections close, the server returns by the deadline
+  "MC_ServerDrain_Green.cfg ServerDrain.tla GREEN" # requests in flight finish, idle connections close, subscription streams end, the server returns by the deadline
   "MC_ServerDrain_Red_Service.cfg ServerDrain.tla RED" # the code before: server tasks stopped as services, a request in flight dropped (INV_NoDropBeforeDeadline)
   "MC_ServerDrain_Red_CheckInside.cfg ServerDrain.tla RED" # closing looked at inside a request cuts it off (INV_NoDropBeforeDeadline)
   "MC_ServerDrain_Red_NoCheck.cfg ServerDrain.tla RED" # closing never looked at: new requests while draining (INV_NoNewWorkWhenClosing)
   "MC_ServerDrain_Red_NoDeadline.cfg ServerDrain.tla RED" # no deadline: a hung request keeps the server from returning (LIVE_ServerReturns)
+  "MC_ServerDrain_Red_StreamIgnoresClosing.cfg ServerDrain.tla RED" # a subscription stream ignores closing: the drain waits out its deadline for it (INV_DeadlineStopsNoStream)
   "MC_DocTopicIngress_Green.cfg DocTopicIngress.tla GREEN" # updates queued past an unsubscribe are dropped, followed ones applied
   "MC_DocTopicIngress_Red_NoCheck.cfg DocTopicIngress.tla RED" # the code before (#2545): an update after the unsubscribe is applied (INV_NoApplyAfterUnsubscribe)
   "MC_DocTopicIngress_Red_OwnSet.cfg DocTopicIngress.tla RED" # the handler checks a set the unsubscribe never clears (INV_NoApplyAfterUnsubscribe)
@@ -932,6 +1015,9 @@ RUNS=(
   "MC_ConnectFallback_Red_KeepLoser.cfg ConnectFallback.tla RED" # the loser left running: its socket stays open after the answer (INV_OneSocket)
   "MC_ConnectFallback_Red_TimeoutMissesRace.cfg ConnectFallback.tla RED" # the connect timeout covers only the lookup: a hanging race runs past it (INV_WithinLimit)
   "MC_ConnectFallback_Red_TimeoutMissesRaceHangs.cfg ConnectFallback.tla RED" # the same, with both attempts hanging: the connect never ends (LIVE_Ends)
+  "MC_PubsubRpcReply_Green.cfg PubsubRpcReply.tla GREEN" # three peers, each request copy direct or relayed in every order: every answer reaches the asker, the deadline cuts off only an answer not yet sent or still on its way, the asker stops
+  "MC_PubsubRpcReply_Red_AnswerRelay.cfg PubsubRpcReply.tla RED" # a peer answers the relay that handed it the request (INV_NoAnswerLost)
+  "MC_PubsubRpcReply_Red_DeadlineCutsOff.cfg PubsubRpcReply.tla RED" # the same: every peer answered, one answer lost, the asker stops at its deadline (INV_AllAnswered)
   "MC_CoordinatorShutdown_Green.cfg CoordinatorShutdown.tla GREEN" # two callers, a late spawn racing the drain, the edge closing and the runtime torn down at any moment: one drain, no task left in the set, every caller returns
   "MC_CoordinatorShutdown_Green_TwoSpawns.cfg CoordinatorShutdown.tla GREEN" # two late spawns whose pruners race the drain and each other: no task left in the set, the caller returns
   "MC_CoordinatorShutdown_Red_DropRefused.cfg CoordinatorShutdown.tla RED" # the old code, a refused drain dropped: the tracked task leaks (INV_NoLeak)

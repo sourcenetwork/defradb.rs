@@ -41,6 +41,10 @@ struct Fields {
     bearer: Option<(Option<String>, Option<String>)>,
     txn: Option<TxnId>,
     authorization_expiration: Option<u64>,
+    /// The collection version the request works through, when it names one
+    /// (possibly inactive): its turn pins that version for every lookup of
+    /// the collection's name.
+    collection_version: Option<String>,
 }
 
 impl RequestContext {
@@ -257,6 +261,20 @@ impl RequestContext {
     #[must_use]
     pub fn with_txn(mut self, txn: Option<TxnId>) -> Self {
         Arc::make_mut(&mut self.0).txn = txn;
+        self
+    }
+
+    /// The collection version this request works through, if it names one:
+    /// every lookup of that collection's name in the request sees it, active
+    /// or not, as Go runs a document call on the selected collection.
+    pub fn collection_version(&self) -> Option<&str> {
+        self.0.collection_version.as_deref()
+    }
+
+    /// This context working through collection version `version_id`.
+    #[must_use]
+    pub fn with_collection_version(mut self, version_id: Option<String>) -> Self {
+        Arc::make_mut(&mut self.0).collection_version = version_id;
         self
     }
 

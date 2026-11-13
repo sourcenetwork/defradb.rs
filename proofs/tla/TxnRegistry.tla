@@ -3,6 +3,9 @@
 \*
 \* Abstracts crates/db/src/txn/registry/cleanup.rs `DbTransactionRegistry::cleanup_stale_transactions`
 \* and the concurrent `get`/`get_ctx` touch path (anchors in TxnRegistry_DESIGN.md).
+\* The same sweep runs on every node that asks for one, with or without an HTTP server: it is
+\* started from crates/defra-node/src/node_builder.rs `NodeBuilder::build` (an HTTP config's idle
+\* timeout, or `NodeBuilder::with_transaction_idle_timeout`) through crates/defra-node/src/assemble.rs.
 \*
 \* THE RACE. A periodic sweep evicts transactions idle longer than `max_idle_age`. It runs
 \* in two phases:

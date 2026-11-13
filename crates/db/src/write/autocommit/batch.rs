@@ -347,6 +347,16 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         Some(self.acp_registration_projection.clone())
     }
 
+    /// Pins `version` in this attempt's transaction, so every lookup of its
+    /// name answers it and its writes are recorded at it. The transaction is
+    /// this attempt's own, so the pin ends with it.
+    fn pin_collection(&self, version: schema::CollectionVersion) -> query::error::Result<()> {
+        let txn = self.shared_txn()?;
+        let crdts = txn.crdts().clone();
+        txn.pin_collection(crate::collection::Collection::new(version, crdts));
+        Ok(())
+    }
+
     async fn register_ordered_async_hook(
         &self,
         callback: storage::corekv::CommitHook,

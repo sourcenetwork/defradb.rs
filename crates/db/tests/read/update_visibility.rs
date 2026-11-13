@@ -3,6 +3,7 @@
 //! the transaction that read the page.
 
 mod decisions;
+mod transaction_fetcher;
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -62,6 +63,24 @@ impl Node {
         Self { db, acp }
     }
 
+    /// A policy-backed store with no provider of its own, so its mutator
+    /// writes unchecked, and a local provider that stands outside every
+    /// transaction and reads an unregistered document as public.
+    async fn outside() -> Self {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(DB::from_arc(store).unwrap());
+        for mut schema in query::parse_sdl("type Users { name: String }").unwrap() {
+            schema.policy = Some(PolicyDescription::new(POLICY, RESOURCE));
+            db.create_collection(schema).await.unwrap();
+        }
+        Self {
+            db,
+            acp: Arc::new(acp::LocalDocumentACP::new(Arc::new(
+                acp::MemoryAcpStore::new(),
+            ))),
+        }
+    }
+
     fn runner(&self, path: Path, acp: Arc<dyn DocumentACP>) -> Box<dyn QueryExecutor> {
         let fetcher = LensedAutoCommitFetcher::new(self.db.clone());
         let provider = DbCollectionProvider::new_arc(self.db.clone());
@@ -93,12 +112,13 @@ impl Node {
         .await
     }
 
-    /// A document its owner created and then updated once: one journal row.
-    async fn updated_document(&self) -> String {
+    /// A document its owner created as `name` and then updated once: one
+    /// journal row.
+    async fn updated_document(&self, name: &str) -> String {
         let created = self
             .run(
                 Path::Registry,
-                r#"mutation { add_Users(input: {name: "before"}) { _docID } }"#,
+                &format!(r#"mutation {{ add_Users(input: {{name: "{name}"}}) {{ _docID }} }}"#),
                 Some(owner()),
             )
             .await;
@@ -106,35 +126,51 @@ impl Node {
             .as_str()
             .unwrap()
             .to_string();
+        self.update(&id, &format!("{name}, updated")).await;
+        id
+    }
+
+    async fn update(&self, id: &str, name: &str) {
         self.run(
             Path::Registry,
             &format!(
-                r#"mutation {{ update_Users(docID: "{id}", input: {{name: "after"}}) {{ _docID }} }}"#
+                r#"mutation {{ update_Users(docID: "{id}", input: {{name: "{name}"}}) {{ _docID }} }}"#
             ),
             Some(owner()),
         )
         .await;
-        id
     }
 
     async fn delete(&self, id: &str) {
-        self.run(
-            Path::Registry,
-            &format!(r#"mutation {{ delete_Users(docID: "{id}") {{ _docID }} }}"#),
-            Some(owner()),
-        )
-        .await;
+        let deleted = self
+            .run(
+                Path::Registry,
+                &format!(r#"mutation {{ delete_Users(docID: "{id}") {{ _docID }} }}"#),
+                Some(owner()),
+            )
+            .await;
+        assert_eq!(deleted["delete_Users"][0]["_docID"], id);
     }
 
-    /// The journal page as `identity` reads it: its `next` and its entries.
-    async fn page(&self, path: Path, identity: Option<Did>) -> (Value, Vec<Value>) {
+    /// The journal page as `identity` reads it: its `next`, and the document
+    /// of each entry.
+    async fn page(&self, path: Path, identity: Option<Did>) -> (Value, Vec<String>) {
         let data = self.run(path, UPDATES, identity).await;
-        let page = &data["_documentUpdates"];
-        (
-            page["next"].clone(),
-            page["entries"].as_array().unwrap().clone(),
-        )
+        shown(&data)
     }
+}
+
+fn shown(data: &Value) -> (Value, Vec<String>) {
+    let page = &data["_documentUpdates"];
+    (
+        page["next"].clone(),
+        page["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["docID"].as_str().unwrap().to_string())
+            .collect(),
+    )
 }
 
 async fn run(runner: &dyn QueryExecutor, query: &str, identity: Option<Did>) -> Value {
@@ -150,15 +186,15 @@ fn a_deleted_private_documents_updates_are_shown_to_nobody() {
     workers::block_on(async {
         for path in [Path::Registry, Path::AutoCommit] {
             let node = Node::new(true).await;
-            let id = node.updated_document().await;
+            let id = node.updated_document("removed").await;
+            let kept = node.updated_document("kept").await;
 
             let (next, entries) = node.page(path, Some(owner())).await;
-            assert_eq!(next, "1", "{path:?}");
-            assert_eq!(entries.len(), 1, "{path:?}");
-            assert_eq!(entries[0]["docID"], id, "{path:?}");
+            assert_eq!(next, "2", "{path:?}");
+            assert_eq!(entries, [id.clone(), kept.clone()], "{path:?}");
             for reader in [None, Some(stranger())] {
                 let (next, entries) = node.page(path, reader).await;
-                assert_eq!(next, "1", "{path:?}");
+                assert_eq!(next, "2", "{path:?}");
                 assert!(entries.is_empty(), "{path:?}: private while it lives");
             }
 
@@ -171,11 +207,13 @@ fn a_deleted_private_documents_updates_are_shown_to_nobody() {
                     .unwrap(),
                 "the delete unregisters the document, which then reads as public"
             );
-            for reader in [None, Some(stranger()), Some(owner())] {
+            for reader in [None, Some(stranger())] {
                 let (next, entries) = node.page(path, reader.clone()).await;
-                assert_eq!(next, "1", "{path:?}: a hidden row still advances the page");
-                assert_eq!(entries, Vec::<Value>::new(), "{path:?} as {reader:?}");
+                assert_eq!(next, "2", "{path:?}: a hidden row still advances the page");
+                assert!(entries.is_empty(), "{path:?} as {reader:?}");
             }
+            let (_, entries) = node.page(path, Some(owner())).await;
+            assert_eq!(entries, [kept], "{path:?}: only the deleted document goes");
         }
     })
     .unwrap();
@@ -191,7 +229,8 @@ fn a_purged_private_documents_updates_are_shown_to_nobody() {
             (Path::AutoCommit, false),
         ] {
             let node = Node::new(true).await;
-            let id = node.updated_document().await;
+            let id = node.updated_document("removed").await;
+            let kept = node.updated_document("kept").await;
             if delete_first {
                 node.delete(&id).await;
             }
@@ -201,15 +240,14 @@ fn a_purged_private_documents_updates_are_shown_to_nobody() {
                 .await
                 .unwrap();
             assert_eq!(purged, 1);
-            for reader in [None, Some(stranger()), Some(owner())] {
+            let case = format!("{path:?}, deleted first: {delete_first}");
+            for reader in [None, Some(stranger())] {
                 let (next, entries) = node.page(path, reader.clone()).await;
-                assert_eq!(next, "1", "{path:?}");
-                assert_eq!(
-                    entries,
-                    Vec::<Value>::new(),
-                    "{path:?}, deleted first: {delete_first}, as {reader:?}"
-                );
+                assert_eq!(next, "2", "{case}");
+                assert!(entries.is_empty(), "{case}, as {reader:?}");
             }
+            let (_, entries) = node.page(path, Some(owner())).await;
+            assert_eq!(entries, [kept], "{case}");
         }
     })
     .unwrap();
@@ -220,12 +258,11 @@ fn a_collection_without_a_policy_still_lists_a_deleted_documents_updates() {
     workers::block_on(async {
         for path in [Path::Registry, Path::AutoCommit] {
             let node = Node::new(false).await;
-            let id = node.updated_document().await;
+            let id = node.updated_document("removed").await;
             node.delete(&id).await;
             let (next, entries) = node.page(path, None).await;
             assert_eq!(next, "1", "{path:?}");
-            assert_eq!(entries.len(), 1, "{path:?}");
-            assert_eq!(entries[0]["docID"], id, "{path:?}");
+            assert_eq!(entries, [id], "{path:?}");
         }
     })
     .unwrap();
@@ -235,18 +272,13 @@ fn a_collection_without_a_policy_still_lists_a_deleted_documents_updates() {
 fn one_page_decides_each_document_once() {
     workers::block_on(async {
         let node = Node::new(true).await;
-        let id = node.updated_document().await;
+        let id = node.updated_document("one").await;
         for name in ["third", "fourth"] {
-            node.run(
-                Path::Registry,
-                &format!(
-                    r#"mutation {{ update_Users(docID: "{id}", input: {{name: "{name}"}}) {{ _docID }} }}"#
-                ),
-                Some(owner()),
-            )
-            .await;
+            node.update(&id, name).await;
         }
-        for path in [Path::Registry, Path::AutoCommit] {
+        // A request's own read transaction binds the provider, and the page
+        // binds it to that same transaction again.
+        for (path, bindings) in [(Path::Registry, 2), (Path::AutoCommit, 1)] {
             let counting = Arc::new(decisions::Decisions::new(node.acp.clone()));
             let data = run(
                 node.runner(path, counting.clone()).as_ref(),
@@ -254,12 +286,8 @@ fn one_page_decides_each_document_once() {
                 Some(owner()),
             )
             .await;
-            assert_eq!(
-                data["_documentUpdates"]["entries"].as_array().unwrap().len(),
-                3,
-                "{path:?}"
-            );
-            assert_eq!(counting.bound.load(Ordering::SeqCst), 1, "{path:?}");
+            assert_eq!(shown(&data).1.len(), 3, "{path:?}");
+            assert_eq!(counting.bound.load(Ordering::SeqCst), bindings, "{path:?}");
             assert_eq!(counting.checks.load(Ordering::SeqCst), 1, "{path:?}");
         }
     })
@@ -270,35 +298,139 @@ fn one_page_decides_each_document_once() {
 fn a_page_in_a_transaction_decides_at_that_transactions_snapshot() {
     workers::block_on(async {
         let node = Node::new(true).await;
-        let id = node.updated_document().await;
-        let runner = QueryRunner::with_arc_registry_and_provider(
-            LensedAutoCommitFetcher::new(node.db.clone()),
-            DbCollectionProvider::new_arc(node.db.clone()),
-            Arc::new(DbTransactionRegistry::new(node.db.clone())),
-        )
-        .with_acp(node.acp.clone());
+        let id = node.updated_document("removed").await;
+        let runner = node.runner(Path::Registry, node.acp.clone());
         let before_delete = runner.begin_txn(true).await.unwrap();
         node.delete(&id).await;
 
-        for (reader, shown) in [(Some(owner()), 1), (Some(stranger()), 0), (None, 0)] {
+        for (reader, expected) in [
+            (Some(owner()), vec![id.clone()]),
+            (Some(stranger()), vec![]),
+            (None, vec![]),
+        ] {
             let mut request = QueryRequest::new(UPDATES);
             request.identity = reader.clone();
             let response = runner.execute_in_txn(request, &before_delete).await;
             assert!(response.errors.is_empty(), "{:?}", response.errors);
             assert_eq!(
-                response.data.unwrap()["_documentUpdates"]["entries"]
-                    .as_array()
-                    .unwrap()
-                    .len(),
-                shown,
+                shown(&response.data.unwrap()).1,
+                expected,
                 "as {reader:?}: the row and its access are both read before the delete"
             );
         }
         runner.discard_txn(&before_delete).await.unwrap();
-        assert_eq!(
-            node.page(Path::Registry, Some(owner())).await.1,
-            Vec::<Value>::new()
-        );
+        assert!(node.page(Path::Registry, Some(owner())).await.1.is_empty());
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_page_in_a_writing_transaction_does_not_fail_it_when_its_document_is_purged() {
+    workers::block_on(async {
+        let node = Node::new(true).await;
+        let id = node.updated_document("removed").await;
+        let runner = node.runner(Path::Registry, node.acp.clone());
+        let writing = runner.begin_txn(false).await.unwrap();
+        let mut page = QueryRequest::new(UPDATES);
+        page.identity = Some(owner());
+        let response = runner.execute_in_txn(page, &writing).await;
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        assert_eq!(shown(&response.data.unwrap()).1, std::slice::from_ref(&id));
+
+        let purged = node
+            .db
+            .purge_by_doc_ids("Users", &[id.parse::<document::DocID>().unwrap()], None)
+            .await
+            .unwrap();
+        assert_eq!(purged, 1);
+
+        let mut write =
+            QueryRequest::new(r#"mutation { add_Users(input: {name: "unrelated"}) { _docID } }"#);
+        write.identity = Some(owner());
+        let response = runner.execute_in_txn(write, &writing).await;
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        runner
+            .commit_txn(&writing)
+            .await
+            .expect("the page decided nothing the transaction wrote");
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_delete_during_the_page_hides_the_row_from_a_provider_outside_its_transaction() {
+    workers::block_on(async {
+        for path in [Path::Registry, Path::AutoCommit] {
+            let node = Node::outside().await;
+            let removed = node.updated_document("removed").await;
+            let kept = node.updated_document("kept").await;
+            for id in [&removed, &kept] {
+                assert!(node
+                    .acp
+                    .is_doc_registered(POLICY, RESOURCE, id)
+                    .await
+                    .unwrap());
+            }
+            let racing: Arc<dyn DocumentACP> = Arc::new(decisions::DeletesMidPage::new(
+                node.acp.clone(),
+                node.db.clone(),
+                removed.clone(),
+            ));
+
+            let data = run(node.runner(path, racing).as_ref(), UPDATES, None).await;
+            let (next, entries) = shown(&data);
+            assert_eq!(next, "2", "{path:?}");
+            assert!(
+                entries.is_empty(),
+                "{path:?}: deleted after the page began, public to the provider: {entries:?}"
+            );
+            let (_, entries) = node.page(path, Some(owner())).await;
+            assert_eq!(entries, [kept], "{path:?}");
+        }
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_transaction_fetcher_pages_for_a_provider_outside_its_transaction() {
+    use query::fetcher::{DocFetcher, DocumentReader, DocumentUpdateOptions};
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(DB::from_arc(store).unwrap());
+        for mut schema in query::parse_sdl("type Users { name: String }").unwrap() {
+            schema.policy = Some(PolicyDescription::new(POLICY, RESOURCE));
+            db.create_collection(schema).await.unwrap();
+        }
+        let node = Node {
+            db: db.clone(),
+            acp: Arc::new(acp::LocalDocumentACP::new(Arc::new(
+                acp::MemoryAcpStore::new(),
+            ))),
+        };
+        let kept = node.updated_document("kept").await;
+
+        let page = db::DbDocFetcher::new(db.new_txn(true).await.unwrap())
+            .get_document_updates(
+                &DocumentUpdateOptions {
+                    collection: "Users".into(),
+                    after: 0,
+                    limit: 10,
+                },
+                &DocumentReader {
+                    context: &defra_core::RequestContext::default(),
+                    acp: node.acp.as_ref(),
+                    projection: None,
+                    identity: &acp::Identity::Authenticated(owner()),
+                },
+            )
+            .await;
+        let docs: Vec<String> = page
+            .expect("a page its owner may read")
+            .entries
+            .into_iter()
+            .map(|entry| entry.doc_id)
+            .collect();
+        assert_eq!(docs, [kept]);
     })
     .unwrap();
 }

@@ -12,6 +12,7 @@ use query::subscription::response_has_data;
 use serde::Deserialize;
 
 use crate::error::HttpError;
+use crate::handlers::closing::next_unless_closing;
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
 use crate::query_context::{
@@ -169,7 +170,9 @@ impl EventAccessContext {
 
 /// GET /api/v0/events — stream event bus events as SSE.
 ///
-/// Optional query param `?event=topic-peer-event` filters by event name.
+/// Optional query param `?event=topic-peer-event` filters by event name. The
+/// stream ends with its `complete` event once the server's edge stops
+/// admitting requests.
 pub async fn events_sse(
     State(state): State<AppState>,
     identity: ExtractIdentity,
@@ -206,8 +209,10 @@ pub async fn events_sse(
         ),
     };
 
+    let closing = state.edge.closing();
     let stream = async_stream::stream! {
-        while let Some(message) = subscription.recv().await {
+        let mut closing = std::pin::pin!(closing);
+        while let Some(message) = next_unless_closing(closing.as_mut(), subscription.recv()).await {
             let json = if let Some(data) = message.as_topic_peer_event() {
                 serde_json::json!({
                     "name": "topic-peer-event",

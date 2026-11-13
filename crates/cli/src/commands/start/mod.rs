@@ -424,7 +424,8 @@ impl StartArgs {
                 remote_signer: Some(std::sync::Arc::new(client)),
                 signing_authorization: None,
             },
-        );
+        )
+        .map_err(|e| Error::InvalidConfig(format!("Orbis signer setup failed: {}", e)))?;
 
         tracing::info!(
             signer_did = %signer_did,

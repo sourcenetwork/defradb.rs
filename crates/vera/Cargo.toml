@@ -42,9 +42,9 @@ crypto = { path = "../crypto" }
 keyring = { path = "../keyring" }
 events = { path = "../events" }
 tempfile = "3"
-vera-client = "0.1.1"
-vera-domain = "0.1.1"
-vera-modules = "0.1.1"
+vera-client = "0.1.2"
+vera-domain = "0.1.2"
+vera-modules = "0.1.2"
 commonware-codec = "=2026.10.0"
 
 # Lock-free shared state
@@ -96,6 +96,9 @@ sha2 = { workspace = true, features = ["asm"] }
 
 [dev-dependencies]
 edge = { path = "../edge", features = ["testing"] }
+# Tests run with ordered JSON maps: bytes built from a map in any order but the sorted one then differ from the
+# pinned ones, so a signed or hashed encoding that depends on this feature fails here and not only in a wider build.
+serde_json = { workspace = true, features = ["preserve_order"] }
 kovan-queue.workspace = true
 
 [lints]

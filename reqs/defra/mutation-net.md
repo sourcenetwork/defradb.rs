@@ -277,18 +277,18 @@ A node fetching a document's DAG from a defradb.rs peer names the composite head
 - **Parents:** ["defra.net.sync.exact_fetch"]
 - **Scenarios:** ["net::sync::exact_fetch::each_new_head_over_held_history_is_served_alone"]
 
-After each of 30 updates, the node that holds the document's history and is told of the new head is served at most the update's own blocks: a composite and its field blocks, three at most. The provider's `car_served_cids` stays at or below three per update, and the receiver's `car_received_already_held` at or below one per update (the head itself, when gossip delivered it first).
+After each of 30 updates, the node that holds the document's history and is told of the new head is served at most the update's own blocks: a composite and its field blocks, three at most. The provider's `car_served_cids` stays at or below three per update, and the receiver's `car_received_already_held` stays at zero: it counts the blocks a response re-sends that the receiver holds, other than the head the fetch asked for by name.
 
 # `defra.net.sync.exact_fetch.concurrent_branch`: A deep concurrent branch is served without shared history
 
 - **Parents:** ["defra.net.sync.exact_fetch"]
 - **Scenarios:** ["net::sync::exact_fetch::a_deep_concurrent_branch_is_served_without_shared_history"]
 
-Two nodes share 20 updates of a document, then lose touch. One makes 40 more updates and the other one of its own. Back in touch, the first node's next update reaches the second, which converges on it while being served the 41 missing updates and none of the 21 shared ones: `car_served_cids` grows by at most three per missing update, and the receiver is sent at most three blocks it holds. The other way, the first node fetching the second node's update is served that update alone (three blocks at most), though none of its own recent heads are on the second node: it names the fetched head's parents, which it holds.
+Two nodes share 20 updates of a document, then lose touch. One makes 40 more updates and the other one of its own. Back in touch, the first node's next update reaches the second, which converges on it while being served the 41 missing updates and none of the 21 shared ones: `car_served_cids` grows by at most three per missing update, and the receiver is sent no block it holds besides the head it asked for (`car_received_already_held` zero on both nodes). The other way, the first node fetching the second node's update is served that update alone (three blocks at most), though none of its own recent heads are on the second node: it names the fetched head's parents, which it holds.
 
 # `defra.net.sync.exact_fetch.empty_receiver`: A receiver holding nothing gets the whole document
 
 - **Parents:** ["defra.net.sync.exact_fetch"]
 - **Scenarios:** ["net::sync::exact_fetch::a_receiver_holding_nothing_still_gets_the_whole_document"]
 
-A node that holds none of a document with 31 updates, told of its next head, fetches the whole DAG and converges on it. It is sent again at most the head itself, when gossip delivered it first (`car_received_already_held` at most 1).
+A node that holds none of a document with 31 updates, told of its next head, fetches the whole DAG and converges on it. It is sent no block it holds besides the head it asked for (`car_received_already_held` zero), however many of the writer's heads gossip delivered before the fetch.

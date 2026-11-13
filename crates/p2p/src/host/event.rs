@@ -52,7 +52,12 @@ pub enum HostEvent {
     /// `pubsub_rpc::TopicHandler`. This channel is how DocSync and
     /// BranchableSync receive Go-compatible traffic (#828).
     GossipRawMessage {
+        /// The mesh neighbour that handed the message to us.
         propagation_source: PeerId,
+        /// The peer that published the message, as gossipsub's signature
+        /// authenticates it. It differs from `propagation_source` when a
+        /// neighbour relayed the message, and a request is answered to it.
+        source: PeerId,
         message_id: gossipsub::MessageId,
         topic: String,
         data: Vec<u8>,

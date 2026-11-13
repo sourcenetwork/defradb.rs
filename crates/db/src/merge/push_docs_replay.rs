@@ -32,6 +32,9 @@ pub const DEFAULT_REPLAY_SEND_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 pub struct ReplayPushConfig {
+    /// The durable install identity whose replay owns status updates.
+    pub install_incarnation: Option<u64>,
+
     /// Retry schedule shared with live replication after replay fails.
     pub retry_schedule: storage::stores::RetrySchedule,
 
@@ -47,7 +50,8 @@ pub struct ReplayPushConfig {
     /// Number of per-peer replay tokens refilled per second.
     pub per_peer_rate_limit_rate: f64,
 
-    /// Timeout for one outbound replay PushLog request.
+    /// Timeout for one outbound replay PushLog request, or one selected head
+    /// across its sends and pauses after initial pacing and slot admission.
     pub send_timeout: Duration,
 }
 
@@ -109,11 +113,14 @@ pub async fn check_retry_admission<S: storage::corekv::Store + 'static>(
 }
 
 /// Persist documents that did not finish their initial replay so the normal
-/// retry sweep owns them after the bounded attempt. Peer existence and marker
-/// writes are validated together by Peerstore transactions.
+/// retry sweep owns them after the bounded attempt. Peer existence, the
+/// install's incarnation and each marker write are validated together by
+/// Peerstore transactions: a replay outlived by its install (the peer was
+/// removed or rewritten) leaves its documents to the new install.
 pub async fn persist_replay_failures<S: storage::corekv::Store>(
     peerstore: &storage::stores::Peerstore<S>,
     peer_id: &PeerId,
+    install_incarnation: u64,
     failures: &[ReplayDocumentFailure],
 ) -> Result<(), String> {
     if failures.is_empty() {
@@ -126,12 +133,13 @@ pub async fn persist_replay_failures<S: storage::corekv::Store>(
             .map_err(|error| format!("failed to serialize replay retry state: {error}"))?;
         // Initial replay resolves the current document heads again on retry,
         // so this is deliberately a scope marker without a payload CID.
-        peerstore
-            .record_push_failure(
+        let recorded = peerstore
+            .record_push_failure_for_incarnation(
                 peer_id.as_str(),
                 &failure.doc_id,
                 &failure.collection_id,
                 &retry_info,
+                install_incarnation,
             )
             .await
             .map_err(|error| {
@@ -140,37 +148,52 @@ pub async fn persist_replay_failures<S: storage::corekv::Store>(
                     failure.doc_id
                 )
             })?;
+        // A newer marker already holding this document leaves the install
+        // current: the next failure is still recorded. Only a replaced install
+        // stops the replay's writes.
+        if recorded == storage::stores::peerstore::ReplayMarkerWrite::InstallReplaced {
+            tracing::debug!(
+                peer_id = %peer_id,
+                install_incarnation,
+                "Replay outlived its install; leaving its unfinished documents to the current one"
+            );
+            return Ok(());
+        }
     }
 
     // Match the live-push failure recorder's observable state. Retry records
     // remain authoritative even if legacy/invalid replicator bytes prevent the
-    // status update.
-    if let Some(bytes) = peerstore
-        .get_replicator(peer_id.as_str())
+    // status update. The row is read, flipped and written in one peerstore
+    // transaction fenced by the install's incarnation (`ReplicatorIncarnation.tla`
+    // ReplayFlip), so a same-incarnation rewrite that commits first is flipped
+    // on top of rather than skipped.
+    let flip = peerstore
+        .update_replicator_for_incarnation(
+            peer_id.as_str(),
+            Some(install_incarnation),
+            false,
+            Box::new(|bytes| {
+                p2p::ReplicatorInfo::rewrite_status(bytes, p2p::ReplicatorStatus::Inactive)
+                    .map_err(|error| storage::corekv::Error::Serialization(error.to_string()))
+            }),
+        )
         .await
-        .map_err(|error| format!("failed to load persisted replicator status: {error}"))?
-    {
-        match p2p::ReplicatorInfo::from_bytes(&bytes) {
-            Ok(mut info) => {
-                if info.set_status_if_changed_now(p2p::ReplicatorStatus::Inactive) {
-                    let bytes = info.to_bytes().map_err(|error| {
-                        format!("failed to encode inactive replicator status: {error}")
-                    })?;
-                    peerstore
-                        .create_replicator(peer_id.as_str(), &bytes)
-                        .await
-                        .map_err(|error| {
-                            format!("failed to persist inactive replicator status: {error}")
-                        })?;
-                }
-            }
-            Err(error) => {
-                tracing::warn!(
-                    peer_id = %peer_id,
-                    %error,
-                    "Replay retries were recorded but replicator status could not be decoded"
-                );
-            }
+        .map_err(|error| format!("failed to persist inactive replicator status: {error}"))?;
+    match flip {
+        storage::stores::peerstore::ReplicatorUpdate::Written => {}
+        storage::stores::peerstore::ReplicatorUpdate::Unchanged => {
+            tracing::debug!(
+                peer_id = %peer_id,
+                install_incarnation,
+                "Replay left the replicator status alone: the peer was removed or replaced, or is already inactive"
+            );
+        }
+        storage::stores::peerstore::ReplicatorUpdate::Refused(error) => {
+            tracing::warn!(
+                peer_id = %peer_id,
+                %error,
+                "Replay retries were recorded but replicator status could not be updated"
+            );
         }
     }
 
@@ -185,6 +208,7 @@ pub async fn persist_replay_failures<S: storage::corekv::Store>(
 impl Default for ReplayPushConfig {
     fn default() -> Self {
         Self {
+            install_incarnation: None,
             retry_schedule: storage::stores::RetrySchedule::default(),
             max_concurrent_document_tasks: MAX_CONCURRENT_REPLAY_TASKS,
             max_concurrent_outbound_pushes: DEFAULT_MAX_CONCURRENT_REPLAY_SENDS,
@@ -197,10 +221,21 @@ impl Default for ReplayPushConfig {
 
 #[derive(Debug)]
 pub enum ReplayPushSendError {
-    Backpressure { retry_after: Duration },
+    Backpressure {
+        retry_after: Duration,
+    },
     Persistence(String),
     SemaphoreClosed,
-    Timeout { timeout: Duration },
+    /// The call's [`SelectedPushStop`](super::push_docs::SelectedPushStop) was raised before this send.
+    Stopped,
+    Timeout {
+        timeout: Duration,
+    },
+    /// The receiver kept pausing a selected head past its fixed deadline; the
+    /// head fails alone and the rest of the selection is still sent.
+    HeadDeferred {
+        timeout: Duration,
+    },
     Transport(p2p::Error),
 }
 
@@ -220,9 +255,15 @@ impl fmt::Display for ReplayPushSendError {
                 retry_after.as_millis()
             ),
             Self::SemaphoreClosed => f.write_str("replay send semaphore closed"),
+            Self::Stopped => f.write_str("not sent: the selected push stopped"),
             Self::Timeout { timeout } => {
                 write!(f, "replay PushLog timed out after {}s", timeout.as_secs())
             }
+            Self::HeadDeferred { timeout } => write!(
+                f,
+                "deferred: receiver pauses outlasted the head's fixed {}ms delivery deadline",
+                timeout.as_millis()
+            ),
             Self::Transport(error) => write!(f, "{error}"),
         }
     }
@@ -312,21 +353,24 @@ impl ReplayPushGate {
             })?
             .map_err(ReplayPushSendError::Transport)?;
         if let Some(delay) = reply.retry_after() {
-            let bucket = self.peer_pacer.bucket(peer_id.as_str());
-            loop {
-                let current = bucket.load();
-                let mut next = *current;
-                next.blocked_until = Some(
-                    next.blocked_until
-                        .unwrap_or_else(Instant::now)
-                        .max(Instant::now() + delay),
-                );
-                if bucket.compare_and_swap(&current, next).is_ok() {
-                    break;
-                }
-            }
+            self.pause_peer_for(peer_id, delay);
         }
         Ok(reply)
+    }
+    pub(crate) fn pause_peer_for(&self, peer_id: &PeerId, delay: Duration) {
+        let bucket = self.peer_pacer.bucket(peer_id.as_str());
+        loop {
+            let current = bucket.load();
+            let mut next = *current;
+            next.blocked_until = Some(
+                next.blocked_until
+                    .unwrap_or_else(Instant::now)
+                    .max(Instant::now() + delay),
+            );
+            if bucket.compare_and_swap(&current, next).is_ok() {
+                break;
+            }
+        }
     }
 }
 

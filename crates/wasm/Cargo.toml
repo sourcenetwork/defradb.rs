@@ -21,7 +21,6 @@ bytes = { workspace = true }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
-web-sys = { version = "0.3", features = ["console"] }
 
 # Serialization for JS interop
 serde-wasm-bindgen = "0.6"
@@ -32,8 +31,6 @@ rapidhash.workspace = true
 # Error handling
 thiserror.workspace = true
 
-# Async (minimal features for WASM)
-futures.workspace = true
 async-trait.workspace = true
 
 # Debugging
@@ -45,30 +42,11 @@ sha2.workspace = true
 # Encoding
 hex.workspace = true
 
-# WASM random number generation
-getrandom = { version = "0.2", features = ["js"] }
-
-# Internal crates - use db crate which provides everything
-db = { path = "../db", default-features = false }
-storage = { path = "../storage", default-features = false, features = ["wasm"] }
 schema = { path = "../schema" }
 document = { path = "../document" }
-query = { path = "../query" }
 defra-core = { path = "../defra-core" }
-# The browser's event loop behind the network runtime handle P2P runs on.
-edge = { path = "../edge" }
-# The page's one worker, driven by the browser's event loop.
-workers = { path = "../workers" }
 crypto = { path = "../crypto" }
-identity = { path = "../identity" }
 zeroize = "1.8"
-events = { path = "../events", features = ["channel"] }
-# The browser is a P2P peer over a relay-only iroh endpoint, running the same
-# coordinator, replication stack, and document ACP a native node does.
-acp = { path = "../acp", default-features = false }
-defra-p2p-adapter = { path = "../p2p-adapter", default-features = false, features = ["iroh"] }
-p2p = { path = "../p2p", default-features = false, features = ["iroh-transport"] }
-iroh.workspace = true
 hkdf = "0.12"
 
 # IPLD
@@ -77,11 +55,36 @@ cid.workspace = true
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 sha2 = { workspace = true, features = ["asm"] }
 
-[dev-dependencies]
-wasm-bindgen-test = "0.3"
+# Only the wasm32-gated modules use these.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+db = { path = "../db", default-features = false }
+storage = { path = "../storage", default-features = false, features = ["wasm"] }
+identity = { path = "../identity" }
+# WASM random number generation
+getrandom = { version = "0.2", features = ["js"] }
+# Async (minimal features for WASM)
+futures.workspace = true
+# The page's one worker, driven by the browser's event loop.
+workers = { path = "../workers" }
+query = { path = "../query" }
+events = { path = "../events", features = ["channel"] }
+# The browser's event loop behind the network runtime handle P2P runs on.
+edge = { path = "../edge" }
+# The browser is a P2P peer over a relay-only iroh endpoint, running the same
+# coordinator, replication stack, and document ACP a native node does.
+acp = { path = "../acp", default-features = false }
+p2p = { path = "../p2p", default-features = false, features = ["iroh-transport"] }
+iroh.workspace = true
+web-sys = { version = "0.3", features = ["console"] }
+defra-p2p-adapter = { path = "../p2p-adapter", default-features = false, features = ["iroh"] }
+
 # The relay end-to-end test drives a native node's HTTP API with fetch and
 # waits on replication with browser timers.
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 web-sys = { version = "0.3", features = ["Headers", "Request", "RequestInit", "Response", "Window"] }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
 gloo-timers = { version = "0.4", features = ["futures"] }
 # The browser benchmark reports through the same contract the native suite
 # does, so the two describe a measurement identically.

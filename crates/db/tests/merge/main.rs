@@ -33,6 +33,7 @@ mod push_docs_common;
 mod push_docs_creator;
 mod push_docs_replay;
 mod push_docs_selected_isolation;
+mod push_docs_selected_stop;
 mod push_docs_selection;
 mod receive_gate;
 mod replicated;

@@ -1,55 +1,25 @@
-use std::ffi::c_char;
-
 use acp::nac::NodePermission;
 
-use crate::ffi_node_db_async_body;
-use crate::types::FfiResult;
+use crate::request::Request;
+use crate::types::DefraResult;
+use crate::{ffi_async, ffi_entry, try_ffi};
 
 /// List actions that are in progress or ended with an error.
 ///
-/// # Safety
-///
-/// `identity_did` must be null or a valid null-terminated UTF-8 string.
 #[no_mangle]
-pub unsafe extern "C" fn list_actions(node_ptr: usize, identity_did: *const c_char) -> FfiResult {
-    ffi_node_db_async_body! {
-        node = node_ptr,
-        identity = identity_did,
-        database = database,
-        context = context,
-        permission = NodePermission::ActionList;
-        {
+pub extern "C" fn defra_action_list(node_ptr: usize, identity_ptr: usize) -> DefraResult {
+    ffi_entry! {
+        let request = try_ffi!(Request::begin(node_ptr, identity_ptr, NodePermission::ActionList));
+        let node = try_ffi!(request.require_node("action list"));
+        let database = try_ffi!(request.database());
+        let context = request.context();
+        ffi_async!(node, {
             let actions = database
                 .list_actions_as(&context)
                 .await
                 .map_err(|e| format!("failed to list actions: {}", e))?;
-
             serde_json::to_string(&actions)
                 .map_err(|e| format!("failed to serialize actions: {}", e))
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::node::{new_node, node_close};
-    use crate::types::NodeInitOptions;
-
-    #[test]
-    fn lists_no_actions_for_new_node() {
-        assert!(crate::runtime::init_runtime());
-
-        let result = new_node(NodeInitOptions::default());
-        assert_eq!(result.status, 0);
-        let node = result.node_ptr;
-
-        let result = unsafe { list_actions(node, std::ptr::null()) };
-        assert_eq!(result.status, 0);
-        let value = unsafe { std::ffi::CStr::from_ptr(result.value).to_string_lossy() };
-        assert_eq!(value, "[]");
-        unsafe { crate::types::defra_free_string(result.value) };
-
-        node_close(node);
+        })
     }
 }

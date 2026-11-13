@@ -641,6 +641,9 @@ async fn retryable_error_after_yield_returns_to_paced_fetch_retry_without_spinni
 
     let mut delay = crate::sync::manager::pending::PENDING_RETRY_BASE;
     for round in 1..=3 {
+        // From round 2 the failed DagReady came from a fetch task on the edge
+        // runtime, which drops its slot only after it records the attempt.
+        coordinator.pending_dag_work_released().await;
         assert_eq!(coordinator.pending_dag_work_count(), 0);
         assert!(
             !coordinator
@@ -682,11 +685,51 @@ async fn retryable_error_after_yield_returns_to_paced_fetch_retry_without_spinni
         assert_eq!(dag.fetch_failures, 0);
         delay = retry_backoff(round);
     }
+    coordinator.pending_dag_work_released().await;
     assert_eq!(coordinator.pending_dag_work_count(), 0);
     assert_eq!(dispatch(&coordinator), 0);
     assert_eq!(failing.calls(), 4);
     assert!(!blockstore.is_merged(&root).await.unwrap());
     assert_eq!(pending.load_all().await.unwrap().len(), 1);
+    coordinator.shutdown().await;
+}
+
+/// A fetch task sends its `DagReady` and only then records its attempt and
+/// drops its slot. The gate holds the task between the two, as a busy edge
+/// thread does, so the merge of that event finishes while the slot is held.
+#[nuclei::test(start_paused = true)]
+async fn a_fetch_task_keeps_its_slot_until_it_ends_after_its_dag_ready() {
+    let (blockstore, pending) = stores();
+    let root = seed(&blockstore, &pending, "long-history").await;
+    let (coordinator, mut events) = restart(blockstore, pending).await;
+    let (open, gate) = futures::channel::oneshot::channel::<()>();
+    let event_tx = coordinator.manager().event_sender();
+    assert!(
+        coordinator.spawn_pending_dag_fetch_task(root, "gated_fetch", async move {
+            event_tx.clone().send(dag_ready_event(root)).await.unwrap();
+            gate.await.unwrap();
+        })
+    );
+    let failing = TestMergeHandler::new(false, false);
+    let results = ReplicationLoop::process_next_batch(
+        &coordinator,
+        &mut events,
+        &failing,
+        &ReplicationConfig::default(),
+    )
+    .await;
+    assert!(matches!(
+        results.as_slice(),
+        [ReplicationResult::Failed { .. }]
+    ));
+    assert_eq!(
+        coordinator.pending_dag_work_count(),
+        1,
+        "the fetch task still owns its slot"
+    );
+    open.send(()).unwrap();
+    coordinator.pending_dag_work_released().await;
+    assert_eq!(coordinator.pending_dag_work_count(), 0);
     coordinator.shutdown().await;
 }
 

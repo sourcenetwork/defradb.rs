@@ -46,7 +46,8 @@ pub fn new_identity() -> Result<Did> {
             remote_signer: None,
             signing_authorization: None,
         },
-    );
+    )
+    .expect("the store takes the identity");
     Ok(did)
 }
 

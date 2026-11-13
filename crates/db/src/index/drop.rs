@@ -37,8 +37,8 @@ use crate::DB;
 /// a committed page deleted.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DropProgress {
-    collection_short_id: u32,
-    index: IndexDescription,
+    pub(super) collection_short_id: u32,
+    pub(super) index: IndexDescription,
     after: Option<Vec<u8>>,
 }
 
@@ -65,10 +65,10 @@ impl DropProgress {
 }
 
 /// A drop whose definition change committed, with its entries still to go.
-struct DroppedIndex {
-    lease: ActionExecutionLease,
-    collection_id: String,
-    progress: DropProgress,
+pub(super) struct DroppedIndex {
+    pub(super) lease: ActionExecutionLease,
+    pub(super) collection_id: String,
+    pub(super) progress: DropProgress,
 }
 
 impl<S> DB<S>
@@ -124,7 +124,7 @@ where
 
     /// Take the index out of the definition this attempt reads, delete its
     /// backfill record and write the drop record, all in `txn`.
-    async fn stage_index_drop(
+    pub(super) async fn stage_index_drop(
         &self,
         txn: &DbTxn<S>,
         collection_name: &str,
@@ -206,7 +206,7 @@ where
     /// Delete the dropped index's entries a page at a time, then its drop
     /// record. A failure stays on the record with the progress kept, so the
     /// next start picks the drop up again.
-    async fn remove_dropped_entries(
+    pub(super) async fn remove_dropped_entries(
         &self,
         lease: ActionExecutionLease,
         collection_id: String,
@@ -356,8 +356,8 @@ where
 
 /// One page of a drop: the entries after `progress.after`.
 struct DropPage {
-    collection_id: String,
-    progress: DropProgress,
+    pub(super) collection_id: String,
+    pub(super) progress: DropProgress,
 }
 
 struct DropPageOutput {

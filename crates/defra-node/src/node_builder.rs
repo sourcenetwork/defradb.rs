@@ -8,6 +8,8 @@ use std::time::Duration;
 use crate::assemble::check_access_hooks;
 use crate::assemble::{assemble, Extras};
 use crate::config::{NodeConfig, NodeSigning, Persistence, SigningKey, TransportConfig};
+#[cfg(feature = "http")]
+use crate::HttpConfig;
 use crate::Node;
 #[cfg(feature = "otel")]
 use crate::TelemetryHandle;
@@ -16,8 +18,6 @@ use crate::{AccessHooks, P2PConfig};
 #[cfg(feature = "vera")]
 use crate::{DocumentAcpConfig, VeraConfig};
 use crate::{Error, QueryLimits, Result};
-#[cfg(feature = "http")]
-use crate::{HttpConfig, TransactionCleanupConfig};
 
 /// Selects which persistent storage backend to use when `data_path` is set.
 #[derive(Debug, Clone, Copy, Default)]
@@ -62,11 +62,17 @@ pub struct NodeBuilder {
     http_config: Option<HttpConfig>,
     #[cfg(feature = "p2p")]
     access_hooks: Option<AccessHooks>,
+    #[cfg(feature = "p2p")]
+    stream_protocols: Vec<p2p::iroh::StreamRegistration>,
     #[cfg(feature = "otel")]
     telemetry_handle: Option<TelemetryHandle>,
     crdts: Vec<crdt::Registration>,
     txn_ownership: db::TxnOwnership,
     document_projector: Option<Arc<dyn db::DocumentMutationProjector>>,
+    /// How long an idle explicit transaction lives, and how often the sweep
+    /// looks; when set, it takes precedence over an HTTP config's setting.
+    #[cfg(not(target_arch = "wasm32"))]
+    transaction_idle: Option<(Duration, Duration)>,
 }
 
 /// Durability is a separate builder setting, so it is applied over the
@@ -307,6 +313,16 @@ impl NodeBuilder {
         self
     }
 
+    /// Hold every index backfill at `gate` before each of its batches, so a
+    /// test can watch a build half done. Go's `db.IndexBuildGate`.
+    pub fn with_index_build_gate(
+        mut self,
+        gate: Arc<dyn db::index::build_gate::IndexBuildGate>,
+    ) -> Self {
+        self.config.index_build_gate = Some(crate::IndexBuildGateHandle(gate));
+        self
+    }
+
     /// Enable the HTTP GraphQL server.
     #[cfg(feature = "http")]
     pub fn with_http(mut self, config: HttpConfig) -> Self {
@@ -402,6 +418,14 @@ impl NodeBuilder {
         self
     }
 
+    /// Use `key` as the transport identity for this start only, as Go's
+    /// `P2PPrivateKey`: it wins over the keyring and the store's key, and is
+    /// recorded in neither, so a later start without it uses the store's key.
+    pub fn with_start_peer_key(mut self, key: crate::StartPeerKey) -> Self {
+        self.config.start_peer_key = Some(key);
+        self
+    }
+
     /// Sign as a node identity the node creates from `key`.
     pub fn with_signing_key(mut self, key: SigningKey) -> Self {
         self.config.signing = NodeSigning::Enabled { key: Some(key) };
@@ -428,6 +452,25 @@ impl NodeBuilder {
         self
     }
 
+    /// Serve `protocol` on the node's iroh connections: a stream a peer opens
+    /// with its tag is admitted as Defra's own are, then handed to `handler`
+    /// on the network runtime. The handler reaches the database through the
+    /// node's request path ([`Node::execute_request`]); see
+    /// [`p2p::iroh::StreamHandler`]. A handler made before the node holds a
+    /// `Weak<Node>` set once `build` returns, and resets streams that arrive
+    /// before then by dropping them. `build` fails unless the transport is
+    /// iroh, for a protocol [`p2p::iroh::StreamProtocol::validate`] refuses,
+    /// and for a tag given twice.
+    #[cfg(feature = "p2p")]
+    pub fn with_stream_protocol(
+        mut self,
+        protocol: p2p::iroh::StreamProtocol,
+        handler: Arc<dyn p2p::iroh::StreamHandler>,
+    ) -> Self {
+        self.stream_protocols.push((protocol, handler));
+        self
+    }
+
     /// Which requests may reach a transaction this node began. Unset, only
     /// requests acting as the identity that began it;
     /// [`db::TxnOwnership::Embedder`] suits a node whose embedding process is
@@ -437,28 +480,52 @@ impl NodeBuilder {
         self
     }
 
+    /// End explicit transactions no request has used for `idle`, checking
+    /// every `sweep`, on a node with or without an HTTP server: the sweep is
+    /// a job on a worker's deadline queue, read through the Env clock. A zero
+    /// `idle` keeps transactions until they are committed or discarded. This
+    /// setting takes precedence over an HTTP config's idle timeout, which
+    /// applies only when this is not called.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_transaction_idle_timeout(mut self, idle: Duration, sweep: Duration) -> Self {
+        self.transaction_idle = Some((idle, sweep));
+        self
+    }
+
     /// Build and start the embedded DefraDB node.
     pub async fn build(mut self) -> Result<Node> {
         let crdts = crdt::Crdts::new(std::mem::take(&mut self.crdts))?;
         #[cfg(feature = "p2p")]
         check_access_hooks(&self.config, self.access_hooks.as_ref())?;
+        #[cfg(feature = "p2p")]
+        if !self.stream_protocols.is_empty()
+            && !matches!(self.config.transport, TransportConfig::Iroh(_))
+        {
+            return Err(Error::StreamProtocolsNeedIroh);
+        }
 
         #[cfg(feature = "http")]
-        let (serves_http, transaction_cleanup) = match self.http_config.as_ref() {
-            Some(config) if config.transaction_idle_timeout.is_zero() => (true, None),
-            Some(config) => {
-                if config.transaction_cleanup_interval.is_zero() {
-                    return Err(Error::ZeroCleanupInterval);
-                }
-                (
-                    true,
-                    Some(TransactionCleanupConfig {
-                        max_idle_age: config.transaction_idle_timeout,
-                        sweep_interval: config.transaction_cleanup_interval,
-                    }),
-                )
-            }
+        let (serves_http, http_idle) = match self.http_config.as_ref() {
+            Some(config) => (
+                true,
+                Some((
+                    config.transaction_idle_timeout,
+                    config.transaction_cleanup_interval,
+                )),
+            ),
             None => (false, None),
+        };
+        #[cfg(all(not(feature = "http"), not(target_arch = "wasm32")))]
+        let http_idle: Option<(Duration, Duration)> = None;
+        #[cfg(not(target_arch = "wasm32"))]
+        let transaction_cleanup = match self.transaction_idle.or(http_idle) {
+            Some((idle, _)) if idle.is_zero() => None,
+            Some((_, sweep)) if sweep.is_zero() => return Err(Error::ZeroCleanupInterval),
+            Some((idle, sweep)) => Some(crate::TransactionCleanupConfig {
+                max_idle_age: idle,
+                sweep_interval: sweep,
+            }),
+            None => None,
         };
 
         #[cfg(feature = "http")]
@@ -472,12 +539,14 @@ impl NodeBuilder {
             embedding_api_key: self.embedding_api_key.take(),
             txn_ownership: self.txn_ownership,
             document_projector: self.document_projector.take(),
-            #[cfg(feature = "http")]
+            #[cfg(not(target_arch = "wasm32"))]
             transaction_cleanup,
             #[cfg(feature = "http")]
             serves_http,
             #[cfg(feature = "p2p")]
             access_hooks: self.access_hooks.take(),
+            #[cfg(feature = "p2p")]
+            stream_protocols: std::mem::take(&mut self.stream_protocols),
             #[cfg(feature = "otel")]
             telemetry: self.telemetry_handle.take(),
         };
@@ -509,6 +578,7 @@ impl NodeBuilder {
                 network.requests().clone(),
             )
             .with_event_bus_arc(node.event_bus.clone())
+            .with_rest_arc(node.rest.clone())
             .with_pool(node.pool.clone())
             .with_dev_mode(http_cfg.dev_mode)
             .with_schema_arc(Arc::new(crate::HttpSchemaOps {

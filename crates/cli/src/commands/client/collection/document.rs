@@ -1,6 +1,8 @@
 //! Collection operation command implementations
 
-use super::{CollectionDeleteArgs, CollectionPatchArgs, SetActiveArgs, TruncateArgs};
+use super::{
+    CollectionDeleteArgs, CollectionPatchArgs, PurgeDocsArgs, SetActiveArgs, TruncateArgs,
+};
 use crate::commands::client::document::write_client;
 use crate::commands::client::http_client::HttpClient;
 use crate::commands::client::ClientContext;
@@ -48,6 +50,20 @@ impl TruncateArgs {
             .collection_truncate(txn.as_deref(), collection, filter.as_ref())
             .await?;
         println!("Truncated collection {}", collection);
+        Ok(())
+    }
+}
+
+impl PurgeDocsArgs {
+    /// Purge the named documents and print `{"count": purged}`.
+    pub async fn execute(&self, ctx: &ClientContext, name: Option<&str>) -> Result<()> {
+        let collection = name
+            .ok_or_else(|| Error::MissingInput("--name is required for purge-docs".to_string()))?;
+        let (client, txn) = write_client(ctx)?;
+        let response = client
+            .collection_purge_docs(txn.as_deref(), collection, &self.doc_ids)
+            .await?;
+        println!("{}", serde_json::to_string(&response)?);
         Ok(())
     }
 }

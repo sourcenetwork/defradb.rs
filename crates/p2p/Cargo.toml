@@ -40,7 +40,6 @@ regolith = { workspace = true }
 libp2p = { workspace = true, features = ["tcp", "noise", "yamux", "identify", "request-response", "macros", "tokio", "gossipsub", "kad", "relay", "dns", "quic", "websocket", "memory-connection-limits"], optional = true }
 bitswap = { path = "../bitswap", optional = true }
 libp2p-stream = { workspace = true, optional = true }
-multiaddr = { workspace = true, optional = true }
 # libp2p's TCP transport on nuclei sockets.
 net = { path = "../net", features = ["libp2p"], optional = true }
 
@@ -112,7 +111,6 @@ libp2p-transport = [
     "kms",
     "dep:libp2p",
     "dep:libp2p-stream",
-    "dep:multiaddr",
     "dep:rlimit",
     "dep:sysinfo",
     "dep:net",
@@ -146,12 +144,13 @@ sha2 = { workspace = true, features = ["asm"] }
 edge = { path = "../edge", features = ["testing"] }
 # Test swarms on nuclei sockets.
 net = { path = "../net", features = ["libp2p"] }
+mantra-macros = "0.9"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tempfile = "3"
 
 [package.metadata.cargo-machete]
-ignored = ["getrandom", "multiaddr", "noq"]
+ignored = ["getrandom", "noq"]
 
 [lints]
 workspace = true

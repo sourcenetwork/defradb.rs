@@ -65,6 +65,7 @@ mod p2p_runtime;
 mod peer_key;
 mod peer_keyring;
 mod signed_query;
+mod start_peer_key;
 mod transaction;
 #[cfg(feature = "vera")]
 mod vera_rs_config;
@@ -98,11 +99,13 @@ pub use config::SyncTuning;
 #[cfg(feature = "vera")]
 pub use config::VeraConfig;
 pub use config::{
-    DocumentAcpConfig, NodeConfig, NodeSigning, Persistence, ReplicationFilterHandle, SigningKey,
-    TransportConfig,
+    DocumentAcpConfig, IndexBuildGateHandle, NodeConfig, NodeSigning, Persistence,
+    ReplicationFilterHandle, SigningKey, TransportConfig,
 };
 #[cfg(feature = "p2p")]
 pub use config::{P2PConfig, PeerKeySource};
+/// The hook [`NodeBuilder::with_index_build_gate`] takes.
+pub use db::index::build_gate::{GateWait, IndexBuildGate};
 #[cfg(feature = "managed-p2p")]
 pub use defra_p2p_adapter::{
     ReplicationFilter, ReplicationFilters, ReplicatorPushOptions, ReplicatorPushOptionsState,
@@ -122,6 +125,7 @@ pub use query::owners::{DocumentAccessDecision, DocumentAccessMode};
 pub use query::QueryLimits;
 pub use query::{QueryExecutor, QueryRequest, QueryResponse, TransactionHandle};
 pub use schema::CollectionVersion;
+pub use start_peer_key::StartPeerKey;
 pub use telemetry::{ConflictMetricsSnapshot, RetryLayerSnapshot};
 #[cfg(feature = "otel")]
 pub use telemetry::{TelemetryConfig, TelemetryHandle};
@@ -232,6 +236,8 @@ pub struct Node {
     vera_acp: Option<Arc<vera::VeraDocumentACP>>,
     query_limits: QueryLimits,
     runner: Arc<dyn QueryExecutor>,
+    #[cfg(feature = "http")]
+    rest: Arc<dyn query::rest::RestOperations>,
     event_bus: Arc<dyn events::Bus>,
     schema_ops: Arc<dyn SchemaOps>,
     block_ops: Arc<dyn BlockOps>,
@@ -265,9 +271,14 @@ pub struct Node {
     shutdown_notify: regolith::sync::Notify,
     #[cfg(feature = "otel")]
     telemetry: kovan_queue::seg_queue::SegQueue<TelemetryHandle>,
+    /// Keeps the key the node made or loaded in the signing store while the
+    /// node lives. Declared last, so it drops last: a node dropped without
+    /// [`Node::shutdown`] keeps its key until its workers, background tasks
+    /// and P2P are gone.
+    _signing_key_hold: Option<defra_core::signing::IdentityHold>,
 }
 
-#[cfg(feature = "http")]
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Copy)]
 struct TransactionCleanupConfig {
     max_idle_age: Duration,
@@ -1116,6 +1127,34 @@ impl Node {
         ops.deny_peer(&peer_id).await.map_err(Error::PeerRevoke)
     }
 
+    /// Open a stream for `protocol` to the iroh peer `peer` and write
+    /// `request` as its first message. The peer serves it if it registered
+    /// `protocol` with [`NodeBuilder::with_stream_protocol`]. Finish the send
+    /// half once the protocol has nothing more to send; dropping it
+    /// unfinished resets the stream.
+    ///
+    /// `peer` is a peer ID or any address `connect_peer` takes. The stream
+    /// rides the connection the two nodes share; with none open, this dials
+    /// one just as `connect_peer` does, which then serves both nodes' streams.
+    #[cfg(feature = "p2p")]
+    pub async fn open_p2p_stream(
+        &self,
+        peer: &str,
+        protocol: &p2p::iroh::StreamProtocol,
+        request: Vec<u8>,
+    ) -> Result<(p2p::iroh::ProtocolSendStream, p2p::iroh::ProtocolRecvStream)> {
+        let transport = self
+            .p2p
+            .as_ref()
+            .ok_or(Error::P2pDisabled)?
+            .iroh_transport()
+            .ok_or(Error::StreamProtocolsNeedIroh)?;
+        let (peer_id, addrs) = p2p::iroh::parse_public_peer_addr(peer)?;
+        Ok(transport
+            .open_stream(&peer_id, addrs, protocol, request)
+            .await?)
+    }
+
     /// Gracefully stop background services owned by this node.
     ///
     /// **The node should not be used after this call.** When the `otel`
@@ -1517,7 +1556,8 @@ mod tests {
                         remote_signer: Some(Arc::new(TestRemoteSigner)),
                         signing_authorization: None,
                     },
-                );
+                )
+                .expect("the store takes the identity");
 
                 let node = Node::builder()
                     .with_node_identity_did(did)

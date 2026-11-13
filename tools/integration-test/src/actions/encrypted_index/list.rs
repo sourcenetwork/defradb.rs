@@ -35,17 +35,14 @@ impl Op for ListEncryptedIndexes {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
-        if self.txn.is_some() {
-            return Err(Failure::unsupported(format!(
-                "{} argument txn",
-                Self::name()
-            )));
-        }
         state
             .block_on(
                 state
                     .node_on(self.common.node())?
-                    .list_encrypted_indexes_as(&state.context_as(None, identity), &self.collection),
+                    .list_encrypted_indexes_as(
+                        &state.context_as(self.txn, identity),
+                        &self.collection,
+                    ),
             )
             .map(|indexes| json!({ "indexes": indexes }))
             .map_err(|e| Failure::operation(e.to_string()))
@@ -64,16 +61,13 @@ impl HttpRun for ListEncryptedIndexes {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             let identity = action.common.client_identity(Self::name())?;
-            if action.txn.is_some() {
-                return Err(Failure::unsupported(format!(
-                    "{} argument txn",
-                    Self::name()
-                )));
-            }
             let collection = action.collection.clone();
+            let txn = state.txn_id(action.txn);
             state
                 .http_as(action.common.node(), identity, |client| async move {
-                    client.encrypted_index_list(&collection).await
+                    client
+                        .encrypted_index_list(txn.as_deref(), &collection)
+                        .await
                 })?
                 .map(|indexes| json!({ "indexes": indexes }))
                 .map_err(|e| Failure::operation(e.to_string()))
@@ -85,12 +79,6 @@ impl CliRun for ListEncryptedIndexes {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             let identity = action.common.client_identity(Self::name())?;
-            if action.txn.is_some() {
-                return Err(Failure::unsupported(format!(
-                    "{} argument txn",
-                    Self::name()
-                )));
-            }
             let args = [
                 "encrypted-index",
                 "list",

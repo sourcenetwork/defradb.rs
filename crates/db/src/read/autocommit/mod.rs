@@ -48,7 +48,7 @@ impl<S: Store + 'static> DocFetcher for AutoCommitFetcher<S> {
             .new_txn(true)
             .await
             .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
-        let result = crate::event::updates::read_bound(&txn, options, reader)
+        let result = crate::event::updates::read(Some(&self.db), &txn, options, reader)
             .await
             .map_err(crate::event::updates::query_error);
         let _ = txn.discard();
