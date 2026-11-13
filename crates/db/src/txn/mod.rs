@@ -101,8 +101,9 @@ pub struct DbTxn<S: Store> {
     /// The CRDT types of the node whose store the transaction runs on, kept
     /// past the commit for the collections it hands out.
     crdts: crdt::Crdts,
-    /// Phantom data for the store type.
-    _marker: std::marker::PhantomData<S>,
+    /// The store `DB::new_txn` began this transaction on, for a later
+    /// snapshot of it. `None` for a transaction begun any other way.
+    store: Option<Arc<S>>,
 }
 
 /// A transaction lent to the handles of one request (its fetcher, mutator and
@@ -156,8 +157,27 @@ impl<S: Store> DbTxn<S> {
             vector_codes,
             shared_collections: None,
             statement_savepoint: None,
-            _marker: std::marker::PhantomData,
+            store: None,
         }
+    }
+
+    pub(crate) fn on_store(mut self, store: Arc<S>) -> Self {
+        self.store = Some(store);
+        self
+    }
+
+    /// A read-only transaction on the same store, begun now: it sees every
+    /// commit that has landed. `None` when this transaction does not know
+    /// its store.
+    pub(crate) async fn later(&self) -> Result<Option<Self>> {
+        let Some(store) = self.store.as_ref() else {
+            return Ok(None);
+        };
+        let id = self.txn.as_ref().map_or(0, BasicTxn::id);
+        let txn = BasicTxn::new(&**store, id, true)
+            .await
+            .map_err(Error::Storage)?;
+        Ok(Some(Self::of_database(txn, self.vector_codes.clone())))
     }
 
     /// The CRDT types of the node whose store the transaction runs on.

@@ -42,9 +42,9 @@ crypto = { path = "../crypto" }
 keyring = { path = "../keyring" }
 events = { path = "../events" }
 tempfile = "3"
-vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "0921f0b921cb9a7fc99017246bfa581d1ef70128" }
-vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "0921f0b921cb9a7fc99017246bfa581d1ef70128" }
-vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "0921f0b921cb9a7fc99017246bfa581d1ef70128" }
+vera-client = "0.1.2"
+vera-domain = "0.1.2"
+vera-modules = "0.1.2"
 commonware-codec = "=2026.10.0"
 
 # Lock-free shared state
@@ -73,7 +73,7 @@ alloy-primitives.workspace = true
 bs58.workspace = true
 
 # Authenticated ACP records and permission evaluation
-acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "0959bd78d13463ac9a4104b3ae0f3c46fb54547b" }
+acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "502e60487f585a8303afa4998b07806aab69922c" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # HTTP for REST/LCD and CometBFT JSON-RPC, and the gRPC channel, on nuclei

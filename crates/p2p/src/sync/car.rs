@@ -24,6 +24,13 @@ mod size_notice_tests;
 #[path = "../../tests/unit/car_depth.rs"]
 mod depth_tests;
 
+mod region;
+pub use region::{collect_missing_region, MAX_HAVE_CIDS};
+
+#[cfg(test)]
+#[path = "../../tests/unit/doc_dag.rs"]
+pub(crate) mod doc_dag;
+
 /// Maximum number of blocks allowed in a single CAR response.
 ///
 /// Prevents a malicious or faulty peer from causing the server to collect and

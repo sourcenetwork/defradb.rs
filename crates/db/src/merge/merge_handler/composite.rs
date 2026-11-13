@@ -50,6 +50,22 @@ impl<'a, 'b> CompositeMergeContext<'a, 'b> {
             mode,
         }
     }
+
+    /// The stable collection a merged update is observed under. Both merge
+    /// paths refuse a block whose collection did not resolve before building
+    /// the context, so a missing one here is a broken invariant, reported as
+    /// such rather than replaced by the version ID.
+    fn observation_collection_id(&self) -> std::result::Result<String, MergeError> {
+        self.collection
+            .as_ref()
+            .map(|collection| collection.collection_id().to_owned())
+            .ok_or_else(|| {
+                MergeError::MissingMetadata(format!(
+                    "Collection not found for collection_version_id: {}",
+                    self.payload.collection_version_id
+                ))
+            })
+    }
 }
 
 #[derive(Default)]
@@ -61,6 +77,9 @@ pub struct CompositeMergeState {
     /// ([`FieldMergeResult::op`](super::field::FieldMergeResult)).
     pub(crate) field_ops: RapidHashMap<String, document::FieldOp>,
     pub(crate) any_field_applied: bool,
+    /// A field block was applied or repeated the stored state, rather than
+    /// lose to a different one: the block is an update of this document.
+    pub(crate) any_field_stands: bool,
     /// A field block of a type this node lacks was parked: the document is
     /// still made, so the block's replay has one to merge into.
     pub(crate) parked_fields: bool,
@@ -79,6 +98,9 @@ pub struct CompositeMergeState {
     pub(crate) reads: super::block_reads::BlockReads,
     /// Unique-index collisions this merge resolved, published after commit.
     pub(crate) unique_conflicts: Vec<events::UniqueIndexConflictData>,
+    /// The document before this composite's field merges, read only when the
+    /// collection has an index.
+    pub(crate) indexed_before: Option<Option<Document>>,
 }
 
 pub(super) enum CompositeMergePreparation {
@@ -599,14 +621,17 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     .drain(..)
                     .map(Message::unique_index_conflict)
                     .collect();
-                committed_events.push(Message::update(Update::new(
-                    doc_id_str.to_string(),
-                    *cid,
-                    payload.collection_version_id.clone(),
-                    event_block,
-                    false,
-                    true,
-                )));
+                committed_events.push(Message::update(
+                    Update::new(
+                        doc_id_str.to_string(),
+                        *cid,
+                        payload.collection_version_id.clone(),
+                        event_block,
+                        false,
+                        true,
+                    )
+                    .with_observation_collection_id(context.observation_collection_id()?),
+                ));
                 committed_events.push(Message::merge_complete(MergeCompleteData {
                     doc_id: doc_id_str.to_string(),
                     subject_doc_id: None,
@@ -1076,7 +1101,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         })?,
                         false,
                         true,
-                    );
+                    )
+                    .with_observation_collection_id(context.observation_collection_id()?);
                     pending_events.push(PendingMergeEvent {
                         message: Message::update(update),
                     });

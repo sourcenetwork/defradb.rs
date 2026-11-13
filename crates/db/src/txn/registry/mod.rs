@@ -37,6 +37,7 @@ mod blocks;
 mod cleanup;
 mod collections;
 mod docs;
+mod indexes;
 mod lenses;
 mod lifecycle;
 pub(crate) mod owned;
@@ -221,6 +222,26 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
             Ok(result) => result,
             Err(Unavailable::NotFound) => Err(not_found()),
             Err(error) => Err(Error::Other(error.to_string())),
+        }
+    }
+}
+
+/// Ends the statement `txn` opened with `set_statement_savepoint` for one
+/// operation: kept when it succeeded, rolled back when it failed, so a
+/// failure part way leaves none of its writes, catalog changes or commit
+/// callbacks in the caller's transaction.
+fn finish_statement<S, T>(txn: &mut crate::txn::DbTxn<S>, outcome: Result<T>) -> Result<T>
+where
+    S: Store,
+{
+    match outcome {
+        Ok(value) => {
+            txn.release_statement_savepoint()?;
+            Ok(value)
+        }
+        Err(error) => {
+            txn.rollback_statement_savepoint()?;
+            Err(error)
         }
     }
 }

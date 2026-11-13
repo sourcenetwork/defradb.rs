@@ -25,6 +25,9 @@ pub(crate) async fn create_document_acp<S>(
     _persistence: Persistence,
     config: &crate::DocumentAcpConfig,
     #[cfg_attr(not(feature = "vera"), allow(unused_variables))] network: Option<&edge::Edge>,
+    #[cfg_attr(not(feature = "vera"), allow(unused_variables))] event_bus: Option<
+        Arc<dyn events::Bus>,
+    >,
 ) -> Result<DocumentAcpSetup>
 where
     S: storage::corekv::Store + 'static,
@@ -84,6 +87,49 @@ where
                 redrive: Some(redrive),
             })
         }
+        #[cfg(feature = "vera")]
+        crate::DocumentAcpConfig::VeraRs(config) => {
+            let edge = remote_edge(network)?;
+            let worker = {
+                let (directory, keyring, deployment) = (
+                    config.worker_dir.clone(),
+                    Arc::clone(&config.keyring),
+                    config.deployment_id,
+                );
+                edge.spawn_blocking(move || {
+                    vera::vera_rs::NativeWorker::open(&directory, keyring.as_ref(), deployment)
+                })
+                .await
+                .map_err(Error::EdgeRuntime)?
+                .map_err(Error::VeraProvider)?
+            };
+            let provider = Arc::new(
+                vera::VeraRsProvider::new(
+                    config.rpc_address.clone(),
+                    &config.consensus_key,
+                    &config.actor_key,
+                    worker,
+                    &config.tuning,
+                    event_bus,
+                    &edge,
+                )
+                .await
+                .map_err(Error::VeraProvider)?,
+            );
+            Ok(verified_acp_setup(
+                provider,
+                &edge,
+                config.tuning.request_timeout,
+                store,
+            ))
+        }
+        #[cfg(feature = "vera")]
+        crate::DocumentAcpConfig::Provider(host) => Ok(verified_acp_setup(
+            Arc::clone(&host.provider),
+            &remote_edge(network)?,
+            host.request_timeout,
+            store,
+        )),
         crate::DocumentAcpConfig::Local => {
             // Memory and disk profiles both share the engine with document rows.
             let zanzibar_store = Arc::new(acp::PersistentZanzibarStore::from_store(store));
@@ -100,6 +146,33 @@ fn remote_edge(network: Option<&edge::Edge>) -> Result<edge::Edge> {
     match network {
         Some(edge) => Ok(edge.clone()),
         None => edge::on_demand().cloned().map_err(Error::EdgeRuntime),
+    }
+}
+
+/// Document ACP over a provider whose reads are verified: access decisions
+/// run on `edge` and are not cached, the provider's policies are mirrored into
+/// `store`, and owed registrations are gated and redriven.
+#[cfg(feature = "vera")]
+fn verified_acp_setup<S>(
+    provider: Arc<dyn vera::VeraProvider>,
+    edge: &edge::Edge,
+    request_timeout: std::time::Duration,
+    store: Arc<S>,
+) -> DocumentAcpSetup
+where
+    S: storage::corekv::Store + 'static,
+{
+    let vera_acp = Arc::new(
+        vera::VeraDocumentACP::without_access_cache(provider).on_network(edge, request_timeout),
+    );
+    let dac_policies = vera_policies(&vera_acp, &store);
+    let (document_acp, redrive) = gate_external_acp(vera_acp.clone(), store);
+    DocumentAcpSetup {
+        document_acp,
+        local_zanzibar_store: None,
+        dac_policies,
+        vera_acp: Some(vera_acp),
+        redrive: Some(redrive),
     }
 }
 
@@ -198,14 +271,59 @@ mod tests {
         Did::new(value).unwrap()
     }
 
+    #[cfg(feature = "vera")]
+    #[test]
+    fn vera_rs_document_acp_rejects_an_invalid_trusted_key_before_connecting() {
+        edge::testing::edge()
+            .block_on(async {
+                let directory = tempfile::tempdir().unwrap();
+                let keyring: Arc<dyn keyring::Keyring> = Arc::new(
+                    keyring::FileKeyring::open(directory.path().join("keys"), b"test-password")
+                        .unwrap(),
+                );
+                let worker_dir = directory.path().join("worker");
+                let config = DocumentAcpConfig::VeraRs(crate::VeraRsConfig {
+                    // Nothing listens here; a connection attempt would fail differently.
+                    rpc_address: "http://127.0.0.1:1".into(),
+                    consensus_key: "not-a-key".into(),
+                    deployment_id: 9001,
+                    actor_key: vec![7; 32],
+                    worker_dir: worker_dir.clone(),
+                    keyring,
+                    tuning: vera::AcpTuning::default(),
+                });
+                let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
+                let result = create_document_acp(
+                    store,
+                    Persistence::Memory,
+                    &config,
+                    Some(&edge::testing::edge()),
+                    None,
+                )
+                .await;
+                assert!(matches!(
+                    result.err(),
+                    Some(crate::Error::VeraProvider(vera::ProviderError::Config(message)))
+                        if message.contains("invalid trusted consensus key")
+                ));
+                assert!(worker_dir.exists(), "the worker journal is opened first");
+            })
+            .unwrap()
+    }
+
     #[test]
     fn local_document_acp_enforces_stored_custom_policy() {
         workers::block_on(async {
             let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
-            let acp_setup =
-                create_document_acp(store, Persistence::Memory, &DocumentAcpConfig::Local, None)
-                    .await
-                    .unwrap();
+            let acp_setup = create_document_acp(
+                store,
+                Persistence::Memory,
+                &DocumentAcpConfig::Local,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
 
             #[cfg(feature = "vera")]
             assert!(acp_setup.vera_acp.is_none());

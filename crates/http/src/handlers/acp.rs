@@ -234,7 +234,9 @@ fn validate_add_doc_relationship(body: &DocRelationshipRequest) -> Result<(), Ht
     }
     if body.relation == "owner" {
         return Err(HttpError::BadRequest(
-            "OPERATION_FORBIDDEN: cannot add owner relation".into(),
+            "failed to add document actor relationship with acp: \
+             OPERATION_FORBIDDEN: cannot add owner relation"
+                .into(),
         ));
     }
     Ok(())
@@ -454,7 +456,9 @@ pub async fn remove_doc_relationship(
 
     if body.relation == "owner" {
         return Err(HttpError::BadRequest(
-            "OPERATION_FORBIDDEN: cannot delete owner relation".into(),
+            "failed to delete document actor relationship with acp: \
+             OPERATION_FORBIDDEN: cannot delete owner relation"
+                .into(),
         ));
     }
 

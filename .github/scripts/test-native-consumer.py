@@ -19,6 +19,12 @@ def success(names):
     return "".join("test " + n + " ... ok\n" for n in names) + f"test result: ok. {len(names)} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
 
 
+SDK = 'vera-client = "0.1.2"\nvera-domain = "0.1.2"\nvera-modules = "0.1.2"\n'
+HARNESS = 'vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "' + 'a' * 40 + '" }\n'
+NODE = ''.join(name + ' = { git = "https://github.com/sourcenetwork/vera.rs", rev = "' + 'a' * 40 + '" }\n'
+               for name in ('vera-jsonrpc', 'vera-node'))
+
+
 class Tests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -26,10 +32,14 @@ class Tests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
 
     def sdk_fixture(self):
-        for file, count in zip(driver.SDK_MANIFESTS, (3, 4)):
+        for file, harness in zip(driver.SDK_MANIFESTS, (False, True)):
             path = self.root / file
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(('vera = { git = "https://github.com/sourcenetwork/vera.rs", rev = "' + 'a' * 40 + '" }\n') * count)
+            path.write_text(SDK + (HARNESS if harness else ''))
+        for file in driver.NODE_MANIFESTS:
+            path = self.root / file
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(NODE)
 
     def test_runtime_revision_rejects_mutable_malformed_and_nonstring_values(self):
         for value in ('', 'main', 'a' * 7, 'A' * 40, 'a' * 40 + '\n',
@@ -70,7 +80,7 @@ class Tests(unittest.TestCase):
     def test_runtime_override_does_not_bypass_conflicting_sdk_declarations(self):
         self.sdk_fixture()
         path = self.root / driver.SDK_MANIFESTS[1]
-        path.write_text(path.read_text().replace('a' * 40, 'c' * 40, 1))
+        path.write_text(path.read_text().replace('vera-domain = "0.1.2"', 'vera-domain = "0.1.3"'))
         with patch.object(driver, 'source') as source, self.assertRaises(ValueError):
             driver.Runner(self.root, self.root / 'runtime', self.root, 'b' * 40)
         source.assert_not_called()
@@ -97,16 +107,119 @@ class Tests(unittest.TestCase):
         log.write_text('qualification failed without a Rust panic\n')
         self.assertIsNone(driver.panic_site(log))
 
-    def test_sdk_pin_reader_requires_all_seven_exact_matching_declarations(self):
-        for file, count in zip(driver.SDK_MANIFESTS, (3, 4)):
-            path = self.root / file
-            path.parent.mkdir(parents=True)
-            path.write_text(('vera = { git = "https://github.com/sourcenetwork/vera.rs", rev = "' + 'a' * 40 + '" }\n') * count)
+    def test_sdk_reader_requires_published_declarations_and_one_immutable_harness_pin(self):
+        self.sdk_fixture()
         self.assertEqual(driver.revision(self.root), 'a' * 40)
-        path.write_text(path.read_text().replace('a' * 40, 'b' * 40, 1))
-        with self.assertRaises(ValueError):
-            driver.revision(self.root)
-        path.write_text('')
+        sdk, harness = (self.root / name for name in driver.SDK_MANIFESTS)
+        changes = [
+            (sdk, SDK.replace('vera-domain = "0.1.2"', 'vera-domain = "0.1.3"')),
+            (sdk, SDK.replace('vera-modules = "0.1.2"\n', '')),
+            (sdk, SDK.replace('vera-client = "0.1.2"', 'vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "' + 'a' * 40 + '" }')),
+            (harness, SDK),
+            (harness, SDK + HARNESS + HARNESS.replace('a' * 40, 'b' * 40)),
+            (harness, SDK + HARNESS.replace('rev = "' + 'a' * 40 + '"', 'tag = "v0.1.2"')),
+        ]
+        for path, content in changes:
+            original = path.read_text()
+            path.write_text(content)
+            with self.assertRaises(ValueError):
+                driver.revision(self.root)
+            path.write_text(original)
+        self.assertEqual(driver.revision(self.root), 'a' * 40)
+
+    def test_node_crates_must_pin_the_harness_revision_on_every_vera_dependency(self):
+        self.sdk_fixture()
+        node = self.root / driver.NODE_MANIFESTS[0]
+        one_line = NODE.splitlines(keepends=True)[1]
+        for content in (
+            NODE.replace('a' * 40, 'b' * 40),
+            NODE.replace('a' * 40, 'b' * 40, 1),
+            NODE.replace('rev = "' + 'a' * 40 + '"', 'tag = "v0.1.2"', 1),
+            NODE.replace('rev = "' + 'a' * 40 + '"', 'branch = "main"'),
+            'vera-jsonrpc = "0.1.2"\n',
+            '',
+        ):
+            node.write_text(content)
+            with self.subTest(content=content), self.assertRaises(ValueError):
+                driver.revision(self.root)
+        for content in (NODE, one_line):
+            node.write_text(content)
+            self.assertEqual(driver.revision(self.root), 'a' * 40)
+
+    def test_vera_pins_are_read_whatever_the_spacing_or_table_form(self):
+        self.sdk_fixture()
+        node = self.root / driver.NODE_MANIFESTS[0]
+        url, pin, other = 'https://github.com/sourcenetwork/vera.rs', 'a' * 40, 'b' * 40
+        unspaced = 'vera-node={git="' + url + '",rev="%s"}\n'
+        table = '[dev-dependencies.vera-node]\ngit = "' + url + '"\nrev = "%s"\n'
+        tight_table = '[dev-dependencies.vera-node]\ngit="' + url + '"\nrev="%s"\n'
+        one_line = NODE.splitlines(keepends=True)[0]
+        for form in (unspaced, table, tight_table):
+            with self.subTest(form=form):
+                self.assertEqual(driver.git_pins(form % other), [other])
+                node.write_text(one_line + form % pin)
+                self.assertEqual(driver.revision(self.root), pin)
+                node.write_text(one_line + form % other)
+                with self.assertRaises(ValueError):
+                    driver.revision(self.root)
+        for mutable in (
+            '[dependencies.vera-node]\ngit = "' + url + '"\ntag = "v0.1.2"\n',
+            '[dependencies.vera-node]\ngit="' + url + '"\nbranch="main"\n',
+            '[dependencies.vera-node]\ngit = "' + url + '"\n[dependencies.other]\nrev = "' + pin + '"\n',
+            'vera-node={git="' + url + '",tag="v0.1.2"}\n',
+            "vera-node = { git = '" + url + ".git', branch = 'main' }\n",
+        ):
+            node.write_text(one_line + mutable)
+            with self.subTest(mutable=mutable), self.assertRaises(ValueError):
+                driver.revision(self.root)
+        node.write_text(one_line + '# ' + unspaced % other)
+        self.assertEqual(driver.revision(self.root), pin)
+
+    def test_a_revision_is_read_only_from_its_own_dependency(self):
+        self.sdk_fixture()
+        node = self.root / driver.NODE_MANIFESTS[0]
+        url, pin, other = 'https://github.com/sourcenetwork/vera.rs', 'a' * 40, 'b' * 40
+        inline = NODE.splitlines(keepends=True)[0]
+        dotted = 'vera-node.git = "' + url + '"\nvera-node.rev = "%s"\n'
+        spaced = 'vera-node . git="' + url + '"\nvera-node . rev="%s"\n'
+        nested = '[dev-dependencies]\n"vera-node".git = "' + url + '"\n"vera-node".rev = "%s"\n'
+        for form in (dotted, spaced, nested):
+            with self.subTest(form=form):
+                self.assertEqual(driver.git_pins(inline + form % other), [pin, other])
+                node.write_text(inline + form % pin)
+                self.assertEqual(driver.revision(self.root), pin)
+                node.write_text(inline + form % other)
+                with self.assertRaises(ValueError):
+                    driver.revision(self.root)
+        for borrowed in (
+            inline + 'vera-node.git = "' + url + '"\n',
+            inline + 'vera-node.git = "' + url + '"\nvera-other.rev = "' + pin + '"\n',
+            inline + 'vera-node.git = "' + url + '"\nrev = "' + pin + '"\n',
+            '[dependencies.vera-node]\ngit = "' + url + '"\nother = { rev = "' + pin + '" }\n',
+            '[dependencies.vera-node]\ngit = "' + url + '"\nvera-jsonrpc.rev = "' + pin + '"\n',
+        ):
+            node.write_text(borrowed)
+            with self.subTest(borrowed=borrowed), self.assertRaises(ValueError):
+                driver.revision(self.root)
+
+    def test_harness_pin_and_sdk_versions_are_read_whatever_the_spacing(self):
+        self.sdk_fixture()
+        sdk, harness = (self.root / name for name in driver.SDK_MANIFESTS)
+        url, pin, other = 'https://github.com/sourcenetwork/vera.rs', 'a' * 40, 'b' * 40
+        tight = 'vera-harness={git="' + url + '",rev="%s"}\n'
+        harness.write_text(SDK + tight % pin)
+        self.assertEqual(driver.revision(self.root), pin)
+        for second in (
+            'vera-node={git="' + url + '",rev="' + other + '"}\n',
+            '[dev-dependencies.vera-node]\ngit="' + url + '"\nrev="' + other + '"\n',
+        ):
+            harness.write_text(SDK + HARNESS + second)
+            with self.subTest(second=second), self.assertRaises(ValueError):
+                driver.revision(self.root)
+        harness.write_text(SDK + HARNESS)
+        sdk.write_text(SDK.replace('vera-domain = "0.1.2"', 'vera-domain="0.1.2"  # published'))
+        self.assertEqual(driver.revision(self.root), pin)
+        sdk.write_text(SDK + '[dev-dependencies]\nvera-client="0.1.1"\n')
         with self.assertRaises(ValueError):
             driver.revision(self.root)
 
@@ -255,8 +368,8 @@ class Tests(unittest.TestCase):
         self.assertEqual(runs['compile-native'][3]['DEFRA_VERA_BINARY'], '/staged/defradb')
         self.assertEqual(runs['compile-native'][3]['VERAD_BINARY'], '/staged/verad')
         tests = [c for c in runner.calls if c[0] == 'test']
-        self.assertEqual(len(tests), 8)
-        self.assertEqual(len(tests[0][4]), 19)
+        self.assertEqual(len(tests), 11)
+        self.assertEqual(len(tests[0][4]), 36)
         self.assertEqual({c[1] for c in tests[1:]}, {phase for phase, _ in driver.LIVE_CASES})
         for _, _, _, selectors, expected in tests[1:]:
             self.assertEqual(selectors, [expected[0], '--exact'])

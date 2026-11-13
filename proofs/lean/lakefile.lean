@@ -16,6 +16,15 @@ lean_lib ProjectionAccessNotification where
 lean_lib EmbeddedSigner where
 
 @[default_target]
+lean_lib VeraActorSpelling where
+
+@[default_target]
+lean_lib VeraDelegationSigner where
+
+@[default_target]
+lean_lib VeraEmbeddedTransport where
+
+@[default_target]
 lean_lib DelegatedRelationship where
 
 @[default_target]
@@ -62,6 +71,9 @@ lean_lib EndpointBind where
 
 @[default_target]
 lean_lib DocKeyScopes where
+
+@[default_target]
+lean_lib DocumentUpdateJournal where
 
 @[default_target]
 lean_lib DefraConvergence where
@@ -125,6 +137,9 @@ lean_lib PeerConnection where
 
 @[default_target]
 lean_lib ByteBudget where
+
+@[default_target]
+lean_lib StreamProtocols where
 
 @[default_target]
 lean_lib FetchStats where
@@ -194,6 +209,9 @@ lean_lib JsonSubPathCut where
 
 @[default_target]
 lean_lib CarClosureDepth where
+
+@[default_target]
+lean_lib CarMissingRegion where
 
 @[default_target]
 lean_lib TxnAdmission where

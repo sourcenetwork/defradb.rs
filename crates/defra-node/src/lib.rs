@@ -23,6 +23,8 @@
 #[cfg(feature = "p2p")]
 mod access_hooks;
 mod acp_ops;
+#[cfg(feature = "vera")]
+mod acp_provider;
 mod assemble;
 #[cfg(not(target_arch = "wasm32"))]
 mod background_tasks;
@@ -66,6 +68,8 @@ pub mod search_chunks;
 mod signed_query;
 mod start_peer_key;
 mod transaction;
+#[cfg(feature = "vera")]
+mod vera_rs_config;
 pub mod version;
 
 use std::sync::Arc;
@@ -79,6 +83,8 @@ pub use access_hooks::AccessHooks;
 /// [`Node::document_acp`] returns) without depending on `acp` directly.
 pub use acp::nac::NodePermission;
 pub use acp::{DocumentACP, DocumentPermission, Identity as AcpIdentity};
+#[cfg(feature = "vera")]
+pub use acp_provider::DocumentAcpProvider;
 #[cfg(not(target_arch = "wasm32"))]
 pub use background_tasks::BackgroundTasks;
 pub use coding_search::{
@@ -94,11 +100,13 @@ pub use config::SyncTuning;
 #[cfg(feature = "vera")]
 pub use config::VeraConfig;
 pub use config::{
-    DocumentAcpConfig, NodeConfig, NodeSigning, Persistence, ReplicationFilterHandle, SigningKey,
-    TransportConfig,
+    DocumentAcpConfig, IndexBuildGateHandle, NodeConfig, NodeSigning, Persistence,
+    ReplicationFilterHandle, SigningKey, TransportConfig,
 };
 #[cfg(feature = "p2p")]
 pub use config::{P2PConfig, PeerKeySource};
+/// The hook [`NodeBuilder::with_index_build_gate`] takes.
+pub use db::index::build_gate::{GateWait, IndexBuildGate};
 #[cfg(feature = "managed-p2p")]
 pub use defra_p2p_adapter::{
     ReplicationFilter, ReplicationFilters, ReplicatorPushOptions, ReplicatorPushOptionsState,
@@ -123,6 +131,8 @@ pub use telemetry::{ConflictMetricsSnapshot, RetryLayerSnapshot};
 #[cfg(feature = "otel")]
 pub use telemetry::{TelemetryConfig, TelemetryHandle};
 pub use transaction::NodeTransaction;
+#[cfg(feature = "vera")]
+pub use vera_rs_config::VeraRsConfig;
 pub use zeroize::Zeroizing;
 
 use network::NodeEdge;
@@ -227,6 +237,8 @@ pub struct Node {
     vera_acp: Option<Arc<vera::VeraDocumentACP>>,
     query_limits: QueryLimits,
     runner: Arc<dyn QueryExecutor>,
+    #[cfg(feature = "http")]
+    rest: Arc<dyn query::rest::RestOperations>,
     event_bus: Arc<dyn events::Bus>,
     schema_ops: Arc<dyn SchemaOps>,
     block_ops: Arc<dyn BlockOps>,
@@ -267,7 +279,7 @@ pub struct Node {
     _signing_key_hold: Option<defra_core::signing::IdentityHold>,
 }
 
-#[cfg(feature = "http")]
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Copy)]
 struct TransactionCleanupConfig {
     max_idle_age: Duration,
@@ -1114,6 +1126,34 @@ impl Node {
         let peer_id =
             defra_p2p_adapter::TransportPeerId::new(peer_id).map_err(Error::InvalidPeerId)?;
         ops.deny_peer(&peer_id).await.map_err(Error::PeerRevoke)
+    }
+
+    /// Open a stream for `protocol` to the iroh peer `peer` and write
+    /// `request` as its first message. The peer serves it if it registered
+    /// `protocol` with [`NodeBuilder::with_stream_protocol`]. Finish the send
+    /// half once the protocol has nothing more to send; dropping it
+    /// unfinished resets the stream.
+    ///
+    /// `peer` is a peer ID or any address `connect_peer` takes. The stream
+    /// rides the connection the two nodes share; with none open, this dials
+    /// one just as `connect_peer` does, which then serves both nodes' streams.
+    #[cfg(feature = "p2p")]
+    pub async fn open_p2p_stream(
+        &self,
+        peer: &str,
+        protocol: &p2p::iroh::StreamProtocol,
+        request: Vec<u8>,
+    ) -> Result<(p2p::iroh::ProtocolSendStream, p2p::iroh::ProtocolRecvStream)> {
+        let transport = self
+            .p2p
+            .as_ref()
+            .ok_or(Error::P2pDisabled)?
+            .iroh_transport()
+            .ok_or(Error::StreamProtocolsNeedIroh)?;
+        let (peer_id, addrs) = p2p::iroh::parse_public_peer_addr(peer)?;
+        Ok(transport
+            .open_stream(&peer_id, addrs, protocol, request)
+            .await?)
     }
 
     /// Gracefully stop background services owned by this node.

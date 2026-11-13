@@ -36,7 +36,7 @@ This codebase is designed for **AI-human pair programming**. Every structural ch
 | **Present** | What the code does now | Working tree |
 | **Future** | What we might do next | GitHub issues |
 
-**No commented-out code. No TODO comments (create issues instead). No speculative docs.**
+**No commented-out code. No TODO comments unless linked to a GitHub issue. No speculative docs.**
 
 ## 3. No Documentation Files
 
@@ -88,6 +88,7 @@ crates/
 ├── replication-filter/ # Query-filter-backed replication matcher
 ├── schema/             # Schema validation
 ├── vera/               # Vera on-chain ACP client (Cosmos/EVM)
+├── vera-embedded/      # Transports to a Vera node hosted in the same process
 ├── storage/            # Storage layer over regolith, the one engine
 ├── telemetry/          # OpenTelemetry exporter setup
 ├── wasm/               # Browser client (WebAssembly)
@@ -127,9 +128,9 @@ rest are scripts and non-Rust harnesses.
 
 **Minimal comments. Code should be self-documenting.**
 
-✅ Comment: Non-obvious WHY, safety invariants, public API docs (`///`)
+✅ Comment: Non-obvious WHY, safety invariants, todos, public API docs (`///`)
 
-❌ Don't: What the code does, TODO/FIXME, commented-out code, change history
+❌ Don't: What the code does, commented-out code, change history
 
 ## 7. Git Worktree Workflow
 
@@ -414,7 +415,7 @@ that is correct but slower is not done.
 
 ## Build Dependencies
 
-- **Rust** (1.99+): `rustup`
+- **Rust**: `rustup`, which installs the version pinned in `rust-toolchain.toml`. Bumping that pin is a deliberate change of its own, never automatic.
 - **protoc**: `brew install protobuf` — required by `crates/orbis`, whose `build.rs` compiles `proto/orbis.proto` via `tonic-prost-build`
 - **cbindgen**: `cargo install cbindgen` — generates C headers for FFI
 - **cargo-nextest**: `cargo install cargo-nextest --locked` — runs the tests; `.config/nextest.toml` builds the `defradb` binaries node tests launch once per run, then runs those tests in parallel

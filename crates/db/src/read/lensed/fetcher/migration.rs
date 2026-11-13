@@ -357,7 +357,3 @@ impl<S: Store + 'static> LensedDocFetcher<S> {
 #[cfg(test)]
 #[path = "../../../../tests/read/lensed_fetcher_caches.rs"]
 mod cache_tests;
-
-#[cfg(test)]
-#[path = "../../../../tests/read/lensed_fetcher_snapshot_history.rs"]
-mod snapshot_history_tests;

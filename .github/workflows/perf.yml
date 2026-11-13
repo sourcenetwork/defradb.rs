@@ -127,6 +127,7 @@ jobs:
           - { family: memory, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: merge, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: merge_dag, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { family: merge_indexed, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: p2p_codec, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: parsing, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: planner, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }

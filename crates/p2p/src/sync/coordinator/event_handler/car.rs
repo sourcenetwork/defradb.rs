@@ -7,7 +7,7 @@ use crate::bitswap::BlockClass;
 use crate::error::Result;
 use crate::message::CarFetchRequest;
 use crate::sync::car::{
-    collect_dag_blocks_within, collect_exact_blocks, decode_car, decode_car_oversized,
+    collect_exact_blocks, collect_missing_region, decode_car, decode_car_oversized,
     encode_car_response, CarCollectOutcome,
 };
 use crate::sync::coordinator::SyncCoordinator;
@@ -66,15 +66,17 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             peer_id = %peer_id,
             recursive = request.recursive,
             max_depth = ?request.max_depth,
+            have_count = request.have_cids.len(),
             requested_count = request.wanted_cids.len(),
             has_token = token.is_some(),
             "CAR handler: collecting blocks"
         );
         let response_roots = request.response_roots();
         let collected = if request.recursive {
-            collect_dag_blocks_within(
+            collect_missing_region(
                 self.manager.blockstore().as_ref(),
                 &response_roots,
+                &request.have_cids,
                 request.max_depth,
             )
             .await?
@@ -107,6 +109,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             kept_count,
             filtered_count,
         );
+        self.manager
+            .diagnostics
+            .record_car_served_bytes(blocks.iter().map(|(_, data)| data.len()).sum());
 
         if blocks.is_empty() {
             self.manager.diagnostics.record_car_no_blocks_served();
@@ -534,13 +539,17 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             return Ok(CarIngestDisposition::Completed);
         }
 
+        let blocks = self.drop_held_blocks(&root_cid, blocks).await;
+
         // Share the same CID ownership boundary as PushLog processing and
         // merge. Go holds its root sync owner across CAR ingest and merge;
-        // Rust additionally owns every contained CID because overlapping DAGs
+        // Rust additionally owns every CID it stores because overlapping DAGs
         // can share a mutable `ToMergeIndexKey` and SSI correctly treats two
-        // unsynchronised writers as a conflict. Alternate arrivals coalesce
-        // instead of waiting here: a waiter would retain one of the bounded
-        // transport task slots needed to serve the owner's recovery request.
+        // unsynchronised writers as a conflict. A block already held is not
+        // stored again, so its put writes no `ToMergeIndexKey` and needs no
+        // owner. Alternate arrivals coalesce instead of waiting here: a waiter
+        // would retain one of the bounded transport task slots needed to
+        // serve the owner's recovery request.
         let _storage_owners = match self
             .manager
             .try_acquire_car_storage_owners(root_cid, blocks.iter().map(|(cid, _)| *cid).collect())
@@ -579,6 +588,45 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
 
         self.car_size_limit_disposition(&peer_id, &root_cid, &oversized)
             .await
+    }
+
+    /// The response's blocks this node does not hold yet. Dropping a held
+    /// block loses nothing: its put would find it and write nothing, and if
+    /// it is deleted before the merge, the merge's missing-link check sees it
+    /// missing and the fetch asks for it again.
+    ///
+    /// `car_received_already_held` counts the held blocks other than
+    /// `root_cid`. The fetch asked for the root by name, so every rooted
+    /// response carries it, and the gossip that started the fetch has usually
+    /// stored it already: counting it would count gossip deliveries, not
+    /// history sent again (ExactDagFetch.tla `sentHeld`).
+    async fn drop_held_blocks(
+        &self,
+        root_cid: &Cid,
+        blocks: Vec<(Cid, Vec<u8>)>,
+    ) -> Vec<(Cid, Vec<u8>)> {
+        let cids: Vec<Cid> = blocks.iter().map(|(cid, _)| *cid).collect();
+        let present = self
+            .manager
+            .blockstore()
+            .has_many(&cids)
+            .await
+            .unwrap_or_default();
+        let held = |idx: usize| present.get(idx).copied().unwrap_or(false);
+        let resent = cids
+            .iter()
+            .enumerate()
+            .filter(|(idx, cid)| held(*idx) && *cid != root_cid)
+            .count();
+        self.manager
+            .diagnostics
+            .record_car_received_already_held(resent);
+        blocks
+            .into_iter()
+            .enumerate()
+            .filter(|(idx, _)| !held(*idx))
+            .map(|(_, block)| block)
+            .collect()
     }
 
     async fn car_size_limit_disposition(

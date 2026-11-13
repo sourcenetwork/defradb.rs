@@ -55,16 +55,20 @@ impl Op for Wait {
 impl Wait {
     /// Poll the node's action list, through the test's client, until it
     /// lists `expected`.
+    ///
+    /// Once a `ListActions { listen }` records the node's action events, it
+    /// waits for the event instead, as Go's does: a completed action leaves
+    /// the list, but its event stays recorded.
     fn await_action(&self, state: &State, expected: &ExpectedAction) -> Result<(), Failure> {
+        if let Some(events) = state.node(self.common.node())?.action_events() {
+            return state
+                .block_on(events.arrived(expected, ACTION_TIMEOUT))
+                .map_err(Failure::operation);
+        }
         let deadline = Instant::now() + ACTION_TIMEOUT;
         loop {
-            let actions = self.actions(state)?;
-            let found = actions.as_array().into_iter().flatten().any(|action| {
-                action["Action"] == json!(expected.action)
-                    && action["CollectionID"] == json!(expected.collection_id)
-                    && action["Status"] == json!(expected.status)
-            });
-            if found {
+            let actions = listed_actions(state, self.common.node())?;
+            if expected.listed_in(&actions) {
                 return Ok(());
             }
             if Instant::now() >= deadline {
@@ -75,25 +79,24 @@ impl Wait {
             std::thread::sleep(ACTION_POLL);
         }
     }
+}
 
-    /// The node's action list as JSON.
-    fn actions(&self, state: &State) -> Result<Value, Failure> {
-        let node = self.common.node();
-        match state.client_type() {
-            ClientType::InProcess => {
-                let listed = state
-                    .block_on(state.node_on(node)?.list_actions_as(&state.context(None)))
-                    .map_err(|e| Failure::operation(e.to_string()))?;
-                serde_json::to_value(listed).map_err(|e| Failure::operation(e.to_string()))
-            }
-            ClientType::Cli => state
-                .defra_client_as(node, None, None, &["action", "list"])
-                .map_err(Failure::operation),
-            ClientType::RustHttp | ClientType::GoHttp => state
-                .http_on(node, |client| async move { client.action_list().await })?
-                .map(|listed| json!(listed))
-                .map_err(|e| Failure::operation(e.to_string())),
+/// Node `node`'s action list as JSON, through the test's client.
+fn listed_actions(state: &State, node: &str) -> Result<Value, Failure> {
+    match state.client_type() {
+        ClientType::InProcess => {
+            let listed = state
+                .block_on(state.node_on(node)?.list_actions_as(&state.context(None)))
+                .map_err(|e| Failure::operation(e.to_string()))?;
+            serde_json::to_value(listed).map_err(|e| Failure::operation(e.to_string()))
         }
+        ClientType::Cli => state
+            .defra_client_as(node, None, None, &["action", "list"])
+            .map_err(Failure::operation),
+        ClientType::RustHttp | ClientType::GoHttp => state
+            .http_on(node, |client| async move { client.action_list().await })?
+            .map(|listed| json!(listed))
+            .map_err(|e| Failure::operation(e.to_string())),
     }
 }
 

@@ -1,40 +1,45 @@
 use crate::{P2PError, P2PErrorExt as _, P2PResult};
 
+/// Set status on whatever incarnation currently owns the peer, reading,
+/// deciding and writing in one peerstore transaction.
 pub async fn set_persisted_replicator_status<S: storage::corekv::Store>(
     peerstore: &storage::stores::Peerstore<S>,
     peer_id: &str,
     status: p2p::ReplicatorStatus,
 ) -> P2PResult<bool> {
-    let Some(current_bytes) = peerstore
-        .get_replicator(peer_id)
-        .await
-        .map_err(|error| P2PError::persistence(format!("failed to load replicator: {error}")))?
-    else {
-        return Ok(false);
-    };
+    update_status(peerstore, peer_id, None, status, false).await
+}
 
-    let mut info = p2p::ReplicatorInfo::from_bytes(&current_bytes)
-        .map_err(|error| P2PError::internal(format!("failed to decode replicator: {error}")))?;
-    if !info.set_status_if_changed_now(status) {
-        return Ok(false);
+/// Rewrite the row's status in one peerstore transaction
+/// (`Peerstore::update_replicator_for_incarnation`); `true` once written.
+async fn update_status<S>(
+    peerstore: &storage::stores::Peerstore<S>,
+    peer_id: &str,
+    expected_incarnation: Option<u64>,
+    status: p2p::ReplicatorStatus,
+    require_no_markers: bool,
+) -> P2PResult<bool>
+where
+    S: storage::corekv::Store,
+{
+    use storage::stores::peerstore::ReplicatorUpdate;
+    let update = peerstore
+        .update_replicator_for_incarnation(
+            peer_id,
+            expected_incarnation,
+            require_no_markers,
+            Box::new(move |bytes| {
+                p2p::ReplicatorInfo::rewrite_status(bytes, status)
+                    .map_err(|error| storage::corekv::Error::Serialization(error.to_string()))
+            }),
+        )
+        .await
+        .map_err(|error| P2PError::persistence(format!("failed to persist replicator: {error}")))?;
+    match update {
+        ReplicatorUpdate::Written => Ok(true),
+        ReplicatorUpdate::Unchanged => Ok(false),
+        ReplicatorUpdate::Refused(error) => Err(P2PError::internal(error.to_string())),
     }
-
-    let bytes = info.to_bytes().map_err(|error| {
-        P2PError::internal(format!("failed to encode replicator status: {error}"))
-    })?;
-    let Some(incarnation) = peerstore
-        .get_replicator_incarnation(peer_id)
-        .await
-        .map_err(|error| {
-            P2PError::persistence(format!("failed to load peer incarnation: {error}"))
-        })?
-    else {
-        return Ok(false);
-    };
-    peerstore
-        .set_replicator_if_incarnation(peer_id, incarnation, &current_bytes, &bytes)
-        .await
-        .map_err(|error| P2PError::persistence(format!("failed to persist replicator: {error}")))
 }
 
 /// Set status only while the failure's exact scope generation still owns the
@@ -78,8 +83,8 @@ pub async fn set_persisted_replicator_status_for_scope_generation<S: storage::co
         .map_err(|error| P2PError::persistence(format!("failed to persist replicator: {error}")))
 }
 
-/// Update retry-pass status only if both the peer incarnation and bytes still
-/// match the observation used to build the update.
+/// Update retry-pass status only while `expected_incarnation` still owns the
+/// peer, reading, deciding and writing in one peerstore transaction.
 pub async fn set_persisted_replicator_status_for_incarnation<S: storage::corekv::Store>(
     peerstore: &storage::stores::Peerstore<S>,
     peer_id: &str,
@@ -105,33 +110,14 @@ pub async fn set_persisted_replicator_status_for_incarnation_with_marker_state<
     status: p2p::ReplicatorStatus,
     require_no_markers: bool,
 ) -> P2PResult<bool> {
-    let Some(current_bytes) = peerstore
-        .get_replicator(peer_id)
-        .await
-        .map_err(|error| P2PError::persistence(format!("failed to load replicator: {error}")))?
-    else {
-        return Ok(false);
-    };
-
-    let mut info = p2p::ReplicatorInfo::from_bytes(&current_bytes)
-        .map_err(|error| P2PError::internal(format!("failed to decode replicator: {error}")))?;
-    if !info.set_status_if_changed_now(status) {
-        return Ok(false);
-    }
-
-    let updated_bytes = info.to_bytes().map_err(|error| {
-        P2PError::internal(format!("failed to encode replicator status: {error}"))
-    })?;
-    peerstore
-        .set_replicator_if_incarnation_with_marker_state(
-            peer_id,
-            expected_incarnation,
-            &current_bytes,
-            &updated_bytes,
-            require_no_markers,
-        )
-        .await
-        .map_err(|error| P2PError::persistence(format!("failed to persist replicator: {error}")))
+    update_status(
+        peerstore,
+        peer_id,
+        Some(expected_incarnation),
+        status,
+        require_no_markers,
+    )
+    .await
 }
 
 pub async fn load_persisted_replicators<S: storage::corekv::Store>(

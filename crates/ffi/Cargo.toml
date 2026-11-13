@@ -90,9 +90,6 @@ defra-node = { path = "../defra-node", default-features = false, features = ["ma
 # IPLD
 cid.workspace = true
 
-[build-dependencies]
-cbindgen = "0.29"
-
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 sha2 = { workspace = true, features = ["asm"] }
 

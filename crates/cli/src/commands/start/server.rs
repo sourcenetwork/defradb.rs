@@ -143,6 +143,8 @@ impl Node {
         let vector_rebuild_task = Some(database.clone().start_vector_rebuild_task());
         info!("Vector index rebuild worker enabled");
 
+        database.start_resumed_index_backfills();
+
         let acp_setup = Self::setup_document_acp(
             config,
             identity_key_bytes.as_deref(),

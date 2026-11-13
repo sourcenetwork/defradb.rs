@@ -65,6 +65,9 @@ pub struct IndexInfo {
     /// Kind-specific config, absent for an ordinary index.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<schema::IndexKind>,
+    /// The state of the action that builds the index; `None` reads as built.
+    #[serde(skip)]
+    pub execution: Option<defra_core::ActionExecution>,
 }
 
 /// Index field information.

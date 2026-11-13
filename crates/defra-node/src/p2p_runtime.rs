@@ -92,6 +92,7 @@ pub(crate) async fn setup_iroh<S>(
     peer_keyring: Option<&crate::PeerKeyring>,
     start_peer_key: Option<&crate::StartPeerKey>,
     scope: edge::Scope,
+    stream_protocols: Vec<p2p::iroh::StreamRegistration>,
 ) -> Result<P2PSetup>
 where
     S: storage::corekv::Store + 'static,
@@ -138,6 +139,7 @@ where
     peer_config.retry_schedule = retry_schedule.clone();
     peer_config.rebroadcast_on_merge = config.rebroadcast_on_merge;
     peer_config.load_persisted_collections = config.load_persisted_collections;
+    peer_config.stream_protocols = stream_protocols;
     if !config.load_persisted_collections {
         tracing::info!(target: "defra_node", "skipping persisted P2P collection subscriptions");
     }
@@ -193,6 +195,7 @@ where
         })
     }));
     system.set_manage_requester(Arc::clone(&peer.manage.requester));
+    system.set_iroh_transport(peer.transport.clone());
 
     let merge_handler_for_kms = Arc::clone(&peer.replication.merge_handler_inner);
     Ok(P2PSetup {

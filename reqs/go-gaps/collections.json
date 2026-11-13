@@ -268,11 +268,9 @@
     "id": "go.collection_version.active_version",
     "verdict": "partial",
     "rust_tests": [
-      "crates/defra-node/tests/issue_859_schema_migration.rs::set_active_collection_version_round_trips_to_original",
-      "crates/db/tests/definition/patch.rs::inactive_patch_keeps_the_active_version_in_cache",
-      "crates/db/tests/definition/patch.rs::patch_relation_version_switching_preserves_go_canonical_versions"
+      "crates/defra-node/tests/issue_859_schema_migration.rs::set_active_collection_version_round_trips_to_original"
     ],
-    "evidence": "crates/defra-node/tests/issue_859_schema_migration.rs:210 asserts switching back to the original version; crates/db/tests/definition/patch.rs:78 asserts a /IsActive false patch leaves the new version inactive; crates/db/tests/definition/patch.rs:645 asserts switching to v2 serves v2",
+    "evidence": "crates/defra-node/tests/issue_859_schema_migration.rs:210 asserts switching back to the original version;",
     "note": "Unverified: empty version ID error, unknown version 'collection not found', GraphQL field visibility after switching ('Cannot query field'), IsActive false removing the collection from Query and true restoring it, two active versions error (schema validator test asserts a different message, 'multiple versions of same collection cannot be active'), GetCollections in a txn seeing the activation."
   },
   {
@@ -473,12 +471,9 @@
   },
   {
     "id": "go.collection_version.patch.add_field.kind.arrays",
-    "verdict": "partial",
-    "rust_tests": [
-      "crates/db/tests/definition/patch.rs::patch_collection_accepts_numeric_go_kind",
-      "crates/db/tests/definition/patch.rs::patch_collection_accepts_numeric_kind_in_whole_fields_replacement"
-    ],
-    "evidence": "crates/db/tests/definition/patch.rs:240-243 asserts numeric Kind 5 is added as FieldKind::ScalarArray(IntArray); crates/db/tests/definition/patch.rs:451-459 same via whole-Fields replace",
+    "verdict": "none",
+    "rust_tests": [],
+    "evidence": "",
     "note": "Only [Int!] by kind ID is checked, at definition level; no query/storage of the array values, and [Boolean!], [Float!], [Float32!], [String!] and adding by name are untested."
   },
   {
@@ -591,11 +586,9 @@
     "id": "go.collection_version.patch.immutable_settings",
     "verdict": "partial",
     "rust_tests": [
-      "crates/db/tests/definition/patch.rs::patch_collection_rejects_mutating_an_existing_policy",
-      "crates/db/tests/definition/patch.rs::patch_collection_rejects_adding_a_policy_to_a_policy_free_collection",
       "tools/integration-test/tests/legacy/basic/cross_runtime_schema_validation.rs::go_schema_patch_validation_parity"
     ],
-    "evidence": "crates/db/tests/definition/patch.rs:530 and :566 assert 'collection policy cannot be mutated.' for replacing and adding a policy; tools/integration-test/tests/legacy/basic/cross_runtime_schema_validation.rs:221 (Indexes replaced), :293 (IsBranchable false->true), :333 (IsMaterialized false on a collection) asserted rejected",
+    "evidence": "for replacing and adding a policy; tools/integration-test/tests/legacy/basic/cross_runtime_schema_validation.rs:221 (Indexes replaced), :293 (IsBranchable false->true), :333 (IsMaterialized false on a collection) asserted rejected",
     "note": "Messages for IsBranchable ('mutating IsBranchable is not supported'), Indexes ('collection indexes cannot be mutated.') and IsMaterialized ('non-materialized collections are not supported') unasserted; IsBranchable true->false direction and removing the policy / its ID / resource unverified."
   },
   {
@@ -749,18 +742,15 @@
   },
   {
     "id": "go.collection_version.patch.view_sources",
-    "verdict": "partial",
-    "rust_tests": [
-      "crates/db/tests/definition/patch.rs::patch_view_query_creates_new_version"
-    ],
-    "evidence": "crates/db/tests/definition/patch.rs:335-346 replacing /UserView/Query/Query creates a new version (asserts exact version_id, previous_version source, 3 versions)",
+    "verdict": "missing",
+    "rust_tests": [],
+    "evidence": "",
     "note": "The view's query results after the patch are not asserted; replacing the queried collection name or the Lens transform is unverified."
   },
   {
     "id": "go.collection_version.patch.dematerialize",
     "verdict": "partial",
     "rust_tests": [
-      "crates/db/tests/definition/patch.rs::patch_dematerialization_requires_an_empty_view",
       "tools/integration-test/tests/legacy/basic/cross_runtime_schema_validation/stateful.rs::go_schema_stateful_validation_parity",
       "crates/schema/tests/validation_tests.rs::materialized_view_cannot_have_policy"
     ],
@@ -782,7 +772,6 @@
     "verdict": "partial",
     "rust_tests": [
       "tools/integration-test/tests/legacy/query/lens_cross_runtime.rs::go_lens_migration_http_parity",
-      "crates/db/tests/definition/patch.rs::patch_collection_registers_migration_atomically",
       "crates/http/src/handlers/collections_tests.rs::patch_collection_forwards_migration"
     ],
     "evidence": "tools/integration-test/tests/legacy/query/lens_cross_runtime.rs:248-265 patches with a migration via CLI and asserts migrated=true on read (and equal to Go at :258); crates/db/tests/definition/patch.rs:103-106 asserts the patch records a transform on the previous version and registers it",
@@ -835,7 +824,6 @@
     "id": "go.collection_version.migrations.query.incremental",
     "verdict": "partial",
     "rust_tests": [
-      "crates/db/tests/definition/migration_suite.rs::migration_context_cache_invalidates_when_graph_changes_without_version_change",
       "tools/integration-test/tests/legacy/p2p_iroh/schema/schema_migration.rs::replicated_doc_much_older_schema_version"
     ],
     "evidence": "crates/db/tests/definition/migration_suite.rs:642-650 asserts that after registering v2->v3 then the earlier edge v1->v2, a read returns values from both edges (stub transform store); tools/integration-test/tests/legacy/p2p_iroh/schema/schema_migration.rs:524-525 asserts a two-edge chain",
@@ -915,7 +903,7 @@
       "tools/integration-test/tests/testo/collection_version/migrations/query/with_restart.rs::collection_migration_query_with_restart_and_migration_before_patch_collection"
     ],
     "evidence": "Every generated testo test for this requirement passes in-process, on rust-http and on go-http (#2383).",
-    "note": "lens_persistence.rs::rust_lens_survives_restart restarts with no migration configured (asserts only an empty lens list and doc count); migration_suite.rs:524-530 reopens but checks only stored, un-migrated data. Searched restart_node/open_from_arc together with lens_set/set_migration."
+    "note": "lens_persistence.rs::rust_lens_survives_restart restarts with no migration configured (asserts only an empty lens list and doc count); migration_suite.rs:524-530 reopens but checks only stored, un-migrated data. Searched restart_node/open_from_arc."
   },
   {
     "id": "go.collection_version.migrations.query.txn",

@@ -1,26 +1,68 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use sha2::{Digest, Sha256};
-use vera_client::Secp256k1SigningKey as SigningKey;
+use k256::ecdsa::VerifyingKey;
+use vera_client::DelegationScope;
 
-/// Create an ES256K JWT bearer token for vera.rs ACP operations.
-///
-/// The token uses the `did:key:z...` format for the issuer.
-pub fn create_bearer_token(
-    signing_key: &SigningKey,
+use super::signer::{admission, DelegationAlgorithm, DelegationSigner, SignerError};
+
+/// A delegation `signer` gives `subject` for vera.rs ACP policy commands.
+pub(super) async fn create_bearer_token(
+    signer: &dyn DelegationSigner,
     issuer: &str,
     subject: &str,
     deployment_id: u64,
     expiry_secs: u64,
 ) -> Result<String, BearerError> {
+    create_scoped_bearer_token(
+        signer,
+        issuer,
+        subject,
+        deployment_id,
+        expiry_secs,
+        DelegationScope::PolicyCommands,
+    )
+    .await
+}
+
+/// A delegation for one scope, issued under the spelling `issuer` gives.
+///
+/// vera.rs takes either spelling of a secp256k1 issuer as the same actor.
+pub(super) async fn create_scoped_bearer_token(
+    signer: &dyn DelegationSigner,
+    issuer: &str,
+    subject: &str,
+    deployment_id: u64,
+    expiry_secs: u64,
+    scope: DelegationScope,
+) -> Result<String, BearerError> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| BearerError::Time(e.to_string()))?
         .as_secs();
+    issue_at(
+        signer,
+        issuer,
+        subject,
+        deployment_id,
+        expiry_secs,
+        scope,
+        now,
+    )
+    .await
+}
 
-    if issuer != did_from_signing_key(signing_key, true)
-        && issuer != did_from_signing_key(signing_key, false)
-    {
+/// The delegation as it is issued at `now`, in seconds since the epoch.
+async fn issue_at(
+    signer: &dyn DelegationSigner,
+    issuer: &str,
+    subject: &str,
+    deployment_id: u64,
+    expiry_secs: u64,
+    scope: DelegationScope,
+    now: u64,
+) -> Result<String, BearerError> {
+    let key = admission::actor_key(signer)?;
+    if issuer != did_from_key(&key, true) && issuer != did_from_key(&key, false) {
         return Err(BearerError::Issuer);
     }
 
@@ -28,12 +70,12 @@ pub fn create_bearer_token(
         .checked_add(expiry_secs)
         .filter(|expiry| *expiry > now)
         .ok_or_else(|| BearerError::Time("invalid delegation lifetime".into()))?;
-    let header = base64url_encode(br#"{"alg":"ES256K","typ":"vera-delegation-v1+jwt"}"#);
+    let header = base64url_encode(header(signer.algorithm()));
     let payload_json = serde_json::json!({
         "iss": issuer,
         "sub": subject,
         "aud": format!("vera:{deployment_id}"),
-        "scope": "acp:policy",
+        "scope": scope,
         "iat": now,
         "nbf": now.saturating_sub(30),
         "exp": expiry,
@@ -42,21 +84,35 @@ pub fn create_bearer_token(
     let payload = base64url_encode(payload_json.as_bytes());
 
     let message = format!("{}.{}", header, payload);
-    let digest = Sha256::digest(message.as_bytes());
-    let (signature, _) = signing_key.sign_prehash_recoverable(digest.as_ref());
-    let sig_b64 = base64url_encode(&signature.to_bytes());
+    let signature = signer.sign(message.as_bytes()).await?;
+    admission::admit(signer, &key, message.as_bytes(), &signature)?;
+    let sig_b64 = base64url_encode(&signature);
 
     Ok(format!("{}.{}", message, sig_b64))
 }
 
-pub(super) fn did_from_signing_key(key: &SigningKey, compressed: bool) -> String {
-    let verifying_key = key.verifying_key();
-    let encoded_key = verifying_key.to_sec1_point(compressed);
+fn header(algorithm: DelegationAlgorithm) -> &'static [u8] {
+    match algorithm {
+        DelegationAlgorithm::Es256k => br#"{"alg":"ES256K","typ":"vera-delegation-v1+jwt"}"#,
+    }
+}
+
+/// The `did:key` of `key` from its compressed or its uncompressed encoding.
+pub(super) fn did_from_key(key: &VerifyingKey, compressed: bool) -> String {
+    let encoded_key = key.to_sec1_point(compressed);
     // multicodec prefix for secp256k1-pub: 0xe7 0x01
     let mut multicodec = vec![0xe7, 0x01];
     multicodec.extend_from_slice(encoded_key.as_bytes());
     let encoded = bs58::encode(&multicodec).into_string();
     format!("did:key:z{}", encoded)
+}
+
+#[cfg(test)]
+pub(super) fn did_from_signing_key(
+    key: &vera_client::Secp256k1SigningKey,
+    compressed: bool,
+) -> String {
+    did_from_key(key.verifying_key(), compressed)
 }
 
 fn base64url_encode(data: &[u8]) -> String {
@@ -72,7 +128,13 @@ pub enum BearerError {
 
     #[error("system time error: {0}")]
     Time(String),
+
+    #[error(transparent)]
+    Signer(#[from] SignerError),
 }
+
+#[cfg(test)]
+mod pinned;
 
 #[cfg(test)]
 mod tests {
@@ -80,16 +142,21 @@ mod tests {
     use k256::ecdsa::signature::hazmat::PrehashVerifier;
     use k256::ecdsa::{Signature, VerifyingKey};
     use serde_json::Value;
+    use sha2::{Digest, Sha256};
+    use vera_client::Secp256k1SigningKey as SigningKey;
 
     use super::*;
+    use crate::vera_rs::signer::Secp256k1Signer;
 
-    #[test]
-    fn bearer_token_uses_vera_rs_es256k_shape() {
+    #[nuclei::test]
+    async fn bearer_token_uses_vera_rs_es256k_shape() {
         let signing_key = SigningKey::from_slice(&[7u8; 32]).expect("valid signing key");
+        let signer = Secp256k1Signer::from_slice(&[7u8; 32]).expect("valid signing key");
         let subject = "did:key:zSubject\",\"scope\":\"other";
         let issuer = did_from_signing_key(&signing_key, false);
-        let token =
-            create_bearer_token(&signing_key, &issuer, subject, 9001, 300).expect("bearer token");
+        let token = create_bearer_token(&signer, &issuer, subject, 9001, 300)
+            .await
+            .expect("bearer token");
         let parts: Vec<_> = token.split('.').collect();
         assert_eq!(parts.len(), 3);
 
@@ -128,18 +195,56 @@ mod tests {
             .expect("signature verifies");
     }
 
-    #[test]
-    fn invalid_lifetime_is_rejected() {
+    #[nuclei::test]
+    async fn a_scoped_token_keeps_the_issuer_spelling_it_was_given() {
+        let key = SigningKey::from_slice(&[7u8; 32]).expect("valid signing key");
+        let signer = Secp256k1Signer::from_slice(&[7u8; 32]).expect("valid signing key");
+        let decoder = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        for compressed in [false, true] {
+            let issuer = did_from_signing_key(&key, compressed);
+            let token = create_scoped_bearer_token(
+                &signer,
+                &issuer,
+                "did:key:zSubject",
+                9001,
+                300,
+                vera_client::DelegationScope::CreatePolicy,
+            )
+            .await
+            .expect("scoped token");
+            let payload: Value = serde_json::from_slice(
+                &decoder
+                    .decode(token.split('.').nth(1).expect("payload"))
+                    .expect("payload b64"),
+            )
+            .expect("payload json");
+            assert_eq!(payload["iss"], issuer);
+            assert_eq!(payload["scope"], "acp:policy:create");
+        }
+    }
+
+    #[nuclei::test]
+    async fn invalid_lifetime_is_rejected() {
         let key = SigningKey::from_slice(&[7u8; 32]).unwrap();
+        let signer = Secp256k1Signer::from_slice(&[7u8; 32]).unwrap();
         let issuer = did_from_signing_key(&key, true);
         for lifetime in [0, u64::MAX] {
             assert!(
-                create_bearer_token(&key, &issuer, "did:key:zSubject", 9001, lifetime).is_err()
+                create_bearer_token(&signer, &issuer, "did:key:zSubject", 9001, lifetime)
+                    .await
+                    .is_err()
             );
         }
-        assert!(create_bearer_token(&key, &issuer, "did:key:zSubject", 9001, 300).is_ok());
+        assert!(
+            create_bearer_token(&signer, &issuer, "did:key:zSubject", 9001, 300)
+                .await
+                .is_ok()
+        );
         let other = SigningKey::from_slice(&[8u8; 32]).unwrap();
         let other_issuer = did_from_signing_key(&other, false);
-        assert!(create_bearer_token(&key, &other_issuer, "did:key:zSubject", 9001, 300).is_err());
+        assert!(matches!(
+            create_bearer_token(&signer, &other_issuer, "did:key:zSubject", 9001, 300).await,
+            Err(BearerError::Issuer)
+        ));
     }
 }

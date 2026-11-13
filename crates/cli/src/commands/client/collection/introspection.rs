@@ -34,8 +34,7 @@ fn is_builtin_field(name: &str) -> bool {
         return true;
     }
 
-    let lower = name.to_lowercase();
-    lower == "commits" || lower.ends_with("commits")
+    name.to_lowercase().ends_with("commits")
 }
 
 impl CollectionListArgs {

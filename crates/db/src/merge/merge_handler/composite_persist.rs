@@ -162,6 +162,26 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .map_err(MergeError::Database)?;
         }
 
+        // A block whose every field lost to a stored state left the document
+        // as it was. A parked field lands later, with no merge of its own.
+        if !doc_is_tombstoned
+            && (state.any_field_stands || state.parked_fields)
+            && context
+                .block
+                .heads
+                .as_deref()
+                .is_some_and(|heads| !heads.is_empty())
+        {
+            crate::event::updates::record(
+                systemstore,
+                collection.resolved_root_id(),
+                context.doc_id_str,
+                &context.cid.to_string(),
+            )
+            .await
+            .map_err(MergeError::Database)?;
+        }
+
         let short_id = collection.resolved_root_id();
         match IndexManager::from_collection(short_id, collection.schema()) {
             Ok(index_manager) if !doc_is_tombstoned => {
@@ -172,7 +192,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 // forward history in permanent retry on both replicas (#1111).
                 // Both documents persist; the index converges to the same
                 // winner everywhere.
-                let index_result = match &old_doc {
+                let index_result = match state.indexed_before.as_ref().unwrap_or(&old_doc) {
                     Some(old_doc) => {
                         index_manager
                             .on_document_update_merge(

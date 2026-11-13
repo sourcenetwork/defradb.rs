@@ -258,6 +258,83 @@ impl QueryExecutor for PooledExecutor {
             .await
     }
 
+    async fn create_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: Option<&str>,
+        fields: Vec<schema::IndexedFieldDescription>,
+        kind: schema::IndexKind,
+    ) -> std::result::Result<schema::IndexDescription, TransactionError> {
+        self.inner
+            .create_index_in_txn_as(context, collection, name, fields, kind)
+            .await
+    }
+
+    async fn drop_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        self.inner
+            .drop_index_in_txn_as(context, collection, name)
+            .await
+    }
+
+    async fn indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> std::result::Result<
+        (
+            schema::CollectionVersion,
+            rapidhash::RapidHashMap<u32, defra_core::ActionExecution>,
+        ),
+        TransactionError,
+    > {
+        self.inner.indexes_in_txn_as(context, collection).await
+    }
+
+    async fn add_encrypted_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        field: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        self.inner
+            .add_encrypted_index_in_txn_as(context, collection, field)
+            .await
+    }
+
+    async fn delete_encrypted_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        field: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        self.inner
+            .delete_encrypted_index_in_txn_as(context, collection, field)
+            .await
+    }
+
+    async fn encrypted_indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> std::result::Result<Vec<String>, TransactionError> {
+        self.inner
+            .encrypted_indexes_in_txn_as(context, collection)
+            .await
+    }
+
+    async fn all_encrypted_indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<(String, Vec<String>)>, TransactionError> {
+        self.inner.all_encrypted_indexes_in_txn_as(context).await
+    }
+
     async fn set_active_collection_version_as(
         &self,
         context: &RequestContext,
@@ -277,6 +354,15 @@ impl QueryExecutor for PooledExecutor {
         self.inner
             .truncate_collection_as(context, name, filter)
             .await
+    }
+
+    async fn purge_by_doc_ids_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        doc_ids: &[document::DocID],
+    ) -> std::result::Result<usize, TransactionError> {
+        self.inner.purge_by_doc_ids_as(context, name, doc_ids).await
     }
 
     async fn add_dac_policy_as(

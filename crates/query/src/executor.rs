@@ -38,6 +38,8 @@ pub const STORAGE_FULL_ERROR_CODE: &str = "STORAGE_FULL";
 /// A mutation input named the secondary side of a relation. The collection
 /// API reports it in Go's collection words rather than GraphQL's.
 pub const SECONDARY_RELATION_ERROR_CODE: &str = "SECONDARY_RELATION_INPUT";
+/// A subscription sent without `Accept: text/event-stream`; HTTP answers it with 406.
+pub const SUBSCRIPTION_NEEDS_SSE_ERROR_CODE: &str = "SUBSCRIPTION_NEEDS_SSE";
 
 /// Stable conflict message recognized by the remote DefraDB client.
 pub const TXN_CONFLICT_MESSAGE: &str = "transaction conflict. Please retry";
@@ -346,6 +348,7 @@ impl QueryResponseError {
         );
         let is_secondary_relation =
             matches!(&error, crate::error::QueryError::SecondaryRelationInput(_));
+        let needs_sse = matches!(&error, crate::error::QueryError::SubscriptionNeedsSse);
         let retry_input = match &error {
             crate::error::QueryError::NeedsInput(request) => Some(request.clone()),
             _ => None,
@@ -361,6 +364,8 @@ impl QueryResponseError {
             response_error.with_code(PERMISSION_DENIED_ERROR_CODE)
         } else if is_secondary_relation {
             response_error.with_code(SECONDARY_RELATION_ERROR_CODE)
+        } else if needs_sse {
+            response_error.with_code(SUBSCRIPTION_NEEDS_SSE_ERROR_CODE)
         } else {
             response_error
         };
@@ -650,6 +655,105 @@ pub trait QueryExecutor: MaybeSendSync {
         ))
     }
 
+    /// [`TransactionRegistry::create_index_in_txn_as`](crate::txn::TransactionRegistry::create_index_in_txn_as).
+    async fn create_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: Option<&str>,
+        fields: Vec<schema::IndexedFieldDescription>,
+        kind: schema::IndexKind,
+    ) -> std::result::Result<schema::IndexDescription, TransactionError> {
+        let _ = (context, collection, name, fields, kind);
+        Err(TransactionError::not_supported(
+            "this index operation is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::drop_index_in_txn_as`](crate::txn::TransactionRegistry::drop_index_in_txn_as).
+    async fn drop_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, collection, name);
+        Err(TransactionError::not_supported(
+            "this index operation is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::indexes_in_txn_as`](crate::txn::TransactionRegistry::indexes_in_txn_as).
+    async fn indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> std::result::Result<
+        (
+            schema::CollectionVersion,
+            rapidhash::RapidHashMap<u32, defra_core::ActionExecution>,
+        ),
+        TransactionError,
+    > {
+        let _ = (context, collection);
+        Err(TransactionError::not_supported(
+            "this index operation is not supported by this executor",
+        ))
+    }
+
+    /// Add an equality encrypted index on `field` of `collection` in the
+    /// transaction `context` carries.
+    async fn add_encrypted_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        field: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, collection, field);
+        Err(TransactionError::not_supported(
+            "this encrypted index operation is not supported by this executor",
+        ))
+    }
+
+    /// Delete the encrypted index on `field` of `collection` in the
+    /// transaction `context` carries.
+    async fn delete_encrypted_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        field: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, collection, field);
+        Err(TransactionError::not_supported(
+            "this encrypted index operation is not supported by this executor",
+        ))
+    }
+
+    /// The fields of `collection` with an encrypted index, as the transaction
+    /// `context` carries sees them.
+    async fn encrypted_indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> std::result::Result<Vec<String>, TransactionError> {
+        let _ = (context, collection);
+        Err(TransactionError::not_supported(
+            "this encrypted index operation is not supported by this executor",
+        ))
+    }
+
+    /// Every collection's encrypted index fields, by collection name, as the
+    /// transaction `context` carries sees them.
+    async fn all_encrypted_indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<(String, Vec<String>)>, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "this encrypted index operation is not supported by this executor",
+        ))
+    }
+
     /// [`TransactionRegistry::set_active_collection_version_as`](crate::txn::TransactionRegistry::set_active_collection_version_as).
     async fn set_active_collection_version_as(
         &self,
@@ -672,6 +776,19 @@ pub trait QueryExecutor: MaybeSendSync {
         let _ = (context, name, filter);
         Err(TransactionError::not_supported(
             "this collection operation is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::purge_by_doc_ids_as`](crate::txn::TransactionRegistry::purge_by_doc_ids_as).
+    async fn purge_by_doc_ids_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        doc_ids: &[document::DocID],
+    ) -> std::result::Result<usize, TransactionError> {
+        let _ = (context, name, doc_ids);
+        Err(TransactionError::not_supported(
+            "document purge is not supported by this executor",
         ))
     }
 

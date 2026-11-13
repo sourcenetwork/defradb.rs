@@ -108,6 +108,10 @@ pub fn route_permission(path: &str, method: &Method) -> RoutePermission {
         "/api/v0/collections/{name}/truncate" => {
             RoutePermission::Required(NodePermission::CollectionTruncate)
         }
+        // A purge is checked against the node permission of a truncate.
+        "/api/v0/collections/{name}/documents/purge" => {
+            RoutePermission::Required(NodePermission::CollectionTruncate)
+        }
         "/api/v0/collections/{name}/document/{docID}" => match *method {
             Method::GET => RoutePermission::Required(NodePermission::DocumentRead),
             Method::PATCH => RoutePermission::Required(NodePermission::DocumentUpdate),

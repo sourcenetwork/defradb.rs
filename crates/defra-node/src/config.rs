@@ -24,6 +24,12 @@ pub enum DocumentAcpConfig {
         config: VeraConfig,
         lcd_address: String,
     },
+    /// Document ACP via a vera.rs node.
+    #[cfg(feature = "vera")]
+    VeraRs(crate::VeraRsConfig),
+    /// Document ACP via a provider the host built.
+    #[cfg(feature = "vera")]
+    Provider(crate::DocumentAcpProvider),
 }
 
 /// Vera document ACP configuration.
@@ -401,6 +407,27 @@ pub struct NodeConfig {
     pub introspection_cache: Option<bool>,
     /// The embedder's check on replicated documents; `None` keeps them all.
     pub replication_filter: Option<ReplicationFilterHandle>,
+    /// The gate index backfills pass before each batch; `None` holds none.
+    pub index_build_gate: Option<IndexBuildGateHandle>,
+}
+
+/// An embedder's [`db::index::build_gate::IndexBuildGate`], compared by
+/// identity.
+#[derive(Clone)]
+pub struct IndexBuildGateHandle(pub Arc<dyn db::index::build_gate::IndexBuildGate>);
+
+impl std::fmt::Debug for IndexBuildGateHandle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("IndexBuildGateHandle")
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for IndexBuildGateHandle {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
 }
 
 /// An embedder's [`db::replication_filter::ReplicationFilter`], compared by

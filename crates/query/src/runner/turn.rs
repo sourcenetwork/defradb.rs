@@ -441,10 +441,7 @@ where
                             .await
                     }
                 }
-                ParsedOperation::Subscription { .. } => Err(QueryError::parse(
-                    "Subscriptions must be executed via Server-Sent Events (SSE). \
-                     Send the request with Accept: text/event-stream header.",
-                )),
+                ParsedOperation::Subscription { .. } => Err(QueryError::SubscriptionNeedsSse),
                 ParsedOperation::Introspection { query } => {
                     scoped_runner.execute_introspection(&query).await
                 }

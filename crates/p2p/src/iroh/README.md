@@ -44,6 +44,23 @@ Iroh-specific. Iroh SE push and SE query messages are signed with the sending
 transport identity and are verified against the QUIC peer that opened the stream
 before transport events are emitted.
 
+## An embedder's stream protocols
+
+An application embedding a node can serve protocols of its own on the same
+connection (`stream_protocols.rs`). Their tags live outside `/defra-iroh/`,
+so a tag Defra adds later never takes one. Admission looks a tag up in Defra's
+table first, then in the embedder's, and reads the request exactly as for a
+Defra message. The request's room in the budget moves into the
+`ProtocolRequest` the handler gets, and comes back when the handler releases
+it, so the budget still bounds what a peer's requests hold. The handler
+borrows the stream and runs on the stream's own task until it returns, its
+deadline passes or the connection closes; shutdown aborts it. Because it only
+borrows, nothing of the stream, its request or the request's room outlives
+that task. Both ends get wrapped stream halves (`protocol_stream.rs`), the
+opener's wrapped on the endpoint task as soon as the stream opens, that reset
+when dropped unfinished, where iroh's would finish the stream and pass a
+cut-off message as whole.
+
 ## Libp2p-only transport methods
 
 These `P2PTransport` methods are libp2p-only by design:

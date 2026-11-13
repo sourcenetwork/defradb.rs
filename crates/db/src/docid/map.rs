@@ -249,14 +249,32 @@ pub async fn resolve_doc_id_scores(
 
 /// Resolve a public DocID to its DocRef (collection + doc short IDs).
 pub async fn get_doc_ref(systemstore: &NamespaceView, doc_id: &str) -> Result<Option<DocRef>> {
-    match systemstore
+    let stored = systemstore
         .get(&DocIDToDocRefKey::new(doc_id).bytes())
         .await
-        .map_err(Error::Storage)?
-    {
-        Some(bytes) => Ok(Some(DocRef::decode(&bytes).map_err(Error::Storage)?)),
-        None => Ok(None),
-    }
+        .map_err(Error::Storage)?;
+    decode_doc_ref(stored)
+}
+
+/// [`get_doc_ref`] by a read that is never validated: for a reader that
+/// decides nothing its transaction writes, such as a page.
+pub async fn peek_doc_ref(systemstore: &NamespaceView, doc_id: &str) -> Result<Option<DocRef>> {
+    let stored = systemstore
+        .get_parts(&DocIDToDocRefKey::new(doc_id).bytes(), &[])
+        .await
+        .map_err(Error::Storage)?;
+    decode_doc_ref(stored)
+}
+
+fn decode_doc_ref(stored: Option<Bytes>) -> Result<Option<DocRef>> {
+    stored
+        .map(|bytes| DocRef::decode(&bytes).map_err(Error::Storage))
+        .transpose()
+}
+
+/// The document's short ID when it belongs to the collection.
+fn short_id_in(doc_ref: DocRef, collection_short_id: u32) -> Option<u64> {
+    (doc_ref.collection_short_id == collection_short_id).then_some(doc_ref.doc_short_id)
 }
 
 /// Resolve a public DocID to its short ID within a specific collection.
@@ -268,12 +286,20 @@ pub async fn get_doc_short_id(
     collection_short_id: u32,
     doc_id: &str,
 ) -> Result<Option<u64>> {
-    match get_doc_ref(systemstore, doc_id).await? {
-        Some(doc_ref) if doc_ref.collection_short_id == collection_short_id => {
-            Ok(Some(doc_ref.doc_short_id))
-        }
-        _ => Ok(None),
-    }
+    Ok(get_doc_ref(systemstore, doc_id)
+        .await?
+        .and_then(|doc_ref| short_id_in(doc_ref, collection_short_id)))
+}
+
+/// [`get_doc_short_id`] through [`peek_doc_ref`].
+pub async fn peek_doc_short_id(
+    systemstore: &NamespaceView,
+    collection_short_id: u32,
+    doc_id: &str,
+) -> Result<Option<u64>> {
+    Ok(peek_doc_ref(systemstore, doc_id)
+        .await?
+        .and_then(|doc_ref| short_id_in(doc_ref, collection_short_id)))
 }
 
 /// Register an additional public DocID for an existing document (backup

@@ -4,12 +4,13 @@
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     Json,
 };
 use serde::Deserialize;
 
 use crate::error::{http_error_from_backend_message, HttpError};
+use crate::handlers::txn_header::call_context;
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
 use crate::request_scope::bound;
@@ -30,12 +31,16 @@ pub struct GoAddEncryptedIndexRequest {
 pub async fn go_add_encrypted_index(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
     Path(collection): Path<String>,
     body: Option<Json<GoAddEncryptedIndexRequest>>,
 ) -> Result<Json<EncryptedIndexInfo>, HttpError> {
     require_permission(&state, &identity, NodePermission::EncryptedIndexAdd).await?;
 
-    let ops = bound(state.require_encrypted_index()?, &identity.context());
+    let ops = bound(
+        state.require_encrypted_index()?,
+        &call_context(&identity, &headers)?,
+    );
 
     validate_identifier(&collection).map_err(|_| {
         HttpError::BadRequest(format!(
@@ -63,11 +68,15 @@ pub async fn go_add_encrypted_index(
 pub async fn go_list_encrypted_indexes(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
     Path(collection): Path<String>,
 ) -> Result<Json<Vec<EncryptedIndexInfo>>, HttpError> {
     require_permission(&state, &identity, NodePermission::EncryptedIndexList).await?;
 
-    let ops = bound(state.require_encrypted_index()?, &identity.context());
+    let ops = bound(
+        state.require_encrypted_index()?,
+        &call_context(&identity, &headers)?,
+    );
 
     validate_identifier(&collection).map_err(|_| {
         HttpError::BadRequest(format!(
@@ -84,16 +93,21 @@ pub async fn go_list_encrypted_indexes(
     Ok(Json(indexes))
 }
 
-/// List all encrypted indexes across all collections (Go-compatible route).
+/// List all encrypted indexes across all collections (Go-compatible route),
+/// in the transaction the `x-defradb-tx` header names when given.
 ///
 /// GET /api/v0/encrypted-indexes
 pub async fn go_list_all_encrypted_indexes(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
 ) -> Result<Json<std::collections::BTreeMap<String, Vec<EncryptedIndexInfo>>>, HttpError> {
     require_permission(&state, &identity, NodePermission::EncryptedIndexListAll).await?;
 
-    let ops = bound(state.require_encrypted_index()?, &identity.context());
+    let ops = bound(
+        state.require_encrypted_index()?,
+        &call_context(&identity, &headers)?,
+    );
 
     let indexes = ops
         .list_encrypted_indexes(None)
@@ -117,11 +131,15 @@ pub async fn go_list_all_encrypted_indexes(
 pub async fn go_delete_encrypted_index(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
     Path((collection, field)): Path<(String, String)>,
 ) -> Result<StatusCode, HttpError> {
     require_permission(&state, &identity, NodePermission::EncryptedIndexDelete).await?;
 
-    let ops = bound(state.require_encrypted_index()?, &identity.context());
+    let ops = bound(
+        state.require_encrypted_index()?,
+        &call_context(&identity, &headers)?,
+    );
 
     validate_identifier(&collection).map_err(|_| {
         HttpError::BadRequest(format!(

@@ -1,9 +1,13 @@
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use alloy_primitives::{Bytes, B256};
+use defra_core::thread_bounds::MaybeBoxFuture;
 use serde::de::DeserializeOwned;
 use vera_domain::{ConsensusPublicKey, NativeTx, ReceiptResponse, RECEIPT_RESPONSE_BYTES};
+
+use super::transport::RpcTransport;
 
 #[cfg(not(target_arch = "wasm32"))]
 use net::http as http_client;
@@ -11,14 +15,18 @@ use net::http as http_client;
 use reqwest as http_client;
 
 pub struct VeraRsClient {
+    transport: Arc<dyn RpcTransport>,
+}
+
+/// JSON-RPC over HTTP to the node at `url`.
+pub(super) struct HttpTransport {
     url: String,
     http: http_client::Client,
     next_id: AtomicU64,
 }
 
-impl VeraRsClient {
-    /// A client of the node at `url` whose connections run on `edge`.
-    pub fn new(
+impl HttpTransport {
+    pub(super) fn new(
         url: String,
         request_timeout: Duration,
         edge: &edge::Edge,
@@ -37,12 +45,12 @@ impl VeraRsClient {
         })
     }
 
-    async fn rpc<T: DeserializeOwned>(
+    async fn post(
         &self,
         method: &str,
         params: serde_json::Value,
         maximum: usize,
-    ) -> Result<T, ClientError> {
+    ) -> Result<serde_json::Value, ClientError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let mut response = self
             .http
@@ -81,10 +89,53 @@ impl VeraRsClient {
                     .into(),
             });
         }
-        let result = value
+        Ok(value
             .get_mut("result")
             .ok_or(ClientError::InvalidResponse("missing result"))?
-            .take();
+            .take())
+    }
+}
+
+impl RpcTransport for HttpTransport {
+    fn call<'a>(
+        &'a self,
+        method: &'a str,
+        params: serde_json::Value,
+        max_bytes: usize,
+    ) -> MaybeBoxFuture<'a, Result<serde_json::Value, ClientError>> {
+        Box::pin(self.post(method, params, max_bytes))
+    }
+}
+
+impl VeraRsClient {
+    /// A client of the node at `url` whose connections run on `edge`.
+    pub fn new(
+        url: String,
+        request_timeout: Duration,
+        edge: &edge::Edge,
+    ) -> Result<Self, ClientError> {
+        Ok(Self::with_transport(Arc::new(HttpTransport::new(
+            url,
+            request_timeout,
+            edge,
+        )?)))
+    }
+
+    /// A client that reaches the node through `transport`.
+    pub fn with_transport(transport: Arc<dyn RpcTransport>) -> Self {
+        Self { transport }
+    }
+
+    async fn rpc<T>(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+        maximum: usize,
+    ) -> Result<T, ClientError>
+    where
+        T: DeserializeOwned,
+    {
+        let result = self.transport.call(method, params, maximum).await?;
         Ok(serde_json::from_value(result)?)
     }
 
@@ -137,6 +188,13 @@ pub enum ClientError {
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Receipt(#[from] vera_domain::ReceiptResponseError),
+    /// A transport other than HTTP could not carry the call.
+    #[error("transport: {message}")]
+    Transport {
+        /// Whether the same call may succeed if sent again.
+        retryable: bool,
+        message: String,
+    },
 }
 
 impl ClientError {
@@ -148,9 +206,13 @@ impl ClientError {
                     code: -32002 | -32000,
                     ..
                 }
+                | Self::Transport {
+                    retryable: true,
+                    ..
+                }
         )
     }
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

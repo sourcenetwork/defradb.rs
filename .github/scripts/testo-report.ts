@@ -364,7 +364,10 @@ function summary(directory: string, knownDir: string): number {
       `and its change against \`${lists.ref}\`.\n\n`,
   );
   write(`| client | ${COLUMNS.join(" | ")} | list |\n|---|${"---:|".repeat(COLUMNS.length + 1)}\n`);
+  // A pull request runs only some clients; a client it did not run is left out.
+  const expected = process.env.TESTO_CLIENTS ? process.env.TESTO_CLIENTS.split(",") : CLIENTS;
   for (const client of CLIENTS) {
+    if (!expected.includes(client) && !clients.has(client)) continue;
     const size = lists.sizes.get(client);
     const change = size ? size.entries - size.base : 0;
     const list = size ? `${size.entries} (${change >= 0 ? "+" : ""}${change})` : "—";

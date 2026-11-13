@@ -811,15 +811,23 @@ fn backfill_batch_aborts_when_a_document_it_read_changes() {
 }
 
 /// The definition, its in-progress action and one committed batch survive
-/// the process; opening the store again finishes the backfill from the
-/// batch after the durable one and clears the action.
+/// the process; opening the store again returns with the backfill still
+/// unfinished, and resuming it finishes it from the batch after the durable
+/// one and clears the action.
 #[test]
 fn index_backfill_resumes_after_a_restart() {
     workers::block_on(async {
         const COLLECTION_ID: &str = "col-index-resumed";
         let total = 300;
         let first_batch = 100;
-        let (store, db) = open_with_collection("Resumed", "resumed-v1", COLLECTION_ID).await;
+        // Opened rather than built from the store, so the index format is
+        // stamped as on a node: the reopen below then has no format migration
+        // to run, and only the resume can build the index.
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(DB::open_from_arc(store.clone()).await.unwrap());
+        db.create_collection(users_schema("Resumed", "resumed-v1", COLLECTION_ID))
+            .await
+            .unwrap();
         let mutator = AutoCommitMutator::new(db.clone());
         for i in 0..total {
             create_user(&mutator, "Resumed", &format!("user-{i}")).await;
@@ -920,6 +928,8 @@ fn index_backfill_resumes_after_a_restart() {
         drop(db);
 
         let db = DB::open_from_arc(store).await.unwrap();
+        assert_eq!(index_entries(&db, "Resumed", index.id).await, first_batch);
+        db.resume_index_backfills().await.unwrap();
         assert_eq!(index_entries(&db, "Resumed", index.id).await, total);
         assert_eq!(entries_for(&db, "Resumed", "user-0").await, 1);
         assert_eq!(entries_for(&db, "Resumed", "user-299").await, 1);
