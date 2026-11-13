@@ -196,6 +196,7 @@ async fn run(
         syncs: RefCell::new(RapidHashMap::new()),
         raw_topics: RefCell::new(RapidHashSet::new()),
         subscribed: RefCell::new(RapidHashSet::new()),
+        fanout: RefCell::new(RapidHashMap::new()),
         next_query: Cell::new(1),
         next_connection: Cell::new(1),
     });
@@ -230,8 +231,13 @@ pub(super) struct Node<H: Hosted + 'static> {
     pub(super) syncs: RefCell<RapidHashMap<u64, nuclei::task::AbortHandle>>,
     /// Topics whose messages are handed on as raw bytes, never decoded.
     pub(super) raw_topics: RefCell<RapidHashSet<String>>,
-    /// The topics the engine subscribed to: the only ones it hears of.
+    /// The topics the engine subscribed to: the only ones whose messages it
+    /// gets.
     pub(super) subscribed: RefCell<RapidHashSet<String>>,
+    /// The topics this node published to, each held joined until the instant
+    /// it names, so the engine hears who joins and leaves them, as gossipsub
+    /// tells a peer's subscriptions on every topic.
+    pub(super) fanout: RefCell<RapidHashMap<String, Instant>>,
     pub(super) next_query: Cell<u64>,
     next_connection: Cell<u64>,
 }
@@ -334,6 +340,7 @@ impl<H: Hosted + 'static> Node<H> {
     async fn sweep_loop(self: Rc<Self>) {
         loop {
             crate::rt::time::sleep(SWEEP_INTERVAL).await;
+            self.expire_fanout(Instant::now()).await;
             for mut stream in self.replies.sweep(Instant::now()) {
                 stream.reset(super::serve::RESET_STALLED).await;
             }

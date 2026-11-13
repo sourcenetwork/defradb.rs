@@ -85,6 +85,45 @@ fn connected_subscribers_see_each_other_join_and_leave() {
     });
 }
 
+/// A node that only published on a document topic hears who joins and
+/// leaves it, as on gossipsub, but takes none of its messages.
+#[test]
+fn a_publisher_that_never_subscribed_sees_subscribers_join_and_leave() {
+    run(async {
+        let hub = hub().await;
+        let mut a = node_on(&hub).await;
+        let b = node_on(&hub).await;
+        let c = node_on(&hub).await;
+        let topic = DefraTopic::document("doc-1");
+        connect(&a.transport, &b.transport).await;
+        a.transport
+            .publish(topic.clone(), broadcast(vec![1]))
+            .await
+            .unwrap();
+        assert!(b.transport.subscribe(topic.clone()).await.unwrap());
+        assert_eq!(joined(&mut a, &topic.to_string()).await, b.id);
+        // The hub pushes c's message to a, a member while it holds the topic.
+        c.transport
+            .publish(topic.clone(), broadcast(vec![2]))
+            .await
+            .unwrap();
+        assert!(b.transport.unsubscribe(topic.clone()).await.unwrap());
+        let left = a
+            .next(|event| match event {
+                TransportEvent::GossipMessage { .. } => {
+                    panic!("a took a message of a topic it never subscribed to")
+                }
+                TransportEvent::PeerUnsubscribed { peer_id, .. } => Some(peer_id),
+                _ => None,
+            })
+            .await;
+        assert_eq!(left, b.id);
+        a.shutdown().await;
+        b.shutdown().await;
+        c.shutdown().await;
+    });
+}
+
 /// A head hint arrives with its publisher as the provider, its block over
 /// iroh's 4 KiB gossip limit and under vinc's 64 KiB.
 #[test]
