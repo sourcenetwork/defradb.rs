@@ -82,10 +82,15 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             "Received PushLog request"
         );
 
-        if let Err(e) = self
-            .check_pushlog_access_str(peer_id.as_str(), &request.collection_id)
-            .await
-        {
+        // A followed document takes its pushes as it takes its gossip: an
+        // update too large for gossip arrives this way (#2820).
+        let access = if self.is_followed_document(&request.doc_id) {
+            Ok(())
+        } else {
+            self.check_pushlog_access_str(peer_id.as_str(), &request.collection_id)
+                .await
+        };
+        if let Err(e) = access {
             tracing::warn!(
                 peer_id = %peer_id,
                 collection_id = %request.collection_id,

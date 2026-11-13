@@ -18,6 +18,12 @@ impl Secp256k1Signer {
         let did = bearer::did_from_key(key.verifying_key(), false);
         Ok(Self { key, did })
     }
+
+    /// The compressed public key in lowercase hexadecimal: the form a vera.rs
+    /// operator policy lists a secp256k1 key in.
+    pub fn operator_key(&self) -> String {
+        hex::encode(self.key.verifying_key().to_sec1_point(true).as_bytes())
+    }
 }
 
 impl DelegationSigner for Secp256k1Signer {

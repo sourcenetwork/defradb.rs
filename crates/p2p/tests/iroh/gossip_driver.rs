@@ -9,6 +9,7 @@ use iroh_gossip::proto::{Command, InEvent};
 use rapidhash::fast::RandomState;
 use regolith::sync::{HopscotchMap, SegQueue};
 
+use super::super::frame::{MAX_BROADCAST, TOPIC_ID_LEN};
 use super::super::GossipHandle;
 use super::*;
 use crate::iroh::endpoint::shutdown_tracked_tasks;
@@ -219,6 +220,233 @@ async fn a_join_hint_dials_the_advertisers_of_a_joined_topic_only() {
         assert!(driver.on_input(hint()).await.is_ok());
         assert!(driver.drain().await.is_ok());
         assert_eq!(dials.0.pop(), Some(peer));
+    })
+    .await
+}
+
+type ProtoState = proto::State<EndpointId, rand::rngs::StdRng>;
+
+fn proto_state(me: EndpointId) -> ProtoState {
+    proto::State::new(
+        me,
+        PeerData::new(Vec::new()),
+        config(),
+        rand::rngs::StdRng::seed_from_u64(1),
+    )
+}
+
+/// Feeds `event` to `a` and runs `a` and `b` against each other until
+/// neither has more to say. Returns what `a` sent `b`.
+fn exchange(
+    a: (EndpointId, &mut ProtoState),
+    b: (EndpointId, &mut ProtoState),
+    event: InEvent<EndpointId>,
+) -> Vec<ProtoMessage> {
+    let ((a_id, a), (b_id, b)) = (a, b);
+    let mut sent = Vec::new();
+    let mut queue = VecDeque::from([(true, event)]);
+    while let Some((to_a, event)) = queue.pop_front() {
+        let state = if to_a { &mut *a } else { &mut *b };
+        let out: Vec<_> = state.handle(event, Instant::now(), None).collect();
+        for event in out {
+            if let OutEvent::SendMessage(_, message) = event {
+                if to_a {
+                    sent.push(message.clone());
+                    queue.push_back((false, InEvent::RecvMessage(a_id, message)));
+                } else {
+                    queue.push_back((true, InEvent::RecvMessage(b_id, message)));
+                }
+            }
+        }
+    }
+    sent
+}
+
+fn broadcast(content: Vec<u8>) -> InEvent<EndpointId> {
+    InEvent::Command(
+        topic_id("t"),
+        Command::Broadcast(Bytes::from(content), Scope::Swarm),
+    )
+}
+
+/// A broadcast the protocol accepts must reach the peer, and must not cost
+/// the peer the messages published after it.
+#[nuclei::test(threads = 0)]
+async fn a_broadcast_the_protocol_sends_does_not_end_gossip_to_the_peer() {
+    edge::compat(async {
+        let dials = Dials::default();
+        let (mut driver, _events) = driver(&dials);
+        let (connection, far_side, _endpoints) = connection().await;
+        let (a_id, b_id) = (iroh::SecretKey::generate().public(), connection.remote_id());
+        let (mut a, mut b) = (proto_state(a_id), proto_state(b_id));
+        let host = InEvent::Command(topic_id("t"), Command::Join(Vec::new()));
+        b.handle(host, Instant::now(), None).for_each(drop);
+        let join = InEvent::Command(topic_id("t"), Command::Join(vec![b_id]));
+        exchange((a_id, &mut a), (b_id, &mut b), join);
+
+        let limit = driver.io.limit;
+        let size = |m: &ProtoMessage| postcard::to_stdvec(m).unwrap().len();
+        assert!(
+            exchange(
+                (a_id, &mut a),
+                (b_id, &mut b),
+                broadcast(vec![1; 2 * limit])
+            )
+            .is_empty(),
+            "the protocol drops a broadcast far over the limit itself"
+        );
+        let largest = (0..limit)
+            .rev()
+            .find_map(|len| exchange((a_id, &mut a), (b_id, &mut b), broadcast(vec![2; len])).pop())
+            .expect("the protocol sends a broadcast just under the limit");
+        let normal = exchange(
+            (a_id, &mut a),
+            (b_id, &mut b),
+            broadcast(b"normal".to_vec()),
+        )
+        .pop()
+        .expect("a normal broadcast is sent");
+        eprintln!(
+            "largest broadcast the protocol sends: {} byte frame; limit {limit}",
+            size(&largest)
+        );
+
+        driver.connected(b_id, connection.clone());
+        driver.send(b_id, largest);
+        driver.send(b_id, normal.clone());
+
+        let mut recv = nuclei::time::timeout(Duration::from_secs(10), far_side.accept_uni())
+            .await
+            .expect("a gossip stream opens")
+            .expect("accept uni");
+        protocols::read_stream_tag(&mut recv).await.unwrap();
+        let mut arrived = Vec::new();
+        loop {
+            match nuclei::time::timeout(Duration::from_secs(5), read_gossip_frame(&mut recv, limit))
+                .await
+            {
+                Ok(Ok(Some(message))) => arrived.push(size(&message)),
+                other => {
+                    eprintln!("stream ended: {other:?}");
+                    break;
+                }
+            }
+        }
+        eprintln!("frames that arrived: {arrived:?}");
+        assert!(
+            arrived.contains(&size(&normal)),
+            "the normal message published after the large one never arrived"
+        );
+        shutdown_tracked_tasks(Arc::clone(&driver.io.tasks)).await;
+    })
+    .await
+}
+
+/// Two protocol states that are neighbours on topic `t`.
+fn neighbour_states() -> ((EndpointId, ProtoState), (EndpointId, ProtoState)) {
+    let (a_id, b_id) = (
+        iroh::SecretKey::generate().public(),
+        iroh::SecretKey::generate().public(),
+    );
+    let (mut a, mut b) = (proto_state(a_id), proto_state(b_id));
+    let host = InEvent::Command(topic_id("t"), Command::Join(Vec::new()));
+    b.handle(host, Instant::now(), None).for_each(drop);
+    let join = InEvent::Command(topic_id("t"), Command::Join(vec![b_id]));
+    exchange((a_id, &mut a), (b_id, &mut b), join);
+    ((a_id, a), (b_id, b))
+}
+
+/// `MAX_BROADCAST` is the protocol's own limit: it sends a broadcast that
+/// size, as a frame within `FRAME_LIMIT`, and drops one a byte larger. This
+/// pins `BROADCAST_OVERHEAD` to the iroh-gossip in use.
+#[test]
+fn the_broadcast_budget_is_the_protocols_own() {
+    let ((a_id, mut a), (b_id, mut b)) = neighbour_states();
+    let mut send = |len: usize, fill: u8| {
+        exchange((a_id, &mut a), (b_id, &mut b), broadcast(vec![fill; len])).pop()
+    };
+    let largest = send(MAX_BROADCAST, 1).expect("the protocol sends a broadcast at the budget");
+    let frame = postcard::to_stdvec(&largest).unwrap().len();
+    assert!(
+        frame <= FRAME_LIMIT,
+        "{frame} byte frame over {FRAME_LIMIT}"
+    );
+    assert!(
+        send(MAX_BROADCAST + 1, 2).is_none(),
+        "the protocol drops a broadcast a byte over the budget"
+    );
+    for len in [0, 127, 128, 16_383, 16_384] {
+        let fits = len <= MAX_BROADCAST;
+        assert_eq!(send(len, 3 + (len % 200) as u8).is_some(), fits, "{len}");
+    }
+}
+
+/// The frame limit allows for the topic our frame adds.
+#[test]
+fn a_frame_carries_the_topic_iroh_gossip_leaves_out() {
+    assert_eq!(
+        postcard::to_stdvec(&topic_id("t")).unwrap().len(),
+        TOPIC_ID_LEN
+    );
+    assert_eq!(FRAME_LIMIT, config().max_message_size + TOPIC_ID_LEN);
+}
+
+/// A publish the protocol would drop is refused before it is queued.
+#[test]
+fn a_publish_the_protocol_would_drop_is_refused_before_it_is_queued() {
+    let handle = GossipHandle::new();
+    let too_large = handle.publish("t".into(), Bytes::from(vec![0; MAX_BROADCAST + 1]), false);
+    assert!(
+        matches!(too_large, Err(Error::GossipTooLarge { size, limit }) if size == MAX_BROADCAST + 1 && limit == MAX_BROADCAST),
+        "{too_large:?}"
+    );
+    assert!(handle
+        .publish("t".into(), Bytes::from(vec![0; MAX_BROADCAST]), false)
+        .is_ok());
+}
+
+/// A message too large to frame is skipped, and the stream carries on with
+/// the messages queued behind it.
+#[nuclei::test(threads = 0)]
+async fn a_message_too_large_to_frame_does_not_end_the_stream() {
+    edge::compat(async {
+        let dials = Dials::default();
+        let (mut driver, _events) = driver(&dials);
+        let (connection, far_side, _endpoints) = connection().await;
+        let peer = connection.remote_id();
+        let ((a_id, mut a), (b_id, mut b)) = neighbour_states();
+        let large = exchange((a_id, &mut a), (b_id, &mut b), broadcast(vec![1; 1000]))
+            .pop()
+            .expect("sent");
+        let normal = exchange(
+            (a_id, &mut a),
+            (b_id, &mut b),
+            broadcast(b"normal".to_vec()),
+        )
+        .pop()
+        .expect("sent");
+        let size = |m: &ProtoMessage| postcard::to_stdvec(m).unwrap().len();
+        driver.io.limit = size(&normal);
+
+        driver.connected(peer, connection.clone());
+        driver.send(peer, large);
+        driver.send(peer, normal.clone());
+
+        let mut recv = nuclei::time::timeout(Duration::from_secs(10), far_side.accept_uni())
+            .await
+            .expect("a gossip stream opens")
+            .expect("accept uni");
+        protocols::read_stream_tag(&mut recv).await.unwrap();
+        let first = nuclei::time::timeout(
+            Duration::from_secs(5),
+            read_gossip_frame(&mut recv, FRAME_LIMIT),
+        )
+        .await
+        .expect("a frame arrives")
+        .unwrap()
+        .expect("the stream is still open");
+        assert_eq!(size(&first), size(&normal));
+        shutdown_tracked_tasks(Arc::clone(&driver.io.tasks)).await;
     })
     .await
 }

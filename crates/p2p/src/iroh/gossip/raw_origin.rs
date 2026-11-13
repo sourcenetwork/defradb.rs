@@ -23,6 +23,10 @@ const MAGIC: [u8; 6] = [0xFF, b'D', b'R', b'A', b'W', 1];
 const KEY_LEN: usize = 32;
 const SIGNATURE_LEN: usize = 64;
 const HEADER_LEN: usize = MAGIC.len() + KEY_LEN + SIGNATURE_LEN;
+
+/// The largest raw payload whose sealed form gossip broadcasts.
+pub(crate) const MAX_RAW_PAYLOAD: usize = super::MAX_BROADCAST - HEADER_LEN;
+
 const DOMAIN: &[u8] = b"defra/iroh-raw-origin/v1\0";
 
 /// A raw payload as it came off the wire.

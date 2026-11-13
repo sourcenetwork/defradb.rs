@@ -24,8 +24,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             ))
         })?;
 
-        collection
-            .validate_write_definition(datastore, false)
+        let (active_version, stored_definition) = collection
+            .validate_write_definition_read(datastore, false)
             .await
             .map_err(MergeError::Database)?;
         if self
@@ -257,6 +257,24 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     "index manager could not be built from the collection schema; \
                      skipping index maintenance for this merge"
                 );
+            }
+        }
+        // The version the document is stored at, which `collection` (resolved
+        // through the cache to the active collection) may not name.
+        if !doc_is_tombstoned
+            && active_version != context.payload.collection_version_id
+            && !state.reads.owes_reindex(collection.collection_id())
+        {
+            // Boxed so the rare path does not grow every merge's future.
+            let owed = Box::pin(self.owe_reindex_off_active_version(
+                systemstore,
+                collection,
+                &active_version,
+                &stored_definition,
+            ))
+            .await?;
+            if owed {
+                state.reads.owed_reindex(collection.collection_id());
             }
         }
 

@@ -442,6 +442,13 @@ impl P2PTransport for IrohTransport {
     }
 
     async fn publish_raw(&self, topic: String, data: Vec<u8>) -> Result<MessageId> {
+        let limit = super::gossip::raw_origin::MAX_RAW_PAYLOAD;
+        if data.len() > limit {
+            return Err(Error::GossipTooLarge {
+                size: data.len(),
+                limit,
+            });
+        }
         // Sealed with our key: gossip relays name only themselves (#2773).
         let data = super::gossip::raw_origin::seal(&self.secret_key, &topic, &data)?;
         self.send_command(|reply| IrohCommand::PublishRaw { topic, data, reply })

@@ -146,11 +146,16 @@ impl Node {
         let view_adapter = if config.acp.document_type != AcpDocumentType::None {
             crate::view_adapter::ViewAdapter::new_arc_with_acp(
                 database.clone(),
+                query_setup.registry.clone(),
                 query_limits,
                 acp_setup.document_acp.clone(),
             )
         } else {
-            crate::view_adapter::ViewAdapter::new_arc(database.clone(), query_limits)
+            crate::view_adapter::ViewAdapter::new_arc(
+                database.clone(),
+                query_setup.registry.clone(),
+                query_limits,
+            )
         };
         server = server.with_view_arc(view_adapter);
         info!("View HTTP endpoints enabled");

@@ -22,6 +22,7 @@ impl<S: Store> P2PHost<S> {
                 if let Some(listen_addr) = info.listen_addrs.first() {
                     self.peer_addrs.insert(peer_id, listen_addr.clone());
                 }
+                self.on_identify_settled(peer_id);
 
                 debug!(
                     "Identified peer {}: {} with {} addresses, {} protocols",
@@ -61,6 +62,8 @@ impl<S: Store> P2PHost<S> {
             }
             libp2p::identify::Event::Error { peer_id, error, .. } => {
                 warn!("Identify error with {}: {}", peer_id, error);
+                // The source port stays the best address known for the peer.
+                self.on_identify_settled(peer_id);
             }
         }
     }

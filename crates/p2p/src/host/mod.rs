@@ -3,6 +3,8 @@
 //! This module provides the main P2P host that manages the libp2p swarm,
 //! handles peer connections, and coordinates CRDT synchronization.
 
+#[cfg(test)]
+mod active_peers_tests;
 mod command;
 mod command_handler;
 mod event;

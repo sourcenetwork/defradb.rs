@@ -38,12 +38,14 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Schema-evolution operations in the core | TLA+ / Lean | client, db, lens, query, http, cli, ffi, defra-node |
 | DAG convergence (partition / eviction / restart) | TLA+ | p2p, db-merge, blockstore |
 | CRDT merge laws | Lean | crdt, defra-core |
+| Secondary index equal-key order | Lean | db, storage |
 | Replicator lifecycle (no-loss / resume) | TLA+ | p2p, db-merge, embedded |
 | Sync ownership transfer (head hint / receiver pull) | TLA+ / Lean | p2p, db-merge, storage, embedded, defra-node |
 | Pull sync (doc-sync / sync-branchable) | TLA+ | p2p |
 | Multi-instance claim | TLA+ | gents |
 | Block integrity / signatures | TLA+ | db-merge, defra-core, blockstore |
 | KMS key distribution | TLA+ / Lean | kms, db, db-merge |
+| Node identity and signing | Lean | defra-node, http |
 | Encrypted LWW restart/replay | TLA+ + existing LWW Lean law | kms, p2p, db-merge, crdt |
 | Management-channel auth (NAC gate) | TLA+ | http, db-nac, pg-compat |
 | ACP soundness + revocation + dual-path commits | TLA+ & Lean | acp, zanzibar, vera, query, db |
@@ -106,6 +108,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Postgres wire connection loop | TLA+ | pg-compat |
 | HTTP client redirects and body deadline | Lean | net |
 | Connect fallback race | TLA+ | net |
+| ActivePeers listen addresses | TLA+ | p2p |
 | Coordinator shutdown drain | TLA+ | p2p, edge |
 | Edge completion | TLA+ | edge |
 | Edge gate continuation | TLA+ | edge, net (#2546) |

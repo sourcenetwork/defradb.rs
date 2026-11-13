@@ -14,6 +14,7 @@ mod addr;
 mod allowlist_tests;
 mod command;
 mod config;
+mod direct_push;
 mod endpoint;
 mod endpoint_commands;
 mod endpoint_config;

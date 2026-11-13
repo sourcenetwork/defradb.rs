@@ -20,6 +20,13 @@
 \*      store.
 \* A Vera node told to stop may never finish: its runtime can hang while it
 \* is dropped.
+\* The `defradb` binary stops its Vera node at the same place in its own
+\* shutdown (crates/cli/src/commands/start/run.rs Node::run): after the HTTP
+\* server drained and P2P stopped, before the database closes. Its PostgreSQL
+\* server is stopped without a drain of its connections, as it was before the
+\* Vera node existed, so a query in flight there is not a request this model
+\* promises a decision: it is refused when the Vera node stops, as it is
+\* refused when the database closes a moment later.
 \*
 \* After a shutdown the host may build the next node over the same directory.
 \* Its Vera node waits for the directory's lock. While the earlier Vera node
@@ -27,9 +34,13 @@
 \* (vera-embedded HostedNode::start) and fails when it passes.
 \*
 \* What must never happen:
-\*   1. a request is given a decision while the Vera node is not running: a
-\*      decision remembered from before is not a decision
-\*      - INV_NoDecisionWithoutVera;
+\*   1. a request is given a decision read from a state past its freshness
+\*      limit. Document ACP remembers a decision under the verified state it
+\*      was read at, and repeats it while that state is the light client's
+\*      newest and still fresh. Once the Vera node is gone no newer state
+\*      comes, so the remembered decision may be repeated until the state
+\*      ages out, and never after; a decision not asked before is refused at
+\*      once - INV_NoDecisionPastFreshness;
 \*   2. a request the node admitted is refused because shutdown stopped the
 \*      Vera node under it - INV_AdmittedRequestsDecided. The one exception
 \*      is a request that outlived the request drain's deadline: shutdown
@@ -43,13 +54,16 @@
 \*      - LIVE_NextStartReturns.
 \*
 \* The Rust code each guard models:
-\*   NoDecisionCache   crates/defra-node/src/node_acp.rs verified_acp_setup,
-\*                     which builds document ACP with
-\*                     VeraDocumentACP::without_access_cache, and
+\*   FreshDecisions    crates/vera/src/vera_rs/provider.rs decision_state,
+\*                     which names a state to remember decisions under only
+\*                     while the light client holds it fresh, and
 \*                     crates/vera-embedded/src/call.rs call, which refuses a
 \*                     call whose link is closed or whose node has stopped.
-\*                     Regression: once_the_node_stops_no_access_decision_is_given
-\*                     in crates/vera-embedded/tests/hosted_node.rs;
+\*                     Regressions:
+\*                     a_remembered_decision_is_not_given_past_the_freshness_limit
+\*                     in crates/vera-embedded/tests/stopped_node_decisions.rs
+\*                     and once_the_node_stops_the_provider_verifies_no_new_decision in
+\*                     crates/vera-embedded/tests/hosted_node.rs;
 \*   StopAfterRequests crates/defra-node/src/lib.rs Node::shutdown, which
 \*                     stops the Vera node after the request drain and P2P's
 \*                     shutdown;
@@ -69,7 +83,7 @@
 EXTENDS Naturals  \* numbers, for counting the waiting request
 
 CONSTANTS
-  NoDecisionCache,    \* TRUE: no decision is served from memory
+  FreshDecisions,     \* TRUE: a remembered decision is repeated only while fresh
   StopAfterRequests,  \* TRUE: shutdown drains requests before it stops Vera
   StopDeadline,       \* TRUE: the wait for Vera's thread ends at a deadline
   StartDeadline,      \* TRUE: the next node's wait for the directory ends at one
@@ -84,13 +98,14 @@ VARIABLES
   admitting,   \* TRUE while the node admits requests
   inflight,    \* how many requests wait for a decision (0 or 1)
   overdue,     \* TRUE once the request drain gave up on a waiting request
-  granted,     \* TRUE once a decision was given: what a cache would remember
-  stale,       \* TRUE once a decision was given without Vera running
+  granted,     \* TRUE once a decision was given: what document ACP remembers
+  fresh,       \* TRUE while the last verified state is within its freshness limit
+  stale,       \* TRUE once a decision was given from a state past that limit
   next,        \* the next node's start: "none", "waiting", "started", "failed"
   vetoed       \* TRUE once shutdown's stop refused an admitted request
 
 vars == <<phase, vera, endedBy, link, dirHeld, admitting, inflight, overdue,
-          granted, stale, vetoed, next>>  \* every variable
+          granted, fresh, stale, vetoed, next>>  \* every variable
 
 Phases == {"Running", "Requests", "StopVera", "Drain", "Done"}  \* the steps
 
@@ -104,6 +119,7 @@ TypeOK ==
   /\ inflight \in 0..1                                 \* at most one request
   /\ overdue \in BOOLEAN                               \* a flag
   /\ granted \in BOOLEAN                               \* a flag
+  /\ fresh \in BOOLEAN                                 \* a flag
   /\ stale \in BOOLEAN                                 \* a flag
   /\ vetoed \in BOOLEAN                                \* a flag
   /\ next \in {"none", "waiting", "started", "failed"} \* a known state
@@ -118,7 +134,8 @@ Init ==
   /\ inflight = 0          \* none waits yet
   /\ overdue = FALSE       \* the drain gave up on none
   /\ granted = FALSE       \* no decision was given yet
-  /\ stale = FALSE         \* none without Vera
+  /\ fresh = TRUE          \* the running node keeps the state fresh
+  /\ stale = FALSE         \* none from a state past its limit
   /\ vetoed = FALSE        \* shutdown refused none
   /\ next = "none"         \* no next node yet
 
@@ -133,7 +150,7 @@ Arrive ==
   /\ inflight = 0                \* one at a time is enough to show the order
   /\ inflight' = 1               \* it waits
   /\ UNCHANGED <<phase, vera, endedBy, link, dirHeld, admitting, granted,
-                 stale, vetoed, overdue, next>>
+                 stale, vetoed, overdue, next, fresh>>
 
 \* Vera answers and the provider verifies the answer.
 Decide ==
@@ -142,17 +159,22 @@ Decide ==
   /\ inflight' = 0               \* the request is answered
   /\ granted' = TRUE             \* a decision now exists to remember
   /\ UNCHANGED <<phase, vera, endedBy, link, dirHeld, admitting, stale,
-                 vetoed, overdue, next>>
+                 vetoed, overdue, next, fresh>>
 
-\* The transport reaches no running Vera node. Without a cache the request is
-\* refused. With one, a decision given before is given again.
+\* Whether document ACP repeats a decision it remembers: one was given, and
+\* the state it was read at is still fresh, or freshness is not asked about.
+Remembered == granted /\ (fresh \/ ~FreshDecisions)
+
+\* The transport reaches no running Vera node. A remembered decision is given
+\* again; otherwise the request is refused, which is shutdown's doing when
+\* shutdown stopped the node under it.
 Unreachable ==
   /\ inflight = 1                                    \* a request waits
   /\ ~Reachable                                      \* nothing to ask
   /\ inflight' = 0                                   \* the request ends
-  /\ stale' = (stale \/ (~NoDecisionCache /\ granted))  \* served from memory
-  /\ vetoed' = (vetoed \/ (endedBy = "shutdown" /\ ~overdue))  \* shutdown's doing
-  /\ UNCHANGED <<phase, vera, endedBy, link, dirHeld, admitting, granted, overdue, next>>
+  /\ stale' = (stale \/ (Remembered /\ ~fresh))      \* repeated past the limit
+  /\ vetoed' = (vetoed \/ (~Remembered /\ endedBy = "shutdown" /\ ~overdue))
+  /\ UNCHANGED <<phase, vera, endedBy, link, dirHeld, admitting, granted, overdue, next, fresh>>
 
 \* ---- What Vera does on its own ----
 
@@ -163,7 +185,16 @@ Fail ==
   /\ vera' = "down"              \* it is not any more
   /\ endedBy' = "itself"         \* nobody asked
   /\ dirHeld' = link             \* held while a transport holds the table
-  /\ UNCHANGED <<phase, link, admitting, inflight, overdue, granted, stale, vetoed, next>>
+  /\ UNCHANGED <<phase, link, admitting, inflight, overdue, granted, stale, vetoed, next, fresh>>
+
+\* With no Vera node running no newer state arrives, and the last verified
+\* state passes its freshness limit.
+Ages ==
+  /\ vera # "up"                 \* nothing renews the state
+  /\ fresh                       \* it was fresh
+  /\ fresh' = FALSE              \* it is not any more
+  /\ UNCHANGED <<phase, vera, endedBy, link, dirHeld, admitting, inflight, overdue,
+                 granted, stale, vetoed, next>>
 
 \* A Vera node told to stop finishes: its thread ends.
 Settle ==
@@ -171,14 +202,14 @@ Settle ==
   /\ vera' = "down"              \* it ended
   /\ dirHeld' = link             \* held while a transport holds the table
   /\ UNCHANGED <<phase, endedBy, link, admitting, inflight, overdue, granted, stale,
-                 vetoed, next>>
+                 vetoed, next, fresh>>
 
 \* A Vera node told to stop never finishes.
 Hang ==
   /\ vera = "stopping"           \* it was told
   /\ vera' = "hung"              \* it will not end
   /\ UNCHANGED <<phase, endedBy, link, dirHeld, admitting, inflight, overdue, granted,
-                 stale, vetoed, next>>
+                 stale, vetoed, next, fresh>>
 
 \* ---- The shutdown sequence ----
 
@@ -190,7 +221,7 @@ Begin ==
   /\ phase' = IF StopAfterRequests THEN "Requests" ELSE "StopVera"
   /\ admitting' = ~StopAfterRequests                          \* closed, or not
   /\ UNCHANGED <<vera, endedBy, link, dirHeld, inflight, overdue, granted, stale,
-                 vetoed, next>>
+                 vetoed, next, fresh>>
 
 \* The request drain ends once no request waits.
 RequestsDrained ==
@@ -198,7 +229,7 @@ RequestsDrained ==
   /\ inflight = 0                \* none waits
   /\ phase' = "StopVera"         \* Vera is next
   /\ UNCHANGED <<vera, endedBy, link, dirHeld, admitting, inflight, overdue, granted,
-                 stale, vetoed, next>>
+                 stale, vetoed, next, fresh>>
 
 \* The request drain reaches its deadline with a request still waiting. It
 \* gives up on that request and shutdown goes on.
@@ -208,7 +239,7 @@ RequestsOverdue ==
   /\ overdue' = TRUE             \* the drain gives up on it
   /\ phase' = "StopVera"         \* Vera is next
   /\ UNCHANGED <<vera, endedBy, link, dirHeld, admitting, inflight, granted,
-                 stale, vetoed, next>>
+                 stale, vetoed, next, fresh>>
 
 \* Shutdown tells Vera to stop and, with ClosesLink, closes its transports. A
 \* Vera node that already ended is not told again, but its transports close
@@ -220,7 +251,7 @@ TellStop ==
   /\ link' = (link /\ ~ClosesLink)                       \* closed, or kept
   /\ vera' = IF vera = "up" THEN "stopping" ELSE vera    \* told, if running
   /\ dirHeld' = IF vera = "down" THEN link' ELSE dirHeld \* freed if it ended
-  /\ UNCHANGED <<phase, admitting, inflight, overdue, granted, stale, vetoed, next>>
+  /\ UNCHANGED <<phase, admitting, inflight, overdue, granted, stale, vetoed, next, fresh>>
 
 \* The wait for Vera's thread ends: the thread finished, or the deadline
 \* passed. Nothing is admitted from here on.
@@ -231,7 +262,7 @@ StopReturns ==
   /\ phase' = "Drain"                    \* the rest of the network work
   /\ admitting' = FALSE                  \* the node's scope closes
   /\ UNCHANGED <<vera, endedBy, link, dirHeld, inflight, overdue, granted, stale,
-                 vetoed, next>>
+                 vetoed, next, fresh>>
 
 \* The node's drain ends once no request waits, and shutdown goes on to
 \* close the store.
@@ -240,7 +271,7 @@ Drained ==
   /\ inflight = 0                \* none waits
   /\ phase' = "Done"             \* shutdown returns
   /\ UNCHANGED <<vera, endedBy, link, dirHeld, admitting, inflight, overdue, granted,
-                 stale, vetoed, next>>
+                 stale, vetoed, next, fresh>>
 
 \* ---- The next node ----
 
@@ -251,7 +282,7 @@ StartNext ==
   /\ next = "none"               \* no next node yet
   /\ next' = "waiting"           \* its Vera node waits for the lock
   /\ UNCHANGED <<phase, vera, endedBy, link, dirHeld, admitting, inflight,
-                 overdue, granted, stale, vetoed>>
+                 overdue, granted, stale, vetoed, fresh>>
 
 \* The directory is free: the next Vera node takes it and starts.
 NextStarts ==
@@ -259,7 +290,7 @@ NextStarts ==
   /\ ~dirHeld                    \* nothing holds the directory
   /\ next' = "started"           \* it starts
   /\ UNCHANGED <<phase, vera, endedBy, link, dirHeld, admitting, inflight,
-                 overdue, granted, stale, vetoed>>
+                 overdue, granted, stale, vetoed, fresh>>
 
 \* The directory is still held when the start deadline passes: the start
 \* fails and says so.
@@ -269,12 +300,12 @@ NextGivesUp ==
   /\ StartDeadline               \* and the wait has a deadline
   /\ next' = "failed"            \* the start fails
   /\ UNCHANGED <<phase, vera, endedBy, link, dirHeld, admitting, inflight,
-                 overdue, granted, stale, vetoed>>
+                 overdue, granted, stale, vetoed, fresh>>
 
 \* Any one thing happens.
 Next ==
   \/ Arrive \/ Decide \/ Unreachable            \* requests
-  \/ Fail \/ Settle \/ Hang                     \* Vera
+  \/ Fail \/ Settle \/ Hang \/ Ages             \* Vera and its last state
   \/ Begin \/ RequestsDrained \/ RequestsOverdue  \* shutdown,
   \/ TellStop \/ StopReturns \/ Drained          \* step by step
   \/ StartNext \/ NextStarts \/ NextGivesUp      \* the next node
@@ -294,8 +325,8 @@ Spec ==
 
 \* ---- What must hold ----
 
-\* No decision is given while the Vera node is not running.
-INV_NoDecisionWithoutVera == ~stale
+\* No decision is given from a state past its freshness limit.
+INV_NoDecisionPastFreshness == ~stale
 
 \* Shutdown refuses no request the node admitted by stopping Vera under it,
 \* unless the request outlived the request drain's deadline.

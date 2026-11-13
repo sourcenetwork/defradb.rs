@@ -607,18 +607,6 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         self.get_by_index_scan_impl(collection_name, params).await
     }
 
-    async fn indexes_match_documents(&self, collection_name: &str) -> query::error::Result<bool> {
-        let (collection, _, _) = crate::collection::loader::get_collection_with_lazy_load(
-            &*self.shared_txn()?,
-            collection_name,
-        )
-        .await?;
-        Ok(!self
-            .load_versions_and_check_migrations(&collection)
-            .await?
-            .1)
-    }
-
     fn supports_index_queries(&self) -> bool {
         true
     }

@@ -32,6 +32,7 @@ mod migrations {
         mod with_inverse;
         mod with_p2p;
         mod with_p2p_collection_branch;
+        mod with_p2p_no_write_back;
         mod with_restart;
         mod with_set_default;
         mod with_txn;
