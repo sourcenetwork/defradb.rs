@@ -657,7 +657,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     /// own provider for a runner scoped to that transaction, so its uncommitted
     /// schemas are visible, and the process-wide one otherwise. When the
     /// request names a collection version, that version answers for its
-    /// collection's name.
+    /// collection's name. The provider is not `Sync` in the single-threaded
+    /// browser build, where nothing shares it across threads.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     fn effective_provider(&self) -> Arc<dyn CollectionProvider> {
         match self.context().collection_version() {
             Some(version_id) => Arc::new(pinned::PinnedProvider::new(
