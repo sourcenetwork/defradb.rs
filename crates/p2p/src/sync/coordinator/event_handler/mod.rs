@@ -54,6 +54,10 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         if let Some(transport) = self.kms_transport.get() {
             transport.peer_subscribed(&topic);
         }
+        #[cfg(feature = "libp2p-transport")]
+        if let Some(services) = self.pubsub_services.as_ref() {
+            services.peer_subscribed(&topic);
+        }
         self.access
             .peer_state
             .peer_subscribed(peer_id.as_str(), topic);
