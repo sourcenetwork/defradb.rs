@@ -392,6 +392,9 @@ pub struct NodeConfig {
     /// ([`edge::on_demand`]); a node without networking starts none.
     pub edge: Option<edge::Edge>,
     pub signing: NodeSigning,
+    /// Keep the identity `signing` configures but write unsigned blocks, as a
+    /// Go node with a `NodeIdentity` and `EnableSigning` off.
+    pub identity_only: bool,
     pub document_acp: DocumentAcpConfig,
     pub query_limits: query::QueryLimits,
     /// Retries of a conflicting transaction; `None` keeps the database default.

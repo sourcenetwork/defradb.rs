@@ -192,61 +192,32 @@ pub(crate) struct PreparedLens {
 }
 
 impl PreparedLens {
-    /// Builds the blocks of `config`'s first module, read from its bytes or
-    /// its path. A path is read here, once, on a blocking thread of `pool`
-    /// (the process's default pool's without one): committing the lens later
-    /// never reads it again.
+    /// Builds the blocks of every module of `config`, each read from its bytes
+    /// or its path, so the ID is Go's: the CID of the whole lens. A path is
+    /// read here, once, on a blocking thread of `pool` (the process's default
+    /// pool's without one): committing the lens later never reads it again.
     pub(crate) async fn new(config: LensConfig, pool: Option<&workers::Pool>) -> Result<Self> {
-        let first_lens = config
-            .lens()
-            .ok_or_else(|| Error::Lens("lens config has no modules".into()))?;
-
-        let wasm_bytes = if let Some(ref bytes) = first_lens.module {
-            bytes.clone()
-        } else if let Some(ref path) = first_lens.path {
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let clean_path = path.strip_prefix("file://").unwrap_or(path).to_owned();
-                let unread = |e: &dyn std::fmt::Display| {
-                    Error::Lens(format!("failed to read WASM from {}: {}", path, e))
-                };
-                let pool = match pool {
-                    Some(pool) => pool.clone(),
-                    None => workers::default_pool().map_err(|e| unread(&e))?,
-                };
-                pool.spawn_blocking(move || std::fs::read(clean_path))
-                    .await
-                    .map_err(|e| unread(&e))?
-                    .await
-                    .map_err(|e| unread(&e))?
-                    .map_err(|e| unread(&e))?
-            }
-            #[cfg(target_arch = "wasm32")]
-            {
-                let _ = pool;
-                return Err(Error::Lens(format!(
-                    "path-based lens modules not supported on wasm32 (path: {}); pass bytes instead",
-                    path
-                )));
-            }
-        } else {
-            return Err(Error::Lens("lens module has neither path nor bytes".into()));
-        };
-
-        let arguments: Vec<(String, String)> = first_lens
-            .arguments
-            .as_ref()
-            .and_then(|v| v.as_object())
-            .map(|obj| {
-                obj.iter()
-                    .map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_string()))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let (config_cid, blocks) =
-            defra_core::build_lens_ipld_blocks(&wasm_bytes, first_lens.inverse, &arguments)
-                .map_err(|e| Error::Lens(format!("failed to build lens IPLD blocks: {}", e)))?;
+        let mut modules = Vec::with_capacity(config.lenses.len());
+        for module in &config.lenses {
+            modules.push((
+                module_wasm_bytes(module, pool).await?,
+                module_arguments(module)?,
+            ));
+        }
+        let parts: Vec<_> = config
+            .lenses
+            .iter()
+            .zip(&modules)
+            .map(
+                |(module, (wasm_bytes, arguments))| defra_core::LensModuleParts {
+                    wasm_bytes,
+                    inverse: module.inverse,
+                    arguments,
+                },
+            )
+            .collect();
+        let (config_cid, blocks) = defra_core::build_lens_ipld_blocks(&parts)
+            .map_err(|e| Error::Lens(format!("failed to build lens IPLD blocks: {}", e)))?;
 
         Ok(Self {
             id: TransformId::new(config_cid.to_string()),
@@ -270,6 +241,68 @@ impl PreparedLens {
         }
         write_lens_config(systemstore, &self.id, &self.config).await
     }
+}
+
+/// A module's WASM bytes, read from its path, else its bytes: the source the
+/// lens runtime (`WasmTransformStore::load_module`) loads, so the ID names the
+/// code that runs.
+async fn module_wasm_bytes(
+    module: &lens::LensModule,
+    pool: Option<&workers::Pool>,
+) -> Result<Vec<u8>> {
+    let Some(ref path) = module.path else {
+        return module
+            .module
+            .clone()
+            .ok_or_else(|| Error::Lens("lens module has neither path nor bytes".into()));
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let clean_path = path.strip_prefix("file://").unwrap_or(path).to_owned();
+        let unread = |e: &dyn std::fmt::Display| {
+            Error::Lens(format!("failed to read WASM from {}: {}", path, e))
+        };
+        let pool = match pool {
+            Some(pool) => pool.clone(),
+            None => workers::default_pool().map_err(|e| unread(&e))?,
+        };
+        pool.spawn_blocking(move || std::fs::read(clean_path))
+            .await
+            .map_err(|e| unread(&e))?
+            .await
+            .map_err(|e| unread(&e))?
+            .map_err(|e| unread(&e))
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = pool;
+        Err(Error::Lens(format!(
+            "path-based lens modules not supported on wasm32 (path: {}); pass bytes instead",
+            path
+        )))
+    }
+}
+
+/// A module's arguments as Go's lens store records them: sorted by key, each
+/// value JSON-encoded as Go's `json.Marshal` writes it. Arguments are an
+/// object, as Go's `map[string]any`: any other value would reach the module's
+/// `set_param` while leaving no trace in the ID, so it is refused.
+fn module_arguments(module: &lens::LensModule) -> Result<Vec<(String, String)>> {
+    let arguments = match &module.arguments {
+        None => return Ok(Vec::new()),
+        Some(serde_json::Value::Object(arguments)) => arguments,
+        Some(other) => {
+            return Err(Error::Lens(format!(
+                "lens module arguments must be a JSON object of named arguments, got {other}"
+            )));
+        }
+    };
+    let mut encoded: Vec<_> = arguments
+        .iter()
+        .map(|(key, value)| (key.clone(), defra_core::encode_lens_argument(value)))
+        .collect();
+    encoded.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(encoded)
 }
 
 /// Persists a lens config under its transform ID in the caller's transaction:

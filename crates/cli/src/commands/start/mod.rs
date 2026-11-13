@@ -8,6 +8,8 @@ mod pool_args;
 mod run;
 mod server;
 mod server_acp;
+#[cfg(feature = "embedded-vera")]
+mod server_acp_embedded;
 mod server_http;
 mod server_p2p;
 mod server_query;

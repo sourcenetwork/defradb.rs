@@ -204,17 +204,17 @@ pub async fn get_doc_id(systemstore: &NamespaceView, doc_short_id: u64) -> Resul
     }
 }
 
+/// Resolve short IDs to `(DocID, short ID)` in order, skipping IDs with no
+/// mapping, and stop once `bound` are mapped (index scan read path).
 pub(crate) async fn resolve_doc_id_pairs(
     systemstore: &NamespaceView,
     doc_short_ids: &[u64],
+    bound: Option<usize>,
 ) -> Result<Vec<(String, u64)>> {
-    let mut pairs = Vec::with_capacity(doc_short_ids.len());
-    for &short_id in doc_short_ids {
-        if let Some(doc_id) = get_doc_id(systemstore, short_id).await? {
-            pairs.push((doc_id, short_id));
-        }
-    }
-    Ok(pairs)
+    crate::read::index_order::resolve_in_order(doc_short_ids, bound, |short_id| {
+        get_doc_id(systemstore, short_id)
+    })
+    .await
 }
 
 /// Resolve doc short IDs to public DocIDs, preserving order and skipping

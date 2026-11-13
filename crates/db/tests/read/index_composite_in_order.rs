@@ -1,7 +1,7 @@
 //! A partial `_in` over a composite index scans a prefix, so one `_in` value
 //! covers several distinct full index keys. Index order across those keys is
-//! the secondary field's order; the public-DocID tie-break (#1602) applies
-//! only within one full key.
+//! the secondary field's order, and within one full key it is the order the
+//! documents were created in (their short IDs), as in Go.
 
 use db::database::DB;
 use db::DbDocFetcher;
@@ -25,8 +25,10 @@ const INDEX: &str = "by_category_rank";
 const CATEGORY: &str = "a";
 
 /// Ranks repeat so one scan covers both the across-key order and the
-/// within-key tie-break.
-const SEED: [(&str, i64); 5] = [("p0", 1), ("p1", 1), ("p2", 2), ("p3", 2), ("p4", 3)];
+/// within-key creation order. They are seeded out of rank order, so a scan
+/// that kept plain creation order fails. `p3` is created before `p1` because
+/// p1's DocID sorts below p3's: a DocID tie-break within rank 1 fails too.
+const SEED: [(&str, i64); 5] = [("p0", 2), ("p3", 1), ("p2", 3), ("p1", 1), ("p4", 2)];
 
 fn schema() -> CollectionVersion {
     let mut version = CollectionVersion::new(
@@ -104,10 +106,10 @@ async fn populated() -> (Arc<DB<RegolithStore>>, Vec<(i64, String)>) {
     (db, seeded)
 }
 
-/// Index order: rank ascending, public DocID ascending within one rank.
+/// Index order: rank ascending, creation order within one rank.
 fn index_order(seeded: &[(i64, String)]) -> Vec<String> {
     let mut ordered = seeded.to_vec();
-    ordered.sort();
+    ordered.sort_by_key(|(rank, _)| *rank);
     ordered.into_iter().map(|(_, id)| id).collect()
 }
 
@@ -117,6 +119,12 @@ fn partial_in_over_a_composite_index_keeps_secondary_field_order() {
         let (db, seeded) = populated().await;
 
         let expected = index_order(&seeded);
+        let creation_only: Vec<String> = seeded.iter().map(|(_, id)| id.clone()).collect();
+        assert_ne!(
+            expected, creation_only,
+            "the seed must distinguish index order from plain creation order, \
+         otherwise this test cannot fail"
+        );
         let doc_id_only: Vec<String> = {
             let mut ids: Vec<String> = seeded.iter().map(|(_, id)| id.clone()).collect();
             ids.sort();
@@ -126,6 +134,15 @@ fn partial_in_over_a_composite_index_keeps_secondary_field_order() {
             expected, doc_id_only,
             "the seed must distinguish index order from a flat DocID sort, \
          otherwise this test cannot fail"
+        );
+        let mut doc_id_within_rank = seeded.clone();
+        doc_id_within_rank.sort();
+        let doc_id_within_rank: Vec<String> =
+            doc_id_within_rank.into_iter().map(|(_, id)| id).collect();
+        assert_ne!(
+            expected, doc_id_within_rank,
+            "the seed must have a same-rank pair whose DocIDs sort against their \
+         creation order, otherwise a DocID tie-break within one key passes"
         );
 
         let txn = db.new_txn(true).await.unwrap();
@@ -150,7 +167,7 @@ fn partial_in_over_a_composite_index_keeps_secondary_field_order() {
 
         assert_eq!(
             got, expected,
-            "a partial `_in` must return index order (rank, then DocID), not a \
+            "a partial `_in` must return index order (rank, then creation), not a \
          DocID sort spanning distinct ranks"
         );
     })

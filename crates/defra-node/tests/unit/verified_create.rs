@@ -365,3 +365,31 @@ fn verified_create_allows_disabled_nac_and_unbound_collection() {
         node.shutdown().await.unwrap();
     }).unwrap();
 }
+
+/// An identity-only node never signs, so a verified create is signed only by
+/// its caller, and it runs in a transaction the node began for no one.
+#[test]
+fn verified_create_on_an_identity_only_node_is_signed_by_its_caller() {
+    edge::testing::edge().block_on(async {
+        let (user, signing) = actor();
+        let user_did = user.did().unwrap().to_string();
+        let node = Node::builder().enable_signing().with_identity_only().build().await.unwrap();
+        node.add_collection("type PlainVerifiedRecord { name: String }").await.unwrap();
+        let schema = node.get_collection("PlainVerifiedRecord").unwrap().unwrap();
+        let input = json!({"name":"identity-only"});
+        let crdts = storage::Crdts::default();
+        let signed = db::block::builder::ClientCreateSignatures::from_input(&crdts, &schema, &input, &signing).unwrap();
+        let graph = db::block::builder::VerifiedClientCreate::verify(&crdts, &schema, &input, signed.evidence()).unwrap();
+        let request = query::QueryRequest::new("mutation($input:PlainVerifiedRecordMutationInputArg!) { create_PlainVerifiedRecord(input:$input) {_docID _version {cid}} }")
+            .with_variables(json!({"input":input})).with_identity(Some(user.did().unwrap()));
+        let txn = node.begin_transaction(false).await.unwrap();
+        let result = node.execute_verified_create_in_txn(request, &txn, &graph).await;
+        assert!(!result.has_errors(), "{:?}", result.errors);
+        let row = &result.data.as_ref().unwrap()["add_PlainVerifiedRecord"][0];
+        assert_eq!(row["_docID"], graph.doc_id());
+        let cid = row["_version"][0]["cid"].as_str().unwrap().to_owned();
+        node.commit_transaction(&txn).await.unwrap();
+        assert_user_signed_block(&node, &cid, &user_did, &signing).await;
+        node.shutdown().await.unwrap();
+    }).unwrap();
+}

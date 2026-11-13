@@ -176,9 +176,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             && select.filter.is_some()
             && !collection.indexes.is_empty()
             && fetcher.supports_index_queries()
-            && fetcher
-                .indexes_match_documents(&select.collection_name)
-                .await?
             && select
                 .filter
                 .as_ref()
@@ -190,9 +187,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             && select.order_by.is_some()
             && !collection.indexes.is_empty()
             && fetcher.supports_index_queries()
-            && fetcher
-                .indexes_match_documents(&select.collection_name)
-                .await?
             && select
                 .order_by
                 .as_ref()
@@ -208,9 +202,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             && select.filter.is_some()
             && !collection.indexes.is_empty()
             && fetcher.supports_index_queries()
-            && fetcher
-                .indexes_match_documents(&select.collection_name)
-                .await?
             && select
                 .filter
                 .as_ref()
@@ -274,16 +265,14 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             let collections: Vec<CollectionVersion> =
                 collections_map.values().map(|c| (**c).clone()).collect();
 
-            let mut planner = Planner::new(
-                crate::runner::plan::indexes_for_documents(fetcher, collections).await?,
-            )
-            .with_query_limits(self.query_limits)
-            .with_fetcher(Arc::new(fetcher_arc))
-            .with_acp(self.acp.clone(), caller_identity.clone())
-            .with_dac_bypass(self.context().dac_bypass())
-            .with_read_validator(self.read_validator.clone())
-            .with_retry_inputs(self.retry_inputs.clone())
-            .with_index_estimates(index_estimates);
+            let mut planner = Planner::new(collections)
+                .with_query_limits(self.query_limits)
+                .with_fetcher(Arc::new(fetcher_arc))
+                .with_acp(self.acp.clone(), caller_identity.clone())
+                .with_dac_bypass(self.context().dac_bypass())
+                .with_read_validator(self.read_validator.clone())
+                .with_retry_inputs(self.retry_inputs.clone())
+                .with_index_estimates(index_estimates);
             if let Some(ref lens_store) = self.lens_store {
                 planner = planner.with_lens_store(lens_store.clone());
             }

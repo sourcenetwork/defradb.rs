@@ -20,6 +20,13 @@
 \*      store.
 \* A Vera node told to stop may never finish: its runtime can hang while it
 \* is dropped.
+\* The `defradb` binary stops its Vera node at the same place in its own
+\* shutdown (crates/cli/src/commands/start/run.rs Node::run): after the HTTP
+\* server drained and P2P stopped, before the database closes. Its PostgreSQL
+\* server is stopped without a drain of its connections, as it was before the
+\* Vera node existed, so a query in flight there is not a request this model
+\* promises a decision: it is refused when the Vera node stops, as it is
+\* refused when the database closes a moment later.
 \*
 \* After a shutdown the host may build the next node over the same directory.
 \* Its Vera node waits for the directory's lock. While the earlier Vera node
