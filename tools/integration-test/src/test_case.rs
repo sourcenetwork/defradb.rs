@@ -104,16 +104,6 @@ impl State {
         })
     }
 
-    /// The index Go's harness gives the next node the test starts: how many
-    /// it started before, an unnamed one included, closed ones still counted.
-    /// The default node every test begins with is not one of them, as Go has
-    /// no counterpart of it.
-    pub fn next_go_node_index(&mut self) -> u64 {
-        let index = self.go_nodes_started;
-        self.go_nodes_started += 1;
-        index
-    }
-
     /// The node identity seed node `name` was started with, if any.
     pub fn node_identity_of(&self, name: &str) -> Option<u64> {
         self.slot(name).and_then(|slot| slot.spec.node_identity)
