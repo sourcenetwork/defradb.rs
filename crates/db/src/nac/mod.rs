@@ -366,7 +366,11 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
         permission: NodePermission,
     ) -> Result<bool> {
         if let Some(grants) = self.edge.current() {
-            return grants.check_permission(identity, permission).await;
+            return grants
+                .nac
+                .check_permission(identity, permission)
+                .await
+                .map_err(|e| Error::Acp(format!("permission check failed: {}", e)));
         }
         if let Some(scope) = self
             .nac
