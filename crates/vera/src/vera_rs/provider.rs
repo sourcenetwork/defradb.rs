@@ -239,7 +239,8 @@ impl VeraRsProvider {
     }
 }
 
-/// A relationship subject as vera.rs records it: an actor by its one DID.
+/// A relationship subject as vera.rs is sent it: an actor in the spelling
+/// vera.rs takes, which is the one an access check for it is sent in.
 fn vera_subject(
     kind: u8,
     resource: &str,
@@ -247,7 +248,7 @@ fn vera_subject(
     relation: &str,
 ) -> Result<zanzibar::Subject, ProviderError> {
     let object_id = if kind == 0 {
-        did_spelling::defra(object_id)
+        did_spelling::wire(object_id)
     } else {
         object_id.into()
     };

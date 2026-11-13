@@ -175,3 +175,42 @@ async fn an_actor_of_each_key_type_owns_grants_and_reads_through_vera() {
 
     node.stop().await.expect("stop");
 }
+
+/// A grant made through an entity subject names its actor as an access check
+/// does: a P-256 reader granted that way is admitted.
+#[nuclei::test]
+async fn a_p256_entity_subject_grant_admits_the_reader() {
+    let directory = tempfile::tempdir().unwrap();
+    let node = start(&directory.path().join("vera")).await;
+    let owner: Arc<dyn DelegationSigner> =
+        Arc::new(Secp256k1Signer::from_slice(&[42; 32]).expect("key"));
+    let owner_did = owner.did().to_owned();
+    let provider = provider(&node, &directory.path().join("owner"), owner).await;
+    let policy = provider.create_policy(POLICY).await.expect("policy");
+    let delegation = provider
+        .create_bearer_token(&owner_did)
+        .await
+        .expect("delegation");
+    provider
+        .register_object(&delegation, &policy, "document", "first")
+        .await
+        .expect("registration");
+
+    let reader = P256Signer::from_slice(&[43; 32])
+        .expect("key")
+        .did()
+        .to_owned();
+    provider
+        .set_relationship_subject(&policy, "document", "first", "reader", 0, "", &reader, "")
+        .await
+        .expect("grant through an entity subject");
+    assert!(
+        provider
+            .verify_access(&policy, "document", "first", "read", &reader)
+            .await
+            .expect("permission proof after the grant"),
+        "an entity-subject grant to {reader} admits it"
+    );
+
+    node.stop().await.expect("stop");
+}

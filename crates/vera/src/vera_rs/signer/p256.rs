@@ -1,6 +1,7 @@
 use crypto::{create_did_key, KeyType};
 use defra_core::thread_bounds::MaybeBoxFuture;
-use p256::ecdsa::SigningKey;
+use p256::ecdsa::signature::hazmat::PrehashSigner;
+use p256::ecdsa::{Signature, SigningKey};
 use sha2::{Digest, Sha256};
 
 use super::{DelegationAlgorithm, DelegationSigner, SignerError};
@@ -38,9 +39,10 @@ impl DelegationSigner for P256Signer {
         signing_input: &'a [u8],
     ) -> MaybeBoxFuture<'a, Result<Vec<u8>, SignerError>> {
         let digest = Sha256::digest(signing_input);
-        let (signature, _) = self.key.sign_prehash_recoverable(digest.as_ref());
         // P-256 signing does not pick the lower `s`; vera.rs accepts no other.
-        let signature = signature.normalize_s().to_bytes().to_vec();
-        Box::pin(std::future::ready(Ok(signature)))
+        let signature = PrehashSigner::<Signature>::sign_prehash(&self.key, digest.as_ref())
+            .map(|signature| signature.normalize_s().to_bytes().to_vec())
+            .map_err(SignerError::from);
+        Box::pin(std::future::ready(signature))
     }
 }
