@@ -194,7 +194,7 @@ impl<S: Store> DB<S> {
 
     /// Write the definition of a new index and its in-progress action into
     /// `txn`, and refresh the collection cache when `txn` commits.
-    async fn stage_index_definition(
+    pub(super) async fn stage_index_definition(
         &self,
         txn: &DbTxn<S>,
         collection: &Collection,
@@ -265,7 +265,7 @@ impl<S: Store> DB<S> {
     }
 
     /// Announce a committed definition and plan its backfill.
-    async fn publish_index_definition(
+    pub(super) async fn publish_index_definition(
         &self,
         collection_name: &str,
         collection_id: &str,

@@ -655,6 +655,52 @@ pub trait QueryExecutor: MaybeSendSync {
         ))
     }
 
+    /// [`TransactionRegistry::create_index_in_txn_as`](crate::txn::TransactionRegistry::create_index_in_txn_as).
+    async fn create_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: Option<&str>,
+        fields: Vec<schema::IndexedFieldDescription>,
+        kind: schema::IndexKind,
+    ) -> std::result::Result<schema::IndexDescription, TransactionError> {
+        let _ = (context, collection, name, fields, kind);
+        Err(TransactionError::not_supported(
+            "this index operation is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::drop_index_in_txn_as`](crate::txn::TransactionRegistry::drop_index_in_txn_as).
+    async fn drop_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, collection, name);
+        Err(TransactionError::not_supported(
+            "this index operation is not supported by this executor",
+        ))
+    }
+
+    /// [`TransactionRegistry::indexes_in_txn_as`](crate::txn::TransactionRegistry::indexes_in_txn_as).
+    async fn indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> std::result::Result<
+        (
+            schema::CollectionVersion,
+            rapidhash::RapidHashMap<u32, defra_core::ActionExecution>,
+        ),
+        TransactionError,
+    > {
+        let _ = (context, collection);
+        Err(TransactionError::not_supported(
+            "this index operation is not supported by this executor",
+        ))
+    }
+
     /// [`TransactionRegistry::set_active_collection_version_as`](crate::txn::TransactionRegistry::set_active_collection_version_as).
     async fn set_active_collection_version_as(
         &self,

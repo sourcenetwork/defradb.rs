@@ -315,6 +315,44 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
             .await
     }
 
+    async fn create_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: Option<&str>,
+        fields: Vec<schema::IndexedFieldDescription>,
+        kind: schema::IndexKind,
+    ) -> std::result::Result<schema::IndexDescription, TransactionError> {
+        self.registry
+            .create_index_in_txn_as(context, collection, name, fields, kind)
+            .await
+    }
+
+    async fn drop_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        self.registry
+            .drop_index_in_txn_as(context, collection, name)
+            .await
+    }
+
+    async fn indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> std::result::Result<
+        (
+            schema::CollectionVersion,
+            rapidhash::RapidHashMap<u32, defra_core::ActionExecution>,
+        ),
+        TransactionError,
+    > {
+        self.registry.indexes_in_txn_as(context, collection).await
+    }
+
     async fn set_active_collection_version_as(
         &self,
         context: &RequestContext,
