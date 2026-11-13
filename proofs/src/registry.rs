@@ -2369,9 +2369,20 @@ pub const PROPERTIES: &[Property] = &[
         name: "INV_OwedKept — work a deferred index owes is always asked for or being drained",
         axis: Tla,
         anchor: "crates/db/src/index/deferred/task.rs",
-        model_ref: "MC_DeferredDrainTask_{Green,Red_StopAtFailure,Red_DropFailed,Red_NoRequeue,Red_SilentPurge,Red_RearmSweep,Red_NoSweep,Red_RequestFirst}.cfg",
+        model_ref: "MC_DeferredDrainTask_{Green,Red_StopAtFailure,Red_DropFailed,Red_NoRequeue,Red_SilentPurge,Red_RearmSweep,Red_NoSweep,Red_RequestFirst,Red_SharedNote}.cfg",
         tiers: &[Boundary],
         bound_by: "crates/db/tests/index/deferred_task.rs",
+    },
+    Property {
+        // A batch asks for each deferred index's drain once per attempt, not
+        // once per document it owes.
+        family: "Index-maintenance consistency",
+        name: "INV_OneAsk — an attempt registers one drain callback per deferred index it owes",
+        axis: Tla,
+        anchor: "crates/db/src/index/manager/deferred.rs IndexManager::owe",
+        model_ref: "MC_DeferredDrainTask_{Green,Red_AskPerDoc}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/db/tests/index/deferred/requests.rs",
     },
     Property {
         // The drain finds a document's old entries only through its position

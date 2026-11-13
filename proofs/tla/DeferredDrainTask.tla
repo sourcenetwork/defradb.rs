@@ -10,9 +10,15 @@
 \* may fail. The sweep also covers what a crash forgot: a reopened node runs
 \* one sweep pass first (the settle at open).
 \*
-\* Who acts: a hot index written all the time; a quiet index written twice,
-\* once by a purge and once by an update, whose drain can fail once; a poison
-\* index whose drain always fails; the drain task; time; one crash.
+\* Who acts: a hot index written all the time; a quiet index written by a
+\* purge and by a batch update, whose drain can fail once; a poison index
+\* whose drain always fails; the drain task; time; one crash.
+\*
+\* A batch update owes the quiet index once per document but asks for its
+\* drain once per attempt: the first document it owes registers the one
+\* commit callback, the rest see it already asked. The batch may abort and
+\* run again, and the note that it already asked must not outlive the
+\* attempt, or the next attempt commits work nobody asked for.
 \*
 \* What must never happen: an index owes work that nobody has asked for and no
 \* pass is about to do; the quiet index stays owed forever while the hot index
@@ -29,7 +35,12 @@
 \*                                            next_wake (the fixed sweep deadline,
 \*                                            a due sweep first), the settle at open
 \*   crates/db/src/index/deferred/requests.rs DrainRequests::request, defer, take
-\*   crates/db/src/index/manager/deferred.rs  IndexManager::owe (asks on commit)
+\*                                            (a set of indexes: queue below)
+\*   crates/db/src/index/manager/deferred.rs  IndexManager::owe (the first owe of
+\*                                            an index asks on commit; the note is
+\*                                            the manager's, built per attempt)
+\*   crates/db/src/write/autocommit/create.rs, delete.rs  the batch: one manager
+\*                                            per attempt, many documents
 \*   crates/db/src/collection/ops/purge.rs    purge_documents (asks like any write)
 \*   crates/db/src/definition/migration/helpers.rs cache_migrated_document_with_indexes
 EXTENDS Naturals, FiniteSets
@@ -37,14 +48,15 @@ EXTENDS Naturals, FiniteSets
 CONSTANTS
   Poison,        \* the index whose drain always fails; first in the task's order
   Hot,           \* the index a steady stream of writes keeps owing
-  Quiet,         \* the index a purge and an update owe once each; its drain may fail once
+  Quiet,         \* the index a purge and a batch update owe; its drain may fail once
   Interval,      \* how many ticks pass before the sweep is due
   Isolate,       \* "On": a failing index leaves the rest of the pass alone | "Off": the pass stops there
   KeepFailed,    \* "On": a failed index is kept for the next sweep | "Off": its request is dropped
   Requeue,       \* "On": an index with work left after its turn asks again | "Off": it does not
   PurgeRequests, \* "On": a purge asks for a drain like any write | "Off": it only owes
   SweepTimer,    \* "Fixed": a request does not push the sweep back | "Rearm": every pass restarts it | "None": no sweep
-  SweepFirst     \* "On": a due sweep wins over a stored request | "Off": either may win
+  SweepFirst,    \* "On": a due sweep wins over a stored request | "Off": either may win
+  AskOnce        \* "PerTxn": a batch asks once per attempt | "PerDoc": once per document | "Shared": its note outlives the attempt
 
 \* The three indexes, in the order a pass visits them.
 Indexes == {Poison, Hot, Quiet}
@@ -60,6 +72,7 @@ ASSUME Requeue \in {"On", "Off"}
 ASSUME PurgeRequests \in {"On", "Off"}
 ASSUME SweepTimer \in {"Fixed", "Rearm", "None"}
 ASSUME SweepFirst \in {"On", "Off"}
+ASSUME AskOnce \in {"PerTxn", "PerDoc", "Shared"}
 
 VARIABLES
   owed,      \* turns of work each index's log holds: 0, 1, or 2 (2 means "more than one turn")
@@ -72,11 +85,19 @@ VARIABLES
   sweeping,  \* whether the running pass is a sweep
   flaky,     \* whether the quiet index's one failure can still happen
   purged,    \* whether the purge happened
-  updated,   \* whether the quiet index's update happened
+  tx,        \* the batch update's attempt: "Idle" (none open) or "Open"
+  tries,     \* how many attempts the batch has started, at most two
+  docs,      \* documents the open attempt owes the quiet index, at most two
+  asks,      \* commit callbacks the open attempt registered for the quiet index
+  noted,     \* whether the batch's note says the quiet index is already asked for
   crashed    \* whether the one crash happened
 
 \* Every variable, for stuttering and fairness.
-vars == <<owed, queue, permit, failed, timer, pc, todo, sweeping, flaky, purged, updated, crashed>>
+vars == <<owed, queue, permit, failed, timer, pc, todo, sweeping, flaky, purged,
+          tx, tries, docs, asks, noted, crashed>>
+
+\* The batch's variables, for the steps that leave them alone.
+batch == <<tx, tries, docs, asks, noted>>
 
 \* The first index of a set in the task's order.
 First(S) == CHOOSE i \in S : \A j \in S : i <= j
@@ -97,6 +118,11 @@ TypeOK ==
   /\ pc \in {"Wait", "Pass"}             \* the task's step
   /\ todo \subseteq Indexes              \* the pass's work
   /\ sweeping \in BOOLEAN                \* a sweep or not
+  /\ tx \in {"Idle", "Open"}             \* the batch's attempt
+  /\ tries \in 0..2                      \* attempts started
+  /\ docs \in 0..2                       \* documents owed by the attempt
+  /\ asks \in 0..2                       \* callbacks the attempt registered
+  /\ noted \in BOOLEAN                   \* the batch's note
 
 \* The node opens with the poison index owing work, and settles: a sweep pass first.
 Init ==
@@ -110,7 +136,9 @@ Init ==
   /\ sweeping = TRUE                     \* the settle is a sweep
   /\ flaky = TRUE                        \* the quiet index can still fail once
   /\ purged = FALSE                      \* no purge yet
-  /\ updated = FALSE                     \* no update yet
+  /\ tx = "Idle" /\ tries = 0            \* no batch attempt yet
+  /\ docs = 0 /\ asks = 0                \* nothing owed or asked by one
+  /\ noted = FALSE                       \* and no note
   /\ crashed = FALSE                     \* no crash yet
 
 \* A write to the hot index commits: it owes a turn and asks for a drain.
@@ -118,7 +146,7 @@ HotWrite ==
   /\ Owe(Hot)                            \* the log grows
   /\ queue' = queue \cup {Hot}           \* the commit asks for the index
   /\ permit' = TRUE                      \* and wakes the task
-  /\ UNCHANGED <<failed, timer, pc, todo, sweeping, flaky, purged, updated, crashed>>
+  /\ UNCHANGED <<failed, timer, pc, todo, sweeping, flaky, purged, batch, crashed>>
 
 \* A purge on the quiet collection commits: it owes, and asks only if purges ask.
 Purge ==
@@ -128,23 +156,50 @@ Purge ==
   /\ IF PurgeRequests = "On"
      THEN queue' = queue \cup {Quiet} /\ permit' = TRUE   \* asks like any write
      ELSE UNCHANGED <<queue, permit>>                     \* owes in silence
-  /\ UNCHANGED <<failed, timer, pc, todo, sweeping, flaky, updated, crashed>>
+  /\ UNCHANGED <<failed, timer, pc, todo, sweeping, flaky, batch, crashed>>
 
-\* An update on the quiet collection commits: it owes and asks.
-QuietUpdate ==
-  /\ ~updated                            \* one update is enough to explore
-  /\ updated' = TRUE
+\* A batch update on the quiet collection starts an attempt: a fresh manager,
+\* so a fresh note, unless the bug keeps the note across attempts.
+BatchBegin ==
+  /\ tx = "Idle" /\ tries < 2           \* an abort and one more try are enough to explore
+  /\ tx' = "Open" /\ tries' = tries + 1 \* the attempt opens
+  /\ docs' = 0 /\ asks' = 0              \* nothing owed or asked yet
+  /\ noted' = IF AskOnce = "Shared" THEN noted ELSE FALSE   \* the bug: the note survives
+  /\ UNCHANGED <<owed, queue, permit, failed, timer, pc, todo, sweeping, flaky, purged, crashed>>
+
+\* The attempt owes the quiet index one document. Only the first owe of the
+\* attempt registers the commit callback, unless the bug asks per document.
+BatchOwe ==
+  /\ tx = "Open" /\ docs < 2             \* two documents are enough to explore
+  /\ docs' = docs + 1                    \* one more document owed, in the attempt only
+  /\ IF AskOnce = "PerDoc" \/ ~noted
+     THEN asks' = asks + 1 /\ noted' = TRUE   \* registers a callback and notes it
+     ELSE UNCHANGED <<asks, noted>>           \* already asked in this attempt
+  /\ UNCHANGED <<owed, queue, permit, failed, timer, pc, todo, sweeping, flaky, purged, tx, tries, crashed>>
+
+\* The attempt commits: its documents land in the log and its callback asks
+\* for the drain. A second ask would add nothing to the set.
+BatchCommit ==
+  /\ tx = "Open" /\ docs > 0             \* it owes something
   /\ Owe(Quiet)                          \* the log grows
-  /\ queue' = queue \cup {Quiet}         \* the commit asks for the index
-  /\ permit' = TRUE                      \* and wakes the task
-  /\ UNCHANGED <<failed, timer, pc, todo, sweeping, flaky, purged, crashed>>
+  /\ IF asks > 0
+     THEN queue' = queue \cup {Quiet} /\ permit' = TRUE   \* the callback asks and wakes the task
+     ELSE UNCHANGED <<queue, permit>>                     \* nobody asks
+  /\ tx' = "Idle" /\ docs' = 0 /\ asks' = 0   \* the attempt is over
+  /\ UNCHANGED <<failed, timer, pc, todo, sweeping, flaky, purged, tries, noted, crashed>>
+
+\* The attempt aborts: its documents and callbacks are dropped unrun.
+BatchAbort ==
+  /\ tx = "Open"                         \* an attempt is open
+  /\ tx' = "Idle" /\ docs' = 0 /\ asks' = 0   \* nothing it did stays
+  /\ UNCHANGED <<owed, queue, permit, failed, timer, pc, todo, sweeping, flaky, purged, tries, noted, crashed>>
 
 \* Time passes toward the sweep.
 Tick ==
   /\ SweepTimer /= "None"                \* there is a timer to run
   /\ timer < Interval                    \* it has not run out
   /\ timer' = timer + 1
-  /\ UNCHANGED <<owed, queue, permit, failed, pc, todo, sweeping, flaky, purged, updated, crashed>>
+  /\ UNCHANGED <<owed, queue, permit, failed, pc, todo, sweeping, flaky, purged, batch, crashed>>
 
 \* The task wakes for the sweep: every index, and the requests too.
 WakeSweep ==
@@ -154,7 +209,7 @@ WakeSweep ==
   /\ todo' = Indexes                     \* it visits every index
   /\ queue' = {}                         \* it takes the requests with it
   /\ timer' = 0                          \* the sweep is armed again
-  /\ UNCHANGED <<owed, permit, failed, flaky, purged, updated, crashed>>
+  /\ UNCHANGED <<owed, permit, failed, flaky, purged, batch, crashed>>
 
 \* The task wakes for a request and takes every index asked for.
 WakeRequest ==
@@ -165,7 +220,7 @@ WakeRequest ==
   /\ todo' = queue                       \* it visits what was asked for
   /\ queue' = {} /\ permit' = FALSE      \* the requests and the wake are taken
   /\ timer' = IF SweepTimer = "Rearm" THEN 0 ELSE timer   \* the bug: a pass pushes the sweep back
-  /\ UNCHANGED <<owed, failed, flaky, purged, updated, crashed>>
+  /\ UNCHANGED <<owed, failed, flaky, purged, batch, crashed>>
 
 \* The pass visits its next index.
 Visit ==
@@ -197,15 +252,16 @@ Visit ==
            ELSE UNCHANGED <<queue, permit>>
         /\ todo' = todo \ {i}            \* the pass moves on
         /\ UNCHANGED flaky
-  /\ UNCHANGED <<timer, pc, sweeping, purged, updated, crashed>>
+  /\ UNCHANGED <<timer, pc, sweeping, purged, batch, crashed>>
 
 \* The pass is over and the task goes back to sleep.
 PassEnd ==
   /\ pc = "Pass" /\ todo = {}            \* nothing left to visit
   /\ pc' = "Wait" /\ sweeping' = FALSE   \* asleep again
-  /\ UNCHANGED <<owed, queue, permit, failed, timer, todo, flaky, purged, updated, crashed>>
+  /\ UNCHANGED <<owed, queue, permit, failed, timer, todo, flaky, purged, batch, crashed>>
 
-\* A crash forgets the requests, the wake and the failures; the logs stay.
+\* A crash forgets the requests, the wake, the failures and an open attempt;
+\* the logs stay.
 \* The reopened node settles with a sweep pass.
 Crash ==
   /\ ~crashed                            \* one crash is enough to explore
@@ -214,11 +270,14 @@ Crash ==
   /\ failed' = {}                        \* so did the failures
   /\ pc' = "Pass" /\ todo' = Indexes /\ sweeping' = TRUE   \* the settle at open
   /\ timer' = 0                          \* a fresh sweep timer
-  /\ UNCHANGED <<owed, flaky, purged, updated>>
+  /\ tx' = "Idle" /\ docs' = 0 /\ asks' = 0   \* an open attempt dies with the process
+  /\ noted' = FALSE                      \* and so does the note
+  /\ UNCHANGED <<owed, flaky, purged, tries>>
 
 \* Any one step happens next.
 Next ==
-  \/ HotWrite \/ Purge \/ QuietUpdate \/ Tick
+  \/ HotWrite \/ Purge \/ Tick
+  \/ BatchBegin \/ BatchOwe \/ BatchCommit \/ BatchAbort
   \/ WakeSweep \/ WakeRequest \/ Visit \/ PassEnd \/ Crash
 
 \* Time passes, the task keeps running when it can, and the hot index is written forever.
@@ -234,6 +293,9 @@ INV_TypeOK == TypeOK
 
 \* Work an index owes is always asked for, or in the pass now running.
 INV_OwedKept == \A i \in Indexes : owed[i] > 0 => i \in queue \cup todo
+
+\* An attempt registers at most one commit callback per index it owes.
+INV_OneAsk == asks <= 1
 
 \* The quiet index ends up owing nothing, however busy the hot index keeps the task.
 PROP_QuietSettles == <>[](owed[Quiet] = 0)

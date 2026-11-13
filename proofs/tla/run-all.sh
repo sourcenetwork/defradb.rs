@@ -675,6 +675,8 @@ RUNS=(
   "MC_DeferredDrainTask_Red_RearmSweep.cfg DeferredDrainTask.tla RED" # each pass restarts the sweep timer, so steady traffic holds it off (PROP_QuietSettles)
   "MC_DeferredDrainTask_Red_NoSweep.cfg DeferredDrainTask.tla RED" # no sweep, as on wasm: a failed index is never retried (PROP_QuietSettles)
   "MC_DeferredDrainTask_Red_RequestFirst.cfg DeferredDrainTask.tla RED" # a stored request beats a due sweep every time (PROP_QuietSettles)
+  "MC_DeferredDrainTask_Red_AskPerDoc.cfg DeferredDrainTask.tla RED" # a batch registers a commit callback per document it owes (INV_OneAsk)
+  "MC_DeferredDrainTask_Red_SharedNote.cfg DeferredDrainTask.tla RED" # the note that a batch asked outlives its attempt, so a later commit never asks (INV_OwedKept)
   "MC_DocumentMaterialization_Red_Overwrite.cfg DocumentMaterialization.tla RED" # active rematerialization must not clear delete marker
   "MC_DocumentMaterialization_Green.cfg DocumentMaterialization.tla GREEN" # deletion marker is componentwise/absorbing
   "MC_PushLogAdmission_Green.cfg MC_PushLogAdmission_Common.tla GREEN" # #1088 W1: capacity overflow nacks -> success implies registered-or-merged + all docs merge
