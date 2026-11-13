@@ -571,6 +571,10 @@ RUNS=(
   "MC_DeferredIndex_Green_Drop.cfg DeferredIndex.tla GREEN" # a drop truncates the log in pages from the first entry left
   "MC_DeferredIndex_Red_DropWhole.cfg DeferredIndex.tla RED" # a drop truncates the whole backlog in one transaction (INV_CleanupBounded)
   "MC_DeferredIndex_Red_DropFromOne.cfg DeferredIndex.tla RED" # each drop page truncates from position 1 (INV_CleanupBounded)
+  "MC_DeferredIndex_Green_Poison.cfg DeferredIndex.tla GREEN" # a document that never migrates stays owed and the rest drain
+  "MC_DeferredIndex_Green_PoisonFixed.cfg DeferredIndex.tla GREEN" # a broken document drains once its lens is fixed
+  "MC_DeferredIndex_Red_PoisonAborts.cfg DeferredIndex.tla RED" # a broken document aborts the whole drain and holds the rest (PROP_HealthyDrains)
+  "MC_DeferredIndex_Red_PoisonDropped.cfg DeferredIndex.tla RED" # a broken document is truncated and forgotten (INV_ReadExact)
   "MC_DeferredIndexMode_Green.cfg DeferredIndexMode.tla GREEN" # an index kept the other way on an earlier start is rebuilt at open
   "MC_DeferredIndexMode_Red_NoCheck.cfg DeferredIndexMode.tla RED" # no check at open: inline entries open deferred with no records (INV_OpenMatchesMode)
   "MC_DeferredIndexMode_Red_OneWay.cfg DeferredIndexMode.tla RED" # the check misses a deferred index that opens inline (INV_OpenMatchesMode)

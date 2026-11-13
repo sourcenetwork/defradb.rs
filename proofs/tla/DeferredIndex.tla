@@ -31,15 +31,27 @@
 \* is left of the log in pages, each its own transaction, each starting at
 \* the first entry still there.
 \*
+\* Some documents may be broken: their lens migration fails, so a drain cannot
+\* learn their live value. The drain moves the other documents it planned,
+\* appends each broken one to the log again, and truncates its plan as usual.
+\* The broken document stays owed at the tail and drains once someone fixes
+\* the lens. A deleted broken document needs no migration, so it drains. A
+\* drain whose every planned entry would be appended again writes nothing.
+\* The model takes the plan's cap to hold more entries than there are broken
+\* documents; past that, the code moves a full plan of them to the tail so
+\* the entries behind come forward.
+\*
 \* Who acts: plain increments and deletes (one transaction each), one
 \* explicit transaction that increments and reads, two drains, a reindex, a
-\* drop, and a crash that loses whatever was not committed.
+\* drop, a crash that loses whatever was not committed, and an operator who
+\* may fix a broken document's lens.
 \*
 \* What must never happen: a read through the index returns a document whose
 \* value does not match, or misses one that does; the index holds an entry
 \* the position record does not name; work is left in the log forever; a
 \* drain aborts the explicit transaction; a drop truncates more than a page
-\* of positions in one transaction.
+\* of positions in one transaction; a broken document holds the others in
+\* the log.
 \*
 \* When a drain runs (requests, the sweep, a failing index) is modelled in
 \* DeferredDrainTask.tla; here a drain may start whenever something is owed.
@@ -49,8 +61,9 @@
 \*                                            IndexManager::place (a create),
 \*                                            IndexManager::replace (the walk's record read
 \*                                            and the record put it relies on)
-\*   crates/db/src/index/deferred/drain.rs    plan (snapshot), apply (position
-\*                                            record, live value), truncate
+\*   crates/db/src/index/deferred/drain.rs    plan (snapshot), apply (live value,
+\*                                            then position record; a failed
+\*                                            document appended again), truncate
 \*   crates/db/src/index/manager/read.rs      IndexManager::read_index (owed docs,
 \*                                            own appends included, records read
 \*                                            unvalidated)
@@ -77,7 +90,11 @@ CONSTANTS
   Drop,        \* "On": the index may be dropped | "Off": it never is
   Cleanup,     \* "Paged": a drop page truncates up to Page entries from the first one left |
                \* "Whole": all that is left at once | "FromOne": up to Page past the first left, but from position 1
-  Page         \* the most log entries one drop page takes
+  Page,        \* the most log entries one drop page takes
+  Poisoned,    \* the documents whose migration fails at the start
+  Carry,       \* "Tail": a drain appends a broken document again and drains the rest |
+               \* "Abort": a broken document aborts the whole drain | "Drop": it is truncated and forgotten
+  Fixed        \* "Eventually": the operator fixes every broken document | "Never": nobody does
 
 \* Each switch takes one of its values.
 ASSUME Overlay \in {"On", "Off"}
@@ -90,6 +107,10 @@ ASSUME WalkRecord \in {"Delete", "Overwrite"}
 ASSUME WalkCheck \in {"WriteConflict", "None"}
 ASSUME Drop \in {"On", "Off"}
 ASSUME Cleanup \in {"Paged", "Whole", "FromOne"}
+ASSUME Carry \in {"Tail", "Abort", "Drop"}
+ASSUME Fixed \in {"Eventually", "Never"}
+\* Only documents can be broken.
+ASSUME Poisoned \subseteq Docs
 \* At least one write, or nothing happens.
 ASSUME MaxSteps \in Nat \ {0}
 \* A page takes at least one entry, or a drop never finishes.
@@ -110,6 +131,8 @@ VARIABLES
   dDocs,    \* each drain's planned documents
   dRec,     \* the position records each drain read
   dLive,    \* the live values each drain read (None for a deleted document)
+  dFirst,   \* each drain's first planned position
+  dFail,    \* the planned documents each drain could not migrate
   txOpen,   \* whether the explicit transaction is open
   txd,      \* the increments the open transaction made, per document
   txApp,    \* the documents the open transaction appended to the log
@@ -127,11 +150,12 @@ VARIABLES
   wRec,     \* the record the walk read for each document
   wLive,    \* the value the walk read for each document (None for a deleted one)
   dropped,  \* whether the index was dropped
-  biggest   \* the most log positions one drop page truncated
+  biggest,  \* the most log positions one drop page truncated
+  broken    \* the documents whose migration fails now
 
-vars == <<value, alive, index, rec, log, trunc, dpc, dP, dDocs, dRec, dLive,
+vars == <<value, alive, index, rec, log, trunc, dpc, dP, dDocs, dRec, dLive, dFirst, dFail,
           txOpen, txd, txApp, sValue, sAlive, sIndex, sOwed, sRec, txAborted, steps, crashed,
-          rx, walked, wpc, wRec, wLive, dropped, biggest>>
+          rx, walked, wpc, wRec, wLive, dropped, biggest, broken>>
 
 \* The values the check can reach.
 Values == 0..MaxSteps
@@ -140,10 +164,16 @@ Values == 0..MaxSteps
 Max(a, b) == IF a > b THEN a ELSE b
 Min(a, b) == IF a < b THEN a ELSE b
 
+\* A set of documents as a sequence, in any order: the order a drain appends them in.
+AsSeq(S) == CHOOSE f \in [1..Cardinality(S) -> S] :
+              \A i, j \in 1..Cardinality(S) : i /= j => f[i] /= f[j]   \* each document once
+
 \* The documents still in the log: appended, and not yet truncated.
 Owed == {log[p] : p \in (trunc + 1)..Len(log)}
 
 \* What a read through the index finds for the value q, at the current state.
+\* A read that meets a broken owed document fails in the code; it never
+\* answers wrongly, so the model lets it answer with the live value.
 Found(q) ==
   IF Overlay = "On"
   THEN {d \in Docs \ Owed : <<d, q>> \in index}                      \* stored entries of settled docs
@@ -175,6 +205,7 @@ TypeOK ==
   /\ wpc \in [Docs -> {"Idle", "Read"}]               \* walk steps
   /\ dropped \in BOOLEAN                              \* the index is dropped or not
   /\ biggest \in Nat                                  \* a count of positions
+  /\ broken \subseteq Poisoned                       \* only poisoned documents are broken
 
 \* Each document exists at 0 with its entry and record; nothing is owed.
 Init ==
@@ -189,6 +220,8 @@ Init ==
   /\ dDocs = [r \in Drains |-> {}]             \* no planned docs
   /\ dRec = [r \in Drains |-> [d \in Docs |-> None]]   \* nothing read
   /\ dLive = [r \in Drains |-> [d \in Docs |-> None]]  \* nothing read
+  /\ dFirst = [r \in Drains |-> 0]             \* no plan
+  /\ dFail = [r \in Drains |-> {}]             \* nothing failed
   /\ txOpen = FALSE                            \* no transaction open
   /\ txd = [d \in Docs |-> 0]                  \* no own increments
   /\ txApp = <<>>                              \* no own appends
@@ -204,13 +237,14 @@ Init ==
   /\ wLive = [d \in Docs |-> None]             \* nothing read
   /\ dropped = FALSE                           \* the index exists
   /\ biggest = 0                               \* no drop page yet
+  /\ broken = Poisoned                         \* the poisoned documents start broken
 
 \* The transaction state, left as is.
 txVars == <<txOpen, txd, txApp, sValue, sAlive, sIndex, sOwed, sRec, txAborted>>
 \* The drains' state, left as is.
-drainVars == <<dpc, dP, dDocs, dRec, dLive>>
+drainVars == <<dpc, dP, dDocs, dRec, dLive, dFirst, dFail>>
 \* The reindex and drop state, left as is.
-lifeVars == <<rx, walked, wpc, wRec, wLive, dropped, biggest>>
+lifeVars == <<rx, walked, wpc, wRec, wLive, dropped, biggest, broken>>
 
 \* A plain increment: blind on the counter, blind append to the log.
 Increment(d) ==
@@ -281,8 +315,10 @@ Plan(r) ==
   /\ \E p \in (trunc + 1)..Len(log) :          \* the planned head
        /\ dP' = [dP EXCEPT ![r] = p]
        /\ dDocs' = [dDocs EXCEPT ![r] = {log[i] : i \in (trunc + 1)..p}]
+       /\ p = Len(log) \/ p - trunc > Cardinality(Poisoned)   \* the cap holds more entries than there are broken docs
+  /\ dFirst' = [dFirst EXCEPT ![r] = trunc + 1]   \* where the plan starts
   /\ dpc' = [dpc EXCEPT ![r] = "Planned"]      \* the apply is next
-  /\ UNCHANGED <<dRec, dLive, value, alive, index, rec, log, trunc, steps, crashed>> /\ UNCHANGED txVars
+  /\ UNCHANGED <<dRec, dLive, dFail, value, alive, index, rec, log, trunc, steps, crashed>> /\ UNCHANGED txVars
   /\ UNCHANGED lifeVars
 
 \* The drain's apply transaction reads each planned doc's record and live value.
@@ -290,26 +326,49 @@ Read(r) ==
   /\ dpc[r] = "Planned"                        \* has a plan
   /\ dRec' = [dRec EXCEPT ![r] = rec]          \* the position records
   /\ dLive' = [dLive EXCEPT ![r] = [d \in Docs |-> IF alive[d] THEN value[d] ELSE None]]   \* live values, unvalidated
+  /\ dFail' = [dFail EXCEPT ![r] = {d \in dDocs[r] : alive[d] /\ d \in broken}]   \* a live broken doc fails to migrate
   /\ dpc' = [dpc EXCEPT ![r] = "Read"]         \* the commit is next
-  /\ UNCHANGED <<dP, dDocs, value, alive, index, rec, log, trunc, steps, crashed>> /\ UNCHANGED txVars
+  /\ UNCHANGED <<dP, dDocs, dFirst, value, alive, index, rec, log, trunc, steps, crashed>> /\ UNCHANGED txVars
   /\ UNCHANGED lifeVars
 
 \* The drain's apply transaction commits, or aborts and runs again on a changed record.
+\* Only the records of documents it could migrate are read, so only they are checked.
 Commit(r) ==
   /\ dpc[r] = "Read"                           \* has read its inputs
-  /\ IF RecordRead = "Validated" /\ \E d \in dDocs[r] : rec[d] /= dRec[r][d]
+  /\ LET ok == dDocs[r] \ dFail[r]              \* the planned documents it can move
+         carried == IF Carry = "Tail" THEN dFail[r] ELSE {}   \* those it appends again
+         taken == dP[r] - dFirst[r] + 1          \* how many entries its plan took
+     IN
+     IF RecordRead = "Validated" /\ \E d \in ok : rec[d] /= dRec[r][d]
      THEN /\ dpc' = [dpc EXCEPT ![r] = "Planned"]   \* another drain moved a record: run the apply again
-          /\ UNCHANGED <<index, rec, trunc>>
-     ELSE /\ IF dropped                        \* the index is gone: only the truncate is left
-             THEN UNCHANGED <<index, rec>>
-             ELSE /\ index' = (index \ {<<d, dRec[r][d]>> : d \in dDocs[r]})          \* old entries out
-                              \cup {<<d, dLive[r][d]>> : d \in {e \in dDocs[r] : dLive[r][e] /= None}}   \* live entries in
-                  /\ rec' = [d \in Docs |-> IF d \in dDocs[r] THEN dLive[r][d] ELSE rec[d]]   \* records follow
+          /\ UNCHANGED <<index, rec, trunc, log>>
+     ELSE IF dropped                            \* the index is gone: only the truncate is left
+     THEN /\ trunc' = LET upto == IF Truncate = "Planned" THEN dP[r] ELSE Len(log)    \* how far it truncates
+                      IN Max(upto, trunc)
+          /\ dpc' = [dpc EXCEPT ![r] = "Idle"]      \* done
+          /\ UNCHANGED <<index, rec, log>>
+     ELSE IF \/ Carry = "Abort" /\ dFail[r] /= {}              \* the bug: one broken doc aborts it all
+             \/ ok = {} /\ Cardinality(carried) = taken        \* carrying all it took only renumbers
+     THEN /\ dpc' = [dpc EXCEPT ![r] = "Idle"]      \* nothing changes; the task tries again later
+          /\ UNCHANGED <<index, rec, trunc, log>>
+     ELSE /\ index' = (index \ {<<d, dRec[r][d]>> : d \in ok})          \* old entries out
+                      \cup {<<d, dLive[r][d]>> : d \in {e \in ok : dLive[r][e] /= None}}   \* live entries in
+          /\ rec' = [d \in Docs |-> IF d \in ok THEN dLive[r][d] ELSE rec[d]]   \* records follow
+          /\ log' = log \o AsSeq(carried)            \* broken docs owed again at the tail
           /\ trunc' = LET upto == IF Truncate = "Planned" THEN dP[r] ELSE Len(log)    \* how far it truncates
                       IN Max(upto, trunc)
           /\ dpc' = [dpc EXCEPT ![r] = "Idle"]      \* done
-  /\ UNCHANGED <<dP, dDocs, dRec, dLive, value, alive, log, steps, crashed>> /\ UNCHANGED txVars
+  /\ UNCHANGED <<dP, dDocs, dRec, dLive, dFirst, dFail, value, alive, steps, crashed>> /\ UNCHANGED txVars
   /\ UNCHANGED lifeVars
+
+\* The operator fixes a broken document's lens, so it migrates from now on.
+Fix(d) ==
+  /\ Fixed = "Eventually"                      \* a fix may happen
+  /\ d \in broken                              \* the document is broken
+  /\ broken' = broken \ {d}                    \* and now it is not
+  /\ UNCHANGED <<value, alive, index, rec, log, trunc, steps, crashed>> /\ UNCHANGED drainVars
+  /\ UNCHANGED txVars
+  /\ UNCHANGED <<rx, walked, wpc, wRec, wLive, dropped, biggest>>
 
 \* A crash: whatever was not committed is lost; the reopened node settles by draining.
 Crash ==
@@ -318,8 +377,8 @@ Crash ==
   /\ dpc' = [r \in Drains |-> "Idle"]          \* drains in flight are gone
   /\ txOpen' = FALSE /\ txd' = [d \in Docs |-> 0] /\ txApp' = <<>>   \* the open transaction is gone
   /\ wpc' = [d \in Docs |-> "Idle"]            \* a walk in flight is gone; the reindex resumes from what it wrote
-  /\ UNCHANGED <<dP, dDocs, dRec, dLive, sValue, sAlive, sIndex, sOwed, sRec, txAborted, value, alive, index, rec, log, trunc, steps>>
-  /\ UNCHANGED <<rx, walked, wRec, wLive, dropped, biggest>>
+  /\ UNCHANGED <<dP, dDocs, dRec, dLive, dFirst, dFail, sValue, sAlive, sIndex, sOwed, sRec, txAborted, value, alive, index, rec, log, trunc, steps>>
+  /\ UNCHANGED <<rx, walked, wRec, wLive, dropped, biggest, broken>>
 
 \* The reindex's clear: every entry goes, the records stay.
 ReindexClear ==
@@ -328,7 +387,7 @@ ReindexClear ==
   /\ ~txOpen                                   \* the transaction's snapshot is wholly before or after it
   /\ rx' = "Cleared"                           \* the walk is next
   /\ index' = {}                               \* the entries are gone
-  /\ UNCHANGED <<value, alive, rec, log, trunc, steps, crashed, walked, wpc, wRec, wLive, dropped, biggest>>
+  /\ UNCHANGED <<value, alive, rec, log, trunc, steps, crashed, walked, wpc, wRec, wLive, dropped, biggest, broken>>
   /\ UNCHANGED drainVars /\ UNCHANGED txVars
 
 \* The walk's transaction for d reads its record and its value.
@@ -338,7 +397,7 @@ WalkRead(d) ==
   /\ wRec' = [wRec EXCEPT ![d] = rec[d]]       \* the record
   /\ wLive' = [wLive EXCEPT ![d] = IF alive[d] THEN value[d] ELSE None]   \* the value, if d lives
   /\ wpc' = [wpc EXCEPT ![d] = "Read"]         \* the commit is next
-  /\ UNCHANGED <<value, alive, index, rec, log, trunc, steps, crashed, rx, walked, dropped, biggest>>
+  /\ UNCHANGED <<value, alive, index, rec, log, trunc, steps, crashed, rx, walked, dropped, biggest, broken>>
   /\ UNCHANGED drainVars /\ UNCHANGED txVars
 
 \* The walk's transaction for d commits, or runs again if a drain moved the record it read
@@ -361,7 +420,7 @@ WalkCommit(d) ==
                                ELSE index)
                               \cup {<<d, wLive[d]>>}    \* and the walk's own comes in
                   /\ rec' = [rec EXCEPT ![d] = wLive[d]]   \* the record names it
-  /\ UNCHANGED <<value, alive, log, trunc, steps, crashed, wRec, wLive, dropped, biggest>>
+  /\ UNCHANGED <<value, alive, log, trunc, steps, crashed, wRec, wLive, dropped, biggest, broken>>
   /\ UNCHANGED drainVars /\ UNCHANGED txVars
 
 \* A drop: the definition goes, then its entries and records (their pages are not
@@ -371,7 +430,7 @@ DropIndex ==
   /\ ~dropped /\ ~txOpen /\ rx /= "Cleared"     \* once, with no writer or reindex in its way
   /\ dropped' = TRUE                           \* no write owes it any more
   /\ index' = {} /\ rec' = [d \in Docs |-> None]   \* entries and records are gone
-  /\ UNCHANGED <<value, alive, log, trunc, steps, crashed, rx, walked, wpc, wRec, wLive, biggest>>
+  /\ UNCHANGED <<value, alive, log, trunc, steps, crashed, rx, walked, wpc, wRec, wLive, biggest, broken>>
   /\ UNCHANGED drainVars /\ UNCHANGED txVars
 
 \* One drop page, its own transaction: it truncates from the first entry left.
@@ -381,7 +440,7 @@ CleanupPage ==
          upto == IF Cleanup = "Whole" THEN Len(log) ELSE Min(trunc + Page, Len(log))   \* where it ends
      IN /\ trunc' = upto                        \* the log is truncated through it
         /\ biggest' = Max(biggest, upto - from + 1)   \* how many positions this one transaction truncated
-  /\ UNCHANGED <<value, alive, index, rec, log, steps, crashed, rx, walked, wpc, wRec, wLive, dropped>>
+  /\ UNCHANGED <<value, alive, index, rec, log, steps, crashed, rx, walked, wpc, wRec, wLive, dropped, broken>>
   /\ UNCHANGED drainVars /\ UNCHANGED txVars
 
 \* Any one step happens next.
@@ -391,12 +450,14 @@ Next ==
   \/ \E r \in Drains : Plan(r) \/ Read(r) \/ Commit(r)
   \/ ReindexClear \/ DropIndex \/ CleanupPage
   \/ \E d \in Docs : WalkRead(d) \/ WalkCommit(d)
+  \/ \E d \in Docs : Fix(d)
 
-\* Drains, the transaction and the drop's cleanup keep making progress when they can.
+\* Drains, the transaction, the drop's cleanup and the operator's fix keep making progress when they can.
 Fairness ==
   /\ \A r \in Drains : WF_vars(Plan(r)) /\ WF_vars(Read(r)) /\ WF_vars(Commit(r))
   /\ WF_vars(TxCommit)
   /\ WF_vars(CleanupPage)
+  /\ \A d \in Docs : WF_vars(Fix(d))
 
 \* Start in Init, take any steps, and let drains run.
 Spec == Init /\ [][Next]_vars /\ Fairness
@@ -433,4 +494,7 @@ INV_CleanupBounded == biggest <= Page
 
 \* Every owed document is eventually drained.
 PROP_Drains == <>[](Owed = {})
+
+\* Every document that can be migrated eventually leaves the log, even while another stays broken.
+PROP_HealthyDrains == <>[](Owed \subseteq broken)
 ====

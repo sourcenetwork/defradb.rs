@@ -2057,6 +2057,17 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A document whose migration fails is appended to the log again in
+        // the drain's own transaction, so the rest of the plan still drains.
+        family: "Index-maintenance consistency",
+        name: "PROP_HealthyDrains — a document that cannot be migrated never holds the others in a deferred index's log",
+        axis: Tla,
+        anchor: "crates/db/src/index/deferred/drain.rs apply",
+        model_ref: "MC_DeferredIndex_{Green_Poison,Green_PoisonFixed,Red_PoisonAborts,Red_PoisonDropped}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // Whether an index is deferred follows the types a start registers,
         // so the check at open rebuilds one whose stored state is the other way.
         family: "Index-maintenance consistency",

@@ -18,8 +18,14 @@
 \* pass is about to do; the quiet index stays owed forever while the hot index
 \* keeps the task busy.
 \*
+\* A turn that drains some documents but leaves one owed because its migration
+\* fails (DeferredIndex.tla, Carry) is kept for the sweep without a wake, as a
+\* failed index is here. Requests still drain the index's other documents and
+\* skip that one; each sweep tries it again.
+\*
 \* Code it models:
-\*   crates/db/src/index/deferred/task.rs     drain_pass (turns, kept failures),
+\*   crates/db/src/index/deferred/task.rs     drain_pass (turns, kept failures,
+\*                                            documents left to the sweep),
 \*                                            next_wake (the fixed sweep deadline,
 \*                                            a due sweep first), the settle at open
 \*   crates/db/src/index/deferred/requests.rs DrainRequests::request, defer, take
