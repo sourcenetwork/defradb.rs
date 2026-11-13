@@ -125,6 +125,7 @@ jobs:
           - { family: identity, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: introspection, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: memory, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { family: lens_index, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: merge, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: merge_dag, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: merge_indexed, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }

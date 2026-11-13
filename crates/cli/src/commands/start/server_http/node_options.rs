@@ -29,10 +29,8 @@ pub(super) fn sanitized_node_options(
     let (vera_chain_id, vera_grpc_address, vera_comet_address) = ("", "", "");
     #[cfg(feature = "vera")]
     let document_signer_present = _user_identity_present
-        && matches!(
-            config.acp.document_type,
-            AcpDocumentType::Vera | AcpDocumentType::VeraRs
-        );
+        && (config.acp.document_type == AcpDocumentType::Vera
+            || config.acp.document_type.is_vera_rs());
     #[cfg(not(feature = "vera"))]
     let document_signer_present = false;
 

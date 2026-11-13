@@ -1,3 +1,6 @@
+#[path = "../tests/unit/p2p_selected_delivery.rs"]
+mod selected_delivery;
+
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 use std::sync::Once;

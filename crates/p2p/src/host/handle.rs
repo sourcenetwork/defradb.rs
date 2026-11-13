@@ -841,12 +841,18 @@ impl P2PHostHandle {
     }
 
     /// Send a CAR request to a peer (request DAG as CARv1).
-    pub async fn send_car_request(&self, peer_id: PeerId, root_cid: Cid) -> Result<()> {
+    pub async fn send_car_request(
+        &self,
+        peer_id: PeerId,
+        root_cid: Cid,
+        haves: Vec<Cid>,
+    ) -> Result<()> {
         let (response_tx, response_rx) = oneshot::channel();
         self.command_tx
             .send(HostCommand::SendCarRequest {
                 peer_id,
                 root_cid,
+                haves,
                 response: response_tx,
             })
             .await

@@ -4,9 +4,9 @@ use acp::nac::NodePermission;
 use defra_core::{ActionExecution, ActionStatus};
 use serde::Serialize;
 
-use crate::helpers::{get_node_database, require_c_str};
-use crate::nac_check::check_nac_for_node;
-use crate::types::FfiResult;
+use crate::request::Request;
+use crate::target::{go_string, CollectionArgs};
+use crate::types::{CollectionOptions, DefraResult};
 use crate::{ffi_async, ffi_entry, try_ffi};
 
 fn visible_indexes(collection: &db::Collection) -> Vec<schema::IndexDescription> {
@@ -18,9 +18,10 @@ fn visible_indexes(collection: &db::Collection) -> Vec<schema::IndexDescription>
         .collect()
 }
 
+/// Go's `client.ListIndexesResult`, field for field.
 #[derive(Serialize)]
 struct IndexResult {
-    #[serde(flatten)]
+    #[serde(rename = "Description")]
     description: schema::IndexDescription,
     #[serde(rename = "CollectionName")]
     collection_name: String,
@@ -86,37 +87,25 @@ fn is_hidden_auto_relation_index(
     })
 }
 
-/// Delete an index from a collection.
-///
-/// # Arguments
-///
-/// * `node_ptr` - Handle to the node
-/// * `collection_name` - Name of the collection
-/// * `index_name` - Name of the index to delete
-///
-/// # Returns
-///
-/// Empty JSON object on success, error on failure.
+/// Deletes the index `index_name` from the collection `opts.name` names.
 ///
 /// # Safety
 ///
-/// All string pointers must be valid null-terminated UTF-8 strings.
+/// `index_name` must be null or a valid null-terminated string; every
+/// non-null string in `opts` must be one too.
 #[no_mangle]
-pub unsafe extern "C" fn delete_index(
+pub unsafe extern "C" fn defra_index_delete(
     node_ptr: usize,
-    identity_did: *const c_char,
-    collection_name: *const c_char,
     index_name: *const c_char,
-) -> FfiResult {
+    opts: CollectionOptions,
+    identity_ptr: usize,
+) -> DefraResult {
     ffi_entry! {
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::IndexDelete
-        ));
-        let collection_name_str = try_ffi!(require_c_str(collection_name, "collection_name"));
-        let index_name_str = try_ffi!(require_c_str(index_name, "index_name"));
-        let database = try_ffi!(get_node_database(node_ptr));
+        let request = try_ffi!(Request::begin(node_ptr, identity_ptr, NodePermission::IndexDelete));
+        let node_ptr = try_ffi!(request.require_node("index delete"));
+        let collection_name_str = CollectionArgs::read(&opts).name.unwrap_or_default();
+        let index_name_str = go_string(index_name);
+        let database = try_ffi!(request.database());
 
         ffi_async!(node_ptr, {
             database
@@ -137,40 +126,27 @@ pub unsafe extern "C" fn delete_index(
     }
 }
 
-/// Get all indexes for a collection.
-///
-/// # Arguments
-///
-/// * `node_ptr` - Handle to the node
-/// * `collection_name` - Name of the collection
-///
-/// # Returns
-///
-/// JSON array of index descriptions.
+/// Answers with the indexes of the collection `opts.name` names as a JSON
+/// array, or, when it names none, with every collection's indexes as a JSON
+/// object keyed by collection name.
 ///
 /// # Safety
 ///
-/// `collection_name` must be a valid null-terminated UTF-8 string.
+/// Every non-null string in `opts` must be a valid null-terminated string.
 #[no_mangle]
-pub unsafe extern "C" fn get_indexes(
+pub unsafe extern "C" fn defra_index_list(
     node_ptr: usize,
-    identity_did: *const c_char,
-    collection_name: *const c_char,
-) -> FfiResult {
+    opts: CollectionOptions,
+    identity_ptr: usize,
+) -> DefraResult {
     ffi_entry! {
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::IndexList
-        ));
-        let collection_name_str = try_ffi!(require_c_str(collection_name, "collection_name"));
-        let database = try_ffi!(get_node_database(node_ptr));
+        let request = try_ffi!(Request::begin(node_ptr, identity_ptr, NodePermission::IndexList));
+        let node_ptr = try_ffi!(request.require_node("index list"));
+        let database = try_ffi!(request.database());
+        let context = request.context();
 
-        // The caller acts in the call's context, so the NAC checks the body
-        // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty()));
-
-        ffi_async!(node_ptr, {
+        match CollectionArgs::read(&opts).name {
+            Some(collection_name_str) => ffi_async!(node_ptr, {
             // Get the collection
             let collection = database
                 .get_collection(&collection_name_str)
@@ -188,41 +164,8 @@ pub unsafe extern "C" fn get_indexes(
                 .map_err(|e| format!("failed to serialize result: {}", e))?;
 
             Ok(json)
-        })
-    }
-}
-
-/// Get all indexes across all collections.
-///
-/// # Arguments
-///
-/// * `node_ptr` - Handle to the node
-///
-/// # Returns
-///
-/// JSON object mapping collection names to their index arrays.
-///
-/// # Safety
-///
-/// Caller must ensure all pointer arguments are valid, non-null, and point to valid C strings.
-#[no_mangle]
-pub unsafe extern "C" fn list_all_indexes(
-    node_ptr: usize,
-    identity_did: *const c_char,
-) -> FfiResult {
-    ffi_entry! {
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::IndexList
-        ));
-        let database = try_ffi!(get_node_database(node_ptr));
-
-        // The caller acts in the call's context, so the NAC checks the body
-        // reaches resolve the actual caller instead of the wildcard.
-        let context = defra_core::RequestContext::default().with_identity(crate::types::c_str_to_string(identity_did).filter(|s| !s.is_empty()));
-
-        ffi_async!(node_ptr, {
+            }),
+            None => ffi_async!(node_ptr, {
             // Get all collection names
             let names = database
                 .list_collections()
@@ -256,147 +199,7 @@ pub unsafe extern "C" fn list_all_indexes(
                 .map_err(|e| format!("failed to serialize result: {}", e))?;
 
             Ok(json)
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::index::create::create_index;
-    use crate::node::{new_node, node_close};
-    use crate::schema::add_schema;
-    use crate::types::NodeInitOptions;
-    use std::ffi::CString;
-
-    #[test]
-    fn test_delete_index() {
-        // Initialize runtime
-        assert!(crate::runtime::init_runtime());
-
-        // Create node
-        let options = NodeInitOptions::default();
-        let result = new_node(options);
-        assert_eq!(result.status, 0);
-        let node = result.node_ptr;
-
-        // Add schema
-        let sdl = CString::new("type Post { title: String }").unwrap();
-        let result = unsafe { add_schema(node, std::ptr::null(), sdl.as_ptr()) };
-        assert_eq!(result.status, 0);
-        if !result.value.is_null() {
-            unsafe { crate::types::defra_free_string(result.value) };
+            }),
         }
-
-        // Create index
-        let collection_name = CString::new("Post").unwrap();
-        let index_json =
-            CString::new(r#"{"Name": "idx_title", "Fields": [{"Name": "title"}]}"#).unwrap();
-        let result = unsafe {
-            create_index(
-                node,
-                std::ptr::null(),
-                collection_name.as_ptr(),
-                index_json.as_ptr(),
-            )
-        };
-        assert_eq!(result.status, 0);
-        if !result.value.is_null() {
-            unsafe { crate::types::defra_free_string(result.value) };
-        }
-
-        // Drop index
-        let index_name = CString::new("idx_title").unwrap();
-        let result = unsafe {
-            delete_index(
-                node,
-                std::ptr::null(),
-                collection_name.as_ptr(),
-                index_name.as_ptr(),
-            )
-        };
-        assert_eq!(result.status, 0, "delete_index should succeed");
-        if !result.value.is_null() {
-            unsafe { crate::types::defra_free_string(result.value) };
-        }
-
-        // Verify index is gone
-        let result = unsafe { get_indexes(node, std::ptr::null(), collection_name.as_ptr()) };
-        assert_eq!(result.status, 0);
-        let value = unsafe { std::ffi::CStr::from_ptr(result.value).to_string_lossy() };
-        assert!(!value.contains("idx_title"), "index should be removed");
-        unsafe { crate::types::defra_free_string(result.value) };
-
-        // Cleanup
-        node_close(node);
-    }
-
-    #[test]
-    fn test_list_all_indexes() {
-        // Initialize runtime
-        assert!(crate::runtime::init_runtime());
-
-        // Create node
-        let options = NodeInitOptions::default();
-        let result = new_node(options);
-        assert_eq!(result.status, 0);
-        let node = result.node_ptr;
-
-        // Add schemas
-        let sdl = CString::new("type Author { name: String }").unwrap();
-        let result = unsafe { add_schema(node, std::ptr::null(), sdl.as_ptr()) };
-        assert_eq!(result.status, 0);
-        if !result.value.is_null() {
-            unsafe { crate::types::defra_free_string(result.value) };
-        }
-
-        let sdl = CString::new("type Book { title: String }").unwrap();
-        let result = unsafe { add_schema(node, std::ptr::null(), sdl.as_ptr()) };
-        assert_eq!(result.status, 0);
-        if !result.value.is_null() {
-            unsafe { crate::types::defra_free_string(result.value) };
-        }
-
-        // Create indexes on both collections
-        let author_coll = CString::new("Author").unwrap();
-        let book_coll = CString::new("Book").unwrap();
-
-        let idx1 =
-            CString::new(r#"{"Name": "idx_author_name", "Fields": [{"Name": "name"}]}"#).unwrap();
-        let result =
-            unsafe { create_index(node, std::ptr::null(), author_coll.as_ptr(), idx1.as_ptr()) };
-        assert_eq!(result.status, 0);
-        if !result.value.is_null() {
-            unsafe { crate::types::defra_free_string(result.value) };
-        }
-
-        let idx2 =
-            CString::new(r#"{"Name": "idx_book_title", "Fields": [{"Name": "title"}]}"#).unwrap();
-        let result =
-            unsafe { create_index(node, std::ptr::null(), book_coll.as_ptr(), idx2.as_ptr()) };
-        assert_eq!(result.status, 0);
-        if !result.value.is_null() {
-            unsafe { crate::types::defra_free_string(result.value) };
-        }
-
-        // Get all indexes
-        let result = unsafe { list_all_indexes(node, std::ptr::null()) };
-        assert_eq!(result.status, 0, "list_all_indexes should succeed");
-
-        let value = unsafe { std::ffi::CStr::from_ptr(result.value).to_string_lossy() };
-        assert!(value.contains("Author"), "should contain Author collection");
-        assert!(value.contains("Book"), "should contain Book collection");
-        assert!(
-            value.contains("idx_author_name"),
-            "should contain author index"
-        );
-        assert!(
-            value.contains("idx_book_title"),
-            "should contain book index"
-        );
-        unsafe { crate::types::defra_free_string(result.value) };
-
-        // Cleanup
-        node_close(node);
     }
 }

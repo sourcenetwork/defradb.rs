@@ -68,6 +68,8 @@ impl VeraRsProvider {
         successful(confirmed)
     }
 
+    /// Drives the journaled request `wire` to its acknowledged receipt.
+    /// Modeled by proofs/tla/PendingSubmission.tla.
     async fn resolve_pending(
         &self,
         worker: OwnedMutexGuard<NativeWorker>,

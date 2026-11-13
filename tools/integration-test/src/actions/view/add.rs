@@ -39,10 +39,9 @@ impl Op for AddView {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
-        self.unsupported_txn()?;
         state
             .block_on(state.node_on(self.common.node())?.add_view_as(
-                &state.context_as(None, identity),
+                &state.context_as(self.txn, identity),
                 self.query.as_str(),
                 self.sdl.as_str(),
                 self.transform_cid.as_ref().map(Text::as_str),
@@ -60,24 +59,10 @@ impl Action for AddView {
     }
 }
 
-impl AddView {
-    /// Fails on a transaction, which the core's view creation does not run in.
-    fn unsupported_txn(&self) -> Result<(), Failure> {
-        match self.txn {
-            Some(_) => Err(Failure::unsupported(format!(
-                "{} argument txn",
-                Self::name()
-            ))),
-            None => Ok(()),
-        }
-    }
-}
-
 impl HttpRun for AddView {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             let identity = action.common.client_identity(Self::name())?;
-            action.unsupported_txn()?;
             let (query, sdl) = (
                 action.query.as_str().to_owned(),
                 action.sdl.as_str().to_owned(),
@@ -86,9 +71,12 @@ impl HttpRun for AddView {
                 .transform_cid
                 .as_ref()
                 .map(|cid| cid.as_str().to_owned());
+            let txn = state.txn_id(action.txn);
             state
                 .http_as(action.common.node(), identity, |client| async move {
-                    client.view_add(&query, &sdl, transform.as_deref()).await
+                    client
+                        .view_add(txn.as_deref(), &query, &sdl, transform.as_deref())
+                        .await
                 })?
                 .map(|_| json!({}))
                 .map_err(|e| Failure::operation(e.to_string()))

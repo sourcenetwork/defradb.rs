@@ -16,6 +16,15 @@ lean_lib ProjectionAccessNotification where
 lean_lib EmbeddedSigner where
 
 @[default_target]
+lean_lib VeraActorSpelling where
+
+@[default_target]
+lean_lib VeraDelegationSigner where
+
+@[default_target]
+lean_lib VeraEmbeddedTransport where
+
+@[default_target]
 lean_lib DelegatedRelationship where
 
 @[default_target]
@@ -64,6 +73,12 @@ lean_lib EndpointBind where
 lean_lib DocKeyScopes where
 
 @[default_target]
+lean_lib DocumentUpdateJournal where
+
+@[default_target]
+lean_lib NodeSigningChoice where
+
+@[default_target]
 lean_lib DefraConvergence where
 
 @[default_target]
@@ -109,6 +124,9 @@ lean_lib EngineTickers where
 lean_lib CpuLedger where
 
 @[default_target]
+lean_lib IdentityStore where
+
+@[default_target]
 lean_lib DefaultPool where
 
 @[default_target]
@@ -122,6 +140,9 @@ lean_lib PeerConnection where
 
 @[default_target]
 lean_lib ByteBudget where
+
+@[default_target]
+lean_lib StreamProtocols where
 
 @[default_target]
 lean_lib FetchStats where
@@ -187,10 +208,16 @@ lean_lib TxnId where
 lean_lib LensListing where
 
 @[default_target]
+lean_lib LensId where
+
+@[default_target]
 lean_lib JsonSubPathCut where
 
 @[default_target]
 lean_lib CarClosureDepth where
+
+@[default_target]
+lean_lib CarMissingRegion where
 
 @[default_target]
 lean_lib TxnAdmission where
@@ -254,3 +281,18 @@ lean_lib CursorToken where
 
 @[default_target]
 lean_lib ViewQuerySource where
+
+@[default_target]
+lean_lib PeerKeyLoad where
+
+@[default_target]
+lean_lib TxnTurns where
+
+@[default_target]
+lean_lib VectorIndexDefaults where
+
+@[default_target]
+lean_lib CatalogPin where
+
+@[default_target]
+lean_lib IndexEqualKeyOrder where

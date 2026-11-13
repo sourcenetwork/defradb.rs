@@ -25,12 +25,13 @@ pub struct AddNACActorRelationship {
 }
 
 impl AddNACActorRelationship {
-    fn target(&self) -> Result<String, Failure> {
+    fn target(&self, state: &State) -> Result<String, Failure> {
         super::target_actor(
             Self::name(),
             self.target_actor.as_deref(),
             self.target_identity_seed,
             self.target_identity_node.as_deref(),
+            state,
         )
     }
 }
@@ -55,7 +56,7 @@ impl Op for AddNACActorRelationship {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         let identity = self.common.client_identity(Self::name())?;
-        let target = self.target()?;
+        let target = self.target(state)?;
         state
             .block_on(
                 state
@@ -83,7 +84,7 @@ impl HttpRun for AddNACActorRelationship {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             let identity = action.common.client_identity(Self::name())?;
-            let (relation, target) = (action.relation.clone(), action.target()?);
+            let (relation, target) = (action.relation.clone(), action.target(state)?);
             let printed = state
                 .http_as(action.common.node(), identity, |client| async move {
                     client.nac_add_relationship(&relation, &target).await
@@ -98,7 +99,7 @@ impl CliRun for AddNACActorRelationship {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             let identity = action.common.client_identity(Self::name())?;
-            let target = action.target()?;
+            let target = action.target(state)?;
             let args = [
                 "acp",
                 "node",

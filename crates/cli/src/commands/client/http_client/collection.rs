@@ -22,6 +22,23 @@ impl HttpClient {
             .map(drop)
     }
 
+    /// Hard-delete the documents of collection `name` named by `doc_ids`, in
+    /// transaction `txn`; the response, `{"count": purged}`. Go shinzo's
+    /// `Collection.PurgeByDocIDs`.
+    pub async fn collection_purge_docs(
+        &self,
+        txn: Option<&str>,
+        name: &str,
+        doc_ids: &[String],
+    ) -> Result<serde_json::Value> {
+        let path = format!("collections/{}/documents/purge", encode(name));
+        let body = serde_json::json!({ "docIDs": doc_ids }).to_string();
+        let response = self
+            .send(Method::DELETE, &path, &[], Some(body), txn)
+            .await?;
+        Ok(response.json().await?)
+    }
+
     /// Delete one or more collections by name via Go-compatible
     /// `DELETE /collections?name=Users,Books&active-only=true`.
     pub async fn collection_delete(&self, names: &[String], active_only: bool) -> Result<()> {

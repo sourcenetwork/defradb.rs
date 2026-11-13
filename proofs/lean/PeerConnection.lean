@@ -22,8 +22,9 @@ theorem connection_does_not_grant_push : mayPush false = false := rfl
 end PeerConnection
 
 /- endpoint_rpc::remember_connection keys an authenticated handle by its own
-   remote peer. endpoint_streams::handle_incoming publishes that handle before
-   rechecking admission. These rules choose a path; they confer no authority.
+   remote peer. endpoint_streams::adopt_new_connection publishes that handle
+   before rechecking admission, and endpoint_rpc::restore_displaced_connection
+   puts back what a refused publish displaced. These rules choose a path; they confer no authority.
    The cache below names handles, while `usable` separately observes closure. -/
 namespace PeerConnection.SharedRpc
 
@@ -137,5 +138,25 @@ theorem old_failure_preserves_replacement (old fresh : Nat) (different : fresh �
 theorem closed_selected_is_removed (handle : Nat) : evict (some handle) handle = none := by
   -- The selected stable id matches the closed handle, so its entry is retired.
   simp [evict]
+
+-- A refused publish evicts only its own handle, then refills only an empty slot.
+def restore (slot : Option Nat) (refused : Nat) : Option Nat → Option Nat
+  -- Nothing was displaced, so the slot is left for the pump to clean up.
+  | none => slot
+  -- The displaced handle goes back only where the refused one was removed.
+  | some displaced => (evict slot refused).or (some displaced)
+
+-- Refusing the handle that displaced a sibling makes the sibling selected again.
+theorem refusal_restores_sibling (refused sibling : Nat) :
+    restore (some refused) refused (some sibling) = some sibling := by
+  -- The slot still holds the refused handle, so it empties and takes the sibling.
+  simp [restore, evict, Option.or]
+
+-- A publish that already replaced the refused handle keeps the slot.
+theorem restore_keeps_a_later_publish (refused fresh : Nat) (displaced : Option Nat)
+    (different : fresh ≠ refused) :
+    restore (some fresh) refused displaced = some fresh := by
+  -- Eviction leaves the different handle, and an occupied slot is not refilled.
+  cases displaced <;> simp [restore, evict, different, Option.or]
 
 end PeerConnection.SharedRpc

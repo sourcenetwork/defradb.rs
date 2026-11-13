@@ -126,7 +126,8 @@ fn signed_graphql_write_records_collection_head_under_persisted_id() {
                 remote_signer: None,
                 signing_authorization: None,
             },
-        );
+        )
+        .expect("the store takes the identity");
 
         let dir = tempfile::tempdir().expect("tempdir");
         let node = Node::builder()

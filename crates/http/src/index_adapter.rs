@@ -117,6 +117,7 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
                 })
                 .collect(),
             unique: index_desc.unique,
+            execution: None,
         })
     }
 
@@ -150,6 +151,11 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
 
         let mut result = Vec::new();
         for col in &collections {
+            let actions = self
+                .database
+                .list_index_actions_as(&self.context(), col.collection_id())
+                .await
+                .map_err(|e| format!("{}", e))?;
             for idx in col.get_indexes() {
                 result.push(IndexInfo {
                     kind: idx.kind,
@@ -170,6 +176,7 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
                         })
                         .collect(),
                     unique: idx.unique,
+                    execution: actions.get(&idx.id).cloned(),
                 });
             }
         }
@@ -184,7 +191,12 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
         self.database
             .drop_index(collection, name)
             .await
-            .map_err(|e| format!("{}", e))
+            .map_err(|e| match e {
+                db::Error::IndexNotFound { index, .. } => {
+                    format!("index with name doesn't exists. Name: {index}")
+                }
+                other => format!("{}", other),
+            })
     }
 }
 

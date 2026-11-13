@@ -201,6 +201,7 @@ where
         if delta.priority == 1 && !doc_exists {
             state = start;
         }
+        let repeated = state.priority == incoming.priority && state.value == incoming.value;
         let applied = crdt
             .merge(&mut state, incoming)
             .ok_or_else(|| MergeError::MergeFailed("malformed register state".into()))?
@@ -221,6 +222,7 @@ where
             deferred: false,
             op: None,
             parked: None,
+            superseded: !applied && !repeated,
         })
     }
 }

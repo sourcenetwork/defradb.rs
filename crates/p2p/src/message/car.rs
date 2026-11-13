@@ -15,6 +15,10 @@ use serde::{Deserialize, Serialize};
 /// `max_depth` bounds a recursive walk to that many links below each wanted
 /// CID. It is omitted when `None` so unbounded requests keep their legacy
 /// bytes; a responder that predates it serves the whole closure.
+/// `have_cids` names merged blocks the receiver holds, so it holds their
+/// closures too. A responder holding one of them serves only the part of the
+/// wanted closure outside those closures, and ignores `max_depth`. Omitted
+/// when empty; a responder that predates it ignores it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CarFetchRequest {
     pub root_cid: Cid,
@@ -24,6 +28,8 @@ pub struct CarFetchRequest {
     pub recursive: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_depth: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub have_cids: Vec<Cid>,
 }
 
 fn default_recursive() -> bool {
@@ -37,6 +43,7 @@ impl CarFetchRequest {
             wanted_cids: vec![root_cid],
             recursive: true,
             max_depth: None,
+            have_cids: Vec::new(),
         }
     }
 
@@ -46,6 +53,7 @@ impl CarFetchRequest {
             wanted_cids: dedupe_cids(wanted_cids),
             recursive: false,
             max_depth: None,
+            have_cids: Vec::new(),
         }
     }
 
@@ -58,7 +66,14 @@ impl CarFetchRequest {
             wanted_cids: dedupe_cids(wanted_cids),
             recursive: true,
             max_depth: None,
+            have_cids: Vec::new(),
         }
+    }
+
+    /// The same request, naming merged blocks the receiver holds.
+    pub fn with_haves(mut self, have_cids: Vec<Cid>) -> Self {
+        self.have_cids = dedupe_cids(have_cids);
+        self
     }
 
     pub fn response_roots(&self) -> Vec<Cid> {
@@ -78,3 +93,7 @@ fn dedupe_cids(cids: Vec<Cid>) -> Vec<Cid> {
 #[cfg(test)]
 #[path = "../../tests/unit/car_request_depth.rs"]
 mod depth_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/car_request_haves.rs"]
+mod haves_tests;

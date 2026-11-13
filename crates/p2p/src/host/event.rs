@@ -52,7 +52,12 @@ pub enum HostEvent {
     /// `pubsub_rpc::TopicHandler`. This channel is how DocSync and
     /// BranchableSync receive Go-compatible traffic (#828).
     GossipRawMessage {
+        /// The mesh neighbour that handed the message to us.
         propagation_source: PeerId,
+        /// The peer that published the message, as gossipsub's signature
+        /// authenticates it. It differs from `propagation_source` when a
+        /// neighbour relayed the message, and a request is answered to it.
+        source: PeerId,
         message_id: gossipsub::MessageId,
         topic: String,
         data: Vec<u8>,
@@ -125,7 +130,12 @@ pub enum HostEvent {
     },
 
     /// Received a CAR fetch request (peer wants a DAG packaged as CARv1).
-    CarFetchRequest { peer_id: PeerId, root_cid: Cid },
+    CarFetchRequest {
+        peer_id: PeerId,
+        root_cid: Cid,
+        /// Merged blocks the requester holds; empty from older peers.
+        haves: Vec<Cid>,
+    },
 
     /// Received a CAR fetch response (CARv1 bytes containing a DAG).
     CarFetchResponse {

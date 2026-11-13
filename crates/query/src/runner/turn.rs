@@ -50,6 +50,25 @@ pub(super) async fn turn_node_permission(
     }
 }
 
+/// Node authorization for `permission` as a lent turn decides it: through
+/// the verified check when the request requires transactional authority,
+/// otherwise as [`turn_node_permission`] does.
+async fn lent_node_permission(
+    fetcher: &dyn DocFetcher,
+    identity: &Did,
+    permission: acp::nac::NodePermission,
+    require_authority: bool,
+    require_bound: bool,
+) -> crate::error::Result<Option<bool>> {
+    if require_authority {
+        fetcher
+            .check_verified_node_permission(identity, permission)
+            .await
+    } else {
+        turn_node_permission(fetcher, identity, permission, require_bound).await
+    }
+}
+
 /// A certified provider is already bound to the row transaction. Only ordinary
 /// queries may ask the fetcher to choose a provider on their behalf.
 pub(super) async fn turn_acp(
@@ -184,10 +203,24 @@ where
                 )));
             }
         }
-        let turned = self
-            .lent(turn, parsed, request, variables, inputs, delegation)
-            .await
-            .unwrap_or_else(|error| Turned::Done(QueryResponse::error(error.to_string())));
+        // The collection version the request works through is pinned for
+        // this turn only, and cleared before the turn ends, so a later request
+        // on the transaction sees the active version (proofs/tla/VersionPin.tla).
+        let turned = match self.pin_selected_version(turn, &request).await {
+            Ok(pinned) => {
+                let turned = self
+                    .lent(turn, parsed, request, variables, inputs, delegation)
+                    .await
+                    .unwrap_or_else(|error| Turned::Done(QueryResponse::error(error.to_string())));
+                match pinned.then(|| turn.pin_collection(None)) {
+                    Some(Err(error)) => Turned::Done(QueryResponse::error(format!(
+                        "failed to clear the selected collection version: {error}"
+                    ))),
+                    _ => turned,
+                }
+            }
+            Err(refused) => Turned::Done(refused),
+        };
         if statement {
             let keep = matches!(&turned, Turned::Done(response) if response.errors.is_empty());
             if let Err(error) = turn.end_statement(keep) {
@@ -197,6 +230,30 @@ where
             }
         }
         turned
+    }
+
+    /// Pins the collection version `request` works through, if it names one,
+    /// for this turn, and says whether it pinned; the response that refuses
+    /// the request when the version cannot be found or pinned.
+    async fn pin_selected_version(
+        &self,
+        turn: &mut dyn TxnTurn,
+        request: &QueryRequest,
+    ) -> std::result::Result<bool, QueryResponse> {
+        let Some(version_id) = request.context.collection_version() else {
+            return Ok(false);
+        };
+        let version = self
+            .collection_provider
+            .get_collection_by_version_id(version_id)
+            .await
+            .map_err(|error| QueryResponse::error(error.to_string()))?
+            .ok_or_else(|| {
+                QueryResponse::error(format!("collection version '{version_id}' not found"))
+            })?;
+        turn.pin_collection(Some((*version).clone()))
+            .map_err(|error| QueryResponse::error(error.to_string()))?;
+        Ok(true)
     }
 
     /// The part of a run that holds the transaction: every handle it makes
@@ -235,22 +292,35 @@ where
         };
         let nac_identity = nac_actor.clone().unwrap_or_else(Did::wildcard);
         let fetcher = txn_ctx.doc_fetcher();
-        let nac_check = if require_authority {
-            fetcher
-                .check_verified_node_permission(&nac_identity, permission_for_operation(&parsed))
-                .await
-        } else {
-            turn_node_permission(
+        let permission = permission_for_operation(&parsed);
+        // Checked in Go's order, so a refused write names the first permission
+        // it lacks, as the same write outside a transaction does.
+        let mut nac_check = Ok(Some(true));
+        let mut denied = permission;
+        for needed in permission.go_order() {
+            nac_check = lent_node_permission(
                 fetcher.as_ref(),
                 &nac_identity,
-                permission_for_operation(&parsed),
+                needed,
+                require_authority,
                 require_bound_nac,
             )
-            .await
-        };
+            .await;
+            if !matches!(nac_check, Ok(Some(true))) {
+                denied = needed;
+                break;
+            }
+        }
         match nac_check {
             Ok(Some(false)) => {
-                return Ok(Turned::Done(QueryResponse::success(serde_json::json!({}))))
+                // A refused read answers with no data; a refused write fails.
+                if !matches!(parsed, ParsedOperation::Mutation { .. }) {
+                    return Ok(Turned::Done(QueryResponse::success(serde_json::json!({}))));
+                }
+                return Ok(Turned::Done(QueryResponse::error(format!(
+                    "not authorized to perform operation. Permission: {}",
+                    denied.as_str()
+                ))));
             }
             Ok(Some(true)) => {}
             Ok(None) if require_bound_nac || require_authority => {
@@ -403,10 +473,7 @@ where
                             .await
                     }
                 }
-                ParsedOperation::Subscription { .. } => Err(QueryError::parse(
-                    "Subscriptions must be executed via Server-Sent Events (SSE). \
-                     Send the request with Accept: text/event-stream header.",
-                )),
+                ParsedOperation::Subscription { .. } => Err(QueryError::SubscriptionNeedsSse),
                 ParsedOperation::Introspection { query } => {
                     scoped_runner.execute_introspection(&query).await
                 }

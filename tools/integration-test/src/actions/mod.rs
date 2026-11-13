@@ -15,6 +15,7 @@ mod peer;
 mod query;
 mod replicator;
 pub mod shared;
+pub mod stream;
 mod txn;
 mod view;
 mod wait;
@@ -34,6 +35,7 @@ pub use parallel::Parallel;
 pub use peer::*;
 pub use query::*;
 pub use replicator::*;
+pub use stream::{AllowStreamPeer, DenyStreamPeer, NewIrohNode, OpenStream, ReadKeptStream};
 pub use txn::*;
 pub use view::*;
 pub use wait::Wait;
@@ -145,6 +147,7 @@ client_actions! {
         NewIndex,
         PatchCollection,
         PeerInfo,
+        PurgeDocs,
         ReEnableNAC,
         RefreshViews,
         Request,
@@ -163,6 +166,11 @@ client_actions! {
     shared: [
         Connect,
         Parallel,
+        AllowStreamPeer,
+        DenyStreamPeer,
+        NewIrohNode,
+        OpenStream,
+        ReadKeptStream,
         Await,
         Benchmark,
         Close,
@@ -170,11 +178,11 @@ client_actions! {
         GetNodeIdentity,
         ListAllEncryptedIndexes,
         NewNode,
-        PurgeDocs,
         SaveDocs,
         Restart,
         Start,
         SubscriptionRequest,
+        SyncCounters,
         Wait,
         WaitForIndexReady,
         WaitForPeersEvents,

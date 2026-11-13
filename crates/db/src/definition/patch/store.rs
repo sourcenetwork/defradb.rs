@@ -303,13 +303,18 @@ impl<S: Store> crate::database::DB<S> {
             config.source_collection_version_id = old_version_id.to_string();
             config.destination_collection_version_id = new_version_id.clone();
 
+            let lens = crate::definition::migration::committed_lenses::PreparedLens::new(
+                config.clone(),
+                self.pool(),
+            )
+            .await?;
             let txn_lens_store = crate::txn::lenses::TxnLensStore::new(self.lens_store.clone());
-            let transform_id = txn_lens_store.add(config.clone()).await?;
+            txn_lens_store.add_with_id(lens.id.clone(), config).await?;
             new_schema.previous_version = Some(CollectionSource {
                 source_collection_id: old_version_id.to_string(),
-                transform: Some(transform_id.to_string()),
+                transform: Some(lens.id.to_string()),
             });
-            Some((transform_id, config))
+            Some(lens)
         } else {
             None
         };
@@ -401,13 +406,8 @@ impl<S: Store> crate::database::DB<S> {
                 .await
                 .map_err(Error::Storage)?;
 
-            if let Some((transform_id, config)) = &committed_migration {
-                crate::definition::migration::committed_lenses::write_lens_config(
-                    &systemstore,
-                    transform_id,
-                    config,
-                )
-                .await?;
+            if let Some(lens) = &committed_migration {
+                lens.write(&txn.blockstore()?, &systemstore).await?;
             }
         } // systemstore reference dropped here
 
@@ -546,9 +546,9 @@ impl<S: Store> crate::database::DB<S> {
         }
         txn.commit().await?;
 
-        if let Some((transform_id, config)) = committed_migration {
+        if let Some(lens) = committed_migration {
             self.bump_migration_generation();
-            self.register_committed_lens(transform_id, config).await;
+            self.register_committed_lens(lens.id, lens.config).await;
         }
 
         // Clean up any pending migration that was linked to this version

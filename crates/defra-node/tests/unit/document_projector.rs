@@ -495,3 +495,24 @@ fn revoked_source_manager_conflicts_with_the_staged_document_and_grant() {
         node.shutdown().await.unwrap();
     }).unwrap();
 }
+
+/// An identity-only node acts as no one by default, but its trusted projector
+/// still acts as the node's DID, so the node builds.
+#[test]
+fn an_identity_only_node_gives_its_projector_the_node_did() {
+    workers::block_on(async {
+        let node = match Node::builder()
+            .enable_signing()
+            .with_identity_only()
+            .with_document_projector(Arc::new(Projector))
+            .build()
+            .await
+        {
+            Ok(node) => node,
+            Err(error) => panic!("an identity-only node with a projector must build: {error}"),
+        };
+        assert!(node.node_identity_did().is_some());
+        node.shutdown().await.unwrap();
+    })
+    .unwrap();
+}

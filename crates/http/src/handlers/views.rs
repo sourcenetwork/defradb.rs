@@ -1,9 +1,10 @@
 //! View endpoint handlers.
 
-use axum::{body::Bytes, extract::State, Json};
+use axum::{body::Bytes, extract::State, http::HeaderMap, Json};
 
 use crate::error::{http_error_from_backend_message, HttpError};
 use crate::handlers::collection_selector::CollectionSelectorQuery;
+use crate::handlers::txn_header::call_context;
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
 use crate::request_scope::bound;
@@ -39,13 +40,14 @@ pub struct ViewNamesRequest {
 pub async fn add_view(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<Vec<CollectionVersion>>, HttpError> {
     require_permission(&state, &identity, NodePermission::ViewAdd).await?;
 
     let body: AddViewRequest = required_body(&body)?;
 
-    let view_ops = bound(state.require_view()?, &identity.context());
+    let view_ops = bound(state.require_view()?, &call_context(&identity, &headers)?);
 
     let result = view_ops
         .add_view(&body.query, &body.sdl, body.transform.as_deref())
@@ -86,12 +88,13 @@ fn view_names_from_body(body: &Bytes) -> Result<Option<Vec<String>>, HttpError> 
 pub async fn refresh_views(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
     query: CollectionSelectorQuery,
     body: Bytes,
 ) -> Result<Json<serde_json::Value>, HttpError> {
     require_permission(&state, &identity, NodePermission::ViewRefresh).await?;
 
-    let view_ops = bound(state.require_view()?, &identity.context());
+    let view_ops = bound(state.require_view()?, &call_context(&identity, &headers)?);
 
     view_ops
         .refresh_views(query.into_selector_with(view_names_from_body(&body)?))

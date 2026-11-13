@@ -395,6 +395,8 @@ impl<S: Store> crate::database::DB<S> {
         context: &defra_core::RequestContext,
         schemas: Vec<CollectionVersion>,
     ) -> Result<Vec<CollectionVersion>> {
+        self.check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
+            .await?;
         self.create_collections_atomic_inner(context, schemas, None, None)
             .await
     }
@@ -426,7 +428,25 @@ impl<S: Store> crate::database::DB<S> {
         document_acp: std::sync::Arc<dyn acp::DocumentACP>,
         creator: Option<identity::Did>,
     ) -> Result<Vec<CollectionVersion>> {
+        self.check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
+            .await?;
         self.create_collections_atomic_inner(context, schemas, Some(document_acp), creator)
+            .await
+    }
+
+    /// Create an AddView's view collections atomically, registering
+    /// branchable ACP before commit when `document_acp` is given. Unlike
+    /// [`Self::create_collections_atomic_as`] it does not check
+    /// `patch-collection`: the caller checks `add-view`, the one permission
+    /// Go's `AddView` needs.
+    pub async fn create_view_collections_as(
+        &self,
+        context: &defra_core::RequestContext,
+        schemas: Vec<CollectionVersion>,
+        document_acp: Option<std::sync::Arc<dyn acp::DocumentACP>>,
+        creator: Option<identity::Did>,
+    ) -> Result<Vec<CollectionVersion>> {
+        self.create_collections_atomic_inner(context, schemas, document_acp, creator)
             .await
     }
 
@@ -468,13 +488,34 @@ impl<S: Store> crate::database::DB<S> {
         document_acp: Option<std::sync::Arc<dyn acp::DocumentACP>>,
         creator: Option<identity::Did>,
     ) -> Result<Vec<CollectionVersion>> {
-        self.check_node_access_as(context, acp::nac::NodePermission::CollectionPatch)
-            .await?;
         let mut txn = self.new_txn(false).await?;
-        let existing = self.get_all_collection_versions_with_txn(&mut txn).await?;
+        let finalized_schemas = self
+            .stage_new_collections(&mut txn, context, schemas, document_acp, creator)
+            .await?;
+        txn.commit().await?;
+        for schema in &finalized_schemas {
+            self.unforbid_collection_id(schema.collection_id.as_str())?;
+        }
+
+        Ok(finalized_schemas)
+    }
+
+    /// Stage the creation of `schemas` on `txn`, validated against the
+    /// collections `txn` sees: their definitions, their branchable ACP
+    /// registration, and their cache entries once `txn` commits. The caller
+    /// commits, and then lifts any forbidden collection IDs.
+    pub(crate) async fn stage_new_collections(
+        &self,
+        txn: &mut DbTxn<S>,
+        context: &defra_core::RequestContext,
+        schemas: Vec<CollectionVersion>,
+        document_acp: Option<std::sync::Arc<dyn acp::DocumentACP>>,
+        creator: Option<identity::Did>,
+    ) -> Result<Vec<CollectionVersion>> {
+        let existing = self.get_all_collection_versions_with_txn(txn).await?;
         schema::definition_validation::validate_new_collections_with_existing(&schemas, &existing)
             .map_err(Error::Other)?;
-        self.require_view_transforms(&txn, &schemas).await?;
+        self.require_view_transforms(txn, &schemas).await?;
 
         // Track old collection_id -> new collection_id mappings.
         // When views are created, create_collection_with_txn regenerates CIDs to include
@@ -488,7 +529,7 @@ impl<S: Store> crate::database::DB<S> {
         let mut finalized_schemas = Vec::with_capacity(schemas.len());
 
         for schema in schemas {
-            let finalized = self.create_collection_with_txn(&mut txn, schema).await?;
+            let finalized = self.create_collection_with_txn(txn, schema).await?;
             finalized_schemas.push(finalized);
         }
 
@@ -580,11 +621,6 @@ impl<S: Store> crate::database::DB<S> {
                 cache
             });
         })))?;
-        txn.commit().await?;
-        for schema in &finalized_schemas {
-            self.unforbid_collection_id(schema.collection_id.as_str())?;
-        }
-
         Ok(finalized_schemas)
     }
 }

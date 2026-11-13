@@ -129,6 +129,42 @@ async fn finish_is_fenced_idempotent_and_preserves_the_requested_set() {
 }
 
 #[nuclei::test]
+async fn install_with_failed_doc_keeps_incarnation() {
+    let h = Harness::default();
+    let mut events = h.bus.subscribe(&[EventName::ReplicatorCompleted]);
+    let plan = h.prepare(&request("peer", &["Note"])).await.unwrap();
+    let peer = p2p::transport::PeerId::new("peer".to_owned());
+    db::merge::push_docs_replay::persist_replay_failures(
+        &h.store,
+        &peer,
+        plan.id,
+        &[db::merge::push_docs_replay::ReplayDocumentFailure {
+            doc_id: "doc".to_owned(),
+            collection_id: "cid-Note".to_owned(),
+        }],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        h.store.get_replicator_incarnation("peer").await.unwrap(),
+        Some(plan.id)
+    );
+    h.finish(&plan, None).await.unwrap();
+    let message = events.recv().await.unwrap();
+    let data = message.as_replicator_completed().unwrap();
+    assert!(
+        data.error.is_none(),
+        "replay failure should be deferred: {:?}",
+        data.error
+    );
+    let next = h.prepare(&request("peer", &["Note"])).await.unwrap();
+    assert!(
+        next.replay.is_empty(),
+        "a settled deferred replay should not restart"
+    );
+}
+
+#[nuclei::test]
 async fn waiting_has_a_deadline_and_does_not_clear_the_active_install() {
     assert_waiting_has_a_deadline_and_preserves_the_install().await;
 }

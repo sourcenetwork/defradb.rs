@@ -634,7 +634,8 @@ fn http_inspection_routes_apply_the_embedded_gates() {
                     remote_signer: None,
                     signing_authorization: None,
                 },
-            );
+            )
+            .expect("the store takes the identity");
             let holder = http_identity();
             let holder_did = holder.did().unwrap().to_string();
             let stranger = http_identity();

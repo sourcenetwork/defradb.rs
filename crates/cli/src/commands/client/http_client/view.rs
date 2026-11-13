@@ -1,6 +1,8 @@
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 
+use net::http::Method;
+
 use super::HttpClient;
 use crate::error::Result;
 
@@ -36,7 +38,20 @@ impl ViewRefreshSelectors {
     /// Go omits an unset selector rather than sending it empty, and omits
     /// `get_inactive` entirely when false, so this does the same.
     pub fn query_string(&self) -> String {
-        let mut pairs: Vec<(&str, String)> = Vec::new();
+        let pairs = self.pairs();
+        if pairs.is_empty() {
+            return String::new();
+        }
+        let encoded: Vec<String> = pairs
+            .into_iter()
+            .map(|(key, value)| format!("{key}={}", urlencoding::encode(&value)))
+            .collect();
+        format!("?{}", encoded.join("&"))
+    }
+
+    /// The selectors Go's client sends, as query pairs.
+    fn pairs(&self) -> Vec<(&'static str, String)> {
+        let mut pairs: Vec<(&'static str, String)> = Vec::new();
         if let Some(name) = &self.name {
             pairs.push(("name", name.clone()));
         }
@@ -49,31 +64,33 @@ impl ViewRefreshSelectors {
         if self.get_inactive {
             pairs.push(("get_inactive", "true".to_string()));
         }
-        if pairs.is_empty() {
-            return String::new();
-        }
-        let encoded: Vec<String> = pairs
-            .into_iter()
-            .map(|(key, value)| format!("{key}={}", urlencoding::encode(&value)))
-            .collect();
-        format!("?{}", encoded.join("&"))
+        pairs
     }
 }
 
 impl HttpClient {
     pub async fn view_add(
         &self,
+        txn: Option<&str>,
         query: &str,
         sdl: &str,
         transform: Option<&str>,
     ) -> Result<JsonValue> {
-        let url = self.view_add_url();
         let body = AddViewRequest {
             query: query.to_string(),
             sdl: sdl.to_string(),
             transform: transform.map(|s| s.to_string()),
         };
-        self.post_json(&url, &body).await
+        let Some(txn) = txn else {
+            return self.post_json(&self.view_add_url(), &body).await;
+        };
+        let body = serde_json::to_string(&body)?;
+        let path = super::GO_VIEW_ADD.trim_start_matches('/');
+        Ok(self
+            .send(Method::POST, path, &[], Some(body), Some(txn))
+            .await?
+            .json()
+            .await?)
     }
 
     /// Refresh views.
@@ -82,9 +99,19 @@ impl HttpClient {
     /// so this must not try to deserialize one: against a Go node the refresh
     /// would succeed and the CLI would then report a parse error. Rust's `{}`
     /// is equally accepted because neither is read.
-    pub async fn view_refresh(&self, selectors: &ViewRefreshSelectors) -> Result<()> {
-        let url = format!("{}{}", self.view_refresh_url(), selectors.query_string());
-        self.request_void("POST", &url, None).await
+    pub async fn view_refresh(
+        &self,
+        txn: Option<&str>,
+        selectors: &ViewRefreshSelectors,
+    ) -> Result<()> {
+        let Some(txn) = txn else {
+            let url = format!("{}{}", self.view_refresh_url(), selectors.query_string());
+            return self.request_void("POST", &url, None).await;
+        };
+        let path = super::GO_VIEW_REFRESH.trim_start_matches('/');
+        self.send(Method::POST, path, &selectors.pairs(), None, Some(txn))
+            .await
+            .map(drop)
     }
 
     pub async fn view_gc(&self, names: Option<Vec<String>>) -> Result<JsonValue> {

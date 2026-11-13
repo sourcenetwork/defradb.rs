@@ -14,9 +14,12 @@ use crate::pubsub_rpc::DeliveryOutcome;
 use crate::transport::{P2PTransport, PeerId};
 
 impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
+    /// `publisher` is the peer that published the message, not the neighbour
+    /// that relayed it: a request is answered on its publisher's `_response`
+    /// topic, and a relay's topic reaches no one waiting for the reply (#2773).
     pub(super) async fn handle_gossip_raw_message(
         &self,
-        propagation_source: PeerId,
+        publisher: PeerId,
         topic: String,
         data: Vec<u8>,
     ) -> Result<()> {
@@ -35,7 +38,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             if is_kms_base || is_kms_response {
                 if let Some(transport) = self.kms_transport.get() {
                     transport
-                        .dispatch_incoming(propagation_source.to_string(), topic, data)
+                        .dispatch_incoming(publisher.to_string(), topic, data)
                         .await;
                 } else {
                     debug!(
@@ -66,11 +69,11 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 return Ok(());
             };
 
-            let from_libp2p: libp2p::PeerId = match propagation_source.as_str().parse() {
+            let from_libp2p: libp2p::PeerId = match publisher.as_str().parse() {
                 Ok(p) => p,
                 Err(e) => {
                     warn!(
-                        peer_id = %propagation_source,
+                        peer_id = %publisher,
                         topic = %topic,
                         error = %e,
                         "GossipRawMessage: source peer id does not parse as libp2p::PeerId"
@@ -108,7 +111,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
 
         #[cfg(not(feature = "libp2p-transport"))]
         {
-            let _ = (propagation_source, data);
+            let _ = (publisher, data);
             debug!(
                 topic = %topic,
                 "GossipRawMessage for non-KMS topic without libp2p transport; dropping"

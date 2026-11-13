@@ -3,32 +3,41 @@ use std::ffi::c_char;
 use acp::nac::NodePermission;
 use storage::corekv::Key;
 
-use crate::helpers::{get_node_database, require_c_str};
-use crate::nac_check::check_nac_for_node;
-use crate::types::FfiResult;
+use crate::request::Request;
+use crate::target::go_string;
+use crate::types::DefraResult;
 use crate::{ffi_async, ffi_entry, try_ffi};
 
-/// Add a new encrypted index on a collection field.
+/// Go's encrypted index type names; empty is the default, equality.
+fn index_type(name: &str) -> Result<schema::EncryptedIndexType, String> {
+    match name {
+        "" | "equality" => Ok(schema::EncryptedIndexType::Equality),
+        other => Err(format!("unsupported encrypted index type: {}", other)),
+    }
+}
+
+/// Creates an encrypted index of type `index_type` ("equality", the default
+/// for null or empty) on field `field_name` of collection `collection_name`,
+/// and answers with its description as JSON.
 ///
 /// # Safety
 ///
-/// All string pointers must be valid null-terminated UTF-8 strings.
+/// Every string must be null or a valid null-terminated string.
 #[no_mangle]
-pub unsafe extern "C" fn add_encrypted_index(
+pub unsafe extern "C" fn defra_encrypted_index_new(
     node_ptr: usize,
-    identity_did: *const c_char,
     collection_name: *const c_char,
     field_name: *const c_char,
-) -> FfiResult {
+    index_type_name: *const c_char,
+    identity_ptr: usize,
+) -> DefraResult {
     ffi_entry! {
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::EncryptedIndexAdd
-        ));
-        let collection_name_str = try_ffi!(require_c_str(collection_name, "collection_name"));
-        let field_name_str = try_ffi!(require_c_str(field_name, "field_name"));
-        let database = try_ffi!(get_node_database(node_ptr));
+        let request = try_ffi!(Request::begin(node_ptr, identity_ptr, NodePermission::EncryptedIndexAdd));
+        let node_ptr = try_ffi!(request.require_node("encrypted index create"));
+        let index_type = try_ffi!(index_type(&go_string(index_type_name)).map_err(DefraResult::error));
+        let collection_name_str = go_string(collection_name);
+        let field_name_str = go_string(field_name);
+        let database = try_ffi!(request.database());
 
         ffi_async!(node_ptr, {
             // Get the collection
@@ -61,7 +70,8 @@ pub unsafe extern "C" fn add_encrypted_index(
             }
 
             // Create the encrypted index description
-            let enc_idx = schema::EncryptedIndexDescription::new(&field_name_str);
+            let mut enc_idx = schema::EncryptedIndexDescription::new(&field_name_str);
+            enc_idx.index_type = index_type;
 
             // Create a transaction
             let txn = database
@@ -117,27 +127,25 @@ pub unsafe extern "C" fn add_encrypted_index(
     }
 }
 
-/// Delete an encrypted index from a collection.
+/// Deletes the encrypted index on field `field_name` of collection
+/// `collection_name`.
 ///
 /// # Safety
 ///
-/// All string pointers must be valid null-terminated UTF-8 strings.
+/// Every string must be null or a valid null-terminated string.
 #[no_mangle]
-pub unsafe extern "C" fn delete_encrypted_index(
+pub unsafe extern "C" fn defra_encrypted_index_delete(
     node_ptr: usize,
-    identity_did: *const c_char,
     collection_name: *const c_char,
     field_name: *const c_char,
-) -> FfiResult {
+    identity_ptr: usize,
+) -> DefraResult {
     ffi_entry! {
-        try_ffi!(check_nac_for_node(
-            node_ptr,
-            identity_did,
-            NodePermission::EncryptedIndexDelete
-        ));
-        let collection_name_str = try_ffi!(require_c_str(collection_name, "collection_name"));
-        let field_name_str = try_ffi!(require_c_str(field_name, "field_name"));
-        let database = try_ffi!(get_node_database(node_ptr));
+        let request = try_ffi!(Request::begin(node_ptr, identity_ptr, NodePermission::EncryptedIndexDelete));
+        let node_ptr = try_ffi!(request.require_node("encrypted index delete"));
+        let collection_name_str = go_string(collection_name);
+        let field_name_str = go_string(field_name);
+        let database = try_ffi!(request.database());
 
         ffi_async!(node_ptr, {
             // Get the collection
@@ -209,203 +217,5 @@ pub unsafe extern "C" fn delete_encrypted_index(
 
             Ok("{}".to_string())
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::encrypted_index::list_encrypted_indexes;
-    use crate::node::{new_node, node_close};
-    use crate::schema::add_schema;
-    use crate::types::NodeInitOptions;
-    use std::ffi::CString;
-
-    #[test]
-    fn test_create_and_list_encrypted_index() {
-        assert!(crate::runtime::init_runtime());
-
-        let options = NodeInitOptions::default();
-        let result = new_node(options);
-        assert_eq!(result.status, 0);
-        let node = result.node_ptr;
-
-        let sdl = CString::new("type User { name: String, ssn: String }").unwrap();
-        let result = unsafe { add_schema(node, std::ptr::null(), sdl.as_ptr()) };
-        assert_eq!(result.status, 0, "add_schema should succeed");
-        if !result.value.is_null() {
-            unsafe { crate::types::defra_free_string(result.value) };
-        }
-
-        let collection_name = CString::new("User").unwrap();
-        let field_name = CString::new("ssn").unwrap();
-        let result = unsafe {
-            add_encrypted_index(
-                node,
-                std::ptr::null(),
-                collection_name.as_ptr(),
-                field_name.as_ptr(),
-            )
-        };
-        assert_eq!(result.status, 0, "add_encrypted_index should succeed");
-
-        let value = unsafe { std::ffi::CStr::from_ptr(result.value).to_string_lossy() };
-        assert!(value.contains("ssn"), "should contain field name");
-        assert!(value.contains("equality"), "should contain index type");
-        unsafe { crate::types::defra_free_string(result.value) };
-
-        let result =
-            unsafe { list_encrypted_indexes(node, std::ptr::null(), collection_name.as_ptr()) };
-        assert_eq!(result.status, 0, "list_encrypted_indexes should succeed");
-
-        let value = unsafe { std::ffi::CStr::from_ptr(result.value).to_string_lossy() };
-        assert!(value.contains("ssn"), "should contain field name");
-        unsafe { crate::types::defra_free_string(result.value) };
-
-        node_close(node);
-    }
-
-    #[test]
-    fn test_delete_encrypted_index() {
-        assert!(crate::runtime::init_runtime());
-
-        let options = NodeInitOptions::default();
-        let result = new_node(options);
-        assert_eq!(result.status, 0);
-        let node = result.node_ptr;
-
-        let sdl = CString::new("type Employee { name: String, salary: Int }").unwrap();
-        let result = unsafe { add_schema(node, std::ptr::null(), sdl.as_ptr()) };
-        assert_eq!(result.status, 0);
-        if !result.value.is_null() {
-            unsafe { crate::types::defra_free_string(result.value) };
-        }
-
-        let collection_name = CString::new("Employee").unwrap();
-        let field_name = CString::new("salary").unwrap();
-        let result = unsafe {
-            add_encrypted_index(
-                node,
-                std::ptr::null(),
-                collection_name.as_ptr(),
-                field_name.as_ptr(),
-            )
-        };
-        assert_eq!(result.status, 0);
-        if !result.value.is_null() {
-            unsafe { crate::types::defra_free_string(result.value) };
-        }
-
-        let result = unsafe {
-            delete_encrypted_index(
-                node,
-                std::ptr::null(),
-                collection_name.as_ptr(),
-                field_name.as_ptr(),
-            )
-        };
-        assert_eq!(result.status, 0, "delete_encrypted_index should succeed");
-        if !result.value.is_null() {
-            unsafe { crate::types::defra_free_string(result.value) };
-        }
-
-        let result =
-            unsafe { list_encrypted_indexes(node, std::ptr::null(), collection_name.as_ptr()) };
-        assert_eq!(result.status, 0);
-        let value = unsafe { std::ffi::CStr::from_ptr(result.value).to_string_lossy() };
-        assert!(!value.contains("salary"), "index should be removed");
-        unsafe { crate::types::defra_free_string(result.value) };
-
-        node_close(node);
-    }
-
-    #[test]
-    fn test_add_encrypted_index_nonexistent_field() {
-        assert!(crate::runtime::init_runtime());
-
-        let options = NodeInitOptions::default();
-        let result = new_node(options);
-        assert_eq!(result.status, 0);
-        let node = result.node_ptr;
-
-        let sdl = CString::new("type Product { name: String }").unwrap();
-        let result = unsafe { add_schema(node, std::ptr::null(), sdl.as_ptr()) };
-        assert_eq!(result.status, 0);
-        if !result.value.is_null() {
-            unsafe { crate::types::defra_free_string(result.value) };
-        }
-
-        let collection_name = CString::new("Product").unwrap();
-        let field_name = CString::new("nonexistent").unwrap();
-        let result = unsafe {
-            add_encrypted_index(
-                node,
-                std::ptr::null(),
-                collection_name.as_ptr(),
-                field_name.as_ptr(),
-            )
-        };
-        assert_eq!(result.status, 1, "should fail for non-existent field");
-        assert!(!result.error.is_null());
-        let error = unsafe { std::ffi::CStr::from_ptr(result.error).to_string_lossy() };
-        assert!(
-            error.contains("non-existent field"),
-            "should contain error message, got: {}",
-            error
-        );
-        unsafe { crate::types::defra_free_string(result.error) };
-
-        node_close(node);
-    }
-
-    #[test]
-    fn test_create_duplicate_encrypted_index() {
-        assert!(crate::runtime::init_runtime());
-
-        let options = NodeInitOptions::default();
-        let result = new_node(options);
-        assert_eq!(result.status, 0);
-        let node = result.node_ptr;
-
-        let sdl = CString::new("type Account { email: String }").unwrap();
-        let result = unsafe { add_schema(node, std::ptr::null(), sdl.as_ptr()) };
-        assert_eq!(result.status, 0);
-        if !result.value.is_null() {
-            unsafe { crate::types::defra_free_string(result.value) };
-        }
-
-        let collection_name = CString::new("Account").unwrap();
-        let field_name = CString::new("email").unwrap();
-        let result = unsafe {
-            add_encrypted_index(
-                node,
-                std::ptr::null(),
-                collection_name.as_ptr(),
-                field_name.as_ptr(),
-            )
-        };
-        assert_eq!(result.status, 0);
-        if !result.value.is_null() {
-            unsafe { crate::types::defra_free_string(result.value) };
-        }
-
-        let result = unsafe {
-            add_encrypted_index(
-                node,
-                std::ptr::null(),
-                collection_name.as_ptr(),
-                field_name.as_ptr(),
-            )
-        };
-        assert_eq!(result.status, 1, "should fail for duplicate index");
-        assert!(!result.error.is_null());
-        let error = unsafe { std::ffi::CStr::from_ptr(result.error).to_string_lossy() };
-        assert!(
-            error.contains("already exists"),
-            "should contain error message"
-        );
-        unsafe { crate::types::defra_free_string(result.error) };
-
-        node_close(node);
     }
 }

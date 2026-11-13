@@ -200,9 +200,6 @@ async fn pair() -> Result<(Node, Node)> {
 }
 
 async fn shutdown(node: Node) -> Result<()> {
-    if let Some(p2p) = node.p2p_system().cloned() {
-        p2p.shutdown().await;
-    }
-    node.database().close().await?;
+    node.shutdown().await?;
     Ok(())
 }

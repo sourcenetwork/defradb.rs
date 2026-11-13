@@ -79,12 +79,24 @@ async fn assert_hint_prevents_resend(path: PushPath) {
         .unwrap()
         .is_none());
 
+    let incarnation = peerstore
+        .get_replicator_incarnation(peer.as_str())
+        .await
+        .unwrap()
+        .unwrap();
     for attempt in 0..2 {
         match path {
             PushPath::Replay => {
                 // Initial replay hands failures to the durable sweep rather than returning them.
                 pusher
-                    .push_existing_docs(&peer, &["Users".into()], &Default::default(), None, None)
+                    .push_existing_docs(
+                        &peer,
+                        &["Users".into()],
+                        &Default::default(),
+                        None,
+                        None,
+                        incarnation,
+                    )
                     .await
                     .unwrap();
             }

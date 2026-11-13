@@ -224,3 +224,47 @@ fn other_collections_do_not_exhaust_scoped_capacity() {
     })
     .unwrap()
 }
+
+#[test]
+fn stable_observation_identity_does_not_rewrite_raw_version_events() {
+    workers::block_on(async {
+        let bus = ChannelBus::new();
+        let mut changes = bus.subscribe_collection_changes(vec!["root".into()]);
+        let mut other = bus.subscribe_collection_changes(vec!["other".into()]);
+        let mut raw = bus.subscribe(&[EventName::Update]);
+        let event = Update::new(
+            "doc".into(),
+            cid::Cid::default(),
+            "version-2".into(),
+            vec![7],
+            false,
+            true,
+        )
+        .with_observation_collection_id("root".into());
+        bus.publish(Message::update(event));
+        let batch = changes.recv().await.unwrap();
+        assert_eq!(batch.changes[0].collection_id, "root");
+        assert_eq!(batch.changes[0].doc_id, "doc");
+        assert!(!batch.changes[0].has_local_write);
+        assert!(other.try_recv().is_err());
+        let message = raw.recv().await.unwrap();
+        let event = message.as_update().unwrap();
+        assert_eq!(event.collection_id, "version-2");
+        assert_eq!(event.observation_collection_id(), "root");
+        assert_eq!(event.block.as_ref(), &[7]);
+        assert_eq!(event.subject_doc_id, None);
+        assert!(
+            Update::new(
+                "local".into(),
+                cid::Cid::default(),
+                "root".into(),
+                Vec::new(),
+                false,
+                false
+            )
+            .observation_collection_id()
+                == "root"
+        );
+    })
+    .unwrap();
+}

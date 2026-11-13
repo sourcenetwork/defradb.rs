@@ -37,6 +37,7 @@ bench = false
 [dependencies]
 # Internal crates
 query = { path = "../query" }
+document = { path = "../document" }
 defra-p2p-adapter = { path = "../p2p-adapter", default-features = false }
 identity = { path = "../identity" }
 schema = { path = "../schema" }
@@ -107,7 +108,6 @@ crypto = { path = "../crypto" }
 
 # Enable test-utils feature for integration tests
 defra-http = { path = ".", features = ["test-utils"] }
-document = { path = "../document" }
 
 [lints]
 workspace = true

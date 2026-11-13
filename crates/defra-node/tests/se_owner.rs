@@ -116,10 +116,8 @@ fn embedded_libp2p_se_owner_queries_replicator() -> Result<()> {
             // Query runs on the OWNER (node A); A fans the tag out to replicator B.
             wait_for_se_query(&owner, "User", r#"{name: {_eq: "John"}}"#, &doc_id).await?;
 
-            p2p_owner.shutdown().await;
-            p2p_replicator.shutdown().await;
-            owner.database().close().await?;
-            replicator.database().close().await?;
+            owner.shutdown().await.unwrap();
+            replicator.shutdown().await.unwrap();
             Ok(())
         })
         .unwrap()
@@ -218,10 +216,8 @@ fn embedded_iroh_se_owner_queries_replicator() -> Result<()> {
 
             wait_for_se_query(&owner, "User", r#"{name: {_eq: "John"}}"#, &doc_id).await?;
 
-            p2p_owner.shutdown().await;
-            p2p_replicator.shutdown().await;
-            owner.database().close().await?;
-            replicator.database().close().await?;
+            owner.shutdown().await.unwrap();
+            replicator.shutdown().await.unwrap();
             Ok(())
         })
         .unwrap()

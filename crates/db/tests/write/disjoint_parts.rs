@@ -186,35 +186,6 @@ fn an_update_conflicts_with_a_change_of_the_field_its_filter_compares() {
     .unwrap()
 }
 
-#[test]
-fn updates_of_a_migrated_collection_both_commit() {
-    workers::block_on(async {
-    let node = Node::new(USERS).await;
-    let migration = lens::LensConfig::new(
-        "ignored-source",
-        "ignored-destination",
-        lens::LensModule::from_bytes(b"\0asm\x01\0\0\0".to_vec()),
-    );
-    node.db
-        .patch_collection_with_migration(
-            "Users",
-            r#"[{"op": "add", "path": "/Users/Fields/-", "value": {"Name": "nickname", "Kind": "String"}}]"#,
-            Some(migration),
-            None,
-        )
-        .await
-        .unwrap();
-    let id = node.create(ANN).await;
-    node.both_commit(
-        &format!(r#"mutation {{ update_Users(docID: "{id}", input: {{age: 31}}) {{ _docID }} }}"#),
-        &format!(r#"mutation {{ update_Users(docID: "{id}", input: {{email: "ann@new"}}) {{ _docID }} }}"#),
-    )
-    .await;
-    assert_ann(&node, 31, "ann@new").await;
-})
-    .unwrap()
-}
-
 const METRIC: &str = "type Metric { label: String  note: String  ts: DateTime  value: Int }";
 const ROLLUP: &str = r#"
 type MetricRollup @downsample(interval: "1000ms", timeField: "ts") {

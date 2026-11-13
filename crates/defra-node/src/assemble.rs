@@ -16,7 +16,7 @@ use crate::{BlockOps, Error, Node, Result, SchemaOps};
 use crate::access_hooks::AccessHooks;
 #[cfg(feature = "otel")]
 use crate::TelemetryHandle;
-#[cfg(feature = "http")]
+#[cfg(not(target_arch = "wasm32"))]
 use crate::TransactionCleanupConfig;
 
 /// What a build takes besides its [`NodeConfig`]: the settings that are not
@@ -28,12 +28,14 @@ pub(crate) struct Extras {
     pub embedding_api_key: Option<String>,
     pub txn_ownership: db::TxnOwnership,
     pub document_projector: Option<Arc<dyn db::DocumentMutationProjector>>,
-    #[cfg(feature = "http")]
+    #[cfg(not(target_arch = "wasm32"))]
     pub transaction_cleanup: Option<TransactionCleanupConfig>,
     #[cfg(feature = "http")]
     pub serves_http: bool,
     #[cfg(feature = "p2p")]
     pub access_hooks: Option<AccessHooks>,
+    #[cfg(feature = "p2p")]
+    pub stream_protocols: Vec<p2p::iroh::StreamRegistration>,
     #[cfg(feature = "otel")]
     pub telemetry: Option<TelemetryHandle>,
 }
@@ -72,10 +74,12 @@ where
 {
     let NodeConfig {
         peer_keyring,
+        start_peer_key,
         persistence,
         transport,
         edge: given_edge,
         signing,
+        identity_only,
         document_acp: document_acp_config,
         query_limits,
         max_txn_retries,
@@ -85,19 +89,30 @@ where
         query_timeout,
         introspection_cache,
         replication_filter,
+        index_build_gate,
     } = config;
     let introspection_cache = introspection_cache.unwrap_or(true);
     #[cfg(not(any(feature = "p2p", feature = "libp2p")))]
-    let _ = (&peer_keyring, &transport);
+    let _ = (&peer_keyring, &start_peer_key, &transport);
 
     let event_bus: Arc<dyn events::Bus> = Arc::new(events::ChannelBus::default());
-    let (raw_identity, node_identity_did) = node_identity::create_node_identity(&signing)?;
+    let node_identity::NodeIdentity {
+        raw: raw_identity,
+        did: node_identity_did,
+        hold: signing_key_hold,
+    } = node_identity::create_node_identity(&signing)?;
     let node_p2p_identity = raw_identity.map(Arc::new);
-    let node_query_identity = node_identity_did
+    if identity_only && node_identity_did.is_none() {
+        return Err(Error::IdentityOnlyNeedsIdentity);
+    }
+    let node_did = node_identity_did
         .as_ref()
         .map(|did| identity::Did::new(did.clone()))
         .transpose()
         .map_err(Error::InvalidNodeIdentityDid)?;
+    // The identity a request without its own acts as: the node's, when it
+    // signs with it. An identity-only node's requests act as their caller.
+    let node_query_identity = node_did.clone().filter(|_| !identity_only);
 
     // Everything the config can refuse is checked before anything opens, so a
     // refusal has nothing to close.
@@ -156,6 +171,9 @@ where
     if let Some(filter) = replication_filter {
         db_options = db_options.with_replication_filter(filter.0);
     }
+    if let Some(gate) = index_build_gate {
+        db_options = db_options.with_index_build_gate(gate.0);
+    }
     if let Some(identity) = node_p2p_identity.as_ref() {
         db_options = db_options.with_node_identity_arc(identity.clone());
     }
@@ -200,6 +218,7 @@ where
             persistence,
             &document_acp_config,
             network.as_ref().map(NodeEdge::edge),
+            Some(event_bus.clone()),
         )
         .await,
     )
@@ -210,9 +229,11 @@ where
         .expect("document ACP was just installed")
         .clone();
     if let Some(projector) = extras.document_projector {
+        // The projector is the node's own trusted actor: an identity-only
+        // node still gives it the node's DID.
         let actor = close_on_error(
             &database,
-            node_query_identity
+            node_did
                 .clone()
                 .ok_or(Error::DocumentProjectorNeedsIdentity),
         )
@@ -265,6 +286,7 @@ where
                     libp2p.sync.sync_config(),
                     schedule,
                     peer_keyring.as_ref(),
+                    start_peer_key.as_ref(),
                     network.edge(),
                 )
                 .await
@@ -280,7 +302,9 @@ where
                 document_acp.clone(),
                 strict_replicated_doc_access,
                 peer_keyring.as_ref(),
+                start_peer_key.as_ref(),
                 network.sibling(),
+                extras.stream_protocols,
             )
             .await
             .map(Some),
@@ -484,18 +508,26 @@ where
 
     // GraphQL requests run on the database's worker pool, routed there once
     // at the boundary.
-    let runner = query::pooled::PooledExecutor::wrap(Arc::new(query_runner), pool.as_ref());
+    let query_runner = Arc::new(query_runner);
+    // The HTTP server's document routes, as `defradb start` serves them.
+    #[cfg(feature = "http")]
+    let rest: Arc<dyn query::rest::RestOperations> =
+        Arc::new(query::rest::RestOperationsImpl::new(query_runner.clone()));
+    let runner = query::pooled::PooledExecutor::wrap(query_runner, pool.as_ref());
 
     let local_zanzibar_store = acp_setup.local_zanzibar_store.clone();
     #[cfg(feature = "vera")]
     let vera_acp = acp_setup.vera_acp.clone();
     #[cfg(all(feature = "vera", not(target_arch = "wasm32")))]
     let redrive = acp_setup.redrive;
+    #[cfg(feature = "embedded-vera")]
+    let embedded_vera = crate::single_slot(acp_setup.embedded_vera);
     database.set_dac_policies(acp_setup.dac_policies);
     let schema_ops: Arc<dyn SchemaOps> = Arc::new(db_impls::DbSchemaOps::new(
         database.clone(),
         query_limits,
         document_acp.clone(),
+        registry.clone(),
     ));
     let acp_ops: Arc<dyn acp_ops::AcpOps> = Arc::new(acp_ops::DbAcpOps::new(
         database.clone(),
@@ -525,7 +557,7 @@ where
     // The sweep holds the registry, and through it the database and its
     // pool: held anywhere but the shutdown set, a node dropped without
     // shutdown would keep its pool's threads and the store alive forever.
-    #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+    #[cfg(not(target_arch = "wasm32"))]
     if let Some(cleanup) = extras.transaction_cleanup {
         tracing::info!(
             max_idle_age_secs = cleanup.max_idle_age.as_secs(),
@@ -543,6 +575,10 @@ where
         node_query_identity.clone(),
     ));
 
+    // Started once nothing else can fail, as the background tasks are: a
+    // resumed build holds the database until it stops.
+    database.start_resumed_index_backfills();
+
     #[cfg(any(feature = "p2p", feature = "libp2p"))]
     let p2p = p2p_setup.map(|setup| setup.system);
     #[cfg(all(feature = "managed-p2p", not(any(feature = "p2p", feature = "libp2p"))))]
@@ -557,6 +593,8 @@ where
         vera_acp,
         query_limits,
         runner,
+        #[cfg(feature = "http")]
+        rest,
         event_bus,
         schema_ops,
         block_ops,
@@ -564,9 +602,13 @@ where
         document_acp,
         embedding_config,
         node_identity_did,
+        node_signs: !identity_only,
         node_query_identity,
+        _signing_key_hold: signing_key_hold,
         network,
         pool,
+        #[cfg(feature = "embedded-vera")]
+        embedded_vera,
         remote_acp,
         #[cfg(not(target_arch = "wasm32"))]
         transaction_stats,

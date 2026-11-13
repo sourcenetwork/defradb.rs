@@ -20,9 +20,8 @@ path = "tests/verars/main.rs"
 
 [dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "0921f0b921cb9a7fc99017246bfa581d1ef70128" }
 commonware-codec = "=2026.10.0"
-defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "0959bd78d13463ac9a4104b3ae0f3c46fb54547b" }
+defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "502e60487f585a8303afa4998b07806aab69922c" }
 crypto = { path = "../../crates/crypto" }
 document = { path = "../../crates/document" }
 edge = { path = "../../crates/edge", features = ["testing"] }
@@ -34,7 +33,10 @@ futures.workspace = true
 paste = "1.0"
 ctor = "1.0"
 chrono = { version = "0.4" }
-defra-node = { path = "../../crates/defra-node", features = ["http", "libp2p"] }
+defra-node = { path = "../../crates/defra-node", features = ["http", "libp2p", "p2p"] }
+# Embedder stream protocols: the testo actions register and open them on iroh nodes.
+p2p = { path = "../../crates/p2p", features = ["iroh-transport"] }
+async-trait = { workspace = true }
 events = { path = "../../crates/events" }
 async-channel = "2"
 cli = { path = "../../crates/cli" }
@@ -63,16 +65,16 @@ path = "src/bin/gen_scenarios/main.rs"
 required-features = ["generator"]
 
 [dev-dependencies]
+vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "a9ce2e431d6f43786f94946dfc5c8a3405a9a8f6" }
 mantra-macros = "0.9"
 keyring = { path = "../../crates/keyring" }
-vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "0921f0b921cb9a7fc99017246bfa581d1ef70128" }
-vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "0921f0b921cb9a7fc99017246bfa581d1ef70128" }
-vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "0921f0b921cb9a7fc99017246bfa581d1ef70128" }
+vera-client = "0.1.2"
+vera-domain = "0.1.2"
+vera-modules = "0.1.2"
 alloy-sol-types.workspace = true
 acp = { path = "../../crates/acp" }
 vera = { path = "../../crates/vera" }
 libc = "0.2"
-p2p = { path = "../../crates/p2p", features = ["iroh-transport"] }
 ciborium = { workspace = true }
 serial_test = "4"
 

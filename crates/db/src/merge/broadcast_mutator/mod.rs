@@ -95,7 +95,7 @@ pub struct BroadcastSeOptions {
 /// Mirrors Go's `Coordinator.retrySEArtifacts` (`internal/se/coordinator_retry.go`):
 /// the producer never stores SE artifacts locally, so on reconnect it regenerates
 /// them from the document's current field values and re-pushes. Object-safe so the
-/// embedded retry loop and the `p2p_retry_replicators` FFI op can drive SE
+/// embedded retry loop and the `defra_p2p_replicator_retry` FFI call can drive SE
 /// re-push without naming the transport type.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]

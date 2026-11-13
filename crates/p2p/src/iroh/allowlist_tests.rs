@@ -23,7 +23,7 @@ use crate::transport::{P2PTransport, PeerId, TransportEvent};
 
 type Events = DispatchReceiver<TransportEvent<iroh::endpoint::SendStream>>;
 
-fn config(secret_key: SecretKey, allowlist: IrohAllowlistConfig) -> IrohEndpointConfig {
+pub(super) fn config(secret_key: SecretKey, allowlist: IrohAllowlistConfig) -> IrohEndpointConfig {
     IrohEndpointConfig {
         secret_key,
         node_identity: None,
@@ -134,7 +134,7 @@ async fn dial_and_wait_for_local_handshake(dialer: &IrohTransport, server: &Iroh
     .expect("dial never reached the server");
 }
 
-async fn shutdown_all(
+pub(super) async fn shutdown_all(
     dialer: IrohTransport,
     server: IrohTransport,
     dialer_task: edge::Task<()>,

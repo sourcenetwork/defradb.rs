@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use net::http::Method;
 use serde::{Deserialize, Serialize};
 use urlencoding::encode;
 
@@ -118,19 +119,16 @@ pub struct IndexFieldInfo {
 }
 
 impl HttpClient {
+    /// Create an index on `collection`, in transaction `txn` when given.
     pub async fn index_create(
         &self,
+        txn: Option<&str>,
         collection: &str,
         fields: &[String],
         name: Option<&str>,
         unique: bool,
         vector: Option<schema::VectorIndexDescription>,
     ) -> Result<IndexInfo> {
-        let url = format!(
-            "{}/api/v0/collections/{}/indexes",
-            self.base_url,
-            encode(collection)
-        );
         let request = GoIndexCreateRequest {
             name: name.map(|s| s.to_string()),
             fields: fields
@@ -143,7 +141,13 @@ impl HttpClient {
             unique,
             vector,
         };
-        let created: GoIndexDescription = self.post_json(&url, &request).await?;
+        let path = format!("collections/{}/indexes", encode(collection));
+        let body = serde_json::to_string(&request)?;
+        let created: GoIndexDescription = self
+            .send(Method::POST, &path, &[], Some(body), txn)
+            .await?
+            .json()
+            .await?;
         Ok(created.into_info(collection))
     }
 
@@ -180,22 +184,33 @@ impl HttpClient {
 
     /// Collection `collection`'s indexes as the node answers: Go's
     /// `[{Description, Execution}]`, the build state included.
-    pub async fn index_listing(&self, collection: &str) -> Result<serde_json::Value> {
-        let url = format!(
-            "{}/api/v0/collections/{}/indexes",
-            self.base_url,
-            encode(collection)
-        );
-        self.request_json("GET", &url, None).await
+    pub async fn index_listing(
+        &self,
+        txn: Option<&str>,
+        collection: &str,
+    ) -> Result<serde_json::Value> {
+        let path = format!("collections/{}/indexes", encode(collection));
+        Ok(self
+            .send(Method::GET, &path, &[], None, txn)
+            .await?
+            .json()
+            .await?)
     }
 
-    pub async fn index_delete(&self, collection: &str, name: &str) -> Result<()> {
-        let url = format!(
-            "{}/api/v0/collections/{}/indexes/{}",
-            self.base_url,
+    /// Delete index `name` of `collection`, in transaction `txn` when given.
+    pub async fn index_delete(
+        &self,
+        txn: Option<&str>,
+        collection: &str,
+        name: &str,
+    ) -> Result<()> {
+        let path = format!(
+            "collections/{}/indexes/{}",
             encode(collection),
             encode(name)
         );
-        self.request_void("DELETE", &url, None).await
+        self.send(Method::DELETE, &path, &[], None, txn)
+            .await
+            .map(drop)
     }
 }

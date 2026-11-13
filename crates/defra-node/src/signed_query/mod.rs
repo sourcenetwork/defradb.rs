@@ -1,6 +1,6 @@
 //! Queries the node runs as its own signing identity.
 //!
-//! The node's identity, signing config and batch session travel in the
+//! The node's principal, signing config and batch session travel in the
 //! request's context. A signed query runs as a task of the network runtime
 //! ([`Edge::spawn`]), so it keeps running if its caller stops waiting.
 
@@ -13,18 +13,24 @@ use query::{QueryExecutor, QueryRequest, QueryResponse, TransactionHandle};
 #[cfg(test)]
 mod tests;
 
+/// Runs `request` signed with `signing_config`. `principal` is the identity
+/// the node acts as, which owns the transactions it begins: the node's DID,
+/// or `None` on an identity-only node, whose request keeps its context's own
+/// identity so it matches the owner of the transaction it runs in.
 pub(super) async fn execute_with_signing_context(
     edge: &Edge,
     executor: Arc<dyn QueryExecutor>,
     mut request: QueryRequest,
     txn_handle: Option<TransactionHandle>,
     signing_config: SigningConfig,
-    node_did: String,
+    principal: Option<String>,
 ) -> QueryResponse {
     let batch_session = Some(signing_config.public_key_hex.clone());
-    request.context = request
-        .context
-        .with_identity(Some(node_did))
+    let context = match principal {
+        Some(did) => request.context.with_identity(Some(did)),
+        None => request.context,
+    };
+    request.context = context
         .with_signing(Some(signing_config))
         .with_batch_session(batch_session);
     let context = request.context.clone();

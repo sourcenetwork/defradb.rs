@@ -627,6 +627,17 @@ pub trait DocMutator: MaybeSendSync {
         Ok(None)
     }
 
+    /// Pins `version`, a collection version the request selected (possibly
+    /// inactive), for the writes this mutator makes in its transaction, so
+    /// they are recorded at that version. A mutator that cannot pin refuses,
+    /// rather than write at the active version.
+    fn pin_collection(&self, version: schema::CollectionVersion) -> Result<()> {
+        let _ = version;
+        Err(crate::error::QueryError::execution(
+            "writing through a selected collection version is not supported here",
+        ))
+    }
+
     /// Configure document ACP for mutation-side ordering guarantees.
     fn set_document_acp(&self, _acp: Arc<dyn acp::DocumentACP>) {}
 

@@ -3,23 +3,26 @@
 //! This module manages the lifecycle of node instances and their handles.
 //! Go code receives opaque usize handles that map to actual node state.
 
+mod handle;
+mod identity;
 mod p2p;
 mod registry;
+mod turns;
+mod txn;
 
 use std::sync::Arc;
 
-use kovan::AtomOption;
+use kovan::{Atom, AtomOption};
 use storage::RegolithStore;
 use zeroize::Zeroizing;
 
 use blockstore::DefraBlockstore;
 
+pub use identity::{IdentityHandle, IdentityRegistry, IdentityState, NodeIdentity, IDENTITIES};
 pub use p2p::P2PState;
-pub use registry::{
-    graphql_subscriptions, nodes, subscriptions, GraphQLSubscriptionRegistry,
-    GraphQLSubscriptionsAccess, NodeRegistry, NodesAccess, SubscriptionRegistry,
-    SubscriptionsAccess, GRAPHQL_SUBSCRIPTIONS, NODES, SUBSCRIPTIONS,
-};
+pub use registry::{GraphQLSubscriptionRegistry, NodeRegistry, GRAPHQL_SUBSCRIPTIONS, NODES};
+pub use turns::{Ticket, Turns};
+pub use txn::{TxnHandle, TxnRegistry, TxnState, TXNS};
 
 /// Type alias for the database type used in FFI.
 pub type FfiDatabase = db::DB<RegolithStore>;
@@ -60,23 +63,26 @@ pub struct NodeState {
     pub local_zanzibar_store: Option<Arc<dyn acp::ZanzibarStore>>,
     /// P2P state (optional - not all nodes have P2P enabled).
     pub p2p: Option<Arc<P2PState>>,
-    /// Node identity DID (set when signing is enabled).
-    /// Used as fallback identity for signing blocks when no explicit identity is provided.
-    pub node_identity_did: AtomOption<String>,
+    /// The node's identity (set when signing is enabled), with the node's
+    /// hold on its key. Used as fallback identity for signing blocks when no
+    /// explicit identity is provided.
+    pub node_identity: Atom<Option<NodeIdentity>>,
     /// Whether block signing is enabled on this node.
     /// When true, anonymous requests still sign with node identity (matching Go).
     pub signing_enabled: bool,
     /// Query parsing and filter evaluation limits configured for this node.
     pub query_limits: query::QueryLimits,
     /// Searchable encryption key (32-byte AES-256 key). Zeroized on drop.
-    /// Set via `set_se_encryption_key` FFI when SE is enabled in test config.
     pub se_encryption_key: AtomOption<Zeroizing<Vec<u8>>>,
+    /// The node's options as `defra_node_options` reports them, redacted.
+    pub options_json: serde_json::Value,
 }
 
 impl NodeState {
     /// The node's default signing identity DID, if one is configured.
     pub fn identity_did(&self) -> Option<String> {
-        self.node_identity_did.load().map(|did| did.to_string())
+        self.node_identity
+            .peek(|identity| identity.as_ref().map(|identity| identity.did.clone()))
     }
 
     pub fn replicator_push_options(&self) -> defra_node::ReplicatorPushOptions {
@@ -85,10 +91,7 @@ impl NodeState {
                 .se_encryption_key
                 .load()
                 .map(|key| Zeroizing::new(key.to_vec())),
-            se_identity_pubkey: self
-                .node_identity_did
-                .load()
-                .map(|identity| identity.as_bytes().to_vec()),
+            se_identity_pubkey: self.identity_did().map(String::into_bytes),
         }
     }
 
@@ -101,19 +104,7 @@ impl NodeState {
     }
 }
 
-/// State held for each FFI subscription.
-pub struct SubscriptionState {
-    /// The underlying events subscription, polled through a shared
-    /// reference (`try_take`): polls of one handle never wait on each other,
-    /// and each event goes to exactly one of them.
-    pub subscription: events::Subscription,
-    /// The node handle this subscription belongs to.
-    pub node_handle: NodeHandle,
-    /// Optional collection name filter (None = all collections).
-    pub collection_filter: Option<String>,
-}
-
-/// State held for each GraphQL subscription (used by poll_graphql_subscription).
+/// State held for each GraphQL subscription (read by `defra_subscription_poll`).
 ///
 /// Subscription queries are re-executed at **event time** (not poll time) to ensure
 /// the DB state matches the event. A background network service processes events as

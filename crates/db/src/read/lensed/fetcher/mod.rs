@@ -510,6 +510,16 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
             .map_err(|e| query::error::QueryError::execution(e.to_string()))
     }
 
+    async fn get_document_updates(
+        &self,
+        options: &query::fetcher::DocumentUpdateOptions,
+        reader: &query::fetcher::DocumentReader<'_>,
+    ) -> query::error::Result<query::fetcher::DocumentUpdatePage> {
+        crate::event::updates::read(Some(&self.db), &*self.shared_txn()?, options, reader)
+            .await
+            .map_err(crate::event::updates::query_error)
+    }
+
     async fn get_json_conflicts(
         &self,
         options: &query::fetcher::JsonConflictOptions,
@@ -596,18 +606,6 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         params: &query::planner::index_selection::IndexScanParams,
     ) -> query::error::Result<query::fetcher::IndexScanResult> {
         self.get_by_index_scan_impl(collection_name, params).await
-    }
-
-    async fn indexes_match_documents(&self, collection_name: &str) -> query::error::Result<bool> {
-        let (collection, _, _) = crate::collection::loader::get_collection_with_lazy_load(
-            &*self.shared_txn()?,
-            collection_name,
-        )
-        .await?;
-        Ok(!self
-            .load_versions_and_check_migrations(&collection)
-            .await?
-            .1)
     }
 
     fn supports_index_queries(&self) -> bool {

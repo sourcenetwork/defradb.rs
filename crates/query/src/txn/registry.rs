@@ -184,6 +184,109 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
         ))
     }
 
+    /// Define index `name` (generated when `None`) of `kind` over `fields` of
+    /// collection `collection` in the transaction `context` carries; its
+    /// backfill runs once that transaction commits.
+    async fn create_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: Option<&str>,
+        fields: Vec<schema::IndexedFieldDescription>,
+        kind: schema::IndexKind,
+    ) -> std::result::Result<schema::IndexDescription, TransactionError> {
+        let _ = (context, collection, name, fields, kind);
+        Err(TransactionError::not_supported(
+            "index changes inside a transaction are not supported in this configuration",
+        ))
+    }
+
+    /// Drop index `name` of collection `collection` in the transaction
+    /// `context` carries; its entries go once that transaction commits.
+    async fn drop_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, collection, name);
+        Err(TransactionError::not_supported(
+            "index changes inside a transaction are not supported in this configuration",
+        ))
+    }
+
+    /// Collection `collection` and its index actions by index ID, as the
+    /// transaction `context` carries sees them.
+    async fn indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> std::result::Result<
+        (
+            schema::CollectionVersion,
+            rapidhash::RapidHashMap<u32, defra_core::ActionExecution>,
+        ),
+        TransactionError,
+    > {
+        let _ = (context, collection);
+        Err(TransactionError::not_supported(
+            "index reads inside a transaction are not supported in this configuration",
+        ))
+    }
+
+    /// Add an equality encrypted index on `field` of `collection` in the
+    /// transaction `context` carries.
+    async fn add_encrypted_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        field: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, collection, field);
+        Err(TransactionError::not_supported(
+            "encrypted index operations inside a transaction are not supported in this configuration",
+        ))
+    }
+
+    /// Delete the encrypted index on `field` of `collection` in the
+    /// transaction `context` carries.
+    async fn delete_encrypted_index_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        field: &str,
+    ) -> std::result::Result<(), TransactionError> {
+        let _ = (context, collection, field);
+        Err(TransactionError::not_supported(
+            "encrypted index operations inside a transaction are not supported in this configuration",
+        ))
+    }
+
+    /// The fields of `collection` with an encrypted index, as the transaction
+    /// `context` carries sees them.
+    async fn encrypted_indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+    ) -> std::result::Result<Vec<String>, TransactionError> {
+        let _ = (context, collection);
+        Err(TransactionError::not_supported(
+            "encrypted index operations inside a transaction are not supported in this configuration",
+        ))
+    }
+
+    /// Every collection's encrypted index fields, by collection name, as the
+    /// transaction `context` carries sees them.
+    async fn all_encrypted_indexes_in_txn_as(
+        &self,
+        context: &RequestContext,
+    ) -> std::result::Result<Vec<(String, Vec<String>)>, TransactionError> {
+        let _ = context;
+        Err(TransactionError::not_supported(
+            "encrypted index operations inside a transaction are not supported in this configuration",
+        ))
+    }
+
     /// Make collection version `version_id` its collection's active one, for
     /// the caller `context` names, in the transaction it carries if any.
     async fn set_active_collection_version_as(
@@ -209,6 +312,22 @@ pub trait TransactionRegistry: MaybeSendSync + 'static {
         let _ = (context, name, filter);
         Err(TransactionError::not_supported(
             "collection truncate is not supported in this configuration",
+        ))
+    }
+
+    /// Hard-delete the documents of collection `name` named by `doc_ids`, in
+    /// the transaction `context` carries when it carries one; how many were
+    /// purged. Their block history is pruned unless the collection is
+    /// branchable. Go shinzo's `Collection.PurgeByDocIDs`.
+    async fn purge_by_doc_ids_as(
+        &self,
+        context: &RequestContext,
+        name: &str,
+        doc_ids: &[document::DocID],
+    ) -> std::result::Result<usize, TransactionError> {
+        let _ = (context, name, doc_ids);
+        Err(TransactionError::not_supported(
+            "document purge is not supported in this configuration",
         ))
     }
 

@@ -38,7 +38,9 @@
 \*   backfill.rs  BackfillPage::index (validated definition read per page),
 \*                DB::backfill_index, FailBackfillAttempt (a failure is recorded
 \*                only while the index is still defined),
-\*                DB::resume_index_backfills (restart)
+\*                DB::resume_index_backfills (restart, which
+\*                DB::start_resumed_index_backfills runs as its own task once
+\*                the database is open)
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS

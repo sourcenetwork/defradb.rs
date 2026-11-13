@@ -497,11 +497,34 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
     /// definition this write uses.
     pub(super) async fn guarded_collection(
         &self,
+        context: &RequestContext,
         collection_name: &str,
     ) -> query::error::Result<((), Collection)> {
-        let collection = self.get_collection_or_err(collection_name)?;
+        let collection = self.collection_for(context, collection_name).await?;
         ensure_collection_is_active(&self.db, collection_name, &collection)?;
         Ok(((), collection))
+    }
+
+    /// The collection `collection_name` as `context` works through it: the
+    /// version it selects when that version carries the name (possibly
+    /// inactive, as Go writes through the selected collection), otherwise the
+    /// active one.
+    async fn collection_for(
+        &self,
+        context: &RequestContext,
+        collection_name: &str,
+    ) -> query::error::Result<Collection> {
+        if let Some(version_id) = context.collection_version() {
+            let selected = self
+                .db
+                .get_collection_by_version_id_full(version_id)
+                .await
+                .map_err(|e| query::error::QueryError::execution(format!("db error: {}", e)))?;
+            if let Some(collection) = selected.filter(|c| c.name() == collection_name) {
+                return Ok(collection);
+            }
+        }
+        self.get_collection_or_err(collection_name)
     }
 
     /// Get collection from DB cache or return a not-found error.

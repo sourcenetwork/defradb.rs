@@ -242,6 +242,21 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
             && prepared.is_some_and(|prepared| prepared.engine_managed_retry)
         {
             if let Some(batch) = mutator.begin_batch().await? {
+                // The collection version the request works through, pinned in
+                // every attempt's own transaction (proofs/tla/VersionPin.tla).
+                let selected = match self.context().collection_version() {
+                    Some(version_id) => Some(
+                        self.collection_provider
+                            .get_collection_by_version_id(version_id)
+                            .await?
+                            .ok_or_else(|| {
+                                QueryError::execution(format!(
+                                    "collection version '{version_id}' not found"
+                                ))
+                            })?,
+                    ),
+                    None => None,
+                };
                 let runner = Arc::new(self.scoped_runner(self.acp.clone()));
                 let mutations = Arc::new(mutations);
                 let caller_identity = caller_identity.clone();
@@ -254,7 +269,11 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                         let caller_identity = caller_identity.clone();
                         let prepared = prepared.clone();
                         let acp = acp.clone();
+                        let selected = selected.clone();
                         Box::pin(async move {
+                            if let Some(version) = selected {
+                                batch_mutator.pin_collection((*version).clone())?;
+                            }
                             batch_mutator.set_document_acp(acp.clone());
                             let attempt_acp = batch_fetcher.scoped_acp(acp.clone()).await?;
                             let mut batch_runner = runner.scoped_runner(attempt_acp);

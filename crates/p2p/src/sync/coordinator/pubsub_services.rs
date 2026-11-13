@@ -34,6 +34,11 @@ pub(crate) struct PubsubServices {
     pub(super) doc_sync: Arc<TopicHandler>,
     pub(super) branchable_sync: Arc<TopicHandler>,
     ready: AtomicBool,
+    /// Woken when a peer subscribes to `doc-sync`, so a held request is sent
+    /// to it.
+    pub(super) doc_sync_joined: regolith::sync::Notify,
+    /// Woken when a peer subscribes to `sync-branchable`.
+    pub(super) branchable_sync_joined: regolith::sync::Notify,
 }
 
 impl PubsubServices {
@@ -72,7 +77,18 @@ impl PubsubServices {
             doc_sync,
             branchable_sync,
             ready: AtomicBool::new(false),
+            doc_sync_joined: regolith::sync::Notify::new(),
+            branchable_sync_joined: regolith::sync::Notify::new(),
         })
+    }
+
+    /// A peer subscribed to `topic`: requests held on it are sent again.
+    pub(super) fn peer_subscribed(&self, topic: &str) {
+        match topic {
+            DOC_SYNC_TOPIC => self.doc_sync_joined.notify_waiters(),
+            BRANCHABLE_SYNC_TOPIC => self.branchable_sync_joined.notify_waiters(),
+            _ => {}
+        }
     }
 
     pub(super) fn is_ready(&self) -> bool {

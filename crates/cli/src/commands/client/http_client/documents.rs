@@ -2,6 +2,7 @@
 
 use net::http::{Method, Response};
 use query::documents::{self, AddOptions, DocumentsResult, Filter};
+use query::executor::{QueryResponse, QueryResponseError};
 use serde_json::{json, Value};
 use urlencoding::encode;
 
@@ -159,8 +160,9 @@ impl HttpClient {
         }
     }
 
-    /// Go's `SaveDocument` over the wire: update the document when it
-    /// exists, else add it, in transaction `txn`.
+    /// Go's `SaveDocument` in transaction `txn`: refuse a deleted document,
+    /// else update it when it exists, else add it. The same requests the
+    /// node's own save runs, sent as GraphQL in that transaction.
     async fn save_in(
         &self,
         txn: &str,
@@ -169,26 +171,26 @@ impl HttpClient {
         doc: &Value,
         options: &AddOptions,
     ) -> Result<String> {
-        let path = format!(
-            "collections/{}/document/{}",
-            encode(collection),
-            encode(doc_id)
-        );
-        let shown = [("show_deleted", "true".to_owned())];
-        match self.send(Method::GET, &path, &shown, None, Some(txn)).await {
-            Ok(_) => {
-                self.send(Method::PATCH, &path, &[], Some(doc.to_string()), Some(txn))
-                    .await?;
-                Ok(doc_id.to_owned())
+        let run = |request: String| async move {
+            match self.graphql(&request, None, Some(txn.to_owned())).await {
+                Ok(response) => QueryResponse {
+                    data: response.data,
+                    errors: response
+                        .errors
+                        .into_iter()
+                        .map(|error| match error.extensions {
+                            Some(extensions) => {
+                                QueryResponseError::new(error.message).with_code(extensions.code)
+                            }
+                            None => QueryResponseError::new(error.message),
+                        })
+                        .collect(),
+                    extensions: None,
+                },
+                Err(error) => QueryResponse::error(error.to_string()),
             }
-            Err(Error::Server(message)) if message.contains("document not found") => {
-                let ids = self
-                    .add_docs(Some(txn), collection, std::slice::from_ref(doc), options)
-                    .await?;
-                ids.into_iter().next().ok_or_else(not_found)
-            }
-            Err(error) => Err(error),
-        }
+        };
+        Ok(documents::save(run, collection, Some(doc_id), doc, options).await?)
     }
 }
 

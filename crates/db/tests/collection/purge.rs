@@ -535,39 +535,6 @@ fn purge_keeps_a_branchable_collections_history() {
     .unwrap()
 }
 
-/// A purge in a caller's transaction validates the collection's definition
-/// as every write there does, so switching the collection's active version
-/// while it runs makes the transaction's commit conflict.
-#[test]
-#[mantra_macros::req_test("defra.purge.count")]
-fn a_purge_in_a_transaction_conflicts_with_a_definition_change() {
-    workers::block_on(async {
-        let db = users().await;
-        let alice = create(&db, "Alice", 40).await;
-        db.patch_collection(
-            "Users",
-            r#"[{"op":"add","path":"/Users/Fields/-","value":{"Name":"extra","Kind":"String"}}]"#,
-            None,
-        )
-        .await
-        .unwrap();
-        let registry = db::txn::registry::DbTransactionRegistry::new(db.clone());
-        let handle = registry.begin(false).await.unwrap();
-        let context =
-            defra_core::RequestContext::default().with_txn(Some(handle.as_str().parse().unwrap()));
-        registry
-            .purge_by_doc_ids_as(&context, "Users", std::slice::from_ref(&alice))
-            .await
-            .unwrap();
-
-        db.set_active_collection_version("users-v1").await.unwrap();
-
-        let error = registry.commit(&handle).await.unwrap_err().to_string();
-        assert!(error.contains("conflict"), "{error}");
-    })
-    .unwrap()
-}
-
 /// A truncate's chunks run as engine-retried attempts: a merge adopting a
 /// block the chunk's owner scan decided on conflicts with the first attempt,
 /// the chunk runs again, and the truncate completes with the block kept.

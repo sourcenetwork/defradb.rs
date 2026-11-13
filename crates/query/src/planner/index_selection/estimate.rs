@@ -37,9 +37,7 @@ pub async fn estimate_filter_indexes(
     filter: &Filter,
 ) -> Result<IndexEstimates> {
     let estimates = IndexEstimates::default();
-    if !fetcher.supports_index_queries()
-        || !fetcher.indexes_match_documents(&collection.name).await?
-    {
+    if !fetcher.supports_index_queries() {
         return Ok(estimates);
     }
     let mut scans: Vec<_> = collection

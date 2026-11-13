@@ -105,7 +105,8 @@ fn owned_transaction_keeps_node_signing_context() {
                 remote_signer: None,
                 signing_authorization: None,
             },
-        );
+        )
+        .expect("the store takes the identity");
         let node = Node::builder()
             .with_node_identity_did(&did)
             .build()

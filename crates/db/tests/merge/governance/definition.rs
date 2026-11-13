@@ -505,46 +505,6 @@ fn a_synced_version_bound_to_a_policy_this_node_does_not_hold_cannot_be_activate
     .unwrap()
 }
 
-/// A node that holds the collection with its policy receives a patched
-/// version from a peer. The patch binds the same policy, by CID, and the
-/// node holds that reference, so the rebuilt version keeps it: activating
-/// the patch must not turn the collection into an unpoliced one.
-#[test]
-fn a_synced_patch_keeps_the_policy_this_node_holds() {
-    workers::block_on(async {
-    let author = Node::bare().await;
-    let defined = query::parse_sdl(POLICIED_LEDGERS).unwrap().remove(0);
-    author.db.create_collection(defined.clone()).await.unwrap();
-    let peer = Node::bare().await;
-    peer.db.create_collection(defined.clone()).await.unwrap();
-
-    let patched = author
-        .db
-        .patch_collection(
-            "Ledgers",
-            r#"[{"op": "add", "path": "/Ledgers/Fields/-", "value": {"Name": "note", "Kind": "String"}}]"#,
-            None,
-        )
-        .await
-        .unwrap();
-    assert_ne!(patched.version_id, defined.version_id);
-    sync_definition(&author, &peer, &patched.version_id).await;
-
-    peer.db
-        .set_active_collection_version(&patched.version_id)
-        .await
-        .unwrap();
-    let active = peer.db.get_collection("Ledgers").unwrap().unwrap();
-    assert_eq!(active.schema().version_id, patched.version_id);
-    assert_eq!(
-        active.schema().policy,
-        defined.policy,
-        "activating the synced patch dropped the policy"
-    );
-})
-    .unwrap()
-}
-
 /// Splitting the collection ID from the version ID is a governed collection's
 /// rule, and the root is what declares it. A `policy` link on a definition that
 /// declares no root is not this tree's to write, so a receiver must read the

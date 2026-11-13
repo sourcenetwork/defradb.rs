@@ -46,6 +46,7 @@ document = { path = "../document" }
 keyring = { path = "../keyring" }
 orbis = { path = "../orbis", optional = true }
 vera = { path = "../vera", optional = true }
+vera-embedded = { path = "../vera-embedded", optional = true, features = ["node"] }
 defra-version = { path = "../defra-version" }
 pg-compat = { path = "../pg-compat", optional = true }
 telemetry = { path = "../telemetry", default-features = false }
@@ -134,6 +135,10 @@ release-full = ["postgres", "vera", "orbis"]
 postgres = ["dep:pg-compat"]
 # Vera/vera.rs on-chain document ACP (`--document-acp-type vera|verars`).
 vera = ["dep:vera"]
+# Run a single-validator Vera node in the `defradb` process
+# (`--document-acp-type verars-embedded`). The Vera node builds a runtime of
+# its own; see AGENTS.md.
+embedded-vera = ["vera", "dep:vera-embedded"]
 sourcehub = ["vera"]
 # Orbis ring threshold signing (`--signer-type orbis`).
 orbis = ["dep:orbis"]
@@ -147,6 +152,14 @@ model-trace = ["p2p/model-trace"]
 # opt-in. When built with this feature, runtime default is on (Go parity); use
 # `--no-telemetry` to disable at runtime.
 otel = ["telemetry/otlp"]
+
+[[test]]
+name = "embedded_vera"
+required-features = ["embedded-vera"]
+
+[[test]]
+name = "embedded_vera_config"
+required-features = ["embedded-vera"]
 
 [dev-dependencies]
 edge = { path = "../edge", features = ["testing"] }

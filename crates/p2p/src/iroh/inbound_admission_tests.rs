@@ -6,12 +6,13 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::endpoint_streams::admit_stream;
+use super::endpoint_streams::{admit_stream, Admission};
 use super::inbound_budget::{InboundBudget, InboundDeadlines, InboundLease};
 use super::mux_tests::spawn_transport;
 use super::protocols;
 use super::services::Priority;
 use super::solicited::Solicited;
+use super::stream_protocols::StreamProtocols;
 use crate::transport::{InboundClassSnapshot, P2PTransport, PeerAddr, PeerId};
 
 const STOPPED: Duration = Duration::from_secs(5);
@@ -167,11 +168,16 @@ async fn admit_one(tag: &[u8], len: u32, body: Body, deadlines: InboundDeadlines
     let share = budget.peer_share(connection.remote_id());
     let peer_id = PeerId::new(connection.remote_id().to_string());
     let solicited = Solicited::new();
+    let stream_protocols = StreamProtocols::default();
+    let admission = Admission {
+        budget: &budget,
+        share: &share,
+        solicited: &solicited,
+        stream_protocols: &stream_protocols,
+    };
     let lease = admit_stream(
         &mut recv,
-        &budget,
-        &share,
-        &solicited,
+        &admission,
         connection.alpn() == protocols::ALPN_MUX,
         connection.remote_id(),
         &peer_id,

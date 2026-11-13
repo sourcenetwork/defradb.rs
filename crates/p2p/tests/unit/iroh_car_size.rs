@@ -77,6 +77,7 @@ async fn size_notice_does_not_cancel_alternate_provider_or_emit_generic_failure(
                     providers,
                     vec![root],
                     None,
+                    Vec::new(),
                 )));
                 let Some(TransportEvent::CarFetchResponse {
                     query_id, car_data, ..
@@ -165,6 +166,7 @@ async fn each_provider_fetch_is_measured() {
                 providers.clone(),
                 vec![root],
                 None,
+                Vec::new(),
             )));
             rx.recv().await.expect("size notice");
             ready_tx.send(()).unwrap();

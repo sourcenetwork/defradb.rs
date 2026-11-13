@@ -1,67 +1,44 @@
 //! A transaction begun through the C API, which carries no identity, serves
 //! every later call whatever identity it acts as, as Go's does (#2335).
 
-use crate::node::{new_node, node_close};
-use crate::query::exec_request;
-use crate::schema::{add_schema, get_collections_in_txn};
-use crate::txn::{begin_txn, commit_txn};
-use crate::types::{defra_free_string, NodeInitOptions};
-use std::ffi::{CStr, CString};
-use std::ptr;
+use crate::collection::defra_collection_describe;
+use crate::identities::{defra_identity_free, defra_identity_new};
+use crate::test_support::{add_collection, close, node, ok, ok_json, query_as};
+use crate::txn::{defra_transaction_commit, defra_transaction_create};
+use crate::types::{defra_new_identity_result_free, CollectionOptions};
+
+/// A new identity's handle.
+fn identity() -> usize {
+    let mut result = unsafe { defra_identity_new(std::ptr::null()) };
+    assert_eq!(result.status, 0, "defra_identity_new must succeed");
+    let handle = result.identity_ptr;
+    unsafe { defra_new_identity_result_free(&mut result) };
+    handle
+}
 
 #[test]
 fn a_transaction_serves_calls_that_act_as_an_identity() {
-    assert!(crate::runtime::init_runtime());
-    let node = new_node(NodeInitOptions::default());
-    assert_eq!(node.status, 0);
-    let node = node.node_ptr;
+    let node = node();
+    add_collection(node, "type TxnIdentity { value: Int }");
 
-    let sdl = CString::new("type TxnIdentity { value: Int }").unwrap();
-    assert_eq!(
-        unsafe { add_schema(node, ptr::null(), sdl.as_ptr()) }.status,
-        0
-    );
+    let txn = defra_transaction_create(node, 0);
+    assert_eq!(txn.status, 0, "defra_transaction_create must succeed");
+    let txn = txn.txn_ptr;
 
-    let txn = begin_txn(node, 0);
-    assert_eq!(txn.status, 0, "begin_txn must succeed");
-    let txn_id = unsafe { CStr::from_ptr(txn.txn_id).to_string_lossy().into_owned() };
-    unsafe { defra_free_string(txn.txn_id) };
-    let txn_id = CString::new(txn_id).unwrap();
-
-    for did in ["did:key:alice", "did:key:bob"] {
-        let did = CString::new(did).unwrap();
-
-        let collections = unsafe { get_collections_in_txn(node, txn_id.as_ptr(), did.as_ptr()) };
-        assert_eq!(
-            collections.status, 0,
-            "get_collections_in_txn must reach the transaction"
+    for caller in [identity(), identity()] {
+        let collections = ok_json(unsafe {
+            defra_collection_describe(txn, CollectionOptions::default(), caller)
+        });
+        assert!(
+            collections.to_string().contains("TxnIdentity"),
+            "{collections}"
         );
-        let json = unsafe {
-            CStr::from_ptr(collections.value)
-                .to_string_lossy()
-                .into_owned()
-        };
-        unsafe { defra_free_string(collections.value) };
-        assert!(json.contains("TxnIdentity"), "{json}");
 
-        let query = CString::new("{ TxnIdentity { value } }").unwrap();
-        let read = unsafe {
-            exec_request(
-                node,
-                txn_id.as_ptr(),
-                did.as_ptr(),
-                query.as_ptr(),
-                ptr::null(),
-                ptr::null(),
-                ptr::null(),
-            )
-        };
-        assert_eq!(read.status, 0, "exec_request must reach the transaction");
-        let json = unsafe { CStr::from_ptr(read.value).to_string_lossy().into_owned() };
-        unsafe { defra_free_string(read.value) };
-        assert!(!json.contains("not found"), "{json}");
+        let read = query_as(txn, "{ TxnIdentity { value } }", caller);
+        assert!(read.get("errors").is_none(), "{read}");
+        defra_identity_free(caller);
     }
 
-    assert_eq!(unsafe { commit_txn(node, txn_id.as_ptr()) }.status, 0);
-    node_close(node);
+    ok(defra_transaction_commit(txn));
+    close(node);
 }

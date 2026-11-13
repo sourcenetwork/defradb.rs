@@ -723,6 +723,13 @@ pub(super) fn parse_field_to_select(
 
     // Parse arguments (filter, limit, offset, order, docIDs, etc.)
     for (arg_name, arg_value) in &field.arguments {
+        if collection_name == "_documentUpdates"
+            && !matches!(arg_name.as_str(), "collection" | "after" | "limit")
+        {
+            return Err(QueryError::parse(
+                "_documentUpdates accepts collection, after and limit only",
+            ));
+        }
         if collection_name == "_documentArrivals"
             && !matches!(
                 arg_name.as_str(),
@@ -748,11 +755,17 @@ pub(super) fn parse_field_to_select(
             "field" if collection_name == "_jsonConflicts" => {
                 select.json_field = Some(resolve_string_value(arg_value, variables, "field")?);
             }
-            "collection" if collection_name == "_documentArrivals" => {
+            "collection"
+                if collection_name == "_documentArrivals"
+                    || collection_name == "_documentUpdates" =>
+            {
                 select.arrival_collection =
                     Some(resolve_string_value(arg_value, variables, "collection")?);
             }
-            "after" if collection_name == "_documentArrivals" => {
+            "after"
+                if collection_name == "_documentArrivals"
+                    || collection_name == "_documentUpdates" =>
+            {
                 select.arrival_after = resolve_string_value(arg_value, variables, "after")?
                     .parse()
                     .map_err(|_| {

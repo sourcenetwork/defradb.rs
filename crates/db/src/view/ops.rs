@@ -23,6 +23,55 @@ pub fn is_refreshable_view(collection: &CollectionVersion) -> bool {
     collection.query.is_some() && collection.is_materialized && !collection.is_embedded_only
 }
 
+/// The views of `collections` a refresh with `options` rebuilds, or why it
+/// refuses. `collections` holds every version when `options` needs all of
+/// them, the active ones otherwise.
+pub(crate) fn refresh_targets<'c>(
+    collections: &'c [CollectionVersion],
+    options: &CollectionSelector,
+) -> Result<Vec<&'c CollectionVersion>> {
+    // A direct version lookup that matches nothing is a caller mistake, not
+    // an empty refresh. Go propagates that not-found error
+    // (`internal/db/collection.go:211`).
+    if let (true, Some(version_id)) = (options.resolves_by_version_lookup(), &options.version_id) {
+        if !collections.iter().any(|col| &col.version_id == version_id) {
+            return Err(Error::Other(format!(
+                "no active collection version {version_id}"
+            )));
+        }
+    }
+    if let Some(collection_id) = &options.collection_id {
+        if !collections
+            .iter()
+            .any(|col| &col.collection_id == collection_id)
+        {
+            return Err(Error::Other(format!(
+                "no active collection {collection_id}"
+            )));
+        }
+    }
+
+    let views: Vec<_> = collections
+        .iter()
+        .filter(|col| is_refreshable_view(col))
+        .filter(|col| options.selects(col))
+        .collect();
+
+    // Go treats get_inactive as an inclusion selector. An active-only
+    // result must therefore remain a valid no-op/success. Rust still
+    // refuses an actually selected inactive view because build_view_cache
+    // resolves its query against active schemas and would rebuild the
+    // shared cache from the wrong definition.
+    if let Some(view) = views.iter().find(|view| !view.is_active) {
+        return Err(Error::Other(format!(
+            "refreshing inactive collection version {} is not supported: the view cache is \
+             rebuilt from the active schema, so it would not hold the requested version",
+            view.version_id
+        )));
+    }
+    Ok(views)
+}
+
 /// Scheduled refresh metadata for a downsampled materialized view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScheduledViewRefresh {
@@ -77,49 +126,7 @@ impl<S: Store> crate::database::DB<S> {
             self.get_all_active_collections_internal()?
         };
 
-        // A direct version lookup that matches nothing is a caller mistake, not
-        // an empty refresh. Go propagates that not-found error
-        // (`internal/db/collection.go:211`).
-        if let (true, Some(version_id)) =
-            (options.resolves_by_version_lookup(), &options.version_id)
-        {
-            if !collections.iter().any(|col| &col.version_id == version_id) {
-                return Err(Error::Other(format!(
-                    "no active collection version {version_id}"
-                )));
-            }
-        }
-        if let Some(collection_id) = &options.collection_id {
-            if !collections
-                .iter()
-                .any(|col| &col.collection_id == collection_id)
-            {
-                return Err(Error::Other(format!(
-                    "no active collection {collection_id}"
-                )));
-            }
-        }
-
-        let views_to_refresh: Vec<_> = collections
-            .iter()
-            .filter(|col| is_refreshable_view(col))
-            .filter(|col| options.selects(col))
-            .collect();
-
-        // Go treats get_inactive as an inclusion selector. An active-only
-        // result must therefore remain a valid no-op/success. Rust still
-        // refuses an actually selected inactive view because build_view_cache
-        // resolves its query against active schemas and would rebuild the
-        // shared cache from the wrong definition.
-        if let Some(view) = views_to_refresh.iter().find(|view| !view.is_active) {
-            return Err(Error::Other(format!(
-                "refreshing inactive collection version {} is not supported: the view cache is \
-                 rebuilt from the active schema, so it would not hold the requested version",
-                view.version_id
-            )));
-        }
-
-        for view in views_to_refresh {
+        for view in refresh_targets(&collections, &options)? {
             let action_execution = self
                 .register_action(&view.collection_id, crate::Action::REFRESH_DATASTORE)
                 .await?;

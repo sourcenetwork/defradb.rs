@@ -602,15 +602,18 @@ fn a_drain_indexes_an_old_document_at_its_migrated_value() {
             .unwrap()
             .version_id()
             .to_string();
+        db.patch_collection(
+            &defra_core::RequestContext::default(),
+            r#"[{"op":"add","path":"/Tallies/Fields/-","value":{"Name":"note","Kind":"String"}}]"#,
+            None,
+        )
+        .await
+        .unwrap();
         let v2 = db
-            .patch_collection(
-                COLLECTION,
-                r#"[{"op":"add","path":"/Tallies/Fields/-","value":{"Name":"note","Kind":"String"}}]"#,
-                None,
-            )
-            .await
+            .require_collection(COLLECTION)
             .unwrap()
-            .version_id;
+            .version_id()
+            .to_string();
         db.set_migration(
             lens::LensConfig::new(
                 &v1,
@@ -651,15 +654,18 @@ async fn migrated(options: db::DbOptions) -> (Node, String, Arc<TimesTen>) {
         .unwrap()
         .version_id()
         .to_string();
+    db.patch_collection(
+        &defra_core::RequestContext::default(),
+        r#"[{"op":"add","path":"/Tallies/Fields/-","value":{"Name":"note","Kind":"String"}}]"#,
+        None,
+    )
+    .await
+    .unwrap();
     let v2 = db
-        .patch_collection(
-            COLLECTION,
-            r#"[{"op":"add","path":"/Tallies/Fields/-","value":{"Name":"note","Kind":"String"}}]"#,
-            None,
-        )
-        .await
+        .require_collection(COLLECTION)
         .unwrap()
-        .version_id;
+        .version_id()
+        .to_string();
     db.set_migration(
         lens::LensConfig::new(
             &v1,
@@ -819,15 +825,18 @@ fn a_backfill_write_back_is_drained_with_no_call_to_drain() {
             .unwrap()
             .version_id()
             .to_string();
+        db.patch_collection(
+            &defra_core::RequestContext::default(),
+            r#"[{"op":"add","path":"/Tallies/Fields/-","value":{"Name":"note","Kind":"String"}}]"#,
+            None,
+        )
+        .await
+        .unwrap();
         let v2 = db
-            .patch_collection(
-                COLLECTION,
-                r#"[{"op":"add","path":"/Tallies/Fields/-","value":{"Name":"note","Kind":"String"}}]"#,
-                None,
-            )
-            .await
+            .require_collection(COLLECTION)
             .unwrap()
-            .version_id;
+            .version_id()
+            .to_string();
         db.set_migration(
             lens::LensConfig::new(
                 &v1,

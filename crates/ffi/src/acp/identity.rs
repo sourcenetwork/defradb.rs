@@ -1,536 +1,80 @@
+//! Identities this implementation adds to Go's: one a bearer token stands
+//! for, and setting a node's identity after it starts.
+
 use std::ffi::c_char;
 
-use identity::Identity;
+use zeroize::Zeroizing;
 
-use crate::helpers::get_node_database;
-use crate::state::NODES;
-use crate::types::{c_str_to_string, FfiResult};
-use crate::{ffi_async, ffi_entry, try_ffi};
+use crate::state::{IdentityState, NodeIdentity, IDENTITIES, NODES};
+use crate::target::{non_empty, resolve_identity_state, resolve_node};
+use crate::types::{DefraNewIdentityResult, DefraResult};
+use crate::{ffi_entry, try_ffi};
 
-use super::identity_ops::parse_signing_key_type;
-
-/// Get the node's identity (DID).
+/// Creates an identity for the logical DID `did`, acting by the bearer token
+/// the host provides instead of a key of its own: the token may be signed by
+/// a device-bound key authorized to act on behalf of `did`. Answers with the
+/// identity's handle.
 ///
-/// Returns JSON with the node identity:
-/// ```json
-/// { "did": "did:key:z6Mk..." }
-/// ```
+/// The token is presented only by requests made with this handle, and goes
+/// when the handle is freed; another handle for the same DID presents its
+/// own. The identity has no key, so on a signing node its blocks are signed
+/// with the node's key, as Go signs for an identity without a private key.
 ///
-/// Returns an error if no node identity is configured.
+/// # Safety
+///
+/// `did` and `bearer_token` must be null or valid null-terminated strings.
 #[no_mangle]
-pub extern "C" fn get_node_identity(node_ptr: usize) -> FfiResult {
-    ffi_entry! {
-        if let Some(Some(did)) = NODES.get(node_ptr, |state| state.identity_did()) {
-            return FfiResult::success(serde_json::json!({ "did": did }).to_string());
-        }
-
-        let database = try_ffi!(get_node_database(node_ptr));
-
-        ffi_async!(caller, {
-            let identity = database
-                .node_identity()
-                .ok_or_else(|| "node identity not configured".to_string())?;
-
-            let did = identity
-                .did()
-                .map_err(|e| format!("failed to get DID: {}", e))?;
-
-            let json = serde_json::json!({ "did": did.to_string() }).to_string();
-            Ok(json)
-        })
-    }
-}
-
-/// Register an existing identity for block signing.
-///
-/// This allows Go-created identities to be used for signing blocks in Rust.
-/// The identity's signing config is stored in the global identity store.
-///
-/// # Parameters
-/// - `did`: The DID string (e.g., "did:key:z6Mk...")
-/// - `private_key_hex`: Hex-encoded private key bytes
-/// - `public_key_hex`: Hex-encoded public key bytes
-/// - `key_type`: Key type ("secp256k1" or "ed25519")
-///
-/// # Returns
-/// Success with empty JSON object, or error on failure.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-#[no_mangle]
-pub extern "C" fn RegisterIdentity(
-    did: *const c_char,
-    private_key_hex: *const c_char,
-    public_key_hex: *const c_char,
-    key_type: *const c_char,
-) -> FfiResult {
-    ffi_entry! {
-        let result = (|| {
-            // SAFETY: These pointers come from Go/C FFI and are valid C strings.
-            let did_str = unsafe { c_str_to_string(did) }.ok_or("invalid did parameter")?;
-            let priv_hex = unsafe { c_str_to_string(private_key_hex) }
-                .ok_or("invalid private_key_hex parameter")?;
-            let pub_hex =
-                unsafe { c_str_to_string(public_key_hex) }.ok_or("invalid public_key_hex parameter")?;
-            let key_type_str =
-                unsafe { c_str_to_string(key_type) }.unwrap_or_else(|| "secp256k1".to_string());
-            let signing_key_type = parse_signing_key_type(&key_type_str)?;
-
-            let private_key_bytes =
-                hex::decode(&priv_hex).map_err(|e| format!("invalid private key hex: {}", e))?;
-            let public_key_bytes =
-                hex::decode(&pub_hex).map_err(|e| format!("invalid public key hex: {}", e))?;
-
-            tracing::debug!(did = %did_str, key_type = %key_type_str, "registering identity");
-
-            defra_core::signing::store_identity(
-                &did_str,
-                defra_core::signing::SigningConfig {
-                    key_type: signing_key_type,
-                    private_key_bytes,
-                    public_key_bytes,
-                    public_key_hex: pub_hex,
-                    remote_signer: None,
-                    signing_authorization: None,
-                },
-            );
-
-            Ok::<String, String>("{}".to_string())
-        })();
-
-        match result {
-            Ok(json) => FfiResult::success(json),
-            Err(e) => FfiResult::error(e),
-        }
-    }
-}
-
-/// Bind a host-provided bearer token to a logical DID for delegated ACP access.
-///
-/// This is intentionally a passthrough: the token may be signed by a device-
-/// bound key that has been authorized to act on behalf of the logical DID.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-#[no_mangle]
-pub extern "C" fn bind_identity_bearer_token(
+pub unsafe extern "C" fn defra_identity_new_from_bearer_token(
     did: *const c_char,
     bearer_token: *const c_char,
-) -> FfiResult {
+) -> DefraNewIdentityResult {
     ffi_entry! {
-        let did_str = match unsafe { c_str_to_string(did) } {
-            Some(value) if !value.is_empty() => value,
-            _ => return FfiResult::error("invalid did parameter"),
+        let Some(did) = non_empty(did) else {
+            return DefraNewIdentityResult::error("invalid did parameter");
         };
-        let token = match unsafe { c_str_to_string(bearer_token) } {
-            Some(value) if !value.is_empty() => value,
-            _ => return FfiResult::error("invalid bearer_token parameter"),
+        let Some(token) = non_empty(bearer_token) else {
+            return DefraNewIdentityResult::error("invalid bearer_token parameter");
         };
-        if let Err(error) = identity::Did::new(did_str.clone()) {
-            return FfiResult::error(format!("invalid DID: {}", error));
+        if let Err(error) = identity::Did::new(did.clone()) {
+            return DefraNewIdentityResult::error(format!("invalid DID: {}", error));
         }
 
-        defra_core::signing::set_request_bearer_token(&did_str, token);
-        FfiResult::success(serde_json::json!({ "did": did_str }).to_string())
+        DefraNewIdentityResult::success(IDENTITIES.insert(IdentityState {
+            did,
+            key_type: None,
+            private_key: None,
+            public_key_hex: String::new(),
+            hold: None,
+            bearer_token: Some(Zeroizing::new(token)),
+        }))
     }
 }
 
-/// Set or clear the node's default signing identity.
-///
-/// When `did` is empty or null the default identity is cleared. Otherwise the
-/// DID must already be registered via `RegisterIdentity` or
-/// `register_remote_identity` / `register_remote_identity_bytes`.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
+/// Sets the node's identity, which signs the node's blocks when signing is
+/// enabled, to the one `identity_ptr` names; 0 clears it.
 #[no_mangle]
-pub extern "C" fn node_set_default_identity(node_ptr: usize, did: *const c_char) -> FfiResult {
+pub extern "C" fn defra_node_set_identity(node_ptr: usize, identity_ptr: usize) -> DefraResult {
     ffi_entry! {
-        let did_str = unsafe { c_str_to_string(did) }.unwrap_or_default();
-        if !did_str.is_empty() && defra_core::signing::get_identity(&did_str).is_none() {
-            return FfiResult::error(format!("no signing identity registered for DID: {}", did_str));
-        }
-
-        let updated = NODES.get(node_ptr, |state| {
-            if did_str.is_empty() {
-                state.node_identity_did.store_none();
-            } else {
-                state.node_identity_did.store_some(did_str.clone());
+        let node = try_ffi!(resolve_node(node_ptr));
+        // The state, not just its DID: while it lives its key stays in the
+        // signing store, so the node's hold finds it even if the handle is
+        // freed meanwhile.
+        let identity = try_ffi!(resolve_identity_state(identity_ptr));
+        let updated = NODES.get(node, |state| {
+            let replaced = state.node_identity.swap(
+                identity
+                    .as_ref()
+                    .map(|identity| NodeIdentity::hold(identity.did.clone())),
+            );
+            if let Some(identity) = &*replaced {
+                identity.release();
             }
             state.sync_replicator_push_options()
         });
-
         match updated {
-            Some(Ok(())) => {
-                if did_str.is_empty() {
-                    FfiResult::success("{}".to_string())
-                } else {
-                    FfiResult::success(serde_json::json!({ "did": did_str }).to_string())
-                }
-            }
-            Some(Err(error)) => FfiResult::error(error),
-            None => FfiResult::error(crate::ERR_INVALID_NODE_HANDLE),
+            Some(Ok(())) => DefraResult::ok(),
+            Some(Err(error)) => DefraResult::error(error),
+            None => DefraResult::error(crate::target::ERR_INVALID_HANDLE),
         }
-    }
-}
-
-/// Create a new identity (Ed25519 keypair).
-///
-/// Generates a fresh Ed25519 keypair and returns the DID and private key.
-/// This is stateless -- no node is required.
-///
-/// Returns a JSON object:
-/// ```json
-/// {
-///   "did": "did:key:z6Mk...",
-///   "privateKeyHex": "abcd...",
-///   "keyType": "ed25519"
-/// }
-/// ```
-#[no_mangle]
-pub extern "C" fn create_identity() -> FfiResult {
-    ffi_entry! {
-        let result = (|| {
-            let private_key = crypto::generate_ed25519()
-                .map_err(|e| format!("failed to generate Ed25519 key: {}", e))?;
-
-            let identity = identity::RawIdentity::from_ed25519(private_key)
-                .map_err(|e| format!("failed to create identity: {}", e))?;
-
-            let did = identity
-                .did()
-                .map_err(|e| format!("failed to derive DID: {}", e))?;
-
-            let private_key_hex = hex::encode(identity.private_key_bytes());
-            let public_key_hex = hex::encode(identity.public_key_bytes());
-
-            // Store identity in global store so block signing can look up the
-            // private key from just a DID string during mutations.
-            defra_core::signing::store_identity(
-                did.as_ref(),
-                defra_core::signing::SigningConfig {
-                    key_type: defra_core::signing::SigningKeyType::Ed25519,
-                    private_key_bytes:
-                        defra_core::signing::SigningConfig::private_key_bytes_from_vec(
-                            identity.private_key_bytes().to_vec(),
-                        ),
-                    public_key_bytes: identity.public_key_bytes().to_vec(),
-                    public_key_hex,
-                    remote_signer: None,
-                    signing_authorization: None,
-                },
-            );
-
-            let json = serde_json::json!({
-                "did": did.to_string(),
-                "privateKeyHex": private_key_hex,
-                "keyType": "ed25519"
-            })
-            .to_string();
-
-            Ok::<String, String>(json)
-        })();
-
-        match result {
-            Ok(json) => FfiResult::success(json),
-            Err(e) => FfiResult::error(e),
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::node::{new_node, node_close};
-    use crate::remote_signer::{register_remote_identity, register_remote_identity_bytes};
-    use crate::types::NodeInitOptions;
-    use crypto::{keys::Key, keys::PublicKey, PrivateKey};
-    use std::ffi::{CStr, CString};
-
-    use kovan::Atom;
-    use regolith::sync::{Lazy, Mutex, MutexGuard};
-    use std::time::Duration;
-
-    fn remote_key_store() -> &'static Atom<Vec<u8>> {
-        static STORE: Lazy<Atom<Vec<u8>>> = Lazy::new(|| Atom::new(Vec::new()));
-        &STORE
-    }
-
-    fn remote_test_lock() -> MutexGuard<'static, ()> {
-        static LOCK: Mutex<()> = Mutex::new(());
-        futures_lite::future::block_on(LOCK.lock())
-    }
-
-    unsafe extern "C" fn test_remote_sign_callback(
-        _signer_handle: usize,
-        _did: *const c_char,
-        _key_type: *const c_char,
-        payload_ptr: *const u8,
-        payload_len: usize,
-        out_signature_ptr: *mut u8,
-        out_signature_capacity: usize,
-        out_signature_len: *mut usize,
-    ) -> i32 {
-        let key_bytes = remote_key_store().load_clone();
-        let private_key = match crypto::Secp256r1PrivateKey::from_bytes(&key_bytes) {
-            Ok(key) => key,
-            Err(_) => return 1,
-        };
-
-        let payload = std::slice::from_raw_parts(payload_ptr, payload_len);
-        let signature = match private_key.sign(payload) {
-            Ok(signature) => signature,
-            Err(_) => return 2,
-        };
-
-        if signature.len() > out_signature_capacity {
-            return 3;
-        }
-
-        std::ptr::copy_nonoverlapping(signature.as_ptr(), out_signature_ptr, signature.len());
-        *out_signature_len = signature.len();
-        0
-    }
-
-    #[test]
-    fn test_get_node_identity_not_configured() {
-        assert!(crate::runtime::init_runtime());
-
-        let options = NodeInitOptions::default();
-        let result = new_node(options);
-        assert_eq!(result.status, 0);
-        let node = result.node_ptr;
-
-        // Get node identity (should fail - not configured)
-        let result = get_node_identity(node);
-        assert_eq!(result.status, 1, "should fail when identity not configured");
-        let error = unsafe { CStr::from_ptr(result.error).to_string_lossy() };
-        assert!(
-            error.contains("not configured"),
-            "should indicate not configured"
-        );
-
-        unsafe { crate::types::defra_free_string(result.error) };
-        node_close(node);
-    }
-
-    #[test]
-    fn test_create_identity() {
-        let result = create_identity();
-        assert_eq!(result.status, 0, "create_identity should succeed");
-        assert!(!result.value.is_null());
-
-        let value = unsafe { CStr::from_ptr(result.value).to_string_lossy() };
-        let parsed: serde_json::Value = serde_json::from_str(&value).unwrap();
-
-        // DID should start with did:key:z6Mk (Ed25519 multicodec prefix)
-        let did = parsed["did"].as_str().unwrap();
-        assert!(
-            did.starts_with("did:key:z6Mk"),
-            "DID should start with did:key:z6Mk, got: {}",
-            did
-        );
-
-        // Private key hex should be non-empty
-        let private_key_hex = parsed["privateKeyHex"].as_str().unwrap();
-        assert!(
-            !private_key_hex.is_empty(),
-            "privateKeyHex should be non-empty"
-        );
-
-        // Key type should be ed25519
-        assert_eq!(parsed["keyType"].as_str().unwrap(), "ed25519");
-
-        unsafe { crate::types::defra_free_string(result.value) };
-
-        // Call twice and verify different DIDs (randomness check)
-        let result2 = create_identity();
-        assert_eq!(result2.status, 0);
-        let value2 = unsafe { CStr::from_ptr(result2.value).to_string_lossy() };
-        let parsed2: serde_json::Value = serde_json::from_str(&value2).unwrap();
-        let did2 = parsed2["did"].as_str().unwrap();
-
-        assert_ne!(did, did2, "two calls should produce different DIDs");
-        unsafe { crate::types::defra_free_string(result2.value) };
-    }
-
-    #[test]
-    fn test_register_remote_identity() {
-        let _guard = remote_test_lock();
-
-        let private_key = crypto::generate_secp256r1().unwrap();
-        remote_key_store().store(private_key.raw().to_vec());
-
-        let raw_identity = identity::RawIdentity::from_secp256r1(private_key).unwrap();
-        let did = raw_identity.did().unwrap().to_string();
-        let public_key_hex = hex::encode(raw_identity.public_key_bytes());
-
-        let did_c = CString::new(did.clone()).unwrap();
-        let pub_c = CString::new(public_key_hex.clone()).unwrap();
-        let key_type_c = CString::new("secp256r1").unwrap();
-
-        let result = register_remote_identity(
-            did_c.as_ptr(),
-            pub_c.as_ptr(),
-            key_type_c.as_ptr(),
-            42,
-            test_remote_sign_callback,
-        );
-        assert_eq!(result.status, 0, "register_remote_identity should succeed");
-        if !result.value.is_null() {
-            unsafe { crate::types::defra_free_string(result.value) };
-        }
-
-        let config = defra_core::signing::get_identity(&did).expect("identity should be stored");
-        assert_eq!(
-            config.key_type,
-            defra_core::signing::SigningKeyType::Secp256r1
-        );
-        assert!(config.private_key_bytes.is_empty());
-        assert!(config.remote_signer.is_some());
-
-        let message = b"remote-signature-test";
-        let signature = config
-            .remote_signer
-            .as_ref()
-            .unwrap()
-            .sign_sync(message, None)
-            .expect("remote signing should succeed");
-        let public_key = crypto::Secp256r1PublicKey::from_bytes(&config.public_key_bytes).unwrap();
-        let valid = public_key.verify(message, &signature).unwrap();
-        assert!(
-            valid,
-            "signature from registered remote signer should verify"
-        );
-    }
-
-    #[test]
-    fn test_register_remote_identity_bytes() {
-        let _guard = remote_test_lock();
-
-        let private_key = crypto::generate_secp256r1().unwrap();
-        remote_key_store().store(private_key.raw().to_vec());
-
-        let raw_identity = identity::RawIdentity::from_secp256r1(private_key).unwrap();
-        let did = raw_identity.did().unwrap().to_string();
-        let public_key_bytes = raw_identity.public_key_bytes();
-
-        let did_c = CString::new(did.clone()).unwrap();
-        let key_type_c = CString::new("secp256r1").unwrap();
-
-        let result = register_remote_identity_bytes(
-            did_c.as_ptr(),
-            public_key_bytes.as_ptr(),
-            public_key_bytes.len(),
-            key_type_c.as_ptr(),
-            7,
-            test_remote_sign_callback,
-        );
-        assert_eq!(
-            result.status, 0,
-            "register_remote_identity_bytes should succeed"
-        );
-        if !result.value.is_null() {
-            unsafe { crate::types::defra_free_string(result.value) };
-        }
-
-        let config = defra_core::signing::get_identity(&did).expect("identity should be stored");
-        assert_eq!(
-            config.key_type,
-            defra_core::signing::SigningKeyType::Secp256r1
-        );
-        assert_eq!(config.public_key_bytes, public_key_bytes);
-        assert_eq!(config.public_key_hex, hex::encode(public_key_bytes));
-        assert!(config.remote_signer.is_some());
-    }
-
-    #[test]
-    fn test_register_remote_identity_rejects_invalid_key_type() {
-        let did_c = CString::new("did:key:zInvalid").unwrap();
-        let pub_c = CString::new("abcd").unwrap();
-        let key_type_c = CString::new("not-a-key").unwrap();
-
-        let result = register_remote_identity(
-            did_c.as_ptr(),
-            pub_c.as_ptr(),
-            key_type_c.as_ptr(),
-            1,
-            test_remote_sign_callback,
-        );
-        assert_eq!(result.status, 1);
-        let error = unsafe { CStr::from_ptr(result.error).to_string_lossy().into_owned() };
-        assert_eq!(error, "unsupported signing key type: not-a-key");
-        unsafe { crate::types::defra_free_string(result.error) };
-    }
-
-    #[test]
-    fn test_bind_identity_bearer_token_allows_delegated_binding() {
-        let device_key = crypto::generate_secp256r1().unwrap();
-        let device_identity = identity::RawIdentity::from_secp256r1(device_key).unwrap();
-        let token = String::from_utf8(
-            identity::new_token(&device_identity, Duration::from_secs(300), None, None).unwrap(),
-        )
-        .unwrap();
-
-        let logical_identity =
-            identity::RawIdentity::from_ed25519(crypto::generate_ed25519().unwrap()).unwrap();
-        let logical_did = logical_identity.did().unwrap().to_string();
-
-        let did_c = CString::new(logical_did.clone()).unwrap();
-        let token_c = CString::new(token.clone()).unwrap();
-
-        let result = bind_identity_bearer_token(did_c.as_ptr(), token_c.as_ptr());
-        assert_eq!(
-            result.status, 0,
-            "bind_identity_bearer_token should succeed"
-        );
-        if !result.value.is_null() {
-            unsafe { crate::types::defra_free_string(result.value) };
-        }
-
-        let stored = defra_core::signing::get_request_bearer_token(&logical_did)
-            .expect("token should exist");
-        assert_eq!(stored, token);
-    }
-
-    #[test]
-    fn test_node_set_default_identity_uses_registered_remote_identity() {
-        let _guard = remote_test_lock();
-
-        assert!(crate::runtime::init_runtime());
-
-        let private_key = crypto::generate_secp256r1().unwrap();
-        remote_key_store().store(private_key.raw().to_vec());
-
-        let raw_identity = identity::RawIdentity::from_secp256r1(private_key).unwrap();
-        let did = raw_identity.did().unwrap().to_string();
-        let public_key_hex = hex::encode(raw_identity.public_key_bytes());
-
-        let did_c = CString::new(did.clone()).unwrap();
-        let pub_c = CString::new(public_key_hex).unwrap();
-        let key_type_c = CString::new("secp256r1").unwrap();
-
-        let register = register_remote_identity(
-            did_c.as_ptr(),
-            pub_c.as_ptr(),
-            key_type_c.as_ptr(),
-            1,
-            test_remote_sign_callback,
-        );
-        assert_eq!(register.status, 0);
-        if !register.value.is_null() {
-            unsafe { crate::types::defra_free_string(register.value) };
-        }
-
-        let node_result = new_node(NodeInitOptions::default());
-        assert_eq!(node_result.status, 0, "new_node should succeed");
-        let node = node_result.node_ptr;
-        let result = node_set_default_identity(node, did_c.as_ptr());
-        assert_eq!(result.status, 0, "node_set_default_identity should succeed");
-        if !result.value.is_null() {
-            unsafe { crate::types::defra_free_string(result.value) };
-        }
-
-        let identity_result = get_node_identity(node);
-        assert_eq!(identity_result.status, 0);
-        let value = unsafe { CStr::from_ptr(identity_result.value).to_string_lossy() };
-        assert!(value.contains(&did));
-
-        unsafe { crate::types::defra_free_string(identity_result.value) };
-        node_close(node);
     }
 }

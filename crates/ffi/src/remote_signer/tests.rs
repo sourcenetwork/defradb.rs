@@ -1,4 +1,4 @@
-use std::ffi::{c_char, c_int, CStr, CString};
+use std::ffi::{c_char, c_int, CString};
 use std::future::Future;
 use std::pin::pin;
 use std::ptr;
@@ -12,7 +12,7 @@ use kovan_queue::seg_queue::SegQueue;
 use serde_json::Value;
 
 use super::*;
-use crate::types::{defra_free_string, FfiResult, NodeInitOptions};
+use crate::types::{DefraNewIdentityResult, NodeInitOptions};
 
 /// A host that keeps an Ed25519 key; tests reach it through the opaque
 /// `signer_handle`, so each test has its own and none share state.
@@ -27,6 +27,8 @@ struct TestHost {
     calls: AtomicUsize,
     threads: SegQueue<std::thread::ThreadId>,
     started: SegQueue<(usize, Vec<u8>)>,
+    /// The identity handle registration gave the host's key.
+    identity: AtomicUsize,
 }
 
 impl TestHost {
@@ -43,6 +45,7 @@ impl TestHost {
             calls: AtomicUsize::new(0),
             threads: SegQueue::new(),
             started: SegQueue::new(),
+            identity: AtomicUsize::new(0),
         }))
     }
 
@@ -73,7 +76,7 @@ impl TestHost {
     /// Registers this host's key with `register`, and returns its signer.
     fn register<R>(&'static self, register: R) -> Arc<dyn RemoteSigner>
     where
-        R: FnOnce(*const c_char, *const u8, usize, *const c_char, usize) -> FfiResult,
+        R: FnOnce(*const c_char, *const u8, usize, *const c_char, usize) -> DefraNewIdentityResult,
     {
         let did = CString::new(self.did.clone()).unwrap();
         let key_type = CString::new("ed25519").unwrap();
@@ -85,7 +88,8 @@ impl TestHost {
             self.handle(),
         );
         assert_eq!(result.status, 0, "registration should succeed");
-        unsafe { defra_free_string(result.value) };
+        assert_ne!(result.identity_ptr, 0, "registration answers with a handle");
+        self.identity.store(result.identity_ptr, Ordering::Relaxed);
         defra_core::signing::get_identity(&self.did)
             .and_then(|config| config.remote_signer.clone())
             .expect("the identity is stored with its signer")
@@ -93,13 +97,13 @@ impl TestHost {
 
     fn register_async(&'static self) -> Arc<dyn RemoteSigner> {
         self.register(|did, key, len, key_type, handle| {
-            register_remote_identity_bytes_async(did, key, len, key_type, handle, async_callback)
+            defra_identity_new_remote_bytes_async(did, key, len, key_type, handle, async_callback)
         })
     }
 
     fn register_sync(&'static self) -> Arc<dyn RemoteSigner> {
         self.register(|did, key, len, key_type, handle| {
-            register_remote_identity_bytes(did, key, len, key_type, handle, sync_callback)
+            defra_identity_new_remote_bytes(did, key, len, key_type, handle, sync_callback)
         })
     }
 }
@@ -346,37 +350,16 @@ fn a_write_signs_its_blocks_through_the_async_callback() {
     edge();
     let host = TestHost::new(true, 0);
     host.register_async();
+    let identity = host.identity.load(Ordering::Relaxed);
 
-    let result = crate::node::new_node(NodeInitOptions {
-        enable_signing: 1,
-        ..NodeInitOptions::default()
+    let node = crate::test_support::node_with(NodeInitOptions {
+        disable_signing: 0,
+        ..crate::test_support::local_options()
     });
-    assert_eq!(result.status, 0);
-    let node = result.node_ptr;
-    let sdl = CString::new("type Note { text: String }").unwrap();
-    let result = unsafe { crate::schema::add_schema(node, ptr::null(), sdl.as_ptr()) };
-    assert_eq!(result.status, 0);
-    unsafe { defra_free_string(result.value) };
+    crate::test_support::add_collection(node, "type Note { text: String }");
 
-    let did = CString::new(host.did.clone()).unwrap();
-    let exec = |query: &str| -> Value {
-        let query = CString::new(query).unwrap();
-        let result = unsafe {
-            crate::query::exec_request_with_signing(
-                node,
-                std::ptr::null(),
-                did.as_ptr(),
-                query.as_ptr(),
-                ptr::null(),
-                ptr::null(),
-                ptr::null(),
-                1,
-            )
-        };
-        assert_eq!(result.status, 0, "the request should succeed");
-        let json = unsafe { CStr::from_ptr(result.value).to_string_lossy().into_owned() };
-        unsafe { defra_free_string(result.value) };
-        let response: Value = serde_json::from_str(&json).unwrap();
+    let exec = |request: &str| -> Value {
+        let response = crate::test_support::query_as(node, request, identity);
         assert!(
             response.get("errors").is_none_or(Value::is_null),
             "request returned errors: {response}"
@@ -415,5 +398,10 @@ fn a_write_signs_its_blocks_through_the_async_callback() {
         .all(|identity| *identity == public_key_hex));
     assert!(host.calls.load(Ordering::Relaxed) > 0);
 
-    crate::node::node_close(node);
+    // A remote identity's private key stays with the host.
+    crate::test_support::err(crate::identities::defra_identity_export_private_key(
+        identity,
+    ));
+
+    crate::test_support::close(node);
 }

@@ -304,6 +304,11 @@ fn all_registered_routes_return_expected_permission() {
             RoutePermission::Required(NodePermission::CollectionTruncate),
         ),
         (
+            "/api/v0/collections/{name}/documents/purge",
+            Method::DELETE,
+            RoutePermission::Required(NodePermission::CollectionTruncate),
+        ),
+        (
             "/api/v0/collections/{name}/document/{docID}",
             Method::GET,
             RoutePermission::Required(NodePermission::DocumentRead),

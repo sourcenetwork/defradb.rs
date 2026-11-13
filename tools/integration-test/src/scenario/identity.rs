@@ -10,9 +10,17 @@
 
 use ::identity::{Identity as _, KeyType, RawIdentity};
 
+/// Seeds from here on name node identities: `NODE_IDENTITY_BASE + n` acts as
+/// Go's `NodeIdentity(n)` through every client, as an `identityNode`
+/// argument asks.
+pub const NODE_IDENTITY_BASE: u64 = 1 << 48;
+
 /// The secp256k1 private key of client identity `seed`. Any 32 bytes below
 /// the curve order are a key, and these are.
 fn private_key(seed: u64) -> [u8; 32] {
+    if let Some(node) = seed.checked_sub(NODE_IDENTITY_BASE) {
+        return node_private_key(node);
+    }
     let mut key = [0x11; 32];
     key[24..].copy_from_slice(&seed.to_be_bytes());
     key

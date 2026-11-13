@@ -106,7 +106,7 @@ pub use defra_core::encryption::EncryptionConfig;
 pub use defra_core::{Action, ActionExecution, ActionStatus};
 pub use downsample::GcDownsampleHistoriesOptions;
 pub use error::{Error, Result};
-pub use index::{BulkIndexResult, IndexManager};
+pub use index::{index_listing, BulkIndexResult, IndexManager};
 pub use read::autocommit::AutoCommitFetcher;
 pub use read::commits::{CommitsFetcher, CommitsQueryOptions};
 pub use read::doc::DbDocFetcher;

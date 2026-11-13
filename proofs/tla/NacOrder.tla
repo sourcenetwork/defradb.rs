@@ -28,7 +28,14 @@
 \*     the transaction                     DB::check_node_access_in_txn
 \*   - the write paths that call them    crates/db/src/write/doc.rs create_as, update_as, delete_as;
 \*                                       crates/db/src/write/autocommit/batch.rs check_attempt_node_access;
-\*                                       crates/db/src/collection/ops/truncate/mod.rs DB::truncate_target
+\*                                       crates/db/src/collection/ops/truncate/mod.rs DB::truncate_target;
+\*                                       crates/db/src/txn/registry/indexes.rs check_access_in
+\*                                       (an index or encrypted index created, listed or
+\*                                       dropped in a transaction)
+\*   - a write in an explicit            crates/query/src/runner/turn.rs QueryRunner::lent,
+\*     transaction, whose refusal          lent_node_permission: walks go_order once, stops at
+\*     names the first missing one         the first missing permission and names it, never
+\*                                         answers empty
 \*   - the caller with no identity       crates/defra-node/src/ops/request.rs Node::caller
 EXTENDS Naturals, Sequences, TLC
 

@@ -49,6 +49,9 @@ pub(super) struct ServerSetup {
     pub http_scope: edge::Scope,
     #[cfg(feature = "postgres")]
     pub pg_server: Option<pg_compat::PgServer>,
+    /// The Vera node started for document ACP.
+    #[cfg(feature = "embedded-vera")]
+    pub embedded_vera: Option<vera_embedded::HostedNode>,
 }
 
 /// DefraDB Node
@@ -67,6 +70,10 @@ pub struct Node {
     pub(super) http_server: Option<defra_http::Server>,
     /// Where the HTTP server's work runs, drained at shutdown.
     pub(super) http_scope: edge::Scope,
+    /// The Vera node this process runs for document ACP, stopped at shutdown
+    /// once nothing asks it for a decision any more.
+    #[cfg(feature = "embedded-vera")]
+    pub(super) embedded_vera: Option<vera_embedded::HostedNode>,
     #[cfg(feature = "postgres")]
     pub(super) pg_server: Option<pg_compat::PgServer>,
     /// Shutdown signal sender (for tests)
@@ -383,6 +390,8 @@ impl Node {
             txn_cleanup_task: servers.txn_cleanup_task,
             http_server: Some(servers.http_server),
             http_scope: servers.http_scope,
+            #[cfg(feature = "embedded-vera")]
+            embedded_vera: servers.embedded_vera,
             #[cfg(feature = "postgres")]
             pg_server: servers.pg_server,
             shutdown_tx,

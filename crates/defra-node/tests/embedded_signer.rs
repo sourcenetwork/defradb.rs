@@ -30,7 +30,7 @@ fn selected_actor_signs_create_update_and_respects_transaction_finality() {
         let (node_did, node_key) = key();
         let (actor, actor_key) = key();
         let (other, other_key) = key();
-        defra_core::signing::store_identity(&node_did, node_key);
+        defra_core::signing::store_identity(&node_did, node_key).expect("the store takes the identity");
         let signer = EmbeddedSigner::from_config(actor_key).unwrap();
         let other_signer = EmbeddedSigner::from_config(other_key).unwrap();
         let node = Node::builder().with_node_identity_did(&node_did).build().await.unwrap();
@@ -94,7 +94,8 @@ fn a_context_carrying_a_callers_key_signs_as_that_actor() {
     workers::block_on(async {
         let (node_did, node_key) = key();
         let (actor, actor_key) = key();
-        defra_core::signing::store_identity(&node_did, node_key);
+        defra_core::signing::store_identity(&node_did, node_key)
+            .expect("the store takes the identity");
         let node = Node::builder()
             .with_node_identity_did(&node_did)
             .build()
@@ -161,7 +162,7 @@ fn selected_signer_does_not_bypass_document_acp() {
         let (node_did, node_key) = key();
         let (owner, owner_key) = key();
         let (other, other_key) = key();
-        defra_core::signing::store_identity(&node_did, node_key);
+        defra_core::signing::store_identity(&node_did, node_key).expect("the store takes the identity");
         let node = Node::builder().with_node_identity_did(&node_did).build().await.unwrap();
         let policy = node.add_dac_policy_as(
             &defra_core::RequestContext::default().with_identity(Some(owner.clone())),
@@ -199,7 +200,8 @@ fn native_admission_matches_executed_lean_model() {
         let (node_did, node_key) = key();
         let (actor, actor_key) = key();
         let (other, _) = key();
-        defra_core::signing::store_identity(&node_did, node_key);
+        defra_core::signing::store_identity(&node_did, node_key)
+            .expect("the store takes the identity");
         let node = Node::builder()
             .with_node_identity_did(&node_did)
             .build()
@@ -256,6 +258,139 @@ fn native_admission_matches_executed_lean_model() {
             );
         }
         node.shutdown().await.unwrap();
+    })
+    .unwrap();
+}
+
+/// An identity-only node never signs for itself, but a caller who brings its
+/// own key still signs as that actor: the node's signing choice covers only
+/// the node's key.
+#[test]
+fn an_identity_only_node_signs_only_with_a_callers_key() {
+    workers::block_on(async {
+        let (node_did, node_key) = key();
+        let (actor, actor_key) = key();
+        defra_core::signing::store_identity(&node_did, node_key).expect("the store takes the identity");
+        let signer = EmbeddedSigner::from_config(actor_key).unwrap();
+        let node = Node::builder()
+            .with_node_identity_did(&node_did)
+            .with_identity_only()
+            .build()
+            .await
+            .unwrap();
+        node.add_collection("type SignedFact { value: String }")
+            .await
+            .unwrap();
+        let composite_cid = |doc: String| {
+            let node = &node;
+            async move {
+                let query = format!(
+                    r#"{{ _commits(docID: "{doc}", filter: {{fieldName: {{_eq: "_C"}}}}) {{ cid }} }}"#
+                );
+                let commits = node.execute(&query).await;
+                commits.data.unwrap()["_commits"][0]["cid"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            }
+        };
+
+        let signed = node
+            .execute_request(signer.attach(request(
+                r#"mutation { add_SignedFact(input: {value: "caller"}) { _docID } }"#,
+                &actor,
+            )))
+            .await;
+        assert!(!signed.has_errors(), "{:?}", signed.errors);
+        let doc = signed.data.unwrap()["add_SignedFact"][0]["_docID"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let cid = composite_cid(doc).await;
+        assert_eq!(node.verified_block_signer_did(&cid).await.unwrap(), actor);
+
+        let unsigned = node
+            .execute(r#"mutation { add_SignedFact(input: {value: "node"}) { _docID } }"#)
+            .await;
+        assert!(!unsigned.has_errors(), "{:?}", unsigned.errors);
+        let doc = unsigned.data.unwrap()["add_SignedFact"][0]["_docID"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let cid = composite_cid(doc).await;
+        let error = node.verified_block_signer_did(&cid).await.unwrap_err();
+        assert!(error.to_string().contains("no signature"), "{error}");
+        node.shutdown().await.unwrap();
+    })
+    .unwrap();
+}
+
+/// On an identity-only node, the transactions the node begins and the
+/// requests run in them agree on the owner (no one): a request that names no
+/// identity runs in one, and so does one a caller's key signs.
+#[test]
+fn an_identity_only_node_runs_requests_in_the_transactions_it_begins() {
+    workers::block_on(async {
+        let (node_did, node_key) = key();
+        let (actor, actor_key) = key();
+        defra_core::signing::store_identity(&node_did, node_key)
+            .expect("the store takes the identity");
+        let signer = EmbeddedSigner::from_config(actor_key).unwrap();
+        let node = Node::builder()
+            .with_node_identity_did(&node_did)
+            .with_identity_only()
+            .build()
+            .await
+            .unwrap();
+        node.add_collection("type TxnFact { value: String }")
+            .await
+            .unwrap();
+        let add = |value: &str| {
+            format!(r#"mutation {{ add_TxnFact(input: {{value: "{value}"}}) {{ _docID }} }}"#)
+        };
+
+        let handle = node.begin_transaction(false).await.unwrap();
+        let unsigned = node
+            .execute_request_in_txn(QueryRequest::new(add("node")), &handle)
+            .await;
+        assert!(!unsigned.has_errors(), "{:?}", unsigned.errors);
+        let signed = node
+            .execute_request_in_txn(signer.attach(request(add("caller"), &actor)), &handle)
+            .await;
+        assert!(!signed.has_errors(), "{:?}", signed.errors);
+        node.commit_transaction(&handle).await.unwrap();
+
+        let txn = node.begin_transaction_guard(false).await.unwrap();
+        let guarded = txn.execute(&add("guard")).await;
+        assert!(!guarded.has_errors(), "{:?}", guarded.errors);
+        txn.commit().await.unwrap();
+
+        let rows = node.execute("{ TxnFact { value } }").await;
+        let mut values: Vec<String> = rows.data.unwrap()["TxnFact"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["value"].as_str().unwrap().to_owned())
+            .collect();
+        values.sort();
+        assert_eq!(values, ["caller", "guard", "node"]);
+        node.shutdown().await.unwrap();
+    })
+    .unwrap();
+}
+
+/// `with_identity_only` with nothing that gives the node an identity is
+/// refused, so an embedder never believes it has one.
+#[test]
+fn an_identity_only_node_needs_an_identity() {
+    workers::block_on(async {
+        match Node::builder().with_identity_only().build().await {
+            Ok(_) => panic!("an identity-only node without an identity must not build"),
+            Err(error) => assert!(
+                matches!(error, defra_node::Error::IdentityOnlyNeedsIdentity),
+                "{error}"
+            ),
+        }
     })
     .unwrap();
 }

@@ -47,7 +47,7 @@ jobs:
         -p path+file://${{ github.workspace }}/crates/identity -p path+file://${{ github.workspace }}/crates/zanzibar
         -p path+file://${{ github.workspace }}/crates/acp -p defra-version -p events -p lens
         -p replication-filter -p telemetry
-      DATA: -p query -p db -p vera -p pg-compat
+      DATA: -p query -p db -p vera -p vera-embedded -p pg-compat
       NETWORK: >-
         -p p2p -p defra-p2p-adapter -p orbis -p net -p edge -p inputs
         -p workers

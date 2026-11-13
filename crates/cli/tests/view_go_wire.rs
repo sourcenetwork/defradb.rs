@@ -226,7 +226,7 @@ fn view_refresh_parses_no_response_body() {
     // Compiles only while `view_refresh` yields `Result<()>`. A body-parsing
     // signature returns `Result<JsonValue>` and fails to unify here.
     fn _typecheck(client: &HttpClient, selectors: &ViewRefreshSelectors) {
-        let call = client.view_refresh(selectors);
+        let call = client.view_refresh(None, selectors);
         let _: &dyn std::future::Future<Output = cli::error::Result<()>> = &call;
     }
 }

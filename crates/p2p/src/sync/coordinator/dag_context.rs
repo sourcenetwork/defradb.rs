@@ -40,6 +40,9 @@ pub(crate) struct DagFetchContext {
     block_sync_completions: Option<crate::sync::manager::BlockSyncCompletionTracker>,
     rooted_car_completions: Option<crate::sync::manager::RootedCarCompletionTracker>,
     rooted_provider_discovery: bool,
+    /// Merged blocks of this document held here, named to providers so
+    /// they leave out history this node already holds.
+    haves: Vec<Cid>,
 }
 
 impl DagFetchContext {
@@ -63,7 +66,17 @@ impl DagFetchContext {
             block_sync_completions: None,
             rooted_car_completions: None,
             rooted_provider_discovery: false,
+            haves: Vec::new(),
         }
+    }
+
+    pub(crate) fn with_haves(mut self, haves: Vec<Cid>) -> Self {
+        self.haves = haves;
+        self
+    }
+
+    pub(crate) fn haves(&self) -> &[Cid] {
+        &self.haves
     }
 
     pub(crate) fn with_alternate_providers(mut self, providers: Vec<PeerId>) -> Self {

@@ -515,7 +515,7 @@ pub(super) mod tests {
             let id = create(&db, 1).await;
             increment(&db, &id).await;
             db.patch_collection(
-                NAME,
+                &defra_core::RequestContext::default(),
                 r#"[{"op":"add","path":"/Tallies/Fields/-","value":{"Name":"note","Kind":"String"}}]"#,
                 None,
             )

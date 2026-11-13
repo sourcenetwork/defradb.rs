@@ -85,6 +85,11 @@ macro_rules! registry {
 
 registry! {
     ActivePeers => [v("peer.active")],
+    AllowStreamPeer => [v("stream.allowPeer")],
+    DenyStreamPeer => [v("stream.denyPeer")],
+    NewIrohNode => [v("stream.openNode")],
+    OpenStream => [v("stream.open")],
+    ReadKeptStream => [v("stream.readKept")],
     AddCollection => [v("schema.addWithMetadata").all(&["expectedResults"]).renames(&[("expectedResults", "expectedData")]), v("schema.add")],
     AddCollectionSubscription => [v("peer.collections.add")],
     AddDACActorRelationship => [v("dac.addActorRelationship")],

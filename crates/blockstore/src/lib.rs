@@ -268,6 +268,23 @@ impl<S: Store + 'static> Blockstore for DefraBlockstore<S> {
         .await
     }
 
+    async fn has_many(&self, cids: &[Cid]) -> Result<Vec<bool>> {
+        if cids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let cids = cids.to_vec();
+        self.on_pool(move |store| async move {
+            let txn = store.new_txn(true).await?;
+            let bs_txn = block_txn(&*txn)?;
+            let mut present = Vec::with_capacity(cids.len());
+            for cid in &cids {
+                present.push(bs_txn.has_block(cid).await?);
+            }
+            Ok(present)
+        })
+        .await
+    }
+
     async fn delete(&self, cid: &Cid) -> Result<()> {
         self.write(vec![BlockWrite::Delete(*cid)]).await
     }
