@@ -15,6 +15,10 @@ bench = false
 name = "hosted_node"
 required-features = ["node"]
 
+[[test]]
+name = "node_placement"
+required-features = ["node"]
+
 [features]
 # Start and stop the node itself, on the network runtime's cores.
 node = ["dep:vera-node", "dep:commonware-codec", "dep:hex"]

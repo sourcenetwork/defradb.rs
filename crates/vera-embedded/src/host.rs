@@ -105,10 +105,12 @@ impl HostedNode {
         let genesis = genesis(config.deployment)?;
         let directory = config.data_dir.clone();
         let mut settings = EmbeddedConfig::new(config.data_dir, genesis, config.listen);
-        let cores = edge.cpus().len();
-        if cores > 0 {
-            settings.worker_threads = Some(cores);
-            settings.verification_threads = settings.verification_threads.min(cores);
+        // The node runs no more worker or verification threads than the
+        // network runtime runs, pinned or not.
+        let threads = edge.threads().max(1);
+        settings.worker_threads = Some(threads);
+        settings.verification_threads = settings.verification_threads.min(threads);
+        if !edge.cpus().is_empty() {
             let placed = edge.clone();
             settings.thread_setup = Some(ThreadSetup::new(move || {
                 if placed.pin_current_thread() {

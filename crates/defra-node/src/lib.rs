@@ -1177,7 +1177,10 @@ impl Node {
     /// with no error surfaced. Drop the node after shutdown completes.
     ///
     /// Every step of the teardown runs; the database close error, if any, is
-    /// returned once it has. Only the first caller gets that outcome: a
+    /// returned once it has. With `embedded-vera`, a Vera node that did not
+    /// stop is returned when the database closed cleanly; when both fail the
+    /// database error is returned and the Vera one is logged. Only the first
+    /// caller gets that outcome: a
     /// concurrent or later caller waits for the teardown and returns `Ok`.
     pub async fn shutdown(&self) -> Result<()> {
         // The first caller tears the node down; a concurrent caller waits for

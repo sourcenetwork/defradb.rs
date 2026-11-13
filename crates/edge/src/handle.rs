@@ -235,6 +235,13 @@ impl Edge {
         &self.shared.rt.cpus
     }
 
+    /// How many threads the runtime runs its tasks on: one per CPU it holds,
+    /// or the count it was configured with when it runs unpinned.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn threads(&self) -> usize {
+        self.shared.rt.cores.threads()
+    }
+
     /// Pins the calling thread to the CPUs the runtime holds, and with it
     /// every thread it starts afterwards where the platform lets a thread
     /// inherit its creator's CPUs. For a library that builds threads of its

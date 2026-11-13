@@ -436,7 +436,7 @@ jobs:
       - run: cargo nextest run --cargo-profile super-dev -p telemetry --features otlp
       - run: cargo nextest run --cargo-profile super-dev -p cli --features otel --test telemetry_dedup
       - run: cargo nextest run --cargo-profile super-dev -p defra-node --features p2p
-      - run: cargo nextest run --cargo-profile super-dev -p vera-embedded --features node --test hosted_node
+      - run: cargo nextest run --cargo-profile super-dev -p vera-embedded --features node --test hosted_node --test node_placement
       - run: cargo nextest run --cargo-profile super-dev -p defra-node --features embedded-vera --test embedded_vera
 
   wasm-check:

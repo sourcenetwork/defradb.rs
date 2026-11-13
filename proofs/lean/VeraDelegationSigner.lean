@@ -56,7 +56,9 @@ refuses it at the first test it fails. -/
 def admit (key : Key) (answer : Answer) : Option Refusal :=
   -- A signature of any other length is no signature of either kind.
   if answer.length ≠ 64 then some .length
+  -- The remaining tests depend on how the key signs.
   else match key with
+    -- An ECDSA key: the two halves, the half of `s`, then verification.
     | .ecdsa =>
       -- Zero, or a value at or above the curve order, is not a signature half.
       if answer.scalars = false then some .scalar
@@ -66,42 +68,56 @@ def admit (key : Key) (answer : Answer) : Option Refusal :=
       else if answer.verifies = false then some .unverified
       -- Every test passed.
       else none
+    -- An Ed25519 key: verification alone.
     | .ed25519 =>
       -- Strict verification is the one test an Ed25519 signature has left.
       if answer.verifies = false then some .unverified
+      -- It verifies.
       else none
 
 /-- What vera.rs's verifier accepts of a signature: every test of the key's
 kind at once. -/
 def veraAccepts (key : Key) (answer : Answer) : Bool :=
+  -- By how the key signs.
   match key with
+  -- ECDSA: the length, both halves, the half of `s` and verification.
   | .ecdsa => answer.length == 64 && answer.scalars && answer.lowS && answer.verifies
+  -- Ed25519: the length and strict verification.
   | .ed25519 => answer.length == 64 && answer.verifies
 
 /-- The token the provider builds from an answer: one that carries the answer
 when it is admitted, and none otherwise. -/
 def token (key : Key) (answer : Answer) : Option Answer :=
+  -- By the provider's decision.
   match admit key answer with
+  -- Admitted: the token carries the answer.
   | none => some answer
+  -- Refused: there is no token.
   | some _ => none
 
 /-- The provider admits an answer exactly when vera.rs would accept it: nothing
 vera.rs refuses is admitted, and nothing vera.rs accepts is refused. -/
 theorem admitted_iff_vera_accepts (key : Key) (answer : Answer) :
     admit key answer = none ↔ veraAccepts key answer = true := by
+  -- Both sides are decided by the key kind, the three flags and the length.
   unfold admit veraAccepts
+  -- Every combination of them agrees.
   cases key <;> cases answer.scalars <;> cases answer.lowS <;> cases answer.verifies <;>
     by_cases h : answer.length = 64 <;> simp [h]
 
 /-- A token that leaves the node carries a signature vera.rs accepts. -/
 theorem sent_is_accepted (key : Key) (answer sent : Answer)
     (h : token key answer = some sent) : veraAccepts key sent = true := by
+  -- A token exists only for an admitted answer.
   unfold token at h
+  -- By the provider's decision on the answer.
   cases admitted : admit key answer with
+  -- Admitted: the token is the answer, and an admitted answer is accepted.
   | none =>
     rw [admitted] at h
     cases h
     exact (admitted_iff_vera_accepts key answer).mp admitted
+  -- Refused: there is no token, against the hypothesis.
   | some reason =>
     rw [admitted] at h
     cases h
@@ -109,6 +125,7 @@ theorem sent_is_accepted (key : Key) (answer sent : Answer)
 /-- A refused answer never becomes a token. -/
 theorem refused_is_not_sent (key : Key) (answer : Answer) (reason : Refusal)
     (h : admit key answer = some reason) : token key answer = none := by
+  -- The token follows the decision, which is a refusal.
   unfold token
   rw [h]
 
@@ -117,18 +134,22 @@ admitted: an honest signer is never refused. -/
 theorem honest_answer_admitted (answer : Answer) (length : answer.length = 64)
     (scalars : answer.scalars = true) (lowS : answer.lowS = true)
     (verifies : answer.verifies = true) : admit .ecdsa answer = none := by
+  -- Each test in turn passes by its hypothesis.
   simp [admit, length, scalars, lowS, verifies]
 
 /-- An Ed25519 answer of the right length that verifies is always admitted,
 whatever the two ECDSA observations read. -/
 theorem honest_ed25519_answer_admitted (answer : Answer) (length : answer.length = 64)
     (verifies : answer.verifies = true) : admit .ed25519 answer = none := by
+  -- The length test and the verification pass by their hypotheses.
   simp [admit, length, verifies]
 
 /-- An Ed25519 answer is never refused for a reason that belongs to ECDSA. -/
 theorem ed25519_refusal_is_length_or_verification (answer : Answer) :
     admit .ed25519 answer ≠ some .scalar ∧ admit .ed25519 answer ≠ some .highS := by
+  -- The Ed25519 branch reads only the length and the verification.
   unfold admit
+  -- Each combination of the two gives a length or verification outcome.
   cases answer.verifies <;> by_cases h : answer.length = 64 <;> simp [h]
 
 /-- Each refusal of an ECDSA answer names the first test the answer fails, so
@@ -141,7 +162,9 @@ theorem refusal_names_the_first_failure (answer : Answer) :
     (admit .ecdsa answer = some .unverified ↔
       answer.length = 64 ∧ answer.scalars = true ∧ answer.lowS = true ∧
         answer.verifies = false) := by
+  -- The ECDSA branch is decided by the three flags and the length.
   unfold admit
+  -- Every combination of them names the first failed test.
   cases answer.scalars <;> cases answer.lowS <;> cases answer.verifies <;>
     by_cases h : answer.length = 64 <;> simp [h]
 
@@ -150,7 +173,9 @@ theorem ed25519_refusal_names_the_first_failure (answer : Answer) :
     (admit .ed25519 answer = some .length ↔ answer.length ≠ 64) ∧
     (admit .ed25519 answer = some .unverified ↔
       answer.length = 64 ∧ answer.verifies = false) := by
+  -- The Ed25519 branch reads only the length and the verification.
   unfold admit
+  -- Each combination of the two gives a length or verification outcome.
   cases answer.verifies <;> by_cases h : answer.length = 64 <;> simp [h]
 
 end VeraDelegationSigner
