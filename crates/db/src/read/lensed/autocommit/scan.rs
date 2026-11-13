@@ -145,173 +145,160 @@ impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
         }
 
         let vf = params.value_filter.as_ref();
-        let (raw_doc_short_ids, raw_fetches, group_lens): (Vec<u64>, u64, Vec<usize>) =
-            match &params.scan_type {
-                IndexScanType::ExactMatch { values } => {
-                    // Cursor seek is intentionally not applied: ExactMatch fetches a single
-                    // value; pagination over a single value is meaningless.
-                    let mut iter = index.get(&datastore, values).await.map_err(|e| {
+        let (raw_doc_short_ids, raw_fetches): (Vec<u64>, u64) = match &params.scan_type {
+            IndexScanType::ExactMatch { values } => {
+                // Cursor seek is intentionally not applied: ExactMatch fetches a single
+                // value; pagination over a single value is meaningless.
+                let mut iter = index.get(&datastore, values).await.map_err(|e| {
+                    query::error::QueryError::execution(format!("index error: {}", e))
+                })?;
+                // The full equal-key set, so indexFetches counts every entry; its page is cut below.
+                let (ids, n) = collect_with_limit(&mut iter, None, 0, vf).await?;
+                (ids, n)
+            }
+            IndexScanType::InScan {
+                values,
+                suffix_values,
+            } => {
+                // Cursor seek is intentionally not applied: InScan fetches a fixed set
+                // of values; pagination over an unordered set is meaningless.
+                let is_composite = index.description().fields.len() > 1;
+                let has_full_key = !suffix_values.is_empty()
+                    && suffix_values.len() == index.description().fields.len() - 1;
+                let mut all_doc_short_ids = Vec::new();
+                let mut seen_short_ids = RapidHashSet::new();
+                let mut raw_count = 0u64;
+                for value in values {
+                    let entries = if has_full_key {
+                        let mut key_values = vec![value.clone()];
+                        key_values.extend(suffix_values.iter().cloned());
+                        let mut iter = index.get(&datastore, &key_values).await.map_err(|e| {
+                            query::error::QueryError::execution(format!("index error: {}", e))
+                        })?;
+                        iter.collect_all().await.map_err(|e| {
+                            query::error::QueryError::execution(format!(
+                                "index iteration error: {}",
+                                e
+                            ))
+                        })?
+                    } else if is_composite {
+                        let mut iter = index
+                            .scan_prefix(&datastore, std::slice::from_ref(value), false)
+                            .await
+                            .map_err(|e| {
+                                query::error::QueryError::execution(format!("index error: {}", e))
+                            })?;
+                        iter.collect_all().await.map_err(|e| {
+                            query::error::QueryError::execution(format!(
+                                "index iteration error: {}",
+                                e
+                            ))
+                        })?
+                    } else {
+                        let mut iter = index
+                            .get(&datastore, std::slice::from_ref(value))
+                            .await
+                            .map_err(|e| {
+                                query::error::QueryError::execution(format!("index error: {}", e))
+                            })?;
+                        iter.collect_all().await.map_err(|e| {
+                            query::error::QueryError::execution(format!(
+                                "index iteration error: {}",
+                                e
+                            ))
+                        })?
+                    };
+                    raw_count += entries.len() as u64;
+                    crate::read::index_order::extend_unique(
+                        &mut all_doc_short_ids,
+                        &mut seen_short_ids,
+                        entries,
+                    );
+                }
+                (all_doc_short_ids, raw_count)
+            }
+            IndexScanType::PrefixScan {
+                prefix_values,
+                reverse,
+            } => {
+                let mut iter = index
+                    .scan_prefix(&datastore, prefix_values, *reverse)
+                    .await
+                    .map_err(|e| {
                         query::error::QueryError::execution(format!("index error: {}", e))
                     })?;
-                    // Full equal-key set: public-DocID tie-break sorts before offset/limit (#1602).
-                    let (ids, n) = collect_with_limit(&mut iter, None, 0, vf).await?;
-                    (ids, n, Vec::new())
-                }
-                IndexScanType::InScan {
-                    values,
-                    suffix_values,
-                } => {
-                    // Cursor seek is intentionally not applied: InScan fetches a fixed set
-                    // of values; pagination over an unordered set is meaningless.
-                    let is_composite = index.description().fields.len() > 1;
-                    let has_full_key = !suffix_values.is_empty()
-                        && suffix_values.len() == index.description().fields.len() - 1;
-                    let mut all_doc_short_ids = Vec::new();
-                    let mut group_lens = Vec::new();
-                    let mut seen_short_ids = RapidHashSet::new();
-                    let mut raw_count = 0u64;
-                    for value in values {
-                        let entries = if has_full_key {
-                            let mut key_values = vec![value.clone()];
-                            key_values.extend(suffix_values.iter().cloned());
-                            let mut iter =
-                                index.get(&datastore, &key_values).await.map_err(|e| {
-                                    query::error::QueryError::execution(format!(
-                                        "index error: {}",
-                                        e
-                                    ))
-                                })?;
-                            iter.collect_all().await.map_err(|e| {
-                                query::error::QueryError::execution(format!(
-                                    "index iteration error: {}",
-                                    e
-                                ))
-                            })?
-                        } else if is_composite {
-                            let mut iter = index
-                                .scan_prefix(&datastore, std::slice::from_ref(value), false)
-                                .await
-                                .map_err(|e| {
-                                    query::error::QueryError::execution(format!(
-                                        "index error: {}",
-                                        e
-                                    ))
-                                })?;
-                            iter.collect_all().await.map_err(|e| {
-                                query::error::QueryError::execution(format!(
-                                    "index iteration error: {}",
-                                    e
-                                ))
-                            })?
-                        } else {
-                            let mut iter = index
-                                .get(&datastore, std::slice::from_ref(value))
-                                .await
-                                .map_err(|e| {
-                                    query::error::QueryError::execution(format!(
-                                        "index error: {}",
-                                        e
-                                    ))
-                                })?;
-                            iter.collect_all().await.map_err(|e| {
-                                query::error::QueryError::execution(format!(
-                                    "index iteration error: {}",
-                                    e
-                                ))
-                            })?
-                        };
-                        raw_count += entries.len() as u64;
-                        crate::read::index_tiebreak::extend_equal_key_groups(
-                            &mut all_doc_short_ids,
-                            &mut group_lens,
-                            &mut seen_short_ids,
-                            entries,
-                        );
-                    }
-                    (all_doc_short_ids, raw_count, group_lens)
-                }
-                IndexScanType::PrefixScan {
-                    prefix_values,
-                    reverse,
-                } => {
-                    let mut iter = index
-                        .scan_prefix(&datastore, prefix_values, *reverse)
-                        .await
-                        .map_err(|e| {
-                            query::error::QueryError::execution(format!("index error: {}", e))
-                        })?;
-                    apply_cursor_seek_to_iterator(
-                        &mut iter,
-                        &params.cursor_seek,
-                        &systemstore,
-                        short_id,
+                apply_cursor_seek_to_iterator(
+                    &mut iter,
+                    &params.cursor_seek,
+                    &systemstore,
+                    short_id,
+                )
+                .await?;
+                let (ids, n) = collect_with_limit(&mut iter, limit, offset, vf).await?;
+                (ids, n)
+            }
+            IndexScanType::RangeScan {
+                prefix_values,
+                lower,
+                upper,
+                reverse,
+            } => {
+                let mut iter = index
+                    .scan_range(
+                        &datastore,
+                        prefix_values,
+                        lower.clone(),
+                        upper.clone(),
+                        *reverse,
                     )
-                    .await?;
-                    let (ids, n) = collect_with_limit(&mut iter, limit, offset, vf).await?;
-                    (ids, n, Vec::new())
+                    .await
+                    .map_err(|e| {
+                        query::error::QueryError::execution(format!("index error: {}", e))
+                    })?;
+                apply_cursor_seek_to_iterator(
+                    &mut iter,
+                    &params.cursor_seek,
+                    &systemstore,
+                    short_id,
+                )
+                .await?;
+                let (ids, n) = collect_with_limit(&mut iter, limit, offset, vf).await?;
+                (ids, n)
+            }
+            IndexScanType::OrScan { branches } => {
+                // Cursor seek is intentionally not applied: each branch gets cursor_seek: None
+                // because OrScan merges independent sets; applying a cursor to individual
+                // branches would arbitrarily exclude results from other branches.
+                let _ = txn.discard();
+                let mut all_doc_ids = Vec::new();
+                let mut total_raw_fetches = 0u64;
+                for branch in branches {
+                    let branch_params = IndexScanParams {
+                        index_name: params.index_name.clone(),
+                        scan_type: branch.clone(),
+                        limit: None,
+                        offset: 0,
+                        value_filter: None,
+                        cursor_seek: None,
+                    };
+                    let branch_result = self
+                        .get_by_index_scan_impl(collection_name, &branch_params)
+                        .await?;
+                    total_raw_fetches += branch_result.raw_fetches();
+                    all_doc_ids.extend(branch_result.doc_ids().iter().cloned());
                 }
-                IndexScanType::RangeScan {
-                    prefix_values,
-                    lower,
-                    upper,
-                    reverse,
-                } => {
-                    let mut iter = index
-                        .scan_range(
-                            &datastore,
-                            prefix_values,
-                            lower.clone(),
-                            upper.clone(),
-                            *reverse,
-                        )
-                        .await
-                        .map_err(|e| {
-                            query::error::QueryError::execution(format!("index error: {}", e))
-                        })?;
-                    apply_cursor_seek_to_iterator(
-                        &mut iter,
-                        &params.cursor_seek,
-                        &systemstore,
-                        short_id,
-                    )
-                    .await?;
-                    let (ids, n) = collect_with_limit(&mut iter, limit, offset, vf).await?;
-                    (ids, n, Vec::new())
-                }
-                IndexScanType::OrScan { branches } => {
-                    // Cursor seek is intentionally not applied: each branch gets cursor_seek: None
-                    // because OrScan merges independent sets; applying a cursor to individual
-                    // branches would arbitrarily exclude results from other branches.
-                    let _ = txn.discard();
-                    let mut all_doc_ids = Vec::new();
-                    let mut total_raw_fetches = 0u64;
-                    for branch in branches {
-                        let branch_params = IndexScanParams {
-                            index_name: params.index_name.clone(),
-                            scan_type: branch.clone(),
-                            limit: None,
-                            offset: 0,
-                            value_filter: None,
-                            cursor_seek: None,
-                        };
-                        let branch_result = self
-                            .get_by_index_scan_impl(collection_name, &branch_params)
-                            .await?;
-                        total_raw_fetches += branch_result.raw_fetches();
-                        all_doc_ids.extend(branch_result.doc_ids().iter().cloned());
-                    }
-                    let mut seen = RapidHashSet::new();
-                    let doc_ids: Vec<String> = all_doc_ids
-                        .into_iter()
-                        .filter(|id| seen.insert(id.clone()))
-                        .collect();
-                    return Ok(query::fetcher::IndexScanResult::with_raw_count(
-                        doc_ids,
-                        total_raw_fetches,
-                    ));
-                }
-                _ => unreachable!(),
-            };
+                let mut seen = RapidHashSet::new();
+                let doc_ids: Vec<String> = all_doc_ids
+                    .into_iter()
+                    .filter(|id| seen.insert(id.clone()))
+                    .collect();
+                return Ok(query::fetcher::IndexScanResult::with_raw_count(
+                    doc_ids,
+                    total_raw_fetches,
+                ));
+            }
+            _ => unreachable!(),
+        };
 
         let mut seen = RapidHashSet::new();
         let doc_short_ids: Vec<u64> = raw_doc_short_ids
@@ -319,7 +306,8 @@ impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
             .filter(|id| seen.insert(*id))
             .collect();
 
-        let resolved = crate::docid::map::resolve_doc_id_pairs(&systemstore, &doc_short_ids)
+        let bound = crate::read::index_order::resolve_bound(&params.scan_type, offset, limit);
+        let resolved = crate::docid::map::resolve_doc_id_pairs(&systemstore, &doc_short_ids, bound)
             .await
             .map_err(|e| {
                 query::error::QueryError::execution(format!("doc ID resolution error: {}", e))
@@ -330,12 +318,11 @@ impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
             .collect::<rapidhash::RapidHashMap<_, _>>();
         let physical_ids_unique = short_ids_by_public.len() == resolved.len();
         let mut doc_ids = resolved.into_iter().map(|(id, _)| id).collect::<Vec<_>>();
-        crate::read::index_tiebreak::apply_equal_key_doc_id_tie_break(
+        crate::read::index_order::apply_exact_match_page(
             &params.scan_type,
             &mut doc_ids,
             offset,
             limit,
-            &group_lens,
         );
 
         let _ = txn.discard();
