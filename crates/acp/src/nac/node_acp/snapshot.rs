@@ -1,6 +1,7 @@
 //! A copy of the node's NAC state into another store, so a snapshot of it can
 //! answer permission checks without reading storage.
 
+use identity::Did;
 use rapidhash::{HashSetExt, RapidHashSet};
 use zanzibar::{Relationship, Subject, ZanzibarStore};
 
@@ -16,14 +17,16 @@ where
     /// Copy the node policy and every relationship a node permission check
     /// can reach into `target`: the node object's, and those of every source
     /// object a grant names, transitively. Nothing is copied when NAC was
-    /// never configured.
-    pub async fn copy_into<T>(&self, target: &T) -> Result<()>
+    /// never configured. Returns every identity a copied relationship names
+    /// directly, so a caller can decide each of them ahead of time.
+    pub async fn copy_into<T>(&self, target: &T) -> Result<Vec<Did>>
     where
         T: ZanzibarStore + ?Sized,
     {
         let Some(policy) = self.store.get_policy(NODE_POLICY_ID).await? else {
-            return Ok(());
+            return Ok(Vec::new());
         };
+        let mut named = Vec::new();
         target.store_policy(&policy).await?;
         let mut relations = vec![OWNER_RELATION, ADMIN_RELATION, DISABLED_RELATION];
         relations.extend(
@@ -43,6 +46,9 @@ where
                     .get_relation_subjects(NODE_POLICY_ID, &resource, &object, relation)
                     .await?;
                 for subject in subjects {
+                    if let Subject::Entity(identity) = &subject {
+                        named.push(identity.clone());
+                    }
                     if let Subject::EntitySet {
                         resource: child_resource,
                         object_id: child,
@@ -59,6 +65,6 @@ where
                 }
             }
         }
-        Ok(())
+        Ok(named)
     }
 }

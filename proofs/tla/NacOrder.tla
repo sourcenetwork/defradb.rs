@@ -16,8 +16,9 @@
 \* through its `CollectionMiddleware`, `get-collection` first, then the
 \* route's own permission. The edge only adds refusals, so its refusal has to
 \* name Go's first missing permission too. The edge decides both permissions
-\* at once from an in-memory snapshot of the node's grants, so its check is
-\* one step here.
+\* at once from an in-memory snapshot of the node's grants, where each
+\* identity's permissions were decided when the snapshot was built, so its
+\* check is one step here.
 \*
 \* That snapshot is a copy. A revoke commits to storage first; the node then
 \* builds a fresh copy and swaps it in, and only then does the revoke return
@@ -63,6 +64,9 @@
 \*                                       crates/db/src/nac/mod.rs NacManager::check_permissions
 \*   - the edge snapshot and its swap    crates/db/src/nac/edge.rs NacManager::refresh_edge,
 \*                                       EdgeGrants::publish, NacManager::refresh_edge_on_commit;
+\*   - the edge's decision, one lookup   crates/db/src/nac/edge.rs EdgeSnapshot::check, check_all,
+\*     per permission                      decide (each identity's permissions, decided ahead by the
+\*                                       engine; the model's FirstMissingIn(snap, ...) is that lookup);
 \*                                       crates/acp/src/nac/node_acp/snapshot.rs NodeACP::copy_into;
 \*                                       crates/db/src/nac/write.rs NacManager::in_write
 EXTENDS Naturals, Sequences, TLC

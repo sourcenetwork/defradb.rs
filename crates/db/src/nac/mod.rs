@@ -376,11 +376,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
         permission: NodePermission,
     ) -> Result<bool> {
         if let Some(grants) = self.edge.current() {
-            return grants
-                .nac
-                .check_permission(identity, permission)
-                .await
-                .map_err(|e| Error::Acp(format!("permission check failed: {}", e)));
+            return grants.check(identity, permission).await;
         }
         if let Some(scope) = self
             .nac
@@ -418,7 +414,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManager<S> {
         permissions: &[NodePermission],
     ) -> Vec<Result<bool>> {
         if let Some(grants) = self.edge.current() {
-            return first_refusal(grants.as_ref(), identity, permissions).await;
+            return grants.check_all(identity, permissions).await;
         }
         let scope = match self.nac.begin_scope(true).await {
             Ok(scope) => scope,

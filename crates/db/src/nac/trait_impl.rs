@@ -40,7 +40,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
         permissions: &[NodePermission],
     ) -> Option<Vec<Result<bool>>> {
         let grants = self.edge_snapshot()?;
-        Some(super::first_refusal(grants.as_ref(), identity, permissions).await)
+        Some(grants.check_all(identity, permissions).await)
     }
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     async fn check_permission_in_txn(

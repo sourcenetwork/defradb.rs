@@ -172,3 +172,107 @@ fn a_returned_revocation_refuses_the_next_edge_check() {
     .unwrap();
     pool.shutdown_blocking().unwrap();
 }
+
+/// The edge's snapshot decides every permission ahead of time. Across the
+/// grant sets the edge tests cover, and admin, all-actors and NAC-off states,
+/// its answer for every identity and every permission is the engine's, and so
+/// is the first refusal of the edge's batched check.
+#[test]
+fn the_snapshot_decides_every_permission_as_the_engine_does() {
+    use acp::nac::NodePermission::{self, CollectionGet, DocumentUpdate};
+    use defra_http::router::{NodeAcpOperations, PermissionCheck};
+
+    let pool = workers::Pool::start(storage::with_worker_io(workers::Config::unplaced(1))).unwrap();
+    let options = storage::RegolithStoreOptions::memory().placed_on(&pool);
+    let store =
+        Arc::new(storage::RegolithStore::open_with_options("regolith-memory", options).unwrap());
+    let zanzibar = Arc::new(acp::PersistentZanzibarStore::from_store(Arc::clone(&store)));
+    let nac: Arc<dyn db::NacManagerApi> = Arc::new(db::NacManager::new(
+        Arc::clone(&zanzibar),
+        db::NacConfig::new().with_enabled(),
+    ));
+    let owner = identity::Did::new(OWNER).unwrap();
+    let reader =
+        identity::Did::new("did:key:z6MkjchhfUsD6mmvni8mCdXHw216Xrm9bQe2mBH1P5RDjVJG").unwrap();
+    let stranger =
+        identity::Did::new("did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH").unwrap();
+    let everyone = identity::Did::wildcard();
+    let adapter = NacAdapter::new(Arc::clone(&nac)).placed_on(Some(&pool));
+    let both = [CollectionGet, DocumentUpdate];
+
+    // Every identity's every permission through the manager (the snapshot)
+    // against a fresh engine over the same store, and the edge's batched
+    // check against the first permission the engine refuses.
+    let agree = |stage: &'static str| {
+        let nac = Arc::clone(&nac);
+        let zanzibar = Arc::clone(&zanzibar);
+        let adapter = &adapter;
+        let identities = [
+            owner.clone(),
+            reader.clone(),
+            stranger.clone(),
+            everyone.clone(),
+        ];
+        async move {
+            let engine = acp::nac::NodeACP::new(zanzibar);
+            engine.load().await.unwrap();
+            for identity in &identities {
+                for &permission in NodePermission::all() {
+                    assert_eq!(
+                        nac.check_permission(identity, permission).await.unwrap(),
+                        engine.check_permission(identity, permission).await.unwrap(),
+                        "{stage}: {identity:?} {permission:?}"
+                    );
+                }
+                let mut expected = PermissionCheck::Granted;
+                for permission in both {
+                    if !engine.check_permission(identity, permission).await.unwrap() {
+                        expected = PermissionCheck::Denied(permission);
+                        break;
+                    }
+                }
+                assert_eq!(
+                    adapter.check_permissions(identity, &both).await,
+                    expected,
+                    "{stage}: {identity:?}"
+                );
+            }
+        }
+    };
+
+    workers::block_on(async {
+        nac.initialize(Some(&owner)).await.unwrap();
+        agree("neither").await;
+        nac.add_permission_grant(&owner, &reader, DocumentUpdate)
+            .await
+            .unwrap();
+        agree("only update-document").await;
+        nac.remove_permission_grant(&owner, &reader, DocumentUpdate)
+            .await
+            .unwrap();
+        nac.add_permission_grant(&owner, &reader, CollectionGet)
+            .await
+            .unwrap();
+        agree("only get-collection").await;
+        nac.add_permission_grant(&owner, &reader, DocumentUpdate)
+            .await
+            .unwrap();
+        agree("both").await;
+        nac.add_admin(&owner, &stranger).await.unwrap();
+        agree("an admin").await;
+        nac.add_permission_grant(&owner, &everyone, CollectionGet)
+            .await
+            .unwrap();
+        agree("get-collection for all actors").await;
+        let caller = db::NacCaller {
+            identity: Some(owner.clone()),
+            node: None,
+        };
+        nac.disable_as(&caller).await.unwrap();
+        agree("NAC off").await;
+        nac.re_enable_as(&caller).await.unwrap();
+        agree("NAC back on").await;
+    })
+    .unwrap();
+    pool.shutdown_blocking().unwrap();
+}
