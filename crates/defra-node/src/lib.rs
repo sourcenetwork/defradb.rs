@@ -252,6 +252,13 @@ pub struct Node {
     document_acp: Arc<dyn acp::DocumentACP>,
     embedding_config: db::EmbeddingClientConfig,
     node_identity_did: Option<String>,
+    /// Whether the node signs the blocks it writes with its identity; false
+    /// for an identity-only node ([`NodeBuilder::with_identity_only`]).
+    node_signs: bool,
+    /// The identity the node acts as when a caller names none: its own DID
+    /// when it signs with it, `None` on an identity-only node. It is the
+    /// default query actor, the principal of [`Node::node_context`] and so the
+    /// owner of the transactions the node begins.
     node_query_identity: Option<identity::Did>,
     /// The node's share of the network runtime; `None` when the node has
     /// no network work and was given no runtime.
@@ -369,7 +376,8 @@ impl Node {
 
     /// Execute a GraphQL query or mutation.
     ///
-    /// A configured node identity is used as the document ACP actor. Prepared
+    /// A configured node identity is used as the document ACP actor, except on
+    /// an identity-only node, where the request acts as no one. Prepared
     /// requests with an explicit identity retain that actor instead.
     pub async fn execute(&self, query_str: &str) -> QueryResponse {
         self.execute_request_once(QueryRequest::new(query_str))
@@ -383,9 +391,9 @@ impl Node {
     ///
     /// A caller's key on the request ([`EmbeddedSigner::attach`]) signs in
     /// place of the node's. The request must name that key's DID as its actor,
-    /// native ACP authorizes that actor, and the node stays the transaction
-    /// principal. This trusted embedded capability does not authenticate an
-    /// HTTP caller.
+    /// native ACP authorizes that actor, and the node's principal (its DID, or
+    /// no one on an identity-only node) stays the transaction principal. This
+    /// trusted embedded capability does not authenticate an HTTP caller.
     pub async fn execute_request(&self, request: QueryRequest) -> QueryResponse {
         self.execute_prepared_request(request, None).await
     }
@@ -508,7 +516,7 @@ impl Node {
                 request,
                 Some(handle.clone()),
                 signing_config,
-                node_did.to_owned(),
+                self.node_principal(),
             )
             .await;
             if response.has_errors() {
@@ -550,7 +558,16 @@ impl Node {
             Err(error) => return QueryResponse::error(error.to_string()),
         };
         let request = self.with_default_query_identity(request);
-        let Some(node_identity_did) = self.node_identity_did.as_deref() else {
+        // A request is signed when the node signs with its identity, or when
+        // the caller brings its own key. Otherwise an identity-only node runs
+        // it unsigned, as its caller, as Go's `NodeIdentity` without
+        // `EnableSigning` does. Either way it runs under the node's principal
+        // (`node_principal`), the owner of the transactions the node begins.
+        let signing_identity = self
+            .node_identity_did
+            .as_deref()
+            .filter(|_| self.node_signs || caller_signer.is_some());
+        let Some(node_identity_did) = signing_identity else {
             if caller_signer.is_some() {
                 return QueryResponse::error(
                     "explicit embedded signing requires a configured node identity",
@@ -598,7 +615,7 @@ impl Node {
             request,
             txn_handle,
             signing_config,
-            node_identity_did.to_string(),
+            self.node_principal(),
         )
         .await
     }
@@ -652,18 +669,31 @@ impl Node {
         self.ops().on_acp(make).await
     }
 
-    /// The context the node's own operations run in: the node's identity acts
-    /// in it, so DB-layer NAC checks resolve to the node itself (which holds
-    /// full access). Without a node identity it is [`RequestContext::ambient`].
+    /// The context the node's own operations run in, and the owner of the
+    /// transactions it begins: the node's principal ([`Self::node_principal`])
+    /// acts in it. On a node that acts as its identity, DB-layer NAC checks
+    /// resolve to the node itself (which holds full access). Without a node
+    /// identity, or on an identity-only node, it is [`RequestContext::ambient`]
+    /// and NAC checks the node's own operations as anonymous, as Go's node
+    /// checks a call that names no identity.
     fn node_context(&self) -> RequestContext {
         let context = RequestContext::ambient();
-        match &self.node_identity_did {
-            Some(did) => context.with_identity(Some(did.clone())),
+        match self.node_principal() {
+            Some(did) => context.with_identity(Some(did)),
             None => context,
         }
     }
 
-    /// DID used as the node identity for signing, when configured.
+    /// The identity the node acts as when a caller names none: its DID on a
+    /// node that signs with it, no one on an identity-only node or a node
+    /// without an identity.
+    fn node_principal(&self) -> Option<String> {
+        self.node_query_identity.as_ref().map(ToString::to_string)
+    }
+
+    /// The node's identity DID, when configured: the DID it signs with, or
+    /// on an identity-only node the DID it keeps for P2P, the KMS and NAC
+    /// without signing.
     pub fn node_identity_did(&self) -> Option<&str> {
         self.node_identity_did.as_deref()
     }

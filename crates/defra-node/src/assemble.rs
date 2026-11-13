@@ -79,6 +79,7 @@ where
         transport,
         edge: given_edge,
         signing,
+        identity_only,
         document_acp: document_acp_config,
         query_limits,
         max_txn_retries,
@@ -101,11 +102,17 @@ where
         hold: signing_key_hold,
     } = node_identity::create_node_identity(&signing)?;
     let node_p2p_identity = raw_identity.map(Arc::new);
-    let node_query_identity = node_identity_did
+    if identity_only && node_identity_did.is_none() {
+        return Err(Error::IdentityOnlyNeedsIdentity);
+    }
+    let node_did = node_identity_did
         .as_ref()
         .map(|did| identity::Did::new(did.clone()))
         .transpose()
         .map_err(Error::InvalidNodeIdentityDid)?;
+    // The identity a request without its own acts as: the node's, when it
+    // signs with it. An identity-only node's requests act as their caller.
+    let node_query_identity = node_did.clone().filter(|_| !identity_only);
 
     // Everything the config can refuse is checked before anything opens, so a
     // refusal has nothing to close.
@@ -222,9 +229,11 @@ where
         .expect("document ACP was just installed")
         .clone();
     if let Some(projector) = extras.document_projector {
+        // The projector is the node's own trusted actor: an identity-only
+        // node still gives it the node's DID.
         let actor = close_on_error(
             &database,
-            node_query_identity
+            node_did
                 .clone()
                 .ok_or(Error::DocumentProjectorNeedsIdentity),
         )
@@ -592,6 +601,7 @@ where
         document_acp,
         embedding_config,
         node_identity_did,
+        node_signs: !identity_only,
         node_query_identity,
         _signing_key_hold: signing_key_hold,
         network,

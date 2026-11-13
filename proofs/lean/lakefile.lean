@@ -76,6 +76,9 @@ lean_lib DocKeyScopes where
 lean_lib DocumentUpdateJournal where
 
 @[default_target]
+lean_lib NodeSigningChoice where
+
+@[default_target]
 lean_lib DefraConvergence where
 
 @[default_target]

@@ -50,6 +50,25 @@ pub(super) async fn turn_node_permission(
     }
 }
 
+/// Node authorization for `permission` as a lent turn decides it: through
+/// the verified check when the request requires transactional authority,
+/// otherwise as [`turn_node_permission`] does.
+async fn lent_node_permission(
+    fetcher: &dyn DocFetcher,
+    identity: &Did,
+    permission: acp::nac::NodePermission,
+    require_authority: bool,
+    require_bound: bool,
+) -> crate::error::Result<Option<bool>> {
+    if require_authority {
+        fetcher
+            .check_verified_node_permission(identity, permission)
+            .await
+    } else {
+        turn_node_permission(fetcher, identity, permission, require_bound).await
+    }
+}
+
 /// A certified provider is already bound to the row transaction. Only ordinary
 /// queries may ask the fetcher to choose a provider on their behalf.
 pub(super) async fn turn_acp(
@@ -273,22 +292,35 @@ where
         };
         let nac_identity = nac_actor.clone().unwrap_or_else(Did::wildcard);
         let fetcher = txn_ctx.doc_fetcher();
-        let nac_check = if require_authority {
-            fetcher
-                .check_verified_node_permission(&nac_identity, permission_for_operation(&parsed))
-                .await
-        } else {
-            turn_node_permission(
+        let permission = permission_for_operation(&parsed);
+        // Checked in Go's order, so a refused write names the first permission
+        // it lacks, as the same write outside a transaction does.
+        let mut nac_check = Ok(Some(true));
+        let mut denied = permission;
+        for needed in permission.go_order() {
+            nac_check = lent_node_permission(
                 fetcher.as_ref(),
                 &nac_identity,
-                permission_for_operation(&parsed),
+                needed,
+                require_authority,
                 require_bound_nac,
             )
-            .await
-        };
+            .await;
+            if !matches!(nac_check, Ok(Some(true))) {
+                denied = needed;
+                break;
+            }
+        }
         match nac_check {
             Ok(Some(false)) => {
-                return Ok(Turned::Done(QueryResponse::success(serde_json::json!({}))))
+                // A refused read answers with no data; a refused write fails.
+                if !matches!(parsed, ParsedOperation::Mutation { .. }) {
+                    return Ok(Turned::Done(QueryResponse::success(serde_json::json!({}))));
+                }
+                return Ok(Turned::Done(QueryResponse::error(format!(
+                    "not authorized to perform operation. Permission: {}",
+                    denied.as_str()
+                ))));
             }
             Ok(Some(true)) => {}
             Ok(None) if require_bound_nac || require_authority => {

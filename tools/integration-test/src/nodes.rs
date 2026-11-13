@@ -333,6 +333,11 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
     if spec.node_identity.is_some() || spec.signing.is_some() {
         builder = builder.with_signing_key(signing_key(spec));
     }
+    // Go keeps the identity and the signing apart: a node with an identity
+    // signs only when the scenario turns signing on.
+    if spec.node_identity.is_some() && spec.signing.is_none() {
+        builder = builder.with_identity_only();
+    }
     if spec.enable_nac {
         builder = match &spec.nac_owner {
             Some(seed) => builder.with_node_acp_owner(crate::scenario::identity::did(*seed)),
@@ -387,9 +392,8 @@ fn go_node_key(spec: &NodeSpec) -> Option<crate::go_node::NodeKey> {
 /// The public key (hex) and key type a node started as `spec` signs blocks
 /// with, as their signature headers name it; `None` when it does not sign.
 pub fn signer_public_key(spec: &NodeSpec) -> Option<(String, KeyType)> {
-    if spec.node_identity.is_none() && spec.signing.is_none() {
-        return None;
-    }
+    // An identity alone signs nothing.
+    spec.signing?;
     let public = |key_type, key: Vec<u8>| {
         ::identity::RawIdentity::from_bytes(key_type, &key)
             .expect("a valid key")
