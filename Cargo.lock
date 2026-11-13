@@ -13862,6 +13862,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "vera-embedded"
+version = "0.5.0"
+dependencies = [
+ "commonware-codec",
+ "defra-core",
+ "edge",
+ "futures",
+ "hex",
+ "keyring 0.5.0",
+ "nuclei",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "vera",
+ "vera-jsonrpc",
+ "vera-node",
+]
+
+[[package]]
 name = "vera-executor"
 version = "0.1.2"
 source = "git+https://github.com/sourcenetwork/vera.rs?rev=a9ce2e431d6f43786f94946dfc5c8a3405a9a8f6#a9ce2e431d6f43786f94946dfc5c8a3405a9a8f6"

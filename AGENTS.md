@@ -88,6 +88,7 @@ crates/
 ├── replication-filter/ # Query-filter-backed replication matcher
 ├── schema/             # Schema validation
 ├── vera/               # Vera on-chain ACP client (Cosmos/EVM)
+├── vera-embedded/      # Transports to a Vera node hosted in the same process
 ├── storage/            # Storage layer over regolith, the one engine
 ├── telemetry/          # OpenTelemetry exporter setup
 ├── wasm/               # Browser client (WebAssembly)
