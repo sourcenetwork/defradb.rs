@@ -13873,11 +13873,13 @@ dependencies = [
 name = "vera-embedded"
 version = "0.5.0"
 dependencies = [
+ "acp",
  "commonware-codec",
  "defra-core",
  "edge",
  "futures",
  "hex",
+ "identity",
  "keyring 0.5.0",
  "nuclei",
  "regolith",
