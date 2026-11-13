@@ -19,6 +19,10 @@ NODE_MANIFESTS = ("crates/vera-embedded/Cargo.toml",)
 # The `git` key of a Vera dependency and its `rev`, with any spacing TOML allows around `=`.
 VERA_GIT = re.compile(r"""(?<![\w-])git\s*=\s*["']https://github\.com/sourcenetwork/vera\.rs(?:\.git)?/?["']""")
 VERA_REV = re.compile(r"""(?<![\w-])rev\s*=\s*["']([0-9a-f]{40})["']""")
+# A `git` or `rev` key on a line of its own, after the dotted path that names its dependency, if any.
+KEY_PATH = r"""\s*((?:(?:[\w-]+|"[^"]*"|'[^']*')\s*\.\s*)*)"""
+OWN_GIT = re.compile(KEY_PATH + r"git\s*=")
+OWN_REV = re.compile(KEY_PATH + r"""rev\s*=\s*["']([0-9a-f]{40})["']\s*""")
 SDK_VERSION = re.compile(r'\s*vera-(?:client|domain|modules)\s*=\s*"(\d+\.\d+\.\d+)"\s*')
 UNIT_NAMES = (
     "abi::tests::delete_relationship_subject_userset_round_trips",
@@ -104,6 +108,16 @@ def tables(text):
     yield table
 
 
+def own_revision(line, table):
+    """Return the revision of the dependency whose `git` key is `line`, from the same table."""
+    path = re.sub(r"\s", "", OWN_GIT.match(line)[1])
+    for sibling in table:
+        match = OWN_REV.fullmatch(sibling)
+        if match is not None and re.sub(r"\s", "", match[1]) == path:
+            return match[2]
+    return None
+
+
 def git_pins(text):
     """Return the immutable revision of every Vera git dependency in a manifest."""
     pins = []
@@ -112,11 +126,16 @@ def git_pins(text):
             if VERA_GIT.search(line) is None:
                 continue
             # An inline table carries its revision on the same line. A `git` key on a line of its own
-            # belongs to a `[dependencies.name]` table, whose other lines carry the revision.
-            match = VERA_REV.search(line if "{" in line else "\n".join(table))
-            if match is None:
+            # takes the `rev` key of the same dependency: the one with the same dotted path, which is
+            # empty inside a `[dependencies.name]` table. It never borrows another dependency's.
+            if "{" in line:
+                match = VERA_REV.search(line)
+                pin = None if match is None else match[1]
+            else:
+                pin = own_revision(line, table) if OWN_GIT.match(line) else None
+            if pin is None:
                 raise ValueError("SDK revision must be immutable")
-            pins.append(match[1])
+            pins.append(pin)
     return pins
 
 

@@ -175,6 +175,33 @@ class Tests(unittest.TestCase):
         node.write_text(one_line + '# ' + unspaced % other)
         self.assertEqual(driver.revision(self.root), pin)
 
+    def test_a_revision_is_read_only_from_its_own_dependency(self):
+        self.sdk_fixture()
+        node = self.root / driver.NODE_MANIFESTS[0]
+        url, pin, other = 'https://github.com/sourcenetwork/vera.rs', 'a' * 40, 'b' * 40
+        inline = NODE.splitlines(keepends=True)[0]
+        dotted = 'vera-node.git = "' + url + '"\nvera-node.rev = "%s"\n'
+        spaced = 'vera-node . git="' + url + '"\nvera-node . rev="%s"\n'
+        nested = '[dev-dependencies]\n"vera-node".git = "' + url + '"\n"vera-node".rev = "%s"\n'
+        for form in (dotted, spaced, nested):
+            with self.subTest(form=form):
+                self.assertEqual(driver.git_pins(inline + form % other), [pin, other])
+                node.write_text(inline + form % pin)
+                self.assertEqual(driver.revision(self.root), pin)
+                node.write_text(inline + form % other)
+                with self.assertRaises(ValueError):
+                    driver.revision(self.root)
+        for borrowed in (
+            inline + 'vera-node.git = "' + url + '"\n',
+            inline + 'vera-node.git = "' + url + '"\nvera-other.rev = "' + pin + '"\n',
+            inline + 'vera-node.git = "' + url + '"\nrev = "' + pin + '"\n',
+            '[dependencies.vera-node]\ngit = "' + url + '"\nother = { rev = "' + pin + '" }\n',
+            '[dependencies.vera-node]\ngit = "' + url + '"\nvera-jsonrpc.rev = "' + pin + '"\n',
+        ):
+            node.write_text(borrowed)
+            with self.subTest(borrowed=borrowed), self.assertRaises(ValueError):
+                driver.revision(self.root)
+
     def test_harness_pin_and_sdk_versions_are_read_whatever_the_spacing(self):
         self.sdk_fixture()
         sdk, harness = (self.root / name for name in driver.SDK_MANIFESTS)
