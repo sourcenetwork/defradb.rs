@@ -518,6 +518,7 @@ where
         database.clone(),
         query_limits,
         document_acp.clone(),
+        registry.clone(),
     ));
     let acp_ops: Arc<dyn acp_ops::AcpOps> = Arc::new(acp_ops::DbAcpOps::new(
         database.clone(),

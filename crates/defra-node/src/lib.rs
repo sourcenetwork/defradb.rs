@@ -758,7 +758,7 @@ impl Node {
         transform: Option<&str>,
     ) -> Result<Vec<CollectionVersion>> {
         self.ops()
-            .add_view(context, source_query, target_sdl, transform)
+            .add_view(&self.caller(context), source_query, target_sdl, transform)
             .await
     }
 
@@ -769,7 +769,9 @@ impl Node {
         context: &RequestContext,
         selector: db::CollectionSelector,
     ) -> Result<()> {
-        self.ops().refresh_views(context, selector).await
+        self.ops()
+            .refresh_views(&self.caller(context), selector)
+            .await
     }
 
     /// Eagerly migrate and cache every known-version document in a collection.

@@ -414,6 +414,8 @@ RUNS=(
   "MC_IndexInTxn_Red_StaleCatalog.cfg IndexInTxn.tla RED" # stale cached definition in the txn (INV_SeesOwnChange)
   "MC_IndexInTxn_Red_NoAwait.cfg IndexInTxn.tla RED" # commit returns before the backfill (INV_BuiltWhenCommitReturns)
   "MC_IndexInTxn_Red_NoSavepoint.cfg IndexInTxn.tla RED" # a failed change keeps its partial writes and the commit lands them (INV_FailedChangeLeavesNothing)
+  "MC_IndexInTxn_Red_StaleSnapshot.cfg IndexInTxn.tla RED" # follow-up work reads a pre-commit snapshot: a txn refresh misses its own document (INV_WorkSeesTxnWrites)
+  "MC_IndexInTxn_Red_RefreshAtRequest.cfg IndexInTxn.tla RED" # refresh rebuilt when asked, outside the txn (INV_WorkSeesTxnWrites)
   "MC_EncryptedIndexAutocommit_Green.cfg EncryptedIndexAutocommit.tla GREEN" # #2755: an encrypted index add or delete outside a txn reads the definition in its txn and re-runs on a conflict
   "MC_EncryptedIndexAutocommit_Red_CacheRead.cfg EncryptedIndexAutocommit.tla RED" # decides from the cache and blind-writes: a concurrent add is lost (INV_NoLostIndex)
   "MC_EncryptedIndexAutocommit_Red_SingleAttempt.cfg EncryptedIndexAutocommit.tla RED" # one attempt: a valid add is refused with the conflict (INV_NoValidRefused)
