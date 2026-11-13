@@ -77,8 +77,6 @@ testo signature::peer::doc_signature_with_peers_an_different_key_types_should_sy
 testo signature::peer::doc_signature_with_peers_an_different_key_types_updating_same_doc_should_sync #2701
 testo acp::dac::branchable::peer::acp_p2_p_branchable_collection_shared_reader_can_read_on_peer_local_acp #2706
 testo acp::dac::branchable::peer::acp_p2_p_branchable_collection_synced_with_node_collection_access_local_acp #2706
-testo acp::dac::query::with_cid_shared_field::acp_query_simple_with_shared_field_cid_returns_only_accessible_owners #2706
-testo acp::dac::commits::with_cid_shared_field::acp_query_commits_with_shared_field_cid_returns_only_accessible_owner #2706
 testo acp::dac::p2p::sync_shared_field::acp_p2_p_sync_shared_field_block_access_to_second_doc #2706
 testo acp::dac::p2p::sync_shared_field::acp_p2_p_sync_shared_field_block_access_to_first_doc #2706
 testo signature::acp::signature_acp_if_has_access_to_doc_validate_signature #2723
