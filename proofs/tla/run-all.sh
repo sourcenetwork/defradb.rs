@@ -997,7 +997,7 @@ RUNS=(
   "MC_NodeDrop_Red_NoAbortOnDrop.cfg NodeDrop.tla RED" # a shutdown set that does not abort on drop leaves every task holding the database
   "MC_NodeDrop_Red_DropAwaits.cfg NodeDrop.tla RED" # the dropping thread waits for an aborted task to end
   "MC_EmbeddedVeraStop_Green.cfg EmbeddedVeraStop.tla GREEN" # requests drain before the embedded Vera node stops; the stop has a deadline and frees the directory
-  "MC_EmbeddedVeraStop_Red_DecisionCache.cfg EmbeddedVeraStop.tla RED" # a remembered decision is given after the Vera node stopped
+  "MC_EmbeddedVeraStop_Red_StaleDecision.cfg EmbeddedVeraStop.tla RED" # a decision remembered under a state past its freshness limit is repeated
   "MC_EmbeddedVeraStop_Red_StopBeforeRequests.cfg EmbeddedVeraStop.tla RED" # the Vera node stops under a request the node admitted
   "MC_EmbeddedVeraStop_Red_NoStopDeadline.cfg EmbeddedVeraStop.tla RED" # a Vera node that hangs while stopping keeps shutdown waiting forever
   "MC_EmbeddedVeraStop_Red_LinkStaysOpen.cfg EmbeddedVeraStop.tla RED" # a transport left open keeps the stopped Vera node's directory locked

@@ -687,10 +687,15 @@ impl VeraProvider for VeraRsProvider {
         Ok(Some(decision.id))
     }
 
+    /// The state decisions are remembered under, while it is fresh. Once the
+    /// light client's newest state is older than its freshness limit there
+    /// is none, so no decision made at it is given again: the check goes to
+    /// the light client, which refuses a stale state.
     fn decision_state(&self) -> Option<String> {
         self.light_client
             .header_chain()
-            .state()
+            .fresh_state()
+            .ok()
             .map(|state| format_root(state.module_state_root))
     }
 

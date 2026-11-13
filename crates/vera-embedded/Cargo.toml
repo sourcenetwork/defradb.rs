@@ -49,6 +49,11 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+# The light client's freshness limit, at the revision `crates/vera` builds on.
+acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "502e60487f585a8303afa4998b07806aab69922c" }
+# The document ACP layer the stopped-node test asks through.
+acp = { path = "../acp" }
+identity = { path = "../identity" }
 # The node the tests host in their own process.
 vera-node = { git = "https://github.com/sourcenetwork/vera.rs", rev = "a9ce2e431d6f43786f94946dfc5c8a3405a9a8f6" }
 commonware-codec = "=2026.10.0"
