@@ -26,7 +26,8 @@ pub(super) async fn create_bearer_token(
 
 /// A delegation for one scope, issued under the spelling `issuer` gives.
 ///
-/// vera.rs takes either spelling of a secp256k1 issuer as the same actor.
+/// vera.rs takes either spelling of a secp256k1 issuer as the same actor, and
+/// an Ed25519 or P-256 issuer under its one canonical DID.
 pub(super) async fn create_scoped_bearer_token(
     signer: &dyn DelegationSigner,
     issuer: &str,
@@ -62,7 +63,7 @@ async fn issue_at(
     now: u64,
 ) -> Result<String, BearerError> {
     let key = admission::actor_key(signer)?;
-    if issuer != did_from_key(&key, true) && issuer != did_from_key(&key, false) {
+    if !key.names(issuer) {
         return Err(BearerError::Issuer);
     }
 
@@ -112,6 +113,8 @@ struct Claims<'a> {
 fn header(algorithm: DelegationAlgorithm) -> &'static [u8] {
     match algorithm {
         DelegationAlgorithm::Es256k => br#"{"alg":"ES256K","typ":"vera-delegation-v1+jwt"}"#,
+        DelegationAlgorithm::EdDsa => br#"{"alg":"EdDSA","typ":"vera-delegation-v1+jwt"}"#,
+        DelegationAlgorithm::Es256 => br#"{"alg":"ES256","typ":"vera-delegation-v1+jwt"}"#,
     }
 }
 
@@ -154,6 +157,8 @@ pub enum BearerError {
     Signer(#[from] SignerError),
 }
 
+#[cfg(test)]
+mod key_types;
 #[cfg(test)]
 mod pinned;
 
