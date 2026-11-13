@@ -9,7 +9,7 @@
 //! follows, and refuses as access denied otherwise.
 //! Modeled in `proofs/tla/GossipDelivery.tla`.
 
-use futures::future::join_all;
+use futures::stream::{self, StreamExt};
 
 use crate::error::{Error, Result};
 use crate::message::{PushLogBroadcast, PushLogReply, PushLogRequest};
@@ -59,16 +59,21 @@ pub(super) async fn push(
     );
     request.message_id = uuid::Uuid::new_v4().to_string();
     request.supports_same_stream_reply = true;
-    let mut failed = Vec::new();
-    // ponytail: waves of FANOUT, so one slow peer holds its wave; a rolling window if that shows.
-    for wave in peers.chunks(FANOUT) {
-        let replies = join_all(wave.iter().map(|peer| push_one(resources, peer, &request))).await;
-        failed.extend(
-            wave.iter()
-                .zip(replies)
-                .filter_map(|(peer, reply)| reply.err().map(|error| format!("{peer}: {error}"))),
-        );
-    }
+    let shared = &request;
+    // Built before the stream, so the stream holds futures, not a closure
+    // over borrowed peers, and stays Send.
+    let pushes: Vec<_> = peers
+        .iter()
+        .map(|peer| async move { (peer, push_one(resources, peer, shared).await) })
+        .collect();
+    let replies: Vec<_> = stream::iter(pushes)
+        .buffer_unordered(FANOUT)
+        .collect()
+        .await;
+    let failed: Vec<String> = replies
+        .into_iter()
+        .filter_map(|(peer, reply)| reply.err().map(|error| format!("{peer}: {error}")))
+        .collect();
     if failed.is_empty() {
         return Ok(MessageId::new(request.message_id));
     }
