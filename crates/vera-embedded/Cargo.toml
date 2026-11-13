@@ -16,6 +16,8 @@ bench = false
 vera = { path = "../vera" }
 # `MaybeBoxFuture`, the future type of the submission transport.
 defra-core = { path = "../defra-core" }
+# The deadline of each wait for the node, on the network runtime's clock.
+edge = { path = "../edge" }
 
 # The embedded node's in-process method table. The revision is the one
 # `tools/integration-test` pins for `vera-harness`; the native consumer check

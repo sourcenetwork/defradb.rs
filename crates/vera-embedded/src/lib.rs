@@ -14,8 +14,13 @@
 //! The node runs its calls on its own runtime. What this crate returns are
 //! plain futures that any executor can await.
 
+use std::time::Duration;
+
+use edge::Edge;
+
 mod acp;
 mod call;
+mod deadline;
 mod error;
 mod submission;
 
@@ -27,15 +32,30 @@ pub use vera_jsonrpc::LocalRpc;
 /// It reaches the node that built `rpc` and no other: once that node stops,
 /// every call fails with [`EmbeddedError::Stopped`], and a node started in
 /// its place needs a transport of its own.
+///
+/// Every wait for the node has a deadline, the one the network transport in
+/// its place has. A submission call waits `request_timeout`. A light client
+/// read waits ten seconds and so does establishing the header subscription,
+/// as over Backbone's HTTP and WebSocket transport. A wait that ends fails
+/// with [`EmbeddedError::Elapsed`]; the node still finishes the method.
 #[derive(Clone, Debug)]
 pub struct EmbeddedTransport {
     rpc: LocalRpc,
+    request_timeout: Duration,
+    edge: Edge,
 }
 
 impl EmbeddedTransport {
     /// A transport over `rpc`, the method table of a running node
-    /// (`EmbeddedNode::rpc`).
-    pub fn new(rpc: LocalRpc) -> Self {
-        Self { rpc }
+    /// (`EmbeddedNode::rpc`), whose deadlines run on `edge`'s clock.
+    ///
+    /// `request_timeout` bounds each submission call, as it does for the
+    /// HTTP transport: the provider's `AcpTuning::request_timeout`.
+    pub fn new(rpc: LocalRpc, request_timeout: Duration, edge: &Edge) -> Self {
+        Self {
+            rpc,
+            request_timeout,
+            edge: edge.clone(),
+        }
     }
 }

@@ -6,6 +6,7 @@ use serde_json::Value;
 use vera::vera_rs::{AcpTransport, HeaderStream, TransportError};
 
 use crate::call::call;
+use crate::deadline::{self, bounded};
 use crate::error::Failure;
 use crate::EmbeddedTransport;
 
@@ -24,7 +25,7 @@ impl AcpTransport for EmbeddedTransport {
         max_bytes: usize,
     ) -> BoxFuture<'_, Result<Value, TransportError>> {
         async move {
-            call(&self.rpc, method, params, max_bytes)
+            call(self, method, params, max_bytes, deadline::PROOF_READ)
                 .await
                 .map_err(|failure| transport_error(method, failure))
         }
@@ -33,11 +34,18 @@ impl AcpTransport for EmbeddedTransport {
 
     fn subscribe_headers(&self) -> BoxFuture<'_, Result<HeaderStream, TransportError>> {
         async move {
-            let subscription = self
+            let accepted = self
                 .rpc
-                .subscribe(SUBSCRIBE_HEADERS, Vec::new(), HEADER_BUFFER)
-                .await
-                .map_err(|error| header_error(Failure::from_node(SUBSCRIBE_HEADERS, error)))?;
+                .subscribe(SUBSCRIBE_HEADERS, Vec::new(), HEADER_BUFFER);
+            let subscription = bounded(
+                &self.edge,
+                SUBSCRIBE_HEADERS,
+                deadline::SUBSCRIPTION,
+                accepted,
+            )
+            .await
+            .map_err(header_error)?
+            .map_err(|error| header_error(Failure::from_node(SUBSCRIBE_HEADERS, error)))?;
             let headers: HeaderStream =
                 futures::stream::unfold(subscription, |mut subscription| async move {
                     let header = subscription.next().await?.map_err(|error| {
@@ -67,6 +75,9 @@ pub(crate) fn transport_error(method: &'static str, failure: Failure) -> Transpo
         },
         Failure::TooLarge => TransportError::ResponseTooLarge { method },
         Failure::Malformed(error) => TransportError::other(error),
+        Failure::Elapsed { method, deadline } => {
+            TransportError::other(Failure::elapsed(method, deadline))
+        }
         Failure::Channel(error) => TransportError::other(error),
     }
 }

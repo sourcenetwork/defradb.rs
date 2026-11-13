@@ -9,6 +9,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use commonware_codec::Encode as _;
 use futures::StreamExt as _;
@@ -56,7 +57,13 @@ async fn start(directory: &Path) -> EmbeddedNode {
 async fn a_provider_creates_and_reads_back_a_policy_through_the_embedded_node() {
     let directory = tempfile::tempdir().unwrap();
     let node = start(&directory.path().join("vera")).await;
-    let transport = Arc::new(EmbeddedTransport::new(node.rpc().clone()));
+    let tuning = AcpTuning::default();
+    let edge = edge::testing::edge();
+    let transport = Arc::new(EmbeddedTransport::new(
+        node.rpc().clone(),
+        tuning.request_timeout,
+        &edge,
+    ));
 
     let keyring = keyring::FileKeyring::open(directory.path().join("keys"), b"test-password")
         .expect("keyring");
@@ -68,9 +75,9 @@ async fn a_provider_creates_and_reads_back_a_policy_through_the_embedded_node() 
         &hex::encode(node.consensus_key().encode()),
         &[42; 32],
         worker,
-        &AcpTuning::default(),
+        &tuning,
         None,
-        &edge::testing::edge(),
+        &edge,
     )
     .await
     .expect("provider");
@@ -124,7 +131,8 @@ async fn a_provider_creates_and_reads_back_a_policy_through_the_embedded_node() 
 async fn answers_limits_and_failures_arrive_as_they_do_over_the_network() {
     let directory = tempfile::tempdir().unwrap();
     let node = start(directory.path()).await;
-    let transport = EmbeddedTransport::new(node.rpc().clone());
+    let edge = edge::testing::edge();
+    let transport = EmbeddedTransport::new(node.rpc().clone(), Duration::from_secs(5), &edge);
 
     let status = RpcTransport::call(&transport, "vera_nodeStatus", json!([]), 4096)
         .await
@@ -208,4 +216,45 @@ async fn answers_limits_and_failures_arrive_as_they_do_over_the_network() {
         ));
     }
     assert!(headers.next().await.is_none());
+}
+
+#[nuclei::test]
+async fn a_call_the_node_answers_too_late_ends_at_the_deadline_and_may_be_asked_again() {
+    let directory = tempfile::tempdir().unwrap();
+    let node = start(directory.path()).await;
+    let edge = edge::testing::edge();
+    // A proof at a height the chain has not reached: the node waits two
+    // seconds for it and then answers that it is busy.
+    let proof = || json!(["acp", "0x00", 1_000_000_000u64]);
+
+    let deadline = Duration::from_millis(100);
+    let hurried = EmbeddedTransport::new(node.rpc().clone(), deadline, &edge);
+    let started = std::time::Instant::now();
+    let elapsed = RpcTransport::call(&hurried, "vera_getCurrentRecordProof", proof(), 4096)
+        .await
+        .expect_err("no answer within the deadline");
+    assert!(started.elapsed() >= deadline);
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert!(matches!(
+        &elapsed,
+        ClientError::Transport {
+            retryable: true,
+            ..
+        }
+    ));
+    assert!(elapsed.retryable());
+    assert_eq!(
+        elapsed.to_string(),
+        "transport: vera_getCurrentRecordProof: no answer from the embedded Vera node within 100ms"
+    );
+
+    // The same call under a deadline the node meets keeps the node's answer.
+    let patient = EmbeddedTransport::new(node.rpc().clone(), Duration::from_secs(5), &edge);
+    let busy = RpcTransport::call(&patient, "vera_getCurrentRecordProof", proof(), 4096)
+        .await
+        .expect_err("the height is not reached");
+    assert!(matches!(busy, ClientError::Rpc { code: -32002, .. }));
+    assert!(busy.retryable());
+
+    node.stop().await.expect("stop");
 }

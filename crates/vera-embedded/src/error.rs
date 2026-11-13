@@ -1,5 +1,7 @@
 //! How an in-process call can fail, and what each consumer is told.
 
+use std::time::Duration;
+
 use vera_jsonrpc::LocalRpcError;
 
 /// A failure of the in-process channel, as distinct from an answer the node
@@ -11,6 +13,19 @@ pub enum EmbeddedError {
     /// succeed: a restarted node has a method table of its own.
     #[error("{method}: the embedded Vera node has stopped")]
     Stopped { method: String },
+
+    /// The node gave no answer within the deadline. It may still finish the
+    /// method: only the wait ended, so asking again is safe and may succeed.
+    #[error("{method}: no answer from the embedded Vera node within {deadline:?}")]
+    Elapsed { method: String, deadline: Duration },
+
+    /// The network runtime that times the wait is stopping.
+    #[error("{method}: {reason}")]
+    Runtime {
+        method: String,
+        #[source]
+        reason: edge::EdgeError,
+    },
 
     /// The call's parameters cannot be sent by position.
     #[error("{method}: parameters must be a JSON array, got {found}")]
@@ -34,11 +49,18 @@ pub(crate) enum Failure {
     TooLarge,
     /// The result is not JSON.
     Malformed(serde_json::Error),
+    /// The node gave no answer within the deadline.
+    Elapsed { method: String, deadline: Duration },
     /// The call did not reach the node or its answer did not come back.
     Channel(EmbeddedError),
 }
 
 impl Failure {
+    /// The error a caller reads when the wait ended, for either consumer.
+    pub(crate) fn elapsed(method: String, deadline: Duration) -> EmbeddedError {
+        EmbeddedError::Elapsed { method, deadline }
+    }
+
     pub(crate) fn from_node(method: &str, error: LocalRpcError) -> Self {
         let method = method.to_owned();
         match error {

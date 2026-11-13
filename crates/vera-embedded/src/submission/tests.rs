@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use vera_jsonrpc::LocalRpcError;
 
 use super::*;
@@ -94,4 +96,37 @@ fn a_payload_the_node_cannot_take_is_not_asked_again() {
         found: "an object",
     }));
     assert!(!params.retryable());
+}
+
+#[test]
+fn a_node_that_gave_no_answer_in_time_is_asked_again_as_after_an_http_timeout() {
+    let elapsed = client_error(Failure::Elapsed {
+        method: "vera_getReceiptProof".into(),
+        deadline: Duration::from_secs(5),
+    });
+    assert!(matches!(
+        &elapsed,
+        ClientError::Transport {
+            retryable: true,
+            ..
+        }
+    ));
+    assert!(elapsed.retryable());
+    assert_eq!(
+        elapsed.to_string(),
+        "transport: vera_getReceiptProof: no answer from the embedded Vera node within 5s"
+    );
+}
+
+#[test]
+fn a_wait_cut_short_by_a_stopping_runtime_is_not_asked_again() {
+    let stopping = client_error(Failure::Channel(EmbeddedError::Runtime {
+        method: "vera_getReceiptProof".into(),
+        reason: edge::EdgeError::Closed,
+    }));
+    assert!(!stopping.retryable());
+    assert_eq!(
+        stopping.to_string(),
+        "transport: vera_getReceiptProof: the network runtime is shutting down"
+    );
 }
