@@ -34,10 +34,10 @@ edge = { path = "../edge" }
 # The embedded node's in-process method table. The revision is the one
 # `tools/integration-test` pins for `vera-harness`; the native consumer check
 # refuses a difference.
-vera-jsonrpc = { git = "https://github.com/sourcenetwork/vera.rs", rev = "a9ce2e431d6f43786f94946dfc5c8a3405a9a8f6" }
+vera-jsonrpc = { git = "https://github.com/sourcenetwork/vera.rs", rev = "1218f068d09b2a46aecbbd984caec6da1d910f8b" }
 
 # The node a host starts with the `node` feature, at the same revision.
-vera-node = { git = "https://github.com/sourcenetwork/vera.rs", rev = "a9ce2e431d6f43786f94946dfc5c8a3405a9a8f6", optional = true }
+vera-node = { git = "https://github.com/sourcenetwork/vera.rs", rev = "1218f068d09b2a46aecbbd984caec6da1d910f8b", optional = true }
 # The encoding of the node's consensus key.
 commonware-codec = { version = "=2026.10.0", optional = true }
 hex = { workspace = true, optional = true }
@@ -55,7 +55,7 @@ acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev 
 acp = { path = "../acp" }
 identity = { path = "../identity" }
 # The node the tests host in their own process.
-vera-node = { git = "https://github.com/sourcenetwork/vera.rs", rev = "a9ce2e431d6f43786f94946dfc5c8a3405a9a8f6" }
+vera-node = { git = "https://github.com/sourcenetwork/vera.rs", rev = "1218f068d09b2a46aecbbd984caec6da1d910f8b" }
 commonware-codec = "=2026.10.0"
 edge = { path = "../edge", features = ["testing"] }
 hex.workspace = true
