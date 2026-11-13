@@ -252,6 +252,17 @@ impl NodeBuilder {
         self
     }
 
+    /// Run a single-validator Vera node in this process and use it for
+    /// document ACP. The node starts before document ACP is set up and stops
+    /// in [`Node::shutdown`](crate::Node::shutdown).
+    ///
+    /// Requires the `embedded-vera` feature.
+    #[cfg(feature = "embedded-vera")]
+    pub fn with_embedded_vera(mut self, config: crate::EmbeddedVeraConfig) -> Self {
+        self.config.document_acp = DocumentAcpConfig::EmbeddedVera(config);
+        self
+    }
+
     /// Use an identity already registered in DefraDB's process-local signing registry.
     ///
     /// The caller must register the signer before calling [`NodeBuilder::build`].

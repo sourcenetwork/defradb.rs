@@ -235,6 +235,17 @@ impl Edge {
         &self.shared.rt.cpus
     }
 
+    /// Pins the calling thread to the CPUs the runtime holds, and with it
+    /// every thread it starts afterwards where the platform lets a thread
+    /// inherit its creator's CPUs. For a library that builds threads of its
+    /// own and takes none of ours: its threads then share the edge's cores
+    /// and none of the workers'. `false` when the runtime runs unpinned or
+    /// the OS refused.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn pin_current_thread(&self) -> bool {
+        self.shared.rt.cores.pin_current_thread()
+    }
+
     /// The runtime's counters, with this handle's work in flight.
     pub fn stats(&self) -> EdgeStats {
         self.shared.stats.snapshot(self.gate.in_flight())

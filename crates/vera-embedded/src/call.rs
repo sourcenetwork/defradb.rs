@@ -23,7 +23,12 @@ pub(crate) async fn call(
     deadline: Duration,
 ) -> Result<Value, Failure> {
     let params = positional(method, params).map_err(Failure::Channel)?;
-    let answer = transport.rpc.request_raw(method, params);
+    let Some(rpc) = transport.rpc.rpc() else {
+        return Err(Failure::Channel(EmbeddedError::Stopped {
+            method: method.to_owned(),
+        }));
+    };
+    let answer = rpc.request_raw(method, params);
     let result = bounded(&transport.edge, method, deadline, answer)
         .await?
         .map_err(|error| Failure::from_node(method, error))?;

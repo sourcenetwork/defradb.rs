@@ -329,6 +329,15 @@ that is correct but slower is not done.
   that binds its own tokio sockets and takes none of ours (iroh, libp2p's QUIC and DNS, the vera.rs clients) runs
   inside `edge::compat`, the one place that tokio runtime is entered. The edge's owner thread builds it, so its workers
   and the blocking threads they start later run on the whole edge CPU set, in the ledger; async-compat starts none.
+- One exception to "no other runtime is built": the embedded Vera node. With `defra-node`'s `embedded-vera` feature a
+  single-validator Vera node runs in the process on a runtime of its own, because Commonware 2026.10's runner always
+  builds its own tokio runtime and takes none from outside. The exception is bounded. `vera-embedded`'s `HostedNode` is
+  its only entry. It pins the node thread to the edge's CPUs (`Edge::pin_current_thread`) before that runtime is built,
+  so where a thread inherits its creator's CPUs, as on Linux, the node's workers, blocking threads, verification pool
+  and history store threads run on the edge cores, in the ledger, and share no core with a database worker; a refused
+  pin fails the start. Its worker and verification threads are capped at the edge's CPU count, and
+  `HostedNode::threads` reports what it runs. Shutdown stops it with a deadline (`proofs/tla/EmbeddedVeraStop.tla`).
+  #2847 removes the exception by moving the node onto the edge runtime.
 - The data-path crates (storage, datastore, blockstore, crdt, defra-core, query, db, acp, zanzibar, lens, kms, events)
   do not depend on a runtime: no `nuclei::spawn`, `nuclei::time`, `block_on`, and no tokio at all.
 - A network task that panics fails only its own request. Every completion a worker waits on carries a deadline.
