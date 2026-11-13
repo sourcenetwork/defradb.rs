@@ -94,7 +94,7 @@ impl<S: Store> P2PHost<S> {
                 // A source port is not the peer's address: hold `ActivePeers`
                 // until its Identify names the listen address.
                 if endpoint.is_dialer() {
-                    self.unidentified.remove(&peer_id);
+                    self.on_identify_settled(peer_id);
                 } else {
                     self.unidentified.insert(peer_id);
                 }
@@ -314,8 +314,7 @@ impl<S: Store> P2PHost<S> {
 
         info!(peer_id = %peer_id, "Peer disconnected");
         self.peer_addrs.remove(&peer_id);
-        self.unidentified.remove(&peer_id);
-        self.answer_peer_addresses();
+        self.on_identify_settled(peer_id);
         for response in self
             .pending_disconnects
             .remove(&peer_id)

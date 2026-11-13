@@ -1,140 +1,198 @@
 ---- MODULE ActivePeersIdentify ----
 \* The story, in plain words.
 \*
-\* A peer dials our node. Our dials, and theirs, come from a fresh source
+\* Peers dial our node. Our dials, and theirs, come from a fresh source
 \* port that nothing listens on, so the first address the host records for a
 \* peer that dialed in is that source port. The peer's Identify, which comes a
 \* moment later, names the address it listens on, and the host records that
 \* instead. Meanwhile a caller may ask ActivePeers for the addresses of the
 \* connected peers.
 \*
-\* Who acts: the peer (it connects, its Identify arrives or fails, it may
+\* Who acts: each peer (it connects, its Identify arrives or fails, it may
 \* hang up), the caller (it asks ActivePeers), and the host (it answers).
 \*
 \* What must never happen:
-\*   1. ActivePeers lists a peer at its source port while the peer's Identify
-\*      may still come - INV_ListenAddress;
-\*   2. a caller waits forever for its answer - LIVE_Answered.
+\*   1. ActivePeers lists a peer that was waiting on its Identify when it was
+\*      asked at its source port while that Identify may still come -
+\*      INV_ListenAddress;
+\*   2. the answer is held by a peer that connected after the call: once
+\*      every peer waiting at the call has settled, the host can answer -
+\*      INV_NotHeldByLater;
+\*   3. a caller waits forever for its answer - LIVE_Answered.
 \*
 \* Correspondence with the Rust code (crates/p2p/src/host):
 \*
 \*   | Model            | Rust                                                     |
 \*   |------------------|----------------------------------------------------------|
-\*   | Connect          | p2p_host/swarm.rs handle_swarm_event, ConnectionEstablished|
+\*   | Connect(p)       | p2p_host/swarm.rs handle_swarm_event, ConnectionEstablished|
 \*   |                  | on the Listener side: peer_addrs = send_back_addr, the   |
 \*   |                  | peer joins `unidentified`                                |
-\*   | Identified       | p2p_host/protocols.rs identify Event::Received: the      |
-\*   |                  | listen address replaces it, the peer leaves              |
-\*   |                  | `unidentified`, answer_peer_addresses                    |
-\*   | IdentifyFails    | identify Event::Error (its own timeout included): the    |
-\*   |                  | source port stays, the peer leaves `unidentified`        |
-\*   | HangUp           | swarm.rs handle_connection_closed, last connection       |
+\*   | Identified(p)    | p2p_host/protocols.rs identify Event::Received: the      |
+\*   |                  | listen address replaces it, on_identify_settled          |
+\*   | IdentifyFails(p) | identify Event::Error (its own timeout included): the    |
+\*   |                  | source port stays, on_identify_settled                   |
+\*   | HangUp(p)        | swarm.rs handle_connection_closed, last connection:      |
+\*   |                  | on_identify_settled                                      |
 \*   | Ask              | command_handler/network.rs handle_peer_addresses: the    |
-\*   |                  | reply joins pending_peer_addresses                       |
-\*   | Answer           | answer_peer_addresses: sent once no connected peer is in |
-\*   |                  | `unidentified` (RED WaitForIdentify = FALSE: at once, as |
-\*   |                  | before #2774)                                            |
+\*   |                  | reply is held with the connected unidentified peers      |
+\*   |                  | (waitsOn; RED SnapshotAtAsk = FALSE: waits on every      |
+\*   |                  | connected unidentified peer, later ones included)        |
+\*   | Answer           | answer_peer_addresses: sent once its waitsOn is empty    |
+\*   |                  | (RED WaitForIdentify = FALSE: at once, as before #2774)  |
 \*
 \* Gaps, explained:
-\*   * One peer and one caller show it: each peer and each call is handled
-\*     the same way and apart from the others.
+\*   * Two peers and one caller show it: a second peer can connect after
+\*     the call, which is how a later peer could hold it. Each call keeps its
+\*     own waitsOn, so a second caller is handled the same way.
+\*   * A peer that connects after the call is listed at whatever address it
+\*     has when the answer goes out, its source port included.
 \*   * A peer we dialed is left out: its recorded address is the one we
 \*     dialed, its listen address, from the start.
+\*   * A peer connects once: a reconnect is a new Connect of the same kind.
 
-CONSTANT WaitForIdentify
-\* TRUE as written: the answer waits for the peer's Identify. A RED
-\* configuration sets it FALSE and answers at once.
+CONSTANTS Peers, WaitForIdentify, SnapshotAtAsk
+\* Peers: the peers that may dial in (two in every configuration).
+\* WaitForIdentify: TRUE as written, the answer waits for Identify; the RED
+\*   AnswerAtOnce sets it FALSE and answers at once.
+\* SnapshotAtAsk: TRUE as written, the answer waits only on the peers that
+\*   were unidentified at the call; the RED WaitOnLater sets it FALSE and
+\*   waits on every connected unidentified peer, as the first version did.
 
-ASSUME WaitForIdentify \in BOOLEAN
-\* The guard is on or off.
+ASSUME WaitForIdentify \in BOOLEAN /\ SnapshotAtAsk \in BOOLEAN
+\* Both guards are on or off.
 
-VARIABLES peer, addr, asked, answer, answeredAt
-\* peer: "away", "connected" (no Identify yet), "identified", "failed"
-\* (its Identify failed), or "gone" (hung up). addr: the address recorded
-\* for it ("none", the "source" port, or its "listen" address). asked: the
-\* caller has asked. answer: what the caller got ("none" yet, an empty
-\* list, or the address it was listed at). answeredAt: the peer's state when
-\* the host answered ("none" before).
+VARIABLES peer, addr, asked, waitsOn, atAsk, answer, answeredAt
+\* peer[p]: "away", "connected" (no Identify yet), "identified", "failed"
+\*   (its Identify failed), or "gone" (hung up).
+\* addr[p]: the address recorded for p ("none", the "source" port, or its
+\*   "listen" address).
+\* asked: the caller has asked.
+\* waitsOn: the peers the held answer still waits on.
+\* atAsk: the peers that were waiting on their Identify when the caller asked.
+\* answer[p]: how the answer listed p ("none" before the answer, "absent" if
+\*   not listed, else the address it was listed at).
+\* answeredAt[p]: p's state when the host answered ("none" before).
 
-vars == <<peer, addr, asked, answer, answeredAt>>
+vars == <<peer, addr, asked, waitsOn, atAsk, answer, answeredAt>>
 \* Every variable, for the stuttering steps.
+
+States == {"away", "connected", "identified", "failed", "gone"}
+\* The states a peer can be in.
 
 TypeOK ==
   \* Every variable holds a value of its kind.
-  /\ peer \in {"away", "connected", "identified", "failed", "gone"}
-  /\ addr \in {"none", "source", "listen"}
+  /\ peer \in [Peers -> States]
+  /\ addr \in [Peers -> {"none", "source", "listen"}]
   /\ asked \in BOOLEAN
-  /\ answer \in {"none", "empty", "source", "listen"}
-  /\ answeredAt \in {"none", "away", "connected", "identified", "failed", "gone"}
+  /\ waitsOn \subseteq Peers
+  /\ atAsk \subseteq Peers
+  /\ answer \in [Peers -> {"none", "absent", "source", "listen"}]
+  /\ answeredAt \in [Peers -> States \cup {"none"}]
+
+Answered == \A p \in Peers : answer[p] # "none"
+\* The host has answered (every peer has its entry in the answer).
 
 Init ==
   \* No connection yet, and nobody has asked.
-  /\ peer = "away"
-  /\ addr = "none"
+  /\ peer = [p \in Peers |-> "away"]
+  /\ addr = [p \in Peers |-> "none"]
   /\ asked = FALSE
-  /\ answer = "none"
-  /\ answeredAt = "none"
+  /\ waitsOn = {}
+  /\ atAsk = {}
+  /\ answer = [p \in Peers |-> "none"]
+  /\ answeredAt = [p \in Peers |-> "none"]
 
-Connect ==
-  \* The peer dials in: the host records its source port.
-  /\ peer = "away"
-  /\ peer' = "connected"
-  /\ addr' = "source"
-  /\ UNCHANGED <<asked, answer, answeredAt>>
+Settle(p) ==
+  \* p's Identify ended one way or the other, or p hung up: no held answer
+  \* waits on it any more.
+  waitsOn' = waitsOn \ {p}
 
-Identified ==
-  \* The peer's Identify arrives: its listen address replaces the port.
-  /\ peer = "connected"
-  /\ peer' = "identified"
-  /\ addr' = "listen"
-  /\ UNCHANGED <<asked, answer, answeredAt>>
+Connect(p) ==
+  \* Peer p dials in: the host records its source port.
+  /\ peer[p] = "away"
+  /\ peer' = [peer EXCEPT ![p] = "connected"]
+  /\ addr' = [addr EXCEPT ![p] = "source"]
+  /\ UNCHANGED <<asked, waitsOn, atAsk, answer, answeredAt>>
 
-IdentifyFails ==
-  \* The peer's Identify fails or times out: the port is all there is.
-  /\ peer = "connected"
-  /\ peer' = "failed"
-  /\ UNCHANGED <<addr, asked, answer, answeredAt>>
+Identified(p) ==
+  \* p's Identify arrives: its listen address replaces the port.
+  /\ peer[p] = "connected"
+  /\ peer' = [peer EXCEPT ![p] = "identified"]
+  /\ addr' = [addr EXCEPT ![p] = "listen"]
+  /\ Settle(p)
+  /\ UNCHANGED <<asked, atAsk, answer, answeredAt>>
 
-HangUp ==
-  \* The peer's last connection closes; the host forgets its address.
-  /\ peer \in {"connected", "identified", "failed"}
-  /\ peer' = "gone"
-  /\ addr' = "none"
-  /\ UNCHANGED <<asked, answer, answeredAt>>
+IdentifyFails(p) ==
+  \* p's Identify fails or times out: the port is all there is.
+  /\ peer[p] = "connected"
+  /\ peer' = [peer EXCEPT ![p] = "failed"]
+  /\ Settle(p)
+  /\ UNCHANGED <<addr, asked, atAsk, answer, answeredAt>>
+
+HangUp(p) ==
+  \* p's last connection closes; the host forgets its address.
+  /\ peer[p] \in {"connected", "identified", "failed"}
+  /\ peer' = [peer EXCEPT ![p] = "gone"]
+  /\ addr' = [addr EXCEPT ![p] = "none"]
+  /\ Settle(p)
+  /\ UNCHANGED <<asked, atAsk, answer, answeredAt>>
+
+Waiting == {p \in Peers : peer[p] = "connected"}
+\* The connected peers still waiting on their Identify.
 
 Ask ==
-  \* The caller asks ActivePeers, once.
+  \* The caller asks ActivePeers, once; the answer is held with the peers
+  \* waiting on their Identify right now.
   /\ ~asked
   /\ asked' = TRUE
+  /\ waitsOn' = Waiting
+  /\ atAsk' = Waiting
   /\ UNCHANGED <<peer, addr, answer, answeredAt>>
 
-Listed ==
-  \* What the host lists: the recorded address of a connected peer.
-  IF peer \in {"connected", "identified", "failed"} THEN addr ELSE "empty"
+CanAnswer ==
+  \* Whether the host lets the held answer go: at once (RED AnswerAtOnce),
+  \* once its own peers settled, or (RED WaitOnLater) once no connected peer
+  \* at all is waiting on its Identify.
+  IF ~WaitForIdentify THEN TRUE
+  ELSE IF SnapshotAtAsk THEN waitsOn = {}
+  ELSE Waiting = {}
+
+Listed(p) ==
+  \* How the host lists p: its recorded address if connected, else absent.
+  IF peer[p] \in {"connected", "identified", "failed"} THEN addr[p] ELSE "absent"
 
 Answer ==
-  \* The host answers, unless it waits on the peer's Identify (RED: never).
+  \* The host answers the caller.
   /\ asked
-  /\ answer = "none"
-  /\ WaitForIdentify => peer # "connected"
-  /\ answer' = Listed
+  /\ ~Answered
+  /\ CanAnswer
+  /\ answer' = [p \in Peers |-> Listed(p)]
   /\ answeredAt' = peer
-  /\ UNCHANGED <<peer, addr, asked>>
+  /\ UNCHANGED <<peer, addr, asked, waitsOn, atAsk>>
 
-Next == Connect \/ Identified \/ IdentifyFails \/ HangUp \/ Ask \/ Answer
-\* Each step is the peer's, the caller's or the host's.
+Next ==
+  \* Each step is a peer's, the caller's or the host's.
+  \/ \E p \in Peers : Connect(p) \/ Identified(p) \/ IdentifyFails(p) \/ HangUp(p)
+  \/ Ask
+  \/ Answer
 
 Spec == /\ Init /\ [][Next]_vars
         /\ WF_vars(Answer)
-        /\ WF_vars(Identified \/ IdentifyFails)
+        /\ \A p \in Peers : WF_vars(Identified(p) \/ IdentifyFails(p))
 \* The host answers when it can, and a pending Identify ends, one way or the
 \* other (libp2p times it out).
 
-INV_ListenAddress == answer = "source" => answeredAt = "failed"
-\* Promise: a peer is listed at its source port only once its Identify
-\* failed, never while the Identify that names its listen address may come.
+INV_ListenAddress ==
+  \* Promise: a peer that was waiting on its Identify at the call is listed at
+  \* its source port only once that Identify failed.
+  \A p \in atAsk : answer[p] = "source" => answeredAt[p] = "failed"
 
-LIVE_Answered == asked ~> answer # "none"
+INV_NotHeldByLater ==
+  \* Promise: once every peer that was waiting at the call has settled, the
+  \* host can answer; a peer that connected later never holds the answer.
+  (asked /\ ~Answered /\ \A p \in atAsk : peer[p] # "connected") => CanAnswer
+
+LIVE_Answered == asked ~> Answered
 \* Promise: every caller that asks gets an answer.
 
 ====

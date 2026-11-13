@@ -104,33 +104,43 @@ impl<S: Store> P2PHost<S> {
         }
     }
 
-    /// Answer `ActivePeers` once every connected peer that dialed us has
-    /// identified. Until then its address is the connection's source port,
-    /// not its listen address (#2774); the reply waits for the peer's Identify,
-    /// whose failure or timeout, or the peer's disconnect, also ends the wait.
+    /// Answer `ActivePeers` once every peer that dialed us and was still
+    /// unidentified when the call came in has identified. Until then its
+    /// address is the connection's source port, not its listen address
+    /// (#2774). Its Identify failing or timing out, or its disconnect, also
+    /// ends the wait. A peer that dials in after the call never holds it: it
+    /// is listed at whatever address it has when the reply goes out, as Go
+    /// lists it.
     pub(super) fn handle_peer_addresses(
         &mut self,
         response: crate::rt::oneshot::Sender<Vec<String>>,
     ) {
-        self.pending_peer_addresses.push(response);
+        let waits_on: RapidHashSet<PeerId> = self
+            .unidentified
+            .iter()
+            .filter(|peer| self.swarm.is_connected(peer))
+            .copied()
+            .collect();
+        self.pending_peer_addresses.push((waits_on, response));
         self.answer_peer_addresses();
     }
 
-    /// The peer's Identify arrived or failed: release any `ActivePeers` reply
-    /// it held.
+    /// The peer's Identify arrived or failed, or its last connection closed:
+    /// release every `ActivePeers` reply it held.
     pub(in crate::host) fn on_identify_settled(&mut self, peer_id: PeerId) {
         self.unidentified.remove(&peer_id);
+        for (waits_on, _) in &mut self.pending_peer_addresses {
+            waits_on.remove(&peer_id);
+        }
         self.answer_peer_addresses();
     }
 
-    /// Send the held `ActivePeers` replies if no connected peer still awaits
-    /// its Identify.
-    pub(in crate::host) fn answer_peer_addresses(&mut self) {
-        if self.pending_peer_addresses.is_empty()
-            || self
-                .unidentified
-                .iter()
-                .any(|peer| self.swarm.is_connected(peer))
+    /// Send every held `ActivePeers` reply whose peers have all settled.
+    fn answer_peer_addresses(&mut self) {
+        if !self
+            .pending_peer_addresses
+            .iter()
+            .any(|(waits_on, _)| waits_on.is_empty())
         {
             return;
         }
@@ -140,7 +150,12 @@ impl<S: Store> P2PHost<S> {
             .iter()
             .filter_map(|pid| self.peer_addrs.get(pid).map(|addr| peer_address(addr, pid)))
             .collect();
-        for response in self.pending_peer_addresses.drain(..) {
+        let (ready, held): (Vec<_>, Vec<_>) = self
+            .pending_peer_addresses
+            .drain(..)
+            .partition(|(waits_on, _)| waits_on.is_empty());
+        self.pending_peer_addresses = held;
+        for (_, response) in ready {
             if response.send(addrs.clone()).is_err() {
                 debug!("PeerAddresses command response dropped - caller cancelled");
             }

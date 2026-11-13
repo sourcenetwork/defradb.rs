@@ -309,10 +309,14 @@ pub struct P2PHost<S: Store> {
     /// Peers that dialed us and have not identified yet: their address is
     /// still the connection's source port, which nothing listens on.
     pub(super) unidentified: RapidHashSet<PeerId>,
-    /// `ActivePeers` replies held until every connected peer has identified
-    /// (or failed to), so each lists the peer's listen address, as Go's
-    /// does from its first moment.
-    pub(super) pending_peer_addresses: Vec<crate::rt::oneshot::Sender<Vec<String>>>,
+    /// `ActivePeers` replies, each held until the peers that were
+    /// unidentified when it was asked have identified (or failed to), so it
+    /// lists them at their listen addresses, as Go's does from the first
+    /// moment.
+    pub(super) pending_peer_addresses: Vec<(
+        RapidHashSet<PeerId>,
+        crate::rt::oneshot::Sender<Vec<String>>,
+    )>,
     /// Optional local DEFRA identity used for Go-compatible identity exchange.
     pub(super) node_identity: Option<Arc<identity::RawIdentity>>,
     /// Tracks established connections and actively prunes them after the

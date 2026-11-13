@@ -986,8 +986,9 @@ RUNS=(
   "MC_PubsubRpcReply_Green.cfg PubsubRpcReply.tla GREEN" # three peers, each request copy direct or relayed in every order: every answer reaches the asker, the deadline cuts off only an answer not yet sent or still on its way, the asker stops
   "MC_PubsubRpcReply_Red_AnswerRelay.cfg PubsubRpcReply.tla RED" # a peer answers the relay that handed it the request (INV_NoAnswerLost)
   "MC_PubsubRpcReply_Red_DeadlineCutsOff.cfg PubsubRpcReply.tla RED" # the same: every peer answered, one answer lost, the asker stops at its deadline (INV_AllAnswered)
-  "MC_ActivePeersIdentify_Green.cfg ActivePeersIdentify.tla GREEN" # a peer dials in; its Identify arrives, fails or it hangs up around an ActivePeers call: never its source port while the Identify may come, every call answered
+  "MC_ActivePeersIdentify_Green.cfg ActivePeersIdentify.tla GREEN" # two peers dial in around an ActivePeers call: never a waiting peer at its source port, never held by a later peer, every call answered
   "MC_ActivePeersIdentify_Red_AnswerAtOnce.cfg ActivePeersIdentify.tla RED" # ActivePeers answers at once, before the Identify (INV_ListenAddress)
+  "MC_ActivePeersIdentify_Red_WaitOnLater.cfg ActivePeersIdentify.tla RED" # the answer waits on peers that dialed in after the call (INV_NotHeldByLater)
   "MC_CoordinatorShutdown_Green.cfg CoordinatorShutdown.tla GREEN" # two callers, a late spawn racing the drain, the edge closing and the runtime torn down at any moment: one drain, no task left in the set, every caller returns
   "MC_CoordinatorShutdown_Green_TwoSpawns.cfg CoordinatorShutdown.tla GREEN" # two late spawns whose pruners race the drain and each other: no task left in the set, the caller returns
   "MC_CoordinatorShutdown_Red_DropRefused.cfg CoordinatorShutdown.tla RED" # the old code, a refused drain dropped: the tracked task leaks (INV_NoLeak)

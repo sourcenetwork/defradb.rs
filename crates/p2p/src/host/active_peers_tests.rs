@@ -137,3 +137,96 @@ async fn active_peers_lists_a_dialer_at_its_listen_address_before_its_identify()
     .await
     .expect("the test finished within its deadline");
 }
+
+/// Dial the host from a fresh bare swarm and return its key and the host's
+/// held Identify request stream.
+async fn dial_and_hold_identify(
+    host_id: libp2p::PeerId,
+    host_addr: Multiaddr,
+) -> (Keypair, libp2p::Stream) {
+    let key = Keypair::generate_ed25519();
+    let (transport, _) = build(&key, false).unwrap();
+    let mut dialer = Swarm::new(
+        transport,
+        libp2p_stream::Behaviour::new(),
+        key.public().to_peer_id(),
+        libp2p::swarm::Config::with_executor(Executor::new(edge::testing::edge()))
+            .with_idle_connection_timeout(Duration::from_secs(120)),
+    );
+    let mut identify_requests = dialer
+        .behaviour()
+        .new_control()
+        .accept(StreamProtocol::new(IDENTIFY))
+        .unwrap();
+    dialer
+        .dial(
+            DialOpts::peer_id(host_id)
+                .addresses(vec![host_addr])
+                .allocate_new_port()
+                .build(),
+        )
+        .unwrap();
+    loop {
+        if let SwarmEvent::ConnectionEstablished { .. } = dialer.select_next_some().await {
+            break;
+        }
+    }
+    nuclei::spawn(async move {
+        loop {
+            dialer.select_next_some().await;
+        }
+    })
+    .detach();
+    let (_, identify) = identify_requests.next().await.expect("an Identify request");
+    (key, identify)
+}
+
+#[nuclei::test]
+async fn active_peers_is_not_held_by_a_peer_that_dials_in_after_the_call() {
+    crate::rt::time::timeout(
+        Duration::from_secs(30),
+        edge::compat(async {
+            let (host, handle, _events, _replicators) =
+                P2PHost::new(MockBitswapStore::new(), edge::testing::edge())
+                    .await
+                    .unwrap();
+            nuclei::spawn(host.run()).detach();
+            handle
+                .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
+                .await
+                .unwrap();
+            let host_addr = handle.listen_addresses().await.unwrap().remove(0);
+            let host_id = handle.local_peer_id_cached();
+
+            let (key_a, mut identify_a) = dial_and_hold_identify(host_id, host_addr.clone()).await;
+            let mut active_peers = Box::pin(handle.peer_addresses());
+            assert!(
+                crate::rt::time::timeout(Duration::from_millis(200), &mut active_peers)
+                    .await
+                    .is_err(),
+                "held by A's Identify"
+            );
+
+            let (_key_b, _identify_b) = dial_and_hold_identify(host_id, host_addr).await;
+
+            let listen: Multiaddr = LISTEN.parse().unwrap();
+            identify_a
+                .write_all(&identify_reply(&key_a, &listen))
+                .await
+                .unwrap();
+            identify_a.close().await.unwrap();
+
+            let answered =
+                crate::rt::time::timeout(Duration::from_secs(5), &mut active_peers).await;
+            assert!(
+                answered.is_ok(),
+                "every peer connected at the call has identified, yet ActivePeers is still \
+                 held 5s later by B, which dialed in after the call"
+            );
+
+            handle.shutdown().await.unwrap();
+        }),
+    )
+    .await
+    .expect("the test finished within its deadline");
+}
