@@ -45,6 +45,8 @@ pub(crate) fn same_schema_except_indexes(
         is_embedded_only: left_is_embedded_only,
         is_placeholder: left_is_placeholder,
         vector_embeddings: left_vector_embeddings,
+        chunked_fields: left_chunked_fields,
+        chunk_of: left_chunk_of,
         root_id: left_root_id,
     } = left;
     let CollectionVersion {
@@ -71,6 +73,8 @@ pub(crate) fn same_schema_except_indexes(
         is_embedded_only: right_is_embedded_only,
         is_placeholder: right_is_placeholder,
         vector_embeddings: right_vector_embeddings,
+        chunked_fields: right_chunked_fields,
+        chunk_of: right_chunk_of,
         root_id: right_root_id,
     } = right;
 
@@ -96,6 +100,8 @@ pub(crate) fn same_schema_except_indexes(
         && left_is_embedded_only == right_is_embedded_only
         && left_is_placeholder == right_is_placeholder
         && left_vector_embeddings == right_vector_embeddings
+        && left_chunked_fields == right_chunked_fields
+        && left_chunk_of == right_chunk_of
         && left_root_id == right_root_id
 }
 

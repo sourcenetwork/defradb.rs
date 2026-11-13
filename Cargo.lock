@@ -2323,6 +2323,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "chunk-split"
+version = "0.5.0"
+dependencies = [
+ "hex",
+ "proptest",
+ "rapidhash",
+ "sha2 0.10.9",
+ "thiserror 2.0.21",
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "ciborium"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3795,6 +3807,7 @@ dependencies = [
  "blst",
  "bytes",
  "chrono",
+ "chunk-split",
  "ciborium",
  "cid",
  "crdt",
@@ -10115,6 +10128,7 @@ dependencies = [
  "bm25",
  "bytes",
  "chrono",
+ "chunk-split",
  "ciborium",
  "cid",
  "crdt",

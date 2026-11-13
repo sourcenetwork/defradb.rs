@@ -180,6 +180,11 @@ impl TestNode {
         }
     }
 
+    /// The node runs Go's defradb in another process.
+    pub fn is_go(&self) -> bool {
+        self.embedded.is_none()
+    }
+
     /// The Rust node behind any client; `None` for a Go node.
     pub fn core(&self) -> Option<Arc<Node>> {
         self.embedded.clone()

@@ -66,6 +66,18 @@ impl AddCollection {
             .map_err(|e| Failure::operation(format!("collection add output: {e}")))?;
         Ok(json!({ "collections": collections }))
     }
+
+    /// Fails on the Rust-only directives a Go node does not know.
+    fn check_go(&self, state: &State) -> Result<(), Failure> {
+        let go = state.node(self.common.node())?.is_go();
+        match go && self.sdl.as_str().contains("@chunk") {
+            true => Err(Failure::unsupported(format!(
+                "{} directive @chunk on a Go node",
+                Self::name()
+            ))),
+            false => Ok(()),
+        }
+    }
 }
 
 impl Action for AddCollection {
@@ -80,6 +92,7 @@ impl HttpRun for AddCollection {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             let identity = action.common.client_identity(Self::name())?;
+            action.check_go(state)?;
             let sdl = action.sdl.as_str().to_owned();
             let txn = state.txn_id(action.txn);
             state

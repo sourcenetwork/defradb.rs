@@ -56,6 +56,8 @@ pub(super) struct ParsedTypeDirectives {
     /// The governance root from `@governed(root:)`, a self-addressing
     /// identifier rather than a bare public key, so it survives key rotation.
     pub(super) governance_root: Option<String>,
+    pub(super) chunked_fields: Vec<schema::ChunkedField>,
+    pub(super) chunk_of: Option<schema::ChunkSource>,
 }
 
 impl Default for ParsedTypeDirectives {
@@ -70,6 +72,8 @@ impl Default for ParsedTypeDirectives {
             is_branchable: false,
             policy: None,
             governance_root: None,
+            chunked_fields: Vec::new(),
+            chunk_of: None,
         }
     }
 }
@@ -164,6 +168,10 @@ impl<'a> SdlParser<'a> {
         if !self.errors.is_empty() {
             return Err(QueryError::parse(self.errors.join("\n")));
         }
+
+        // Add `@chunk` collections and list fields now, so the passes below build
+        // them like any other type.
+        self.synthesize_chunk_types()?;
 
         // Second pass: validate parsed types before building
         self.validate_types()?;

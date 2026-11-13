@@ -17,9 +17,27 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // The version_id is the CID of this collection definition block
         let version_id = cid.to_string();
 
-        // For patched versions, payload.name is None (name didn't change).
-        // Resolve name and collection_id from the previous version via block.heads.
+        // A patch names its collection only when it renames it. Either way the
+        // collection_id comes from the previous version via block.heads.
+        let has_heads = block.heads.as_ref().is_some_and(|heads| !heads.is_empty());
         let (collection_name, collection_id, prev_fields, previous) = match &payload.name {
+            // A named patch renames its collection. It stays a patch, so the
+            // rename meets the rules a patch follows.
+            Some(name) if has_heads => {
+                match self.resolve_previous_collection_version(block).await? {
+                    Some(prev) => (
+                        name.clone(),
+                        prev.collection_id.clone(),
+                        prev.fields.clone(),
+                        Some(prev),
+                    ),
+                    None => {
+                        return Ok(MergeOutcome::retryable_skip(
+                            "collection predecessor definition is not yet available",
+                        ))
+                    }
+                }
+            }
             Some(name) => {
                 // Initial version: the name is explicit and the collection ID
                 // is this block's own CID, except that a policy reaches the
@@ -44,7 +62,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         (name, col_id, fields, Some(prev))
                     }
                     None => {
-                        if block.heads.as_ref().is_some_and(|heads| !heads.is_empty()) {
+                        if has_heads {
                             return Ok(MergeOutcome::retryable_skip(
                                 "collection predecessor definition is not yet available",
                             ));
@@ -151,6 +169,15 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             schema.is_branchable = payload.is_branchable;
             schema.governance_root.clone_from(&payload.governance_root);
         }
+        // Every version's block carries the `@chunk` settings, so this peer
+        // cuts text the same way the author does. A patch must restate the
+        // settings it supersedes, which is checked below.
+        schema.chunked_fields = payload
+            .chunked_fields
+            .iter()
+            .map(schema::ChunkedField::from)
+            .collect();
+        schema.chunk_of = payload.chunk_of.as_deref().map(schema::ChunkSource::from);
         // The version ID binds the policy by a CID over its reference. The
         // record keeps the binding, and the policy itself only when a version
         // this node holds of the same collection supplies the reference the
@@ -192,6 +219,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             schema.is_materialized = true;
         }
 
+        if let Some(error) = definition_chunks::chunk_settings_error(previous.as_ref(), &schema) {
+            return Ok(definition_chunks::reject_chunk_settings(&schema, &error));
+        }
+
         // A version this node already holds is not rebuilt. The local record
         // commits to at least what the block carries, and holds what the
         // block cannot: whether it is active, its indexes, its policy. The
@@ -216,6 +247,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let txn = self.db.new_txn(false).await.map_err(MergeError::Database)?;
         {
             let systemstore = txn.systemstore().map_err(MergeError::Database)?;
+            if let Some(error) = self.chunk_parent_error(&systemstore, &schema).await? {
+                return Ok(definition_chunks::reject_chunk_settings(&schema, &error));
+            }
             schema.root_id = crate::collection::ensure_persisted_collection_short_id(
                 &systemstore,
                 &collection_id,

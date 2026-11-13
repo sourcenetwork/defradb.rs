@@ -2885,9 +2885,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Collection truncate",
-        name: "INV_NoRemovalWithoutPermission / INV_FilteredNeverOnBranchable / INV_FilteredRemovesOnlyCommittedMatches / INV_BadFilterRemovesNothing / INV_UnfilteredRemovesAll / INV_UnfilteredEmptiesView",
+        name: "INV_NoRemovalWithoutPermission / INV_NoRemovalFromChunks / INV_FilteredNeverOnBranchable / INV_FilteredRemovesOnlyCommittedMatches / INV_BadFilterRemovesNothing / INV_UnfilteredRemovesAll / INV_UnfilteredEmptiesView",
         axis: Tla,
-        anchor: "crates/db/src/collection/ops/truncate/mod.rs DB::truncate_collection_as, DB::truncate_parsed_as, DB::truncate_target, conditions, DB::truncate; crates/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::truncate_metadata_in; crates/db/src/collection/ops/truncate/filtered.rs DB::truncate_matching",
+        anchor: "crates/db/src/collection/ops/truncate/mod.rs DB::truncate_collection_as, DB::truncate_parsed_as, DB::truncate_target, conditions, DB::truncate; crates/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::truncate_metadata_in; crates/db/src/collection/ops/truncate/filtered.rs DB::truncate_matching; crates/db/src/chunk/user_writes.rs ensure_admin_changeable",
         model_ref: "MC_Truncate_{Green,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -3010,6 +3010,37 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "ServiceRecord (lake build)",
         tiers: &[Boundary],
         bound_by: "",
+    },
+    Property {
+        family: "Text chunking",
+        name: "covers / bounded / pickPre_capped / deterministic / units_edit / local_edit / heading_keeps_text / unit_break_reads_only_headings / long_unit_fences",
+        axis: Lean,
+        anchor: "crates/chunk-split/src/split/mod.rs split, split_v1; version.rs SplitterVersion; segments.rs units, fence_before, segments; atoms.rs atoms, sentence_ends; pack.rs pack; overlap.rs with_overlap, borrow, REPEAT_SHARE",
+        model_ref: "ChunkSplit (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Text chunking",
+        name: "no_chunks_keeps_its_identity / different_settings_different_identity / field_order_does_not_change_identity / peer_holds_the_same_settings_as_the_author / buggy_identity_ignores_settings / decode_encode / default_splitter_keeps_the_old_bytes / old_bytes_read_as_the_default / encode_injective / splitter_reaches_the_identity",
+        axis: Lean,
+        anchor: "crates/schema/src/cid.rs build_collection_delta; crates/query/src/sdl_parse/chunk.rs synthesize_chunk_types; crates/db/src/merge/merge_handler/definition.rs process_collection_definition_delta; crates/defra-core/src/block_delta.rs ChunkedFieldDelta, DEFAULT_SPLITTER_VERSION, is_default_splitter_version; crates/defra-core/src/ipld/to_ipld.rs; crates/defra-core/src/ipld/from_ipld.rs",
+        model_ref: "ChunkSplit (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A peer's definition blocks arrive in any order and may be forged.
+        // A first version follows the SDL's rules, a patch keeps its previous
+        // version's settings, and activation refuses settings other than the
+        // first version's, even for a record stored before the merge checked.
+        family: "Text chunking",
+        name: "FirstValid / MergedMatchFirst / ActiveMatchesFirst / MergedKeepName / ActiveKeepsName: a synced version's @chunk settings are ones a schema could declare, and every merged or active version keeps its collection's first version's settings and name",
+        axis: Tla,
+        anchor: "crates/db/src/merge/merge_handler/definition.rs process_collection_definition_delta; crates/db/src/merge/merge_handler/definition_chunks.rs chunk_settings_error, chunk_parent_error; crates/schema/src/chunk_rules.rs chunk_settings_errors, chunk_settings_change, ensure_chunk_settings_kept; crates/db/src/chunk/user_writes.rs ensure_keeps_first_chunk_settings; crates/db/src/collection/ops/version.rs set_active_collection_version_as; crates/db/src/txn/registry/collections.rs set_collection_active_in_txn_as",
+        model_ref: "MC_ChunkSettingsSync_{Green,Green_Legacy}.cfg (GREEN) / MC_ChunkSettingsSync_{Red_NoFirstCheck,Red_NoMergeGuard,Red_NoActivateGuard,Red_NoNameCheck}.cfg (RED)",
+        tiers: &[Contract],
+        bound_by: "crates/db/tests/merge/chunk_definition_guard.rs a_patch_that_changes_max_chars_is_rejected, a_first_version_with_max_chars_below_the_minimum_is_rejected, an_honest_patch_that_keeps_the_chunk_settings_is_accepted, activating_a_version_with_other_chunk_settings_is_refused, a_patch_that_changes_the_splitter_version_is_rejected, activating_a_version_with_another_splitter_version_is_refused, a_patch_that_renames_the_parent_is_rejected, activating_a_renamed_version_is_refused; crates/schema/tests/chunk_validation_tests.rs renaming_the_parent_is_refused, renaming_the_chunk_collection_is_refused",
     },
     Property {
         // One task serves a pg-compat connection: one deadline read at the

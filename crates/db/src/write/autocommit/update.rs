@@ -126,6 +126,11 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
 
         let (_collection_guard, collection) =
             self.guarded_collection(context, collection_name).await?;
+        crate::chunk::user_writes::refuse_list_writes(
+            collection.schema(),
+            &doc,
+            Some(&modified_fields),
+        )?;
         let input_doc_id = doc
             .id()
             .cloned()

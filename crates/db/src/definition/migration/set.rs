@@ -99,6 +99,7 @@ impl<S: Store> DB<S> {
                 }
             };
 
+            crate::chunk::ensure_admin_changeable(&source_col)?;
             let dst_key = CollectionKey::new(&dest_version_id);
             let dst_data = systemstore
                 .get(&dst_key.bytes())
@@ -141,6 +142,7 @@ impl<S: Store> DB<S> {
                     placeholder
                 }
             };
+            crate::chunk::ensure_admin_changeable(&dst_col)?;
 
             if !source_col.collection_id.is_empty() {
                 source_col.root_id = crate::collection::ensure_persisted_collection_short_id(
@@ -356,6 +358,7 @@ impl<S: Store> DB<S> {
                 }
             };
 
+            crate::chunk::ensure_admin_changeable(&source_col)?;
             let dst_key = CollectionKey::new(&dest_version_id);
             let dst_data = systemstore
                 .get(&dst_key.bytes())
@@ -398,6 +401,7 @@ impl<S: Store> DB<S> {
                     placeholder
                 }
             };
+            crate::chunk::ensure_admin_changeable(&dst_col)?;
 
             if !source_col.collection_id.is_empty() {
                 source_col.root_id = crate::collection::ensure_persisted_collection_short_id(

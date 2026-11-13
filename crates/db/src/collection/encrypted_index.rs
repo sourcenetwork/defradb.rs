@@ -163,6 +163,7 @@ where
         F: FnOnce(&mut CollectionVersion) -> Result<()>,
     {
         let found = definition_in(txn, collection).await?;
+        crate::chunk::ensure_admin_changeable(found.schema())?;
         let mut updated = found.schema().clone();
         change(&mut updated)?;
         let data = serde_json::to_vec(&updated).map_err(|error| {

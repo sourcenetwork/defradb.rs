@@ -311,6 +311,12 @@ RUNS=(
   "MC_PeerDisconnect_Red_EarlyAck.cfg PeerDisconnect.tla RED" # answering before the closes (INV_AnsweredMeansClosed)
   "MC_SchemaPublication_Green.cfg SchemaPublication.tla GREEN"
   "MC_SchemaPublication_Red_EarlyReply.cfg SchemaPublication.tla RED"
+  "MC_ChunkSettingsSync_Green.cfg ChunkSettingsSync.tla GREEN"
+  "MC_ChunkSettingsSync_Green_Legacy.cfg ChunkSettingsSync.tla GREEN"
+  "MC_ChunkSettingsSync_Red_NoFirstCheck.cfg ChunkSettingsSync.tla RED"
+  "MC_ChunkSettingsSync_Red_NoMergeGuard.cfg ChunkSettingsSync.tla RED"
+  "MC_ChunkSettingsSync_Red_NoActivateGuard.cfg ChunkSettingsSync.tla RED"
+  "MC_ChunkSettingsSync_Red_NoNameCheck.cfg ChunkSettingsSync.tla RED"
   "MC_RetryPreparedInputs_Green.cfg RetryPreparedInputs.tla GREEN" # exact-context external answer survives commit retry
   "MC_RetryPreparedInputs_Red_Recompute.cfg RetryPreparedInputs.tla RED" # clearing prepared memo repeats provider work
   "MC_RetryPreparedInputs_Red_InAttempt.cfg RetryPreparedInputs.tla RED" # provider work runs under active transaction
@@ -419,7 +425,8 @@ RUNS=(
   "MC_EncryptedIndexAutocommit_Green.cfg EncryptedIndexAutocommit.tla GREEN" # #2755: an encrypted index add or delete outside a txn reads the definition in its txn and re-runs on a conflict
   "MC_EncryptedIndexAutocommit_Red_CacheRead.cfg EncryptedIndexAutocommit.tla RED" # decides from the cache and blind-writes: a concurrent add is lost (INV_NoLostIndex)
   "MC_EncryptedIndexAutocommit_Red_SingleAttempt.cfg EncryptedIndexAutocommit.tla RED" # one attempt: a valid add is refused with the conflict (INV_NoValidRefused)
-  "MC_Truncate_Green.cfg Truncate.tla GREEN" # #2321: truncate checks nac, then for a filter branchable, txn and shape, before a delete that is durable at once
+  "MC_Truncate_Green.cfg Truncate.tla GREEN" # #2321: truncate checks nac and chunk, then for a filter branchable, txn and shape, before a delete that is durable at once and empties a view's cache
+  "MC_Truncate_Red_Chunk.cfg Truncate.tla RED" # chunk check left out: a truncate empties a chunk collection its parents still list (INV_NoRemovalFromChunks)
   "MC_Truncate_Red_Nac.cfg Truncate.tla RED" # permission check left out: a caller without CollectionTruncate removes documents (INV_NoRemovalWithoutPermission)
   "MC_Truncate_Red_Branchable.cfg Truncate.tla RED" # branchable check left out: a filtered truncate splits shared history (INV_FilteredNeverOnBranchable)
   "MC_Truncate_Red_Txn.cfg Truncate.tla RED" # transaction check left out, as before: a filter on the txn view removes an uncommitted match (INV_FilteredRemovesOnlyCommittedMatches)

@@ -1,0 +1,114 @@
+//! The `@chunk` splitter.
+//!
+//! It splits the text into paragraphs, groups them into units (a heading and
+//! the paragraph under it), and groups units into segments of about
+//! `SEGMENT_CHUNKS` times `max_chars` on average. Each segment is packed into
+//! chunks of at most `max_chars` characters, and a heading starts a new chunk
+//! once the current one is half full. A chunk can repeat the last whole
+//! sentences of the chunk before it. Lengths count characters, not bytes, and
+//! every cut falls between graphemes unless one grapheme is longer than a chunk.
+//! Any change to where a text is cut is a new [`SplitterVersion`], so peers on
+//! different builds never cut one text two ways.
+//!
+//! The Lean proof `proofs/lean/ChunkSplit` shows that the chunks cover the text
+//! with no gaps, that no chunk is too long, and that an edit which keeps its
+//! paragraph's heading flag and the fence before its unit only changes the
+//! chunks of its segment.
+
+mod atoms;
+mod overlap;
+mod pack;
+mod paragraphs;
+mod segments;
+mod version;
+
+pub use atoms::{cut_sentences, cut_words};
+pub use overlap::REPEAT_SHARE;
+pub use paragraphs::{paragraphs, Para};
+pub use segments::{fence_before, segments, units, Unit, SEGMENT_CHUNKS};
+pub use version::{SplitterVersion, UnknownSplitterVersion};
+
+use crate::list::text_hash;
+
+/// Settings for one `@chunk` field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChunkConfig {
+    /// The rules the chunks are cut with, from the field's definition.
+    pub version: SplitterVersion,
+    /// The most characters a chunk may hold, overlap included.
+    pub max_chars: usize,
+    /// How many sentences a chunk repeats from the end of the chunk before it, up
+    /// to [`REPEAT_SHARE`] of `max_chars` and never more than its own text.
+    pub overlap: usize,
+}
+
+impl ChunkConfig {
+    /// The config a definition's `@chunk` settings name, if this build has their rules.
+    pub fn new(
+        version: u32,
+        max_chars: usize,
+        overlap: usize,
+    ) -> Result<Self, UnknownSplitterVersion> {
+        Ok(Self {
+            version: SplitterVersion::try_from(version)?,
+            max_chars,
+            overlap,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Chunk {
+    /// Start of the chunk's own text in the parent text, in characters.
+    pub start: usize,
+    /// End of the chunk's own text. These ranges cover the whole text with no gaps.
+    pub end: usize,
+    /// What the chunk stores, which is any repeated sentences and then its own text.
+    pub text: String,
+    /// Hex SHA-256 of `text`, the chunk's identity.
+    pub hash: String,
+}
+
+pub fn split(text: &str, config: &ChunkConfig) -> Vec<Chunk> {
+    match config.version {
+        SplitterVersion::V1 => split_v1(text, config),
+    }
+}
+
+fn split_v1(text: &str, config: &ChunkConfig) -> Vec<Chunk> {
+    let max = config.max_chars.max(1);
+    let paras = paragraphs(text);
+    let mut chunks = Vec::new();
+    for segment in segments::segments(&paras, max) {
+        let start = segment[0].start;
+        let atoms: Vec<pack::Atom<'_>> = segment
+            .iter()
+            .flat_map(|para| {
+                atoms::atoms(para.text, max)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, text)| pack::Atom {
+                        text,
+                        heading: para.heading && i == 0,
+                    })
+            })
+            .collect();
+        let cores = pack::pack(&atoms, max);
+        let mut offset = start;
+        let prefixes = overlap::with_overlap(&cores, max, config.overlap);
+        for (pre, core) in prefixes.into_iter().zip(&cores) {
+            let len = core.chars().count();
+            let mut stored = String::with_capacity(pre.len() + core.len());
+            stored.push_str(pre);
+            stored.push_str(core);
+            chunks.push(Chunk {
+                start: offset,
+                end: offset + len,
+                hash: text_hash(&stored),
+                text: stored,
+            });
+            offset += len;
+        }
+    }
+    chunks
+}

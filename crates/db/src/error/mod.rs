@@ -138,6 +138,27 @@ pub enum Error {
     #[error("{0}")]
     Other(String),
 
+    /// An admin change to a chunk collection, which follows its parent.
+    #[error(
+        "{collection} holds the chunks of {parent}.{field} and is changed only through {parent}"
+    )]
+    ChunkCollection {
+        collection: String,
+        parent: String,
+        field: String,
+    },
+
+    /// A version whose `@chunk` settings no schema could declare or keep.
+    #[error(transparent)]
+    ChunkSettings(#[from] schema::ChunkSettingsError),
+
+    /// A `@chunk` field's definition names splitting rules this node lacks.
+    #[error("cannot cut or check the chunks of {field}: {source}")]
+    UnknownSplitterVersion {
+        field: String,
+        source: chunk_split::split::UnknownSplitterVersion,
+    },
+
     /// A view names a lens transform CID with no committed lens config.
     #[error("lens CID not found: {0}")]
     ViewTransformMissing(String),
