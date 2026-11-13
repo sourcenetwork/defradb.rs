@@ -1645,6 +1645,44 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         self.runtime.shutdown.pending_dag_fetch_count()
     }
 
+    /// Waits until no pending-DAG work holds a slot. A fetch task sends its
+    /// `DagReady` before it records its attempt and drops its owner, so the
+    /// merge of that event can finish while the task still holds the slot.
+    /// Every owner's release signals `pending_dag_capacity_released`, which
+    /// keeps a permit for a release that lands before the wait.
+    ///
+    /// Panics if a slot is still held after `PENDING_DAG_RELEASE_LIMIT`: a
+    /// leaked owner, or a wake-up another waiter on the notifier took. The
+    /// wait and its deadline run on the edge's real clock. The caller only
+    /// awaits a oneshot: a timer on a paused test runtime would let that
+    /// clock auto-advance to it and move the test's own deadlines.
+    #[cfg(test)]
+    pub(crate) async fn pending_dag_work_released(&self) {
+        const PENDING_DAG_RELEASE_LIMIT: Duration = Duration::from_secs(5);
+        let shutdown = self.runtime.shutdown.clone();
+        let edge = self.network().edge().clone();
+        let (done, outcome) = futures::channel::oneshot::channel();
+        self.network().spawn(async move {
+            let wait = async {
+                while shutdown.pending_dag_fetch_count() != 0 {
+                    shutdown
+                        .inner
+                        .pending_dag_capacity_released
+                        .notified()
+                        .await;
+                }
+            };
+            let released = edge.timeout(PENDING_DAG_RELEASE_LIMIT, wait).await.is_ok();
+            let _ = done.send(released);
+        });
+        let released = outcome.await.expect("the edge runs the release wait");
+        assert!(
+            released,
+            "pending-DAG slot not released: {} held",
+            self.pending_dag_work_count()
+        );
+    }
+
     #[cfg(test)]
     pub(crate) fn pending_dag_count(&self) -> usize {
         self.manager.pending_dag_count()
