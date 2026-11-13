@@ -3030,6 +3030,24 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "Text chunking",
+        name: "INV_ReadsMatchText / INV_SettledPeersAgree",
+        axis: Tla,
+        anchor: "crates/query/src/plan/chunk_parent.rs parent_hashes; crates/chunk-split/src/list.rs describes",
+        model_ref: "MC_ChunkMerge_Green.cfg / MC_ChunkMerge_Red_TrustList.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Text chunking",
+        name: "INV_ShownIsLiveAndReadable / INV_ShownIsTheText / INV_ServedIsReadable",
+        axis: Tla,
+        anchor: "crates/query/src/plan/chunk_parent.rs parent_hashes, verified_hash; crates/query/src/plan/chunk_gate.rs ChunkGate::allows, ChunkGate::decide; crates/db/src/chunk/access.rs history_parents, read_owners; crates/p2p-adapter/src/read_gate.rs DbBlockReadGate::may_read, DbBlockClassifier::classify; crates/db/src/block/verify.rs load_authorized_block_signature",
+        model_ref: "MC_ChunkRead_Green.cfg / MC_ChunkRead_Red_NoDeletedCheck.cfg / MC_ChunkRead_Red_NoHashCheck.cfg / MC_ChunkRead_Red_SharedMemo.cfg / MC_ChunkRead_Red_NoMergedCheck.cfg / MC_ChunkRead_Red_NoGrantCheck.cfg / MC_ChunkRead_Red_NoListCheck.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // A peer's definition blocks arrive in any order and may be forged.
         // A first version follows the SDL's rules, a patch keeps its previous
         // version's settings, and activation refuses settings other than the
@@ -3354,7 +3372,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Verify block signature",
         name: "INV_VerifiedAtOnePoint / INV_NoValidRejected",
         axis: Tla,
-        anchor: "crates/defra-node/src/ops/block.rs NodeOps::verify_block_signature; crates/db/src/txn/registry/blocks.rs DbTransactionRegistry::verify_block_signature_in_txn_as; crates/db/src/block/verify.rs verify_block_signature_as, verify_block_signature_in_txn_as, verify_block_signature_with_blockstore, load_authorized_block_signature; crates/db/src/access/nac.rs DB::check_node_access_in_txn",
+        anchor: "crates/defra-node/src/ops/block.rs NodeOps::verify_block_signature; crates/db/src/txn/registry/blocks.rs DbTransactionRegistry::verify_block_signature_in_txn_as; crates/db/src/block/verify.rs verify_block_signature_as, verify_block_signature_in_txn_as, verify_block_signature_with_txn, load_authorized_block_signature; crates/db/src/access/nac.rs DB::check_node_access_in_txn",
         model_ref: "MC_VerifySignature_{Green_*,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",

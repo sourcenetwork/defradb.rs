@@ -105,7 +105,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | JSON CRDT per-path merge | TLA+ & Lean | crdt, db-merge (specified before the code, #2129) |
 | Custom CRDT types | TLA+ & Lean | crdt, schema, db-merge, p2p (#2183) |
 | Document write pipeline | TLA+ | db, db-block-builder |
-| Text chunking | TLA+ / Lean | chunk-split, schema, db |
+| Text chunking | TLA+ / Lean | chunk-split, schema, db, query |
 | Postgres wire connection loop | TLA+ | pg-compat |
 | HTTP client redirects and body deadline | Lean | net |
 | Connect fallback race | TLA+ | net |

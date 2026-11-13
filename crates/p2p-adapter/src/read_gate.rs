@@ -21,21 +21,24 @@ impl<S: Store + 'static> DbBlockClassifier<S> {
         Arc::new(Self::new(db))
     }
 
-    async fn doc_ids_for_block(&self, cid: &Cid, block: &DefraBlock) -> Option<Vec<String>> {
+    async fn attributed_meta(
+        &self,
+        collection: &schema::CollectionVersion,
+        cid: &Cid,
+        block: &DefraBlock,
+    ) -> Option<BlockAcpMeta> {
         let txn = self.db.new_txn(true).await.ok()?;
-        let systemstore = match txn.systemstore() {
-            Ok(systemstore) => systemstore,
-            Err(_) => {
-                let _ = txn.discard();
-                return None;
-            }
-        };
-        let doc_ids = db::docid::map::resolve_block_doc_ids(&systemstore, cid, block)
-            .await
-            .ok()
-            .flatten();
+        let meta = async {
+            let systemstore = txn.systemstore().ok()?;
+            let doc_ids = db::docid::map::resolve_block_doc_ids(&systemstore, cid, block)
+                .await
+                .ok()
+                .flatten()?;
+            self.attribute(&txn, collection, doc_ids).await
+        }
+        .await;
         let _ = txn.discard();
-        doc_ids
+        meta
     }
 
     /// Resolve the block's metadata from the durable doc index alone: the
@@ -47,11 +50,16 @@ impl<S: Store + 'static> DbBlockClassifier<S> {
     /// unattributable case, which callers fail closed on.
     async fn indexed_meta(&self, cid: &Cid) -> Option<BlockAcpMeta> {
         let txn = self.db.new_txn(true).await.ok()?;
+        let meta = self.indexed_meta_in(&txn, cid).await;
+        let _ = txn.discard();
+        meta
+    }
+
+    async fn indexed_meta_in(&self, txn: &db::DbTxn<S>, cid: &Cid) -> Option<BlockAcpMeta> {
         let attribution = match txn.systemstore() {
             Ok(systemstore) => self.indexed_attribution(&systemstore, cid).await,
             Err(_) => None,
         };
-        let _ = txn.discard();
         let (doc_ids, collection_short_id) = attribution?;
         for name in self.db.list_collections().ok()? {
             let Ok(Some(collection)) = self.db.get_collection(&name) else {
@@ -60,19 +68,57 @@ impl<S: Store + 'static> DbBlockClassifier<S> {
             if collection.resolved_root_id() != collection_short_id {
                 continue;
             }
-            let collection = collection.schema();
-            let policy = collection
-                .policy
-                .as_ref()
-                .map(|p| (p.id.clone(), p.resource_name.clone()));
-            return Some(BlockAcpMeta {
-                collection_id: collection.collection_id.clone(),
-                is_branchable: collection.is_branchable,
-                policy,
-                doc_ids,
-            });
+            return self.attribute(txn, collection.schema(), doc_ids).await;
         }
         None
+    }
+
+    /// The metadata a block's read is checked against.
+    ///
+    /// A `@chunk` chunk's blocks are part of its parent's history, so they are
+    /// checked as the parent's. A chunk this node doesn't have is denied.
+    async fn attribute(
+        &self,
+        txn: &db::DbTxn<S>,
+        collection: &schema::CollectionVersion,
+        doc_ids: Vec<String>,
+    ) -> Option<BlockAcpMeta> {
+        let meta = |collection: &schema::CollectionVersion, doc_ids| BlockAcpMeta {
+            collection_id: collection.collection_id.clone(),
+            is_branchable: collection.is_branchable,
+            policy: collection
+                .policy
+                .as_ref()
+                .map(|p| (p.id.clone(), p.resource_name.clone())),
+            doc_ids,
+        };
+        let Some(source) = &collection.chunk_of else {
+            return Some(meta(collection, doc_ids));
+        };
+        let parents =
+            match db::chunk::access::history_parents(&self.db, txn, collection, &doc_ids).await {
+                Ok(parents) if !parents.is_empty() => parents,
+                Ok(_) => {
+                    tracing::debug!(chunks = %collection.name, "chunk block has no parent here");
+                    return None;
+                }
+                Err(error) => {
+                    tracing::warn!(chunks = %collection.name, %error, "chunk parent lookup failed");
+                    return None;
+                }
+            };
+        let parent = match self.db.get_collection(&source.collection) {
+            Ok(Some(parent)) => parent,
+            Ok(None) => {
+                tracing::debug!(parent = %source.collection, "chunk parent collection not found");
+                return None;
+            }
+            Err(error) => {
+                tracing::warn!(parent = %source.collection, %error, "parent collection lookup failed");
+                return None;
+            }
+        };
+        Some(meta(parent.schema(), parents))
     }
 
     /// The block's owning docs and their shared collection. Ownership is only
@@ -135,21 +181,10 @@ impl<S: Store + 'static> BlockClassifier for DbBlockClassifier<S> {
                     Ok(Some(collection)) => collection,
                     Ok(None) | Err(_) => return BlockClass::Deny,
                 };
-                let collection = collection.schema();
-                let policy = collection
-                    .policy
-                    .as_ref()
-                    .map(|p| (p.id.clone(), p.resource_name.clone()));
-                let Some(doc_ids) = self.doc_ids_for_block(cid, &block).await else {
-                    return BlockClass::Deny;
-                };
-
-                BlockClass::Data(BlockAcpMeta {
-                    collection_id: collection.collection_id.clone(),
-                    is_branchable: collection.is_branchable,
-                    policy,
-                    doc_ids,
-                })
+                match self.attributed_meta(collection.schema(), cid, &block).await {
+                    Some(meta) => BlockClass::Data(meta),
+                    None => BlockClass::Deny,
+                }
             }
             Err(_) if is_lens_block(data) => BlockClass::Allow,
             Err(_) => BlockClass::Deny,

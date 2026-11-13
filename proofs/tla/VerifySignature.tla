@@ -35,7 +35,7 @@
 (*     DbTransactionRegistry::verify_block_signature_in_txn_as             *)
 (*   crates/db/src/block/verify.rs verify_block_signature_as,              *)
 (*     verify_block_signature_in_txn_as,                                   *)
-(*     verify_block_signature_with_blockstore (NAC at the view),           *)
+(*     verify_block_signature_with_txn (NAC at the view),                  *)
 (*     load_authorized_block_signature (block read, bound document ACP)    *)
 (*   crates/db/src/access/nac.rs DB::check_node_access_in_txn              *)
 (* Go reference: internal/db/verify.go.                                    *)

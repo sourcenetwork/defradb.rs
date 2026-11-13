@@ -222,6 +222,13 @@ pub(crate) fn build_plan(
     app_read: Option<crate::access_hooks::AppReadCheck>,
     query_limits: QueryLimits,
 ) -> Result<Box<dyn PlanNode>> {
+    // This path has no chunk gate, so a chunk read here would skip its parent's checks.
+    if collection.chunk_of.is_some() {
+        return Err(QueryError::internal(format!(
+            "{} holds chunks and must be read through the planner",
+            collection.name
+        )));
+    }
     // Materialized ID lookups have already resolved aliases to canonical IDs.
     // Rechecking the input aliases would discard those documents.
     let scan_doc_ids = match &source {
@@ -550,3 +557,7 @@ pub(crate) fn doc_to_json(doc: &Doc, mapping: &DocumentMapping) -> Result<JsonVa
 
     Ok(JsonValue::Object(obj))
 }
+
+#[cfg(test)]
+#[path = "plan_tests.rs"]
+mod tests;
