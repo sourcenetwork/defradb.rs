@@ -120,6 +120,7 @@ mod nac {
     mod add_dac_policy;
     mod add_dac_relationship;
     mod add_document;
+    mod add_document_partial_grants;
     mod add_lens;
     mod add_nac_relationship;
     mod add_p2p_collection;

@@ -15,6 +15,16 @@ impl TransactionZanzibarStore {
     pub fn new(view: NamespaceView) -> Self {
         Self { view }
     }
+    /// A write to the node's access control policy: the transaction owes
+    /// what its [`datastore::NodeAccessWrites`] asks at commit.
+    fn written(&self, policy_id: &str) -> Result<()> {
+        if policy_id != crate::nac::NODE_POLICY_ID {
+            return Ok(());
+        }
+        self.view
+            .node_access_written()
+            .map_err(|error| Error::Serialization(error.to_string()))
+    }
     fn policy_key(policy_id: &str) -> String {
         format!("{}{}", POLICY_PREFIX, policy_id)
     }
@@ -66,7 +76,7 @@ impl ZanzibarStore for TransactionZanzibarStore {
             .await
             .map_err(|e| Error::Serialization(format!("store_policy: set key {}: {}", key, e)))?;
 
-        Ok(())
+        self.written(&policy.id)
     }
 
     async fn get_policy(&self, policy_id: &str) -> Result<Option<Policy>> {
@@ -166,6 +176,7 @@ impl ZanzibarStore for TransactionZanzibarStore {
                     .await
                     .map_err(|e| Error::Serialization(e.to_string()))?;
             }
+            self.written(policy_id)?;
         }
 
         Ok(exists)
@@ -181,7 +192,7 @@ impl ZanzibarStore for TransactionZanzibarStore {
             .await
             .map_err(|e| Error::Serialization(e.to_string()))?;
 
-        Ok(())
+        self.written(policy_id)
     }
 
     async fn delete_relationship(&self, policy_id: &str, rel: &Relationship) -> Result<bool> {
@@ -198,6 +209,7 @@ impl ZanzibarStore for TransactionZanzibarStore {
             txn.delete(key.as_bytes())
                 .await
                 .map_err(|e| Error::Serialization(e.to_string()))?;
+            self.written(policy_id)?;
         }
 
         Ok(exists)
@@ -365,10 +377,14 @@ impl ZanzibarStore for TransactionZanzibarStore {
             }
         }
 
+        let deleted = !keys_to_delete.is_empty();
         for key in keys_to_delete {
             txn.delete(&key)
                 .await
                 .map_err(|e| Error::Serialization(e.to_string()))?;
+        }
+        if deleted {
+            self.written(policy_id)?;
         }
 
         Ok(())

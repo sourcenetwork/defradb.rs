@@ -27,6 +27,21 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
     async fn check_permission(&self, identity: &Did, permission: NodePermission) -> Result<bool> {
         NacManager::check_permission(self, identity, permission).await
     }
+    async fn check_permissions(
+        &self,
+        identity: &Did,
+        permissions: &[NodePermission],
+    ) -> Vec<Result<bool>> {
+        NacManager::check_permissions(self, identity, permissions).await
+    }
+    async fn check_permissions_in_memory(
+        &self,
+        identity: &Did,
+        permissions: &[NodePermission],
+    ) -> Option<Vec<Result<bool>>> {
+        let grants = self.edge_snapshot()?;
+        Some(grants.check_all(identity, permissions).await)
+    }
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     async fn check_permission_in_txn(
         &self,
@@ -75,6 +90,9 @@ impl<S: ZanzibarStore + ?Sized + 'static> NacManagerApi for NacManager<S> {
             .await
             .map(Some)
             .map_err(|error| super::error::Error::Other(error.to_string()))
+    }
+    fn edge_refresh_owed(&self) -> storage::corekv::OnCommit {
+        self.refresh_edge_on_commit()
     }
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     async fn change_source_permission_in_txn(

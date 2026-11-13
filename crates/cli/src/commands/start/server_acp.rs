@@ -172,7 +172,7 @@ impl Node {
         user_did: Option<&Did>,
         store: Arc<S>,
         pool: Option<&workers::Pool>,
-    ) -> Result<Option<Arc<crate::nac_adapter::NacAdapter>>> {
+    ) -> Result<Option<Arc<defra_http::nac_adapter::NacAdapter>>> {
         if !config.acp.node_enable {
             return Ok(None);
         }
@@ -188,7 +188,7 @@ impl Node {
             .map_err(|e| Error::InvalidConfig(format!("failed to initialize NAC: {}", e)))?;
 
         Ok(Some(Arc::new(
-            crate::nac_adapter::NacAdapter::new(nac_manager).placed_on(pool),
+            defra_http::nac_adapter::NacAdapter::new(nac_manager).placed_on(pool),
         )))
     }
 }

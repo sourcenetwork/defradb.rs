@@ -35,8 +35,6 @@ pub async fn go_add_encrypted_index(
     Path(collection): Path<String>,
     body: Option<Json<GoAddEncryptedIndexRequest>>,
 ) -> Result<Json<EncryptedIndexInfo>, HttpError> {
-    require_permission(&state, &identity, NodePermission::EncryptedIndexAdd).await?;
-
     let ops = bound(
         state.require_encrypted_index()?,
         &call_context(&identity, &headers)?,
@@ -71,8 +69,6 @@ pub async fn go_list_encrypted_indexes(
     headers: HeaderMap,
     Path(collection): Path<String>,
 ) -> Result<Json<Vec<EncryptedIndexInfo>>, HttpError> {
-    require_permission(&state, &identity, NodePermission::EncryptedIndexList).await?;
-
     let ops = bound(
         state.require_encrypted_index()?,
         &call_context(&identity, &headers)?,
@@ -88,7 +84,7 @@ pub async fn go_list_encrypted_indexes(
     let indexes = ops
         .list_encrypted_indexes(Some(&collection))
         .await
-        .map_err(HttpError::Internal)?;
+        .map_err(http_error_from_backend_message)?;
 
     Ok(Json(indexes))
 }
@@ -134,8 +130,6 @@ pub async fn go_delete_encrypted_index(
     headers: HeaderMap,
     Path((collection, field)): Path<(String, String)>,
 ) -> Result<StatusCode, HttpError> {
-    require_permission(&state, &identity, NodePermission::EncryptedIndexDelete).await?;
-
     let ops = bound(
         state.require_encrypted_index()?,
         &call_context(&identity, &headers)?,

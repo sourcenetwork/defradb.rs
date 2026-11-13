@@ -1,4 +1,4 @@
-use crate::actions::peer::support::failed;
+use crate::actions::peer::support::{addresses_of, failed};
 use crate::clients::{CliRun, HttpRun};
 use crate::scenario::{Common, Failure, Op};
 use crate::test_case::State;
@@ -54,6 +54,17 @@ impl PeerInfo {
         }
     }
 
+    /// A step that only names the addresses for later actions, as Go's
+    /// `{{.Peer0_Address0}}` template does: Go reads them from the test's own
+    /// view of the node, never through the client, so node access control
+    /// does not apply.
+    fn captures_only(&self) -> bool {
+        !self.common.capture.is_empty()
+            && self.expected_data.is_null()
+            && self.expected_error.is_none()
+            && !self.id_only
+    }
+
     fn shape(&self, addresses: Vec<String>) -> Value {
         match self.id_only {
             true => json!({ "peerID": addresses.first().map(|a| crate::nodes::peer_id(a)) }),
@@ -74,6 +85,9 @@ impl HttpRun for PeerInfo {
     fn execute_http(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             action.check_arguments()?;
+            if action.captures_only() {
+                return Ok(action.shape(addresses_of(state, &[action.common.node()])?));
+            }
             let addresses = state
                 .http_as(
                     action.common.node(),
@@ -90,6 +104,9 @@ impl CliRun for PeerInfo {
     fn execute_cli(&self, state: &mut State) {
         crate::scenario::execute_with(self, state, |action, state| {
             action.check_arguments()?;
+            if action.captures_only() {
+                return Ok(action.shape(addresses_of(state, &[action.common.node()])?));
+            }
             let printed = state
                 .defra_client_as(
                     action.common.node(),

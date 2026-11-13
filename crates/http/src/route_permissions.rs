@@ -24,6 +24,25 @@ pub enum RoutePermission {
     IdentityOnly,
 }
 
+/// Whether the route reads its collection before it runs, as Go's
+/// `CollectionMiddleware` does for the collection handler's routes
+/// (`http/handler.go`): such a route checks `get-collection` before its own
+/// permission. `path` is the Axum `MatchedPath` template.
+pub fn reads_collection_first(path: &str, method: &Method) -> bool {
+    match normalize_api_version(path).as_ref() {
+        "/api/v0/collections/{name}" => {
+            matches!(*method, Method::POST | Method::PATCH | Method::DELETE)
+        }
+        "/api/v0/collections/{name}/indexes"
+        | "/api/v0/collections/{name}/indexes/{index}"
+        | "/api/v0/collections/{name}/encrypted-indexes"
+        | "/api/v0/collections/{name}/encrypted-indexes/{field}"
+        | "/api/v0/collections/{name}/truncate"
+        | "/api/v0/collections/{name}/document/{docID}" => true,
+        _ => false,
+    }
+}
+
 /// Look up the permission requirement for a route.
 ///
 /// The `path` parameter is the Axum `MatchedPath` template string
@@ -126,14 +145,11 @@ pub fn route_permission(path: &str, method: &Method) -> RoutePermission {
         "/api/v0/collections/{name}/indexes/{index}" => {
             RoutePermission::Required(NodePermission::IndexDelete)
         }
-        "/api/v0/collections/{name}/encrypted-indexes" => match *method {
-            Method::GET => RoutePermission::Required(NodePermission::EncryptedIndexList),
-            Method::POST => RoutePermission::Required(NodePermission::EncryptedIndexAdd),
-            _ => RoutePermission::Required(NodePermission::EncryptedIndexList),
-        },
-        "/api/v0/collections/{name}/encrypted-indexes/{field}" => {
-            RoutePermission::Required(NodePermission::EncryptedIndexDelete)
-        }
+        // The edge checks `get-collection` first (`reads_collection_first`)
+        // and leaves the encrypted index permission to the operation, so it
+        // comes after the collection on every server, as in Go.
+        "/api/v0/collections/{name}/encrypted-indexes"
+        | "/api/v0/collections/{name}/encrypted-indexes/{field}" => RoutePermission::IdentityOnly,
 
         // =====================================================================
         // P2P
@@ -183,6 +199,8 @@ pub fn route_permission(path: &str, method: &Method) -> RoutePermission {
         "/api/v0/acp/policy" => RoutePermission::Required(NodePermission::DacStatus),
         "/api/v0/acp/policy/{id}" => RoutePermission::Required(NodePermission::DacStatus),
         "/api/v0/acp/document/decide" => RoutePermission::Required(NodePermission::DacStatus),
+        // Reads the documents in the caller's transaction, as a query does.
+        "/api/v0/acp/document/is-owner" => RoutePermission::Required(NodePermission::DocumentRead),
         "/api/v0/acp/document/relationship" => match *method {
             Method::POST => RoutePermission::Required(NodePermission::DacRelationAdd),
             Method::DELETE => RoutePermission::Required(NodePermission::DacRelationDelete),
@@ -209,6 +227,8 @@ pub fn route_permission(path: &str, method: &Method) -> RoutePermission {
         "/api/v0/acp/node/relationships" => {
             RoutePermission::Required(NodePermission::NacRelationAdd)
         }
+        // The transaction's source-grant job checks the caller per edge.
+        "/api/v0/acp/node/source-permission" => RoutePermission::Dynamic,
         "/api/v0/acp/node/disable" => RoutePermission::Dynamic,
         "/api/v0/acp/node/re-enable" => RoutePermission::Dynamic,
 
