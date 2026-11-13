@@ -2,13 +2,14 @@
 
 use std::sync::Arc;
 
+use rapidhash::RapidHashSet;
 use storage::corekv::{IterOptions, RetryAttemptError, RetryAttemptValue, Store};
 use storage::keys::{index_pending_log, index_position_key};
 
 use crate::collection::loader::load_collection_from_systemstore;
 use crate::database::DB;
 use crate::index::error::{Error, Result};
-use crate::index::manager::LiveDocs;
+use crate::index::manager::{IndexType, LiveDocs};
 use crate::index::IndexManager;
 
 /// The most log entries one drain transaction takes, so a backlog commits in
@@ -22,9 +23,41 @@ struct Plan {
     docs: Vec<u64>,
 }
 
+impl Plan {
+    /// Positions are dense from the head, so this is how many entries it takes.
+    fn entries(&self) -> usize {
+        usize::try_from(self.through - self.first + 1).unwrap_or(usize::MAX)
+    }
+
+    /// Whether carrying all of `carried` would only renumber the plan's
+    /// entries. A full plan is still carried, so the entries behind it come forward.
+    fn only_renumbers(&self, carried: usize) -> bool {
+        carried == self.entries() && self.entries() < MAX_PLAN
+    }
+}
+
+/// What a drain did with its plan.
+#[derive(Default)]
+pub(crate) struct Drained {
+    /// Documents whose entries now match their live value.
+    pub(crate) moved: Vec<u64>,
+    /// Documents that failed, each with why. Each is owed again at the log's tail.
+    pub(crate) failed: Vec<(u64, Error)>,
+    /// Whether some document is owed again at the log's tail.
+    pub(crate) carried: bool,
+    /// Whether the log shrank, so another plan may find more to do.
+    pub(crate) progressed: bool,
+}
+
 /// Drains up to [`MAX_PLAN`] entries of the index `index_id` of the
-/// collection `name`. True when it took some, so the caller drains again.
-pub(crate) async fn drain_index<S>(db: &DB<S>, name: &str, index_id: u32) -> Result<bool>
+/// collection `name`, or `None` when nothing is owed. A document in `skip`,
+/// or one that fails, is owed again at the log's tail, so the rest still drain.
+pub(crate) async fn drain_index<S>(
+    db: &DB<S>,
+    name: &str,
+    index_id: u32,
+    skip: &RapidHashSet<u64>,
+) -> Result<Option<Drained>>
 where
     S: Store + 'static,
 {
@@ -32,25 +65,31 @@ where
         .get_collection(name)
         .map_err(|e| Error::Other(e.to_string()))?
     else {
-        return Ok(false);
+        return Ok(None);
     };
     let short_id = collection.resolved_root_id();
     let Some(plan) = plan(db, short_id, index_id).await? else {
-        return Ok(false);
+        return Ok(None);
     };
-    let (name, plan) = (name.to_string(), Arc::new(plan));
+    if plan.only_renumbers(plan.docs.len()) && plan.docs.iter().all(|doc| skip.contains(doc)) {
+        return Ok(Some(Drained {
+            carried: true,
+            ..Drained::default()
+        }));
+    }
+    let (name, plan, skip) = (name.to_string(), Arc::new(plan), Arc::new(skip.clone()));
     let lens_store = Arc::clone(db.lens_store());
-    datastore::transact(
+    let drained = datastore::transact(
         db.store().as_ref(),
         db.options().retry_options(),
         move |txn| {
-            let (name, plan) = (name.clone(), Arc::clone(&plan));
+            let (name, plan, skip) = (name.clone(), Arc::clone(&plan), Arc::clone(&skip));
             let lens_store = Arc::clone(&lens_store);
             Box::pin(async move {
-                apply(txn, &name, short_id, index_id, &plan, &lens_store)
+                let drained = apply(txn, &name, short_id, index_id, &plan, &skip, &lens_store)
                     .await
                     .map_err(|error| RetryAttemptError::Abort(Box::new(error)))?;
-                Ok(Box::new(()) as RetryAttemptValue)
+                Ok(Box::new(drained) as RetryAttemptValue)
             })
         },
     )
@@ -59,7 +98,7 @@ where
         Ok(error) => error,
         Err(error) => Error::Storage(error.into_storage()),
     })?;
-    Ok(true)
+    Ok(Some(drained))
 }
 
 /// The oldest entries of the log, read on a snapshot. Entries committed after
@@ -110,15 +149,18 @@ where
 
 /// Moves each planned document's entries to its live value and truncates the
 /// log through the plan. The position record is the one read that decides: a
-/// drain racing this one on a document makes one of them run again.
+/// drain racing this one on a document makes one of them run again. A
+/// document that cannot be read or decoded is appended again instead, so it
+/// stays owed without holding back the others.
 async fn apply(
     txn: &mut datastore::BasicTxn,
     name: &str,
     short_id: u32,
     index_id: u32,
     plan: &Plan,
+    skip: &RapidHashSet<u64>,
     lens_store: &Arc<dyn lens::TransformStore>,
-) -> Result<()> {
+) -> Result<Drained> {
     let datastore = txn.datastore();
     let systemstore = txn.systemstore();
     let log = index_pending_log(short_id, index_id);
@@ -135,10 +177,15 @@ async fn apply(
             .cloned()
     });
     let (Some(collection), Some(desc)) = (collection, desc) else {
-        return datastore
+        datastore
             .truncate_log(&log, plan.first..=plan.through)
             .await
-            .map_err(Error::Storage);
+            .map_err(Error::Storage)?;
+        return Ok(Drained {
+            moved: plan.docs.clone(),
+            progressed: true,
+            ..Drained::default()
+        });
     };
     let schema = collection.schema();
     let manager = IndexManager::from_indexes(
@@ -151,16 +198,14 @@ async fn apply(
         .get_index(&desc.name)
         .ok_or_else(|| Error::Other(format!("index '{}' not found", desc.name)))?;
     let mut live_docs = LiveDocs::new(&collection, &datastore, &systemstore, Some(lens_store));
+    let mut drained = Drained::default();
+    let mut carry = Vec::new();
     for &doc in &plan.docs {
-        let moved = async {
-            let record = index_position_key(short_id, index_id, doc);
-            let old = IndexManager::recorded(
-                datastore
-                    .get(&record)
-                    .await
-                    .map_err(Error::Storage)?
-                    .as_deref(),
-            )?;
+        if skip.contains(&doc) {
+            carry.push(doc);
+            continue;
+        }
+        let entries = async {
             let new = match live_docs.get(doc).await? {
                 Some(live) => IndexManager::entry_keys(
                     index,
@@ -169,35 +214,89 @@ async fn apply(
                 )?,
                 None => Vec::new(),
             };
-            if old == new {
-                return Ok(());
-            }
-            for key in old.iter().filter(|key| !new.contains(key)) {
-                datastore.delete(key).await.map_err(Error::Storage)?;
-            }
-            for key in new.iter().filter(|key| !old.contains(key)) {
-                datastore.set(key, &[]).await.map_err(Error::Storage)?;
-            }
-            if new.is_empty() {
-                datastore.delete(&record).await.map_err(Error::Storage)
-            } else {
-                datastore
-                    .set(&record, &super::encode_record(&new)?)
-                    .await
-                    .map_err(Error::Storage)
-            }
+            // Read only once the live value is known, so a document carried
+            // forward validates nothing.
+            let record = datastore
+                .get(&index_position_key(short_id, index_id, doc))
+                .await
+                .map_err(Error::Storage)?;
+            Ok::<_, Error>((IndexManager::recorded(record.as_deref())?, new))
         };
-        if let Err(source) = moved.await {
-            return Err(Error::DeferredDrainDocument {
-                doc: document_name(&systemstore, doc).await,
-                source: Box::new(source),
-            });
+        match entries.await {
+            Ok((old, new)) => {
+                if let Err(source) =
+                    move_entries(&datastore, index, short_id, doc, &old, &new).await
+                {
+                    return Err(named(&systemstore, doc, source).await);
+                }
+                drained.moved.push(doc);
+            }
+            // A store failure is no fault of the document's.
+            Err(Error::Storage(error)) => {
+                return Err(named(&systemstore, doc, Error::Storage(error)).await)
+            }
+            Err(source) => {
+                drained
+                    .failed
+                    .push((doc, named(&systemstore, doc, source).await));
+                carry.push(doc);
+            }
         }
+    }
+    drained.carried = !carry.is_empty();
+    if drained.moved.is_empty() && plan.only_renumbers(carry.len()) {
+        return Ok(drained);
+    }
+    let shrinks = !drained.moved.is_empty() || carry.len() < plan.entries();
+    for doc in carry {
+        datastore
+            .append(&log, &doc.to_be_bytes(), None)
+            .await
+            .map_err(Error::Storage)?;
     }
     datastore
         .truncate_log(&log, plan.first..=plan.through)
         .await
-        .map_err(Error::Storage)
+        .map_err(Error::Storage)?;
+    drained.progressed = shrinks;
+    Ok(drained)
+}
+
+/// Moves a document's entries from the keys its record names to `new`.
+async fn move_entries(
+    datastore: &datastore::NamespaceView,
+    index: &IndexType,
+    short_id: u32,
+    doc: u64,
+    old: &[Vec<u8>],
+    new: &[Vec<u8>],
+) -> Result<()> {
+    if old == new {
+        return Ok(());
+    }
+    for key in old.iter().filter(|key| !new.contains(key)) {
+        datastore.delete(key).await.map_err(Error::Storage)?;
+    }
+    for key in new.iter().filter(|key| !old.contains(key)) {
+        datastore.set(key, &[]).await.map_err(Error::Storage)?;
+    }
+    let record = index_position_key(short_id, index.description().id, doc);
+    if new.is_empty() {
+        datastore.delete(&record).await.map_err(Error::Storage)
+    } else {
+        datastore
+            .set(&record, &super::encode_record(new)?)
+            .await
+            .map_err(Error::Storage)
+    }
+}
+
+/// `source`, naming the document it failed on.
+async fn named(systemstore: &datastore::NamespaceView, doc: u64, source: Error) -> Error {
+    Error::DeferredDrainDocument {
+        doc: document_name(systemstore, doc).await,
+        source: Box::new(source),
+    }
 }
 
 /// The document's DocID for an error, or its short id when that is not to be had.
@@ -304,9 +403,17 @@ pub(super) mod tests {
                 let plan = Arc::clone(&plan);
                 let lens_store = Arc::clone(&lens_store);
                 Box::pin(async move {
-                    apply(txn, NAME, short_id, index_id, &plan, &lens_store)
-                        .await
-                        .map_err(|error| RetryAttemptError::Abort(Box::new(error)))?;
+                    apply(
+                        txn,
+                        NAME,
+                        short_id,
+                        index_id,
+                        &plan,
+                        &RapidHashSet::new(),
+                        &lens_store,
+                    )
+                    .await
+                    .map_err(|error| RetryAttemptError::Abort(Box::new(error)))?;
                     Ok(Box::new(()) as RetryAttemptValue)
                 })
             },
@@ -353,13 +460,18 @@ pub(super) mod tests {
                 short_id,
                 index_id,
                 &planned,
+                &RapidHashSet::new(),
                 db.lens_store(),
             )
             .await
             .unwrap();
             increment(&db, &id).await;
 
-            while drain_index(&db, NAME, index_id).await.unwrap() {}
+            while drain_index(&db, NAME, index_id, &RapidHashSet::new())
+                .await
+                .unwrap()
+                .is_some_and(|drained| drained.progressed)
+            {}
 
             assert!(first.commit().await.is_err());
         })
@@ -420,6 +532,7 @@ pub(super) mod tests {
                 short_id,
                 index_id,
                 &planned,
+                &RapidHashSet::new(),
                 db.lens_store(),
             )
             .await

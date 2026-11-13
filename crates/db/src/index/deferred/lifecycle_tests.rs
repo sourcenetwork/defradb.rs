@@ -2,7 +2,7 @@
 
 use datastore::BasicTxn;
 use document::{Document, NormalValue};
-use rapidhash::RapidHashMap;
+use rapidhash::{HashSetExt, RapidHashMap, RapidHashSet};
 use storage::corekv::IterOptions;
 use storage::keys::{index_pending_log, index_position_prefix, IndexDataStoreKey, IndexedField};
 use storage::RegolithStore;
@@ -42,7 +42,11 @@ fn at(short_id: u32, index_id: u32, value: i64) -> Vec<u8> {
 }
 
 async fn drain(db: &DB<RegolithStore>, index_id: u32) {
-    while drain_index(db, NAME, index_id).await.unwrap() {}
+    while drain_index(db, NAME, index_id, &RapidHashSet::new())
+        .await
+        .unwrap()
+        .is_some_and(|drained| drained.progressed)
+    {}
 }
 
 fn manager(db: &DB<RegolithStore>, short_id: u32) -> IndexManager {

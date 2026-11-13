@@ -8,7 +8,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use futures::future::{select, Either};
-use rapidhash::RapidHashMap;
+use rapidhash::{HashSetExt, RapidHashMap, RapidHashSet};
 use storage::corekv::Store;
 
 use super::drain::drain_index;
@@ -32,19 +32,31 @@ enum Wake {
     Request,
 }
 
-/// Failed drains in a row per index, kept by the drain task.
+/// What one turn of an index did with the documents it planned.
+struct TurnReport {
+    turn: Turn,
+    moved: Vec<u64>,
+    failed: Vec<(u64, Error)>,
+    carried: bool,
+}
+
+/// Failed drains in a row per index, and per document a drain carried
+/// forward, kept by the drain task.
 #[derive(Default)]
-struct Failures(RapidHashMap<IndexRef, u32>);
+struct Failures {
+    indexes: RapidHashMap<IndexRef, u32>,
+    docs: RapidHashMap<IndexRef, RapidHashMap<u64, u32>>,
+}
 
 impl Failures {
     fn has(&self, target: IndexRef) -> bool {
-        self.0.contains_key(&target)
+        self.indexes.contains_key(&target)
     }
 
     /// Warns on the first failure and then each time the count doubles, so
     /// a stuck index does not flood the log.
     fn failed(&mut self, name: &str, target: IndexRef, error: &Error) {
-        let count = self.0.entry(target).or_insert(0);
+        let count = self.indexes.entry(target).or_insert(0);
         *count += 1;
         if count.is_power_of_two() {
             tracing::warn!(
@@ -59,13 +71,54 @@ impl Failures {
     }
 
     fn drained(&mut self, name: &str, target: IndexRef) {
-        if let Some(count) = self.0.remove(&target) {
+        if let Some(count) = self.indexes.remove(&target) {
             tracing::info!(
                 collection = %name,
                 index_id = target.1,
                 failures = count,
                 "deferred index drains again"
             );
+        }
+    }
+
+    /// The documents a request pass leaves to the sweep. A sweep tries them all.
+    fn stuck(&self, target: IndexRef, sweep: bool) -> RapidHashSet<u64> {
+        match self.docs.get(&target) {
+            Some(docs) if !sweep => docs.keys().copied().collect(),
+            _ => RapidHashSet::new(),
+        }
+    }
+
+    /// Notes what a turn did with each document, warning as `failed` does.
+    fn turned(&mut self, name: &str, target: IndexRef, report: &TurnReport) {
+        let docs = self.docs.entry(target).or_default();
+        for doc in &report.moved {
+            if let Some(count) = docs.remove(doc) {
+                tracing::info!(
+                    collection = %name,
+                    index_id = target.1,
+                    doc_short_id = doc,
+                    failures = count,
+                    "deferred index drains the document again"
+                );
+            }
+        }
+        for (doc, error) in &report.failed {
+            let count = docs.entry(*doc).or_insert(0);
+            *count += 1;
+            if count.is_power_of_two() {
+                tracing::warn!(
+                    collection = %name,
+                    collection_short_id = target.0,
+                    index_id = target.1,
+                    failures = *count,
+                    %error,
+                    "deferred index drain left a document owed; the next sweep retries it"
+                );
+            }
+        }
+        if docs.is_empty() {
+            self.docs.remove(&target);
         }
     }
 }
@@ -86,14 +139,28 @@ impl<S> DB<S>
 where
     S: Store + 'static,
 {
-    /// Drains every deferred index until nothing is owed. Each index drains
-    /// on its own, so one that fails does not stop the others; the first
-    /// failure is returned.
+    /// Drains every deferred index until nothing is owed but the documents
+    /// that fail, which stay owed. Each index drains on its own, so one that
+    /// fails does not stop the others; the first failure is returned.
     pub async fn drain_deferred_indexes(&self) -> Result<()> {
         let mut failure = None;
         for (name, target) in self.deferred_indexes()? {
-            if let Err(error) = self.drain_turn(&name, target, usize::MAX).await {
-                failure.get_or_insert(error);
+            match self
+                .drain_turn(&name, target, usize::MAX, RapidHashSet::new())
+                .await
+            {
+                Ok(report) => {
+                    if let Some((_, source)) = report.failed.into_iter().next() {
+                        failure.get_or_insert(Error::DeferredDrain {
+                            collection: name,
+                            index_id: target.1,
+                            source: Box::new(source),
+                        });
+                    }
+                }
+                Err(error) => {
+                    failure.get_or_insert(error);
+                }
             }
         }
         failure.map_or(Ok(()), Err)
@@ -122,24 +189,44 @@ where
         Ok(indexes)
     }
 
-    /// Drains up to `plans` plans of one index.
-    async fn drain_turn(&self, name: &str, target: IndexRef, plans: usize) -> Result<Turn> {
-        let mut turn = Turn::Idle;
+    /// Drains up to `plans` plans of one index, carrying forward the
+    /// documents in `skip` and those that fail. It stops at a plan that frees
+    /// nothing, so a document that keeps failing waits for the next sweep.
+    async fn drain_turn(
+        &self,
+        name: &str,
+        target: IndexRef,
+        plans: usize,
+        mut skip: RapidHashSet<u64>,
+    ) -> Result<TurnReport> {
+        let mut report = TurnReport {
+            turn: Turn::Idle,
+            moved: Vec::new(),
+            failed: Vec::new(),
+            carried: false,
+        };
         for _ in 0..plans {
-            let took =
-                drain_index(self, name, target.1)
-                    .await
-                    .map_err(|source| Error::DeferredDrain {
-                        collection: name.to_string(),
-                        index_id: target.1,
-                        source: Box::new(source),
-                    })?;
-            if !took {
-                return Ok(turn);
+            let drained = drain_index(self, name, target.1, &skip)
+                .await
+                .map_err(|source| Error::DeferredDrain {
+                    collection: name.to_string(),
+                    index_id: target.1,
+                    source: Box::new(source),
+                })?;
+            let Some(drained) = drained else {
+                return Ok(report);
+            };
+            report.carried |= drained.carried;
+            skip.extend(drained.failed.iter().map(|(doc, _)| *doc));
+            report.moved.extend(drained.moved);
+            report.failed.extend(drained.failed);
+            if !drained.progressed {
+                return Ok(report);
             }
-            turn = Turn::Drained;
+            report.turn = Turn::Drained;
         }
-        Ok(Turn::More)
+        report.turn = Turn::More;
+        Ok(report)
     }
 
     /// One pass of the drain task: the indexes asked for, or every index on
@@ -166,16 +253,23 @@ where
                 self.deferred_drains.defer(target);
                 continue;
             }
-            match self.drain_turn(&name, target, TURN).await {
-                Ok(Turn::Idle) => failures.drained(&name, target),
-                Ok(Turn::Drained) => {
-                    worked += 1;
+            let stuck = failures.stuck(target, sweep);
+            match self.drain_turn(&name, target, TURN, stuck).await {
+                Ok(report) => {
                     failures.drained(&name, target);
-                }
-                Ok(Turn::More) => {
-                    worked += 1;
-                    failures.drained(&name, target);
-                    self.deferred_drains.request(target);
+                    failures.turned(&name, target, &report);
+                    match report.turn {
+                        Turn::Idle => {}
+                        Turn::Drained => worked += 1,
+                        Turn::More => {
+                            worked += 1;
+                            self.deferred_drains.request(target);
+                        }
+                    }
+                    // Owed again, kept for the sweep without a wake.
+                    if report.carried && !matches!(report.turn, Turn::More) {
+                        self.deferred_drains.defer(target);
+                    }
                 }
                 Err(error) => {
                     failures.failed(&name, target, &error);
