@@ -180,7 +180,7 @@ pub trait Iterator: MaybeSend + super::traits::private::Sealed {
     }
 }
 
-/// Implement Iterator for Box<dyn Iterator> to allow boxing.
+/// Implement `Iterator` for `Box<dyn Iterator>` to allow boxing.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl Iterator for Box<dyn Iterator> {

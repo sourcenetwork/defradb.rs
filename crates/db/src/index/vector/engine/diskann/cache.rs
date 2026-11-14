@@ -71,7 +71,7 @@ pub struct CodeCache {
     quantizers: Atom<SharedQuantizers>,
 }
 
-/// The quantizers of the last [`SHARED_TRAININGS`] trainings shared, newest
+/// The quantizers of the last `SHARED_TRAININGS` trainings shared, newest
 /// first.
 type SharedQuantizers = [Option<SharedQuantizer>; SHARED_TRAININGS];
 
@@ -112,7 +112,7 @@ impl CodeCache {
 
     /// Shares `quantizer`, built from `training`'s codebooks, as the newest.
     /// A training already shared keeps the quantizer it has; otherwise the
-    /// oldest of the [`SHARED_TRAININGS`] is dropped to make room.
+    /// oldest of the `SHARED_TRAININGS` is dropped to make room.
     pub fn share_quantizer(&self, training: u128, quantizer: Arc<ProductQuantizer>) {
         let fresh = SharedQuantizer {
             training,

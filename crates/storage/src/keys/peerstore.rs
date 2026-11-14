@@ -8,7 +8,7 @@ use crate::corekv::Key;
 
 /// ReplicatorKey: Stores replicator configuration and state
 ///
-/// Structure: /rep/id/[ReplicatorID]
+/// Structure: `/rep/id/[ReplicatorID]`
 /// Example: /rep/id/replicator_user_collection_peer1
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplicatorKey {
@@ -105,7 +105,7 @@ impl Key for ReplicatorIncarnationKey {
 
 /// ReplicatorRetryIDKey: Tracks failed replication attempts by peer
 ///
-/// Structure: /rep/retry/id/[PeerID]
+/// Structure: `/rep/retry/id/[PeerID]`
 /// Example: /rep/retry/id/QmXxxx...
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplicatorRetryIDKey {
@@ -139,7 +139,7 @@ impl Key for ReplicatorRetryIDKey {
 
 /// ReplicatorRetryDocIDKey: Tracks document-specific replication failures
 ///
-/// Structure: /rep/retry/doc/[PeerID]/[DocID]
+/// Structure: `/rep/retry/doc/[PeerID]/[DocID]`
 /// Example: /rep/retry/doc/QmXxxx.../bae123456789abcdef0123456789abcdef012345
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplicatorRetryDocIDKey {
@@ -273,7 +273,7 @@ impl Key for ReplicatorAckedHeadsKey {
 
 /// PeerstoreSERetry: Tracks search engine indexing failures on peer
 ///
-/// Structure: /se-retry/[PeerID]/[CollectionID]/[DocID]
+/// Structure: `/se-retry/[PeerID]/[CollectionID]/[DocID]`
 /// Example: /se-retry/QmXxxx.../users/bae123456789abcdef0123456789abcdef012345
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PeerstoreSERetry {

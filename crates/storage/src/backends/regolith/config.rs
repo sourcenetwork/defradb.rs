@@ -15,7 +15,7 @@ pub struct RegolithStoreOptions {
     /// Engine options. Built from a regolith profile, so a target that
     /// needs a different memory budget picks it up by construction rather
     /// than by a caller remembering to tune it. The at-rest keys are not in
-    /// here: the open installs them ([`Self::engine_with_keys`]).
+    /// here: the open installs them (`engine_with_keys`).
     pub engine: Options,
     /// Commit-time validation. DefraLevel uses the installed key classifier
     /// to allow identical content-addressed block writes. Other key families

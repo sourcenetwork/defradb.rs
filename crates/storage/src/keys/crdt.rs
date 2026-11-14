@@ -6,7 +6,7 @@ const NONCES_SUFFIX: &[u8] = b"/nonces/";
 
 /// CRDTValueKey: Stores a CRDT field value.
 ///
-/// Structure: /data/[SchemaVersionID]/[DocID bytes]/[FieldName]
+/// Structure: `/data/[SchemaVersionID]/[DocID bytes]/[FieldName]`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CRDTValueKey {
     /// Schema version identifier.
@@ -81,7 +81,7 @@ impl Key for CRDTValueKey {
 
 /// CRDTPriorityKey: Stores CRDT field priority metadata.
 ///
-/// Structure: /data/[SchemaVersionID]/[DocID bytes]/[FieldName]/priority
+/// Structure: `/data/[SchemaVersionID]/[DocID bytes]/[FieldName]/priority`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CRDTPriorityKey {
     /// Value key this priority metadata is associated with.
@@ -115,7 +115,7 @@ impl Key for CRDTPriorityKey {
 
 /// CRDTNoncePrefix: Prefix for CRDT nonce-tracking keys.
 ///
-/// Structure: /data/[SchemaVersionID]/[DocID bytes]/[FieldName]/nonces/
+/// Structure: `/data/[SchemaVersionID]/[DocID bytes]/[FieldName]/nonces/`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CRDTNoncePrefix {
     /// Value key this nonce prefix is associated with.
@@ -157,7 +157,7 @@ impl Key for CRDTNoncePrefix {
 
 /// CRDTNonceKey: Tracks an applied counter nonce.
 ///
-/// Structure: /data/[SchemaVersionID]/[DocID bytes]/[FieldName]/nonces/[NonceBE]
+/// Structure: `/data/[SchemaVersionID]/[DocID bytes]/[FieldName]/nonces/[NonceBE]`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CRDTNonceKey {
     /// Prefix for the nonce-tracking keys.

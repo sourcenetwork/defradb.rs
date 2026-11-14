@@ -216,7 +216,7 @@ impl IntoResponse for IdentityExtractionError {
 /// Behavior matches Go DefraDB:
 /// - No Authorization header → anonymous
 /// - "Bearer " with empty token → anonymous
-/// - "Bearer <token>" → parse and verify token, 403 on failure
+/// - `"Bearer <token>"` → parse and verify token, 403 on failure
 /// - Non-Bearer auth → 403 Forbidden (treated as invalid token)
 ///
 /// Token verification includes:

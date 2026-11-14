@@ -13,8 +13,8 @@
 //!
 //! Every transition is one engine transaction of the [`PendingDagStorage`]:
 //! registering a root, with the retirement of the parent it supersedes as its
-//! sender scope's current head, a slot under the durable cap ([`slots`]) and a
-//! charge to its announcing peer's share ([`shares`]); discharging it after a merge;
+//! sender scope's current head, a slot under the durable cap (`slots`) and a
+//! charge to its announcing peer's share (`shares`); discharging it after a merge;
 //! quarantining it; and the sweep that reads every record. Concurrent
 //! transitions that touch the same keys settle in the engine, so no lock
 //! orders them. Each one updates the [`PersistedView`], the in-memory view of

@@ -134,7 +134,7 @@ pub struct ExplainQuery {
     pub subject: String,
 }
 
-/// GET /api/v0/acp/node/explain?subject=<did>: every way the subject holds
+/// `GET /api/v0/acp/node/explain?subject=<did>`: every way the subject holds
 /// each node permission. The core allows the subject itself, an admin, or a
 /// caller holding `NacStatus`, as the embedded `Node::explain_nac_subject_as`.
 pub async fn explain_subject(

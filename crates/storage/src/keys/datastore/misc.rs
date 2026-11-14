@@ -3,7 +3,7 @@ use crate::corekv::Key;
 
 /// DatastoreSE: Stores search engine index artifacts
 ///
-/// Structure: /se/[CollectionID]/[IndexID]/[SearchTagHex]/[DocID]
+/// Structure: `/se/[CollectionID]/[IndexID]/[SearchTagHex]/[DocID]`
 /// Example: /se/col1/idx1/a1b2c3d4e5f6/docid123
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DatastoreSE {
@@ -66,7 +66,7 @@ impl Key for DatastoreSE {
 
 /// ViewCacheKey: Caches view/query result items
 ///
-/// Structure: /collection/vi/[CollectionRootID]/[ItemID]
+/// Structure: `/collection/vi/[CollectionRootID]/[ItemID]`
 /// Example: /collection/vi/1/5
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ViewCacheKey {

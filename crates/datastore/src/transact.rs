@@ -1,7 +1,7 @@
 //! Engine transactions over the namespaced datastore facade.
 //!
 //! [`transact`] runs a body in one engine transaction of a store through
-//! [`storage::corekv::transact`]: each run gets a fresh [`BasicTxn`] over the
+//! [`storage::corekv::transact()`]: each run gets a fresh [`BasicTxn`] over the
 //! attempt, lent mutably so the body's future stays `Send`, and the body
 //! reads and writes through the same namespace views as any other datastore
 //! code; the store commits the run that wins. The
