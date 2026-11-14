@@ -12,7 +12,7 @@ use identity::Did;
 
 use crate::error::{Result, TransactionError};
 use crate::executor::{GqlWarning, QueryExecutor, QueryRequest, QueryResponse, QueryResponseError};
-use crate::query_parse::{validate_parsed_operation, ParsedOperation};
+use crate::query_parse::{validate_operation, ParsedOperation};
 use crate::txn::{TransactionHandle, TransactionRegistry};
 
 use super::turn::answered;
@@ -654,7 +654,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         }
 
         // Validate that all referenced collections exist before execution
-        if let Err(e) = validate_parsed_operation(&parsed, self.effective_provider().as_ref()).await
+        let graphql_text = request.parsed.is_none();
+        if let Err(e) =
+            validate_operation(&parsed, self.effective_provider().as_ref(), graphql_text).await
         {
             return QueryResponse {
                 data: None,

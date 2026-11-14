@@ -18,7 +18,7 @@ use crate::error::{QueryError, TransactionError};
 use crate::executor::{GqlWarning, QueryRequest, QueryResponse, QueryResponseError};
 use crate::mutator::DocMutator;
 use crate::prepared::{PreparedInputMemo, PreparedInputRequest};
-use crate::query_parse::{validate_parsed_operation, ParsedOperation};
+use crate::query_parse::{validate_operation, ParsedOperation};
 use crate::txn::{txn_job, TransactionRegistry, TxnJob, TxnTurn};
 
 use super::executor::{check_nac, convert_variables, permission_for_operation};
@@ -281,7 +281,8 @@ where
         };
 
         // Validate that all referenced collections exist before execution.
-        if let Err(error) = validate_parsed_operation(&parsed, txn_provider.as_ref()).await {
+        let graphql_text = request.parsed.is_none();
+        if let Err(error) = validate_operation(&parsed, txn_provider.as_ref(), graphql_text).await {
             return Ok(Turned::Done(parse_error(error.to_string())));
         }
 

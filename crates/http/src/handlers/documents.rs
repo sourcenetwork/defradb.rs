@@ -95,12 +95,16 @@ impl Server {
     }
 
     async fn run(self, mutation: String) -> QueryResponse {
+        self.run_request(QueryRequest::new(mutation)).await
+    }
+
+    async fn run_request(self, request: QueryRequest) -> QueryResponse {
         let Self {
             state,
             identity,
             txn,
         } = self;
-        let request = QueryRequest::new(mutation).with_identity(identity.did().cloned());
+        let request = request.with_identity(identity.did().cloned());
         if let Some(handle) = txn {
             return execute_in_txn_with_context(&state, &identity, request, handle).await;
         }
@@ -171,10 +175,15 @@ pub async fn add_document(
         doc => vec![doc],
     };
     let server = Server::new(state, identity, &headers)?;
-    documents::add(|m| server.run(m), &collection, &docs, &params.options())
-        .await
-        .map(Json)
-        .map_err(refused)
+    documents::add(
+        |r| server.run_request(r),
+        &collection,
+        &docs,
+        &params.options(),
+    )
+    .await
+    .map(Json)
+    .map_err(refused)
 }
 
 /// Update a single document.

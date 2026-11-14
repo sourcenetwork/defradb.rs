@@ -46,6 +46,9 @@ pub struct NodeSpec {
     pub iroh_network: bool,
     /// The node's own identity, Go's `NodeIdentity(seed)`; the node signs as it.
     pub node_identity: Option<u64>,
+    /// The node's index in its test, which picks the key Go's harness signs
+    /// with when the node has no `node_identity`.
+    pub go_index: Option<u64>,
     /// The key type the node signs with, when it signs.
     pub signing: Option<crate::actions::shared::KeyType>,
     /// How long an idle explicit transaction lives and the sweep interval.
@@ -389,7 +392,8 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
 /// The key a node signs with: its node identity's, or, for a node that only
 /// signs, a key of its own that no test identity shares.
 fn signing_key(spec: &NodeSpec) -> defra_node::SigningKey {
-    let seed = spec.node_identity.unwrap_or(u64::MAX);
+    // Go's node `i` signs as `NodeIdentity(i)` unless told otherwise.
+    let seed = spec.node_identity.or(spec.go_index).unwrap_or(u64::MAX);
     let key = crate::scenario::identity::node_private_key(seed).to_vec();
     match spec.signing.unwrap_or_default() {
         KeyType::Secp256k1 => defra_node::SigningKey::Secp256k1(key),
