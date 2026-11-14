@@ -54,6 +54,8 @@ rapidhash.workspace = true
 cid = { workspace = true }
 base64 = "0.23"
 hex = "0.4"
+# Holds a stopped Go node's P2P port with SO_REUSEPORT until it restarts.
+socket2 = { version = "0.6", features = ["all"] }
 identity = { path = "../../crates/identity" }
 
 [features]
