@@ -136,7 +136,7 @@ fn doc_id_index_key(segments: &[&[u8]]) -> Vec<u8> {
 
 /// DocShortIDToDocIDKey: Maps a document short ID to its public DocID.
 ///
-/// Structure: /d/s/[DocShortID uvarint]  →  DocID string
+/// Structure: `/d/s/[DocShortID uvarint]`  →  DocID string
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocShortIDToDocIDKey {
     /// Document short ID.
@@ -165,7 +165,7 @@ impl Key for DocShortIDToDocIDKey {
 
 /// DocIDToDocRefKey: Maps a public DocID to its DocRef.
 ///
-/// Structure: /d/p/[DocID]  →  DocRef bytes
+/// Structure: `/d/p/[DocID]`  →  DocRef bytes
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocIDToDocRefKey {
     /// Public document ID string.
@@ -196,7 +196,7 @@ impl Key for DocIDToDocRefKey {
 /// Supports enumeration of every DocID mapping to clean up when a
 /// document is purged.
 ///
-/// Structure: /d/r/[DocShortID uvarint]/[DocID]  →  DocID string
+/// Structure: `/d/r/[DocShortID uvarint]/[DocID]`  →  DocID string
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocShortIDToDocIDAliasKey {
     /// Document short ID.
@@ -244,7 +244,7 @@ impl Key for DocShortIDToDocIDAliasKey {
 /// Field blocks can be byte-identical across documents, so ownership is
 /// a set keyed by (block CID, DocID).
 ///
-/// Structure: /d/b/[BlockCID]/[DocID]  →  (empty)
+/// Structure: `/d/b/[BlockCID]/[DocID]`  →  (empty)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockCIDToDocIDKey {
     /// Block CID string form.

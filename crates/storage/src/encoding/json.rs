@@ -1,7 +1,7 @@
 //! JSON path+value encoding for indexing
 //!
 //! Encodes JSON leaf values with their paths for secondary index keys.
-//! Format: [JSON_MARKER][path_parts][ESCAPED_TERM][PATH_END][typed_value]
+//! Format: `[JSON_MARKER][path_parts][ESCAPED_TERM][PATH_END][typed_value]`
 //!
 //! Path parts are encoded as:
 //! - Property names: encoded as escaped bytes
@@ -25,15 +25,15 @@ pub const JSON_PATH_END: u8 = b'/'; // 0x2F - matches Go's jsonPathEnd
 
 /// Encode a JSON leaf value with path in ascending order.
 ///
-/// Format: [JSON_MARKER][path_parts...][ESCAPED_TERM][PATH_END][typed_value]
+/// Format: `[JSON_MARKER][path_parts...][ESCAPED_TERM][PATH_END][typed_value]`
 ///
 /// Path encoding:
 /// - Properties: escaped bytes (using encode_bytes_ascending without marker)
 /// - Array indices: uvarint (always 0 per Go)
 ///
 /// Special sentinel values for range bounds:
-/// - PathMin: Encodes path + [ESCAPED_TERM][PATH_END][NULL_MARKER] (comes before all values)
-/// - PathMax: Encodes path + [ESCAPED_TERM][PATH_END + 1] (comes after all values)
+/// - PathMin: Encodes path + `[ESCAPED_TERM][PATH_END][NULL_MARKER]` (comes before all values)
+/// - PathMax: Encodes path + `[ESCAPED_TERM][PATH_END + 1]` (comes after all values)
 pub fn encode_json_ascending(buf: Vec<u8>, leaf: &JsonLeafValue) -> Vec<u8> {
     let mut buf = buf;
     buf.push(JSON_MARKER);

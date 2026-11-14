@@ -165,7 +165,7 @@ impl Key for ActionProgressKey {
 
 /// CollectionKey: Maps collection ID to full collection definition (JSON)
 ///
-/// Structure: /collection/id/[CollectionID]
+/// Structure: `/collection/id/[CollectionID]`
 /// Example: /collection/id/user_profiles_v1
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CollectionKey {
@@ -199,7 +199,7 @@ impl Key for CollectionKey {
 
 /// CollectionID: Maps full collection ID to short ID (reverse index)
 ///
-/// Structure: /collection/shortID/[CollectionID]
+/// Structure: `/collection/shortID/[CollectionID]`
 /// Example: /collection/shortID/user_profiles_v1
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CollectionID {
@@ -233,7 +233,7 @@ impl Key for CollectionID {
 
 /// CollectionNameKey: Maps collection name to collection ID
 ///
-/// Structure: /collection/name/[CollectionName]
+/// Structure: `/collection/name/[CollectionName]`
 /// Example: /collection/name/users
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CollectionNameKey {
@@ -265,7 +265,7 @@ impl Key for CollectionNameKey {
 
 /// CollectionVersionKey: Tracks all versions of a collection
 ///
-/// Structure: /collection/version/[CollectionID]/[VersionID]
+/// Structure: `/collection/version/[CollectionID]/[VersionID]`
 /// Example: /collection/version/user_profiles/v1
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CollectionVersionKey {
@@ -315,7 +315,7 @@ impl Key for CollectionVersionKey {
 
 /// FieldID: Maps full field ID to short field ID (reverse index)
 ///
-/// Structure: /field/shortID/[CollectionShortID]/[FieldID]
+/// Structure: `/field/shortID/[CollectionShortID]/[FieldID]`
 /// Example: /field/shortID/1/user_email
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldID {
@@ -393,7 +393,7 @@ impl Key for NodeACPKey {
 
 /// P2PCollectionKey: Tracks P2P replication metadata for collections
 ///
-/// Structure: /p2p/collection/[CollectionID]
+/// Structure: `/p2p/collection/[CollectionID]`
 /// Example: /p2p/collection/users
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct P2PCollectionKey {
@@ -427,7 +427,7 @@ impl Key for P2PCollectionKey {
 
 /// P2PDocumentKey: Tracks P2P replication metadata for documents
 ///
-/// Structure: /p2p/document/[DocID]
+/// Structure: `/p2p/document/[DocID]`
 /// Example: /p2p/document/bae123456789abcdef0123456789abcdef012345
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct P2PDocumentKey {
@@ -461,7 +461,7 @@ impl Key for P2PDocumentKey {
 
 /// P2PPendingDagKey: Persisted pending-DAG registration awaiting missing links
 ///
-/// Structure: /p2p/pending_dag/[RootCID]
+/// Structure: `/p2p/pending_dag/[RootCID]`
 /// Example: /p2p/pending_dag/bafyreib2rxk3rybk3aobmv5cjuql3bm2twh4jo5uxgf5kpqrsgxbyqx54
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct P2PPendingDagKey {
@@ -500,7 +500,7 @@ impl Key for P2PPendingDagKey {
 /// must never observe a quarantined root, or it would re-drive a merge that is
 /// known to fail deterministically on every replay.
 ///
-/// Structure: /p2p/quarantined_dag/[RootCID]
+/// Structure: `/p2p/quarantined_dag/[RootCID]`
 /// Example: /p2p/quarantined_dag/bafyreib2rxk3rybk3aobmv5cjuql3bm2twh4jo5uxgf5kpqrsgxbyqx54
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct P2PQuarantinedDagKey {
@@ -535,7 +535,7 @@ impl Key for P2PQuarantinedDagKey {
 /// StoredCrdtTypeKey: a custom CRDT type some document part in this store was
 /// written by. A node opens the store only if it registers every such type.
 ///
-/// Structure: /crdt/stored/[CrdtName]
+/// Structure: `/crdt/stored/[CrdtName]`
 /// Example: /crdt/stored/maxreg
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredCrdtTypeKey {
@@ -568,7 +568,7 @@ impl Key for StoredCrdtTypeKey {
 /// A parked block that cannot merge moves under [`Self::FAILED_PREFIX`], with
 /// the rest of its key unchanged.
 ///
-/// Structure: /crdt/parked/[CrdtName]/[CollectionID]/[DocShortID]/[Field]/[Priority]/[CID]
+/// Structure: `/crdt/parked/[CrdtName]/[CollectionID]/[DocShortID]/[Field]/[Priority]/[CID]`
 /// Example: /crdt/parked/maxreg/col-1/7/best/00000000000000000003/bafyreib2rxk3rybk3aobmv5cjuql3bm2twh4jo5uxgf5kpqrsgxbyqx54
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParkedCrdtBlockKey {
@@ -641,7 +641,7 @@ impl Key for ParkedCrdtBlockKey {
 
 /// LensConfigKey: Stores a serialized LensConfig for persistence across restarts.
 ///
-/// Structure: /lens/config/[TransformID]
+/// Structure: `/lens/config/[TransformID]`
 /// Example: /lens/config/bafe98e8334bf1605a4ddd88cc11a20b330
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LensConfigKey {
@@ -701,7 +701,7 @@ impl Key for CollectionIDSequenceKey {
 
 /// FieldIDSequenceKey: Monotonic sequence counter for field IDs (per collection)
 ///
-/// Structure: /seq/field/[CollectionShortID]
+/// Structure: `/seq/field/[CollectionShortID]`
 /// Example: /seq/field/1
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldIDSequenceKey {
@@ -735,7 +735,7 @@ impl Key for FieldIDSequenceKey {
 
 /// IndexIDSequenceKey: Monotonic sequence counter for index IDs (per collection version)
 ///
-/// Structure: /seq/index/[CollectionID]
+/// Structure: `/seq/index/[CollectionID]`
 /// Example: /seq/index/user_profiles_v1
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexIDSequenceKey {

@@ -476,7 +476,7 @@ impl Collection {
     /// The version is stored separately from the document data to enable
     /// efficient version checks without deserializing the full document.
     ///
-    /// Key format: /v/<collection_id>/<doc_short_id> — a prefix distinct
+    /// Key format: `/v/<collection_id>/<doc_short_id>` — a prefix distinct
     /// from doc blobs so blob scans never have to filter version keys.
     pub(crate) fn version_key(&self, doc_short_id: u64) -> Vec<u8> {
         let mut key = Vec::new();

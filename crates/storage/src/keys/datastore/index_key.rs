@@ -43,8 +43,8 @@ impl PartialEq for IndexedField {
 
 /// IndexDataStoreKey: Stores indexed field values for secondary indexes
 ///
-/// Structure: /[CollectionShortID]/[IndexID]/[EncodedFieldValue1][EncodedFieldValue2]...(/[DocShortID])
-/// Example: /1/2/<encoded value A><encoded value B>
+/// Structure: `/[CollectionShortID]/[IndexID]/[EncodedFieldValue1][EncodedFieldValue2]...(/[DocShortID])`
+/// Example: `/1/2/<encoded value A><encoded value B>`
 ///
 /// The trailing doc short ID makes equal index values unique and lets
 /// index scans resolve the matching document without storing the full
