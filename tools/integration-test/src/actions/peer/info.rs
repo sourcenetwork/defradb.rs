@@ -37,6 +37,9 @@ impl Op for PeerInfo {
 
     fn run(&self, state: &State) -> Result<Value, Failure> {
         self.check_arguments()?;
+        if self.captures_only() {
+            return Ok(self.shape(addresses_of(state, &[self.common.node()])?));
+        }
         let node = state.node_on(self.common.node())?;
         let addresses = state
             .block_on(node.peer_info_as(&state.context_as(None, self.common.identity_seed)))
@@ -54,15 +57,14 @@ impl PeerInfo {
         }
     }
 
-    /// A step that only names the addresses for later actions, as Go's
-    /// `{{.Peer0_Address0}}` template does: Go reads them from the test's own
+    /// A step that only names the addresses or the peer ID for later actions,
+    /// as Go's `{{.Peer0_Address0}}` template does: Go reads them from the test's own
     /// view of the node, never through the client, so node access control
     /// does not apply.
     fn captures_only(&self) -> bool {
         !self.common.capture.is_empty()
             && self.expected_data.is_null()
             && self.expected_error.is_none()
-            && !self.id_only
     }
 
     fn shape(&self, addresses: Vec<String>) -> Value {
