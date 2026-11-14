@@ -302,6 +302,13 @@ pub trait CollectionManagementOperations: defra_core::thread_bounds::MaybeSendSy
 pub trait DocumentAcpOperations: defra_core::thread_bounds::MaybeSendSync {
     bind_request!(DocumentAcpOperations);
 
+    /// The DID that signed `token`, when `token` is a delegation the node's
+    /// document ACP may act under now for that DID. `None` when `token` is
+    /// not a delegation or the node's ACP takes none.
+    fn caller_of_delegation(&self, _token: &str) -> Option<Result<identity::Did, String>> {
+        None
+    }
+
     /// Whether a bound request stages relationship changes in its named
     /// transaction. Backends must refuse the request if they cannot bind its
     /// authorization provider to that transaction.

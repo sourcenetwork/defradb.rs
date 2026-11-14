@@ -713,6 +713,20 @@ impl VeraProvider for VeraRsProvider {
             connected: sync.is_some(),
         })
     }
+
+    fn delegation_audience(&self) -> Option<acp::DelegationAudience> {
+        Some(acp::DelegationAudience {
+            worker: self.worker_did.clone(),
+            deployment: self.deployment,
+        })
+    }
+
+    fn caller_of_delegation(&self, token: &str) -> Option<Result<String, ProviderError>> {
+        bearer::is_delegation(token).then(|| {
+            bearer::caller_of_delegation(token, &self.worker_did, self.deployment)
+                .map_err(|error| ProviderError::Config(format!("caller delegation: {error}")))
+        })
+    }
 }
 
 #[cfg(test)]

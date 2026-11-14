@@ -19,7 +19,7 @@ use axum::{
 
 use defra_core::RequestContext;
 
-use crate::identity_extractor::{parse_identity_from_headers, ExtractIdentity, MiddlewareIdentity};
+use crate::identity_extractor::{caller_from_headers, ExtractIdentity, MiddlewareIdentity};
 use crate::nac_guard::require_permissions;
 use crate::route_permissions::{self, route_permission, RoutePermission};
 use crate::router::{AppState, NodePermission};
@@ -53,7 +53,7 @@ pub async fn auth_middleware(
     let acting_did = match permission {
         RoutePermission::Exempt => None,
         RoutePermission::IdentityOnly | RoutePermission::Dynamic | RoutePermission::Required(_) => {
-            match parse_identity_from_headers(request.headers()) {
+            match caller_from_headers(request.headers(), state.doc_acp.as_deref()) {
                 Ok(did) => did,
                 Err(err) => return err.into_response(),
             }

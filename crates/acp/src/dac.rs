@@ -69,6 +69,14 @@ pub trait DocumentACP: MaybeSendSync {
         None
     }
 
+    /// The DID that signed `token`, when `token` is a delegation this ACP may
+    /// act under now for that DID through this node. `None` when `token` is
+    /// not a delegation, or this ACP takes none: the caller is then
+    /// authenticated by its identity token.
+    fn caller_of_delegation(&self, _token: &str) -> Option<std::result::Result<Did, String>> {
+        None
+    }
+
     /// The bearer token `did` presents to this provider: the one of the
     /// request it is bound to, or of [`RequestContext::ambient`] when it is
     /// bound to none.
