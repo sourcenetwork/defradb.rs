@@ -597,6 +597,7 @@ impl<S: Store> DB<S> {
     /// Install the NAC manager. First call wins (OnceCell); subsequent calls
     /// are silently discarded. Called once at node startup. When unset, all
     /// `check_node_access` calls are no-ops (NAC not configured).
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub fn set_nac_manager(&self, nac: std::sync::Arc<dyn NacManagerApi>) {
         if self.nac_manager.set(Arc::clone(&nac)).is_ok() {
             let _ = self

@@ -21,6 +21,7 @@ use acp::{MemoryZanzibarStore, ZanzibarStore};
 use defra_core::thread_bounds::MaybeSendSync;
 use identity::Did;
 use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
+#[cfg(not(target_arch = "wasm32"))]
 use regolith::sync::Atom;
 use storage::corekv::{make_async_callback, OnCommit};
 
@@ -170,14 +171,17 @@ async fn held(
 }
 
 /// The published snapshot and the refresh that built it.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 struct Published {
     generation: u64,
     grants: Option<Snapshot>,
 }
 
-/// The snapshot edge checks read, swapped whole by each refresh.
+/// The snapshot edge checks read, swapped whole by each refresh. A wasm32
+/// build has no network edge and keeps no snapshot: its checks read storage.
 pub(super) struct EdgeGrants {
+    #[cfg(not(target_arch = "wasm32"))]
     published: Atom<Published>,
     next: AtomicU64,
 }
@@ -186,6 +190,7 @@ impl EdgeGrants {
     /// No snapshot yet: checks read storage until the first refresh.
     pub(super) fn new() -> Self {
         Self {
+            #[cfg(not(target_arch = "wasm32"))]
             published: Atom::new(Published {
                 generation: 0,
                 grants: None,
@@ -195,8 +200,14 @@ impl EdgeGrants {
     }
 
     /// The snapshot to check against, if one is published.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn current(&self) -> Option<Snapshot> {
         self.published.load().grants.clone()
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn current(&self) -> Option<Snapshot> {
+        None
     }
 
     /// Withdraw the snapshot: checks read storage until the next refresh.
@@ -208,6 +219,7 @@ impl EdgeGrants {
     /// Publish `grants` unless a refresh that started later already did. A
     /// refresh that started later read storage after this one began, so it saw
     /// at least the writes this one saw.
+    #[cfg(not(target_arch = "wasm32"))]
     fn publish(&self, generation: u64, grants: Option<Snapshot>) {
         self.published.rcu(|current| {
             if current.generation < generation {
@@ -220,6 +232,9 @@ impl EdgeGrants {
             }
         });
     }
+
+    #[cfg(target_arch = "wasm32")]
+    fn publish(&self, _generation: u64, _grants: Option<Snapshot>) {}
 }
 
 /// Withdraws the edge snapshot when dropped before [`Self::refreshed`]. A NAC
@@ -321,6 +336,7 @@ where
 
     /// A manager over a copy of the committed NAC state, read in one scope.
     /// `None` when the store has no scopes: its checks already read memory.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     async fn read_edge_grants(&self) -> Result<Option<Snapshot>> {
         let scope = self
             .nac
