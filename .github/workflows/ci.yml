@@ -986,6 +986,9 @@ jobs:
           path: testo-report
           retention-days: 7
           if-no-files-found: ignore
+          # A re-run replaces the first attempt's report, so the summary reads
+          # only the latest result.
+          overwrite: true
 
   testo-summary:
     name: Testo summary
