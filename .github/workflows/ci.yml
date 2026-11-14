@@ -244,7 +244,7 @@ jobs:
       - name: Build docs with warnings denied
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --workspace --no-deps
+        run: cargo doc --workspace --no-deps --keep-going
 
   lint:
     name: Lint

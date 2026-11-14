@@ -717,7 +717,7 @@ lint-wasm:
 [doc("Build docs with warnings denied (broken links fail CI).")]
 [group('check')]
 doc:
-    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --keep-going
 
 # What to make green before asking for a review.
 [group('check')]
