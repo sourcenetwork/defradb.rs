@@ -119,6 +119,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Add collection | TLA+ | db |
 | Index changes in a transaction | TLA+ | db, defra-node, http, cli |
 | Encrypted index changes outside a transaction | TLA+ | db, defra-node, cli |
+| Gossip announcement audience | TLA+ | p2p |
 | Collection truncate | TLA+ | db |
 | Relation-filtered mutation | TLA+ | query, datastore, db |
 | Add DAC policy | TLA+ | db, acp, vera, http, cli, ffi, defra-node |

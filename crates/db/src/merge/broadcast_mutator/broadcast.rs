@@ -10,9 +10,6 @@ use query::mutator::BroadcastStatus;
 
 use crate::block::builder::BlockResult;
 
-pub(crate) const BROADCAST_MAX_RETRIES: u32 = 10;
-const BROADCAST_MAX_RETRY_DELAY_MS: u64 = 10_000;
-
 fn is_expected_fire_and_forget_failure(err: &str) -> bool {
     let lower = err.to_ascii_lowercase();
     lower.contains("insufficientpeers")
@@ -76,40 +73,6 @@ fn report_dropped(
     }
 }
 
-pub fn broadcast_retry_delay_ms(
-    err_str: &str,
-    connected_peers: usize,
-    attempt: u32,
-) -> Option<u64> {
-    if !err_str.contains("InsufficientPeers") {
-        return None;
-    }
-    if connected_peers == 0 || attempt > BROADCAST_MAX_RETRIES {
-        return None;
-    }
-    let base_delay_ms = 100 * (1u64 << attempt.min(5));
-    let peer_multiplier = match connected_peers {
-        1 => 4,
-        2 => 2,
-        _ => 1,
-    };
-    Some(
-        base_delay_ms
-            .saturating_mul(peer_multiplier)
-            .min(BROADCAST_MAX_RETRY_DELAY_MS),
-    )
-}
-
-async fn connected_peer_count<B: Blockstore + 'static, T: P2PTransport>(
-    sync: &SyncCoordinator<B, T>,
-) -> usize {
-    sync.transport()
-        .connected_peers()
-        .await
-        .map(|peers| peers.len())
-        .unwrap_or_else(|_| sync.peer_state().stats().connected_peers())
-}
-
 /// Log broadcast failures for asynchronous propagation paths.
 pub(crate) fn log_broadcast_failure(status: &BroadcastStatus) {
     if let BroadcastStatus::Failed(err) = status {
@@ -127,150 +90,110 @@ pub(crate) fn log_broadcast_failure(status: &BroadcastStatus) {
     }
 }
 
-/// Broadcast via GossipSub with retry, optionally overriding the creator DID.
-pub(crate) async fn broadcast_with_retry_with_creator<B: Blockstore + 'static, T: P2PTransport>(
+/// Announce a committed write over gossip once, optionally overriding the
+/// creator DID.
+///
+/// Go publishes a write once, when it commits, and never again: "Retries are
+/// for replicators only and should not pollute the pubsub network"
+/// (internal/db/p2p/p2p.go SendUpdate). A topic with no subscriber then
+/// reaches no one, and a peer that subscribes later learns of the write
+/// through a later update's DAG (#2841).
+pub async fn broadcast_with_creator<B, T>(
     sync: &SyncCoordinator<B, T>,
     bus: Option<&Arc<dyn Bus>>,
     block_result: &BlockResult,
     collection_id: &str,
     collection_name: &str,
     creator_override: Option<&str>,
-) -> BroadcastStatus {
-    let mut attempt = 0u32;
-
-    loop {
-        attempt += 1;
-        match sync
-            .broadcast_local_update_with_creator(
-                &block_result.cid,
-                &block_result.block,
-                &block_result.doc_id,
-                collection_id,
-                creator_override,
-            )
-            .await
-        {
-            Ok(BroadcastResult::Success) => {
+) -> BroadcastStatus
+where
+    B: Blockstore + 'static,
+    T: P2PTransport,
+{
+    match sync
+        .broadcast_local_update_with_creator(
+            &block_result.cid,
+            &block_result.block,
+            &block_result.doc_id,
+            collection_id,
+            creator_override,
+        )
+        .await
+    {
+        Ok(BroadcastResult::Success) => {
+            tracing::debug!(
+                doc_id = %block_result.doc_id,
+                cid = %block_result.cid,
+                collection = %collection_name,
+                "Broadcast document to P2P network"
+            );
+            BroadcastStatus::Success
+        }
+        Ok(BroadcastResult::PartialDocumentOnly { collection_error }) => {
+            tracing::warn!(
+                doc_id = %block_result.doc_id,
+                collection = %collection_name,
+                error = %collection_error,
+                "Partial broadcast: document topic succeeded, collection topic failed"
+            );
+            BroadcastStatus::Failed(format!(
+                "Partial: collection topic failed: {}",
+                collection_error
+            ))
+        }
+        Ok(BroadcastResult::PartialCollectionOnly { document_error }) => {
+            // Per-doc topics only have subscribers when a client explicitly
+            // calls subscribe_document. For the common batch-create path
+            // nobody is watching the doc-topic, and gossipsub returns
+            // InsufficientPeers. Go's PublishToTopicAsync silently skips
+            // when the topic has no local subscription, so for parity we
+            // treat this as success: the collection-topic delivered to
+            // subscribed replicators, which is the meaningful path.
+            if document_error.contains("InsufficientPeers") {
                 tracing::debug!(
                     doc_id = %block_result.doc_id,
                     cid = %block_result.cid,
                     collection = %collection_name,
-                    attempts = attempt,
-                    "Broadcast document to P2P network"
+                    "Doc-topic has no subscribers; broadcast delivered via collection topic"
                 );
                 return BroadcastStatus::Success;
             }
-            Ok(BroadcastResult::PartialDocumentOnly { collection_error }) => {
-                let connected_peers = connected_peer_count(sync).await;
-                if let Some(delay_ms) =
-                    broadcast_retry_delay_ms(&collection_error, connected_peers, attempt)
-                {
-                    tracing::trace!(
-                        doc_id = %block_result.doc_id,
-                        attempt = attempt,
-                        connected_peers = connected_peers,
-                        delay_ms = delay_ms,
-                        "Retrying broadcast after collection-topic InsufficientPeers"
-                    );
-                    sync.network()
-                        .sleep(std::time::Duration::from_millis(delay_ms))
-                        .await;
-                    continue;
-                }
-                tracing::warn!(
-                    doc_id = %block_result.doc_id,
-                    collection = %collection_name,
-                    error = %collection_error,
-                    "Partial broadcast: document topic succeeded, collection topic failed"
+            tracing::warn!(
+                doc_id = %block_result.doc_id,
+                collection = %collection_name,
+                error = %document_error,
+                "Partial broadcast: collection topic succeeded, document topic failed"
+            );
+            BroadcastStatus::Failed(format!(
+                "Partial: document topic failed: {}",
+                document_error
+            ))
+        }
+        Ok(other) => {
+            tracing::warn!(
+                doc_id = %block_result.doc_id,
+                collection = %collection_name,
+                result = ?other,
+                "Unexpected broadcast result from P2P network"
+            );
+            BroadcastStatus::Failed(format!("Unexpected broadcast result: {:?}", other))
+        }
+        Err(e) => {
+            tracing::warn!(
+                doc_id = %block_result.doc_id,
+                collection = %collection_name,
+                error = %e,
+                "Failed to broadcast document to P2P network - local mutation succeeded"
+            );
+            if e.to_string().contains(p2p::error::BROADCAST_SLOT_ELAPSED) {
+                report_dropped(
+                    bus,
+                    block_result.cid,
+                    block_result.doc_id.clone(),
+                    collection_id.to_string(),
                 );
-                return BroadcastStatus::Failed(format!(
-                    "Partial: collection topic failed: {}",
-                    collection_error
-                ));
             }
-            Ok(BroadcastResult::PartialCollectionOnly { document_error }) => {
-                // Per-doc topics only have subscribers when a client explicitly
-                // calls subscribe_document. For the common batch-create path
-                // nobody is watching the doc-topic, and gossipsub returns
-                // InsufficientPeers. Go's PublishToTopicAsync silently skips
-                // when the topic has no local subscription, so for parity we
-                // treat this as success: the collection-topic delivered to
-                // subscribed replicators, which is the meaningful path.
-                if document_error.contains("InsufficientPeers") {
-                    tracing::debug!(
-                        doc_id = %block_result.doc_id,
-                        cid = %block_result.cid,
-                        collection = %collection_name,
-                        attempts = attempt,
-                        "Doc-topic has no subscribers; broadcast delivered via collection topic"
-                    );
-                    return BroadcastStatus::Success;
-                }
-                tracing::warn!(
-                    doc_id = %block_result.doc_id,
-                    collection = %collection_name,
-                    error = %document_error,
-                    "Partial broadcast: collection topic succeeded, document topic failed"
-                );
-                return BroadcastStatus::Failed(format!(
-                    "Partial: document topic failed: {}",
-                    document_error
-                ));
-            }
-            Ok(other) => {
-                tracing::warn!(
-                    doc_id = %block_result.doc_id,
-                    collection = %collection_name,
-                    result = ?other,
-                    "Unexpected broadcast result from P2P network"
-                );
-                return BroadcastStatus::Failed(format!(
-                    "Unexpected broadcast result: {:?}",
-                    other
-                ));
-            }
-            Err(e) => {
-                let err_str = e.to_string();
-                let connected_peers = connected_peer_count(sync).await;
-                if let Some(delay_ms) = broadcast_retry_delay_ms(&err_str, connected_peers, attempt)
-                {
-                    tracing::trace!(
-                        doc_id = %block_result.doc_id,
-                        attempt = attempt,
-                        connected_peers = connected_peers,
-                        delay_ms = delay_ms,
-                        "Retrying broadcast after InsufficientPeers"
-                    );
-                    sync.network()
-                        .sleep(std::time::Duration::from_millis(delay_ms))
-                        .await;
-                    continue;
-                }
-                if err_str.contains("InsufficientPeers") && connected_peers == 0 {
-                    tracing::debug!(
-                        doc_id = %block_result.doc_id,
-                        collection = %collection_name,
-                        attempts = attempt,
-                        "Skipping GossipSub retries because no P2P peers are connected"
-                    );
-                }
-                tracing::warn!(
-                    doc_id = %block_result.doc_id,
-                    collection = %collection_name,
-                    error = %e,
-                    attempts = attempt,
-                    "Failed to broadcast document to P2P network - local mutation succeeded"
-                );
-                if err_str.contains(p2p::error::BROADCAST_SLOT_ELAPSED) {
-                    report_dropped(
-                        bus,
-                        block_result.cid,
-                        block_result.doc_id.clone(),
-                        collection_id.to_string(),
-                    );
-                }
-                return BroadcastStatus::Failed(e.to_string());
-            }
+            BroadcastStatus::Failed(e.to_string())
         }
     }
 }
