@@ -189,11 +189,8 @@ fn raw_topics_carry_a_request_and_its_answer_as_bytes() {
         let (from, request) = b
             .next(|event| match event {
                 TransportEvent::GossipRawMessage {
-                    propagation_source,
-                    topic,
-                    data,
-                    ..
-                } if topic == "encryption" => Some((propagation_source, data)),
+                    source, topic, data, ..
+                } if topic == "encryption" => Some((source, data)),
                 _ => None,
             })
             .await;

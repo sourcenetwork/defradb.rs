@@ -43,6 +43,7 @@ where
                 &Peerstore::new(store.clone()).with_max_txn_retries(max_txn_retries),
                 config.secret_key_path.as_deref(),
                 peer_keyring,
+                None,
             )
             .await?
         }
