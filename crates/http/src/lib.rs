@@ -102,6 +102,8 @@ mod client_signer_tests;
 #[cfg(feature = "server")]
 mod client_signing;
 mod client_signing_wire;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+pub mod collection_mgmt_adapter;
 #[cfg(feature = "server")]
 pub mod error;
 #[cfg(feature = "server")]

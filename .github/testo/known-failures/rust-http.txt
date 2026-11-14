@@ -44,11 +44,7 @@ testo acp::dac::delete_with_index::acp_dac_delete_doc_by_id_with_reader_only_acc
 testo signature::txn_acp::an_anonymous_caller_cannot_verify_a_block_the_txn_created #2704
 testo acp::nac::list_p2p_replicator::nac_gates_list_p2_p_replicator_authorized_identity_allow_access #2702
 testo acp::nac::relation_admin::list_p2p_replicator::nac_admin_relation_can_list_p2_p_replicator #2702
-testo collection::refresh::list_actions::refresh_collection_list_action_does_not_list_completed_refreshes #2708
-testo collection::refresh::list_actions::refresh_collection_list_action_records_error_against_refresh_action #2708
-testo collection::truncate::list_actions::truncate_collection_list_action_does_not_list_completed_truncates #2708
 testo encryption::peer::doc_encryption_peer_upon_sync_should_sync_encrypted_dag #2705
-testo index::list_actions::index_backfill_after_successful_build_lists_no_action #2708
 testo signature::commit::signature_with_commit_query_should_be_hex_encoded #2701
 testo signature::commit::signature_with_commit_query_should_include_signature_data #2701
 testo signature::commit::signature_with_deleted_doc_and_commit_query_should_include_signature_data #2701
