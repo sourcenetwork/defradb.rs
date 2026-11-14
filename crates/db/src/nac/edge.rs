@@ -336,6 +336,7 @@ where
 
     /// A manager over a copy of the committed NAC state, read in one scope.
     /// `None` when the store has no scopes: its checks already read memory.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     async fn read_edge_grants(&self) -> Result<Option<Snapshot>> {
         let scope = self
             .nac
