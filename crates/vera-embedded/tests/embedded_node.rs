@@ -215,7 +215,11 @@ async fn answers_limits_and_failures_arrive_as_they_do_over_the_network() {
             Some(EmbeddedError::Stopped { .. })
         ));
     }
-    assert!(headers.next().await.is_none());
+    // A block can finalize while the node settles its stop, so the stream may
+    // still hold a header before it ends.
+    while let Some(header) = headers.next().await {
+        header.expect("header");
+    }
 }
 
 #[nuclei::test]
