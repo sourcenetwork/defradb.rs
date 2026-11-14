@@ -1513,6 +1513,24 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "proofs/tests/behavioral/kms.rs kms_unauthorized_dek_release_denied",
     },
     Property {
+        family: "KMS key distribution",
+        name: "chunks_flatten / chunk_size_le / answers_in_order / answers_length: a key batch split for a transport asks for every key once, no chunk over the per-request limit, and answers every key in its place",
+        axis: Lean,
+        anchor: "crates/kms/src/defra_kms.rs DefraKms::with_inputs, CHUNKS_IN_FLIGHT; crates/inputs/src/service.rs Inner::inline, Inner::answers",
+        model_ref: "KmsChunks (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/kms/src/remote_tests.rs a_batch_is_split_to_the_keys_a_transport_carries, a_split_batch_keeps_few_chunks_on_the_wire_at_once, a_retryable_send_failure_of_one_chunk_is_retried",
+    },
+    Property {
+        family: "KMS key distribution",
+        name: "WindowBound / PermitBound / RetriedBeforeError / OwnOutcome / AllAnswered: an inline call's chunks run at most flights_per_group at once and max_in_flight on the wire, a chunk errs only after its retries, each chunk's keys get that chunk's own outcome, and every chunk is answered",
+        axis: Tla,
+        anchor: "crates/inputs/src/service.rs Inner::inline, Inner::round_trip, Inner::answers; crates/kms/src/defra_kms.rs DefraKms::with_inputs, CHUNKS_IN_FLIGHT",
+        model_ref: "MC_InlineBatchFlights_Green.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/kms/src/remote_tests.rs a_split_batch_keeps_few_chunks_on_the_wire_at_once, a_retryable_send_failure_of_one_chunk_is_retried",
+    },
+    Property {
         // A merge that needs a DEK fetches it inline on the serial merge
         // executor, blocking unrelated merges for up to RESPONSE_TIMEOUT (5 s,
         // plus up to SUBSCRIBER_WAIT_TIMEOUT, 10 s, when no subscriber is

@@ -24,6 +24,9 @@ use crate::transport::KeyTransport;
 use crate::types::{EncryptionCid, KeyScope, PolicyDecision};
 use crate::wire::{FetchEncryptionKeyReply, FetchEncryptionKeyRequest};
 
+/// Chunks of one batch on the wire at once, when a transport splits it.
+pub(crate) const CHUNKS_IN_FLIGHT: usize = 4;
+
 /// How [`DefraKms`] reaches peers for keys, and how many keys it keeps in
 /// memory.
 #[derive(Clone, Debug)]
@@ -120,6 +123,18 @@ impl DefraKms {
     ) -> Self {
         let tier = Arc::new(KeyTier::new(store, inputs.key_tier_bytes));
         let test_ephemeral = Arc::new(AtomOption::none());
+        let mut remote_config = inputs.remote;
+        // A transport that carries fewer keys per request than a batch holds
+        // (iroh gossip, #2842) gets the batch as chunks, each its own round
+        // trip with its own retries, a few at once.
+        if let Some(per_request) = transports
+            .iter()
+            .filter_map(|transport| transport.max_keys_per_request())
+            .min()
+        {
+            remote_config.max_batch = remote_config.max_batch.min(per_request);
+            remote_config.flights_per_group = remote_config.flights_per_group.max(CHUNKS_IN_FLIGHT);
+        }
         let remote = inputs::Service::new(
             RemoteKeys {
                 tier: Arc::clone(&tier),
@@ -127,7 +142,7 @@ impl DefraKms {
                 node_identity,
                 test_ephemeral: Arc::clone(&test_ephemeral),
             },
-            inputs.remote,
+            remote_config,
             inputs.runtime,
         );
         Self {
