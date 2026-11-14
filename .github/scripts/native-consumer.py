@@ -95,6 +95,13 @@ LIVE_CASES = (
     ("node-builder", "node_builder::node_built_with_vera_rs_enforces_verified_document_access"),
     ("node-provider", "node_builder::node_built_with_a_host_provider_enforces_verified_document_access"),
     ("actor-spelling", "actor_spelling::either_spelling_of_a_secp256k1_actor_is_one_vera_actor"),
+    ("archived-record", "verified_records::archived_owner_record_does_not_authorize_access"),
+    ("permission-rules", "verified_records::native_permissions_honor_policy_exclusions_and_cross_object_rules"),
+    ("worker-recovery", "native_worker::native_worker_recovers_pending_and_rejected_submissions"),
+    ("provider-recovery", "native_worker::native_provider_recovers_pending_before_concurrent_requests"),
+    ("in-process-archived-record", "in_process::in_process_archived_owner_record_does_not_authorize_access"),
+    ("in-process-permission-rules", "in_process::in_process_permissions_are_proven_and_end_with_the_node"),
+    ("in-process-provider-recovery", "in_process::in_process_provider_recovers_pending_before_concurrent_requests"),
 )
 CARGO = ["cargo", "+1.99.1"]
 BUILD = ["--release", "--frozen", "-j", "2"]

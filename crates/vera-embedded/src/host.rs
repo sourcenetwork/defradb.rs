@@ -102,9 +102,21 @@ impl HostedNode {
     /// then, for one because a node stopped past its own deadline still
     /// holds the directory, is told to stop and left to finish alone.
     pub async fn start(config: HostConfig, edge: &Edge) -> Result<Self, HostError> {
+        Self::start_serving(config, None, edge).await
+    }
+
+    /// As [`start`](Self::start), with the node's JSON-RPC methods also
+    /// served on `rpc_listen`, for a client in another process. What it reads
+    /// there it verifies as it would from any Vera node.
+    pub async fn start_serving(
+        config: HostConfig,
+        rpc_listen: Option<SocketAddr>,
+        edge: &Edge,
+    ) -> Result<Self, HostError> {
         let genesis = genesis(config.deployment)?;
         let directory = config.data_dir.clone();
         let mut settings = EmbeddedConfig::new(config.data_dir, genesis, config.listen);
+        settings.rpc_listen = rpc_listen;
         // The node runs no more worker or verification threads than the
         // network runtime runs, pinned or not.
         let threads = edge.threads().max(1);

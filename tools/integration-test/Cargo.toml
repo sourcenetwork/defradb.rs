@@ -65,7 +65,7 @@ path = "src/bin/gen_scenarios/main.rs"
 required-features = ["generator"]
 
 [dev-dependencies]
-vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "a9ce2e431d6f43786f94946dfc5c8a3405a9a8f6" }
+vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "1218f068d09b2a46aecbbd984caec6da1d910f8b" }
 mantra-macros = "0.9"
 keyring = { path = "../../crates/keyring" }
 vera-client = "0.1.2"
@@ -74,6 +74,8 @@ vera-modules = "0.1.2"
 alloy-sol-types.workspace = true
 acp = { path = "../../crates/acp" }
 vera = { path = "../../crates/vera" }
+# The Vera node the in-process provider tests host themselves.
+vera-embedded = { path = "../../crates/vera-embedded", features = ["node"] }
 libc = "0.2"
 ciborium = { workspace = true }
 serial_test = "4"
