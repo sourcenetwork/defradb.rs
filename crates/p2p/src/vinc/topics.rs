@@ -205,7 +205,11 @@ impl<H: Hosted + 'static> Node<H> {
                     .subscribed
                     .borrow()
                     .contains(topic_name(topic).as_str()),
-                Event::Lost { .. } => false,
+                Event::Lost { .. }
+                | Event::AdjacencyShort { .. }
+                | Event::ReachRefused { .. }
+                | Event::ReachClosed
+                | Event::ReachOpened => false,
             };
             if foreign {
                 continue;
@@ -222,14 +226,31 @@ impl<H: Hosted + 'static> Node<H> {
                 Event::Message {
                     topic,
                     origin,
+                    hop,
                     payload,
                     ..
-                } => match self.delivery(topic_name(&topic), origin, payload) {
+                } => match self.delivery(topic_name(&topic), origin, &hop, payload) {
                     Some(event) => event,
                     None => continue,
                 },
                 Event::Lost { count } => {
                     warn!(count, "vinc topic events were dropped: the queue was full");
+                    continue;
+                }
+                Event::AdjacencyShort { sessions, named } => {
+                    warn!(sessions, ?named, "vinc hubs were told only some of this node's peers");
+                    continue;
+                }
+                Event::ReachRefused { node } => {
+                    warn!(peer_id = %node_to_peer_id(&node), "vinc hub adjacency table full: a peer's record was refused");
+                    continue;
+                }
+                Event::ReachClosed => {
+                    warn!("vinc hub adjacency table closed");
+                    continue;
+                }
+                Event::ReachOpened => {
+                    debug!("vinc hub adjacency table opened again");
                     continue;
                 }
             };
@@ -242,7 +263,13 @@ impl<H: Hosted + 'static> Node<H> {
 
     /// The transport event a message becomes, or `None` when it is not
     /// delivered.
-    fn delivery(&self, topic: String, origin: NodeId, payload: Vec<u8>) -> Option<EventOut> {
+    fn delivery(
+        &self,
+        topic: String,
+        origin: NodeId,
+        hop: &NodeId,
+        payload: Vec<u8>,
+    ) -> Option<EventOut> {
         // ponytail: "on a mesh" is "holds a peer session"; two meshes that
         // share a hub still hear each other. Exact reach needs the hub to know
         // who is connected to whom (vinc facade gap).
@@ -254,7 +281,8 @@ impl<H: Hosted + 'static> Node<H> {
         let message_id = MessageId::new(uuid::Uuid::new_v4().to_string());
         if self.raw_topics.borrow().contains(&topic) {
             return Some(TransportEvent::GossipRawMessage {
-                propagation_source: origin_id,
+                propagation_source: node_to_peer_id(hop),
+                source: origin_id,
                 message_id,
                 topic,
                 data: payload,

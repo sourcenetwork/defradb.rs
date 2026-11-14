@@ -86,7 +86,7 @@ impl Node {
             txn_broadcaster: Some(Arc::clone(&peer.replication.txn_broadcaster)),
             wire_merge_acp: None,
             wire_doc_pusher_acp: None,
-            kms_transport: Some(Arc::clone(&peer.kms_transport)),
+            kms_transport: Some(peer.kms_transport.clone() as Arc<dyn kms::KeyTransport>),
             wire_kms: Some(Box::new(move |kms| merge_handler_for_kms.set_kms(kms))),
             local_peer_id: peer.local_peer_id.clone(),
             se_transport,

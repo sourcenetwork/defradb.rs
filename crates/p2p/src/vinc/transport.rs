@@ -634,7 +634,8 @@ impl P2PTransport for VincTransport {
         providers: Vec<PeerId>,
         missing: Vec<Cid>,
     ) -> Result<QueryId> {
-        self.sync(car_request(root, missing, None), providers).await
+        self.sync(car_request(root, missing, None, Vec::new()), providers)
+            .await
     }
 
     async fn sync_blocks_within(
@@ -643,8 +644,9 @@ impl P2PTransport for VincTransport {
         providers: Vec<PeerId>,
         missing: Vec<Cid>,
         max_depth: u32,
+        haves: Vec<Cid>,
     ) -> Result<QueryId> {
-        self.sync(car_request(root, missing, Some(max_depth)), providers)
+        self.sync(car_request(root, missing, Some(max_depth), haves), providers)
             .await
     }
 
@@ -723,7 +725,12 @@ impl VincTransport {
 
 /// The CAR request a block sync sends each provider: the whole DAG below
 /// `root`, or the closure below the missing frontier, cut at `max_depth`.
-fn car_request(root: Cid, missing: Vec<Cid>, max_depth: Option<u32>) -> CarFetchRequest {
+fn car_request(
+    root: Cid,
+    missing: Vec<Cid>,
+    max_depth: Option<u32>,
+    haves: Vec<Cid>,
+) -> CarFetchRequest {
     if missing.is_empty() {
         CarFetchRequest::full_dag(root)
     } else {
@@ -731,6 +738,7 @@ fn car_request(root: Cid, missing: Vec<Cid>, max_depth: Option<u32>) -> CarFetch
             max_depth,
             ..CarFetchRequest::selective_dag(root, missing)
         }
+        .with_haves(haves)
     }
 }
 
