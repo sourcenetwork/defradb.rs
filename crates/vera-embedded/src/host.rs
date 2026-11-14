@@ -23,6 +23,9 @@ pub use vera_node::ThreadBudget;
 use crate::link::Link;
 use crate::EmbeddedTransport;
 
+/// How long a start waits before it asks again for a directory still held.
+const DIRECTORY_RETRY: Duration = Duration::from_millis(50);
+
 /// The deployment a hosted node creates on first start and reopens later.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Deployment {
@@ -135,9 +138,22 @@ impl HostedNode {
             }));
         }
         let threads = settings.thread_budget();
-        // Dropping the start at the deadline drops its stop sender, so a node
-        // that gets its directory later stops by itself.
-        let node = match edge.timeout(config.start_deadline, launch(settings)).await {
+        // The node refuses a directory another node holds; a node that was
+        // told to stop releases it shortly, so the start is asked again until
+        // the deadline. Dropping the start at the deadline drops its stop
+        // sender, so a node that got its directory stops by itself.
+        let held = edge.clone();
+        let start = async move {
+            loop {
+                match launch(settings.clone()).await {
+                    Err(vera_node::EmbedError::DirectoryInUse(_)) => {
+                        held.sleep(DIRECTORY_RETRY).await;
+                    }
+                    started => return started,
+                }
+            }
+        };
+        let node = match edge.timeout(config.start_deadline, start).await {
             Ok(started) => started.map_err(HostError::Start)?,
             Err(edge::EdgeError::Deadline(_)) => {
                 return Err(HostError::StartElapsed {
