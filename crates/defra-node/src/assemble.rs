@@ -320,6 +320,7 @@ where
                 document_acp.clone(),
                 strict_replicated_doc_access,
                 peer_keyring.as_ref(),
+                start_peer_key.as_ref(),
                 network.sibling(),
             )
             .await

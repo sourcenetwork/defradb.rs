@@ -170,10 +170,10 @@ async fn run(
                 socket: Rc::new(socket),
             })
             .map_err(|error| vinc_error("vinc endpoint", error))?;
-        Ok::<_, Error>((ep, allowlist, directory))
+        Ok::<_, Error>((ep, allowlist, directory, !config.hubs.is_empty()))
     }
     .await;
-    let (ep, allowlist, directory) = match built {
+    let (ep, allowlist, directory, has_hubs) = match built {
         Ok(built) => built,
         Err(error) => {
             let _ = ready.send(Err(error));
@@ -197,6 +197,8 @@ async fn run(
         raw_topics: RefCell::new(RapidHashSet::new()),
         subscribed: RefCell::new(RapidHashSet::new()),
         fanout: RefCell::new(RapidHashMap::new()),
+        has_hubs,
+        joining: RefCell::new(RapidHashMap::new()),
         next_query: Cell::new(1),
         next_connection: Cell::new(1),
     });
@@ -238,6 +240,10 @@ pub(super) struct Node<H: Hosted + 'static> {
     /// it names, so the engine hears who joins and leaves them, as gossipsub
     /// tells a peer's subscriptions on every topic.
     pub(super) fanout: RefCell<RapidHashMap<String, Instant>>,
+    /// Whether the endpoint names a hub: only a hub confirms a join.
+    pub(super) has_hubs: bool,
+    /// The subscribes waiting for a hub to confirm their topic's join.
+    pub(super) joining: RefCell<RapidHashMap<String, Vec<oneshot::Sender<()>>>>,
     pub(super) next_query: Cell<u64>,
     next_connection: Cell<u64>,
 }

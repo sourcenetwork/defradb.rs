@@ -21,6 +21,11 @@
 //!   directly or through other peers. A node with no peer session is on no
 //!   mesh, so it takes nothing a hub hands it. Modeled in
 //!   `proofs/tla/VincTopicDelivery.tla`.
+//! - **Subscribed means reachable.** A gossipsub subscription is in the
+//!   peers' view once the call returns; a vinc join returns before any hub
+//!   knows of it, so a message published at once could miss the new member.
+//!   A subscribe answers once a hub confirms the join (`Event::Joined`), or
+//!   after [`JOIN_WAIT`] with no confirmation.
 //! - **Raw topics.** A raw topic is marked raw before it is joined, so none
 //!   of its messages is ever decoded as a PushLog.
 
@@ -33,6 +38,7 @@ use vinc::{Event, Hosted, NodeId};
 
 use crate::error::{Error, Result};
 use crate::message::PushLogBroadcast;
+use crate::rt::oneshot;
 use crate::transport::{MessageId, PeerId, TransportEvent};
 
 use super::addr::node_to_peer_id;
@@ -43,6 +49,11 @@ use super::wire::vinc_error;
 /// How long a waiting publish holds for a member of its topic, as on iroh.
 const NEIGHBOR_WAIT: Duration = Duration::from_secs(10);
 
+/// How long a subscribe waits for a hub to confirm its join.
+/// Under the coordinator's subscription deadline (5 s), so a join no hub
+/// confirms still answers in time.
+const JOIN_WAIT: Duration = Duration::from_secs(3);
+
 /// How long a publish keeps its topic joined, gossipsub's default
 /// `fanout_ttl`.
 pub(super) const FANOUT_TTL: Duration = Duration::from_secs(60);
@@ -52,7 +63,7 @@ pub(super) const FANOUT_TTL: Duration = Duration::from_secs(60);
 const MAX_FANOUT: usize = 64;
 
 impl<H: Hosted + 'static> Node<H> {
-    pub(super) async fn subscribe(&self, topic: String, raw: bool, reply: Reply<bool>) {
+    pub(super) async fn subscribe(self: &Rc<Self>, topic: String, raw: bool, reply: Reply<bool>) {
         if raw {
             self.raw_topics.borrow_mut().insert(topic.clone());
         }
@@ -62,12 +73,45 @@ impl<H: Hosted + 'static> Node<H> {
             .ep
             .join(topic.as_bytes(), &[])
             .await
-            .map(|_| new)
             .map_err(|error| vinc_error("topic join", error));
         if joined.is_err() && new {
             self.subscribed.borrow_mut().remove(&topic);
         }
-        let _ = reply.send(joined);
+        // Only a join new to vinc waits: a topic a publish already holds
+        // joined was confirmed, or is being confirmed, by that join.
+        match joined {
+            Ok(true) if self.has_hubs => self.answer_when_confirmed(topic, new, reply),
+            joined => {
+                let _ = reply.send(joined.map(|_| new));
+            }
+        }
+    }
+
+    /// Answer a new subscription once a hub confirms its join, or after
+    /// [`JOIN_WAIT`]: the command loop does not wait.
+    fn answer_when_confirmed(self: &Rc<Self>, topic: String, new: bool, reply: Reply<bool>) {
+        let (confirmed, wait) = oneshot::channel();
+        self.joining
+            .borrow_mut()
+            .entry(topic.clone())
+            .or_default()
+            .push(confirmed);
+        let spawned = self.spawn(async move {
+            if crate::rt::time::timeout(JOIN_WAIT, wait).await.is_err() {
+                debug!(topic, "no vinc hub confirmed the join in time");
+            }
+            let _ = reply.send(Ok(new));
+        });
+        if spawned.is_none() {
+            warn!("the vinc endpoint is busy: a subscribe answers before its join is confirmed");
+        }
+    }
+
+    /// A hub confirmed the join of `topic`: answer its waiting subscribes.
+    fn joined(&self, topic: &str) {
+        for confirmed in self.joining.borrow_mut().remove(topic).unwrap_or_default() {
+            let _ = confirmed.send(());
+        }
     }
 
     /// Keep `topic` joined for [`FANOUT_TTL`] from now: a new hold joins it.
@@ -206,6 +250,7 @@ impl<H: Hosted + 'static> Node<H> {
                     .borrow()
                     .contains(topic_name(topic).as_str()),
                 Event::Lost { .. }
+                | Event::Joined { .. }
                 | Event::AdjacencyShort { .. }
                 | Event::ReachRefused { .. }
                 | Event::ReachClosed
@@ -235,6 +280,10 @@ impl<H: Hosted + 'static> Node<H> {
                 },
                 Event::Lost { count } => {
                     warn!(count, "vinc topic events were dropped: the queue was full");
+                    continue;
+                }
+                Event::Joined { topic, .. } => {
+                    self.joined(&topic_name(&topic));
                     continue;
                 }
                 Event::AdjacencyShort { sessions, named } => {
