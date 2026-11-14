@@ -22,6 +22,7 @@ fn config(directory: &Path) -> HostConfig {
             threshold: 1,
             operator_keys: vec![ACCOUNT_KEY.to_string()],
             created: now(),
+            policies: Vec::new(),
         },
         listen: "127.0.0.1:0".parse().expect("address"),
         start_deadline: Duration::from_secs(60),

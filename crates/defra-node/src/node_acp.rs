@@ -110,19 +110,33 @@ where
                 .map_err(Error::EdgeRuntime)?
                 .map_err(Error::VeraProvider)?
             };
-            let provider = Arc::new(
-                vera::VeraRsProvider::new(
-                    config.rpc_address.clone(),
-                    &config.consensus_key,
-                    &config.actor_key,
-                    worker,
-                    &config.tuning,
-                    event_bus,
-                    &edge,
-                )
-                .await
-                .map_err(Error::VeraProvider)?,
-            );
+            let provider = match &config.actor {
+                crate::VeraRsActor::Secp256k1Key(key) => {
+                    vera::VeraRsProvider::new(
+                        config.rpc_address.clone(),
+                        &config.consensus_key,
+                        key,
+                        worker,
+                        &config.tuning,
+                        event_bus,
+                        &edge,
+                    )
+                    .await
+                }
+                crate::VeraRsActor::Signer(signer) => {
+                    vera::VeraRsProvider::new_with_signer(
+                        config.rpc_address.clone(),
+                        &config.consensus_key,
+                        Arc::clone(signer),
+                        worker,
+                        &config.tuning,
+                        event_bus,
+                        &edge,
+                    )
+                    .await
+                }
+            };
+            let provider = Arc::new(provider.map_err(Error::VeraProvider)?);
             Ok(verified_acp_setup(
                 provider,
                 &edge,
@@ -303,7 +317,7 @@ mod tests {
                     rpc_address: "http://127.0.0.1:1".into(),
                     consensus_key: "not-a-key".into(),
                     deployment_id: 9001,
-                    actor_key: vec![7; 32],
+                    actor: crate::VeraRsActor::Secp256k1Key(vec![7; 32]),
                     worker_dir: worker_dir.clone(),
                     keyring,
                     tuning: vera::AcpTuning::default(),

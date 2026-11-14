@@ -98,8 +98,23 @@ where
             policies.keep(&built).await.map_err(failed)?;
             return Ok(built.id);
         };
-        if counter.is_some() {
-            return Err(DacPolicyError::ExplicitCounterRemote);
+        if let Some(counter) = counter {
+            // A remote ACP assigns its own counters, so a caller's counter
+            // can only name a policy that ACP already holds: one it was
+            // seeded with under the ID this definition and counter derive.
+            let built = build(&parsed, counter).map_err(failed)?;
+            let seeded = remote
+                .get_policy(&built.id)
+                .await
+                .map_err(failed)?
+                .ok_or_else(|| DacPolicyError::RemotePolicyAbsent {
+                    policy_id: built.id.clone(),
+                })?;
+            if seeded.id != built.id {
+                return Err(failed("the remote ACP answered for another policy".into()));
+            }
+            policies.keep(&built).await.map_err(failed)?;
+            return Ok(built.id);
         }
         let mut built = build(&parsed, UNASSIGNED_ID_COUNTER).map_err(failed)?;
         built.validate().map_err(|e| failed(e.to_string()))?;

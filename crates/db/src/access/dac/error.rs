@@ -20,10 +20,10 @@ pub enum DacPolicyError {
         acp: &'static str,
         creator: String,
     },
-    /// An explicit policy counter names a local policy ID; a remote ACP
-    /// assigns its own.
-    #[error("an explicit policy counter is only supported with local ACP")]
-    ExplicitCounterRemote,
+    /// An explicit policy counter names a policy ID, and the remote ACP,
+    /// which assigns its own counters, holds no policy under it.
+    #[error("the remote ACP holds no policy {policy_id}; with a remote ACP an explicit counter only names a policy it was seeded with")]
+    RemotePolicyAbsent { policy_id: String },
     /// The policy store could not be read for policy `policy_id`.
     #[error("policy validation failed with acp: {message}. PolicyID: {policy_id}")]
     Lookup { message: String, policy_id: String },

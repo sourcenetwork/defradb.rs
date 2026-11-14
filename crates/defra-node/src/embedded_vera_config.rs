@@ -7,6 +7,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub use vera_embedded::Deployment as EmbeddedVeraDeployment;
+pub use vera_embedded::SeededPolicy as EmbeddedVeraPolicy;
+
+pub use crate::vera_rs_config::VeraRsActor as EmbeddedVeraActor;
 
 /// vera.rs document ACP from a single-validator Vera node the DefraDB node
 /// starts before document ACP and stops on shutdown. The node is reached
@@ -30,6 +33,10 @@ pub struct EmbeddedVeraConfig {
     pub stop_deadline: Duration,
     /// The actor that owns this node's policies.
     pub actor: EmbeddedVeraActor,
+    /// Where the Vera node also serves its JSON-RPC methods, for another
+    /// node of the same account that verifies against this deployment.
+    /// `None` serves no listener.
+    pub rpc_listen: Option<SocketAddr>,
     /// Where the worker journals a submission until Vera confirms it. It must
     /// survive restarts, or a pending submission is lost.
     pub worker_dir: PathBuf,
@@ -38,43 +45,6 @@ pub struct EmbeddedVeraConfig {
     /// Timeouts for requests and receipts.
     pub tuning: vera::AcpTuning,
 }
-
-/// Who an embedded Vera node's policies belong to: the key that signs the
-/// delegations this node's worker acts under.
-#[derive(Clone)]
-pub enum EmbeddedVeraActor {
-    /// A 32-byte secp256k1 private key this process holds.
-    Secp256k1Key(Vec<u8>),
-    /// A signer for a key of any type vera.rs accepts (secp256k1, Ed25519,
-    /// P-256), which may be held outside the process. The node builds every
-    /// delegation itself and sends one only when the signer's signature
-    /// verifies under its DID's key.
-    Signer(Arc<dyn vera::vera_rs::DelegationSigner>),
-}
-
-impl fmt::Debug for EmbeddedVeraActor {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Secp256k1Key(_) => formatter.write_str("Secp256k1Key(..)"),
-            Self::Signer(signer) => formatter
-                .debug_tuple("Signer")
-                .field(&signer.did())
-                .finish(),
-        }
-    }
-}
-
-impl PartialEq for EmbeddedVeraActor {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Secp256k1Key(a), Self::Secp256k1Key(b)) => a == b,
-            (Self::Signer(a), Self::Signer(b)) => Arc::ptr_eq(a, b),
-            _ => false,
-        }
-    }
-}
-
-impl Eq for EmbeddedVeraActor {}
 
 impl fmt::Debug for EmbeddedVeraConfig {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -86,6 +56,7 @@ impl fmt::Debug for EmbeddedVeraConfig {
             .field("start_deadline", &self.start_deadline)
             .field("stop_deadline", &self.stop_deadline)
             .field("actor", &self.actor)
+            .field("rpc_listen", &self.rpc_listen)
             .field("worker_dir", &self.worker_dir)
             .field("tuning", &self.tuning)
             .finish_non_exhaustive()
@@ -100,6 +71,7 @@ impl PartialEq for EmbeddedVeraConfig {
             && self.start_deadline == other.start_deadline
             && self.stop_deadline == other.stop_deadline
             && self.actor == other.actor
+            && self.rpc_listen == other.rpc_listen
             && self.worker_dir == other.worker_dir
             && Arc::ptr_eq(&self.keyring, &other.keyring)
             && self.tuning == other.tuning
@@ -107,3 +79,14 @@ impl PartialEq for EmbeddedVeraConfig {
 }
 
 impl Eq for EmbeddedVeraConfig {}
+
+/// The identity of a running embedded Vera deployment: what a verifying
+/// client is configured with. It comes from the node that runs the
+/// deployment, never from a node being asked over the network.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EmbeddedVeraTrust {
+    /// The deployment's chain identifier.
+    pub chain_id: u64,
+    /// Hex consensus key every proof and header is verified against.
+    pub consensus_key: String,
+}

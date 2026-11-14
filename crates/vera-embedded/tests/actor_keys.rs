@@ -32,6 +32,7 @@ resources:
 
 async fn start(directory: &Path) -> EmbeddedNode {
     let genesis = SoloGenesis {
+        policies: Vec::new(),
         chain_id: DEPLOYMENT,
         operators: serde_json::from_value(json!({ "threshold": 1, "keys": [ACCOUNT_KEY] }))
             .expect("operator policy"),

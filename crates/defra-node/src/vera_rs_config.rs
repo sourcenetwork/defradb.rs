@@ -16,8 +16,8 @@ pub struct VeraRsConfig {
     pub consensus_key: String,
     /// The deployment the node's worker signs for.
     pub deployment_id: u64,
-    /// The 32-byte secp256k1 key of the actor that owns this node's policies.
-    pub actor_key: Vec<u8>,
+    /// The actor that owns this node's policies.
+    pub actor: VeraRsActor,
     /// Where the worker journals a submission until Vera confirms it. It must
     /// survive restarts, or a pending submission is lost.
     pub worker_dir: PathBuf,
@@ -45,7 +45,7 @@ impl PartialEq for VeraRsConfig {
         self.rpc_address == other.rpc_address
             && self.consensus_key == other.consensus_key
             && self.deployment_id == other.deployment_id
-            && self.actor_key == other.actor_key
+            && self.actor == other.actor
             && self.worker_dir == other.worker_dir
             && Arc::ptr_eq(&self.keyring, &other.keyring)
             && self.tuning == other.tuning
@@ -53,3 +53,40 @@ impl PartialEq for VeraRsConfig {
 }
 
 impl Eq for VeraRsConfig {}
+
+/// Who a node's Vera policies belong to: the key that signs the delegations
+/// the node's worker acts under.
+#[derive(Clone)]
+pub enum VeraRsActor {
+    /// A 32-byte secp256k1 private key this process holds.
+    Secp256k1Key(Vec<u8>),
+    /// A signer for a key of any type vera.rs accepts (secp256k1, Ed25519,
+    /// P-256), which may be held outside the process. The node builds every
+    /// delegation itself and sends one only when the signer's signature
+    /// verifies under its DID's key.
+    Signer(Arc<dyn vera::vera_rs::DelegationSigner>),
+}
+
+impl fmt::Debug for VeraRsActor {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Secp256k1Key(_) => formatter.write_str("Secp256k1Key(..)"),
+            Self::Signer(signer) => formatter
+                .debug_tuple("Signer")
+                .field(&signer.did())
+                .finish(),
+        }
+    }
+}
+
+impl PartialEq for VeraRsActor {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Secp256k1Key(a), Self::Secp256k1Key(b)) => a == b,
+            (Self::Signer(a), Self::Signer(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for VeraRsActor {}

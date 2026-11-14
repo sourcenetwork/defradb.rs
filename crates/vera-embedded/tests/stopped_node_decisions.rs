@@ -40,6 +40,7 @@ resources:
 async fn a_remembered_decision_is_not_given_past_the_freshness_limit() {
     let directory = tempfile::tempdir().unwrap();
     let genesis = SoloGenesis {
+        policies: Vec::new(),
         chain_id: DEPLOYMENT,
         operators: serde_json::from_value(json!({ "threshold": 1, "keys": [ACCOUNT_KEY] }))
             .expect("operator policy"),

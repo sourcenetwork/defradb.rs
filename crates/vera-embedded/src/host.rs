@@ -39,6 +39,21 @@ pub struct Deployment {
     /// The time the deployment is created, in Unix seconds. Read on first
     /// start only.
     pub created: u64,
+    /// Policies the deployment starts with. Part of its identity: a
+    /// directory is reopened only with the list it was created with.
+    pub policies: Vec<SeededPolicy>,
+}
+
+/// A policy a deployment holds from its first block, under the ID a local
+/// ACP derives from the same definition and counter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SeededPolicy {
+    /// The policy as YAML.
+    pub definition: String,
+    /// The counter its ID is derived from.
+    pub counter: u64,
+    /// The DID recorded as its owner.
+    pub owner: String,
 }
 
 /// Where a hosted node keeps its state and how long its host waits for it.
@@ -63,6 +78,8 @@ pub struct HostConfig {
 pub enum HostError {
     #[error("invalid operator policy: {0}")]
     Operators(#[source] serde_json::Error),
+    #[error("invalid seeded policy: {0}")]
+    Policies(#[source] serde_json::Error),
     #[error("the embedded Vera node did not start: {0}")]
     Start(#[source] vera_node::EmbedError),
     #[error(
@@ -239,5 +256,18 @@ fn genesis(deployment: Deployment) -> Result<SoloGenesis, HostError> {
         }))
         .map_err(HostError::Operators)?,
         timestamp: deployment.created,
+        policies: deployment
+            .policies
+            .into_iter()
+            .map(|policy| {
+                serde_json::from_value(serde_json::json!({
+                    "definition": policy.definition,
+                    "marshal_type": "ShortYaml",
+                    "counter": policy.counter,
+                    "owner": policy.owner,
+                }))
+                .map_err(HostError::Policies)
+            })
+            .collect::<Result<_, _>>()?,
     })
 }

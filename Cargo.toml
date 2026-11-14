@@ -322,14 +322,14 @@ iroh = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274d38fe
 iroh-base = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274d38fe3b41617a20f9bb7a10072" }
 iroh-dns = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274d38fe3b41617a20f9bb7a10072" }
 iroh-relay = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274d38fe3b41617a20f9bb7a10072" }
+# Temporary: the unreleased Vera crates, from the revision the node crates use.
+vera-acp = { git = "https://github.com/sourcenetwork/vera.rs", rev = "774ccd92c10a3313a15760c39d67e9b154865dbb" }
+vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "774ccd92c10a3313a15760c39d67e9b154865dbb" }
+vera-crypto = { git = "https://github.com/sourcenetwork/vera.rs", rev = "774ccd92c10a3313a15760c39d67e9b154865dbb" }
+vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "774ccd92c10a3313a15760c39d67e9b154865dbb" }
+vera-identity = { git = "https://github.com/sourcenetwork/vera.rs", rev = "774ccd92c10a3313a15760c39d67e9b154865dbb" }
+vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "774ccd92c10a3313a15760c39d67e9b154865dbb" }
+vera-permission = { git = "https://github.com/sourcenetwork/vera.rs", rev = "774ccd92c10a3313a15760c39d67e9b154865dbb" }
+vera-zanzibar = { git = "https://github.com/sourcenetwork/vera.rs", rev = "774ccd92c10a3313a15760c39d67e9b154865dbb" }
 
-# Resolve the Vera git crates' internal dependencies to the published 0.1.2 packages.
-[patch."https://github.com/sourcenetwork/vera.rs"]
-vera-acp = "0.1.2"
-vera-client = "0.1.2"
-vera-crypto = "0.1.2"
-vera-domain = "0.1.2"
-vera-identity = "0.1.2"
-vera-modules = "0.1.2"
-vera-permission = "0.1.2"
-vera-zanzibar = "0.1.2"
+

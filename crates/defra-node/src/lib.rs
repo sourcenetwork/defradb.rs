@@ -117,7 +117,10 @@ pub use defra_p2p_adapter::{
 pub use dense_search::{DenseHybridSearchHit, DenseHybridSearchRequest, DenseHybridSearchResponse};
 pub use embedded_signer::{EmbeddedSigner, EmbeddedSignerError};
 #[cfg(feature = "embedded-vera")]
-pub use embedded_vera_config::{EmbeddedVeraActor, EmbeddedVeraConfig, EmbeddedVeraDeployment};
+pub use embedded_vera_config::{
+    EmbeddedVeraActor, EmbeddedVeraConfig, EmbeddedVeraDeployment, EmbeddedVeraPolicy,
+    EmbeddedVeraTrust,
+};
 pub use error::{Error, Result};
 pub use events::EventName;
 pub use keyring;
@@ -137,7 +140,7 @@ pub use telemetry::{ConflictMetricsSnapshot, RetryLayerSnapshot};
 pub use telemetry::{TelemetryConfig, TelemetryHandle};
 pub use transaction::NodeTransaction;
 #[cfg(feature = "vera")]
-pub use vera_rs_config::VeraRsConfig;
+pub use vera_rs_config::{VeraRsActor, VeraRsConfig};
 pub use zeroize::Zeroizing;
 
 use network::NodeEdge;
@@ -269,6 +272,8 @@ pub struct Node {
     /// tells it to stop and waits for nothing.
     #[cfg(feature = "embedded-vera")]
     embedded_vera: kovan_queue::seg_queue::SegQueue<vera_embedded::HostedNode>,
+    #[cfg(feature = "embedded-vera")]
+    embedded_vera_trust: Option<EmbeddedVeraTrust>,
     /// Document ACP is a remote provider: its calls reach the network, so
     /// they stay where they are made.
     remote_acp: bool,
@@ -1096,6 +1101,13 @@ impl Node {
     #[cfg(feature = "vera")]
     pub fn vera_acp(&self) -> Option<&Arc<vera::VeraDocumentACP>> {
         self.vera_acp.as_ref()
+    }
+
+    /// What another node of the same account needs to verify against the
+    /// Vera deployment this node runs; `None` when it runs none.
+    #[cfg(feature = "embedded-vera")]
+    pub fn embedded_vera_trust(&self) -> Option<&EmbeddedVeraTrust> {
+        self.embedded_vera_trust.as_ref()
     }
 
     /// The limits queries on this node run under.

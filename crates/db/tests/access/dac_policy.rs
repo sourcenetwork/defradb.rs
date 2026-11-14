@@ -41,6 +41,7 @@ fn local_db() -> (DB<RegolithStore>, Arc<MemoryZanzibarStore>) {
 #[derive(Default)]
 struct Remote {
     creators: Atom<Vec<String>>,
+    seeded: Atom<Vec<Policy>>,
 }
 
 #[async_trait::async_trait]
@@ -52,8 +53,12 @@ impl RemotePolicies for Remote {
         Ok("remote-policy".to_owned())
     }
 
-    async fn get_policy(&self, _policy_id: &str) -> Result<Option<Policy>, String> {
-        Ok(None)
+    async fn get_policy(&self, policy_id: &str) -> Result<Option<Policy>, String> {
+        Ok(self
+            .seeded
+            .load_clone()
+            .into_iter()
+            .find(|policy| policy.id == policy_id))
     }
 
     fn light_client_status(&self) -> Result<LightClientStatus, String> {
@@ -190,14 +195,37 @@ fn a_remote_policy_gets_the_caller_as_creator_and_a_local_copy() {
         assert_eq!(kept.name, "Sensitive Rows");
         db.validate_resource_interface(&id, "users").await.unwrap();
 
+        let seeded = acp::policy_yaml::build_policy(
+            &acp::policy_yaml::parse_policy_yaml(POLICY).unwrap(),
+            1,
+        )
+        .unwrap();
         let err = db
             .add_dac_policy_with_counter_as(&context, POLICY, 1)
             .await
             .unwrap_err();
         assert!(
-            matches!(err, DacPolicyError::ExplicitCounterRemote),
+            matches!(&err, DacPolicyError::RemotePolicyAbsent { policy_id } if *policy_id == seeded.id),
             "{err}"
         );
+        assert!(mirror.get_policy(&seeded.id).await.unwrap().is_none());
+
+        remote.seeded.store(vec![seeded.clone()]);
+        let adopted = db
+            .add_dac_policy_with_counter_as(&context, POLICY, 1)
+            .await
+            .unwrap();
+        assert_eq!(adopted, seeded.id);
+        assert_eq!(remote.creators.load_clone(), vec![OWNER_DID.to_owned()]);
+        let kept = mirror
+            .get_policy(&adopted)
+            .await
+            .unwrap()
+            .expect("a local copy");
+        assert_eq!(kept.name, "Sensitive Rows");
+        db.validate_resource_interface(&adopted, "users")
+            .await
+            .unwrap();
         let status = db.acp_light_client_status_as(&context).await.unwrap();
         assert_eq!(status.height, 7);
     })

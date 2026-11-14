@@ -67,7 +67,7 @@ path = "src/bin/gen_scenarios/main.rs"
 required-features = ["generator"]
 
 [dev-dependencies]
-vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "589ba3453d258676d3e3736af955e50877351100" }
+vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "774ccd92c10a3313a15760c39d67e9b154865dbb" }
 mantra-macros = "0.9"
 keyring = { path = "../../crates/keyring" }
 vera-client = "0.1.2"

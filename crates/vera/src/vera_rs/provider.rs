@@ -116,6 +116,34 @@ impl VeraRsProvider {
         .await
     }
 
+    /// As [`new`](Self::new), for an actor whose key `signer` holds.
+    pub async fn new_with_signer(
+        rpc_url: String,
+        trusted_consensus_key: &str,
+        signer: Arc<dyn DelegationSigner>,
+        worker: NativeWorker,
+        tuning: &AcpTuning,
+        event_bus: Option<Arc<dyn Bus>>,
+        edge: &edge::Edge,
+    ) -> Result<Self, ProviderError> {
+        trusted_key(trusted_consensus_key)?;
+        let acp = HttpWsTransport::new(&rpc_url, &derive_ws_url(&rpc_url))
+            .map_err(|e| ProviderError::Config(format!("light client: {e}")))?;
+        let rpc = HttpTransport::new(rpc_url, tuning.request_timeout, edge)
+            .map_err(|e| ProviderError::Config(format!("HTTP client: {e}")))?;
+        Self::with_signer(
+            Arc::new(rpc),
+            Arc::new(acp),
+            trusted_consensus_key,
+            signer,
+            worker,
+            tuning,
+            event_bus,
+            edge,
+        )
+        .await
+    }
+
     /// A provider that reaches the node through the transports it is given:
     /// `rpc` carries submissions and receipt reads, `acp` the light client's
     /// proof reads and finalized headers. Neither is trusted: every receipt,

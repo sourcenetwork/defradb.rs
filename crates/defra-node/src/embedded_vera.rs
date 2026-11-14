@@ -26,7 +26,7 @@ pub(crate) async fn start<S>(
 where
     S: storage::corekv::Store + 'static,
 {
-    let node = vera_embedded::HostedNode::start(
+    let node = vera_embedded::HostedNode::start_serving(
         vera_embedded::HostConfig {
             data_dir: config.data_dir.clone(),
             deployment: config.deployment.clone(),
@@ -34,6 +34,7 @@ where
             start_deadline: config.start_deadline,
             stop_deadline: config.stop_deadline,
         },
+        config.rpc_listen,
         edge,
     )
     .await?;
