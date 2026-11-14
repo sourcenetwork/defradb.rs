@@ -149,6 +149,10 @@ impl DocumentAcpOperations for HttpNodeOps {
         true
     }
 
+    fn caller_of_delegation(&self, token: &str) -> Option<Result<identity::Did, String>> {
+        self.ops.document_acp.caller_of_delegation(token)
+    }
+
     fn bind_request(&self, context: &RequestContext) -> Option<Arc<dyn DocumentAcpOperations>> {
         Some(self.bound(context))
     }

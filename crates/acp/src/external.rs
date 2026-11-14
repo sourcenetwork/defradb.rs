@@ -224,6 +224,10 @@ where
         self.provider.bearer_token_for(did)
     }
 
+    fn caller_of_delegation(&self, token: &str) -> Option<std::result::Result<Did, String>> {
+        self.provider.caller_of_delegation(token)
+    }
+
     async fn redrive_registration(
         &self,
         policy_id: &str,

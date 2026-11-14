@@ -274,3 +274,149 @@ mod tests {
         ));
     }
 }
+
+/// The delegation a caller presents to a node so that the node's vera.rs ACP
+/// acts for it: `signer` lets `audience.worker` submit its policy commands on
+/// `audience.deployment` for `lifetime`.
+///
+/// A caller reads the audience from the node's light client status.
+pub async fn caller_delegation(
+    signer: &dyn DelegationSigner,
+    audience: &acp::DelegationAudience,
+    lifetime: std::time::Duration,
+) -> Result<String, BearerError> {
+    create_bearer_token(
+        signer,
+        &super::did_spelling::wire(signer.did()),
+        &audience.worker,
+        audience.deployment,
+        lifetime.as_secs(),
+    )
+    .await
+}
+
+/// The token type vera.rs gives a delegation.
+const DELEGATION_TYPE: &str = "vera-delegation-v1+jwt";
+
+/// Whether `token` declares itself a vera.rs delegation. Nothing is verified.
+pub(super) fn is_delegation(token: &str) -> bool {
+    use base64::Engine;
+
+    #[derive(serde::Deserialize)]
+    struct Header {
+        typ: String,
+    }
+    token
+        .split('.')
+        .next()
+        .and_then(|header| {
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(header)
+                .ok()
+        })
+        .and_then(|header| serde_json::from_slice::<Header>(&header).ok())
+        .is_some_and(|header| header.typ == DELEGATION_TYPE)
+}
+
+/// The DID that signed the delegation `token`, in DefraDB's spelling, when
+/// vera.rs would act under it now for `worker` on `deployment_id`: a current
+/// delegation for policy commands and nothing narrower or wider.
+pub(super) fn caller_of_delegation(
+    token: &str,
+    worker: &str,
+    deployment_id: u64,
+) -> Result<String, CallerDelegationError> {
+    let claims = vera_crypto::jwt::verify_bearer_token(token)?;
+    if claims.relay.is_some()
+        || claims.request.is_some()
+        || claims.scope != DelegationScope::PolicyCommands
+    {
+        return Err(CallerDelegationError::Kind);
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| CallerDelegationError::Clock)?
+        .as_secs();
+    claims.authorize(worker, deployment_id, now)?;
+    Ok(super::did_spelling::defra(&claims.iss).into_owned())
+}
+
+/// Why a caller's delegation was refused.
+#[derive(Debug, thiserror::Error)]
+pub(super) enum CallerDelegationError {
+    #[error(transparent)]
+    Token(#[from] vera_crypto::jwt::JwtError),
+    #[error("the delegation is not a plain delegation for policy commands")]
+    Kind,
+    #[error("the system clock is before the Unix epoch")]
+    Clock,
+}
+
+#[cfg(test)]
+mod caller_tests {
+    use super::*;
+    use crate::vera_rs::signer::Ed25519Signer;
+
+    const WORKER: &str = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
+
+    fn audience(deployment: u64) -> acp::DelegationAudience {
+        acp::DelegationAudience {
+            worker: WORKER.into(),
+            deployment,
+        }
+    }
+
+    #[nuclei::test]
+    async fn a_delegation_names_its_signer_only_to_the_worker_and_deployment_it_was_made_for() {
+        {
+            let signer = Ed25519Signer::from_slice(&[7; 32]).unwrap();
+            let lifetime = std::time::Duration::from_secs(60);
+            let token = caller_delegation(&signer, &audience(9), lifetime)
+                .await
+                .unwrap();
+            assert!(is_delegation(&token));
+            assert_eq!(
+                caller_of_delegation(&token, WORKER, 9).unwrap(),
+                signer.did()
+            );
+            assert!(caller_of_delegation(&token, WORKER, 10).is_err());
+            assert!(caller_of_delegation(&token, signer.did(), 9).is_err());
+
+            let mut forged = token.clone();
+            forged.pop();
+            forged.push(if token.ends_with('A') { 'B' } else { 'A' });
+            assert!(is_delegation(&forged));
+            assert!(caller_of_delegation(&forged, WORKER, 9).is_err());
+
+            let narrower = create_scoped_bearer_token(
+                &signer,
+                signer.did(),
+                WORKER,
+                9,
+                60,
+                DelegationScope::CreatePolicy,
+            )
+            .await
+            .unwrap();
+            assert!(matches!(
+                caller_of_delegation(&narrower, WORKER, 9),
+                Err(CallerDelegationError::Kind)
+            ));
+        }
+    }
+
+    #[test]
+    fn an_identity_token_is_not_a_delegation() {
+        let identity =
+            identity::RawIdentity::from_private_key(crypto::generate_ed25519().unwrap()).unwrap();
+        let token = identity::new_token(
+            &identity,
+            std::time::Duration::from_secs(60),
+            Some("127.0.0.1:9181".into()),
+            None,
+        )
+        .unwrap();
+        assert!(!is_delegation(std::str::from_utf8(&token).unwrap()));
+        assert!(!is_delegation("not a token"));
+    }
+}
