@@ -64,7 +64,6 @@ testo issues::t_2569::p2_p_update_with_pn_counter_float_overflow_decrement_preve
 testo issues::t_2569::p2_p_update_with_pn_counter_float_overflow_increment_prevents_querying #2711
 testo issues::t_2569::p2_p_update_with_pn_counter_float_overflow_prevents_collection_get #2711
 testo mutation::update::with_filter_action::update_with_invalid_filter_type_returns_error #2711
-testo collection_version::migrations::query::with_p2p::collection_migration_query_with_p2_p_replicated_doc_at_much_newer_schema_version_with_schema_history_gap #2517
 testo acp::nac::relation_admin::verify_signature::nac_admin_relation_go_client_can_verify_signature #2723
 testo acp::nac::verify_signature::nac_gates_verify_signature_go_client_authorized_identity_allow_access #2723
 testo signature::acp::signature_acp_if_has_access_to_doc_validate_signature #2723

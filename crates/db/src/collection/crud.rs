@@ -698,8 +698,15 @@ impl Collection {
             .filter(|version| *version != self.version_id())
         {
             let system = datastore.sibling(storage::namespace::Namespace::Systemstore);
+            // A placeholder, or a version of another collection (a placeholder
+            // a migration made before its source was known), is no definition
+            // of this collection: the document is stored as for an unknown one,
+            // under this collection's key.
             crate::definition::loader::get_collection_by_version_id(&system, version)
                 .await?
+                .filter(|schema| {
+                    !schema.is_placeholder && schema.collection_id == self.collection_id()
+                })
                 .map(|schema| Collection::new(schema, datastore.crdts().clone()))
         } else {
             None
