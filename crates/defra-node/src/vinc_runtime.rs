@@ -19,6 +19,7 @@ pub(crate) async fn setup_vinc<S>(
     document_acp: Arc<dyn acp::DocumentACP>,
     strict_replicated_doc_access: bool,
     peer_keyring: Option<&crate::PeerKeyring>,
+    start_peer_key: Option<&crate::StartPeerKey>,
     scope: edge::Scope,
 ) -> Result<P2PSetup>
 where
@@ -32,13 +33,14 @@ where
     let retry_schedule = config.sync.retry_schedule()?;
 
     // The seed the node's other transports use, so it keeps its peer id.
-    let seed = match config.peer_key {
-        PeerKeySource::File => zeroize::Zeroizing::new(
+    let seed = match (start_peer_key, &config.peer_key) {
+        (Some(start_key), _) => start_key.seed().clone(),
+        (None, PeerKeySource::File) => zeroize::Zeroizing::new(
             p2p::iroh::load_or_generate_secret_key(config.secret_key_path.as_deref())
                 .await?
                 .to_bytes(),
         ),
-        PeerKeySource::Store => {
+        (None, PeerKeySource::Store) => {
             crate::peer_key::load_with_keyring(
                 &Peerstore::new(store.clone()).with_max_txn_retries(max_txn_retries),
                 config.secret_key_path.as_deref(),
