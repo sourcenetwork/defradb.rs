@@ -529,7 +529,7 @@ macro_rules! generate_backend_tests {
     };
 }
 
-/// Macro for concurrency tests that need Arc<Store>
+/// Macro for concurrency tests that need `Arc<Store>`
 /// NOTE: This macro assumes generate_backend_tests! was already called, which imports test_suite
 #[macro_export]
 macro_rules! generate_backend_concurrency_tests {

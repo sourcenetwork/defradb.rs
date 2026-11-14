@@ -144,7 +144,7 @@ use network::NodeEdge;
 #[cfg(not(target_arch = "wasm32"))]
 use signed_query::{execute_with_signing_context, unavailable_node_signer_response};
 
-/// Type-erased schema operations so we can store DB<S> without leaking the Store generic.
+/// Type-erased schema operations so we can store `DB<S>` without leaking the `Store` generic.
 #[async_trait::async_trait]
 trait SchemaOps: Send + Sync {
     async fn add_collection(

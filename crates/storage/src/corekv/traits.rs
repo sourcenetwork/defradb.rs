@@ -472,7 +472,7 @@ pub trait TxnStore: Store {}
 /// Blanket implementation: any Store automatically implements TxnStore.
 impl<T> TxnStore for T where T: Store {}
 
-/// Blanket implementation of Reader for Box<dyn Txn>.
+/// Blanket implementation of `Reader` for `Box<dyn Txn>`.
 ///
 /// This allows boxed transactions to be used where Reader is required.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -499,7 +499,7 @@ impl Reader for Box<dyn Txn> {
     }
 }
 
-/// Blanket implementation of Writer for Box<dyn Txn>.
+/// Blanket implementation of `Writer` for `Box<dyn Txn>`.
 ///
 /// This allows boxed transactions to be used where Writer is required.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]

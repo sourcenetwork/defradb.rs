@@ -226,9 +226,29 @@ jobs:
       - name: Check defra-node feature graph
         run: bash .github/scripts/assert-defra-node-graph.sh
 
+  # Mirrors `just doc`: a broken intra-doc link or malformed doc comment fails.
+  docs:
+    name: Docs
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/volume=80gb/env=v3/extras=s3-cache+git-cache+apt-cache
+    steps:
+      - uses: runs-on/action@v2
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: docs
+          save-if: ${{ env.SAVE_CACHE == 'true' }}
+      - name: Build docs with warnings denied
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps
+
   lint:
     name: Lint
-    needs: [ci-scope, lint-default, feature-checks, dependency-checks]
+    needs: [ci-scope, lint-default, feature-checks, dependency-checks, docs]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -238,12 +258,14 @@ jobs:
           DEFAULT: ${{ needs.lint-default.result }}
           FEATURES: ${{ needs.feature-checks.result }}
           DEPENDENCIES: ${{ needs.dependency-checks.result }}
+          DOCS: ${{ needs.docs.result }}
         run: |
           test "$DEFAULT" = success
           # Skipped on a pull request without its ci: label; the merge queue runs them. Only then: a
           # failed scope job also skips them, and leaves RUN_FEATURES empty.
           test "$FEATURES" = success || { test "$FEATURES" = skipped && test "$RUN_FEATURES" = false; }
           test "$DEPENDENCIES" = success
+          test "$DOCS" = success
 
   unit-tests:
     name: Unit tests

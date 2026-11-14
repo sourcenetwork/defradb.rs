@@ -4,7 +4,7 @@
 //! when values are compared lexicographically as byte slices.
 //!
 //! Adapted from CockroachDB's encoding package:
-//! https://github.com/cockroachdb/cockroach/tree/v20.2.19/pkg/util/encoding
+//! <https://github.com/cockroachdb/cockroach/tree/v20.2.19/pkg/util/encoding>
 
 mod bool;
 mod bytes;
