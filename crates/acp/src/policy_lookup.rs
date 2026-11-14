@@ -51,4 +51,16 @@ pub struct LightClientStatus {
     pub cache_entries: usize,
     pub last_invalidation_height: u64,
     pub connected: bool,
+    /// What a caller's own delegation must name for the remote ACP to act
+    /// for that caller through this node; absent when it takes none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegation: Option<DelegationAudience>,
+}
+
+/// The worker and deployment a caller's delegation names: the node's
+/// submitting identity on the remote ACP, and that ACP's deployment.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DelegationAudience {
+    pub worker: String,
+    pub deployment: u64,
 }

@@ -231,4 +231,18 @@ pub trait VeraProvider: MaybeSendSync {
             "ACP light client status is not available for this provider".into(),
         ))
     }
+
+    /// What a caller's own delegation must name for this provider to act
+    /// under it; `None` when the provider takes none.
+    fn delegation_audience(&self) -> Option<acp::DelegationAudience> {
+        None
+    }
+
+    /// The DID that signed `token`, when `token` is a delegation this
+    /// provider may act under now: signed by its issuer, current, and naming
+    /// this provider's worker and deployment. `None` when `token` is not a
+    /// delegation at all, so the caller is authenticated some other way.
+    fn caller_of_delegation(&self, _token: &str) -> Option<Result<String, ProviderError>> {
+        None
+    }
 }
