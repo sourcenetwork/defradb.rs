@@ -39,6 +39,8 @@ DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
 UNIT_NAMES = (
     "abi::tests::delete_relationship_subject_userset_round_trips",
     "abi::tests::set_relationship_subject_object_edge_round_trips",
+    "bearer::caller_tests::a_delegation_names_its_signer_only_to_the_worker_and_deployment_it_was_made_for",
+    "bearer::caller_tests::an_identity_token_is_not_a_delegation",
     "bearer::key_types::a_p256_delegation_is_issued_under_the_compressed_spelling_only",
     "bearer::key_types::a_registered_ed25519_or_p256_identity_gets_a_delegation_vera_rs_verifies",
     "bearer::key_types::a_signer_whose_algorithm_and_key_disagree_issues_nothing",
