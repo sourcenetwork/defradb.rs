@@ -10,6 +10,9 @@ pub struct AddOptions {
     pub encrypt_doc: bool,
     /// Encrypt only these fields.
     pub encrypted_fields: Vec<String>,
+    /// Go's `EnableSigning`: `Some(false)` writes the documents unsigned,
+    /// `None` follows the node.
+    pub enable_signing: Option<bool>,
 }
 
 /// Which documents a filtered write acts on: a filter object, or its GraphQL

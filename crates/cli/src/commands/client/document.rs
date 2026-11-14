@@ -67,6 +67,10 @@ pub struct DocumentAddArgs {
     /// Comma-separated list of fields to encrypt
     #[arg(long, value_delimiter = ',')]
     pub encrypt_fields: Vec<String>,
+
+    /// Override signing for this operation
+    #[arg(long, num_args = 0..=1, default_missing_value = "true", require_equals = true)]
+    pub enable_signing: Option<bool>,
 }
 
 /// Arguments for document get command
@@ -158,6 +162,7 @@ impl DocumentAddArgs {
         let options = AddOptions {
             encrypt_doc: self.encrypt,
             encrypted_fields: self.encrypt_fields.clone(),
+            enable_signing: self.enable_signing,
         };
         let (client, txn) = write_client(ctx)?;
         let ids = client

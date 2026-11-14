@@ -42,10 +42,20 @@ where
         && docs.iter().all(|doc| doc.get("_docID").is_none());
     if typed {
         let request = QueryRequest::parsed(save_many::operation(collection, docs, options)?);
-        return response::saved_doc_ids(run(request).await, docs.len());
+        return response::saved_doc_ids(run(signed(request, options)).await, docs.len());
     }
     let mutation = request::add(collection, docs, options)?;
-    response::doc_ids(run(QueryRequest::new(mutation)).await, "add", collection)
+    let request = signed(QueryRequest::new(mutation), options);
+    response::doc_ids(run(request).await, "add", collection)
+}
+
+/// `request` carrying the write's own signing choice, which the edge keeps
+/// when it gives the request the caller's context.
+fn signed(mut request: QueryRequest, options: &AddOptions) -> QueryRequest {
+    request.context = request
+        .context
+        .with_signing_override(options.enable_signing);
+    request
 }
 
 /// Set the fields `patch` names on document `doc_id`.
@@ -83,7 +93,7 @@ where
     }
     let mutation = request::save(collection, doc_id, doc, options)?;
     response::single(response::doc_ids(
-        run(QueryRequest::new(mutation)).await,
+        run(signed(QueryRequest::new(mutation), options)).await,
         "upsert",
         collection,
     )?)
@@ -110,7 +120,7 @@ where
         return Ok(Vec::new());
     }
     let request = QueryRequest::parsed(save_many::operation(collection, docs, options)?);
-    response::saved_doc_ids(run(request).await, docs.len())
+    response::saved_doc_ids(run(signed(request, options)).await, docs.len())
 }
 
 /// Delete document `doc_id`.

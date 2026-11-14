@@ -134,18 +134,41 @@ fn json_body(body: &Bytes) -> Result<JsonValue, HttpError> {
     serde_json::from_slice(body).map_err(|e| HttpError::BadRequest(e.to_string()))
 }
 
-/// Go's `encrypt` and `encryptFields` query parameters.
+/// Go's `encrypt`, `encryptFields` and `enableSigning` query parameters.
 #[derive(Debug, Default, Deserialize)]
 pub struct AddParams {
     #[serde(default)]
     encrypt: Option<String>,
     #[serde(default, rename = "encryptFields")]
     encrypt_fields: Option<String>,
+    #[serde(default, rename = "enableSigning")]
+    enable_signing: Option<String>,
+}
+
+/// Go's `enableSigning` query parameter: the write's own signing choice.
+#[derive(Debug, Default, Deserialize)]
+pub struct SigningParams {
+    #[serde(default, rename = "enableSigning")]
+    enable_signing: Option<String>,
+}
+
+/// `enableSigning` as a choice; absent follows the node. Parsed as Go's
+/// `strconv.ParseBool` parses it, refusing what that refuses.
+fn signing_choice(value: Option<&str>) -> Result<Option<bool>, HttpError> {
+    match value {
+        None => Ok(None),
+        Some("1" | "t" | "T" | "TRUE" | "true" | "True") => Ok(Some(true)),
+        Some("0" | "f" | "F" | "FALSE" | "false" | "False") => Ok(Some(false)),
+        Some(other) => Err(HttpError::BadRequest(format!(
+            "strconv.ParseBool: parsing {other:?}: invalid syntax"
+        ))),
+    }
 }
 
 impl AddParams {
-    fn options(&self) -> AddOptions {
-        AddOptions {
+    fn options(&self) -> Result<AddOptions, HttpError> {
+        Ok(AddOptions {
+            enable_signing: signing_choice(self.enable_signing.as_deref())?,
             encrypt_doc: self.encrypt.as_deref() == Some("true"),
             encrypted_fields: self
                 .encrypt_fields
@@ -153,7 +176,7 @@ impl AddParams {
                 .filter(|fields| !fields.is_empty())
                 .map(|fields| fields.split(',').map(str::to_owned).collect())
                 .unwrap_or_default(),
-        }
+        })
     }
 }
 
@@ -170,20 +193,16 @@ pub async fn add_document(
     Query(params): Query<AddParams>,
     body: Bytes,
 ) -> Result<Json<Vec<String>>, HttpError> {
+    let options = params.options()?;
     let docs = match json_body(&body)? {
         JsonValue::Array(docs) => docs,
         doc => vec![doc],
     };
     let server = Server::new(state, identity, &headers)?;
-    documents::add(
-        |r| server.run_request(r),
-        &collection,
-        &docs,
-        &params.options(),
-    )
-    .await
-    .map(Json)
-    .map_err(refused)
+    documents::add(|r| server.run_request(r), &collection, &docs, &options)
+        .await
+        .map(Json)
+        .map_err(refused)
 }
 
 /// Update a single document.
@@ -196,11 +215,18 @@ pub async fn update_document(
     identity: ExtractIdentity,
     headers: HeaderMap,
     Path((collection, doc_id)): Path<(String, String)>,
+    Query(params): Query<SigningParams>,
     body: Bytes,
 ) -> Result<StatusCode, HttpError> {
+    let enable_signing = signing_choice(params.enable_signing.as_deref())?;
     let patch = json_body(&body)?;
     let server = Server::new(state, identity, &headers)?;
-    documents::update(|m| server.run(m), &collection, &doc_id, &patch)
+    let run = |mutation| {
+        let mut request = QueryRequest::new(mutation);
+        request.context = request.context.with_signing_override(enable_signing);
+        server.run_request(request)
+    };
+    documents::update(run, &collection, &doc_id, &patch)
         .await
         .map(|()| StatusCode::OK)
         .map_err(refused)
@@ -298,4 +324,32 @@ pub async fn update_documents_with_filter(
     .await
     .map(Json)
     .map_err(refused)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{signing_choice, HttpError};
+
+    #[test]
+    fn enable_signing_parses_as_go_parse_bool() {
+        for yes in ["1", "t", "T", "TRUE", "true", "True"] {
+            assert_eq!(signing_choice(Some(yes)).unwrap(), Some(true), "{yes}");
+        }
+        for no in ["0", "f", "F", "FALSE", "false", "False"] {
+            assert_eq!(signing_choice(Some(no)).unwrap(), Some(false), "{no}");
+        }
+        assert_eq!(signing_choice(None).unwrap(), None);
+    }
+
+    #[test]
+    fn enable_signing_refuses_what_go_parse_bool_refuses() {
+        for bad in ["", "nope", "yes", "tRUE", "2"] {
+            match signing_choice(Some(bad)) {
+                Err(HttpError::BadRequest(message)) => {
+                    assert!(message.contains("invalid syntax"), "{message}")
+                }
+                other => panic!("{bad:?} gave {other:?}"),
+            }
+        }
+    }
 }
