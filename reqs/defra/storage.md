@@ -281,6 +281,13 @@ Transaction behaviour beyond what Go's integration suite checks.
 
 A transaction that reads document alice and updates her `age` to 10 commits successfully even though another writer rewrote every field of bob (the next document in the collection) and committed in between.
 
+# `defra.txn.returned_field_not_decided`: A field an update returns does not conflict
+
+- **Parents:** ["defra.txn"]
+- **Scenarios:** ["txn::returned_field::an_update_commits_beside_a_write_of_a_field_it_returned"]
+
+A transaction runs `update_Snap(input: {status: "claimed"}) { content }` and gets `content: "init"`; another writer sets `content` to `"changed"` and commits first. The transaction still commits, and the document reads `status: "claimed"`, `content: "changed"`. What an update returns is read, not decided on, so it is not validated at commit. Go conflicts here.
+
 # `defra.document`: Building documents from client values
 
 - **Parents:** ["defra"]

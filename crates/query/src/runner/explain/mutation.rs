@@ -123,8 +123,12 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         // For update/upsert: Phase 1 captures the "find + mutate" scan metrics.
         let phase1 = if mutation.mutation_type != MutationType::Add {
             Some(
-                self.execute_select_with_metrics(&metric_select, caller_identity.clone())
-                    .await?,
+                self.execute_select_with_metrics(
+                    &metric_select,
+                    caller_identity.clone(),
+                    &mut Vec::new(),
+                )
+                .await?,
             )
         } else {
             None
@@ -253,8 +257,12 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         // For update/upsert: Phase 2 captures the "return results" scan metrics.
         let phase2 = if mutation.mutation_type != MutationType::Delete {
             Some(
-                self.execute_select_with_metrics(&metric_select, caller_identity.clone())
-                    .await?,
+                self.execute_select_with_metrics(
+                    &metric_select,
+                    caller_identity.clone(),
+                    &mut Vec::new(),
+                )
+                .await?,
             )
         } else {
             None

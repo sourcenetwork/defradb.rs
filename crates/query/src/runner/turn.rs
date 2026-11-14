@@ -431,6 +431,7 @@ where
                                 identity,
                                 explain_type,
                                 variables.as_ref(),
+                                &mut warnings,
                             )
                             .await
                     } else {

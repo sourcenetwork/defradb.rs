@@ -705,6 +705,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                                 identity,
                                 explain_type,
                                 variables.as_ref(),
+                                &mut warnings,
                             )
                             .await
                     } else {

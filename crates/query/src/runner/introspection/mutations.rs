@@ -8,7 +8,7 @@ use super::descriptions as d;
 /// Build the Mutation type, with Go's fields, arguments and types. `docIDs` on
 /// update and delete is defradb.rs's own spelling of `docID`, kept alongside.
 pub(super) fn build_mutation_type(collections: &[Arc<CollectionVersion>]) -> Object {
-    let mut mutation = Object::new("Mutation").description("Root mutation type");
+    let mut mutation = Object::new("Mutation");
 
     for collection in collections {
         // Embedded-only types have no mutations, and `@chunk` collections are
