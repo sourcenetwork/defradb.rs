@@ -97,6 +97,21 @@ ignore = [
     { id = "RUSTSEC-2026-0489", reason = "hickory-proto 0.25 via libp2p 0.56; zone-file text parsing only; #2813" },
     { id = "RUSTSEC-2026-0490", reason = "hickory-proto 0.25 via libp2p 0.56; zone-file lexer only; #2813" },
     { id = "RUSTSEC-2026-0491", reason = "hickory-proto 0.25 via libp2p 0.56; reachable via DNS answers; fix needs libp2p 0.57; #2813" },
+    # Also fixed only past libp2p 0.56: seven more hickory-proto DNSSEC
+    # validation flaws (DNSSEC is not enabled), hickory-resolver returning
+    # records that failed DNSSEC validation (same), and libp2p-gossipsub 0.49
+    # keeping PRUNE backoffs for topics the node never joined. The gossipsub one
+    # is reachable: a peer can grow memory with PRUNEs until the backoffs expire.
+    # Its fix is gossipsub 0.50.1, in libp2p 0.57. Remove all with #2813.
+    { id = "RUSTSEC-2026-0504", reason = "hickory-proto 0.25 via libp2p 0.56; DNSSEC validation, not enabled; #2813" },
+    { id = "RUSTSEC-2026-0505", reason = "hickory-proto 0.25 via libp2p 0.56; DNSSEC validation, not enabled; #2813" },
+    { id = "RUSTSEC-2026-0511", reason = "hickory-proto 0.25 via libp2p 0.56; DNSSEC validation, not enabled; #2813" },
+    { id = "RUSTSEC-2026-0512", reason = "hickory-proto 0.25 via libp2p 0.56; DNSSEC validation, not enabled; #2813" },
+    { id = "RUSTSEC-2026-0530", reason = "hickory-proto 0.25 via libp2p 0.56; DNSSEC validation, not enabled; #2813" },
+    { id = "RUSTSEC-2026-0531", reason = "hickory-proto 0.25 via libp2p 0.56; DNSSEC validation, not enabled; #2813" },
+    { id = "RUSTSEC-2026-0532", reason = "hickory-proto 0.25 via libp2p 0.56; DNSSEC validation, not enabled; #2813" },
+    { id = "RUSTSEC-2026-0514", reason = "hickory-resolver via libp2p 0.56; DNSSEC validation, not enabled; #2813" },
+    { id = "RUSTSEC-2026-0534", reason = "libp2p-gossipsub 0.49 via libp2p 0.56; reachable PRUNE memory growth; fix needs libp2p 0.57; #2813" },
 ]
 
 [licenses]
