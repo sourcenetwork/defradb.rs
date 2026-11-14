@@ -11,7 +11,7 @@
 //! - `native` — native host (event channel). Default-on.
 //! - `vera` — on-chain document ACP. Default-on. Omit for local-only ACP.
 //! - `wasmtime-runtime` — Lens WASM execution. Default-on. Without it,
-//!   [`Node::set_migration`] returns an explicit error.
+//!   [`Node::set_migration_as`] returns an explicit error.
 //! - `p2p` — Iroh/QUIC replication. Implies `native`. Does **not** compile libp2p.
 //!   `iroh` is the same feature under its former name.
 //! - `libp2p` — libp2p replication. Implies `native`. Off by default, so the
@@ -671,7 +671,7 @@ impl Node {
     }
 
     /// The context the node's own operations run in, and the owner of the
-    /// transactions it begins: the node's principal ([`Self::node_principal`])
+    /// transactions it begins: the node's principal (`node_principal`)
     /// acts in it. On a node that acts as its identity, DB-layer NAC checks
     /// resolve to the node itself (which holds full access). Without a node
     /// identity, or on an identity-only node, it is [`RequestContext::ambient`]
@@ -822,7 +822,7 @@ impl Node {
     /// List the names of every active collection known to the node.
     ///
     /// Useful for idempotent schema-bootstrap flows that need to decide whether
-    /// to call [`Self::add_collection`] (create) or [`Self::patch_collection`] (evolve).
+    /// to call [`Self::add_collection`] (create) or [`Self::patch_collection_as`] (evolve).
     pub fn list_collections(&self) -> Result<Vec<String>> {
         self.schema_ops.list_collections()
     }

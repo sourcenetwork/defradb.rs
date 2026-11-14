@@ -130,14 +130,14 @@ pub trait Reader: MaybeSendSync + private::Sealed {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait Writer: MaybeSendSync + private::Sealed {
-    /// [`merge`](Self::merge) through a shared reference.
+    /// [`Self::merge`] through a shared reference.
     async fn merge_shared(&self, _key: &[u8], _operand: &[u8]) -> Result<()> {
         Err(super::errors::Error::Other(
             "value merges are unsupported by this store".into(),
         ))
     }
 
-    /// [`append`](Self::append) through a shared reference.
+    /// [`Self::append`] through a shared reference.
     async fn append_shared(
         &self,
         _log: &super::types::AppendLog,
@@ -149,7 +149,7 @@ pub trait Writer: MaybeSendSync + private::Sealed {
         ))
     }
 
-    /// [`truncate_log`](Self::truncate_log) through a shared reference.
+    /// [`Self::truncate_log`] through a shared reference.
     async fn truncate_log_shared(
         &self,
         _log: &super::types::AppendLog,
@@ -169,10 +169,10 @@ pub trait Writer: MaybeSendSync + private::Sealed {
         ))
     }
 
-    /// [`set`](Self::set) through a shared reference.
+    /// [`Self::set`] through a shared reference.
     async fn set_shared(&self, key: &[u8], value: &[u8]) -> Result<()>;
 
-    /// [`delete`](Self::delete) through a shared reference.
+    /// [`Self::delete`] through a shared reference.
     async fn delete_shared(&self, key: &[u8]) -> Result<()>;
 
     /// Apply an operator-defined operand without reading the value first.
@@ -337,9 +337,9 @@ pub trait Dropable: Store + private::Sealed {
 ///
 /// # Callbacks
 ///
-/// [`on_commit`](Txn::on_commit) and [`on_abort`](Txn::on_abort) register
+/// [`Txn::on_commit`] and [`Txn::on_abort`] register
 /// what runs once the transaction ends: after a commit, or after any other
-/// end. The [`callbacks`](super::callbacks) module says in what order.
+/// end. The [`super::callbacks`] module says in what order.
 ///
 /// # Callback Panic Handling
 ///
@@ -417,7 +417,7 @@ pub trait Txn: ReaderWriter + private::Sealed {
     /// Plain callbacks run once the commit is durable. An ordered one goes
     /// out with every commit's events in commit-receipt order, so it needs a
     /// commit receipt: a read-only transaction refuses it with
-    /// [`Error::ReadOnlyTxn`](super::Error::ReadOnlyTxn).
+    /// [`super::Error::ReadOnlyTxn`].
     ///
     /// ```no_run
     /// use storage::corekv::{OnAbort, OnCommit, Store};

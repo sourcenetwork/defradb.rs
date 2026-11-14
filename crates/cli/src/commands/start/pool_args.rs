@@ -30,7 +30,7 @@ pub struct WorkerArgs {
     #[arg(long, env = "DEFRA_WORKER_SMT")]
     pub worker_smt: Option<String>,
 
-    /// Each worker's NUMA memory policy: off, local or bind:<nodes>
+    /// Each worker's NUMA memory policy: off, local or bind:NODES
     #[arg(long, env = "DEFRA_WORKER_MEMORY_POLICY")]
     pub worker_memory_policy: Option<String>,
 

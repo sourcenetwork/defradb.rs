@@ -28,7 +28,7 @@
 //! store, which keeps it transactional and durable without a redo log. Every
 //! pending write also appends to a commit-ordered log, so searches share an
 //! in-memory copy of the set and catch it up from the log rather than scan it
-//! ([`pending_cache`]).
+//! (`pending_cache`).
 //!
 //! ADC ranks by squared distance, which orders cosine only on unit vectors and
 //! Euclidean by definition, so the engine refuses only a dot-product metric.

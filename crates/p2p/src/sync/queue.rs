@@ -124,7 +124,7 @@ impl ProcessQueue {
     /// Returns:
     /// - `Ok(ProcessGuard)` if this caller owns the CID now
     /// - `Err(ProcessWait)` if another caller does; await
-    ///   [`ProcessWait::released`] to know when it lets go
+    ///   `ProcessWait::released` to know when it lets go
     ///
     /// # Example
     ///
