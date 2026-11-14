@@ -110,6 +110,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | HTTP client redirects and body deadline | Lean | net |
 | Connect fallback race | TLA+ | net |
 | ActivePeers listen addresses | TLA+ | p2p |
+| vinc reply bridge | TLA+ & Lean | p2p (vinc transport) |
 | Coordinator shutdown drain | TLA+ | p2p, edge |
 | Edge completion | TLA+ | edge |
 | Edge gate continuation | TLA+ | edge, net (#2546) |

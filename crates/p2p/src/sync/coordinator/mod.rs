@@ -1699,6 +1699,10 @@ pub type Libp2pSyncCoordinator<B> =
 #[cfg(feature = "iroh-transport")]
 pub type IrohSyncCoordinator<B> = SyncCoordinator<B, crate::iroh::IrohTransport>;
 
+/// Type alias for SyncCoordinator using the vinc transport.
+#[cfg(all(feature = "vinc-transport", not(target_arch = "wasm32")))]
+pub type VincSyncCoordinator<B> = SyncCoordinator<B, crate::vinc::VincTransport>;
+
 #[cfg(test)]
 mod access_tests;
 #[cfg(test)]

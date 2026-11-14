@@ -74,6 +74,8 @@ mod transaction;
 #[cfg(feature = "vera")]
 mod vera_rs_config;
 pub mod version;
+#[cfg(feature = "vinc")]
+mod vinc_runtime;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -102,6 +104,8 @@ pub use config::Libp2pConfig;
 pub use config::SyncTuning;
 #[cfg(feature = "vera")]
 pub use config::VeraConfig;
+#[cfg(feature = "vinc")]
+pub use config::VincConfig;
 pub use config::{
     DocumentAcpConfig, IndexBuildGateHandle, NodeConfig, NodeSigning, Persistence,
     ReplicationFilterHandle, SigningKey, TransportConfig,
@@ -126,6 +130,9 @@ pub use lens::{LensConfig, LensModule, TransformId};
 #[cfg(feature = "managed-p2p")]
 pub use managed_p2p::{ManagedP2PSystem, ShutdownHandle, TransportKind};
 pub use node_builder::{NodeBuilder, StorageBackend, StoreProfile};
+/// Runs a vinc hub, which vinc topics travel through.
+#[cfg(feature = "vinc")]
+pub use p2p::vinc::spawn_hub as spawn_vinc_hub;
 pub use peer_keyring::PeerKeyring;
 pub use query::owners::{DocumentAccessDecision, DocumentAccessMode};
 pub use query::QueryLimits;

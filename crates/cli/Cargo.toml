@@ -145,6 +145,8 @@ orbis = ["dep:orbis"]
 iroh = ["p2p/iroh-transport", "p2p/kms", "defra-p2p-adapter/iroh", "defra-p2p-adapter/kms", "dep:iroh-net", "dep:rand"]
 # Host an iroh relay server (`net.iroh_relay_server`) alongside the endpoint.
 iroh-relay-server = ["iroh", "p2p/iroh-relay-server"]
+# The vinc transport (`net.transport: vinc`): direct connections, no gossip.
+vinc = ["p2p/vinc-transport", "p2p/kms", "defra-p2p-adapter/vinc", "defra-p2p-adapter/kms"]
 profiling = ["dep:tracing-chrome"]
 # Log the P2P delivery trace events proofs/tla/Trace_P2PDelivery.tla replays.
 model-trace = ["p2p/model-trace"]

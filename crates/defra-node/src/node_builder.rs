@@ -350,6 +350,13 @@ impl NodeBuilder {
         self
     }
 
+    /// Enable P2P replication over vinc: direct connections, no gossip.
+    #[cfg(feature = "vinc")]
+    pub fn with_vinc(mut self, config: crate::VincConfig) -> Self {
+        self.config.transport = TransportConfig::Vinc(config);
+        self
+    }
+
     /// Hand a pre-built telemetry handle to the node so it owns shutdown.
     ///
     /// The caller is responsible for calling [`telemetry::init`] and

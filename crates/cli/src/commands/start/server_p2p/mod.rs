@@ -12,6 +12,8 @@ use crate::error::Result;
 mod iroh;
 #[path = "libp2p.rs"]
 mod libp2p_setup;
+#[cfg(feature = "vinc")]
+mod vinc;
 
 type WireDocumentAcp = Option<Box<dyn FnOnce(Arc<dyn acp::DocumentACP>)>>;
 type WireKms = Option<Box<dyn FnOnce(Arc<dyn kms::KmsService>) + Send>>;
@@ -110,6 +112,40 @@ impl Node {
                 );
                 return Err(Error::InvalidTransport(
                     "iroh transport not enabled. Rebuild with --features iroh".into(),
+                ));
+            }
+        }
+
+        if config.net.transport == TransportType::Vinc {
+            #[cfg(feature = "vinc")]
+            {
+                return Self::setup_vinc_p2p(
+                    store,
+                    database,
+                    event_bus,
+                    config,
+                    peer_keypair,
+                    node_identity,
+                    se_key,
+                    document_acp,
+                    edge,
+                )
+                .await;
+            }
+            #[cfg(not(feature = "vinc"))]
+            {
+                let _ = (
+                    store,
+                    database,
+                    event_bus,
+                    peer_keypair,
+                    node_identity,
+                    se_key,
+                    document_acp,
+                    edge,
+                );
+                return Err(crate::error::Error::InvalidTransport(
+                    "vinc transport not enabled. Rebuild with --features vinc".into(),
                 ));
             }
         }

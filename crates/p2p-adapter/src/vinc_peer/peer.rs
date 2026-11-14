@@ -1,0 +1,425 @@
+//! Assembling the peer.
+
+use std::sync::Arc;
+
+use p2p::bitswap::{LateBoundServeAcp, ServeAcp};
+use p2p::vinc::VincTransport;
+use p2p::P2PTransport;
+use storage::corekv::Store;
+
+use super::config::VincPeerConfig;
+use super::events::spawn_event_handler;
+use super::shutdown::VincPeerShutdown;
+use crate::manage::hooks::ManageHooksCell;
+use crate::{
+    DbBlockClassifier, DbBlockReadGate, DbTransportDocPusher, DbTransportVersionSyncer,
+    P2POperations, TransportDocPusher, VincP2PAdapter,
+};
+
+pub type VincBlockstore<S> = blockstore::DefraBlockstore<S>;
+pub type VincCoordinator<S> = p2p::sync::VincSyncCoordinator<VincBlockstore<S>>;
+pub type VincReplicationStack<S> = db::merge::ReplicationStack<S, VincBlockstore<S>, VincTransport>;
+
+/// The management channel: inbound requests are served once `hooks` is
+/// populated, and `requester` relays outbound ones.
+pub struct VincManageChannel {
+    pub hooks: ManageHooksCell,
+    pub correlator: p2p::ManageCorrelator,
+    pub query_correlator: p2p::ManageQueryCorrelator,
+    pub requester: Arc<dyn crate::ManageRequester>,
+}
+
+/// A running vinc peer. Stop it with [`VincPeerShutdown::shutdown`].
+pub struct VincPeer<S: Store + 'static> {
+    pub transport: VincTransport,
+    pub coordinator: Arc<VincCoordinator<S>>,
+    pub replication: VincReplicationStack<S>,
+    pub doc_pusher: Arc<dyn TransportDocPusher>,
+    pub ops: Arc<dyn P2POperations>,
+    pub manage: VincManageChannel,
+    /// KMS key exchange over the raw `encryption` topics.
+    #[cfg(feature = "kms")]
+    pub kms_transport: Arc<p2p::kms::PubsubKeyTransport<VincTransport>>,
+    pub local_peer_id: String,
+    pub shutdown: VincPeerShutdown,
+    #[cfg(not(target_arch = "wasm32"))]
+    se_correlator: p2p::SeQueryCorrelator,
+}
+
+impl<S: Store + 'static> VincPeer<S> {
+    /// Binds the endpoint and starts every peer task on `config.edge`, so
+    /// the caller may be on any thread or executor.
+    pub async fn start(
+        store: Arc<S>,
+        database: Arc<db::DB<S>>,
+        event_bus: Arc<dyn events::Bus>,
+        config: VincPeerConfig,
+    ) -> p2p::Result<Self> {
+        let edge = config.edge.clone();
+        edge.spawn(Self::assemble(store, database, event_bus, config))
+            .await
+            .map_err(|error| {
+                p2p::Error::Transport(format!(
+                    "vinc peer did not start on the network runtime: {error}"
+                ))
+            })?
+    }
+
+    // Nothing here is Send on wasm32, and nothing needs to be: the browser has
+    // one thread.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+    async fn assemble(
+        store: Arc<S>,
+        database: Arc<db::DB<S>>,
+        event_bus: Arc<dyn events::Bus>,
+        config: VincPeerConfig,
+    ) -> p2p::Result<Self> {
+        let VincPeerConfig {
+            endpoint,
+            edge,
+            document_acp,
+            strict_replicated_doc_access,
+            sync,
+            access_mode,
+            rebroadcast_on_merge,
+            max_merge_depth,
+            retry_schedule,
+            load_persisted_collections,
+            replicator_push_options,
+        } = config;
+
+        let (transport, events, replicators, endpoint_task) =
+            p2p::vinc::spawn_endpoint(endpoint, edge.clone()).await?;
+        let local_peer_id = transport.local_peer_id().to_string();
+        p2p::model_trace!(Crash {
+            node: &local_peer_id,
+        });
+
+        let blockstore = Arc::new(
+            VincBlockstore::new(Arc::clone(&store), true)
+                .with_max_txn_retries(database.options().max_txn_retries())
+                .placed_on(database.pool()),
+        );
+        let serve_acp = Arc::new(LateBoundServeAcp::new());
+        let (mut coordinator, sync_events) =
+            match p2p::sync::SyncCoordinator::with_head_provider_and_serve_gate(
+                transport.clone(),
+                Arc::clone(&blockstore),
+                p2p::network::Network::on(edge.clone()),
+                sync,
+                access_mode,
+                replicators,
+                p2p::sync::pooled_collection_store(
+                    Arc::new(
+                        p2p::sync::P2PCollectionStore::new(Arc::clone(&store))
+                            .with_max_txn_retries(database.options().max_txn_retries()),
+                    ),
+                    database.pool(),
+                ),
+                Arc::new(db::merge::create_head_provider(Arc::clone(&database))),
+                Arc::new(replication_filter::QueryReplicationFilterMatcher::new()),
+                DbBlockClassifier::new_arc(Arc::clone(&database)),
+                Arc::clone(&serve_acp),
+            )
+            .await
+            {
+                Ok(coordinator) => coordinator,
+                Err(error) => {
+                    stop_endpoint(&transport, endpoint_task).await;
+                    return Err(error);
+                }
+            };
+
+        let failure_rx = db::merge::attach_failure_channel(&mut coordinator, 1024);
+        let coordinator = Arc::new(coordinator);
+        // Its durable registrations change on the database's worker pool.
+        coordinator
+            .install_pending_dag_store(p2p::sync::pooled_pending_store(
+                Arc::new(
+                    p2p::sync::PendingDagStore::new(Arc::clone(&store))
+                        .with_max_txn_retries(database.options().max_txn_retries()),
+                ),
+                database.pool(),
+            ))
+            .await;
+
+        // The requester's DID has to come from the vinc handshake: the KMS
+        // release policy checks the transport-authenticated identity, and an
+        // anonymous one is denied every policy-bound document.
+        #[cfg(feature = "kms")]
+        let kms_transport = match p2p::kms::PubsubKeyTransport::new(
+            transport.clone(),
+            Arc::new(p2p::vinc::VincPeerIdentityResolver::new(transport.clone())),
+            edge.clone(),
+        )
+        .await
+        {
+            Ok(kms_transport) => kms_transport,
+            Err(error) => {
+                coordinator.shutdown().await;
+                stop_endpoint(&transport, endpoint_task).await;
+                return Err(p2p::Error::Transport(format!(
+                    "failed to create KMS transport: {error}"
+                )));
+            }
+        };
+        #[cfg(feature = "kms")]
+        coordinator.install_kms_transport(Arc::clone(&kms_transport));
+
+        // The topics every libp2p node joins at start, so peers see each other
+        // JOINED on them. Raw: vinc has no pubsub doc-sync service, so what
+        // arrives is never decoded as a head hint.
+        for topic in [p2p::DOC_SYNC_TOPIC, p2p::SYNC_BRANCHABLE_TOPIC] {
+            if let Err(error) = transport.subscribe_raw(topic.to_owned()).await {
+                tracing::warn!(topic, %error, "failed to subscribe to default topic");
+            }
+        }
+
+        let replication = db::merge::create_replication_stack_with_max_merge_depth(
+            Arc::clone(&database),
+            Arc::clone(&blockstore),
+            Arc::clone(&coordinator),
+            max_merge_depth,
+        );
+        let doc_pusher_acp = Arc::new(
+            DbTransportDocPusher::new(
+                Arc::clone(&database),
+                transport.clone(),
+                coordinator.head_hint_car_authority(),
+            )
+            .with_retry_schedule(retry_schedule.clone()),
+        );
+
+        // Inbound events queue in the endpoint's channel until the handler
+        // below drains them, so binding ACP here precedes every merge and serve.
+        serve_acp.set(ServeAcp {
+            resolver: Arc::new(p2p::vinc::VincPeerIdentityResolver::new(transport.clone())),
+            gate: DbBlockReadGate::new_arc(Arc::clone(&document_acp)),
+        });
+        coordinator.set_document_acp(Arc::clone(&document_acp));
+        replication
+            .merge_handler
+            .set_strict_replicated_doc_access(strict_replicated_doc_access);
+        replication
+            .merge_handler
+            .set_document_acp(Arc::clone(&document_acp));
+        doc_pusher_acp.set_document_acp(Arc::clone(&document_acp));
+        replication.broadcast_mutator.set_document_acp(document_acp);
+        // Its storage calls run on the database's worker pool.
+        let doc_pusher: Arc<dyn TransportDocPusher> =
+            crate::pooled(doc_pusher_acp, database.pool());
+
+        if load_persisted_collections {
+            match db::merge::load_persisted_collections(&coordinator).await {
+                Ok(0) => {}
+                Ok(count) => tracing::info!(count, "loaded persisted P2P collection subscriptions"),
+                Err(error) => {
+                    tracing::warn!(%error, "failed to load persisted P2P collections")
+                }
+            }
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let se_correlator = p2p::SeQueryCorrelator::new();
+        let manage_correlator = p2p::ManageCorrelator::new();
+        let manage_query_correlator = p2p::ManageQueryCorrelator::new();
+        let manage_hooks = crate::manage::hooks::new_manage_hooks_cell();
+
+        let replication_coordinator = Arc::clone(&coordinator);
+        // Natively each merge runs on the database's worker pool, on its
+        // document's worker; a browser's one worker is this thread.
+        #[cfg(not(target_arch = "wasm32"))]
+        let merge_handler = replication.merge_handler_on_pool();
+        #[cfg(target_arch = "wasm32")]
+        let merge_handler = Arc::clone(&replication.merge_handler);
+        let replication_bus = Arc::clone(&event_bus);
+        let replication_peer = local_peer_id.clone();
+        tracing::info!("Starting replication loop for P2P sync (vinc)");
+        let replication_task = edge.spawn_service(async move {
+            p2p::sync::ReplicationLoop::run(
+                replication_coordinator,
+                sync_events,
+                merge_handler,
+                p2p::sync::ReplicationConfig {
+                    rebroadcast_on_merge,
+                    ..p2p::sync::ReplicationConfig::default()
+                },
+                move |result| {
+                    crate::publish_replication_result(
+                        replication_bus.as_ref(),
+                        &replication_peer,
+                        result,
+                    )
+                },
+            )
+            .await;
+        });
+
+        // Owned by the coordinator, so shutdown drains them before the store
+        // they hold is released (#1309). Started only once the replication loop
+        // consumes sync events.
+        let resync_coordinator = Arc::clone(&coordinator);
+        coordinator.spawn_background_task("pending_dag_resync", async move {
+            resync_coordinator
+                .run_pending_dag_resync(std::time::Duration::from_secs(60))
+                .await;
+        });
+        // A replication filter also judges pushes before their blocks are
+        // fetched; the merge keeps its own check.
+        if let Some(gate) = db::receive_gate::DbReceiveGate::new(Arc::clone(&database)) {
+            coordinator.set_receive_gate(Arc::new(gate));
+        }
+        let retry_clock_coordinator = Arc::clone(&coordinator);
+        coordinator.spawn_background_task("pending_dag_retry_clock", async move {
+            retry_clock_coordinator
+                .run_pending_dag_retry_clock(std::time::Duration::from_secs(2))
+                .await
+                .expect("retry interval is nonzero");
+        });
+
+        // The fallback for a deferred verdict no arrival can release: one
+        // named nothing, one past the index's capacity, and everything the
+        // index held before this process started.
+        // Natively it runs on the database's worker pool; in a browser the
+        // page's one worker is this thread, so the sweep is a task here.
+        // Either way it ends with the coordinator's shutdown.
+        #[cfg(not(target_arch = "wasm32"))]
+        drop(db::merge::governance::start_governance_sweep(
+            Arc::clone(&replication.merge_handler_inner),
+            db::merge::governance::SWEEP_INTERVAL,
+            coordinator.shutdown_handle(),
+        ));
+        #[cfg(target_arch = "wasm32")]
+        {
+            let sweep_handler = Arc::clone(&replication.merge_handler_inner);
+            let sweep_shutdown = coordinator.shutdown_handle();
+            coordinator.spawn_background_task("governance_sweep", async move {
+                db::merge::governance::run_governance_sweep(
+                    sweep_handler,
+                    db::merge::governance::SWEEP_INTERVAL,
+                    sweep_shutdown,
+                )
+                .await;
+            });
+        }
+
+        let event_handler_task = spawn_event_handler(
+            events,
+            Arc::clone(&coordinator),
+            Arc::clone(&store),
+            database.peerstore(),
+            Arc::clone(&event_bus),
+            transport.clone(),
+            manage_hooks.clone(),
+            #[cfg(not(target_arch = "wasm32"))]
+            se_correlator.clone(),
+            &edge,
+        );
+
+        let failure_recorder_task = crate::spawn_failure_recorder(
+            database
+                .peerstore()
+                .with_retry_schedule(retry_schedule.clone()),
+            failure_rx,
+        );
+        let se_repusher =
+            db::merge::pooled_se_repusher(replication.broadcast_mutator.clone(), database.pool());
+        #[cfg(not(target_arch = "wasm32"))]
+        replication
+            .merge_handler_inner
+            .set_se_repusher(se_repusher.clone());
+        let retry_loop_task = crate::spawn_retry_loop(
+            database.peerstore().with_retry_schedule(retry_schedule),
+            transport.clone(),
+            Arc::clone(&doc_pusher),
+            Some(se_repusher),
+            &edge,
+        );
+
+        let version_syncer = DbTransportVersionSyncer::new_arc(
+            blockstore,
+            Arc::clone(&replication.merge_handler_inner),
+            Arc::clone(&database),
+            transport.clone(),
+        );
+        let restored_doc_ids =
+            crate::restore_vinc_p2p_state(Arc::clone(&store), &transport, &coordinator).await;
+        p2p::model_trace!(RestoreReplicators);
+        let mut adapter = VincP2PAdapter::with_full_context(
+            transport.clone(),
+            Arc::clone(&coordinator),
+            Arc::clone(&doc_pusher),
+            event_bus,
+            Some(version_syncer),
+            db::node_access_checker(database),
+        );
+        if let Some(options) = replicator_push_options {
+            adapter = adapter.with_replicator_push_options_state(options);
+        }
+        adapter.set_initial_tracked_documents(restored_doc_ids);
+
+        let manage = VincManageChannel {
+            hooks: manage_hooks,
+            requester: Arc::new(crate::manage::client::ManageClient::new(
+                transport.clone(),
+                manage_correlator.clone(),
+                manage_query_correlator.clone(),
+            )),
+            correlator: manage_correlator,
+            query_correlator: manage_query_correlator,
+        };
+
+        tracing::info!(peer_id = %local_peer_id, "vinc peer started");
+        Ok(Self {
+            shutdown: VincPeerShutdown::new(
+                transport.clone(),
+                coordinator.shutdown_handle(),
+                endpoint_task,
+                retry_loop_task,
+                vec![event_handler_task, replication_task],
+                failure_recorder_task,
+                edge.clone(),
+            ),
+            transport,
+            coordinator,
+            replication,
+            doc_pusher,
+            ops: Arc::new(adapter),
+            manage,
+            #[cfg(feature = "kms")]
+            kms_transport,
+            local_peer_id,
+            #[cfg(not(target_arch = "wasm32"))]
+            se_correlator,
+        })
+    }
+
+    /// Bind the KMS built after the peer.
+    #[cfg(feature = "kms")]
+    pub fn wire_kms(&self, kms: Arc<dyn kms::KmsService>) {
+        self.replication.merge_handler_inner.set_kms(kms);
+    }
+
+    /// The searchable-encryption query transport, fanning encrypted queries
+    /// to this peer's replicators under `key`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn se_query_transport(
+        &self,
+        key: db::merge::SeKeyHandle,
+    ) -> Arc<dyn query::SeQueryTransport> {
+        Arc::new(db::merge::DbMergeSeQueryTransport::new(
+            self.transport.clone(),
+            self.se_correlator.clone(),
+            Arc::clone(self.coordinator.replicators()),
+            key,
+            self.coordinator.network(),
+        ))
+    }
+}
+
+async fn stop_endpoint(transport: &VincTransport, endpoint_task: edge::Task<()>) {
+    if let Err(error) = transport.shutdown().await {
+        tracing::debug!(%error, "failed to signal vinc endpoint during setup rollback");
+    }
+    let _ = endpoint_task.await;
+}

@@ -1058,6 +1058,20 @@ RUNS=(
   "MC_AnnounceAudience_Red_HoldWhenAlone.cfg AnnounceAudience.tla RED" # a write made alone is held for the window and reaches a peer that joined during it (INV_GoAudience)
   "MC_AnnounceAudience_Red_AloneMeansDisconnected.cfg AnnounceAudience.tla RED" # alone means no peer connected: a write made while the peer is connected but not subscribed waits out the window and reaches it (INV_GoAudience)
   "MC_AnnounceAudience_Red_RetryWhileConnected.cfg AnnounceAudience.tla RED" # an announcement that found no subscriber is published again while a peer is connected, and reaches it once it subscribes (INV_GoAudience)
+  "MC_VincReplyBridge_Green.cfg VincReplyBridge.tla GREEN" # lossy drops, a refused stream, a connection that may end, every deadline reached: one answer per stream, a bounded table that empties for good
+  "MC_VincReplyBridge_Green_NoLoss.cfg VincReplyBridge.tla GREEN" # no lost drop and no deadline in the run: replies, drops and the purge alone empty the table
+  "MC_VincReplyBridge_Red_NoTakeOnce.cfg VincReplyBridge.tla RED" # a reply leaves its entry: the sweep resets a stream that got its reply (INV_OneOutcome)
+  "MC_VincReplyBridge_Red_NoDropReset.cfg VincReplyBridge.tla RED" # a dropped token sends nothing: its stream is held forever (LIVE_NoLeak)
+  "MC_VincReplyBridge_Red_NoSweep.cfg VincReplyBridge.tla RED" # no sweep: a drop lost to a full queue leaks its entry (LIVE_NoLeak)
+  "MC_VincReplyBridge_Red_NoCap.cfg VincReplyBridge.tla RED" # no capacity check: the table outgrows its bound (INV_Bounded)
+  "MC_VincTopicDelivery_Green.cfg VincTopicDelivery.tla GREEN" # two nodes subscribe, unsubscribe, publish and hold, let holds end, link and unlink: only a node on the mesh gets a message, JOINED only for a linked member of a subscribed or held topic, an ended hold keeps the engine's topic
+  "MC_VincTopicDelivery_Green_Raw.cfg VincTopicDelivery.tla GREEN" # a raw topic: every message reaches the engine as bytes
+  "MC_VincTopicDelivery_Red_NoGate.cfg VincTopicDelivery.tla RED" # no peer-session gate: a node that dialed no one takes the hub's push (INV_NoDeliveryOffMesh)
+  "MC_VincTopicDelivery_Red_RawLate.cfg VincTopicDelivery.tla RED" # raw marked after the join: a KMS message is decoded as a PushLog (INV_RawNeverDecoded)
+  "MC_VincTopicDelivery_Red_NoSessionFilter.cfg VincTopicDelivery.tla RED" # JOINED from the hub's member list: a peer with no session is reported joined (INV_JoinedOnlyLinkedMembers)
+  "MC_VincTopicDelivery_Red_NoOwnerCheck.cfg VincTopicDelivery.tla RED" # an ended hold leaves whatever happened: the engine loses a topic it subscribed to meanwhile (INV_EngineKeepsItsTopic)
+  "MC_VincTopicDelivery_Red_NoHoldKeep.cfg VincTopicDelivery.tla RED" # an unsubscribe leaves a held topic: the node stops hearing who joins a document it wrote (INV_HeldIsJoined)
+  "MC_VincTopicDelivery_Red_NoEngineFilter.cfg VincTopicDelivery.tla RED" # messages of a topic the engine is not subscribed to reach it (INV_OnlyEngineTopics)
   "MC_CoordinatorShutdown_Green.cfg CoordinatorShutdown.tla GREEN" # two callers, a late spawn racing the drain, the edge closing and the runtime torn down at any moment: one drain, no task left in the set, every caller returns
   "MC_CoordinatorShutdown_Green_TwoSpawns.cfg CoordinatorShutdown.tla GREEN" # two late spawns whose pruners race the drain and each other: no task left in the set, the caller returns
   "MC_CoordinatorShutdown_Red_DropRefused.cfg CoordinatorShutdown.tla RED" # the old code, a refused drain dropped: the tracked task leaks (INV_NoLeak)
