@@ -25,8 +25,9 @@
 \* joined for a while after it (gossipsub's fanout time, 60 seconds). While
 \* held, the engine hears who joins and leaves the topic, but none of its
 \* messages unless it subscribed. When the hold ends the node leaves the topic,
-\* unless the engine subscribed to it meanwhile; an engine that unsubscribes
-\* while a hold lasts leaves it to the hold's end.
+\* unless the engine subscribed to it meanwhile. An engine that unsubscribes
+\* leaves at once and ends the hold with it, so the node shows as LEFT to the
+\* others as on gossipsub; its next publish holds the topic again.
 \*
 \* A tiny example. Nodes a and b subscribe and dial each other; node c
 \* subscribes but dials no one. a publishes. The hub pushes the message to b
@@ -54,8 +55,8 @@
 \*   |--------------------|----------------------------------------------------------|
 \*   | Subscribe          | Node::subscribe in topics.rs: mark raw, add to the       |
 \*   |                    | subscribed set, then ep.join                             |
-\*   | Unsubscribe        | Node::unsubscribe: out of the set, then ep.leave unless  |
-\*   |                    | the fanout map holds the topic                           |
+\*   | Unsubscribe        | Node::unsubscribe: out of the set, the hold ends, then   |
+\*   |                    | Node::leave                                              |
 \*   | MarkRaw (RED)      | the raw mark made after the join                         |
 \*   | Hold               | Node::hold_fanout, called by Node::publish: the topic    |
 \*   |                    | into the fanout map, joined if new and not subscribed    |
@@ -74,8 +75,8 @@
 \*   |                    | hub's member list as is)                                 |
 \*   | OwnerCheck         | an ended hold leaves only a topic the engine is not      |
 \*   |                    | subscribed to (RED: leave always)                        |
-\*   | HoldKeep           | unsubscribe leaves no topic a hold still has (RED:       |
-\*   |                    | leave always)                                            |
+\*   | HoldEnds           | unsubscribe ends the hold as it leaves (RED: the hold    |
+\*   |                    | stays on a topic the node left)                          |
 \*   | EngineFilter       | messages of a topic not subscribed, and JOINED of one    |
 \*   |                    | neither subscribed nor held, are skipped (RED: on)       |
 \*
@@ -94,14 +95,14 @@
 EXTENDS Naturals, FiniteSets
 \* Naturals gives the range 2..3; FiniteSets gives Cardinality.
 
-CONSTANTS Nodes, RawTopic, Gate, RawFirst, SessionFilter, OwnerCheck, HoldKeep, EngineFilter
+CONSTANTS Nodes, RawTopic, Gate, RawFirst, SessionFilter, OwnerCheck, HoldEnds, EngineFilter
 \* Nodes: the nodes. RawTopic: whether the topic is raw. The six other
 \* switches are guards in the code: TRUE as written, and each RED turns one
 \* off.
 
 ASSUME /\ Cardinality(Nodes) \in 2..3
        \* two or three nodes;
-       /\ \A b \in {RawTopic, Gate, RawFirst, SessionFilter, OwnerCheck, HoldKeep, EngineFilter} : b \in BOOLEAN
+       /\ \A b \in {RawTopic, Gate, RawFirst, SessionFilter, OwnerCheck, HoldEnds, EngineFilter} : b \in BOOLEAN
        \* and every switch is on or off.
 
 VARIABLES joined, engine, held, raw, links, inflight, delivered, reported
@@ -180,16 +181,18 @@ Subscribe(n) ==
   \* The rest stays.
 
 Unsubscribe(n) ==
-  \* n's engine unsubscribes. The node leaves the topic unless a hold still
-  \* has it (RED: leaves whatever). Messages the hub already pushed stay on
-  \* their way.
+  \* n's engine unsubscribes. The node leaves the topic at once, and its
+  \* hold ends with it (RED: the hold stays). Messages the hub already pushed
+  \* stay on their way.
   /\ n \in engine
   \* the engine is subscribed;
   /\ engine' = engine \ {n}
   \* now it is not;
-  /\ joined' = IF n \in held /\ HoldKeep THEN joined ELSE joined \ {n}
-  \* and the node is off the topic, unless held;
-  /\ UNCHANGED <<held, raw, links, inflight, delivered, reported>>
+  /\ joined' = joined \ {n}
+  \* the node is off the topic;
+  /\ held' = IF HoldEnds THEN held \ {n} ELSE held
+  \* and its hold ends;
+  /\ UNCHANGED <<raw, links, inflight, delivered, reported>>
   \* The rest stays.
 
 MarkRaw(n) ==

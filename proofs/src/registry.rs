@@ -3192,14 +3192,30 @@ pub const PROPERTIES: &[Property] = &[
         // raw topic before joining it, and reports JOINED from vinc's
         // neighbours, the members it holds a session with. Every publish
         // holds its topic joined for gossipsub's fanout time, so the engine
-        // hears who joins a topic it only publishes to.
+        // hears who joins a topic it only publishes to; an unsubscribe leaves
+        // at once and ends the hold.
         family: "vinc topic delivery",
         name: "INV_NoDeliveryOffMesh / INV_RawNeverDecoded / INV_JoinedOnlyLinkedMembers / INV_EngineKeepsItsTopic / INV_OnlyEngineTopics / INV_HeldIsJoined: only a node on the mesh gets a message, a raw topic is never decoded, JOINED names a linked member, an ended hold never takes the engine off its topic, the engine gets messages only of topics it is subscribed to and JOINED only of those or held ones, and a held topic stays joined",
         axis: Tla,
-        anchor: "crates/p2p/src/vinc/topics.rs Node::subscribe, Node::unsubscribe, Node::publish, Node::hold_fanout, Node::expire_fanout, Node::topic_events, Node::delivery; crates/p2p/src/vinc/endpoint.rs Node::connected, Node::disconnected, Node::sweep_loop",
-        model_ref: "MC_VincTopicDelivery_{Green,Green_Raw,Red_NoGate,Red_RawLate,Red_NoSessionFilter,Red_NoOwnerCheck,Red_NoHoldKeep,Red_NoEngineFilter}.cfg",
+        anchor: "crates/p2p/src/vinc/topics.rs Node::subscribe, Node::unsubscribe, Node::leave, Node::publish, Node::hold_fanout, Node::expire_fanout, Node::topic_events, Node::delivery; crates/p2p/src/vinc/endpoint.rs Node::connected, Node::disconnected, Node::sweep_loop",
+        model_ref: "MC_VincTopicDelivery_{Green,Green_Raw,Red_NoGate,Red_RawLate,Red_NoSessionFilter,Red_NoOwnerCheck,Red_NoHoldEnd,Red_NoEngineFilter}.cfg",
         tiers: &[Boundary],
         bound_by: "crates/p2p/src/vinc/tests/topics.rs connected_subscribers_see_each_other_join_and_leave, a_publisher_that_never_subscribed_sees_subscribers_join_and_leave, a_node_with_no_peer_takes_no_head_hint, raw_topics_carry_a_request_and_its_answer_as_bytes",
+    },
+    Property {
+        // A vinc join returns before a hub knows of it, so a subscribe
+        // answers only once a hub confirmed the topic's join, and fails
+        // after JOIN_WAIT with none, taking the topic back so the retry
+        // joins afresh. GREEN assumes vinc confirms only the subscription
+        // that asked (vinc #483); Red_UntaggedList and Red_Undrained are
+        // vinc as it is today.
+        family: "vinc join confirmation",
+        name: "INV_OkOnlyWhenHeld / INV_FailOnlyUnconfirmed / INV_NoMissedWake / INV_NoStuckSubscription / INV_JoinedMatches: a subscribe answers only while a hub holds its join, never fails once confirmed, never waits for an event already read, a lost event never strands a subscription, and vinc is joined exactly while the engine or a hold has the topic",
+        axis: Tla,
+        anchor: "crates/p2p/src/vinc/topics.rs Node::subscribe, Node::answer_when_confirmed, Node::joined, Node::abandon_join, Node::leave, Node::unsubscribe, Node::hold_fanout, Node::expire_fanout, JOIN_WAIT",
+        model_ref: "MC_VincJoinConfirm_{Green,Green_Wide,Red_NoConfirmCheck,Red_NoConfirmCheck_Wake,Red_NoStillJoined,Red_NoRecheck,Red_NoRollback,Red_NoClearOnLeave,Red_UntaggedList,Red_Undrained}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/p2p/src/vinc/tests/topics.rs a_subscribe_no_hub_confirms_fails_and_its_retry_waits_again, connected_subscribers_see_each_other_join_and_leave",
     },
     Property {
         // The first shutdown caller to swap the flag builds the one drain,

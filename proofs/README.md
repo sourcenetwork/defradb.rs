@@ -111,6 +111,8 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Connect fallback race | TLA+ | net |
 | ActivePeers listen addresses | TLA+ | p2p |
 | vinc reply bridge | TLA+ & Lean | p2p (vinc transport) |
+| vinc topic delivery | TLA+ | p2p (vinc transport) |
+| vinc join confirmation | TLA+ | p2p (vinc transport) |
 | Coordinator shutdown drain | TLA+ | p2p, edge |
 | Edge completion | TLA+ | edge |
 | Edge gate continuation | TLA+ | edge, net (#2546) |
