@@ -131,6 +131,9 @@ jobs:
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -195,6 +198,9 @@ jobs:
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -214,6 +220,9 @@ jobs:
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: mozilla-actions/sccache-action@v0.0.11
       - run: sccache --start-server && echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV" || true
@@ -273,6 +282,7 @@ jobs:
     needs: ci-scope
     if: needs.ci-scope.outputs.full == 'true'
     uses: ./.github/workflows/unit-tests.yml
+    secrets: inherit
     with:
       os: linux
 
@@ -288,6 +298,9 @@ jobs:
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - name: Restore Go DefraDB
         id: go-defradb
         uses: actions/cache/restore@v6
@@ -397,6 +410,9 @@ jobs:
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - uses: dtolnay/rust-toolchain@stable
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: mozilla-actions/sccache-action@v0.0.11
@@ -446,6 +462,9 @@ jobs:
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@v2
         with:
@@ -473,6 +492,9 @@ jobs:
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -529,6 +551,9 @@ jobs:
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@v2
         with:
@@ -603,6 +628,9 @@ jobs:
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@v2
         with:
@@ -660,6 +688,9 @@ jobs:
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -810,6 +841,9 @@ jobs:
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@v2
         with:
@@ -869,6 +903,9 @@ jobs:
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@v2
         with:
@@ -934,6 +971,9 @@ jobs:
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@v2
         with:
@@ -1039,6 +1079,9 @@ jobs:
           echo "::error::Build testo archive was ${{ needs.testo-archive.result }}, so no testo shard ran"
           exit 1
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - uses: actions/download-artifact@v8
         with:
           pattern: testo-report-*
