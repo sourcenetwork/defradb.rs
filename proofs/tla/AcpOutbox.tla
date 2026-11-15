@@ -1,0 +1,599 @@
+---- MODULE AcpOutbox ----
+\* The story, in plain words.
+\*
+\* A node keeps documents and asks an access-control provider who may read
+\* them. A local provider writes inside the row transaction. A remote one
+\* (Vera, a chain) cannot: its state changes only when a signed request lands
+\* on it, some time after the rows committed. So the node writes down what it
+\* owes the provider, in the same transaction as the rows, and pays later.
+\*
+\* Two kinds of debt:
+\*   * an owed registration: "this document's creator becomes its owner";
+\*   * an owed relationship change: "add" or "delete" one tuple (a subject
+\*     that may read the document). A subject is one identity, or "*", which
+\*     stands for everyone.
+\* One document is modelled. Its creator is "c". "g" is an identity the
+\* creator may grant, "x" is a stranger nobody names, "m" is an actor with no
+\* authority over the document, and "o" is another owner the provider may
+\* already hold for the same document.
+\*
+\* Who acts:
+\*   * transactions: one at a time, a transaction creates the document and
+\*     stages changes, then commits or rolls back. Each staged change takes
+\*     the next sequence number;
+\*   * the node may crash and restart at any point: an open transaction is
+\*     gone, and so is everything the settlement loop only remembered;
+\*   * the provider applies a request, refuses one from an actor that does
+\*     not own the document, keeps a receipt of either, and is sometimes
+\*     unavailable;
+\*   * the settlement loop (the redrive, the drainer) registers the document,
+\*     then submits the changes in sequence order. Before it sends a change it
+\*     marks the record "in flight"; after a send it asks for the receipt and
+\*     sends again only when the provider has none;
+\*   * authority: a change is signed with a key the node holds, or with a
+\*     stored delegation that can expire. A change whose delegation expired
+\*     waits for a fresh one;
+\*   * readers ask the node for access. The node answers from the provider's
+\*     state and from what it still owes (the overlay).
+\*
+\* The overlay, between commit and settlement:
+\*   * while the registration is owed, only the creator reads the document,
+\*     and an identity the creator itself granted by name in an owed add;
+\*   * any other owed add grants nothing: the grantee waits for the provider;
+\*   * an owed delete denies its subject from the commit on, also when the
+\*     provider refused it, until the provider has applied it.
+\*
+\* What must never happen:
+\*   1. the node honours an access that the committed changes, all applied,
+\*      would not give, or that the provider will not give once everything
+\*      is settled - INV_NoWidening;
+\*   2. after a delete committed and no later change added the tuple again,
+\*      the node honours an access that rests on that tuple
+\*      - INV_RevokedAtCommit;
+\*   3. a change is sent while the document's registration is still owed
+\*      - INV_RegistrationFirst;
+\*   4. one change takes effect twice on the provider - INV_AtMostOneEffect;
+\*   5. something stays owed for a transaction that rolled back
+\*      - INV_RollbackLeavesNothing;
+\*   6. while the registration is owed, anyone reads the document but its
+\*      creator and the identities the creator named - INV_OwedDocumentNarrow;
+\*   7. a committed change stays unsettled for ever though the provider keeps
+\*      coming back and fresh authority keeps being supplied - LIVE_Drains.
+\*
+\* What exists in the code today, and what is specification ahead of code.
+\* Exists (the registry anchors these):
+\*   the owed registration and its key      crates/acp/src/pending.rs
+\*                                          (PendingRegistration,
+\*                                          PendingRegistrations::record);
+\*   recording it in the create transaction crates/db/src/write/autocommit/
+\*                                          helpers.rs register_created_doc;
+\*   creator-only until settled             crates/acp/src/external.rs
+\*                                          ExternalDocumentAcp::check_doc_access;
+\*   register, then clear                   ExternalDocumentAcp::settle, clear;
+\*   settling after the commit              acp_registration_retry_callback in
+\*                                          crates/db/src/write/autocommit/
+\*                                          create.rs, DocumentACP::
+\*                                          redrive_registration;
+\*   the redrive at start                   ExternalDocumentAcp::redrive_owed,
+\*                                          started by gate_external_acp in
+\*                                          crates/defra-node/src/node_acp.rs.
+\* In the model these are StageCreate, Commit, Rollback, Crash,
+\* RegisterOnChain, ClearOwed, and the "registration is owed" branch of
+\* Honours without the grants.
+\* Specification ahead of code (#2954): everything about relationship
+\* changes. StageChange, Mark, Land, SendLost, Lookup, AwaitAuthority,
+\* Reauthorize, the deny overlay, the creator's owed grants, and the rules
+\* RegFirst, InOrder, ParkedBlocks, DrainPastRefused and Marker. No Rust code
+\* is named for them because none exists yet.
+\*
+\* Assumptions, by name. Each is a switch, and a RED configuration turns it
+\* off to show what rests on it.
+\*   AssumeReceiptRetrievable   after a change landed, its receipt (or the
+\*       worker's journal entry) can still be read when the loop asks. This is
+\*       the open question of #2954: when no receipt is retrievable, the loop
+\*       cannot tell "landed" from "lost", sends again, and the change takes
+\*       effect twice. INV_AtMostOneEffect holds only under this assumption.
+\*   AssumeUncontested          the provider does not already hold the
+\*       document under another owner. When it does, settle keeps that owner,
+\*       and the creator read a document the provider gives to someone else.
+\* Assumed without a switch:
+\*   * one request sent twice is executed once (the worker journal and the
+\*     provider's sequence, PendingSubmission.tla). A second effect here is a
+\*     second, newly prepared request;
+\*   * transactions commit one after another, so sequence order is commit
+\*     order. #2954 leaves the allocator open;
+\*   * nobody else changes this document on the provider;
+\*   * an unregistered document is closed on the provider (Vera's rule).
+\*
+\* Not modelled: several documents, deleting the document, the read inside
+\* the open transaction (DeferredAcp.tla), abandoning or retrying a refused
+\* change, the registration-with-grants batch (without it a creator's grantee
+\* loses access between ClearOwed and the grant landing: narrower, never
+\* wider), limits on how much may be owed, and a stale provider answer
+\* (Acp.tla).
+
+EXTENDS Naturals, FiniteSets  \* numbers and finite sets
+
+CONSTANTS
+  MaxChanges,                \* how many sequence numbers exist
+  Subjects,                  \* the subjects a change may name: "g", "*"
+  Actors,                    \* who may stage a change: "c", "m"
+  Auths,                     \* how a change is signed: "node", "deleg"
+  Preexisting,               \* TRUE: the document is already registered
+  InitTuples,                \* the tuples the provider holds at the start
+  MaxCrashes,                \* how often the node may crash
+  MaxExpiries,               \* how often the stored delegation may expire
+  TxnOwnsOwed,               \* TRUE: owed records are the transaction's own writes
+  DenyRule,                  \* which owed deletes deny: see DenyTuple
+  RefusedDeleteDenies,       \* TRUE: a refused delete keeps denying
+  OwedAdds,                  \* which owed adds grant: see Grants
+  RegFirst,                  \* TRUE: no change is sent while the registration is owed
+  InOrder,                   \* TRUE: changes are sent in sequence order
+  ParkedBlocks,              \* TRUE: a change awaiting authority holds its tuple
+  DrainPastRefused,          \* TRUE: a refused change does not hold the rest
+  Marker,                    \* TRUE: the in-flight mark survives a crash
+  AssumeReceiptRetrievable,  \* TRUE: a landed change's receipt can be read
+  AssumeUncontested          \* TRUE: the provider holds no other owner
+
+ASSUME MaxChanges \in Nat /\ MaxCrashes \in Nat /\ MaxExpiries \in Nat  \* bounds are numbers
+ASSUME Subjects \subseteq {"g", "*"} /\ Subjects # {}       \* known subjects
+ASSUME Actors \subseteq {"c", "m"} /\ Actors # {}           \* known actors
+ASSUME Auths \subseteq {"node", "deleg"} /\ Auths # {}      \* known ways to sign
+ASSUME InitTuples \subseteq Subjects                        \* tuples name subjects
+ASSUME Preexisting \/ InitTuples = {}                       \* a new document has no tuples
+ASSUME Preexisting => AssumeUncontested                     \* an existing one is the creator's
+ASSUME DenyRule \in {"AnyOwedDelete", "LatestOp", "None"}   \* a known deny rule
+ASSUME OwedAdds \in {"CreatorExplicit", "CreatorAny", "Any"}  \* a known grant rule
+
+Slots == 1..MaxChanges       \* the sequence numbers
+Readers == {"c", "g", "x"}   \* who asks for access: creator, grantee, stranger
+
+\* A slot nobody staged holds this placeholder.
+NoChange == [subj |-> "-", op |-> "-", actor |-> "-", auth |-> "-"]
+\* Everything a transaction may stage: a subject, add or delete, who asks,
+\* and how the request will be signed.
+Changes == [subj : Subjects, op : {"add", "del"}, actor : Actors, auth : Auths]
+
+VARIABLES
+  doc,          \* "absent", "open" (created in the open transaction), "exists"
+  owedReg,      \* TRUE while the stored record says the registration is owed
+  st,           \* per slot: where its change stands (see TypeOK)
+  chg,          \* per slot: the change staged there
+  receipt,      \* per slot: what the provider recorded: "none", "ok", "rejected"
+  effects,      \* per slot: how often the change took effect on the provider
+  checked,      \* per slot, in memory only: "I asked, the provider has no receipt"
+  rolled,       \* the slots whose transaction rolled back (for the properties)
+  chainOwner,   \* the provider's owner of the document, "none" if unregistered
+  chainTuples,  \* the tuples the provider holds
+  up,           \* TRUE while the provider can be reached
+  delegOk,      \* TRUE while the stored delegation is valid
+  crashes,      \* how often the node crashed
+  expiries      \* how often the delegation expired
+
+vars == <<doc, owedReg, st, chg, receipt, effects, checked, rolled,
+          chainOwner, chainTuples, up, delegOk, crashes, expiries>>  \* every variable
+
+TypeOK ==
+  /\ doc \in {"absent", "open", "exists"}                 \* a known document state
+  /\ owedReg \in BOOLEAN                                  \* a flag
+  /\ st \in [Slots -> {"free", "open", "void", "staged", "inflight",
+                       "awaiting", "refused", "settled"}]  \* a known step each
+  /\ chg \in [Slots -> Changes \cup {NoChange}]           \* a change or nothing
+  /\ receipt \in [Slots -> {"none", "ok", "rejected"}]    \* a known receipt each
+  /\ effects \in [Slots -> 0..2]                          \* a small count each
+  /\ checked \in [Slots -> BOOLEAN]                       \* a flag each
+  /\ rolled \subseteq Slots                               \* some slots
+  /\ chainOwner \in {"none", "c", "o"}                    \* a known owner
+  /\ chainTuples \subseteq Subjects                       \* some tuples
+  /\ up \in BOOLEAN                                       \* a flag
+  /\ delegOk \in BOOLEAN                                  \* a flag
+  /\ crashes \in 0..MaxCrashes                            \* a small count
+  /\ expiries \in 0..MaxExpiries                          \* a small count
+
+Init ==
+  /\ doc = (IF Preexisting THEN "exists" ELSE "absent")   \* there from the start, or not yet
+  /\ owedReg = FALSE                                      \* nothing is owed
+  /\ st = [s \in Slots |-> "free"]                        \* no sequence number is taken
+  /\ chg = [s \in Slots |-> NoChange]                     \* nothing is staged
+  /\ receipt = [s \in Slots |-> "none"]                   \* the provider recorded nothing
+  /\ effects = [s \in Slots |-> 0]                        \* nothing took effect
+  /\ checked = [s \in Slots |-> FALSE]                    \* the loop remembers nothing
+  /\ rolled = {}                                          \* nothing rolled back
+  /\ chainOwner = (IF Preexisting THEN "c"                \* registered to the creator,
+                   ELSE IF AssumeUncontested THEN "none"  \* or not registered,
+                   ELSE "o")                              \* or held by another owner
+  /\ chainTuples = InitTuples                             \* the tuples given
+  /\ up = TRUE                                            \* the provider answers
+  /\ delegOk = TRUE                                       \* the delegation is valid
+  /\ crashes = 0                                          \* no crash yet
+  /\ expiries = 0                                         \* no expiry yet
+
+\* ---- Words used below ----
+
+\* The highest sequence number in a set of slots that is not empty.
+Last(S) == CHOOSE s \in S : \A r \in S : r <= s
+\* The change is owed and still to be delivered.
+Live(s) == st[s] \in {"staged", "inflight", "awaiting"}
+\* The node still stores a record for the change: owed, or parked as refused.
+Kept(s) == Live(s) \/ st[s] = "refused"
+\* The change belongs to a transaction that committed.
+Committed(s) == (Kept(s) \/ st[s] = "settled") /\ s \notin rolled
+\* A transaction is open: it created the document or staged a change.
+OpenTxn == doc = "open" \/ \E s \in Slots : st[s] = "open"
+\* The change can be signed now: the node's own key always can, a delegation
+\* only while it is valid.
+Valid(s) == chg[s].auth = "node" \/ delegOk
+\* A set of tuples lets this reader in: by name, or through "everyone".
+Carries(T, who) == who \in T \/ "*" \in T
+
+\* ---- The two states the node's answers are measured against ----
+
+\* The tuples that hold once the counted changes have all applied in
+\* sequence order: for each tuple, its last counted change decides; a tuple
+\* no counted change touched stays as the provider had it at the start.
+Final(Counted) ==
+  {t \in Subjects :
+     LET S == {s \in Counted : chg[s].subj = t}           \* the changes on this tuple
+     IN IF S = {} THEN t \in InitTuples                   \* untouched: as at the start
+        ELSE chg[Last(S)].op = "add"}                     \* else the last one decides
+
+\* The intended state: every committed change applied.
+IntendedTuples == Final({s \in Slots : Committed(s)})
+\* The owner the provider ends with: the creator, unless another holds it.
+SettledOwner == IF AssumeUncontested THEN "c" ELSE "o"
+\* The settled state: every committed change the provider accepts applied.
+\* It accepts a change only from the document's owner.
+SettledTuples == Final({s \in Slots : Committed(s) /\ chg[s].actor = SettledOwner})
+
+\* The intended state lets this reader in: the creator, or a tuple.
+IntendedAllows(who) == doc = "exists" /\ (who = "c" \/ Carries(IntendedTuples, who))
+\* The provider, once everything is settled, lets this reader in.
+SettledAllows(who) == doc = "exists" /\ (who = SettledOwner \/ Carries(SettledTuples, who))
+
+\* ---- The overlay: what the node answers before settlement ----
+
+\* An owed delete that denies: still to be delivered, or refused when a
+\* refused delete keeps denying.
+Denying(s) == chg[s].op = "del" /\ (Live(s) \/ (st[s] = "refused" /\ RefusedDeleteDenies))
+\* The stored records for one tuple.
+OnTuple(t) == {s \in Slots : Kept(s) /\ chg[s].subj = t}
+\* The tuple is denied by the overlay.
+\*   AnyOwedDelete  while any stored delete on it denies. This is the rule
+\*                  the model shows to be needed.
+\*   LatestOp       while the latest stored record on it is a delete. This
+\*                  is the wording of #2954, and it is too weak: a later
+\*                  owed add lifts the denial though an owed add must grant
+\*                  nothing (MC_AcpOutbox_Red_LatestOpOverlay).
+\*   None           never: a delete counts only once the provider applied it.
+DenyTuple(t) ==
+  CASE DenyRule = "AnyOwedDelete" -> \E s \in OnTuple(t) : Denying(s)
+    [] DenyRule = "LatestOp" -> OnTuple(t) # {} /\ Denying(Last(OnTuple(t)))
+    [] OTHER -> FALSE
+\* The reader is denied by the overlay: its own tuple is, or "everyone" is.
+\* The node cannot see through which tuple the provider lets a reader in, so
+\* an owed delete of "everyone" denies every reader but the document's owner.
+Denied(who) == DenyTuple(who) \/ (DenyTuple("*") /\ who # chainOwner)
+
+\* An owed add that the node honours before the provider has it.
+\*   CreatorExplicit  only the creator's own add, and only for a named
+\*                    identity, never for "everyone" (the design);
+\*   CreatorAny       the creator's own add, also for "everyone";
+\*   Any              every owed add, whoever staged it and whether or not
+\*                    the registration is still owed.
+Grants(s) ==
+  /\ Live(s) /\ chg[s].op = "add"                         \* an add still to be delivered
+  /\ CASE OwedAdds = "CreatorExplicit" -> chg[s].actor = "c" /\ chg[s].subj # "*"
+       [] OwedAdds = "CreatorAny" -> chg[s].actor = "c"
+       [] OTHER -> TRUE
+\* The subjects such adds name.
+OwedGranted == {chg[s].subj : s \in {r \in Slots : Grants(r)}}
+
+\* The node's answer to one reader, from the provider's tuples T and the
+\* owed grants G. They are passed in so a property can ask "and without this
+\* tuple?".
+HonoursUsing(who, T, G) ==
+  /\ doc = "exists"                                       \* there is a document to read
+  /\ IF owedReg
+     THEN \/ who = "c"                                    \* owed: the creator,
+          \/ Carries(G, who) /\ ~Denied(who)              \* or someone the creator granted
+     ELSE /\ ~Denied(who)                                 \* settled: no owed delete denies,
+          /\ \/ up /\ (who = chainOwner \/ Carries(T, who))  \* and the provider says yes,
+             \/ OwedAdds = "Any" /\ Carries(G, who)       \* or (bug) any owed add does
+\* The node's answer as it stands.
+Honours(who) == HonoursUsing(who, chainTuples, OwedGranted)
+
+\* ---- Transactions ----
+
+\* The open transaction creates the document. The owed registration is one
+\* of its writes (register_created_doc), so nothing is stored yet.
+StageCreate ==
+  /\ doc = "absent"                                       \* there is no document yet
+  /\ doc' = "open"                                        \* now there is, uncommitted
+  /\ UNCHANGED <<owedReg, st, chg, receipt, effects, checked, rolled,
+                 chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+
+\* The open transaction stages one change on the document. It takes the next
+\* sequence number.
+StageChange(s, c) ==
+  /\ doc \in {"open", "exists"}                           \* the transaction sees the document
+  /\ st[s] = "free"                                       \* this number is not taken,
+  /\ \A r \in Slots : r < s => st[r] # "free"             \* and every lower one is
+  /\ st' = [st EXCEPT ![s] = "open"]                      \* staged, uncommitted
+  /\ chg' = [chg EXCEPT ![s] = c]                         \* with this change
+  /\ UNCHANGED <<doc, owedReg, receipt, effects, checked, rolled,
+                 chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+
+\* The open transaction commits: the document, its owed registration and the
+\* staged changes become durable together.
+Commit ==
+  /\ OpenTxn                                              \* something is open
+  /\ doc' = (IF doc = "open" THEN "exists" ELSE doc)      \* the document is there
+  /\ owedReg' = (owedReg \/ doc = "open")                 \* its registration is owed
+  /\ st' = [s \in Slots |-> IF st[s] = "open" THEN "staged" ELSE st[s]]  \* changes are owed
+  /\ UNCHANGED <<chg, receipt, effects, checked, rolled,
+                 chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+
+\* What a discarded transaction leaves of its changes. Owned by the
+\* transaction, they are gone with it. Written beside it (the bug), they
+\* stay owed.
+DiscardSt ==
+  [s \in Slots |-> IF st[s] = "open"
+                   THEN (IF TxnOwnsOwed THEN "void" ELSE "staged")
+                   ELSE st[s]]
+\* The changes it leaves: a discarded one is forgotten.
+DiscardChg ==
+  [s \in Slots |-> IF st[s] = "open" /\ TxnOwnsOwed THEN NoChange ELSE chg[s]]
+\* Whether the registration is owed after a discard: as before, or (the bug)
+\* owed for a document that was never committed.
+DiscardReg == owedReg \/ (~TxnOwnsOwed /\ doc = "open")
+\* The slots the discarded transaction had staged.
+Discarded == {s \in Slots : st[s] = "open"}
+
+\* The open transaction rolls back.
+Rollback ==
+  /\ OpenTxn                                              \* something is open
+  /\ doc' = (IF doc = "open" THEN "absent" ELSE doc)      \* its document is gone
+  /\ owedReg' = DiscardReg                                \* and so is what it owed,
+  /\ st' = DiscardSt                                      \* its changes,
+  /\ chg' = DiscardChg                                    \* and what they said
+  /\ rolled' = rolled \cup Discarded                      \* remembered, for the properties
+  /\ UNCHANGED <<receipt, effects, checked, chainOwner, chainTuples,
+                 up, delegOk, crashes, expiries>>
+
+\* The node crashes and restarts. An open transaction is rolled back. The
+\* settlement loop forgets what it had checked. Without a durable mark, a
+\* change in flight reads as never sent.
+Crash ==
+  /\ crashes < MaxCrashes                                 \* crashes are not endless
+  /\ \/ OpenTxn                                           \* there is something to lose:
+     \/ \E s \in Slots : checked[s]                       \* an open transaction, a memory,
+     \/ ~Marker /\ \E s \in Slots : st[s] = "inflight"    \* or a mark that does not last
+  /\ crashes' = crashes + 1                               \* one more
+  /\ doc' = (IF doc = "open" THEN "absent" ELSE doc)      \* the open document is gone
+  /\ owedReg' = DiscardReg                                \* with what it owed
+  /\ st' = [s \in Slots |-> IF DiscardSt[s] = "inflight" /\ ~Marker
+                            THEN "staged"                 \* the mark is lost
+                            ELSE DiscardSt[s]]            \* or everything stored stays
+  /\ chg' = DiscardChg                                    \* open changes are forgotten
+  /\ rolled' = rolled \cup Discarded                      \* remembered, for the properties
+  /\ checked' = [s \in Slots |-> FALSE]                   \* the loop remembers nothing
+  /\ UNCHANGED <<receipt, effects, chainOwner, chainTuples, up, delegOk, expiries>>
+
+\* ---- Settling the registration (ExternalDocumentAcp::settle) ----
+
+\* The provider registers the creator as owner. A provider that refuses or
+\* cannot be reached simply does not take this step, and the record stays.
+RegisterOnChain ==
+  /\ owedReg /\ up                                        \* owed, and the provider answers
+  /\ chainOwner = "none"                                  \* it holds no owner yet
+  /\ chainOwner' = "c"                                    \* now the creator owns it
+  /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, rolled,
+                 chainTuples, up, delegOk, crashes, expiries>>
+
+\* The provider holds the document, so the record is cleared. An owner the
+\* provider already had stays: from here on the provider decides.
+ClearOwed ==
+  /\ owedReg /\ up                                        \* owed, and the provider answers
+  /\ chainOwner # "none"                                  \* it holds the document
+  /\ owedReg' = FALSE                                     \* nothing is owed any more
+  /\ UNCHANGED <<doc, st, chg, receipt, effects, checked, rolled,
+                 chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+
+\* ---- Settling the changes (the drainer of #2954) ----
+
+\* An earlier stored change holds this one back.
+Blocked(s) ==
+  \E r \in Slots :
+    /\ r < s                                              \* an earlier change
+    /\ \/ InOrder /\ st[r] \in {"staged", "inflight"}     \* that is still to be delivered,
+       \/ /\ ParkedBlocks /\ st[r] = "awaiting"           \* or waits for authority
+          /\ chg[r].subj = chg[s].subj                    \* on the same tuple,
+       \/ ~DrainPastRefused /\ st[r] = "refused"          \* or (bug) was refused
+
+\* The loop marks a change in flight, durably, before anything is sent. A
+\* fresh mark means nothing was sent, so there is no receipt to ask for.
+Mark(s) ==
+  /\ st[s] = "staged"                                     \* owed and not yet sent
+  /\ ~Blocked(s)                                          \* its turn has come
+  /\ RegFirst => ~owedReg                                 \* the registration is settled
+  /\ Valid(s)                                             \* it can be signed
+  /\ st' = [st EXCEPT ![s] = "inflight"]                  \* marked
+  /\ checked' = [checked EXCEPT ![s] = TRUE]              \* known not to have landed
+  /\ UNCHANGED <<doc, owedReg, chg, receipt, effects, rolled,
+                 chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+
+\* The provider's tuples after it applied a change.
+Applied(s) ==
+  IF chg[s].op = "add" THEN chainTuples \cup {chg[s].subj}  \* an add puts the tuple in,
+  ELSE chainTuples \ {chg[s].subj}                          \* a delete takes it out
+
+\* The loop sends the change and the request lands. The provider applies a
+\* change from the document's owner and refuses any other, and records a
+\* receipt either way. The loop does not learn which: it must ask.
+Land(s) ==
+  /\ st[s] = "inflight" /\ checked[s]                     \* in flight, known not landed
+  /\ Valid(s) /\ up                                       \* signable, provider reachable
+  /\ IF chg[s].actor = chainOwner                         \* from the owner:
+     THEN /\ chainTuples' = Applied(s)                    \*   applied,
+          /\ effects' = [effects EXCEPT ![s] = IF @ < 2 THEN @ + 1 ELSE @]  \* counted,
+          /\ receipt' = [receipt EXCEPT ![s] = "ok"]      \*   and receipted
+     ELSE /\ receipt' = [receipt EXCEPT ![s] = "rejected"]  \* else refused, receipted
+          /\ UNCHANGED <<chainTuples, effects>>           \*   and nothing changes
+  /\ checked' = [checked EXCEPT ![s] = FALSE]             \* the loop must ask again
+  /\ UNCHANGED <<doc, owedReg, st, chg, rolled, chainOwner, up, delegOk,
+                 crashes, expiries>>
+
+\* The loop sends the change while the provider cannot be reached: nothing
+\* lands, and the loop cannot know that either.
+SendLost(s) ==
+  /\ st[s] = "inflight" /\ checked[s]                     \* in flight, known not landed
+  /\ Valid(s) /\ ~up                                      \* signable, provider unreachable
+  /\ checked' = [checked EXCEPT ![s] = FALSE]             \* the loop must ask again
+  /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, rolled,
+                 chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+
+\* The loop asks the provider for the receipt of a change in flight. This is
+\* also the first thing it does with one after a restart.
+Lookup(s) ==
+  /\ st[s] = "inflight" /\ ~checked[s]                    \* in flight, outcome unknown
+  /\ up                                                   \* the provider answers
+  /\ CASE receipt[s] = "ok" ->                            \* it landed:
+            /\ st' = [st EXCEPT ![s] = "settled"]         \*   the record is deleted
+            /\ UNCHANGED checked
+       [] receipt[s] = "rejected" ->                      \* it was refused:
+            /\ st' = [st EXCEPT ![s] = "refused"]         \*   the record is parked
+            /\ UNCHANGED checked
+       [] OTHER ->                                        \* no receipt:
+            /\ checked' = [checked EXCEPT ![s] = TRUE]    \*   it may be sent again
+            /\ UNCHANGED st
+  /\ UNCHANGED <<doc, owedReg, chg, receipt, effects, rolled,
+                 chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+
+\* A change whose delegation expired waits for a fresh one. One in flight
+\* may do so only when it is known not to have landed.
+AwaitAuthority(s) ==
+  /\ ~Valid(s)                                            \* it cannot be signed
+  /\ st[s] = "staged" \/ (st[s] = "inflight" /\ checked[s])  \* not sent, or known lost
+  /\ st' = [st EXCEPT ![s] = "awaiting"]                  \* parked until reauthorized
+  /\ checked' = [checked EXCEPT ![s] = FALSE]             \* nothing to remember
+  /\ UNCHANGED <<doc, owedReg, chg, receipt, effects, rolled,
+                 chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+
+\* The embedder supplies a fresh delegation: the change is owed again.
+Reauthorize(s) ==
+  /\ st[s] = "awaiting"                                   \* it waits for authority
+  /\ st' = [st EXCEPT ![s] = "staged"]                    \* owed again
+  /\ delegOk' = TRUE                                      \* with a valid delegation
+  /\ UNCHANGED <<doc, owedReg, chg, receipt, effects, checked, rolled,
+                 chainOwner, chainTuples, up, crashes, expiries>>
+
+\* ---- The world around the node ----
+
+\* The stored delegation expires.
+Expire ==
+  /\ "deleg" \in Auths                                    \* delegations are in use
+  /\ delegOk /\ expiries < MaxExpiries                    \* valid, and expiries not endless
+  /\ delegOk' = FALSE                                     \* no longer valid
+  /\ expiries' = expiries + 1                             \* one more
+  /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, rolled,
+                 chainOwner, chainTuples, up, crashes>>
+
+\* The provider becomes unreachable.
+ProviderDown ==
+  /\ up /\ up' = FALSE                                    \* it stops answering
+  /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, rolled,
+                 chainOwner, chainTuples, delegOk, crashes, expiries>>
+
+\* The provider comes back.
+ProviderUp ==
+  /\ ~up /\ up' = TRUE                                    \* it answers again
+  /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, rolled,
+                 chainOwner, chainTuples, delegOk, crashes, expiries>>
+
+\* The receipt of a landed change can no longer be read (the provider pruned
+\* it, the worker's journal entry is gone) while the node still has the
+\* change in flight. Possible only without AssumeReceiptRetrievable.
+ReceiptLost(s) ==
+  /\ ~AssumeReceiptRetrievable                            \* the assumption is off
+  /\ st[s] = "inflight" /\ receipt[s] = "ok"              \* landed, not yet noticed
+  /\ receipt' = [receipt EXCEPT ![s] = "none"]            \* and now unreadable
+  /\ UNCHANGED <<doc, owedReg, st, chg, effects, checked, rolled,
+                 chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+
+\* Any one thing happens.
+Next ==
+  \/ StageCreate \/ Commit \/ Rollback \/ Crash           \* transactions and crashes
+  \/ \E s \in Slots, c \in Changes : StageChange(s, c)    \* staging a change
+  \/ RegisterOnChain \/ ClearOwed                         \* settling the registration
+  \/ \E s \in Slots : Mark(s) \/ Land(s) \/ SendLost(s) \/ Lookup(s)  \* settling a change
+  \/ \E s \in Slots : AwaitAuthority(s) \/ Reauthorize(s)  \* authority
+  \/ \E s \in Slots : ReceiptLost(s)                      \* a receipt disappears
+  \/ Expire \/ ProviderDown \/ ProviderUp                 \* the world
+
+\* Safety: start, then take steps. Nothing is promised to happen.
+Spec == Init /\ [][Next]_vars
+
+\* Liveness adds what is promised. The provider comes back, and a step that
+\* needs it and can be taken again and again is taken: it registers, lands a
+\* send and answers a lookup. The loop takes its turns. Fresh authority is
+\* supplied to a change that waits for it. Transactions, crashes, outages
+\* and expiries are promised nothing.
+SpecLive ==
+  /\ Spec                                                 \* all of the above
+  /\ WF_vars(ProviderUp)                                  \* the provider comes back
+  /\ SF_vars(RegisterOnChain) /\ SF_vars(ClearOwed)       \* the registration settles
+  /\ \A s \in Slots : WF_vars(Mark(s))                    \* the loop marks,
+  /\ \A s \in Slots : SF_vars(Land(s))                    \* a send lands,
+  /\ \A s \in Slots : SF_vars(Lookup(s))                  \* a lookup is answered,
+  /\ \A s \in Slots : WF_vars(AwaitAuthority(s))          \* an expired change is parked,
+  /\ \A s \in Slots : WF_vars(Reauthorize(s))             \* and fresh authority arrives
+
+\* ---- What must hold ----
+
+\* The node never honours more than was intended, nor more than the provider
+\* will give once everything is settled.
+INV_NoWidening ==
+  \A who \in Readers : Honours(who) => IntendedAllows(who) /\ SettledAllows(who)
+
+\* The last committed change on a tuple, or "none".
+LastOp(t) ==
+  LET S == {s \in Slots : Committed(s) /\ chg[s].subj = t}  \* the committed changes on it
+  IN IF S = {} THEN "none" ELSE chg[Last(S)].op             \* the latest one's kind
+\* The node honours this reader, and would not without this tuple.
+Through(who, t) ==
+  Honours(who) /\ ~HonoursUsing(who, chainTuples \ {t}, OwedGranted \ {t})
+\* Once a delete of a tuple committed and nothing added it again, no access
+\* the node honours rests on that tuple.
+INV_RevokedAtCommit ==
+  \A t \in Subjects : LastOp(t) = "del" => \A who \in Readers : ~Through(who, t)
+
+\* No change has been sent while the document's registration was owed: one
+\* that was sent finds the document registered.
+INV_RegistrationFirst ==
+  (\E s \in Slots : st[s] \in {"inflight", "settled", "refused"})
+    => (~owedReg /\ chainOwner # "none")
+
+\* A change takes effect on the provider at most once.
+INV_AtMostOneEffect == \A s \in Slots : effects[s] <= 1
+
+\* Nothing is owed for a transaction that rolled back: no registration
+\* without a committed document, no record of a rolled-back change.
+INV_RollbackLeavesNothing ==
+  /\ owedReg => doc = "exists"                            \* owed only for a real document
+  /\ \A s \in rolled : st[s] = "void"                     \* a rolled-back change is gone
+
+\* While the registration is owed, the document is read only by its creator
+\* and by identities the creator granted by name.
+INV_OwedDocumentNarrow ==
+  owedReg => \A who \in Readers :
+    Honours(who) => \/ who = "c"                          \* the creator,
+                    \/ \E s \in Slots :                   \* or someone the creator
+                         /\ Committed(s) /\ chg[s].op = "add"  \* granted,
+                         /\ chg[s].actor = "c" /\ chg[s].subj = who  \* by name
+
+\* Every committed change ends settled, or parked as refused or as awaiting
+\* authority, and stays so.
+LIVE_Drains ==
+  <>[](\A s \in Slots : Committed(s) => st[s] \in {"settled", "refused", "awaiting"})
+
+====

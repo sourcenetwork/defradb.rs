@@ -561,6 +561,24 @@ RUNS=(
   "MC_PendingSubmission_Red_GivesUpEarly.cfg PendingSubmission.tla RED" # a failure that may pass ends the loop before its deadline
   "MC_PendingSubmission_Red_ForgetsOnTimeout.cfg PendingSubmission.tla RED" # the journal drops the request when the deadline passes
   "MC_PendingSubmission_Red_Recalled_Forgets.cfg PendingSubmission.tla RED" # with the journal emptied at a deadline, a later call has nothing to send again
+  "MC_AcpOutbox_Green.cfg AcpOutbox.tla GREEN" # a new document: owed registration and two owed changes never widen access, across crashes
+  "MC_AcpOutbox_Green_Registered.cfg AcpOutbox.tla GREEN" # a registered document: deletes of tuples the provider holds deny from the commit on
+  "MC_AcpOutbox_Green_Three.cfg AcpOutbox.tla GREEN" # three changes on one tuple in every order, with an actor the provider refuses
+  "MC_AcpOutbox_Green_Three_Registered.cfg AcpOutbox.tla GREEN" # a change awaiting authority holds the later changes on its tuple
+  "MC_AcpOutbox_Green_Live.cfg AcpOutbox.tla GREEN" # every committed change ends settled, refused or awaiting authority
+  "MC_AcpOutbox_Red_OwedOutsideTxn.cfg AcpOutbox.tla RED" # owed records written beside the transaction survive its rollback (INV_RollbackLeavesNothing)
+  "MC_AcpOutbox_Red_NoDenyOverlay.cfg AcpOutbox.tla RED" # a committed delete counts only once it lands (INV_RevokedAtCommit)
+  "MC_AcpOutbox_Red_LatestOpOverlay.cfg AcpOutbox.tla RED" # a later owed add that the provider refuses lifts an owed delete's denial (INV_NoWidening)
+  "MC_AcpOutbox_Red_RefusedDeleteForgotten.cfg AcpOutbox.tla RED" # a refused delete stops denying (INV_RevokedAtCommit)
+  "MC_AcpOutbox_Red_OwedAddGrants.cfg AcpOutbox.tla RED" # every owed add grants at once (INV_NoWidening)
+  "MC_AcpOutbox_Red_WildcardGrant.cfg AcpOutbox.tla RED" # a creator's owed grant to everyone opens an owed document (INV_OwedDocumentNarrow)
+  "MC_AcpOutbox_Red_ChangeBeforeRegistration.cfg AcpOutbox.tla RED" # a change is sent while the registration is owed (INV_RegistrationFirst)
+  "MC_AcpOutbox_Red_OutOfOrder.cfg AcpOutbox.tla RED" # a delete lands before the add it follows (INV_RevokedAtCommit)
+  "MC_AcpOutbox_Red_DrainPastAwaiting.cfg AcpOutbox.tla RED" # an add reauthorized after a later delete landed restores the tuple (INV_RevokedAtCommit)
+  "MC_AcpOutbox_Red_NoInFlightMarker.cfg AcpOutbox.tla RED" # without a durable mark a landed change is sent again after a crash (INV_AtMostOneEffect)
+  "MC_AcpOutbox_Red_ReceiptLost.cfg AcpOutbox.tla RED" # with no receipt to read a landed change is sent again (INV_AtMostOneEffect)
+  "MC_AcpOutbox_Red_ContestedRegistration.cfg AcpOutbox.tla RED" # the provider holds another owner while the creator still reads (INV_NoWidening)
+  "MC_AcpOutbox_Red_RefusedBlocksDrain.cfg AcpOutbox.tla RED" # a refused change holds every later one for ever (LIVE_Drains)
   "MC_RegisterDocOnce_Green.cfg RegisterDocOnce.tla GREEN" # racing registrations of one document: one owner, the winner owns it, one wins
   "MC_RegisterDocOnce_Red_NoValidation.cfg RegisterDocOnce.tla RED" # deciding scan not validated: two owners (INV_OneOwner)
   "MC_RegisterDocOnce_Red_Sentinel.cfg RegisterDocOnce.tla RED" # main before the fix: the identical sentinel write commits, two owners (INV_OneOwner)

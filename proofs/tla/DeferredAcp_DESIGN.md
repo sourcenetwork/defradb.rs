@@ -4,12 +4,15 @@ Backlog item #2 (`proofs/README.md` Coverage map / `survey/query-plan.md`): *Def
 overlay consistency — a txn-local ACP projection gates reads exactly as the committed state
 would; fail-closed across commit/rollback.*
 
-This slice models the **deferred-ACP overlay** in
-`crates/query/src/txn/context.rs`: a `DeferredAcpMutations` object that an explicit
-DefraDB transaction uses to (a) maintain a txn-LOCAL `projected_registrations` map and (b)
-buffer the real ACP register/unregister writes as commit-time hooks. Access checks within
-the txn consult the projection FIRST (`check_doc_access_with_overlay`); the buffered hooks
-apply the actual ACP writes only after the storage txn commits.
+This slice models the **deferred-ACP overlay**: the ACP registrations an explicit DefraDB
+transaction has written but not committed. They are the transaction's own writes in its ACP
+namespace. A local provider joins the transaction (`DocumentACP::bind_transaction`) and
+registers through its view; an external provider cannot, so the create records the
+registration it owes in the same view (`PendingRegistrations::record`) and
+`AcpRegistrationProjection` in `crates/query/src/txn/context.rs` reads it back. Access
+checks within the txn consult the projection FIRST (`check_doc_access_with_projection`);
+the writes reach committed ACP state only when the storage txn commits. What happens to an
+owed registration after the commit (settling it with the provider) is `AcpOutbox.tla`.
 
 It is **distinct from the Acp and Commits slices**, which both assume an *already-committed*
 ACP state (Zanzibar soundness + revocation cache; dual-path commit gating). This slice is the
@@ -62,19 +65,16 @@ states, so the invariants hold over a non-trivial space:
 
 | Symbol in model | Code | Anchor |
 |---|---|---|
-| `Reg(o)` / `Unreg` (`ProjectedDocRegistration::Registered{owner}` / `Unregistered`) | `enum ProjectedDocRegistration` | `crates/query/src/txn/context.rs:30-34` |
-| `proj[t]` (txn-local `projected_registrations`) | `DeferredAcpState.projected_registrations` | `context.rs:48-52` |
-| one `DeferredAcpMutations` per txn (isolation by construction) | `Arc::new(DeferredAcpMutations::new())` at `begin()` | `crates/db/src/txn/registry/lifecycle.rs:216-229` |
-| `proj[t][d] := Reg(o)` + buffer hook (`Register` action) | `schedule_register_doc_object` | `context.rs:120-158` (projection insert 131-137; hook push 141-157) |
-| `proj[t][d] := Unreg` + buffer hook (`Unregister` action) | `schedule_unregister_doc_object` | `context.rs:161-204` (projection insert 172-176) |
-| `EffectiveProj` / `OverlayGrant` (the gate: projection-first, else committed) | `check_doc_access_with_overlay` | `context.rs:328-351` |
-| `OwnerCheck="Strict"` (Registered grants only to owner) | `matches!(identity, Identity::Authenticated(did) if did == &owner)` | `context.rs:342-344` |
-| projected `Unregistered ⇒ open` for the modeled backend | `ProjectedDocRegistration::Unregistered => acp.unregistered_documents_are_public()` | `crates/query/src/txn/context.rs`, `check_doc_access_with_overlay` |
-| `Commit` runs hooks atomically (one action) | `run_all_logged` drains and runs all hooks | `context.rs:207-237` |
-| commit hook wired to **commit only** (`on_success_async`), never rollback | `db_txn.on_success_async(... run_all_logged ...)` | `txn/registry/lifecycle.rs:218-229` |
-| `on_success_async` semantics: fired on `commit()`, NOT on `discard()` | corekv `Transaction` trait docs | `crates/storage/src/corekv/traits.rs:304-369` |
-| projection scoped per query execution via task-local | `scope_deferred_acp_mutations` | `crates/query/src/runner/executor.rs:444-474`, `context.rs:266-303` |
-| register/unregister scheduled from the mutation runner | `schedule_register_doc_object` / `schedule_unregister_doc_object` call sites | `crates/query/src/runner/mutation.rs:705-720, 764-771` |
+| `Reg(o)` (a projected registration and its owner) | `PendingRegistration { creator, .. }` for an external provider; the bound provider's own owner record for a local one | `crates/acp/src/pending.rs` |
+| `proj[t]` (the txn's own ACP writes) | the transaction's ACP namespace view, read by `PendingRegistrations::get` | `crates/acp/src/pending.rs`; `DbTxn::acpstore` in `crates/db/src/txn/mod.rs` |
+| one projection per txn (isolation by construction) | `DbTxn::acp_registration_projection` builds it over the txn's own view | `crates/db/src/txn/mod.rs` |
+| `proj[t][d] := Reg(o)` (`Register` action) | `register_created_doc`: `bind_transaction` then `register_doc_object`, or `PendingRegistrations::record` | `crates/db/src/write/autocommit/helpers.rs` |
+| `proj[t][d] := Unreg` (`Unregister` action) | `unregister_deleted_doc`: `unregister_doc_object` through the bound provider, or `PendingRegistrations::clear` | `crates/db/src/write/autocommit/helpers.rs` |
+| `EffectiveProj` / `OverlayGrant` (the gate: projection-first, else committed) | `check_doc_access_with_projection`, `is_doc_registered_with_projection` | `crates/query/src/txn/context.rs` |
+| `OwnerCheck="Strict"` (Registered grants only to owner) | `is_creator` | `crates/query/src/txn/context.rs` |
+| projected `Unregistered ⇒ open` for the modeled backend | `acp.unregistered_documents_are_public()` | `crates/query/src/txn/context.rs` |
+| `Commit` applies the projection atomically (one action) | the storage transaction's commit publishes its ACP-namespace writes with its rows | `DbTxn::commit` in `crates/db/src/txn/mod.rs` |
+| `Rollback` changes nothing | the writes are the transaction's own, dropped by `DbTxn::discard`; the projection holds only a weak view (`PendingRegistrations::active_view`) | `crates/db/src/txn/mod.rs`; `crates/acp/src/pending.rs` |
 
 ### Go (origin/develop — the live upstream, not the stale checkout)
 
@@ -103,9 +103,9 @@ model.
 | Config | Knobs | Verdict | Mechanism toggled |
 |---|---|---|---|
 | `MC_DeferredAcp_Green` | `PerTxn / NoHooks / Strict` | **GREEN — all hold** | correct mechanism |
-| `MC_DeferredAcp_Red_SharedOverlay` | `Shared / NoHooks / Strict` | **RED** — `INV_FailClosedActive` *and* `INV_NoCrossTxnLeak` violated | one global `DeferredAcpMutations` shared by both txns; txn B reads off txn A's uncommitted projection → access B's own commit would never grant |
-| `MC_DeferredAcp_Red_RollbackHooks` | `PerTxn / RunHooks / Strict` | **RED** — `INV_RollbackNoOp` violated | rollback fires the buffered hooks (as if `on_success_async` ran on `discard()`) → committed ACP mutated though the txn aborted |
-| `MC_DeferredAcp_Red_OwnerBypass` | `PerTxn / NoHooks / Any` | **RED** — `INV_FailClosedActive` violated | overlay grants a projected `Registered{owner}` to ANY authenticated identity (the `did == owner` check dropped) → a stranger reads what committed denies |
+| `MC_DeferredAcp_Red_SharedOverlay` | `Shared / NoHooks / Strict` | **RED** — `INV_FailClosedActive` *and* `INV_NoCrossTxnLeak` violated | one projection shared by both txns, not one view each; txn B reads off txn A's uncommitted projection → access B's own commit would never grant |
+| `MC_DeferredAcp_Red_RollbackHooks` | `PerTxn / RunHooks / Strict` | **RED** — `INV_RollbackNoOp` violated | rollback applies the projected writes (as if a discard committed them) → committed ACP mutated though the txn aborted |
+| `MC_DeferredAcp_Red_OwnerBypass` | `PerTxn / NoHooks / Any` | **RED** — `INV_FailClosedActive` violated | overlay grants a projected `Registered{owner}` to ANY authenticated identity (the `is_creator` check dropped) → a stranger reads what committed denies |
 
 The `SharedOverlay` case violates `INV_NoCrossTxnLeak` even checked alone (verified) — the
 dedicated isolation invariant is not subsumed by the headline; it pins the cross-txn-leak
@@ -131,24 +131,24 @@ the named invariant "is violated" with a concrete two-txn counterexample trace.
   projection ops per txn. The doc starts committed-Registered to `u1` (genuinely protected),
   so any over-grant to `u2`/anon or any cross-txn leak is a real violation. This is the minimal
   witnessing shape; conclusions are structural (the gate, the isolation boundary, the
-  commit-vs-rollback hook split), not quantity-sensitive.
+  commit-vs-rollback split), not quantity-sensitive.
 - **Abstracted:** the actual Zanzibar/`DocumentACP` relation evaluation is collapsed into the
   `Grant` rule for public-absence backends (Unregistered ⇒ anyone; Registered{owner} ⇒ owner-only). Native Vera's deny-on-absence behavior and branchable collection inheritance are not modeled. Multi-relation policies,
-  the bearer-token guard (`RequestBearerTokenGuard`), and hook fail-soft/`catch_unwind` logging
+  and the bearer token a settlement runs under
   are out of scope — modeled as an atomic, total commit application. The relation engine itself
   is the Acp slice's job and is exercised by `--test acp`.
 - **Modeled as atomic:** commit applies the transaction-local projection in one TLA+ action.
   Storage transaction atomicity and isolation are assumed engine boundaries, not discharged
-  by this model. Remote ACP hooks can partially succeed after durability; their delivery and
-  partial failure are outside this model. No atomic remote-hook application is claimed.
+  by this model. Settling an owed registration with a remote provider after durability is
+  `AcpOutbox.tla`. No atomic remote application is claimed.
 - **Out of scope here:** the per-request identity/JWT authentication that produces
   `Identity::Authenticated(did)` (the Auth/Jwt slices); the dual-path User-vs-Commits gating
   (the Commits slice). This slice assumes those gates and models only the deferred overlay on
   top of committed ACP.
 - **Integrator TODO:** no automated model↔code conformance harness yet (repo-wide policy,
   `proofs/README.md` "Model ≠ code"). Keep anchors in step manually if `txn/context.rs` changes
-  the projection-first gate, the owner check, the per-txn `DeferredAcpMutations` allocation in
-  `txn/registry/lifecycle.rs`, or the `on_success_async` (commit-only) hook wiring.
+  the projection-first gate or the owner check, or if `DbTxn::acp_registration_projection`
+  stops reading through the transaction's own view.
 - **Integrator TODO (run-all):** add the four `MC_DeferredAcp_*` rows to
   `proofs/tla/run-all.sh` (shared file, intentionally not edited by this slice):
 

@@ -1633,6 +1633,29 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        // A remote provider cannot join the row transaction, so a create
+        // writes the registration it owes into that transaction and the
+        // node settles it after the commit and again at start. Until the
+        // record is cleared the gate lets only the creator read. That part
+        // exists and is anchored here. Owed relationship changes (#2954) are
+        // specified in the same model before their code: an owed delete
+        // denies from the commit on, an owed add grants nothing but the
+        // creator's own named grant on a document still owed, the
+        // registration settles first, changes go in sequence order behind a
+        // durable in-flight mark, and a refused or unauthorized change is
+        // parked. INV_AtMostOneEffect rests on a receipt staying readable
+        // (Red_ReceiptLost), and the creator-only gate on the provider not
+        // already holding the document for another owner
+        // (Red_ContestedRegistration).
+        family: "ACP outbox and owed registrations",
+        name: "INV_NoWidening / INV_RevokedAtCommit / INV_RegistrationFirst / INV_AtMostOneEffect / INV_RollbackLeavesNothing / INV_OwedDocumentNarrow / LIVE_Drains: what a node owes a remote ACP provider never widens access before it is settled, a committed delete denies at once, the registration settles before any change, a change takes effect once across a crash, a rollback leaves nothing owed, and every committed change ends settled or parked",
+        axis: Tla,
+        anchor: "crates/acp/src/pending.rs PendingRegistration, PendingRegistrations::record, PendingRegistrations::get, PendingRegistrations::clear; crates/acp/src/external.rs ExternalDocumentAcp::settle, ExternalDocumentAcp::clear, ExternalDocumentAcp::redrive_owed, ExternalDocumentAcp::check_doc_access, ExternalDocumentAcp::redrive_registration; crates/db/src/write/autocommit/helpers.rs register_created_doc, unregister_deleted_doc; crates/db/src/write/autocommit/create.rs acp_registration_retry_callback; crates/query/src/txn/context.rs AcpRegistrationProjection; crates/defra-node/src/node_acp.rs gate_external_acp",
+        model_ref: "MC_AcpOutbox_{Green,Green_Registered,Green_Three,Green_Three_Registered,Green_Live,Red_OwedOutsideTxn,Red_NoDenyOverlay,Red_LatestOpOverlay,Red_RefusedDeleteForgotten,Red_OwedAddGrants,Red_WildcardGrant,Red_ChangeBeforeRegistration,Red_OutOfOrder,Red_DrainPastAwaiting,Red_NoInFlightMarker,Red_ReceiptLost,Red_ContestedRegistration,Red_RefusedBlocksDrain}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         // Registrations of one document that race each write their own owner
         // key, so only the commit can refuse all but one. The deciding prefix
         // scan is a validated scan: a registration that commits under the
@@ -2200,7 +2223,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Deferred-ACP overlay consistency",
         name: "INV_FailClosedActive — txn-local ACP projection gates as committed state would",
         axis: Tla,
-        anchor: "crates/query/src/txn/context.rs; crates/db/src/write/autocommit/batch.rs",
+        anchor: "crates/query/src/txn/context.rs AcpRegistrationProjection::owed_creator, check_doc_access_with_projection, is_doc_registered_with_projection, is_creator; crates/db/src/txn/mod.rs DbTxn::acp_registration_projection; crates/acp/src/pending.rs PendingRegistrations::record, PendingRegistrations::get, PendingRegistrations::clear; crates/db/src/write/autocommit/helpers.rs register_created_doc, unregister_deleted_doc",
         model_ref: "MC_DeferredAcp_Green.cfg",
         tiers: &[Behavioral],
         bound_by: "proofs/tests/behavioral/deferred_acp.rs deferred_acp_txn_local_gating",
