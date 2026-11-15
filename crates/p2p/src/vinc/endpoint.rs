@@ -199,6 +199,7 @@ async fn run(
         fanout: RefCell::new(RapidHashMap::new()),
         has_hubs,
         joining: RefCell::new(RapidHashMap::new()),
+        confirmed: RefCell::new(RapidHashSet::new()),
         next_query: Cell::new(1),
         next_connection: Cell::new(1),
     });
@@ -244,6 +245,8 @@ pub(super) struct Node<H: Hosted + 'static> {
     pub(super) has_hubs: bool,
     /// The subscribes waiting for a hub to confirm their topic's join.
     pub(super) joining: RefCell<RapidHashMap<String, Vec<oneshot::Sender<()>>>>,
+    /// The joined topics a hub confirmed since this node last joined them.
+    pub(super) confirmed: RefCell<RapidHashSet<String>>,
     pub(super) next_query: Cell<u64>,
     next_connection: Cell<u64>,
 }

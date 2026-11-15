@@ -189,7 +189,10 @@ fn raw_topics_carry_a_request_and_its_answer_as_bytes() {
         let (from, request) = b
             .next(|event| match event {
                 TransportEvent::GossipRawMessage {
-                    source, topic, data, ..
+                    source,
+                    topic,
+                    data,
+                    ..
                 } if topic == "encryption" => Some((source, data)),
                 _ => None,
             })
@@ -249,5 +252,24 @@ fn a_node_with_no_peer_takes_no_head_hint() {
         a.shutdown().await;
         b.shutdown().await;
         lonely.shutdown().await;
+    });
+}
+
+/// A subscribe no hub confirms fails, and takes its topic back, so the
+/// coordinator's retry joins afresh and waits again instead of answering at
+/// once from the join the failed one left behind.
+#[test]
+fn a_subscribe_no_hub_confirms_fails_and_its_retry_waits_again() {
+    run(async {
+        // A plain endpoint named as the hub: it never confirms a join.
+        let silent = TestNode::spawn().await;
+        let listening = silent.transport.listen_addresses().await.unwrap();
+        let hub = crate::vinc::best_shareable_public_addr(&silent.id, &listening).unwrap();
+        let a = node_on(&hub).await;
+        let topic = DefraTopic::collection("c1");
+        assert!(a.transport.subscribe(topic.clone()).await.is_err());
+        assert!(a.transport.subscribe(topic.clone()).await.is_err());
+        a.shutdown().await;
+        silent.shutdown().await;
     });
 }

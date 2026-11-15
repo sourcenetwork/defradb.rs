@@ -1173,7 +1173,17 @@ RUNS=(
   "MC_VincTopicDelivery_Red_RawLate.cfg VincTopicDelivery.tla RED" # raw marked after the join: a KMS message is decoded as a PushLog (INV_RawNeverDecoded)
   "MC_VincTopicDelivery_Red_NoSessionFilter.cfg VincTopicDelivery.tla RED" # JOINED from the hub's member list: a peer with no session is reported joined (INV_JoinedOnlyLinkedMembers)
   "MC_VincTopicDelivery_Red_NoOwnerCheck.cfg VincTopicDelivery.tla RED" # an ended hold leaves whatever happened: the engine loses a topic it subscribed to meanwhile (INV_EngineKeepsItsTopic)
-  "MC_VincTopicDelivery_Red_NoHoldKeep.cfg VincTopicDelivery.tla RED" # an unsubscribe leaves a held topic: the node stops hearing who joins a document it wrote (INV_HeldIsJoined)
+  "MC_VincTopicDelivery_Red_NoHoldEnd.cfg VincTopicDelivery.tla RED" # an unsubscribe leaves but keeps the hold: a held topic the node is off (INV_HeldIsJoined)
+  "MC_VincJoinConfirm_Green.cfg VincJoinConfirm.tla GREEN" # two subscribes, an unsubscribe, a hold and a lost event: "subscribed" only while the hub holds the join, no fail once confirmed, no missed wake-up, no stuck subscription
+  "MC_VincJoinConfirm_Green_Wide.cfg VincJoinConfirm.tla GREEN" # three attempts, two unsubscribes, two holds: the same promises
+  "MC_VincJoinConfirm_Red_NoConfirmCheck.cfg VincJoinConfirm.tla RED" # old code, waits only on a join new to vinc: a held topic answers before the hub has it (INV_OkOnlyWhenHeld)
+  "MC_VincJoinConfirm_Red_NoConfirmCheck_Wake.cfg VincJoinConfirm.tla RED" # old code: the event is read before the subscribe decides, and it waits for nothing (INV_NoMissedWake)
+  "MC_VincJoinConfirm_Red_NoStillJoined.cfg VincJoinConfirm.tla RED" # an event of a left topic confirms it: the next subscribe answers early (INV_OkOnlyWhenHeld)
+  "MC_VincJoinConfirm_Red_NoRecheck.cfg VincJoinConfirm.tla RED" # the timer wins over the wake-up and the subscribe fails though confirmed (INV_FailOnlyUnconfirmed)
+  "MC_VincJoinConfirm_Red_NoRollback.cfg VincJoinConfirm.tla RED" # a failed subscribe keeps its join: a lost event is never raised again (INV_NoStuckSubscription)
+  "MC_VincJoinConfirm_Red_NoClearOnLeave.cfg VincJoinConfirm.tla RED" # a left topic stays confirmed: a rejoin answers early (INV_OkOnlyWhenHeld)
+  "MC_VincJoinConfirm_Red_UntaggedList.cfg VincJoinConfirm.tla RED" # vinc today (#483): an old list confirms a new join (INV_OkOnlyWhenHeld)
+  "MC_VincJoinConfirm_Red_Undrained.cfg VincJoinConfirm.tla RED" # vinc today (#483): a queued old event confirms a new join (INV_OkOnlyWhenHeld)
   "MC_VincTopicDelivery_Red_NoEngineFilter.cfg VincTopicDelivery.tla RED" # messages of a topic the engine is not subscribed to reach it (INV_OnlyEngineTopics)
   "MC_CoordinatorShutdown_Green.cfg CoordinatorShutdown.tla GREEN" # two callers, a late spawn racing the drain, the edge closing and the runtime torn down at any moment: one drain, no task left in the set, every caller returns
   "MC_CoordinatorShutdown_Green_TwoSpawns.cfg CoordinatorShutdown.tla GREEN" # two late spawns whose pruners race the drain and each other: no task left in the set, the caller returns

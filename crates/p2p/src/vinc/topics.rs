@@ -24,9 +24,12 @@
 //! - **Subscribed means reachable.** A gossipsub subscription is in the
 //!   peers' view once the call returns; a vinc join returns before any hub
 //!   knows of it, so a message published at once could miss the new member.
-//!   A subscribe answers once a hub confirms the join (`Event::Joined`), and
-//!   fails after [`JOIN_WAIT`] with none: a subscription no hub holds would
-//!   look installed and get nothing.
+//!   A subscribe answers once a hub confirmed the topic's join
+//!   (`Event::Joined`), whichever join made it, and fails after
+//!   [`JOIN_WAIT`] with none: a subscription no hub holds would look
+//!   installed and get nothing. A failed subscribe takes the topic back, so
+//!   the coordinator's retry joins afresh and waits again. Modeled in
+//!   `proofs/tla/VincJoinConfirm.tla`.
 //! - **Raw topics.** A raw topic is marked raw before it is joined, so none
 //!   of its messages is ever decoded as a PushLog.
 
@@ -78,18 +81,21 @@ impl<H: Hosted + 'static> Node<H> {
         if joined.is_err() && new {
             self.subscribed.borrow_mut().remove(&topic);
         }
-        // Only a join new to vinc waits: a topic a publish already holds
-        // joined was confirmed, or is being confirmed, by that join.
+        // A topic a publish holds joined may not be confirmed yet, and one a
+        // failed subscribe left joined never answers again: whether the join
+        // is new to vinc says nothing, only a confirmation does.
         match joined {
-            Ok(true) if self.has_hubs => self.answer_when_confirmed(topic, new, reply),
+            Ok(_) if self.has_hubs && !self.confirmed.borrow().contains(&topic) => {
+                self.answer_when_confirmed(topic, new, reply);
+            }
             joined => {
                 let _ = reply.send(joined.map(|_| new));
             }
         }
     }
 
-    /// Answer a new subscription once a hub confirms its join, or fail it
-    /// after [`JOIN_WAIT`]: the command loop does not wait.
+    /// Answer a subscription once a hub confirms its join, or fail it after
+    /// [`JOIN_WAIT`]: the command loop does not wait.
     fn answer_when_confirmed(self: &Rc<Self>, topic: String, new: bool, reply: Reply<bool>) {
         let (confirmed, wait) = oneshot::channel();
         self.joining
@@ -97,12 +103,17 @@ impl<H: Hosted + 'static> Node<H> {
             .entry(topic.clone())
             .or_default()
             .push(confirmed);
+        let node = Rc::clone(self);
         let spawned = self.spawn(async move {
-            let answer = match crate::rt::time::timeout(JOIN_WAIT, wait).await {
-                Ok(Ok(())) => Ok(new),
-                _ => Err(Error::Transport(format!(
+            let woken = matches!(crate::rt::time::timeout(JOIN_WAIT, wait).await, Ok(Ok(())));
+            // A confirmation that landed as the wait ran out still counts.
+            let answer = if woken || node.confirmed.borrow().contains(&topic) {
+                Ok(new)
+            } else {
+                node.abandon_join(&topic).await;
+                Err(Error::Transport(format!(
                     "no vinc hub confirmed the join of {topic} within {JOIN_WAIT:?}"
-                ))),
+                )))
             };
             let _ = reply.send(answer);
         });
@@ -111,11 +122,46 @@ impl<H: Hosted + 'static> Node<H> {
         }
     }
 
-    /// A hub confirmed the join of `topic`: answer its waiting subscribes.
+    /// A hub confirmed the join of `topic`: if the topic is still joined,
+    /// remember it and answer its waiting subscribes. A subscribe waiting on a
+    /// topic since left fails when its wait runs out.
     fn joined(&self, topic: &str) {
+        // ponytail: a confirmation of an earlier join, still queued when the
+        // topic is left and joined again, counts for the new join; vinc #483
+        // is the hub confirming only the subscription that asked.
+        if !self.subscribed.borrow().contains(topic) && !self.fanout.borrow().contains_key(topic) {
+            return;
+        }
+        self.confirmed.borrow_mut().insert(topic.to_owned());
         for confirmed in self.joining.borrow_mut().remove(topic).unwrap_or_default() {
             let _ = confirmed.send(());
         }
+    }
+
+    /// No hub confirmed `topic` in time: take the subscription back, and
+    /// leave unless a publish holds the topic, so the retry joins afresh. A
+    /// confirmation vinc dropped (`Event::Lost`) never comes again for a
+    /// join that stays.
+    async fn abandon_join(&self, topic: &str) {
+        {
+            let mut joining = self.joining.borrow_mut();
+            if let Some(waiting) = joining.get_mut(topic) {
+                waiting.retain(|confirmed| !confirmed.is_closed());
+                if waiting.is_empty() {
+                    joining.remove(topic);
+                }
+            }
+        }
+        self.subscribed.borrow_mut().remove(topic);
+        if !self.fanout.borrow().contains_key(topic) {
+            self.leave(topic).await;
+        }
+    }
+
+    /// Leave `topic`: vinc forgets its confirmation, and so does this node.
+    async fn leave(&self, topic: &str) {
+        self.confirmed.borrow_mut().remove(topic);
+        self.ep.leave(topic.as_bytes()).await;
     }
 
     /// Keep `topic` joined for [`FANOUT_TTL`] from now: a new hold joins it.
@@ -156,7 +202,7 @@ impl<H: Hosted + 'static> Node<H> {
         };
         for topic in ended {
             if !self.subscribed.borrow().contains(&topic) {
-                self.ep.leave(topic.as_bytes()).await;
+                self.leave(&topic).await;
             }
         }
     }
@@ -170,7 +216,7 @@ impl<H: Hosted + 'static> Node<H> {
             self.fanout.borrow_mut().remove(topic);
         }
         if was || !self.fanout.borrow().contains_key(topic) {
-            self.ep.leave(topic.as_bytes()).await;
+            self.leave(topic).await;
         }
         let _ = reply.send(Ok(was));
     }
@@ -296,7 +342,11 @@ impl<H: Hosted + 'static> Node<H> {
                     continue;
                 }
                 Event::AdjacencyShort { sessions, named } => {
-                    warn!(sessions, ?named, "vinc hubs were told only some of this node's peers");
+                    warn!(
+                        sessions,
+                        ?named,
+                        "vinc hubs were told only some of this node's peers"
+                    );
                     continue;
                 }
                 Event::ReachRefused { node } => {
