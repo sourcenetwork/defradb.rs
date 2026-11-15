@@ -51,9 +51,9 @@ use super::wire::vinc_error;
 const NEIGHBOR_WAIT: Duration = Duration::from_secs(10);
 
 /// How long a subscribe waits for a hub to confirm its join.
-/// Under the coordinator's subscription deadline (5 s), so a join no hub
+/// Under the coordinator's subscription deadline (15 s), so a join no hub
 /// confirms fails as itself, not as the coordinator's timeout.
-const JOIN_WAIT: Duration = Duration::from_secs(3);
+const JOIN_WAIT: Duration = Duration::from_secs(12);
 
 /// How long a publish keeps its topic joined, gossipsub's default
 /// `fanout_ttl`.
