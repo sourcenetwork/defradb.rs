@@ -54,6 +54,17 @@ async fn node_serving(
     policies: Vec<EmbeddedVeraPolicy>,
     rpc_listen: Option<std::net::SocketAddr>,
 ) -> Node {
+    starting(directory, actor, policies, rpc_listen)
+        .await
+        .expect("node")
+}
+
+async fn starting(
+    directory: &Path,
+    actor: EmbeddedVeraActor,
+    policies: Vec<EmbeddedVeraPolicy>,
+    rpc_listen: Option<std::net::SocketAddr>,
+) -> defra_node::Result<Node> {
     let keyring: Arc<dyn keyring::Keyring> = Arc::new(
         keyring::FileKeyring::open(directory.join("keys"), b"test-password").expect("keyring"),
     );
@@ -78,7 +89,6 @@ async fn node_serving(
         })
         .build()
         .await
-        .expect("node")
 }
 
 async fn reads(node: &Node, actor: &identity::Did, policy: &str) -> bool {
@@ -200,6 +210,30 @@ fn now() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock")
         .as_secs()
+}
+
+/// A seed that does not compile is refused before the deployment exists, so
+/// the host starts in the same directory once the seed is corrected.
+#[test]
+fn a_refused_seed_leaves_the_directory_free_for_a_corrected_one() {
+    workers::block_on(async {
+        let directory = tempfile::tempdir().unwrap();
+        let actor = || EmbeddedVeraActor::Secp256k1Key(vec![42; 32]);
+        let seed = |definition: &str| {
+            vec![EmbeddedVeraPolicy {
+                definition: definition.to_string(),
+                counter: 0,
+                owner: STRANGER.to_string(),
+            }]
+        };
+
+        let refused = starting(directory.path(), actor(), seed("["), None).await;
+        assert!(refused.is_err(), "a malformed seed started a node");
+
+        let node = node_with(directory.path(), actor(), seed(POLICY)).await;
+        node.shutdown().await.expect("shutdown");
+    })
+    .unwrap();
 }
 
 /// A host that already names its policy by the ID a local ACP derives finds
