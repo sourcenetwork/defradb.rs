@@ -22,7 +22,7 @@ use super::log_throttle::DagFetchLogThrottles;
 /// Process-global counter of gossip payload decode failures.
 ///
 /// Both the libp2p and iroh gossip paths increment this via
-/// [`record_gossip_decode_failure`]. Exposed through every
+/// `record_gossip_decode_failure`. Exposed through every
 /// `SyncDiagnostics::snapshot()` so tests see the same number across all
 /// managers in the process.
 static GOSSIP_DECODE_FAILURES: AtomicU64 = AtomicU64::new(0);
@@ -203,10 +203,10 @@ pub struct SyncDiagnosticsSnapshot {
     pub pending_dag_terminal_quarantined: u64,
     /// Dispatch passes whose due order the tie-break would have changed.
     pub pending_dag_tie_reorders: u64,
-    /// Process-global; see [`record_gossip_decode_failure`].
+    /// Process-global; see `record_gossip_decode_failure`.
     pub gossip_decode_failures: u64,
     /// Process-global recent samples captured by
-    /// [`record_gossip_decode_failure_sample`].
+    /// `record_gossip_decode_failure_sample`.
     pub recent_gossip_decode_failures: Vec<GossipDecodeFailureSample>,
 }
 

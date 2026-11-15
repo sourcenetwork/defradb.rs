@@ -32,7 +32,7 @@ mod submission;
 
 pub use error::EmbeddedError;
 #[cfg(feature = "node")]
-pub use host::{Deployment, HostConfig, HostError, HostedNode, ThreadBudget};
+pub use host::{Deployment, HostConfig, HostError, HostedNode, SeededPolicy, ThreadBudget};
 pub use vera_jsonrpc::LocalRpc;
 
 /// The in-process channel to one embedded Vera node.

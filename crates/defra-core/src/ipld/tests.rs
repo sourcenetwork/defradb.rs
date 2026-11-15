@@ -806,3 +806,103 @@ fn an_explicit_false_commitment_flag_decodes() {
     let decoded = CollectionDefinitionDeltaPayload::try_from(&Ipld::Map(collection)).unwrap();
     assert!(!decoded.is_branchable);
 }
+
+fn chunked_delta() -> CollectionDefinitionDeltaPayload {
+    CollectionDefinitionDeltaPayload::new(1)
+        .with_name("Article")
+        .with_chunked_fields(vec![crate::ChunkedFieldDelta {
+            field: "body".to_string(),
+            max_chars: 64,
+            overlap: 1,
+            splitter_version: crate::DEFAULT_SPLITTER_VERSION,
+        }])
+}
+
+/// The `@chunk` settings survive both codecs, and both write the same bytes,
+/// so the CID a peer computes matches the author's.
+#[test]
+fn chunk_settings_round_trip_through_both_codecs() {
+    let generated = CollectionDefinitionDeltaPayload::new(1)
+        .with_name("Article__body_chunk")
+        .with_chunk_of(crate::ChunkOfDelta {
+            collection: "Article".to_string(),
+            field: "body".to_string(),
+        });
+    let mut versioned = chunked_delta();
+    versioned.chunked_fields[0].splitter_version = crate::DEFAULT_SPLITTER_VERSION + 1;
+    for delta in [chunked_delta(), generated, versioned] {
+        let bytes = serde_ipld_dagcbor::to_vec(&delta).unwrap();
+        let decoded: CollectionDefinitionDeltaPayload =
+            serde_ipld_dagcbor::from_slice(&bytes).unwrap();
+        assert_eq!(decoded, delta);
+
+        let ipld = Ipld::try_from(&delta).unwrap();
+        assert_eq!(serde_ipld_dagcbor::to_vec(&ipld).unwrap(), bytes);
+        let restored = CollectionDefinitionDeltaPayload::try_from(&ipld).unwrap();
+        assert_eq!(restored, delta);
+    }
+}
+
+#[test]
+fn chunk_settings_change_the_delta_bytes() {
+    let encode =
+        |delta: &CollectionDefinitionDeltaPayload| serde_ipld_dagcbor::to_vec(delta).unwrap();
+    let bare = CollectionDefinitionDeltaPayload::new(1).with_name("Article");
+    let mut wider = chunked_delta();
+    wider.chunked_fields[0].max_chars = 1600;
+    assert_ne!(encode(&bare), encode(&chunked_delta()));
+    assert_ne!(encode(&chunked_delta()), encode(&wider));
+}
+
+/// The delta of a field on the default splitter is byte for byte the one made
+/// before the version existed, so its CID and the collection's IDs stay the same.
+#[test]
+fn the_default_splitter_version_leaves_the_delta_bytes_unchanged() {
+    let mut setting = BTreeMap::new();
+    setting.insert("field".to_string(), Ipld::String("body".to_string()));
+    setting.insert("maxChars".to_string(), Ipld::Integer(64));
+    setting.insert("overlap".to_string(), Ipld::Integer(1));
+    let mut before = BTreeMap::new();
+    before.insert("priority".to_string(), Ipld::Integer(1));
+    before.insert("name".to_string(), Ipld::String("Article".to_string()));
+    before.insert("chunked".to_string(), Ipld::List(vec![Ipld::Map(setting)]));
+    let before = serde_ipld_dagcbor::to_vec(&Ipld::Map(before)).unwrap();
+
+    let delta = chunked_delta();
+    assert_eq!(
+        delta.chunked_fields[0].splitter_version,
+        crate::DEFAULT_SPLITTER_VERSION
+    );
+    assert_eq!(serde_ipld_dagcbor::to_vec(&delta).unwrap(), before);
+    let ipld = Ipld::try_from(&delta).unwrap();
+    assert_eq!(serde_ipld_dagcbor::to_vec(&ipld).unwrap(), before);
+    let decoded: CollectionDefinitionDeltaPayload =
+        serde_ipld_dagcbor::from_slice(&before).unwrap();
+    assert_eq!(decoded, delta);
+}
+
+#[test]
+fn the_splitter_version_changes_the_delta_bytes() {
+    let mut versioned = chunked_delta();
+    versioned.chunked_fields[0].splitter_version = crate::DEFAULT_SPLITTER_VERSION + 1;
+    let encode =
+        |delta: &CollectionDefinitionDeltaPayload| serde_ipld_dagcbor::to_vec(delta).unwrap();
+    assert_ne!(encode(&chunked_delta()), encode(&versioned));
+}
+
+/// An explicit default is a valid encoding and still decodes.
+#[test]
+fn an_explicit_default_splitter_version_decodes() {
+    let mut setting = BTreeMap::new();
+    setting.insert("field".to_string(), Ipld::String("body".to_string()));
+    setting.insert("maxChars".to_string(), Ipld::Integer(64));
+    setting.insert("overlap".to_string(), Ipld::Integer(1));
+    setting.insert(
+        "splitterVersion".to_string(),
+        Ipld::Integer(crate::DEFAULT_SPLITTER_VERSION.into()),
+    );
+    let decoded = crate::ChunkedFieldDelta::try_from(&Ipld::Map(setting.clone())).unwrap();
+    assert_eq!(decoded, chunked_delta().chunked_fields[0]);
+    setting.insert("splitterVersion".to_string(), Ipld::String("1".to_string()));
+    assert!(crate::ChunkedFieldDelta::try_from(&Ipld::Map(setting)).is_err());
+}

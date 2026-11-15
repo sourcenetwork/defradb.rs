@@ -66,6 +66,7 @@ mod dac {
         mod replicator;
         mod replicator_with_doc_actor_relationship;
         mod subscribe;
+        mod subscribe_denied_doc;
         mod subscribe_grant_race;
         mod subscribe_with_doc_actor_relationship;
         mod sync_shared_field;
@@ -120,6 +121,7 @@ mod nac {
     mod add_dac_policy;
     mod add_dac_relationship;
     mod add_document;
+    mod add_document_partial_grants;
     mod add_lens;
     mod add_nac_relationship;
     mod add_p2p_collection;
@@ -145,6 +147,7 @@ mod nac {
     mod get_collection_by_name;
     mod get_collection_by_version;
     mod get_p2p_active_peers;
+    mod get_p2p_peer_info;
     mod list_all_encrypted_index;
     mod list_collection;
     mod list_encrypted_index;
@@ -185,6 +188,7 @@ mod nac {
         mod get_collection_by_version;
         mod get_nac_status;
         mod get_p2p_active_peers;
+        mod get_p2p_peer_info;
         mod list_all_encrypted_index;
         mod list_collection;
         mod list_encrypted_index;

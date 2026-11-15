@@ -55,6 +55,11 @@ RUNS=(
   "MC_HostNoopProjection_Red_Skipped.cfg HostNoopProjection.tla RED"
   "MC_HostNoopProjection_Red_Authority.cfg HostNoopProjection.tla RED"
   "MC_HostNoopProjection_Red_Rollback.cfg HostNoopProjection.tla RED"
+  "MC_InlineBatchFlights_Green.cfg InlineBatchFlights.tla GREEN"
+  "MC_InlineBatchFlights_Red_Window.cfg InlineBatchFlights.tla RED"
+  "MC_InlineBatchFlights_Red_Permit.cfg InlineBatchFlights.tla RED"
+  "MC_InlineBatchFlights_Red_Retry.cfg InlineBatchFlights.tla RED"
+  "MC_InlineBatchFlights_Red_Shared.cfg InlineBatchFlights.tla RED"
   "MC_LocalFetchPermit_Green.cfg LocalFetchPermit.tla GREEN"
   "MC_LocalFetchPermit_Red_Hold.cfg LocalFetchPermit.tla RED"
   "MC_HeldPubsubRequest_Green.cfg HeldPubsubRequest.tla GREEN"
@@ -311,6 +316,12 @@ RUNS=(
   "MC_PeerDisconnect_Red_EarlyAck.cfg PeerDisconnect.tla RED" # answering before the closes (INV_AnsweredMeansClosed)
   "MC_SchemaPublication_Green.cfg SchemaPublication.tla GREEN"
   "MC_SchemaPublication_Red_EarlyReply.cfg SchemaPublication.tla RED"
+  "MC_ChunkSettingsSync_Green.cfg ChunkSettingsSync.tla GREEN"
+  "MC_ChunkSettingsSync_Green_Legacy.cfg ChunkSettingsSync.tla GREEN"
+  "MC_ChunkSettingsSync_Red_NoFirstCheck.cfg ChunkSettingsSync.tla RED"
+  "MC_ChunkSettingsSync_Red_NoMergeGuard.cfg ChunkSettingsSync.tla RED"
+  "MC_ChunkSettingsSync_Red_NoActivateGuard.cfg ChunkSettingsSync.tla RED"
+  "MC_ChunkSettingsSync_Red_NoNameCheck.cfg ChunkSettingsSync.tla RED"
   "MC_RetryPreparedInputs_Green.cfg RetryPreparedInputs.tla GREEN" # exact-context external answer survives commit retry
   "MC_RetryPreparedInputs_Red_Recompute.cfg RetryPreparedInputs.tla RED" # clearing prepared memo repeats provider work
   "MC_RetryPreparedInputs_Red_InAttempt.cfg RetryPreparedInputs.tla RED" # provider work runs under active transaction
@@ -419,7 +430,8 @@ RUNS=(
   "MC_EncryptedIndexAutocommit_Green.cfg EncryptedIndexAutocommit.tla GREEN" # #2755: an encrypted index add or delete outside a txn reads the definition in its txn and re-runs on a conflict
   "MC_EncryptedIndexAutocommit_Red_CacheRead.cfg EncryptedIndexAutocommit.tla RED" # decides from the cache and blind-writes: a concurrent add is lost (INV_NoLostIndex)
   "MC_EncryptedIndexAutocommit_Red_SingleAttempt.cfg EncryptedIndexAutocommit.tla RED" # one attempt: a valid add is refused with the conflict (INV_NoValidRefused)
-  "MC_Truncate_Green.cfg Truncate.tla GREEN" # #2321: truncate checks nac, then for a filter branchable, txn and shape, before a delete that is durable at once
+  "MC_Truncate_Green.cfg Truncate.tla GREEN" # #2321: truncate checks nac and chunk, then for a filter branchable, txn and shape, before a delete that is durable at once and empties a view's cache
+  "MC_Truncate_Red_Chunk.cfg Truncate.tla RED" # chunk check left out: a truncate empties a chunk collection its parents still list (INV_NoRemovalFromChunks)
   "MC_Truncate_Red_Nac.cfg Truncate.tla RED" # permission check left out: a caller without CollectionTruncate removes documents (INV_NoRemovalWithoutPermission)
   "MC_Truncate_Red_Branchable.cfg Truncate.tla RED" # branchable check left out: a filtered truncate splits shared history (INV_FilteredNeverOnBranchable)
   "MC_Truncate_Red_Txn.cfg Truncate.tla RED" # transaction check left out, as before: a filter on the txn view removes an uncommitted match (INV_FilteredRemovesOnlyCommittedMatches)
@@ -430,6 +442,12 @@ RUNS=(
   "MC_NacOrder_Red_OwnFirst.cfg NacOrder.tla RED" # the write's own permission checked first: the refusal names it, not get-collection (INV_RefusalNamesGoFirst)
   "MC_NacOrder_Red_AnonAsNode.cfg NacOrder.tla RED" # no identity acts as the node: a caller with nothing writes (INV_NoEffectWithoutPermission)
   "MC_NacOrder_Red_OutsideTxn.cfg NacOrder.tla RED" # permissions read outside the transaction: a revoke that lands first is missed (INV_NoEffectWithoutPermission)
+  "MC_NacOrder_Red_EdgeOwnOnly.cfg NacOrder.tla RED" # #2787: the HTTP edge checks only the route's own permission: its refusal names it, not get-collection (INV_RefusalNamesGoFirst)
+  "MC_NacOrder_Red_StaleEdge.cfg NacOrder.tla RED" # the revoke returns before the edge snapshot is swapped: a later request passes the edge (INV_EdgeSeesReturnedRevoke)
+  "MC_NacOrder_Red_NoWithdraw.cfg NacOrder.tla RED" # a revoke dropped after its commit leaves the old snapshot: a later request passes the edge (INV_EdgeSeesReturnedRevoke)
+  "MC_NacEdgeRefreshOnWrite_Green.cfg NacEdgeRefreshOnWrite.tla GREEN" # a transaction rebuilds the edge snapshot iff a NAC write survived its savepoints
+  "MC_NacEdgeRefreshOnWrite_Red_EveryWrite.cfg NacEdgeRefreshOnWrite.tla RED" # every projected write registers a rebuild (INV_NoRebuildWithoutNacWrite)
+  "MC_NacEdgeRefreshOnWrite_Red_KeepOnRollback.cfg NacEdgeRefreshOnWrite.tla RED" # a rolled-back NAC write keeps its rebuild (INV_NoRebuildWithoutNacWrite)
   "MC_NacDacBypass_Green.cfg NacDacBypass.tla GREEN" # #2681: a read bypasses DAC exactly when NAC is on and grants bypass-dac at its snapshot
   "MC_NacDacBypass_Red_NacOff.cfg NacDacBypass.tla RED" # a bare permission check: NAC off reads as granted and opens DAC (INV_BypassOnlyWhenGranted)
   "MC_NacDacBypass_Red_Never.cfg NacDacBypass.tla RED" # no bypass, as before: the node owner reads nothing it does not own (INV_BypassWhenGranted)
@@ -1024,7 +1042,7 @@ RUNS=(
   "MC_NodeDrop_Red_NoAbortOnDrop.cfg NodeDrop.tla RED" # a shutdown set that does not abort on drop leaves every task holding the database
   "MC_NodeDrop_Red_DropAwaits.cfg NodeDrop.tla RED" # the dropping thread waits for an aborted task to end
   "MC_EmbeddedVeraStop_Green.cfg EmbeddedVeraStop.tla GREEN" # requests drain before the embedded Vera node stops; the stop has a deadline and frees the directory
-  "MC_EmbeddedVeraStop_Red_DecisionCache.cfg EmbeddedVeraStop.tla RED" # a remembered decision is given after the Vera node stopped
+  "MC_EmbeddedVeraStop_Red_StaleDecision.cfg EmbeddedVeraStop.tla RED" # a decision remembered under a state past its freshness limit is repeated
   "MC_EmbeddedVeraStop_Red_StopBeforeRequests.cfg EmbeddedVeraStop.tla RED" # the Vera node stops under a request the node admitted
   "MC_EmbeddedVeraStop_Red_NoStopDeadline.cfg EmbeddedVeraStop.tla RED" # a Vera node that hangs while stopping keeps shutdown waiting forever
   "MC_EmbeddedVeraStop_Red_LinkStaysOpen.cfg EmbeddedVeraStop.tla RED" # a transport left open keeps the stopped Vera node's directory locked
@@ -1070,6 +1088,10 @@ RUNS=(
   "MC_ActivePeersIdentify_Green.cfg ActivePeersIdentify.tla GREEN" # two peers dial in around an ActivePeers call: never a waiting peer at its source port, never held by a later peer, every call answered
   "MC_ActivePeersIdentify_Red_AnswerAtOnce.cfg ActivePeersIdentify.tla RED" # ActivePeers answers at once, before the Identify (INV_ListenAddress)
   "MC_ActivePeersIdentify_Red_WaitOnLater.cfg ActivePeersIdentify.tla RED" # the answer waits on peers that dialed in after the call (INV_NotHeldByLater)
+  "MC_AnnounceAudience_Green.cfg AnnounceAudience.tla GREEN" # the other peer away, connected or subscribed at the commit, connecting and subscribing around it: only a peer subscribed at the commit gets the write, and every write is announced
+  "MC_AnnounceAudience_Red_HoldWhenAlone.cfg AnnounceAudience.tla RED" # a write made alone is held for the window and reaches a peer that joined during it (INV_GoAudience)
+  "MC_AnnounceAudience_Red_AloneMeansDisconnected.cfg AnnounceAudience.tla RED" # alone means no peer connected: a write made while the peer is connected but not subscribed waits out the window and reaches it (INV_GoAudience)
+  "MC_AnnounceAudience_Red_RetryWhileConnected.cfg AnnounceAudience.tla RED" # an announcement that found no subscriber is published again while a peer is connected, and reaches it once it subscribes (INV_GoAudience)
   "MC_CoordinatorShutdown_Green.cfg CoordinatorShutdown.tla GREEN" # two callers, a late spawn racing the drain, the edge closing and the runtime torn down at any moment: one drain, no task left in the set, every caller returns
   "MC_CoordinatorShutdown_Green_TwoSpawns.cfg CoordinatorShutdown.tla GREEN" # two late spawns whose pruners race the drain and each other: no task left in the set, the caller returns
   "MC_CoordinatorShutdown_Red_DropRefused.cfg CoordinatorShutdown.tla RED" # the old code, a refused drain dropped: the tracked task leaks (INV_NoLeak)

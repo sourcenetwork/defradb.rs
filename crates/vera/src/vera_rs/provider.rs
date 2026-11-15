@@ -116,6 +116,34 @@ impl VeraRsProvider {
         .await
     }
 
+    /// As [`new`](Self::new), for an actor whose key `signer` holds.
+    pub async fn new_with_signer(
+        rpc_url: String,
+        trusted_consensus_key: &str,
+        signer: Arc<dyn DelegationSigner>,
+        worker: NativeWorker,
+        tuning: &AcpTuning,
+        event_bus: Option<Arc<dyn Bus>>,
+        edge: &edge::Edge,
+    ) -> Result<Self, ProviderError> {
+        trusted_key(trusted_consensus_key)?;
+        let acp = HttpWsTransport::new(&rpc_url, &derive_ws_url(&rpc_url))
+            .map_err(|e| ProviderError::Config(format!("light client: {e}")))?;
+        let rpc = HttpTransport::new(rpc_url, tuning.request_timeout, edge)
+            .map_err(|e| ProviderError::Config(format!("HTTP client: {e}")))?;
+        Self::with_signer(
+            Arc::new(rpc),
+            Arc::new(acp),
+            trusted_consensus_key,
+            signer,
+            worker,
+            tuning,
+            event_bus,
+            edge,
+        )
+        .await
+    }
+
     /// A provider that reaches the node through the transports it is given:
     /// `rpc` carries submissions and receipt reads, `acp` the light client's
     /// proof reads and finalized headers. Neither is trusted: every receipt,
@@ -687,10 +715,15 @@ impl VeraProvider for VeraRsProvider {
         Ok(Some(decision.id))
     }
 
+    /// The state decisions are remembered under, while it is fresh. Once the
+    /// light client's newest state is older than its freshness limit there
+    /// is none, so no decision made at it is given again: the check goes to
+    /// the light client, which refuses a stale state.
     fn decision_state(&self) -> Option<String> {
         self.light_client
             .header_chain()
-            .state()
+            .fresh_state()
+            .ok()
             .map(|state| format_root(state.module_state_root))
     }
 
@@ -706,6 +739,20 @@ impl VeraProvider for VeraRsProvider {
             cache_entries: self.light_client.cache().len(),
             last_invalidation_height,
             connected: sync.is_some(),
+        })
+    }
+
+    fn delegation_audience(&self) -> Option<acp::DelegationAudience> {
+        Some(acp::DelegationAudience {
+            worker: self.worker_did.clone(),
+            deployment: self.deployment,
+        })
+    }
+
+    fn caller_of_delegation(&self, token: &str) -> Option<Result<String, ProviderError>> {
+        bearer::is_delegation(token).then(|| {
+            bearer::caller_of_delegation(token, &self.worker_did, self.deployment)
+                .map_err(|error| ProviderError::Config(format!("caller delegation: {error}")))
         })
     }
 }

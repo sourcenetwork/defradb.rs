@@ -202,6 +202,9 @@ lean_lib SelectedCarAuthority where
 lean_lib RetrySchedule where
 
 @[default_target]
+lean_lib ChunkSplit where
+
+@[default_target]
 lean_lib TxnId where
 
 @[default_target]
@@ -209,6 +212,9 @@ lean_lib LensListing where
 
 @[default_target]
 lean_lib LensId where
+
+@[default_target]
+lean_lib DocStoreTarget where
 
 @[default_target]
 lean_lib JsonSubPathCut where
@@ -296,3 +302,9 @@ lean_lib CatalogPin where
 
 @[default_target]
 lean_lib IndexEqualKeyOrder where
+
+@[default_target]
+lean_lib KmsChunks where
+
+@[default_target]
+lean_lib SigningOverride where

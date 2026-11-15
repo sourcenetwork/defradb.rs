@@ -322,6 +322,7 @@ impl acp::RemotePolicies for VeraDocumentACP {
             cache_entries: status.cache_entries,
             last_invalidation_height: status.last_invalidation_height,
             connected: status.connected,
+            delegation: self.provider.delegation_audience(),
         })
     }
 }
@@ -329,6 +330,15 @@ impl acp::RemotePolicies for VeraDocumentACP {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl DocumentACP for VeraDocumentACP {
+    fn caller_of_delegation(&self, token: &str) -> Option<std::result::Result<Did, String>> {
+        Some(
+            self.provider
+                .caller_of_delegation(token)?
+                .map_err(|error| error.to_string())
+                .and_then(|did| Did::new(&did).map_err(|error| error.to_string())),
+        )
+    }
+
     fn bind_request(&self, context: &defra_core::RequestContext) -> Option<Arc<dyn DocumentACP>> {
         Some(Arc::new(Self {
             provider: Arc::clone(&self.provider),

@@ -88,7 +88,7 @@ pub fn build_introspection_schema(
     let mut schema_builder = Schema::build("Query", mutation_name, Some("Subscription"));
 
     // Build a Query type with fields for each collection
-    let mut query_type = Object::new("Query").description("Root query type");
+    let mut query_type = Object::new("Query");
     // Subscriptions are served over SSE; this type only describes them.
     let mut subscription_type = Subscription::new("Subscription");
 
@@ -528,9 +528,88 @@ mod tests {
 
             for type_name in ["collection", "query", "commit"] {
                 assert_non_null_aggregate(&result[type_name], "AVG", "Float");
-                assert_non_null_aggregate(&result[type_name], "COUNT", "Int");
+                if type_name != "commit" {
+                    assert_non_null_aggregate(&result[type_name], "COUNT", "Int");
+                }
                 assert_non_null_aggregate(&result[type_name], "SUM", "Float");
             }
+            // Go's `Commit.COUNT` is a nullable `Int`.
+            let commit_count = result["commit"]["fields"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|field| field["name"] == "COUNT")
+                .unwrap();
+            assert_eq!(commit_count["type"]["kind"], "SCALAR");
+            assert_eq!(commit_count["type"]["name"], "Int");
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn operator_list_and_root_types_match_go() {
+        workers::block_on(async {
+            // A _docID and a Boolean field put the ID and Boolean operator blocks in the schema.
+            let collection = CollectionVersion::new(
+                "Users",
+                "v1",
+                "users",
+                vec![
+                    FieldDescription::new(
+                        "1",
+                        "_docID",
+                        FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "2",
+                        "verified",
+                        FieldKind::bool(),
+                        schema::CType::LwwRegister,
+                    ),
+                ],
+            );
+            let result = execute_introspection(
+                &[Arc::new(collection)],
+                r#"query {
+                id: __type(name: "IDOperatorBlock") {
+                    inputFields { name type { kind ofType { kind name } } }
+                }
+                boolean: __type(name: "BooleanOperatorBlock") {
+                    inputFields { name type { kind ofType { kind name } } }
+                }
+                commits: __type(name: "CommitsFilterArg") {
+                    inputFields { name type { kind ofType { kind name } } }
+                }
+                query: __type(name: "Query") { description }
+                mutation: __type(name: "Mutation") { description }
+            }"#,
+            )
+            .await
+            .expect("introspection execution should succeed");
+
+            let element_kind = |type_name: &str, field_name: &str| {
+                let field = result[type_name]["inputFields"]
+                    .as_array()
+                    .unwrap_or_else(|| panic!("{type_name} is not in the schema: {result}"))
+                    .iter()
+                    .find(|field| field["name"] == field_name)
+                    .unwrap_or_else(|| {
+                        panic!("{type_name} has no {field_name}: {}", result[type_name])
+                    })
+                    .clone();
+                assert_eq!(field["type"]["kind"], "LIST", "{type_name}.{field_name}");
+                field["type"]["ofType"]["kind"].clone()
+            };
+            for field_name in ["_in", "_nin"] {
+                assert_eq!(element_kind("id", field_name), "NON_NULL");
+                assert_eq!(element_kind("boolean", field_name), "SCALAR");
+            }
+            for field_name in ["_and", "_or"] {
+                assert_eq!(element_kind("commits", field_name), "NON_NULL");
+            }
+            assert_eq!(result["query"]["description"], JsonValue::Null);
+            assert_eq!(result["mutation"]["description"], JsonValue::Null);
         })
         .unwrap()
     }

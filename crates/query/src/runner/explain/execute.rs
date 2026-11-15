@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use crate::document::documents_to_plan_docs;
 use crate::error::{QueryError, Result};
+use crate::executor::GqlWarning;
 use crate::mapper::{Requestable, Select};
 use crate::plan::PermissionFilterNode;
 use crate::planner::index_selection::{
@@ -29,6 +30,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         query: &str,
         caller_identity: Option<Did>,
         variables: Option<&RapidHashMap<String, JsonValue>>,
+        warnings: &mut Vec<GqlWarning>,
     ) -> Result<JsonValue> {
         let mut selects = parse_query_with_limits(query, variables, self.query_limits)?;
         if query.contains("@exhaustive") {
@@ -46,7 +48,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
             // Execute the select and collect metrics
             match self
-                .execute_select_with_metrics(&select, caller_identity.clone())
+                .execute_select_with_metrics(&select, caller_identity.clone(), warnings)
                 .await
             {
                 Ok((explanation, _doc_count, _exec_count)) => {
@@ -128,6 +130,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         &self,
         select: &Select,
         caller_identity: Option<Did>,
+        warnings: &mut Vec<GqlWarning>,
     ) -> Result<(JsonValue, usize, u64)> {
         // Handle _commits system collection (no real collection exists)
         if select.collection_name == "_commits" {
@@ -277,6 +280,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 planner = planner.with_lens_store(lens_store.clone());
             }
             let plan_result = planner.plan_with_index_info(select)?;
+            warnings.extend(plan_result.warnings);
             let mut plan = plan_result.plan;
 
             // `plan_with_index_info` wraps a regular collection's root plan in

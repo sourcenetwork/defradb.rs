@@ -1,4 +1,4 @@
-//! Contract checks for a [`FieldCrdt`](super::FieldCrdt), for the built-in
+//! Contract checks for a [`FieldCrdt`], for the built-in
 //! types and for a custom type a third party registers.
 
 use document::{FieldOp, NormalValue};

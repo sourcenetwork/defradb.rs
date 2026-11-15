@@ -135,6 +135,7 @@ where
             .await
             .map_err(|error| Error::Other(error.to_string()))?
             .ok_or_else(|| Error::CollectionNotFound(collection_name.to_string()))?;
+        crate::chunk::ensure_admin_changeable(collection.schema())?;
         let mut schema = collection.schema().clone();
         let position = schema
             .indexes

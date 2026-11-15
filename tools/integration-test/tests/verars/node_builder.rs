@@ -27,7 +27,9 @@ async fn node_built_with_vera_rs_enforces_verified_document_access() {
                 rpc_address: hub.node(0).rpc_url(),
                 consensus_key,
                 deployment_id: 9001,
-                actor_key: hex::decode(&owner.private_key_hex).expect("owner key"),
+                actor: defra_node::VeraRsActor::Secp256k1Key(
+                    hex::decode(&owner.private_key_hex).expect("owner key"),
+                ),
                 worker_dir: directory.path().join("worker"),
                 keyring,
                 tuning: vera::AcpTuning::default(),

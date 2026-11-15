@@ -133,6 +133,32 @@ fn extract_host_header(headers: &axum::http::HeaderMap) -> HostHeaderResult {
 #[derive(Clone, Debug)]
 pub(crate) struct MiddlewareIdentity(pub Option<Did>);
 
+/// The caller a request's headers authenticate, for a node whose document
+/// ACP may take a caller's own delegation as its credential.
+///
+/// A delegation names the node's worker and deployment and is verified by
+/// the ACP that will act under it, so it needs no `Host` audience. Any other
+/// bearer is an identity token, checked as [`parse_identity_from_headers`]
+/// checks it.
+pub(crate) fn caller_from_headers(
+    headers: &axum::http::HeaderMap,
+    delegations: Option<&dyn crate::router::DocumentAcpOperations>,
+) -> Result<Option<Did>, IdentityExtractionError> {
+    let delegated = delegations.and_then(|acp| {
+        let token = headers.get(AUTHORIZATION)?.to_str().ok()?;
+        let token = token
+            .strip_prefix("Bearer ")
+            .or_else(|| token.strip_prefix("bearer "))?
+            .trim();
+        acp.caller_of_delegation(token)
+    });
+    match delegated {
+        Some(Ok(did)) => Ok(Some(did)),
+        Some(Err(error)) => Err(IdentityExtractionError::TokenVerificationFailed(error)),
+        None => parse_identity_from_headers(headers),
+    }
+}
+
 /// Parse identity from HTTP headers (shared between middleware and extractors).
 ///
 /// Extracts the Authorization header, validates the Host header for
@@ -216,7 +242,7 @@ impl IntoResponse for IdentityExtractionError {
 /// Behavior matches Go DefraDB:
 /// - No Authorization header → anonymous
 /// - "Bearer " with empty token → anonymous
-/// - "Bearer <token>" → parse and verify token, 403 on failure
+/// - `"Bearer <token>"` → parse and verify token, 403 on failure
 /// - Non-Bearer auth → 403 Forbidden (treated as invalid token)
 ///
 /// Token verification includes:

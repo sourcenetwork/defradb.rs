@@ -45,7 +45,8 @@ pub mod txn;
 // Re-export commonly used types
 pub use error::{Error, Result};
 pub use multistore::{
-    DocumentMutationProjector, NamespaceView, RootView, SharedTxn, WeakNamespaceView,
+    DocumentMutationProjector, NamespaceView, NodeAccessWrites, RootView, SharedTxn,
+    WeakNamespaceView,
 };
 pub use traits::Txn;
 pub use transact::transact;

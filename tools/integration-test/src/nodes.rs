@@ -32,6 +32,9 @@ pub struct NodeSpec {
     pub dir: Option<Arc<TempDir>>,
     /// The P2P addresses a restarted node listens on again.
     pub listen: Vec<String>,
+    /// A stopped Go node's `listen` ports, held so nothing else binds them
+    /// before it starts again.
+    pub reserved: Vec<Arc<crate::reserved_port::ReservedPort>>,
     /// Start with node access control enabled, as Go's `Start { EnableNAC }`.
     pub enable_nac: bool,
     /// The client identity seed starting the node, which owns its NAC when
@@ -43,6 +46,9 @@ pub struct NodeSpec {
     pub iroh_network: bool,
     /// The node's own identity, Go's `NodeIdentity(seed)`; the node signs as it.
     pub node_identity: Option<u64>,
+    /// The node's index in its test, which picks the key Go's harness signs
+    /// with when the node has no `node_identity`.
+    pub go_index: Option<u64>,
     /// The key type the node signs with, when it signs.
     pub signing: Option<crate::actions::shared::KeyType>,
     /// How long an idle explicit transaction lives and the sweep interval.
@@ -133,7 +139,8 @@ impl TestNode {
                 let url = format!("http://{}", listener.local_addr().expect("local address"));
                 let mut config = HttpConfig::with_listener(listener)
                     .expect("http config")
-                    .with_dev_mode(true);
+                    .with_dev_mode(true)
+                    .with_collection_management(true);
                 if let Some((ttl, tick)) = spec.txn_ttl {
                     config = config
                         .with_transaction_idle_timeout(ttl)
@@ -178,6 +185,11 @@ impl TestNode {
             events: Atom::new(None),
             actions: Atom::new(None),
         }
+    }
+
+    /// The node runs Go's defradb in another process.
+    pub fn is_go(&self) -> bool {
+        self.embedded.is_none()
     }
 
     /// The Rust node behind any client; `None` for a Go node.
@@ -268,14 +280,21 @@ impl TestNode {
     /// The node's P2P addresses, as Go's `PeerInfo` lists them: the test's
     /// own view of the node, whichever client the test runs through.
     pub fn peer_info(&self) -> Result<Vec<String>, String> {
-        let context = RequestContext::ambient();
+        // The node's NAC owner may read it once NAC is on.
+        let owner = self.spec.nac_owner;
         match (&self.embedded, &self.url) {
-            (Some(node), _) => workers::block_on(node.peer_info_as(&context))
-                .map_err(|e| e.to_string())?
-                .map_err(|e| e.to_string()),
+            (Some(node), _) => {
+                let context = match owner {
+                    Some(seed) => RequestContext::ambient()
+                        .with_identity(Some(crate::scenario::identity::did(seed))),
+                    None => RequestContext::ambient(),
+                };
+                workers::block_on(node.peer_info_as(&context))
+                    .map_err(|e| e.to_string())?
+                    .map_err(|e| e.to_string())
+            }
             (None, Some(url)) => {
-                // The node's NAC owner may read it once NAC is on.
-                let token = self.spec.nac_owner.map(|seed| {
+                let token = owner.map(|seed| {
                     cli::commands::client::generate_auth_token(
                         &crate::scenario::identity::private_key_hex(seed),
                         url,
@@ -373,7 +392,8 @@ fn build(spec: &NodeSpec, listen: &str, http: Option<HttpConfig>) -> Result<Node
 /// The key a node signs with: its node identity's, or, for a node that only
 /// signs, a key of its own that no test identity shares.
 fn signing_key(spec: &NodeSpec) -> defra_node::SigningKey {
-    let seed = spec.node_identity.unwrap_or(u64::MAX);
+    // Go's node `i` signs as `NodeIdentity(i)` unless told otherwise.
+    let seed = spec.node_identity.or(spec.go_index).unwrap_or(u64::MAX);
     let key = crate::scenario::identity::node_private_key(seed).to_vec();
     match spec.signing.unwrap_or_default() {
         KeyType::Secp256k1 => defra_node::SigningKey::Secp256k1(key),

@@ -219,11 +219,18 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
         for collection in &mut collections {
             if collection.downsample_interval.is_some() {
                 collection.downsample_source = Some(query_source.clone());
+            } else {
+                collection.query = Some(query_source.clone());
+            }
+        }
+        schema::definition_validation::validate_no_chunk_in_view(&collections)
+            .map_err(|e| Error::ViewCollectionCreate(db::Error::Other(e)))?;
+
+        for collection in &collections {
+            if collection.downsample_interval.is_some() {
                 self.database
                     .validate_downsample_collection(collection)
                     .map_err(Error::InvalidDownsample)?;
-            } else {
-                collection.query = Some(query_source.clone());
             }
 
             if db::is_refreshable_view(collection) {

@@ -34,6 +34,9 @@ struct Fields {
     require_transactional_authority: bool,
     encryption: Option<EncryptionConfig>,
     signing: Option<SigningConfig>,
+    /// Go's per-operation `EnableSigning`: `Some(false)` writes this
+    /// request's blocks unsigned whatever key it carries.
+    signing_override: Option<bool>,
     batch_session: Option<String>,
     creator: Option<String>,
     /// The DID that presented a bearer token and the token, when the request
@@ -199,7 +202,25 @@ impl RequestContext {
     /// The key this request signs the blocks it writes with; unsigned blocks
     /// without one.
     pub fn signing(&self) -> Option<&SigningConfig> {
-        self.0.signing.as_ref()
+        match self.0.signing_override {
+            Some(false) => None,
+            _ => self.0.signing.as_ref(),
+        }
+    }
+
+    /// The caller's per-operation signing choice, if it made one.
+    pub fn signing_override(&self) -> Option<bool> {
+        self.0.signing_override
+    }
+
+    /// This context with the per-operation signing choice `signing_override`.
+    /// The edge that resolves the request's key reads the choice first, so
+    /// `Some(true)` resolves one on a node configured not to sign, as Go
+    /// does; here `Some(false)` hides whatever key the request carries.
+    #[must_use]
+    pub fn with_signing_override(mut self, signing_override: Option<bool>) -> Self {
+        Arc::make_mut(&mut self.0).signing_override = signing_override;
+        self
     }
 
     /// This context with the signing set to `signing`.
@@ -343,6 +364,29 @@ mod tests {
         let shown = format!("{context:?}");
         assert!(shown.contains("Ed25519"));
         assert!(!shown.contains("171"), "{shown}");
+    }
+
+    #[test]
+    fn signing_override_false_hides_the_key_and_others_keep_it() {
+        let signed = RequestContext::default().with_signing(Some(SigningConfig {
+            key_type: crate::signing::SigningKeyType::Ed25519,
+            private_key_bytes: vec![0xAB; 32],
+            public_key_bytes: Vec::new(),
+            public_key_hex: "public".to_string(),
+            remote_signer: None,
+            signing_authorization: None,
+        }));
+        assert!(signed
+            .clone()
+            .with_signing_override(Some(false))
+            .signing()
+            .is_none());
+        assert!(signed
+            .clone()
+            .with_signing_override(Some(true))
+            .signing()
+            .is_some());
+        assert!(signed.with_signing_override(None).signing().is_some());
     }
 
     #[test]

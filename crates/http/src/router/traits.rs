@@ -166,6 +166,18 @@ pub struct ImportResult {
 /// Re-export NAC types from the acp crate for convenience.
 pub use acp::nac::{NacStatus, NodePermission};
 
+/// The outcome of [`NodeAcpOperations::check_permissions`]: every permission
+/// held, or the first one that was not and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PermissionCheck {
+    /// The identity holds every permission asked for.
+    Granted,
+    /// The identity does not hold this permission.
+    Denied(NodePermission),
+    /// Checking this permission failed with this error.
+    Failed(NodePermission, String),
+}
+
 /// Trait for Node Access Control (NAC) operations.
 ///
 /// NAC provides node-level access control using the Zanzibar permission model.
@@ -183,6 +195,27 @@ pub trait NodeAcpOperations: defra_core::thread_bounds::MaybeSendSync {
         identity: &identity::Did,
         permission: NodePermission,
     ) -> Result<bool, String>;
+
+    /// Checks `permissions` in order and stops at the first one `identity`
+    /// does not hold, as [`Self::check_permission`] would one at a time.
+    ///
+    /// The HTTP edge decides all of a route's permissions in this one call,
+    /// so an implementation that reaches its store on a worker pool crosses
+    /// onto it once per request instead of once per permission.
+    async fn check_permissions(
+        &self,
+        identity: &identity::Did,
+        permissions: &[NodePermission],
+    ) -> PermissionCheck {
+        for &permission in permissions {
+            match self.check_permission(identity, permission).await {
+                Ok(true) => {}
+                Ok(false) => return PermissionCheck::Denied(permission),
+                Err(error) => return PermissionCheck::Failed(permission, error),
+            }
+        }
+        PermissionCheck::Granted
+    }
 
     /// Get the current NAC status.
     async fn get_status(&self) -> NacStatus;
@@ -268,6 +301,13 @@ pub trait CollectionManagementOperations: defra_core::thread_bounds::MaybeSendSy
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 pub trait DocumentAcpOperations: defra_core::thread_bounds::MaybeSendSync {
     bind_request!(DocumentAcpOperations);
+
+    /// The DID that signed `token`, when `token` is a delegation the node's
+    /// document ACP may act under now for that DID. `None` when `token` is
+    /// not a delegation or the node's ACP takes none.
+    fn caller_of_delegation(&self, _token: &str) -> Option<Result<identity::Did, String>> {
+        None
+    }
 
     /// Whether a bound request stages relationship changes in its named
     /// transaction. Backends must refuse the request if they cannot bind its

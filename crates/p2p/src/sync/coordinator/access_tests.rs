@@ -696,6 +696,10 @@ pub(super) struct NoopTransport {
     /// Whether `publish_raw` never completes, like a host whose command queue
     /// does not drain.
     pub(super) raw_publish_stalls: Arc<AtomicBool>,
+    /// Whether a publish finds a subscriber; open unless a test closes it.
+    publish_open: Arc<AtomicBool>,
+    /// The topics every publish that found a subscriber went to.
+    published: Arc<Atom<Vec<DefraTopic>>>,
 }
 
 /// Appends to a recorder that tests read back cumulatively.
@@ -726,6 +730,8 @@ impl NoopTransport {
             raw_published: Arc::new(Atom::new(Vec::new())),
             raw_publish_attempted: Arc::new(regolith::sync::Notify::new()),
             raw_publish_stalls: Arc::new(AtomicBool::new(false)),
+            publish_open: Arc::new(AtomicBool::new(true)),
+            published: Arc::new(Atom::new(Vec::new())),
         }
     }
 
@@ -734,6 +740,18 @@ impl NoopTransport {
     pub(super) fn with_libp2p_identity(mut self) -> Self {
         self.peer_id = PeerId::new(libp2p::PeerId::random().to_string());
         self
+    }
+
+    /// Open or close the topics to subscribers: a closed publish fails with
+    /// gossipsub's `InsufficientPeers`.
+    pub(super) fn set_publish_open(&self, open: bool) {
+        self.publish_open
+            .store(open, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// The topics publishes reached, in order.
+    pub(super) fn published(&self) -> Vec<DefraTopic> {
+        self.published.load_clone()
     }
 
     fn set_connected_peers(&self, peers: Vec<PeerId>) {
@@ -833,9 +851,15 @@ impl P2PTransport for NoopTransport {
 
     async fn publish(
         &self,
-        _topic: DefraTopic,
+        topic: DefraTopic,
         _msg: crate::message::PushLogBroadcast,
     ) -> crate::Result<MessageId> {
+        if !self.publish_open.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(crate::error::Error::GossipSubPublish(
+                "gossipsub publish error: InsufficientPeers".to_string(),
+            ));
+        }
+        record(&self.published, topic);
         Ok(MessageId::new("noop".to_string()))
     }
 

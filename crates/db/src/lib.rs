@@ -45,6 +45,7 @@
 pub mod access;
 pub mod backup;
 pub mod block;
+pub mod chunk;
 pub mod collection;
 pub use collection::stream::BackfillSource;
 pub mod database;

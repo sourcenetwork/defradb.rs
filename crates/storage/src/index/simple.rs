@@ -18,7 +18,7 @@ use crate::keys::IndexDataStoreKey;
 /// SimpleIndex stores doc short IDs in the key itself, allowing
 /// multiple documents to have the same indexed field values.
 ///
-/// Key format: /[ColID]/[IdxID]/[EncodedFields]/[DocShortID]
+/// Key format: `/[ColID]/[IdxID]/[EncodedFields]/[DocShortID]`
 /// Value: empty
 pub struct SimpleIndex {
     /// The collection's short ID

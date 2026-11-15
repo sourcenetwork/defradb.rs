@@ -1403,7 +1403,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "INV_CommittedIsOwnedOrReported / INV_PendingBounded / INV_WindowHoldsNoSlot / INV_TasksBounded / LIVE_AllSettled: a committed write's gossip is published, or reported past a wait deadline, on one lane task",
         axis: Tla,
-        anchor: "crates/p2p/src/sync/coordinator/mod.rs spawn_non_authoritative_broadcast_task, publish_slot, acquire_non_authoritative_broadcast_slot; crates/p2p/src/sync/coordinator/broadcast_room.rs BroadcastRoom::reserve, BroadcastRoom::run, lane; crates/p2p/src/sync/coordinator/broadcast.rs broadcast_local_update_with_creator; crates/db/src/merge/broadcast_mutator/broadcast.rs spawn_gossip_or_report, broadcast_with_retry_with_creator",
+        anchor: "crates/p2p/src/sync/coordinator/mod.rs spawn_non_authoritative_broadcast_task, publish_slot, acquire_non_authoritative_broadcast_slot; crates/p2p/src/sync/coordinator/broadcast_room.rs BroadcastRoom::reserve, BroadcastRoom::run, lane; crates/p2p/src/sync/coordinator/broadcast.rs broadcast_local_update_with_creator; crates/db/src/merge/broadcast_mutator/broadcast.rs spawn_gossip_or_report, broadcast_with_creator",
         model_ref: "MC_SenderBroadcast_{Green,Red_Shed,Red_SilentExpiry,Red_SlotAcrossWindow,Red_UnboundedPending,Red_TaskPerWrite}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -1511,6 +1511,24 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_Kms_Green.cfg",
         tiers: &[Behavioral, Boundary],
         bound_by: "proofs/tests/behavioral/kms.rs kms_unauthorized_dek_release_denied",
+    },
+    Property {
+        family: "KMS key distribution",
+        name: "chunks_flatten / chunk_size_le / answers_in_order / answers_length: a key batch split for a transport asks for every key once, no chunk over the per-request limit, and answers every key in its place",
+        axis: Lean,
+        anchor: "crates/kms/src/defra_kms.rs DefraKms::with_inputs, CHUNKS_IN_FLIGHT; crates/inputs/src/service.rs Inner::inline, Inner::answers",
+        model_ref: "KmsChunks (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/kms/src/remote_tests.rs a_batch_is_split_to_the_keys_a_transport_carries, a_split_batch_keeps_few_chunks_on_the_wire_at_once, a_retryable_send_failure_of_one_chunk_is_retried",
+    },
+    Property {
+        family: "KMS key distribution",
+        name: "WindowBound / PermitBound / RetriedBeforeError / OwnOutcome / AllAnswered: an inline call's chunks run at most flights_per_group at once and max_in_flight on the wire, a chunk errs only after its retries, each chunk's keys get that chunk's own outcome, and every chunk is answered",
+        axis: Tla,
+        anchor: "crates/inputs/src/service.rs Inner::inline, Inner::round_trip, Inner::answers; crates/kms/src/defra_kms.rs DefraKms::with_inputs, CHUNKS_IN_FLIGHT",
+        model_ref: "MC_InlineBatchFlights_Green.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/kms/src/remote_tests.rs a_split_batch_keeps_few_chunks_on_the_wire_at_once, a_retryable_send_failure_of_one_chunk_is_retried",
     },
     Property {
         // A merge that needs a DEK fetches it inline on the serial merge
@@ -1782,6 +1800,19 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "LensId (lake build)",
         tiers: &[Boundary],
         bound_by: "crates/defra-core/tests/lens_block_id.rs every_module_and_argument_value_counts, an_empty_lens_has_gos_config_block_cid",
+    },
+    Property {
+        // #2517: a document saved at another version is stored with that
+        // version's layout only when it is a real definition of the same
+        // collection; a placeholder (often in the orphan collection) is
+        // treated as unknown, so the value stays under the owning collection.
+        family: "Schema-evolution operations in the core",
+        name: "DocStoreTarget.stored_under_owner / placeholder_never_lays_out / old_stores_under_orphan",
+        axis: Lean,
+        anchor: "crates/db/src/collection/crud.rs Collection::save_with_datastore_priorities",
+        model_ref: "DocStoreTarget (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
     },
     Property {
         // #2379: an index answers queries only while no reindex is owed;
@@ -2426,16 +2457,17 @@ pub const PROPERTIES: &[Property] = &[
     Property {
         // A node that runs its own Vera node stops it after the request
         // drain, waits for it up to a deadline and closes its transports:
-        // no decision is given without it, and once it has ended its
+        // a remembered decision outlives it by no more than the freshness of
+        // the state it was read at, and once it has ended its
         // directory is free for the next node. A Vera node that hangs past
         // the deadline keeps its directory.
         family: "Node shutdown order",
-        name: "INV_NoDecisionWithoutVera / INV_AdmittedRequestsDecided / INV_StoppedNodeFreesDirectory / LIVE_ShutdownReturns / LIVE_NextStartReturns: no access decision is given while the embedded Vera node is not running, shutdown stops it under no admitted request but one the request drain gave up on, a node that shut down holds the directory of an ended Vera node no longer, shutdown returns, the next start over the directory starts or fails at its deadline",
+        name: "INV_NoDecisionPastFreshness / INV_AdmittedRequestsDecided / INV_StoppedNodeFreesDirectory / LIVE_ShutdownReturns / LIVE_NextStartReturns: once the embedded Vera node is gone a remembered access decision is repeated no longer than its state stays fresh and no new one is given, shutdown stops it under no admitted request but one the request drain gave up on, a node that shut down holds the directory of an ended Vera node no longer, shutdown returns, the next start over the directory starts or fails at its deadline",
         axis: Tla,
-        anchor: "crates/defra-node/src/lib.rs Node::shutdown; crates/defra-node/src/embedded_vera.rs start; crates/cli/src/commands/start/run.rs Node::run; crates/cli/src/commands/start/server_acp_embedded.rs setup; crates/defra-node/src/node_acp.rs verified_acp_setup; crates/vera-embedded/src/host.rs HostedNode::start, HostedNode::stop; crates/vera-embedded/src/link.rs Link; crates/vera-embedded/src/call.rs call",
-        model_ref: "MC_EmbeddedVeraStop_{Green,Red_DecisionCache,Red_StopBeforeRequests,Red_NoStopDeadline,Red_LinkStaysOpen,Red_NoStartDeadline}.cfg",
+        anchor: "crates/defra-node/src/lib.rs Node::shutdown; crates/defra-node/src/embedded_vera.rs start; crates/cli/src/commands/start/run.rs Node::run; crates/cli/src/commands/start/server_acp_embedded.rs setup; crates/vera/src/vera_rs/provider.rs decision_state; crates/vera-embedded/src/host.rs HostedNode::start, HostedNode::stop; crates/vera-embedded/src/link.rs Link; crates/vera-embedded/src/call.rs call",
+        model_ref: "MC_EmbeddedVeraStop_{Green,Red_StaleDecision,Red_StopBeforeRequests,Red_NoStopDeadline,Red_LinkStaysOpen,Red_NoStartDeadline}.cfg",
         tiers: &[Boundary],
-        bound_by: "crates/vera-embedded/tests/hosted_node.rs once_the_node_stops_no_access_decision_is_given",
+        bound_by: "crates/vera-embedded/tests/hosted_node.rs once_the_node_stops_the_provider_verifies_no_new_decision; crates/vera-embedded/tests/stopped_node_decisions.rs a_remembered_decision_is_not_given_past_the_freshness_limit",
     },
     Property {
         // A signed query or transformed route keeps a request-scope permit
@@ -2975,9 +3007,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Collection truncate",
-        name: "INV_NoRemovalWithoutPermission / INV_FilteredNeverOnBranchable / INV_FilteredRemovesOnlyCommittedMatches / INV_BadFilterRemovesNothing / INV_UnfilteredRemovesAll / INV_UnfilteredEmptiesView",
+        name: "INV_NoRemovalWithoutPermission / INV_NoRemovalFromChunks / INV_FilteredNeverOnBranchable / INV_FilteredRemovesOnlyCommittedMatches / INV_BadFilterRemovesNothing / INV_UnfilteredRemovesAll / INV_UnfilteredEmptiesView",
         axis: Tla,
-        anchor: "crates/db/src/collection/ops/truncate/mod.rs DB::truncate_collection_as, DB::truncate_parsed_as, DB::truncate_target, conditions, DB::truncate; crates/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::truncate_metadata_in; crates/db/src/collection/ops/truncate/filtered.rs DB::truncate_matching",
+        anchor: "crates/db/src/collection/ops/truncate/mod.rs DB::truncate_collection_as, DB::truncate_parsed_as, DB::truncate_target, conditions, DB::truncate; crates/db/src/collection/ops/truncate/all.rs DB::truncate_all, DB::truncate_metadata_in; crates/db/src/collection/ops/truncate/filtered.rs DB::truncate_matching; crates/db/src/chunk/user_writes.rs ensure_admin_changeable",
         model_ref: "MC_Truncate_{Green,Red_*}.cfg",
         tiers: &[Boundary],
         bound_by: "",
@@ -3040,19 +3072,34 @@ pub const PROPERTIES: &[Property] = &[
         // A document write or a truncate checks `get-collection` and then
         // its own permission, in Go's order, inside its transaction, and a
         // call that names no identity acts as no one, never as the node.
+        // Over HTTP the edge checks first, in the same order, from a
+        // snapshot of the grants swapped in before any NAC write returns.
         family: "Node access control operations",
-        name: "INV_NoEffectWithoutPermission / INV_RefusalNamesGoFirst",
+        name: "INV_NoEffectWithoutPermission / INV_RefusalNamesGoFirst / INV_EdgeSeesReturnedRevoke",
         axis: Tla,
-        anchor: "crates/acp/src/nac/permission.rs NodePermission::go_order; crates/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/db/src/write/autocommit/batch.rs check_attempt_node_access; crates/db/src/txn/registry/indexes.rs check_access_in; crates/query/src/runner/turn.rs lent, lent_node_permission; crates/defra-node/src/ops/request.rs caller, txn_owner",
-        model_ref: "MC_NacOrder_{Green,Red_SkipGet,Red_OwnFirst,Red_AnonAsNode,Red_OutsideTxn}.cfg",
+        anchor: "crates/acp/src/nac/permission.rs NodePermission::go_order; crates/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/db/src/write/autocommit/batch.rs check_attempt_node_access; crates/db/src/txn/registry/indexes.rs check_access_in; crates/query/src/runner/turn.rs lent, lent_node_permission; crates/defra-node/src/ops/request.rs caller, txn_owner; crates/http/src/auth_middleware.rs auth_middleware; crates/http/src/route_permissions.rs reads_collection_first, route_permission; crates/http/src/nac_guard.rs require_permissions; crates/http/src/nac_adapter.rs NacAdapter::check_permissions; crates/db/src/nac/mod.rs NacManager::check_permissions; crates/db/src/nac/edge.rs refresh_edge, refresh_edge_on_commit, refresh_guard, RefreshGuard, reload_after_commit, EdgeGrants::publish, EdgeSnapshot::check, check_all, decide; crates/acp/src/nac/node_acp/snapshot.rs copy_into; crates/db/src/nac/write.rs in_write; crates/db/src/nac/mod.rs initialize, enable, purge; crates/defra-node/src/node_builder.rs NodeBuilder::build",
+        model_ref: "MC_NacOrder_{Green,Red_SkipGet,Red_OwnFirst,Red_AnonAsNode,Red_OutsideTxn,Red_EdgeOwnOnly,Red_StaleEdge,Red_NoWithdraw}.cfg",
         tiers: &[Boundary],
-        bound_by: "",
+        bound_by: "crates/cli/src/nac_adapter_tests.rs a_returned_revocation_refuses_the_next_edge_check, the_snapshot_decides_every_permission_as_the_engine_does; crates/db/tests/nac/dropped_write.rs a_revoke_dropped_after_its_commit_still_checks_the_edge",
+    },
+    Property {
+        // A database transaction that commits a NAC tuple write (through a
+        // projector or a source grant) rebuilds the edge snapshot at commit;
+        // one that writes none registers nothing and rebuilds nothing. A
+        // savepoint rolled back drops the registrations made after it.
+        family: "Node access control operations",
+        name: "INV_RebuiltAfterNacWrite / INV_NoRebuildWithoutNacWrite",
+        axis: Tla,
+        anchor: "crates/acp/src/zanzibar/store/transaction.rs written; crates/datastore/src/multistore.rs node_access_written, NodeAccessWrites; crates/db/src/nac/edge.rs EdgeRefreshOwed, refresh_edge_on_commit; crates/db/src/database/mod.rs new_db_txn; crates/storage/src/corekv/callbacks.rs TxnCallbacks::mark, TxnCallbacks::truncate",
+        model_ref: "MC_NacEdgeRefreshOnWrite_{Green,Red_EveryWrite,Red_KeepOnRollback}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/acp/tests/node_access_writes.rs only_node_policy_writes_owe_the_edge_refresh; crates/defra-node/tests/unit/document_projector.rs raw_document_mutations_stage_sources_in_the_same_transaction",
     },
     Property {
         family: "Node access control operations",
         name: "goOrder_collection_write / goOrder_alone / firstMissing_none_iff / firstMissing_some / allowed_needs_both / refused_get_collection_first / no_bypass_when_off / no_bypass_anonymous / bypass_iff_held",
         axis: Lean,
-        anchor: "crates/acp/src/nac/permission.rs NodePermission::go_order; crates/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/query/src/runner/turn.rs lent, lent_node_permission; crates/db/src/read/lensed/fetcher/mod.rs dac_bypass",
+        anchor: "crates/acp/src/nac/permission.rs NodePermission::go_order; crates/db/src/access/nac.rs check_node_access_as, check_node_access_in_txn; crates/query/src/runner/turn.rs lent, lent_node_permission; crates/db/src/read/lensed/fetcher/mod.rs dac_bypass; crates/p2p-adapter/src/libp2p.rs P2PAdapter::check_nac; crates/p2p-adapter/src/iroh.rs IrohP2PAdapter::check_nac",
         model_ref: "NacOrder (lake build)",
         tiers: &[Boundary],
         bound_by: "",
@@ -3100,6 +3147,37 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "ServiceRecord (lake build)",
         tiers: &[Boundary],
         bound_by: "",
+    },
+    Property {
+        family: "Text chunking",
+        name: "covers / bounded / pickPre_capped / deterministic / units_edit / local_edit / heading_keeps_text / unit_break_reads_only_headings / long_unit_fences",
+        axis: Lean,
+        anchor: "crates/chunk-split/src/split/mod.rs split, split_v1; version.rs SplitterVersion; segments.rs units, fence_before, segments; atoms.rs atoms, sentence_ends; pack.rs pack; overlap.rs with_overlap, borrow, REPEAT_SHARE",
+        model_ref: "ChunkSplit (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Text chunking",
+        name: "no_chunks_keeps_its_identity / different_settings_different_identity / field_order_does_not_change_identity / peer_holds_the_same_settings_as_the_author / buggy_identity_ignores_settings / decode_encode / default_splitter_keeps_the_old_bytes / old_bytes_read_as_the_default / encode_injective / splitter_reaches_the_identity",
+        axis: Lean,
+        anchor: "crates/schema/src/cid.rs build_collection_delta; crates/query/src/sdl_parse/chunk.rs synthesize_chunk_types; crates/db/src/merge/merge_handler/definition.rs process_collection_definition_delta; crates/defra-core/src/block_delta.rs ChunkedFieldDelta, DEFAULT_SPLITTER_VERSION, is_default_splitter_version; crates/defra-core/src/ipld/to_ipld.rs; crates/defra-core/src/ipld/from_ipld.rs",
+        model_ref: "ChunkSplit (lake build)",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        // A peer's definition blocks arrive in any order and may be forged.
+        // A first version follows the SDL's rules, a patch keeps its previous
+        // version's settings, and activation refuses settings other than the
+        // first version's, even for a record stored before the merge checked.
+        family: "Text chunking",
+        name: "FirstValid / MergedMatchFirst / ActiveMatchesFirst / MergedKeepName / ActiveKeepsName: a synced version's @chunk settings are ones a schema could declare, and every merged or active version keeps its collection's first version's settings and name",
+        axis: Tla,
+        anchor: "crates/db/src/merge/merge_handler/definition.rs process_collection_definition_delta; crates/db/src/merge/merge_handler/definition_chunks.rs chunk_settings_error, chunk_parent_error; crates/schema/src/chunk_rules.rs chunk_settings_errors, chunk_settings_change, ensure_chunk_settings_kept; crates/db/src/chunk/user_writes.rs ensure_keeps_first_chunk_settings; crates/db/src/collection/ops/version.rs set_active_collection_version_as; crates/db/src/txn/registry/collections.rs set_collection_active_in_txn_as",
+        model_ref: "MC_ChunkSettingsSync_{Green,Green_Legacy}.cfg (GREEN) / MC_ChunkSettingsSync_{Red_NoFirstCheck,Red_NoMergeGuard,Red_NoActivateGuard,Red_NoNameCheck}.cfg (RED)",
+        tiers: &[Contract],
+        bound_by: "crates/db/tests/merge/chunk_definition_guard.rs a_patch_that_changes_max_chars_is_rejected, a_first_version_with_max_chars_below_the_minimum_is_rejected, an_honest_patch_that_keeps_the_chunk_settings_is_accepted, activating_a_version_with_other_chunk_settings_is_refused, a_patch_that_changes_the_splitter_version_is_rejected, activating_a_version_with_another_splitter_version_is_refused, a_patch_that_renames_the_parent_is_rejected, activating_a_renamed_version_is_refused; crates/schema/tests/chunk_validation_tests.rs renaming_the_parent_is_refused, renaming_the_chunk_collection_is_refused",
     },
     Property {
         // One task serves a pg-compat connection: one deadline read at the
@@ -3168,6 +3246,15 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_ActivePeersIdentify_{Green,Red_AnswerAtOnce,Red_WaitOnLater}.cfg",
         tiers: &[Boundary],
         bound_by: "crates/p2p/src/host/active_peers_tests.rs active_peers_lists_a_dialer_at_its_listen_address_before_its_identify, active_peers_is_not_held_by_a_peer_that_dials_in_after_the_call",
+    },
+    Property {
+        family: "Gossip announcement audience",
+        name: "INV_GoAudience / LIVE_Announced: a write committed with no peer subscribed is announced at once and never published again, so it reaches only peers subscribed at its commit, as Go's SendUpdate; every write is announced",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/broadcast.rs broadcast_local_update_with_creator; crates/p2p/src/sync/peer_state/tracker/operations.rs has_subscriber; crates/p2p/src/sync/broadcast_coalescer.rs BroadcastCoalescer::run; crates/db/src/merge/broadcast_mutator/broadcast.rs broadcast_with_creator",
+        model_ref: "MC_AnnounceAudience_{Green,Red_HoldWhenAlone,Red_AloneMeansDisconnected,Red_RetryWhileConnected}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/p2p/src/sync/coordinator/broadcast_pool_tests.rs a_write_with_no_peer_connected_is_not_held_for_a_peer_that_joins, a_write_with_no_peer_subscribed_is_not_held_for_a_peer_that_subscribes; crates/db/tests/merge/broadcast_mutator_broadcast.rs a_write_that_finds_no_subscriber_is_not_published_again",
     },
     Property {
         // The first shutdown caller to swap the flag builds the one drain,
@@ -3377,6 +3464,19 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "CursorToken (lake build)",
         tiers: &[Boundary],
         bound_by: "",
+    },
+    Property {
+        // A write's own enableSigning picks the flag its key is resolved
+        // with, once, at the edge, before the write runs; no conformance
+        // binary test reaches the choice of key. Boundary, bound by the unit
+        // tests on each edge and the testo scenario.
+        family: "Per-operation signing choice",
+        name: "false_never_signs / true_signs_with_the_picked_key / true_signs_when_there_is_a_key / absent_follows_the_node / old_left_true_unsigned",
+        axis: Lean,
+        anchor: "crates/defra-core/src/request_context.rs RequestContext::signing; crates/defra-core/src/signing.rs resolve_signing_config_with_flag; crates/http/src/query_context.rs request_context; crates/ffi/src/document/run.rs DocumentCall::begin; crates/defra-node/src/lib.rs execute_prepared_request",
+        model_ref: "SigningOverride (lake build)",
+        tiers: &[Boundary],
+        bound_by: "crates/defra-core/src/request_context.rs signing_override_false_hides_the_key_and_others_keep_it; crates/http/src/query_context.rs enable_signing_overrides_the_node_either_way; crates/ffi/src/document/signing_tests.rs opting_out_of_a_save_many_leaves_the_blocks_unsigned_on_a_signing_node; tools/integration-test/tests/testo/signature/per_op_signing.rs signature_with_per_op_signing_enabled_on_a_node_not_signing_signs_every_commit",
     },
     Property {
         // #2724: add_view accepts a transform CID only if it is non-empty and

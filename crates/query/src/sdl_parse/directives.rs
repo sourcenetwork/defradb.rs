@@ -20,6 +20,7 @@ pub const KNOWN_FIELD_DIRECTIVES: &[&str] = &[
     "fulltext",
     "immutable",
     "policy", // Go allows @policy on fields in some contexts
+    "chunk",
 ];
 
 /// Known type-level directives
@@ -59,6 +60,7 @@ pub fn known_directive_arguments(directive_name: &str) -> &'static [&'static str
         "encryptedIndex" => &["type"],
         "fulltext" => &["language", "k1", "b"],
         "immutable" => &[],
+        "chunk" => &["maxChars", "overlap"],
         _ => &[],
     }
 }
@@ -197,6 +199,15 @@ pub struct ParsedDirectives {
     pub vector_index: Vec<VectorIndexConfig>,
     /// Whether this field is immutable after document creation
     pub immutable: bool,
+    /// Settings from a `@chunk` directive.
+    pub chunk: Option<ChunkDirective>,
+}
+
+/// Settings from a `@chunk` directive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChunkDirective {
+    pub max_chars: u32,
+    pub overlap: u32,
 }
 
 /// Full-text search configuration from @fulltext directive

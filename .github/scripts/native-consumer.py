@@ -39,6 +39,8 @@ DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
 UNIT_NAMES = (
     "abi::tests::delete_relationship_subject_userset_round_trips",
     "abi::tests::set_relationship_subject_object_edge_round_trips",
+    "bearer::caller_tests::a_delegation_names_its_signer_only_to_the_worker_and_deployment_it_was_made_for",
+    "bearer::caller_tests::an_identity_token_is_not_a_delegation",
     "bearer::key_types::a_p256_delegation_is_issued_under_the_compressed_spelling_only",
     "bearer::key_types::a_registered_ed25519_or_p256_identity_gets_a_delegation_vera_rs_verifies",
     "bearer::key_types::a_signer_whose_algorithm_and_key_disagree_issues_nothing",
@@ -95,6 +97,13 @@ LIVE_CASES = (
     ("node-builder", "node_builder::node_built_with_vera_rs_enforces_verified_document_access"),
     ("node-provider", "node_builder::node_built_with_a_host_provider_enforces_verified_document_access"),
     ("actor-spelling", "actor_spelling::either_spelling_of_a_secp256k1_actor_is_one_vera_actor"),
+    ("archived-record", "verified_records::archived_owner_record_does_not_authorize_access"),
+    ("permission-rules", "verified_records::native_permissions_honor_policy_exclusions_and_cross_object_rules"),
+    ("worker-recovery", "native_worker::native_worker_recovers_pending_and_rejected_submissions"),
+    ("provider-recovery", "native_worker::native_provider_recovers_pending_before_concurrent_requests"),
+    ("in-process-archived-record", "in_process::in_process_archived_owner_record_does_not_authorize_access"),
+    ("in-process-permission-rules", "in_process::in_process_permissions_are_proven_and_end_with_the_node"),
+    ("in-process-provider-recovery", "in_process::in_process_provider_recovers_pending_before_concurrent_requests"),
 )
 CARGO = ["cargo", "+1.99.1"]
 BUILD = ["--release", "--frozen", "-j", "2"]

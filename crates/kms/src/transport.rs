@@ -75,6 +75,12 @@ pub trait KeyTransport: MaybeSendSync {
     /// Idempotent: replacing a previously installed handler is allowed (M1
     /// transports keep only one).
     fn install_handler(&self, handler: Arc<dyn IncomingHandler>);
+
+    /// The most keys one request may ask for, so that it and its reply fit
+    /// what this transport carries; `None` sets no limit.
+    fn max_keys_per_request(&self) -> Option<usize> {
+        None
+    }
 }
 
 #[cfg(test)]

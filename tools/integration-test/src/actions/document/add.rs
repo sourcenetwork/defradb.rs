@@ -89,22 +89,16 @@ impl Op for AddDoc {
 }
 
 impl AddDoc {
-    /// Fails on the arguments no client supports yet.
+    /// The identity the add acts as.
     fn check_arguments(&self, state: &State) -> Result<Option<u64>, Failure> {
-        let identity = self.common.acting_identity(Self::name(), state)?;
-        if self.enable_signing.is_some() {
-            return Err(Failure::unsupported(format!(
-                "{} argument enableSigning",
-                Self::name()
-            )));
-        }
-        Ok(identity)
+        self.common.acting_identity(Self::name(), state)
     }
 
     fn options(&self) -> AddOptions {
         AddOptions {
             encrypt_doc: self.is_doc_encrypted.unwrap_or_default(),
             encrypted_fields: self.encrypted_fields.clone().unwrap_or_default(),
+            enable_signing: self.enable_signing,
         }
     }
 
@@ -194,6 +188,9 @@ impl CliRun for AddDoc {
             };
             let docs = docs.to_string();
             let fields = action.options().encrypted_fields.join(",");
+            let signing = action
+                .enable_signing
+                .map(|enable| format!("--enable-signing={enable}"));
             let mut args = vec![
                 "document",
                 "--collection-name",
@@ -203,6 +200,9 @@ impl CliRun for AddDoc {
             ];
             if action.options().encrypt_doc {
                 args.push("--encrypt");
+            }
+            if let Some(signing) = &signing {
+                args.push(signing);
             }
             if !fields.is_empty() {
                 args.extend(["--encrypt-fields", &fields]);

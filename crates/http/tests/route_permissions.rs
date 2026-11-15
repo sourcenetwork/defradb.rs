@@ -440,6 +440,11 @@ fn all_registered_routes_return_expected_permission() {
             Method::GET,
             RoutePermission::Dynamic,
         ),
+        (
+            "/api/v0/acp/document/is-owner",
+            Method::POST,
+            RoutePermission::Required(NodePermission::DocumentRead),
+        ),
         // ACP Node
         (
             "/api/v0/acp/node/status",
@@ -460,6 +465,11 @@ fn all_registered_routes_return_expected_permission() {
             "/api/v0/acp/node/relationships",
             Method::POST,
             RoutePermission::Required(NodePermission::NacRelationAdd),
+        ),
+        (
+            "/api/v0/acp/node/source-permission",
+            Method::POST,
+            RoutePermission::Dynamic,
         ),
         (
             "/api/v0/acp/node/disable",

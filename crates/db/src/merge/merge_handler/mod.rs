@@ -12,6 +12,7 @@ mod composite_fields;
 mod composite_heads;
 pub mod composite_persist;
 mod definition;
+mod definition_chunks;
 mod dispatch;
 mod doc_identity;
 mod encryption;

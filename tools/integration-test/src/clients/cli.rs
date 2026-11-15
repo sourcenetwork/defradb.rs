@@ -29,7 +29,7 @@ where
 }
 
 impl State {
-    /// [`State::defra_client`] against node `name`, in transaction number
+    /// `State::defra_client` against node `name`, in transaction number
     /// `txn` when the action names one.
     pub fn defra_client_on(
         &self,

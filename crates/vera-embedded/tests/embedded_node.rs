@@ -40,6 +40,7 @@ resources:
 /// loopback port the system picks and no RPC listener.
 async fn start(directory: &Path) -> EmbeddedNode {
     let genesis = SoloGenesis {
+        policies: Vec::new(),
         chain_id: DEPLOYMENT,
         operators: serde_json::from_value(json!({ "threshold": 1, "keys": [ACCOUNT_KEY] }))
             .expect("operator policy"),
@@ -215,7 +216,11 @@ async fn answers_limits_and_failures_arrive_as_they_do_over_the_network() {
             Some(EmbeddedError::Stopped { .. })
         ));
     }
-    assert!(headers.next().await.is_none());
+    // A block can finalize while the node settles its stop, so the stream may
+    // still hold a header before it ends.
+    while let Some(header) = headers.next().await {
+        header.expect("header");
+    }
 }
 
 #[nuclei::test]

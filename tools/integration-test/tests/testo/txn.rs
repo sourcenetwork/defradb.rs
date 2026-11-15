@@ -17,6 +17,7 @@ mod new_index;
 mod patch_collection;
 mod refresh_view;
 mod request;
+mod returned_field;
 mod set_active_collection_version;
 mod set_migration;
 mod truncate;

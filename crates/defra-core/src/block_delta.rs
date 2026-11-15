@@ -397,6 +397,57 @@ pub struct CollectionDefinitionDeltaPayload {
     /// version of the same collection.
     #[serde(rename = "policy", default, skip_serializing_if = "Option::is_none")]
     pub policy_cid: Option<Cid>,
+
+    /// The `@chunk` fields' settings. They decide how text is cut, so two
+    /// nodes must not hold one version with different settings.
+    #[serde(rename = "chunked", default, skip_serializing_if = "Vec::is_empty")]
+    pub chunked_fields: Vec<ChunkedFieldDelta>,
+
+    /// The parent field a generated chunk collection holds the chunks of.
+    #[serde(rename = "chunkOf", default, skip_serializing_if = "Option::is_none")]
+    pub chunk_of: Option<Box<ChunkOfDelta>>,
+}
+
+/// The splitter version a `@chunk` setting that states none was cut with.
+///
+/// Fixed for good: deltas made before the version existed state none.
+pub const DEFAULT_SPLITTER_VERSION: u32 = 1;
+
+/// Whether `version` is the one a delta leaves unstated.
+pub fn is_default_splitter_version(version: &u32) -> bool {
+    *version == DEFAULT_SPLITTER_VERSION
+}
+
+fn default_splitter_version() -> u32 {
+    DEFAULT_SPLITTER_VERSION
+}
+
+/// One `@chunk` field's settings in its collection's delta.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChunkedFieldDelta {
+    #[serde(rename = "field")]
+    pub field: String,
+    #[serde(rename = "maxChars")]
+    pub max_chars: u32,
+    #[serde(rename = "overlap")]
+    pub overlap: u32,
+    /// The splitting rules, in the identity so peers on other rules see another collection.
+    /// Skipped at the default, so definitions made before it keep their IDs.
+    #[serde(
+        rename = "splitterVersion",
+        default = "default_splitter_version",
+        skip_serializing_if = "is_default_splitter_version"
+    )]
+    pub splitter_version: u32,
+}
+
+/// A generated chunk collection's parent field in its delta.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChunkOfDelta {
+    #[serde(rename = "collection")]
+    pub collection: String,
+    #[serde(rename = "field")]
+    pub field: String,
 }
 
 impl CollectionDefinitionDeltaPayload {
@@ -410,6 +461,8 @@ impl CollectionDefinitionDeltaPayload {
             governance_root: None,
             is_branchable: false,
             policy_cid: None,
+            chunked_fields: Vec::new(),
+            chunk_of: None,
         }
     }
 
@@ -446,6 +499,18 @@ impl CollectionDefinitionDeltaPayload {
     /// Set the CID over the collection's policy reference.
     pub fn with_policy_cid(mut self, policy_cid: Cid) -> Self {
         self.policy_cid = Some(policy_cid);
+        self
+    }
+
+    /// Set the `@chunk` fields' settings.
+    pub fn with_chunked_fields(mut self, chunked_fields: Vec<ChunkedFieldDelta>) -> Self {
+        self.chunked_fields = chunked_fields;
+        self
+    }
+
+    /// Set the parent field of a generated chunk collection.
+    pub fn with_chunk_of(mut self, chunk_of: ChunkOfDelta) -> Self {
+        self.chunk_of = Some(Box::new(chunk_of));
         self
     }
 }

@@ -23,6 +23,9 @@ pub use vera_node::ThreadBudget;
 use crate::link::Link;
 use crate::EmbeddedTransport;
 
+/// How long a start waits before it asks again for a directory still held.
+const DIRECTORY_RETRY: Duration = Duration::from_millis(50);
+
 /// The deployment a hosted node creates on first start and reopens later.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Deployment {
@@ -36,6 +39,21 @@ pub struct Deployment {
     /// The time the deployment is created, in Unix seconds. Read on first
     /// start only.
     pub created: u64,
+    /// Policies the deployment starts with. Part of its identity: a
+    /// directory is reopened only with the list it was created with.
+    pub policies: Vec<SeededPolicy>,
+}
+
+/// A policy a deployment holds from its first block, under the ID a local
+/// ACP derives from the same definition and counter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SeededPolicy {
+    /// The policy as YAML.
+    pub definition: String,
+    /// The counter its ID is derived from.
+    pub counter: u64,
+    /// The DID recorded as its owner.
+    pub owner: String,
 }
 
 /// Where a hosted node keeps its state and how long its host waits for it.
@@ -60,6 +78,8 @@ pub struct HostConfig {
 pub enum HostError {
     #[error("invalid operator policy: {0}")]
     Operators(#[source] serde_json::Error),
+    #[error("invalid seeded policy: {0}")]
+    Policies(#[source] serde_json::Error),
     #[error("the embedded Vera node did not start: {0}")]
     Start(#[source] vera_node::EmbedError),
     #[error(
@@ -102,9 +122,21 @@ impl HostedNode {
     /// then, for one because a node stopped past its own deadline still
     /// holds the directory, is told to stop and left to finish alone.
     pub async fn start(config: HostConfig, edge: &Edge) -> Result<Self, HostError> {
+        Self::start_serving(config, None, edge).await
+    }
+
+    /// As [`start`](Self::start), with the node's JSON-RPC methods also
+    /// served on `rpc_listen`, for a client in another process. What it reads
+    /// there it verifies as it would from any Vera node.
+    pub async fn start_serving(
+        config: HostConfig,
+        rpc_listen: Option<SocketAddr>,
+        edge: &Edge,
+    ) -> Result<Self, HostError> {
         let genesis = genesis(config.deployment)?;
         let directory = config.data_dir.clone();
         let mut settings = EmbeddedConfig::new(config.data_dir, genesis, config.listen);
+        settings.rpc_listen = rpc_listen;
         // The node runs no more worker or verification threads than the
         // network runtime runs, pinned or not.
         let threads = edge.threads().max(1);
@@ -123,9 +155,22 @@ impl HostedNode {
             }));
         }
         let threads = settings.thread_budget();
-        // Dropping the start at the deadline drops its stop sender, so a node
-        // that gets its directory later stops by itself.
-        let node = match edge.timeout(config.start_deadline, launch(settings)).await {
+        // The node refuses a directory another node holds; a node that was
+        // told to stop releases it shortly, so the start is asked again until
+        // the deadline. Dropping the start at the deadline drops its stop
+        // sender, so a node that got its directory stops by itself.
+        let held = edge.clone();
+        let start = async move {
+            loop {
+                match launch(settings.clone()).await {
+                    Err(vera_node::EmbedError::DirectoryInUse(_)) => {
+                        held.sleep(DIRECTORY_RETRY).await;
+                    }
+                    started => return started,
+                }
+            }
+        };
+        let node = match edge.timeout(config.start_deadline, start).await {
             Ok(started) => started.map_err(HostError::Start)?,
             Err(edge::EdgeError::Deadline(_)) => {
                 return Err(HostError::StartElapsed {
@@ -211,5 +256,18 @@ fn genesis(deployment: Deployment) -> Result<SoloGenesis, HostError> {
         }))
         .map_err(HostError::Operators)?,
         timestamp: deployment.created,
+        policies: deployment
+            .policies
+            .into_iter()
+            .map(|policy| {
+                serde_json::from_value(serde_json::json!({
+                    "definition": policy.definition,
+                    "marshal_type": "ShortYaml",
+                    "counter": policy.counter,
+                    "owner": policy.owner,
+                }))
+                .map_err(HostError::Policies)
+            })
+            .collect::<Result<_, _>>()?,
     })
 }

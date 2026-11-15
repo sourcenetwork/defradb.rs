@@ -24,6 +24,11 @@ impl<S: Store> crate::database::DB<S> {
             .get_collection(name)
             .await?
             .ok_or_else(|| Error::CollectionNotFound(name.to_string()))?;
+        if let Some(source) = &collection.schema().chunk_of {
+            if txn.get_collection(&source.collection).await?.is_some() {
+                crate::chunk::ensure_admin_changeable(collection.schema())?;
+            }
+        }
 
         let version_id = collection.version_id().to_string();
         let collection_id = collection.collection_id().to_string();

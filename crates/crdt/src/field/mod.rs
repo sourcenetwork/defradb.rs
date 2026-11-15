@@ -3,9 +3,9 @@
 //! One [`FieldCrdt`] per CRDT type answers everything a local write, a merge and
 //! the document value need to know about a field: what an operation does to
 //! its value, what its block carries, how its state is stored and how two
-//! states merge. Callers find a type through [`field_crdt`] (by the field's
-//! declared type), [`delta_crdt`] (by the block that carries it) or
-//! [`part_crdt`] (by the stored part), and never branch on the kind.
+//! states merge. Callers find a type through [`Crdts::field`] (by the field's
+//! declared type), [`Crdts::delta`] (by the block that carries it) or
+//! [`Crdts::part`] (by the stored part), and never branch on the kind.
 //!
 //! Most types merge a block into the stored value on its own. A type whose
 //! operations count in the value they edit, such as positions in a text,
@@ -15,7 +15,7 @@
 //!
 //! The trait is also the contract for a custom type, one a third party
 //! implements and registers on the node builder under a [`CType::Custom`]
-//! name ([`register`]). Its laws are stated method by method below, and
+//! name ([`Registration`]). Its laws are stated method by method below, and
 //! [`testing::check_field_crdt`] checks them.
 
 mod causal;
@@ -210,7 +210,7 @@ pub trait FieldCrdt: Send + Sync {
     /// The state of `field` holding `value` at `priority`, as the document
     /// value stores it. Law: [`materialize`](Self::materialize) reads it back
     /// as `value`. A custom type's state is of kind
-    /// [`ValueKind::Custom`](crate::stored::ValueKind::Custom) of its name, so
+    /// [`ValueKind::Custom`] of its name, so
     /// the store's merge operator finds the type from the part alone.
     fn state(
         &self,

@@ -102,6 +102,8 @@ pub unsafe extern "C" fn defra_view_add(
                 })
                 .collect();
 
+            schema::definition_validation::validate_no_chunk_in_view(&view_collections)
+                .map_err(|e| format!("failed to create view collection: {}", e))?;
             for collection in &view_collections {
                 if collection.downsample_interval.is_some() {
                     database

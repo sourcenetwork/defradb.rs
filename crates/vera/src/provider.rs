@@ -218,8 +218,10 @@ pub trait VeraProvider: MaybeSendSync {
     }
 
     /// The verified ACP state a decision is read at, when the provider
-    /// proves one (the vera.rs light client's module state root). A decision
-    /// cached under it is exact: a new state is a new key.
+    /// proves one and it is still fresh (the vera.rs light client's module
+    /// state root, within its freshness limit). A decision cached under it
+    /// is exact: a new state is a new key, and a state that aged out is no
+    /// key at all.
     fn decision_state(&self) -> Option<String> {
         None
     }
@@ -228,5 +230,19 @@ pub trait VeraProvider: MaybeSendSync {
         Err(ProviderError::Unavailable(
             "ACP light client status is not available for this provider".into(),
         ))
+    }
+
+    /// What a caller's own delegation must name for this provider to act
+    /// under it; `None` when the provider takes none.
+    fn delegation_audience(&self) -> Option<acp::DelegationAudience> {
+        None
+    }
+
+    /// The DID that signed `token`, when `token` is a delegation this
+    /// provider may act under now: signed by its issuer, current, and naming
+    /// this provider's worker and deployment. `None` when `token` is not a
+    /// delegation at all, so the caller is authenticated some other way.
+    fn caller_of_delegation(&self, _token: &str) -> Option<Result<String, ProviderError>> {
+        None
     }
 }

@@ -15,7 +15,7 @@ use crate::stored::{Part, StoredField, ValueKind};
 /// the block's parent version, and a field's value is the Fugue replay of its
 /// history ([`fugue::replay`]). The document value stores the replayed text,
 /// which each merge or write replaces whole. A write of null is a block whose
-/// data is CBOR null ([`NIL`]): it clears its parent version, and the field
+/// data is CBOR null (`0xf6`): it clears its parent version, and the field
 /// reads null while every head of its history is such a block.
 pub struct TextField;
 

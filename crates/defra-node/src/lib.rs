@@ -11,7 +11,7 @@
 //! - `native` — native host (event channel). Default-on.
 //! - `vera` — on-chain document ACP. Default-on. Omit for local-only ACP.
 //! - `wasmtime-runtime` — Lens WASM execution. Default-on. Without it,
-//!   [`Node::set_migration`] returns an explicit error.
+//!   [`Node::set_migration_as`] returns an explicit error.
 //! - `p2p` — Iroh/QUIC replication. Implies `native`. Does **not** compile libp2p.
 //!   `iroh` is the same feature under its former name.
 //! - `libp2p` — libp2p replication. Implies `native`. Off by default, so the
@@ -68,7 +68,6 @@ mod p2p_runtime;
 #[cfg(any(feature = "p2p", feature = "libp2p"))]
 mod peer_key;
 mod peer_keyring;
-pub mod search_chunks;
 mod signed_query;
 mod start_peer_key;
 mod transaction;
@@ -118,7 +117,10 @@ pub use defra_p2p_adapter::{
 pub use dense_search::{DenseHybridSearchHit, DenseHybridSearchRequest, DenseHybridSearchResponse};
 pub use embedded_signer::{EmbeddedSigner, EmbeddedSignerError};
 #[cfg(feature = "embedded-vera")]
-pub use embedded_vera_config::{EmbeddedVeraConfig, EmbeddedVeraDeployment};
+pub use embedded_vera_config::{
+    EmbeddedVeraActor, EmbeddedVeraConfig, EmbeddedVeraDeployment, EmbeddedVeraPolicy,
+    EmbeddedVeraTrust,
+};
 pub use error::{Error, Result};
 pub use events::EventName;
 pub use keyring;
@@ -138,14 +140,14 @@ pub use telemetry::{ConflictMetricsSnapshot, RetryLayerSnapshot};
 pub use telemetry::{TelemetryConfig, TelemetryHandle};
 pub use transaction::NodeTransaction;
 #[cfg(feature = "vera")]
-pub use vera_rs_config::VeraRsConfig;
+pub use vera_rs_config::{VeraRsActor, VeraRsConfig};
 pub use zeroize::Zeroizing;
 
 use network::NodeEdge;
 #[cfg(not(target_arch = "wasm32"))]
 use signed_query::{execute_with_signing_context, unavailable_node_signer_response};
 
-/// Type-erased schema operations so we can store DB<S> without leaking the Store generic.
+/// Type-erased schema operations so we can store `DB<S>` without leaking the `Store` generic.
 #[async_trait::async_trait]
 trait SchemaOps: Send + Sync {
     async fn add_collection(
@@ -270,6 +272,8 @@ pub struct Node {
     /// tells it to stop and waits for nothing.
     #[cfg(feature = "embedded-vera")]
     embedded_vera: kovan_queue::seg_queue::SegQueue<vera_embedded::HostedNode>,
+    #[cfg(feature = "embedded-vera")]
+    embedded_vera_trust: Option<EmbeddedVeraTrust>,
     /// Document ACP is a remote provider: its calls reach the network, so
     /// they stay where they are made.
     remote_acp: bool,
@@ -558,15 +562,17 @@ impl Node {
             Err(error) => return QueryResponse::error(error.to_string()),
         };
         let request = self.with_default_query_identity(request);
-        // A request is signed when the node signs with its identity, or when
-        // the caller brings its own key. Otherwise an identity-only node runs
-        // it unsigned, as its caller, as Go's `NodeIdentity` without
-        // `EnableSigning` does. Either way it runs under the node's principal
-        // (`node_principal`), the owner of the transactions the node begins.
-        let signing_identity = self
-            .node_identity_did
-            .as_deref()
-            .filter(|_| self.node_signs || caller_signer.is_some());
+        // A request is signed when the node signs with its identity, when the
+        // caller brings its own key, or when the write asks for signing with
+        // `enableSigning: true`, as Go's `EnableSigning` does on a node that
+        // does not sign. Otherwise an identity-only node runs it unsigned, as
+        // its caller, as Go's `NodeIdentity` without `EnableSigning` does.
+        // Either way it runs under the node's principal (`node_principal`),
+        // the owner of the transactions the node begins.
+        let signs = self.node_signs
+            || caller_signer.is_some()
+            || request.context.signing_override() == Some(true);
+        let signing_identity = self.node_identity_did.as_deref().filter(|_| signs);
         let Some(node_identity_did) = signing_identity else {
             if caller_signer.is_some() {
                 return QueryResponse::error(
@@ -670,13 +676,16 @@ impl Node {
     }
 
     /// The context the node's own operations run in, and the owner of the
-    /// transactions it begins: the node's principal ([`Self::node_principal`])
+    /// transactions it begins: the node's principal (`node_principal`)
     /// acts in it. On a node that acts as its identity, DB-layer NAC checks
     /// resolve to the node itself (which holds full access). Without a node
     /// identity, or on an identity-only node, it is [`RequestContext::ambient`]
     /// and NAC checks the node's own operations as anonymous, as Go's node
     /// checks a call that names no identity.
-    fn node_context(&self) -> RequestContext {
+    ///
+    /// An embedder reads node-ACP-gated P2P information as the node with
+    /// `node.p2p_system()?.ops_for(&node.node_context())`.
+    pub fn node_context(&self) -> RequestContext {
         let context = RequestContext::ambient();
         match self.node_principal() {
             Some(did) => context.with_identity(Some(did)),
@@ -818,7 +827,7 @@ impl Node {
     /// List the names of every active collection known to the node.
     ///
     /// Useful for idempotent schema-bootstrap flows that need to decide whether
-    /// to call [`Self::add_collection`] (create) or [`Self::patch_collection`] (evolve).
+    /// to call [`Self::add_collection`] (create) or [`Self::patch_collection_as`] (evolve).
     pub fn list_collections(&self) -> Result<Vec<String>> {
         self.schema_ops.list_collections()
     }
@@ -1073,6 +1082,12 @@ impl Node {
     }
 
     /// The node access control manager: off until enabled.
+    ///
+    /// The embedded HTTP server decides when the node is built whether its
+    /// edge routes check node ACP, as `defradb start` does at startup: they do
+    /// once node ACP was enabled through the builder or by an earlier run on
+    /// the same store. Enabling it here on a node built without it guards the
+    /// database now and the edge routes from the next build.
     pub fn nac_manager(&self) -> &Arc<dyn db::NacManagerApi> {
         &self.nac_manager
     }
@@ -1086,6 +1101,13 @@ impl Node {
     #[cfg(feature = "vera")]
     pub fn vera_acp(&self) -> Option<&Arc<vera::VeraDocumentACP>> {
         self.vera_acp.as_ref()
+    }
+
+    /// What another node of the same account needs to verify against the
+    /// Vera deployment this node runs; `None` when it runs none.
+    #[cfg(feature = "embedded-vera")]
+    pub fn embedded_vera_trust(&self) -> Option<&EmbeddedVeraTrust> {
+        self.embedded_vera_trust.as_ref()
     }
 
     /// The limits queries on this node run under.

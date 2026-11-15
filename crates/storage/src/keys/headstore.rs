@@ -8,7 +8,7 @@ const PRIORITY_HEX_WIDTH: usize = 16;
 
 /// HeadstoreDocKey: Links documents to their current block head CID
 ///
-/// Structure: /d/[DocShortID uvarint]/[FieldID]/[CID]
+/// Structure: `/d/[DocShortID uvarint]/[FieldID]/[CID]`
 /// Example: /d/\x01/fieldname/bafyreih7c4pdkyvosses56rmyomakxvicn4cehjrw3w3mmk57iagt6f4sq
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeadstoreDocKey {
@@ -85,8 +85,8 @@ impl Key for HeadstoreDocKey {
 
 /// HeadstorePriorityKey: Secondary index for document commit height lookups
 ///
-/// Structure: /p/[DocShortID uvarint]/[PriorityHex16]/[CID bytes]
-/// Example: /p/\x01/0000000000000042/<cid-bytes>
+/// Structure: `/p/[DocShortID uvarint]/[PriorityHex16]/[CID bytes]`
+/// Example: `/p/\x01/0000000000000042/<cid-bytes>`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeadstorePriorityKey {
     /// Document short ID
@@ -293,7 +293,7 @@ impl Key for HeadstoreColPublishedKey {
 
 /// HeadstoreFieldDefinition: Maps field definitions to their block head
 ///
-/// Structure: /f/[CollectionName]/[FieldName]/[CID]
+/// Structure: `/f/[CollectionName]/[FieldName]/[CID]`
 /// Example: /f/users/email/bafyreih7c4pdkyvosses56rmyomakxvicn4cehjrw3w3mmk57iagt6f4sq
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeadstoreFieldDefinition {
@@ -360,7 +360,7 @@ impl Key for HeadstoreFieldDefinition {
 
 /// HeadstoreCollectionDefinition: Maps collection definitions to their block head
 ///
-/// Structure: /g/[CollectionName]/[CID]
+/// Structure: `/g/[CollectionName]/[CID]`
 /// Example: /g/users/bafyreih7c4pdkyvosses56rmyomakxvicn4cehjrw3w3mmk57iagt6f4sq
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeadstoreCollectionDefinition {
@@ -403,7 +403,7 @@ impl Key for HeadstoreCollectionDefinition {
 
 /// HeadstoreCollectionSetDefinition: Maps collection set definitions to their block head
 ///
-/// Structure: /s/[FirstCollectionID]/[CID]
+/// Structure: `/s/[FirstCollectionID]/[CID]`
 /// Example: /s/col_a/bafyreih7c4pdkyvosses56rmyomakxvicn4cehjrw3w3mmk57iagt6f4sq
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeadstoreCollectionSetDefinition {

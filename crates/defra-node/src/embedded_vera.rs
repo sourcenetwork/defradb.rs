@@ -13,8 +13,10 @@ use crate::{EmbeddedVeraConfig, Error, Result};
 /// The provider trusts the consensus key of the deployment this process
 /// created or reopened, and verifies every receipt, proof and header against
 /// it as it does over the network. Once the node stops, by shutdown or on
-/// its own, its transport refuses every call, so access decisions fail and
-/// none is served from memory.
+/// its own, its transport refuses every call, so a decision that was not
+/// asked before fails. Document ACP remembers a decision under the verified
+/// state it was read at and may repeat it while that state is fresh, which
+/// is at most the light client's freshness limit after the node stopped.
 pub(crate) async fn start<S>(
     config: &EmbeddedVeraConfig,
     event_bus: Option<Arc<dyn events::Bus>>,
@@ -24,7 +26,7 @@ pub(crate) async fn start<S>(
 where
     S: storage::corekv::Store + 'static,
 {
-    let node = vera_embedded::HostedNode::start(
+    let node = vera_embedded::HostedNode::start_serving(
         vera_embedded::HostConfig {
             data_dir: config.data_dir.clone(),
             deployment: config.deployment.clone(),
@@ -32,6 +34,7 @@ where
             start_deadline: config.start_deadline,
             stop_deadline: config.stop_deadline,
         },
+        config.rpc_listen,
         edge,
     )
     .await?;
@@ -56,20 +59,37 @@ where
         .map_err(Error::VeraProvider)?
     };
     let transport = Arc::new(node.transport(config.tuning.request_timeout));
-    let provider = Arc::new(
-        vera::VeraRsProvider::with_transport(
-            transport.clone(),
-            transport,
-            node.consensus_key(),
-            &config.actor_key,
-            worker,
-            &config.tuning,
-            event_bus,
-            edge,
-        )
-        .await
-        .map_err(Error::VeraProvider)?,
-    );
+    let consensus_key = node.consensus_key();
+    let tuning = &config.tuning;
+    let provider = match &config.actor {
+        crate::EmbeddedVeraActor::Secp256k1Key(key) => {
+            vera::VeraRsProvider::with_transport(
+                transport.clone(),
+                transport,
+                consensus_key,
+                key,
+                worker,
+                tuning,
+                event_bus,
+                edge,
+            )
+            .await
+        }
+        crate::EmbeddedVeraActor::Signer(signer) => {
+            vera::VeraRsProvider::with_signer(
+                transport.clone(),
+                transport,
+                consensus_key,
+                Arc::clone(signer),
+                worker,
+                tuning,
+                event_bus,
+                edge,
+            )
+            .await
+        }
+    };
+    let provider = Arc::new(provider.map_err(Error::VeraProvider)?);
     let mut setup = verified_acp_setup(provider, edge, config.tuning.request_timeout, store);
     setup.embedded_vera = Some(node);
     Ok(setup)

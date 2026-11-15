@@ -427,6 +427,12 @@ impl<T: P2PTransport> KeyTransport for PubsubKeyTransport<T> {
         "pubsub"
     }
 
+    fn max_keys_per_request(&self) -> Option<usize> {
+        self.transport
+            .max_raw_publish()
+            .map(super::request_keys::keys_per_request)
+    }
+
     async fn send_request(&self, req: EncodedFetchRequest) -> KmsResult<TransportReplyStream> {
         // Register correlation by request-CID, then publish the raw request on
         // the base topic. Go peers reply on `encryption/<self>/_response`,

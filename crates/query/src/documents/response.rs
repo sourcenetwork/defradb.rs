@@ -65,12 +65,7 @@ pub(super) fn single(ids: Vec<String>) -> Result<String> {
 /// The `_docID` each of `count` aliased fields `s0`, `s1`, … saved, in
 /// order, or the request's first error with its text unchanged.
 pub(super) fn saved_doc_ids(response: QueryResponse, count: usize) -> Result<Vec<String>> {
-    if let Some(error) = response.errors.first() {
-        return Err(match error.code() == Some(TXN_CONFLICT_ERROR_CODE) {
-            true => Error::Conflict,
-            false => Error::Request(error.message.clone()),
-        });
-    }
+    refused(&response)?;
     (0..count)
         .map(|index| {
             response

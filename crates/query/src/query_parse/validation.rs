@@ -21,6 +21,18 @@ pub async fn validate_parsed_operation(
     op: &ParsedOperation,
     provider: &dyn CollectionProvider,
 ) -> Result<()> {
+    validate_operation(op, provider, true).await
+}
+
+/// [`validate_parsed_operation`] for an operation parsed from GraphQL text
+/// (`graphql_text`) or built as typed structs. A typed one carries no GraphQL
+/// arguments, so argument types are not checked: its `encryptFields` is
+/// checked against the collection when it runs, as Go's collection API does.
+pub async fn validate_operation(
+    op: &ParsedOperation,
+    provider: &dyn CollectionProvider,
+    graphql_text: bool,
+) -> Result<()> {
     match op {
         ParsedOperation::Query { selects, .. } => {
             for select in selects {
@@ -29,7 +41,7 @@ pub async fn validate_parsed_operation(
         }
         ParsedOperation::Mutation { mutations, .. } => {
             for mutation in mutations {
-                validate_mutation_collection(mutation, provider).await?;
+                validate_mutation_collection(mutation, provider, graphql_text).await?;
             }
         }
         ParsedOperation::Subscription { select, .. } => {
@@ -153,6 +165,7 @@ fn holds_vector(kind: &FieldKind) -> bool {
 async fn validate_mutation_collection(
     mutation: &Mutation,
     provider: &dyn CollectionProvider,
+    graphql_text: bool,
 ) -> Result<()> {
     let name = &mutation.collection_name;
 
@@ -175,7 +188,9 @@ async fn validate_mutation_collection(
         return Err(QueryError::parse(msg));
     };
 
-    validate_encrypt_fields(mutation, &collection)?;
+    if graphql_text {
+        validate_encrypt_fields(mutation, &collection)?;
+    }
     validate_similarity(&mutation.fields, &collection, provider).await
 }
 
@@ -346,6 +361,10 @@ mod tests {
     }
 
     fn encrypt_fields_result(encrypt_fields: &[&str]) -> Result<()> {
+        encrypt_fields_checked(encrypt_fields, true)
+    }
+
+    fn encrypt_fields_checked(encrypt_fields: &[&str], graphql_text: bool) -> Result<()> {
         let collection: CollectionVersion = serde_json::from_value(serde_json::json!({
             "Name": "Users",
             "Fields": [{ "Name": "_docID" }, { "Name": "name" }, { "Name": "age" }],
@@ -369,7 +388,7 @@ mod tests {
             explain: None,
         };
         let provider = StaticCollectionProvider::new(vec![collection]);
-        workers::block_on(async { validate_parsed_operation(&op, &provider).await }).unwrap()
+        workers::block_on(async { validate_operation(&op, &provider, graphql_text).await }).unwrap()
     }
 
     #[test]
@@ -407,6 +426,15 @@ mod tests {
     fn test_encrypt_fields_accepts_explicit_fields() {
         assert!(encrypt_fields_result(&["name", "age"]).is_ok());
         assert!(encrypt_fields_result(&[]).is_ok());
+    }
+
+    /// A typed operation leaves `encryptFields` to the collection API, which
+    /// gives Go's collection errors when the write runs.
+    #[test]
+    fn typed_operations_leave_encrypt_fields_to_the_write() {
+        assert!(encrypt_fields_checked(&["_docID"], false).is_ok());
+        assert!(encrypt_fields_checked(&["name", "points"], false).is_ok());
+        assert!(encrypt_fields_checked(&["_docID"], true).is_err());
     }
 
     #[test]
