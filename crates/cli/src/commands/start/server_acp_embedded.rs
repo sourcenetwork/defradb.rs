@@ -61,6 +61,7 @@ pub(super) async fn setup(
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_err(|error| invalid("genesis time", &error))?
                     .as_secs(),
+                policies: Vec::new(),
             },
             listen,
             start_deadline: START_DEADLINE,

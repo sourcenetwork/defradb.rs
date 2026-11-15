@@ -521,6 +521,15 @@ where
     #[cfg(all(feature = "vera", not(target_arch = "wasm32")))]
     let redrive = acp_setup.redrive;
     #[cfg(feature = "embedded-vera")]
+    let embedded_vera_trust =
+        acp_setup
+            .embedded_vera
+            .as_ref()
+            .map(|vera| crate::EmbeddedVeraTrust {
+                chain_id: vera.chain_id(),
+                consensus_key: vera.consensus_key().to_owned(),
+            });
+    #[cfg(feature = "embedded-vera")]
     let embedded_vera = crate::single_slot(acp_setup.embedded_vera);
     database.set_dac_policies(acp_setup.dac_policies);
     let schema_ops: Arc<dyn SchemaOps> = Arc::new(db_impls::DbSchemaOps::new(
@@ -608,6 +617,8 @@ where
         pool,
         #[cfg(feature = "embedded-vera")]
         embedded_vera,
+        #[cfg(feature = "embedded-vera")]
+        embedded_vera_trust,
         remote_acp,
         #[cfg(not(target_arch = "wasm32"))]
         transaction_stats,

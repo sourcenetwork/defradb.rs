@@ -98,8 +98,27 @@ where
             policies.keep(&built).await.map_err(failed)?;
             return Ok(built.id);
         };
-        if counter.is_some() {
-            return Err(DacPolicyError::ExplicitCounterRemote);
+        if let Some(counter) = counter {
+            // A remote ACP assigns its own counters, so a caller's counter
+            // can only name a policy that ACP already holds: one it was
+            // seeded with under the ID this definition and counter derive.
+            let built = build(&parsed, counter).map_err(failed)?;
+            let seeded = remote
+                .get_policy(&built.id)
+                .await
+                .map_err(failed)?
+                .ok_or_else(|| DacPolicyError::RemotePolicyAbsent {
+                    policy_id: built.id.clone(),
+                })?;
+            // The ID hashes names without separators and leaves fields out,
+            // so two definitions can share one.
+            if !same_definition(&seeded, &built) {
+                return Err(DacPolicyError::RemotePolicyDiffers {
+                    policy_id: built.id,
+                });
+            }
+            policies.keep(&built).await.map_err(failed)?;
+            return Ok(built.id);
         }
         let mut built = build(&parsed, UNASSIGNED_ID_COUNTER).map_err(failed)?;
         built.validate().map_err(|e| failed(e.to_string()))?;
@@ -180,6 +199,13 @@ fn parse(policy: &str) -> Result<ParsedPolicy, String> {
     }
     policy_yaml::validate_policy_expressions(&parsed)?;
     Ok(parsed)
+}
+
+fn same_definition(left: &Policy, right: &Policy) -> bool {
+    match (serde_json::to_value(left), serde_json::to_value(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
 }
 
 fn build(parsed: &ParsedPolicy, counter: u64) -> Result<Policy, String> {
