@@ -243,6 +243,9 @@ jobs:
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/vinc-access
+        with:
+          key: ${{ secrets.VINC_DEPLOY_KEY }}
       - uses: dtolnay/rust-toolchain@stable
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: mozilla-actions/sccache-action@v0.0.11
