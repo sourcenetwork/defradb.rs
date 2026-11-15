@@ -3166,6 +3166,17 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "crates/p2p/src/sync/coordinator/broadcast_pool_tests.rs a_write_with_no_peer_connected_is_not_held_for_a_peer_that_joins, a_write_with_no_peer_subscribed_is_not_held_for_a_peer_that_subscribes; crates/db/tests/merge/broadcast_mutator_broadcast.rs a_write_that_finds_no_subscriber_is_not_published_again",
     },
     Property {
+        // vinc hands a dial over before the peer answers when its access was
+        // allowed lately; the endpoint counts the peer only once it answered.
+        family: "vinc dial answered",
+        name: "INV_NoPushUnanswered / INV_ConnectedHeard: a dial counts the peer as connected only once it answered, so the retry pass never pushes into a peer that stopped",
+        axis: Tla,
+        anchor: "crates/p2p/src/vinc/endpoint.rs Node::connection, Node::connected, Node::disconnected, Command::ConnectedPeers; crates/p2p-adapter/src/retry.rs run_retry_pass",
+        model_ref: "MC_VincDialAnswered_{Green,Red_CountAtHandOver}.cfg",
+        tiers: &[Boundary],
+        bound_by: "crates/p2p/src/vinc/tests/redial.rs a_dial_to_a_peer_that_stopped_fails_and_it_stays_disconnected",
+    },
+    Property {
         // The vinc endpoint holds each request's `!Send` stream under the
         // `Send` id its token carries. A reply or a dropped token takes the
         // entry; a drop lost to a full queue is caught by the deadline sweep.
