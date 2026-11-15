@@ -11,6 +11,7 @@ mod exchange;
 mod identity;
 mod inbound_admission;
 mod mux;
+mod redial;
 mod topics;
 mod two_stream;
 

@@ -1161,6 +1161,8 @@ RUNS=(
   "MC_AnnounceAudience_Red_HoldWhenAlone.cfg AnnounceAudience.tla RED" # a write made alone is held for the window and reaches a peer that joined during it (INV_GoAudience)
   "MC_AnnounceAudience_Red_AloneMeansDisconnected.cfg AnnounceAudience.tla RED" # alone means no peer connected: a write made while the peer is connected but not subscribed waits out the window and reaches it (INV_GoAudience)
   "MC_AnnounceAudience_Red_RetryWhileConnected.cfg AnnounceAudience.tla RED" # an announcement that found no subscriber is published again while a peer is connected, and reaches it once it subscribes (INV_GoAudience)
+  "MC_VincDialAnswered_Green.cfg VincDialAnswered.tla GREEN" # the target stops and restarts while documents are owed: a dial counts it connected only once it answered, so no push goes into a silent connection
+  "MC_VincDialAnswered_Red_CountAtHandOver.cfg VincDialAnswered.tla RED" # a dial counts the target connected when vinc hands it over: a push goes into a stopped target (INV_NoPushUnanswered)
   "MC_VincReplyBridge_Green.cfg VincReplyBridge.tla GREEN" # lossy drops, a refused stream, a connection that may end, every deadline reached: one answer per stream, a bounded table that empties for good
   "MC_VincReplyBridge_Green_NoLoss.cfg VincReplyBridge.tla GREEN" # no lost drop and no deadline in the run: replies, drops and the purge alone empty the table
   "MC_VincReplyBridge_Red_NoTakeOnce.cfg VincReplyBridge.tla RED" # a reply leaves its entry: the sweep resets a stream that got its reply (INV_OneOutcome)

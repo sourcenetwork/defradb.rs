@@ -465,7 +465,15 @@ impl<H: Hosted + 'static> Node<H> {
         }
         let mut to = NodeAddr::new(*peer);
         to.direct = direct;
-        let connection = crate::rt::time::timeout(CONNECT_TIMEOUT, self.ep.connect(to, ALPN_MUX))
+        // A dial is handed over before the peer answers when its access was
+        // allowed lately; the peer counts as connected only once it answered,
+        // so a peer that stopped is never reported reachable.
+        let dial = async {
+            let connection = self.ep.connect(to, ALPN_MUX).await?;
+            connection.answered().await?;
+            Ok::<_, vinc::Error>(connection)
+        };
+        let connection = crate::rt::time::timeout(CONNECT_TIMEOUT, dial)
             .await
             .map_err(|_| Error::ConnectionTimeout(node_to_peer_id(peer).to_string()))?
             .map_err(|error| vinc_error("dial", error))?;
