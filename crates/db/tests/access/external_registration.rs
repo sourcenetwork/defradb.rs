@@ -17,24 +17,34 @@ use regolith::sync::HopscotchMap;
 use schema::PolicyDescription;
 use storage::RegolithStore;
 
-const POLICY: &str = "remote-policy";
-const RESOURCE: &str = "users";
+pub(super) const POLICY: &str = "remote-policy";
+pub(super) const RESOURCE: &str = "users";
 
 /// A remote provider: unregistered documents are public, a registered one is
-/// readable by its owner only, and every call fails while it is down.
+/// readable by its owner and by whoever holds a relationship on it, and every
+/// call fails while it is down.
 #[derive(Default)]
-struct RemoteAcp {
+pub(super) struct RemoteAcp {
     owners: HopscotchMap<String, Did, rapidhash::fast::RandomState>,
-    down: AtomicBool,
+    grants: HopscotchMap<(String, String), (), rapidhash::fast::RandomState>,
+    pub(super) down: AtomicBool,
     registrations: AtomicUsize,
+    pub(super) access_checks: AtomicUsize,
+    pub(super) owner_lookups: AtomicUsize,
 }
 
 impl RemoteAcp {
-    fn new() -> Arc<Self> {
+    pub(super) fn new() -> Arc<Self> {
         Arc::new(Self {
             owners: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
+            grants: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
             ..Self::default()
         })
+    }
+
+    fn granted(&self, doc_id: &str, subject: &str) -> bool {
+        self.grants
+            .contains_key(&(doc_id.to_string(), subject.to_string()))
     }
 
     fn reachable(&self) -> acp::Result<()> {
@@ -44,7 +54,7 @@ impl RemoteAcp {
         Ok(())
     }
 
-    fn owner(&self, doc_id: &str) -> Option<Did> {
+    pub(super) fn owner(&self, doc_id: &str) -> Option<Did> {
         self.owners.get(doc_id)
     }
 }
@@ -87,6 +97,7 @@ impl DocumentACP for RemoteAcp {
         doc_id: &str,
     ) -> acp::Result<Option<Did>> {
         self.reachable()?;
+        self.owner_lookups.fetch_add(1, Ordering::SeqCst);
         Ok(self.owners.get(doc_id))
     }
 
@@ -99,38 +110,49 @@ impl DocumentACP for RemoteAcp {
         doc_id: &str,
     ) -> acp::Result<bool> {
         self.reachable()?;
-        Ok(match self.owners.get(doc_id) {
-            None => true,
-            Some(owner) => matches!(identity, Identity::Authenticated(did) if *did == owner),
+        self.access_checks.fetch_add(1, Ordering::SeqCst);
+        Ok(match (self.owners.get(doc_id), identity) {
+            (None, _) => true,
+            (Some(_), _) if self.granted(doc_id, "*") => true,
+            (Some(owner), Identity::Authenticated(did)) => {
+                *did == owner || self.granted(doc_id, did.as_str())
+            }
+            (Some(_), _) => false,
         })
     }
 
     async fn add_actor_relationship(
         &self,
         _requestor: &Did,
-        _target: &Did,
+        target: &Did,
         _policy_id: &str,
         _collection_id: &str,
-        _doc_id: &str,
+        doc_id: &str,
         _relation: &str,
         _managing_relations: &[String],
     ) -> acp::Result<bool> {
         self.reachable()?;
-        Ok(false)
+        Ok(self
+            .grants
+            .insert((doc_id.to_string(), target.to_string()), ())
+            .is_none())
     }
 
     async fn delete_actor_relationship(
         &self,
         _requestor: &Did,
-        _target: &Did,
+        target: &Did,
         _policy_id: &str,
         _collection_id: &str,
-        _doc_id: &str,
+        doc_id: &str,
         _relation: &str,
         _managing_relations: &[String],
     ) -> acp::Result<bool> {
         self.reachable()?;
-        Ok(false)
+        Ok(self
+            .grants
+            .remove(&(doc_id.to_string(), target.to_string()))
+            .is_some())
     }
 
     async fn unregister_doc_object(
@@ -145,35 +167,39 @@ impl DocumentACP for RemoteAcp {
     }
 }
 
-fn alice() -> Did {
+pub(super) fn alice() -> Did {
     Did::new("did:key:z6MkalicE").unwrap()
 }
 
-fn bob() -> Did {
+pub(super) fn bob() -> Did {
     Did::new("did:key:z6MkboB").unwrap()
 }
 
-fn mallory() -> Did {
+pub(super) fn mallory() -> Did {
     Did::new("did:key:z6MkmallorY").unwrap()
 }
 
 /// The provider as every reader and writer sees it.
-fn gate(
+pub(super) fn gate(
     remote: &Arc<RemoteAcp>,
     store: Arc<RegolithStore>,
 ) -> Arc<acp::ExternalDocumentAcp<RegolithStore>> {
     Arc::new(acp::ExternalDocumentAcp::new(remote.clone(), store))
 }
 
-type Runner =
+pub(super) type Runner =
     QueryRunner<LensedAutoCommitFetcher<RegolithStore>, DbTransactionRegistry<RegolithStore>>;
 
-struct Node {
-    db: Arc<DB<RegolithStore>>,
-    runner: Runner,
+pub(super) struct Node {
+    pub(super) db: Arc<DB<RegolithStore>>,
+    pub(super) runner: Runner,
 }
 
-async fn node(store: Arc<RegolithStore>, acp: Arc<dyn DocumentACP>, create_schema: bool) -> Node {
+pub(super) async fn node(
+    store: Arc<RegolithStore>,
+    acp: Arc<dyn DocumentACP>,
+    create_schema: bool,
+) -> Node {
     let db = Arc::new(DB::open_from_arc(store).await.unwrap());
     if create_schema {
         for mut schema in query::parse_sdl("type Users { name: String }").unwrap() {
@@ -193,14 +219,14 @@ async fn node(store: Arc<RegolithStore>, acp: Arc<dyn DocumentACP>, create_schem
     Node { db, runner }
 }
 
-fn request(query: &str, identity: Option<Did>) -> QueryRequest {
+pub(super) fn request(query: &str, identity: Option<Did>) -> QueryRequest {
     let mut request = QueryRequest::new(query);
     request.identity = identity;
     request
 }
 
 /// The names `identity` can read.
-async fn readable(runner: &Runner, identity: Option<Did>) -> Vec<String> {
+pub(super) async fn readable(runner: &Runner, identity: Option<Did>) -> Vec<String> {
     let response = runner
         .execute(request("{ Users { name } }", identity))
         .await;
