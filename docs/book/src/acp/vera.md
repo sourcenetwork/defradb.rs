@@ -18,7 +18,8 @@ archive objects, set and delete relationships, check access. Two implementations
 Both are wrapped as a `DocumentACP` and installed as the node's document ACP. Because
 the provider cannot join local transactions, the node wraps it in the external-ACP
 adapter: owed registrations, gated reads until confirmation, fail-closed
-`Unavailable` (the previous chapter's shape).
+`Unavailable` (the previous chapter's shape). The adapter also holds the record and the
+read gate for relationship changes owed to the provider, which nothing stages yet.
 
 ## Why it exists
 

@@ -7,6 +7,12 @@
 //! between, and a record survives a crash or a provider failure until a later
 //! redrive settles it. The provider itself stays at the network edge: its own
 //! answers are as fresh as its last round trip.
+//!
+//! The same gate denies whoever an unsettled relationship delete names (see
+//! [`crate::outbox`]) before it asks the provider, on every decision it
+//! serves: document access, access decisions, and the authority to change a
+//! document's relationships. The owner is spared, as the provider names it.
+//! Named permission checks and relationship listings are not served here.
 
 use std::sync::Arc;
 
@@ -19,6 +25,8 @@ use zanzibar::types::Subject;
 use crate::dac::DocumentACP;
 use crate::error::{Error, Result};
 use crate::identity::Identity;
+use crate::outbox::deny::{owed_denial, Denial};
+use crate::outbox::{OwedChanges, StagedCount};
 use crate::pending::{pending_key, PendingRegistration, PENDING_PREFIX};
 use crate::permission::DocumentPermission;
 
@@ -73,6 +81,62 @@ where
             .map_err(storage_error)?
             .map(|bytes| PendingRegistration::decode(&bytes))
             .transpose()
+    }
+
+    /// The relationship changes owed to the provider, through the transaction
+    /// whose ACP namespace `view` is and whose count `staged` is.
+    pub fn owed_changes(&self, view: &datastore::NamespaceView, staged: StagedCount) -> OwedChanges
+    where
+        S: 'static,
+    {
+        OwedChanges::new(view, Arc::new(self.store.clone()), staged)
+    }
+
+    /// Whether a committed, unsettled relationship delete denies `identity`
+    /// on an object. The provider is asked for the owner only when one does
+    /// and the owner is spared.
+    async fn revoked(
+        &self,
+        identity: &Identity,
+        policy_id: &str,
+        resource_name: &str,
+        object_id: &str,
+    ) -> Result<bool> {
+        let denial = {
+            let txn = self.store.new_txn(true).await.map_err(storage_error)?;
+            owed_denial(&txn, identity, policy_id, resource_name, object_id).await?
+        };
+        match (denial, identity) {
+            (Denial::None, _) => Ok(false),
+            (Denial::Always, _) | (Denial::UnlessOwner, Identity::Anonymous) => Ok(true),
+            (Denial::UnlessOwner, Identity::Authenticated(actor)) => {
+                let owner = self
+                    .provider
+                    .get_doc_owner(policy_id, resource_name, object_id)
+                    .await?;
+                Ok(owner.as_ref() != Some(actor))
+            }
+        }
+    }
+
+    /// Refuse `actor` the authority an owed delete takes from it.
+    async fn refuse_revoked(
+        &self,
+        actor: &Did,
+        policy_id: &str,
+        resource_name: &str,
+        object_id: &str,
+    ) -> Result<()> {
+        let identity = Identity::Authenticated(actor.clone());
+        if self
+            .revoked(&identity, policy_id, resource_name, object_id)
+            .await?
+        {
+            return Err(Error::PermissionDenied(format!(
+                "a revocation owed to the provider denies {actor} on {resource_name} {object_id}"
+            )));
+        }
+        Ok(())
     }
 
     /// Register the owed creator, then clear the record. A provider that
@@ -300,6 +364,12 @@ where
         if let Some(owed) = self.owed(policy_id, resource_name, doc_id).await? {
             return Ok(matches!(identity, Identity::Authenticated(did) if *did == owed.creator));
         }
+        if self
+            .revoked(identity, policy_id, resource_name, doc_id)
+            .await?
+        {
+            return Ok(false);
+        }
         self.provider
             .check_doc_access(identity, permission, policy_id, resource_name, doc_id)
             .await
@@ -315,6 +385,14 @@ where
     ) -> Result<Option<String>> {
         self.settle_if_owed(policy_id, resource_name, object_id)
             .await?;
+        if self
+            .revoked(identity, policy_id, resource_name, object_id)
+            .await?
+        {
+            return Err(Error::PermissionDenied(format!(
+                "a revocation owed to the provider denies {permission} on {resource_name} {object_id}"
+            )));
+        }
         self.provider
             .create_access_decision(identity, policy_id, resource_name, object_id, permission)
             .await
@@ -331,6 +409,8 @@ where
         managing_relations: &[String],
     ) -> Result<bool> {
         self.settle_if_owed(policy_id, collection_id, doc_id)
+            .await?;
+        self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
         self.provider
             .add_actor_relationship(
@@ -357,6 +437,8 @@ where
     ) -> Result<bool> {
         self.settle_if_owed(policy_id, collection_id, doc_id)
             .await?;
+        self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
+            .await?;
         self.provider
             .add_relationship(
                 requestor,
@@ -382,6 +464,8 @@ where
     ) -> Result<bool> {
         self.settle_if_owed(policy_id, collection_id, doc_id)
             .await?;
+        self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
+            .await?;
         self.provider
             .delete_actor_relationship(
                 requestor,
@@ -406,6 +490,8 @@ where
         managing_relations: &[String],
     ) -> Result<bool> {
         self.settle_if_owed(policy_id, collection_id, doc_id)
+            .await?;
+        self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
         self.provider
             .delete_relationship(

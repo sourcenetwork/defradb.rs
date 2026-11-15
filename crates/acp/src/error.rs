@@ -57,6 +57,20 @@ pub enum Error {
     #[error("cannot {operation}: actor is not a manager of relation")]
     NotManager { operation: String },
 
+    /// One transaction staged more relationship changes owed to an external
+    /// provider than [`crate::outbox::MAX_OWED_CHANGES_PER_TRANSACTION`].
+    #[error("a transaction may stage at most {limit} ACP changes owed to the provider")]
+    OwedChangesPerTransaction { limit: u32 },
+
+    /// The node already owes its external provider as many relationship
+    /// changes as it may hold unsettled; staging resumes as they settle.
+    #[error("{unsettled} ACP changes are owed to the provider, at the node's limit of {limit}")]
+    OwedChangesPerNode { unsettled: u64, limit: u64 },
+
+    /// An owed relationship change does not fit its record.
+    #[error("an owed ACP change takes {size} bytes, over the limit of {limit}")]
+    OwedChangeTooLarge { size: usize, limit: usize },
+
     /// Invalid policy configuration
     #[error("invalid policy: {0}")]
     InvalidPolicy(String),
