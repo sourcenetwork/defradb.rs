@@ -139,7 +139,7 @@ noq = { version = "1.1", features = ["bloom", "rustls-ring"], optional = true }
 nuclei = { workspace = true }
 # vinc (optional, off by default): private and unlicensed, so pinned to the
 # vinc master commit this transport was built against.
-vinc = { git = "https://github.com/sourcenetwork/vinc", rev = "16a18e851e3aaab19bffd6c5ee16f5b54f2f6f88", optional = true }
+vinc = { git = "https://github.com/sourcenetwork/vinc", rev = "61355c7bcb88f78b8dd097a41b946f1b5e845a2a", optional = true }
 
 # rand reaches getrandom 0.3, which refuses to build for the browser without an
 # explicit backend. The matching --cfg lives in .cargo/config.toml.
