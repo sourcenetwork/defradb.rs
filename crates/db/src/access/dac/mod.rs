@@ -110,8 +110,12 @@ where
                 .ok_or_else(|| DacPolicyError::RemotePolicyAbsent {
                     policy_id: built.id.clone(),
                 })?;
-            if seeded.id != built.id {
-                return Err(failed("the remote ACP answered for another policy".into()));
+            // The ID hashes names without separators and leaves fields out,
+            // so two definitions can share one.
+            if !same_definition(&seeded, &built) {
+                return Err(DacPolicyError::RemotePolicyDiffers {
+                    policy_id: built.id,
+                });
             }
             policies.keep(&built).await.map_err(failed)?;
             return Ok(built.id);
@@ -195,6 +199,13 @@ fn parse(policy: &str) -> Result<ParsedPolicy, String> {
     }
     policy_yaml::validate_policy_expressions(&parsed)?;
     Ok(parsed)
+}
+
+fn same_definition(left: &Policy, right: &Policy) -> bool {
+    match (serde_json::to_value(left), serde_json::to_value(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
 }
 
 fn build(parsed: &ParsedPolicy, counter: u64) -> Result<Policy, String> {

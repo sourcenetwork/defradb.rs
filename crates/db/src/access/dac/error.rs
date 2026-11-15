@@ -24,6 +24,10 @@ pub enum DacPolicyError {
     /// which assigns its own counters, holds no policy under it.
     #[error("the remote ACP holds no policy {policy_id}; with a remote ACP an explicit counter only names a policy it was seeded with")]
     RemotePolicyAbsent { policy_id: String },
+    /// The remote ACP holds a policy under the ID an explicit counter names,
+    /// and its definition is not the caller's.
+    #[error("the remote ACP holds policy {policy_id} under another definition")]
+    RemotePolicyDiffers { policy_id: String },
     /// The policy store could not be read for policy `policy_id`.
     #[error("policy validation failed with acp: {message}. PolicyID: {policy_id}")]
     Lookup { message: String, policy_id: String },

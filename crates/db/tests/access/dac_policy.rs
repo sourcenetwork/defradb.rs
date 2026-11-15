@@ -69,6 +69,42 @@ impl RemotePolicies for Remote {
     }
 }
 
+/// Two definitions can derive one ID, so the ID alone does not show that
+/// the remote policy is the caller's.
+#[test]
+fn a_seeded_policy_under_the_same_id_and_another_definition_is_not_adopted() {
+    workers::block_on(async {
+        let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+        let remote = Arc::new(Remote::default());
+        let mirror = Arc::new(MemoryZanzibarStore::new());
+        db.set_dac_policies(Arc::new(DacPolicies::remote(
+            remote.clone(),
+            mirror.clone(),
+        )));
+        let seeded = acp::policy_yaml::build_policy(
+            &acp::policy_yaml::parse_policy_yaml("name: ab\nresources:\n  - name: c\n").unwrap(),
+            1,
+        )
+        .unwrap();
+        remote.seeded.store(vec![seeded.clone()]);
+
+        let err = db
+            .add_dac_policy_with_counter_as(
+                &acting(OWNER_DID),
+                "name: a\nresources:\n  - name: bc\n",
+                1,
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, DacPolicyError::RemotePolicyDiffers { policy_id } if *policy_id == seeded.id),
+            "{err}"
+        );
+        assert!(mirror.get_policy(&seeded.id).await.unwrap().is_none());
+    })
+    .unwrap()
+}
+
 #[test]
 fn a_node_without_acp_refuses_with_gos_text() {
     workers::block_on(async {
