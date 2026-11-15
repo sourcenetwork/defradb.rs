@@ -24,8 +24,9 @@
 //! - **Subscribed means reachable.** A gossipsub subscription is in the
 //!   peers' view once the call returns; a vinc join returns before any hub
 //!   knows of it, so a message published at once could miss the new member.
-//!   A subscribe answers once a hub confirms the join (`Event::Joined`), or
-//!   after [`JOIN_WAIT`] with no confirmation.
+//!   A subscribe answers once a hub confirms the join (`Event::Joined`), and
+//!   fails after [`JOIN_WAIT`] with none: a subscription no hub holds would
+//!   look installed and get nothing.
 //! - **Raw topics.** A raw topic is marked raw before it is joined, so none
 //!   of its messages is ever decoded as a PushLog.
 
@@ -51,7 +52,7 @@ const NEIGHBOR_WAIT: Duration = Duration::from_secs(10);
 
 /// How long a subscribe waits for a hub to confirm its join.
 /// Under the coordinator's subscription deadline (5 s), so a join no hub
-/// confirms still answers in time.
+/// confirms fails as itself, not as the coordinator's timeout.
 const JOIN_WAIT: Duration = Duration::from_secs(3);
 
 /// How long a publish keeps its topic joined, gossipsub's default
@@ -87,8 +88,8 @@ impl<H: Hosted + 'static> Node<H> {
         }
     }
 
-    /// Answer a new subscription once a hub confirms its join, or after
-    /// [`JOIN_WAIT`]: the command loop does not wait.
+    /// Answer a new subscription once a hub confirms its join, or fail it
+    /// after [`JOIN_WAIT`]: the command loop does not wait.
     fn answer_when_confirmed(self: &Rc<Self>, topic: String, new: bool, reply: Reply<bool>) {
         let (confirmed, wait) = oneshot::channel();
         self.joining
@@ -97,10 +98,13 @@ impl<H: Hosted + 'static> Node<H> {
             .or_default()
             .push(confirmed);
         let spawned = self.spawn(async move {
-            if crate::rt::time::timeout(JOIN_WAIT, wait).await.is_err() {
-                debug!(topic, "no vinc hub confirmed the join in time");
-            }
-            let _ = reply.send(Ok(new));
+            let answer = match crate::rt::time::timeout(JOIN_WAIT, wait).await {
+                Ok(Ok(())) => Ok(new),
+                _ => Err(Error::Transport(format!(
+                    "no vinc hub confirmed the join of {topic} within {JOIN_WAIT:?}"
+                ))),
+            };
+            let _ = reply.send(answer);
         });
         if spawned.is_none() {
             warn!("the vinc endpoint is busy: a subscribe answers before its join is confirmed");
@@ -159,8 +163,13 @@ impl<H: Hosted + 'static> Node<H> {
 
     pub(super) async fn unsubscribe(&self, topic: &str, reply: Reply<bool>) {
         let was = self.subscribed.borrow_mut().remove(topic);
-        // A fanout hold keeps the topic until it ends.
-        if !self.fanout.borrow().contains_key(topic) {
+        // Leave now, fanout hold or not: gossipsub tells its peers at once, so
+        // a node that published to the topic still shows as LEFT. The hold
+        // ends with it; the next publish holds the topic again.
+        if was {
+            self.fanout.borrow_mut().remove(topic);
+        }
+        if was || !self.fanout.borrow().contains_key(topic) {
             self.ep.leave(topic.as_bytes()).await;
         }
         let _ = reply.send(Ok(was));

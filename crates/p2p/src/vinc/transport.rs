@@ -478,9 +478,20 @@ impl P2PTransport for VincTransport {
     }
 
     async fn send_car_request(&self, peer_id: &PeerId, root_cid: Cid) -> Result<()> {
+        self.send_car_request_with_haves(peer_id, root_cid, Vec::new())
+            .await
+    }
+
+    async fn send_car_request_with_haves(
+        &self,
+        peer_id: &PeerId,
+        root_cid: Cid,
+        haves: Vec<Cid>,
+    ) -> Result<()> {
         self.send_command(|reply| Command::SendCarRequest {
             peer_id: peer_id.clone(),
             root_cid,
+            haves,
             reply,
         })
         .await

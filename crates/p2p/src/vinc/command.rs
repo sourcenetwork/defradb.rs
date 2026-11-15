@@ -128,6 +128,7 @@ pub enum Command {
     SendCarRequest {
         peer_id: PeerId,
         root_cid: Cid,
+        haves: Vec<Cid>,
         reply: Reply<()>,
     },
     SyncBlocks {

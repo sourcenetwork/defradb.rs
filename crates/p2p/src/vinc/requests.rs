@@ -162,8 +162,9 @@ impl<H: Hosted + 'static> Node<H> {
         self: &Rc<Self>,
         peer_id: &PeerId,
         root_cid: Cid,
+        haves: Vec<Cid>,
     ) -> Result<()> {
-        let request = CarFetchRequest::full_dag(root_cid);
+        let request = CarFetchRequest::full_dag(root_cid).with_haves(haves);
         let car = self.fetch_car(peer_id, &request).await?;
         if self
             .events
