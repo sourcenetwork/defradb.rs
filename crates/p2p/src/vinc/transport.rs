@@ -657,8 +657,11 @@ impl P2PTransport for VincTransport {
         max_depth: u32,
         haves: Vec<Cid>,
     ) -> Result<QueryId> {
-        self.sync(car_request(root, missing, Some(max_depth), haves), providers)
-            .await
+        self.sync(
+            car_request(root, missing, Some(max_depth), haves),
+            providers,
+        )
+        .await
     }
 
     fn supports_cancellable_rooted_sync(&self) -> bool {
