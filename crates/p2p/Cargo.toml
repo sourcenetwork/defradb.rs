@@ -138,8 +138,8 @@ noq = { version = "1.1", features = ["bloom", "rustls-ring"], optional = true }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 nuclei = { workspace = true }
 # vinc (optional, off by default): private and unlicensed, so pinned to the
-# vinc master commit this transport was built against.
-vinc = { git = "https://github.com/sourcenetwork/vinc", rev = "61355c7bcb88f78b8dd097a41b946f1b5e845a2a", optional = true }
+# vinc commit this transport was built against (the answered fix, sourcenetwork/vinc#498).
+vinc = { git = "https://github.com/sourcenetwork/vinc", rev = "86ed85ee1498ab14982fbe30db20709dc801efe8", optional = true }
 
 # rand reaches getrandom 0.3, which refuses to build for the browser without an
 # explicit backend. The matching --cfg lives in .cargo/config.toml.
