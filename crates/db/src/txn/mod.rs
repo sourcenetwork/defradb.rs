@@ -99,8 +99,9 @@ pub struct DbTxn<S: Store> {
     shared_collections: Option<Arc<crate::collection::epoch::EpochedCollections>>,
     statement_savepoint: Option<StatementSavepoint>,
     /// How many relationship changes owed to an external ACP provider this
-    /// transaction has staged (see [`acp::outbox`]).
-    owed_staged: acp::StagedCount,
+    /// transaction has staged (see [`acp::outbox`]). Made when the first one
+    /// is staged: a transaction that stages none carries nothing for it.
+    owed_staged: regolith::sync::OnceCell<acp::StagedCount>,
     /// The CRDT types of the node whose store the transaction runs on, kept
     /// past the commit for the collections it hands out.
     crdts: crdt::Crdts,
@@ -167,7 +168,7 @@ impl<S: Store> DbTxn<S> {
             vector_codes,
             shared_collections: None,
             statement_savepoint: None,
-            owed_staged: acp::StagedCount::new(),
+            owed_staged: regolith::sync::OnceCell::new(),
             store: None,
         }
     }
@@ -264,7 +265,7 @@ impl<S: Store> DbTxn<S> {
             .set_savepoint()?;
         self.statement_savepoint = Some(StatementSavepoint {
             catalog: self.catalog.snapshot(),
-            owed_staged: self.owed_staged.get(),
+            owed_staged: self.owed_staged.get().map_or(0, acp::StagedCount::get),
         });
         Ok(())
     }
@@ -283,7 +284,9 @@ impl<S: Store> DbTxn<S> {
             return Err(error);
         }
         self.catalog.restore(savepoint.catalog);
-        self.owed_staged.restore(savepoint.owed_staged);
+        if let Some(staged) = self.owed_staged.get() {
+            staged.restore(savepoint.owed_staged);
+        }
         Ok(())
     }
 
@@ -410,7 +413,9 @@ impl<S: Store> DbTxn<S> {
     /// for an external ACP provider, for every handle that stages through
     /// it. A statement rolled back to its savepoint puts the count back.
     pub fn owed_staged(&self) -> acp::StagedCount {
-        self.owed_staged.clone()
+        self.owed_staged
+            .get_or_init_racy(acp::StagedCount::new)
+            .clone()
     }
 
     /// Get the rootstore.
