@@ -12,12 +12,17 @@ pub enum ChunkMergeError {
     Changed,
     #[error("a chunk's hash does not match its text")]
     HashMismatch,
+    #[error("a chunk's text and hash must both be strings")]
+    NotText,
 }
 
-/// Refuses a chunk whose hash doesn't match its text, and any change to an
-/// existing chunk. Otherwise a peer could plant a fake chunk that the parent's
-/// next write would never replace.
-pub fn check_chunk_merge(old: Option<&Document>, merged: &Document) -> Result<(), ChunkMergeError> {
+/// Refuses a changed chunk, or one whose text and hash aren't a matching pair.
+/// Only an `encrypted` merge may leave both out, as fields this node can't read.
+pub fn check_chunk_merge(
+    old: Option<&Document>,
+    merged: &Document,
+    encrypted: bool,
+) -> Result<(), ChunkMergeError> {
     if let Some(old) = old {
         let changed = [CHUNK_SOURCE_ID_FIELD, CHUNK_TEXT_FIELD, CHUNK_HASH_FIELD]
             .iter()
@@ -26,13 +31,15 @@ pub fn check_chunk_merge(old: Option<&Document>, merged: &Document) -> Result<()
             return Err(ChunkMergeError::Changed);
         }
     }
-    // An encrypted chunk can't be checked here, so the read path checks its hash.
-    if let (Some(NormalValue::String(text)), Some(NormalValue::String(hash))) =
-        (merged.get(CHUNK_TEXT_FIELD), merged.get(CHUNK_HASH_FIELD))
-    {
-        if text_hash(text) != *hash {
-            return Err(ChunkMergeError::HashMismatch);
+    match (merged.get(CHUNK_TEXT_FIELD), merged.get(CHUNK_HASH_FIELD)) {
+        (Some(NormalValue::String(text)), Some(NormalValue::String(hash))) => {
+            if text_hash(text) != *hash {
+                return Err(ChunkMergeError::HashMismatch);
+            }
+            Ok(())
         }
+        // The read path checks the hash once this node can read the text.
+        (None, None) if encrypted => Ok(()),
+        _ => Err(ChunkMergeError::NotText),
     }
-    Ok(())
 }

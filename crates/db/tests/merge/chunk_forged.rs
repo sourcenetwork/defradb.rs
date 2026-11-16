@@ -248,3 +248,33 @@ fn a_chunk_cannot_be_rewritten_after_it_merged() {
     })
     .unwrap()
 }
+
+#[test]
+fn a_chunk_with_a_null_text_and_a_real_hash_is_refused() {
+    workers::block_on(async {
+        let author = node().await;
+        let peer = node().await;
+        let parent = parent_article(&peer).await;
+
+        let collection = chunks_of(&author);
+        let mut forged = chunk(&collection, &parent, "short", &text_hash("short"));
+        forged.set("text", NormalValue::Null).unwrap();
+        let built = db::block::builder::build_blocks_from_document(
+            &storage::Crdts::default(),
+            &forged,
+            collection.schema(),
+            &author.blockstore,
+        )
+        .await
+        .unwrap();
+
+        let outcome = merge(&author, &peer, &collection, &built.cid, &built.doc_id)
+            .await
+            .unwrap();
+
+        assert_rejected(&outcome, "must both be strings");
+        let chunk_id = DocID::from_string(&built.doc_id).unwrap();
+        assert!(stored(&peer, &chunks_of(&peer), &chunk_id).await.is_none());
+    })
+    .unwrap()
+}

@@ -104,7 +104,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 .map_err(|e| MergeError::MergeFailed(e.to_string()))?;
         }
         if collection.schema().chunk_of.is_some() {
-            crate::chunk::guard::check_chunk_merge(old_doc.as_ref(), &doc)
+            let encrypted =
+                context.block.encryption.is_some() || !state.linked_encryption_cids.is_empty();
+            crate::chunk::guard::check_chunk_merge(old_doc.as_ref(), &doc, encrypted)
                 .map_err(|reason| MergeError::ChunkRejected(reason.to_string()))?;
         }
 
