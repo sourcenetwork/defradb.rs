@@ -892,3 +892,243 @@ fn a_restart_settles_a_change_the_chain_could_not_take() {
     })
     .unwrap();
 }
+
+const GROUPS_POLICY: &str = "\
+name: embedded groups
+resources:
+  - name: users
+    permissions:
+      - name: read
+        expr: writer + reader
+      - name: update
+        expr: writer
+      - name: delete
+        expr: writer
+    relations:
+      - name: writer
+        types:
+          - actor
+      - name: reader
+        types:
+          - actor
+          - groups->member
+  - name: groups
+    relations:
+      - name: member
+        types:
+          - actor
+";
+
+/// The userset every member of group `g` stands for, as a relationship target.
+const MEMBERS: &str = "groups:g#member";
+
+/// An identity whose key the node holds, so the node signs for it, and which
+/// is not the node's own actor.
+fn registered_identity() -> identity::Did {
+    use crypto::Key as _;
+    use identity::Identity as _;
+
+    let key = crypto::generate_ed25519().expect("key");
+    let identity = identity::RawIdentity::from_ed25519(key.clone()).expect("identity");
+    let did = identity.did().expect("did");
+    let public = identity.public_key_bytes();
+    defra_core::signing::store_identity(
+        did.as_str(),
+        defra_core::signing::SigningConfig {
+            key_type: defra_core::signing::SigningKeyType::Ed25519,
+            private_key_bytes: key.raw().to_vec(),
+            public_key_hex: hex::encode(&public),
+            public_key_bytes: public,
+            remote_signer: None,
+            signing_authorization: None,
+        },
+    )
+    .expect("the store takes the identity");
+    did
+}
+
+/// A node with a `Users` collection under [`GROUPS_POLICY`], one document of
+/// `owner`'s, and a group `g` of `owner`'s with `member` in it. Neither
+/// `owner` nor `member` is the node's own actor.
+struct Grouped {
+    node: Node,
+    policy: String,
+    doc: String,
+    owner: identity::Did,
+    member: identity::Did,
+}
+
+impl Grouped {
+    async fn new(directory: &Path) -> Self {
+        let node = node(directory).await;
+        let vera = node.vera_acp().expect("vera.rs document ACP").clone();
+        let actor = vera.self_did().expect("actor DID");
+        let policy = vera
+            .add_policy(&actor, GROUPS_POLICY)
+            .await
+            .expect("policy");
+        drop(vera);
+        node.add_collection(&users(&policy))
+            .await
+            .expect("collection");
+        let owner = registered_identity();
+        assert_ne!(owner.as_str(), actor);
+        let member = identity::Did::new(STRANGER).unwrap();
+        let doc = created(node.execute_request(create_user("shared", &owner)).await);
+        node.document_acp()
+            .register_object(&owner, &policy, "groups", "g")
+            .await
+            .expect("group");
+        node.document_acp()
+            .add_actor_relationship(&owner, &member, &policy, "groups", "g", "member", &[])
+            .await
+            .expect("membership");
+        Self {
+            node,
+            policy,
+            doc,
+            owner,
+            member,
+        }
+    }
+
+    async fn member_reads(&self) -> bool {
+        chain_reads(&self.node, &self.member, &self.policy, &self.doc).await
+    }
+}
+
+/// A userset relationship changed outside a transaction is decided by the
+/// chain on its requestor's authority: the document's owner grants and
+/// revokes, and a caller who neither owns nor manages the document does
+/// neither, though the node could sign as its own actor.
+#[test]
+fn a_direct_userset_change_is_decided_on_its_requestors_authority() {
+    workers::block_on(async {
+        let directory = tempfile::tempdir().unwrap();
+        let grouped = Grouped::new(directory.path()).await;
+        let node = &grouped.node;
+        let outsider = registered_identity();
+        assert!(!grouped.member_reads().await);
+
+        let refused = node
+            .add_dac_actor_relationship(outsider.as_str(), "Users", &grouped.doc, "reader", MEMBERS)
+            .await;
+        assert!(refused.is_err(), "an outsider granted: {refused:?}");
+        assert!(!grouped.member_reads().await);
+
+        node.add_dac_actor_relationship(
+            grouped.owner.as_str(),
+            "Users",
+            &grouped.doc,
+            "reader",
+            MEMBERS,
+        )
+        .await
+        .expect("the owner's grant");
+        assert!(grouped.member_reads().await);
+        assert_eq!(
+            names(node.execute_request(read_users(&grouped.member)).await),
+            ["shared"]
+        );
+
+        let refused = node
+            .delete_dac_actor_relationship(
+                outsider.as_str(),
+                "Users",
+                &grouped.doc,
+                "reader",
+                MEMBERS,
+            )
+            .await;
+        assert!(refused.is_err(), "an outsider revoked: {refused:?}");
+        assert!(grouped.member_reads().await);
+
+        node.delete_dac_actor_relationship(
+            grouped.owner.as_str(),
+            "Users",
+            &grouped.doc,
+            "reader",
+            MEMBERS,
+        )
+        .await
+        .expect("the owner's revocation");
+        assert!(!grouped.member_reads().await);
+        node.shutdown().await.expect("shutdown");
+    })
+    .unwrap();
+}
+
+/// The same through a transaction: an outsider's userset grant is refused
+/// when it is staged, and the owner's is staged and submitted under the
+/// owner's authority, which the chain accepts.
+#[test]
+fn a_staged_userset_change_is_decided_on_its_actors_authority() {
+    workers::block_on(async {
+        let directory = tempfile::tempdir().unwrap();
+        let grouped = Grouped::new(directory.path()).await;
+        let node = &grouped.node;
+        let outsider = registered_identity();
+        let acting = |did: &identity::Did| {
+            defra_core::RequestContext::default().with_identity(Some(did.to_string()))
+        };
+
+        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        let refused = node
+            .add_dac_actor_relationship_change_for_in_txn(
+                transaction.handle(),
+                &acting(&outsider),
+                "Users",
+                &grouped.doc,
+                "reader",
+                MEMBERS,
+            )
+            .await;
+        assert!(
+            matches!(
+                refused,
+                Err(defra_node::Error::Acp(acp::Error::NotOwner { .. }))
+            ),
+            "{refused:?}"
+        );
+        let staged = node
+            .add_dac_actor_relationship_change_for_in_txn(
+                transaction.handle(),
+                &acting(&grouped.owner),
+                "Users",
+                &grouped.doc,
+                "reader",
+                MEMBERS,
+            )
+            .await
+            .expect("the owner's staged grant");
+        assert!(
+            matches!(
+                staged,
+                RelationshipChange::Staged {
+                    authority_checked: true,
+                    ..
+                }
+            ),
+            "{staged:?}"
+        );
+        assert!(!grouped.member_reads().await);
+        transaction.commit().await.expect("commit");
+        assert!(grouped.member_reads().await);
+
+        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        node.delete_dac_actor_relationship_change_for_in_txn(
+            transaction.handle(),
+            &acting(&grouped.owner),
+            "Users",
+            &grouped.doc,
+            "reader",
+            MEMBERS,
+        )
+        .await
+        .expect("the owner's staged revocation");
+        transaction.commit().await.expect("commit");
+        assert!(!grouped.member_reads().await);
+        node.shutdown().await.expect("shutdown");
+    })
+    .unwrap();
+}
