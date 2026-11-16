@@ -89,10 +89,19 @@ fn registered_signer(
 /// with: what [`resolve_registered_or_passthrough_bearer_token_as`] signs
 /// with before it falls back to a request's token.
 pub(crate) fn holds_registered_key(did: &str) -> bool {
-    defra_core::signing::get_identity(did).is_some_and(|signing_config| {
-        signing_config.has_local_private_key()
-            && matches!(registered_signer(&signing_config), Some(Ok(_)))
-    })
+    registered_key(did)
+        .is_some_and(|signing_config| matches!(registered_signer(&signing_config), Some(Ok(_))))
+}
+
+/// The local key registered for the actor `did` names, under whichever
+/// spelling of its key it was registered. A caller may name the actor in
+/// another spelling than the registration's, and a staged change keeps the
+/// actor in one spelling only.
+fn registered_key(did: &str) -> Option<defra_core::signing::SigningConfig> {
+    super::did_spelling::spellings(did)
+        .iter()
+        .filter_map(|spelling| defra_core::signing::get_identity(spelling))
+        .find(defra_core::signing::SigningConfig::has_local_private_key)
 }
 
 /// [`resolve_registered_or_passthrough_bearer_token_as`] in
@@ -122,30 +131,23 @@ pub(crate) async fn resolve_registered_or_passthrough_bearer_token_as(
     submitter: &str,
     deployment_id: u64,
 ) -> Result<Option<String>, crate::provider::ProviderError> {
-    if let Some(signing_config) = defra_core::signing::get_identity(did) {
-        if signing_config.has_local_private_key() {
-            if let Some(signer) = registered_signer(&signing_config) {
-                let signer = signer.map_err(|e| {
-                    crate::provider::ProviderError::Config(format!("invalid signing key: {}", e))
-                })?;
-                let issuer = super::did_spelling::wire(did);
-                return super::bearer::create_bearer_token(
-                    signer.as_ref(),
-                    &issuer,
-                    submitter,
-                    deployment_id,
-                    300,
-                )
-                .await
-                .map(Some)
-                .map_err(|e| {
-                    crate::provider::ProviderError::Config(format!(
-                        "bearer token creation failed: {}",
-                        e
-                    ))
-                });
-            }
-        }
+    if let Some(signer) = registered_key(did).as_ref().and_then(registered_signer) {
+        let signer = signer.map_err(|e| {
+            crate::provider::ProviderError::Config(format!("invalid signing key: {}", e))
+        })?;
+        let issuer = super::did_spelling::wire(did);
+        return super::bearer::create_bearer_token(
+            signer.as_ref(),
+            &issuer,
+            submitter,
+            deployment_id,
+            300,
+        )
+        .await
+        .map(Some)
+        .map_err(|e| {
+            crate::provider::ProviderError::Config(format!("bearer token creation failed: {}", e))
+        });
     }
 
     Ok(context.bearer_token_for(did))
@@ -302,6 +304,13 @@ mod request_bearer_tests {
         defra_core::signing::set_request_bearer_token(carried, "stored");
 
         assert!(holds_registered_key(&held));
+        // The same key named in its other spelling is the same held key.
+        let other = crate::vera_rs::did_spelling::spellings(&held)
+            .pop()
+            .expect("a spelling")
+            .into_owned();
+        assert_ne!(other, held);
+        assert!(holds_registered_key(&other));
         assert!(!holds_registered_key(carried));
         assert!(!holds_registered_key("did:key:z6MkVeraRsUnknown"));
 

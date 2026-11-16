@@ -103,6 +103,14 @@ pub trait DocumentACP: MaybeSendSync {
     /// be bound to. Submitting a change the provider already holds is
     /// [`Submission::Applied`](crate::outbox::Submission::Applied) wherever
     /// the provider can tell.
+    ///
+    /// The caller may stop waiting for the answer, and submits the later
+    /// changes of the tuple afterwards. A submission must therefore never
+    /// take effect after one made later through this provider: what is
+    /// still in flight when the next is made has to execute before it or
+    /// not at all. vera.rs holds one journaled request per worker and
+    /// prepares the next only once that one has a verified receipt; Cosmos
+    /// orders one signer's transactions by account sequence.
     async fn submit_owed_change(
         &self,
         change: &crate::outbox::OwedChange,

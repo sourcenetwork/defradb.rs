@@ -526,3 +526,60 @@ fn a_change_over_the_record_cap_is_refused_and_leaves_nothing() {
     })
     .unwrap()
 }
+
+/// A change is admitted only with room left to park it: the largest record
+/// staging takes is still written as refused and as awaiting authority,
+/// with the provider's words whole up to the reserved length, and a record
+/// one byte larger is refused when it is staged.
+#[test]
+fn the_largest_change_staged_can_still_be_parked() {
+    workers::block_on(async {
+        let outbox = Outbox::new();
+        let reader = tuple("doc-1", "reader", actor(bob()));
+        let with_token = |length: usize| NewOwedChange {
+            authority: OwedAuthority::Delegation {
+                token: "t".repeat(length),
+            },
+            ..owed(&reader, OwedOp::Add)
+        };
+        let words = "x".repeat(acp::outbox::RESERVED_REASON_BYTES);
+        let refused = OwedState::Refused {
+            reason: words.clone(),
+        };
+
+        // What the largest later state adds to a record, measured on a
+        // small one.
+        let (txn, changes) = outbox.begin().await;
+        let small = changes.stage(with_token(0)).await.unwrap();
+        txn.discard().unwrap();
+        let parked = acp::OwedChange {
+            state: refused.clone(),
+            attempts: u32::MAX,
+            last_error: Some(words.clone()),
+            ..small
+        };
+        let largest = acp::outbox::MAX_OWED_CHANGE_BYTES - parked.encode().unwrap().len();
+
+        let (txn, changes) = outbox.begin().await;
+        assert!(matches!(
+            changes.stage(with_token(largest + 1)).await,
+            Err(acp::Error::OwedChangeTooLarge { .. })
+        ));
+        let staged = changes.stage(with_token(largest)).await.unwrap();
+        assert_eq!(staged.seq.to_string().len(), small.seq.to_string().len());
+        txn.commit().await.unwrap();
+
+        for state in [refused, OwedState::AwaitingAuthority] {
+            let (txn, changes) = outbox.begin().await;
+            assert!(changes
+                .mark(staged.seq, state.clone(), u32::MAX, Some(words.clone()))
+                .await
+                .unwrap());
+            let marked = changes.get(staged.seq).await.unwrap().expect("the change");
+            assert_eq!(marked.state, state, "the words are kept whole");
+            assert_eq!(marked.last_error.as_deref(), Some(words.as_str()));
+            txn.commit().await.unwrap();
+        }
+    })
+    .unwrap()
+}

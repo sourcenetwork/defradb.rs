@@ -22,6 +22,11 @@ pub const MAX_OWED_CHANGE_BYTES: usize = 16 * 1024;
 
 const RECORD_VERSION: u8 = 1;
 
+/// The bytes of the provider's words a parked record is always left room
+/// for, in its state and again in its last error. Longer words are cut to
+/// what the record has left.
+pub const RESERVED_REASON_BYTES: usize = 128;
+
 /// What the change does to its tuple.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -194,6 +199,31 @@ impl OwedChange {
             last_error: None,
             authority_checked: new.authority_checked,
         }
+    }
+
+    /// The record's bytes as it is first written, refused unless the record
+    /// still fits [`MAX_OWED_CHANGE_BYTES`] in the largest state it can be
+    /// parked in later: refused or awaiting authority, with the highest
+    /// attempt count and [`RESERVED_REASON_BYTES`] of the provider's words
+    /// twice. A change that could be staged and never parked would be
+    /// submitted again for ever, with its tuple behind it.
+    pub(crate) fn encode_admitted(&self) -> Result<Vec<u8>> {
+        let words = "x".repeat(RESERVED_REASON_BYTES);
+        for state in [
+            OwedState::Refused {
+                reason: words.clone(),
+            },
+            OwedState::AwaitingAuthority,
+        ] {
+            Self {
+                state,
+                attempts: u32::MAX,
+                last_error: Some(words.clone()),
+                ..self.clone()
+            }
+            .encode()?;
+        }
+        self.encode()
     }
 
     /// Halve the provider's words kept with the change, in its state and in
