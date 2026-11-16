@@ -44,9 +44,10 @@ pub type SubscriptionHandle = usize;
 
 /// State held for each FFI node.
 pub struct NodeState {
-    /// The node itself, held so its network scope and tasks outlive the
-    /// handles copied out of it below.
-    pub _node: defra_node::Node,
+    /// The node itself: the operations it runs in the transaction their
+    /// request context names, and what keeps its network scope and tasks
+    /// alive for the handles copied out of it below.
+    pub node: Arc<defra_node::Node>,
     /// The database instance.
     pub database: Arc<FfiDatabase>,
     /// Background tasks owned by the node (e.g. the downsample worker).

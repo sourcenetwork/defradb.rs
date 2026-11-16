@@ -191,12 +191,7 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
         self.database
             .drop_index(collection, name)
             .await
-            .map_err(|e| match e {
-                db::Error::IndexNotFound { index, .. } => {
-                    format!("index with name doesn't exists. Name: {index}")
-                }
-                other => format!("{}", other),
-            })
+            .map_err(|e| e.to_string())
     }
 }
 

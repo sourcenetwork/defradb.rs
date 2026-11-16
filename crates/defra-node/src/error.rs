@@ -515,9 +515,6 @@ pub enum Error {
     #[cfg(any(feature = "libp2p", feature = "p2p"))]
     #[error(transparent)]
     SeedLength(#[from] SeedLength),
-    /// No index has the name (Go: `NewErrIndexWithNameDoesNotExists`).
-    #[error("index with name doesn't exists. Name: {0}")]
-    IndexNameMissing(String),
     /// A transaction could not be created.
     #[error("failed to create transaction: {0}")]
     TxnCreate(#[source] db::Error),
