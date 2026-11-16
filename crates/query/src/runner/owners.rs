@@ -83,12 +83,16 @@ where
                 })
                 .collect());
         }
-        let DocumentAccessMode::Named {
-            permission,
-            node_permission,
-        } = mode
-        else {
-            unreachable!()
+        let (named, document, node_permission) = match mode {
+            DocumentAccessMode::Named {
+                permission,
+                node_permission,
+            } => (Some(permission), None, node_permission),
+            DocumentAccessMode::Document {
+                permission,
+                node_permission,
+            } => (None, Some(permission), node_permission),
+            DocumentAccessMode::DelegatedRead => unreachable!(),
         };
         validate_observation_ids(collection, doc_ids)?;
         let context = context.with_dac_bypass(false);
@@ -138,15 +142,40 @@ where
                         result.push(DocumentAccessDecision::Unavailable);
                         continue;
                     }
-                    let decision = named_access_decision(
-                        acp.as_ref(),
-                        &actor,
-                        &permission,
-                        policy,
-                        doc_id,
-                        node,
-                    )
-                    .await?;
+                    let decision = match (&named, document) {
+                        (Some(permission), _) => {
+                            named_access_decision(
+                                acp.as_ref(),
+                                &actor,
+                                permission,
+                                policy,
+                                doc_id,
+                                node,
+                            )
+                            .await?
+                        }
+                        (_, Some(permission)) => match node {
+                            None => DocumentAccessDecision::Unavailable,
+                            Some(node_allowed) => {
+                                let allowed = acp
+                                    .check_doc_access(
+                                        &acp::Identity::Authenticated(actor.clone()),
+                                        permission,
+                                        &policy.id,
+                                        &policy.resource_name,
+                                        doc_id,
+                                    )
+                                    .await
+                                    .map_err(|error| QueryError::execution(error.to_string()))?;
+                                if node_allowed && allowed {
+                                    DocumentAccessDecision::Allowed
+                                } else {
+                                    DocumentAccessDecision::Denied
+                                }
+                            }
+                        },
+                        _ => unreachable!(),
+                    };
                     result.push(decision);
                 }
                 Ok(result)

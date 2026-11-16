@@ -474,7 +474,8 @@ impl Node {
                 })?;
                 defra_core::RequestContext::default().with_identity(Some(node.to_string()))
             }
-            query::owners::DocumentAccessMode::Named { .. } => {
+            query::owners::DocumentAccessMode::Named { .. }
+            | query::owners::DocumentAccessMode::Document { .. } => {
                 self.node_context().with_dac_bypass(false)
             }
         };
