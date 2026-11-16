@@ -4,13 +4,15 @@
 //! Truncate, which Go does not run in a transaction, applies at once.
 
 use std::ptr;
+use std::time::Duration;
 
+use defra_core::ActionStatus;
 use serde_json::{json, Value};
 
 use crate::collection::defra_collection_truncate;
 use crate::encrypted_index::{defra_encrypted_index_list, defra_encrypted_index_new};
 use crate::index::{defra_index_delete, defra_index_list, defra_index_new};
-use crate::test_support::{add_collection, close, cstr, node, ok, ok_json, query, Named};
+use crate::test_support::{add_collection, close, cstr, node, ok, ok_json, query, wait_for, Named};
 use crate::txn::{defra_transaction_commit, defra_transaction_create, defra_transaction_discard};
 use crate::view::defra_view_add;
 
@@ -42,6 +44,10 @@ fn index_names(handle: usize) -> Vec<String> {
 }
 
 fn create_index(handle: usize, name: &str) {
+    new_index(handle, name, false);
+}
+
+fn new_index(handle: usize, name: &str, unique: bool) {
     let user = Named::new("User");
     let (name, fields) = (cstr(name), cstr("name"));
     ok(unsafe {
@@ -49,12 +55,38 @@ fn create_index(handle: usize, name: &str) {
             handle,
             name.as_ptr(),
             fields.as_ptr(),
-            0,
+            unique.into(),
             ptr::null(),
             user.options(),
             0,
         )
     });
+}
+
+/// Waits until index `name` of `User` on `node` has finished building, so
+/// every document it covers is in it.
+fn wait_until_built(node: usize, name: &str) {
+    let user = Named::new("User");
+    wait_for(Duration::from_secs(10), || {
+        let listed = ok_json(unsafe { defra_index_list(node, user.options(), 0) });
+        let index = listed
+            .as_array()
+            .and_then(|indexes| {
+                indexes
+                    .iter()
+                    .find(|index| index["Description"]["Name"] == name)
+            })
+            .unwrap_or_else(|| panic!("index {name} is listed: {listed}"));
+        let status = &index["Execution"]["Status"];
+        match status
+            .as_u64()
+            .map(|status| ActionStatus::new(status as u16))
+        {
+            Some(ActionStatus::COMPLETED) => Ok(()),
+            Some(ActionStatus::ERRORED) => panic!("the build failed: {index}"),
+            _ => Err(format!("still building: {index}")),
+        }
+    })
 }
 
 #[test]
@@ -93,21 +125,28 @@ fn an_index_deleted_in_a_discarded_transaction_stays() {
     close(node);
 }
 
+/// A unique index created in a transaction, after a document the transaction
+/// added, holds that document once built: a second document with the same
+/// value is refused, which only an entry for the first one can cause.
 #[test]
 fn an_index_created_in_a_transaction_covers_its_own_documents() {
     let node = node();
     add_collection(node, "type User { name: String }");
+    let add_b = r#"mutation { add_User(input: {name: "B"}) { _docID } }"#;
     let txn = begin(node);
-    query(
-        txn,
-        r#"mutation { add_User(input: {name: "B"}) { _docID } }"#,
-    );
+    let added = query(txn, add_b);
+    assert!(added.get("errors").is_none(), "{added}");
 
-    create_index(txn, "by_name");
+    new_index(txn, "by_name", true);
     ok(defra_transaction_commit(txn));
+    wait_until_built(node, "by_name");
 
-    let found = query(node, r#"{ User(filter: {name: {_eq: "B"}}) { name } }"#);
-    assert_eq!(found["data"]["User"], json!([{"name": "B"}]), "{found}");
+    let duplicate = query(node, add_b);
+    assert!(
+        duplicate.get("errors").is_some(),
+        "the index holds the first B: {duplicate}"
+    );
+    assert_eq!(user_names(node), json!([{"name": "B"}]));
     close(node);
 }
 
