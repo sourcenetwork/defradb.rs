@@ -11,6 +11,8 @@ EXTENDS Nac
 \*                                   (a non-admin turned NAC back on)
 \*   MC_Nac_Red_EnableAddsOwner.cfg  fails INV_NoNonAdminMutatesAdminSet
 \*                                   (a non-admin made itself an owner)
+\* The same step also changes the admin set while NAC is disabled, so it
+\* breaks INV_NoWriteWhileDisabled too.
 
 \* The bootstrap owner.
 mcOwner == "owner"

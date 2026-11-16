@@ -219,7 +219,9 @@ EnableDisabled(a) ==
   /\ dirty_by_nonadmin' =                 \* the admin set changed by a non-admin?
        (dirty_by_nonadmin \/ (a # Owner /\ ~IsAdminGT(a)))
   /\ bad_reenable' = (bad_reenable \/ ~IsAdminGT(a)) \* re-enabled unauthorized?
-  /\ UNCHANGED <<disk_disabled, configured, mutations, wrote_while_disabled>>
+  /\ wrote_while_disabled' =              \* the admin set changed while disabled?
+       (wrote_while_disabled \/ (a # Owner /\ a \notin admins_persisted))
+  /\ UNCHANGED <<disk_disabled, configured, mutations>>
 
 \* Any actor may call enable(); only the meaningful transitions exist.
 Enable(a) == EnableFirst \/ EnableDisabled(a)
