@@ -222,6 +222,56 @@ nothing, until a caller can abandon a staged change and a drainer settles them.
   revokes nothing. An owed add grants nothing, in its own transaction either. With
   nothing owed on an object the gate costs one point read.
 
+### Verified writes on an external provider
+
+A verified write (`Node::execute_verified_create_in_txn`,
+`Node::execute_verified_mutation_in_txn`) is one create, update or delete an embedder has
+checked against its signer's signature, run in a transaction the node owns. On a local
+ACP its authority is *bound*: decided inside the transaction and validated at the
+commit. An external provider cannot be bound that way. There its authority counts as
+bound when what the write needs from the provider is **owed in the transaction, with
+authority to send it as the signer**:
+
+- a **create** owes the registration of its document, recorded with the row as an
+  ordinary create records it;
+- a relationship change made in the same transaction is staged as above, and is sent
+  after the registration;
+- an **update** or a **delete** owes nothing. The provider decides the signer's
+  permission at the network edge, as for any write on an external provider.
+
+The embedder hands the node what lets it act for the signer, as an argument beside the
+write (`SignerCredential`), and the node carries it for that signer only. Nothing is read
+from process-wide state:
+
+| Credential | The write is staged when |
+|---|---|
+| `None` | the node holds a key for the signer |
+| `Delegation(token)` | the provider takes `token` now as the signer's delegation to this node for its policy commands |
+| `RequestBound(token)` | `token` is the signer's delegation bound to exactly the command the write sends: the registration of the document a create makes |
+
+Anything else is refused before the statement writes a row or an owed record, with the
+error code `WRITE_AUTHORITY_UNAVAILABLE`, and the node discards the transaction: no
+credential and no key, a delegation signed by somebody else, made for another node or
+expired, a plain delegation presented as request-bound, a request-bound one presented as
+plain, and a request-bound one that names another document or another command. An update
+or a delete sends the provider no command, so a request-bound delegation has nothing to
+name there and is refused; those writes need the key or a plain delegation.
+
+A relationship change in the same transaction carries its own credential in the context
+of its call: `RequestContext::with_bearer` for a plain delegation, or
+`RequestContext::with_request_delegation` for one bound to that one change. A
+request-bound delegation covers one command, so a create and a grant beside it need two.
+
+What is recorded and what is not: the staged relationship change keeps its token in its
+record and is submitted with it, checked again against the change it is submitted with;
+one that has expired by then parks the change as awaiting authority. The owed
+registration keeps no token. The commit's own hook submits it with the token the write
+carried; if that fails, the registration stays owed, its document readable by its creator
+only, until a later request by the creator presents a credential for it.
+
+The model is `proofs/tla/VerifiedRemoteWrite.tla`, with `VerifiedRemoteAuthority.lean`
+for the rule itself.
+
 ## The query engine's side
 
 The planner wraps collection plans in permission filter nodes; `_commits` rows,
