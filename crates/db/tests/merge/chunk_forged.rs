@@ -9,7 +9,7 @@ use db::collection::Collection;
 use db::database::DB;
 use db::merge::merge_handler::{DbMergeHandler, MergeError};
 use defra_core::block::Block;
-use defra_core::merge::{BlockMetadata, MergeErrorDisposition, MergeHandler, MergeOutcome};
+use defra_core::merge::{BlockMetadata, MergeHandler, MergeOutcome};
 use document::{DocID, Document, NormalValue};
 use query::mutator::DocMutator;
 use storage::RegolithStore;
@@ -137,12 +137,17 @@ fn assert_rejected(outcome: &MergeOutcome, why: &str) {
     assert!(reason.contains(why), "{reason}");
 }
 
-fn assert_terminal(node: &Node) {
-    let error = MergeError::ChunkRejected("a chunk".into());
-    assert_eq!(
-        node.handler.error_disposition(&error),
-        MergeErrorDisposition::Terminal
-    );
+/// Delivers the block again: a refusal for good is rejected again, never stored or retried.
+async fn assert_refused_again(
+    from: &Node,
+    to: &Node,
+    collection: &Collection,
+    cid: &cid::Cid,
+    doc_id: &str,
+    why: &str,
+) {
+    let again = merge(from, to, collection, cid, doc_id).await.unwrap();
+    assert_rejected(&again, why);
 }
 
 #[test]
@@ -168,7 +173,15 @@ fn a_chunk_with_the_wrong_hash_is_refused_for_good() {
             .await
             .unwrap();
         assert_rejected(&outcome, "hash does not match");
-        assert_terminal(&peer);
+        assert_refused_again(
+            &author,
+            &peer,
+            &collection,
+            &built.cid,
+            &built.doc_id,
+            "hash does not match",
+        )
+        .await;
 
         let chunk_id = DocID::from_string(&built.doc_id).unwrap();
         assert!(stored(&peer, &chunks_of(&peer), &chunk_id).await.is_none());
@@ -241,7 +254,15 @@ fn a_chunk_cannot_be_rewritten_after_it_merged() {
             .await
             .unwrap();
         assert_rejected(&outcome, "cannot change after it is created");
-        assert_terminal(&peer);
+        assert_refused_again(
+            &author,
+            &peer,
+            &collection,
+            &update.cid,
+            &chunk_id_str,
+            "cannot change after it is created",
+        )
+        .await;
 
         assert_eq!(stored(&peer, &peer_chunks, &chunk_id).await.unwrap(), kept);
         assert_eq!(list_of(&peer, &parent).await, before);

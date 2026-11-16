@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use db::chunk::list::text_hash;
 use db::database::DB;
 use db::{AutoCommitMutator, DbBlockDocIDResolver};
 use defra_core::block::generate_cid_from_bytes;
@@ -94,7 +95,10 @@ async fn plant_chunk_in(
     let chunks_col = db.get_collection("Article__body_chunk").unwrap().unwrap();
     let chunk_id = DocID::new_v0_from_seed(&format!("chunk of {parent}"));
     let mut chunk = Document::from_json_str(
-        &format!(r#"{{"_sourceID": "{parent}", "text": "t", "hash": "00"}}"#),
+        &format!(
+            r#"{{"_sourceID": "{parent}", "text": "t", "hash": "{}"}}"#,
+            text_hash("t")
+        ),
         chunks_col.schema().clone(),
     )
     .unwrap();
@@ -154,7 +158,7 @@ fn a_chunks_key_owner_is_its_parent() {
 }
 
 #[test]
-fn a_chunk_whose_parent_has_not_arrived_has_no_block_owner() {
+fn a_chunk_whose_parent_has_not_arrived_has_no_history_parent() {
     workers::block_on(async {
         let db = chunked_db().await;
         let missing = DocID::new_v0_from_seed("parent not merged yet").to_string();
