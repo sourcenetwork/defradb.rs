@@ -4,14 +4,17 @@ use std::sync::Arc;
 
 use acp::DocumentACP;
 use blockstore::{Blockstore as _, DefraBlockstore};
+use db::block::builder::BlockResult;
 use db::collection::Collection;
 use db::database::DB;
-use db::merge::merge_handler::DbMergeHandler;
+use db::merge::merge_handler::{DbMergeHandler, MergeError};
 use db::{AutoCommitMutator, DbCollectionProvider, DbTransactionRegistry, LensedAutoCommitFetcher};
 use defra_core::block::Block;
-use defra_core::merge::{BlockMetadata, MergeHandler};
-use document::{Document, NormalValue};
+use defra_core::merge::{BlockMetadata, MergeHandler, MergeOutcome};
+use defra_core::signing::SigningConfig;
+use document::{DocID, Document, NormalValue};
 use identity::Did;
+use query::access_hooks::ReadValidator;
 use query::{QueryExecutor, QueryRequest, QueryRunner};
 use schema::PolicyDescription;
 use serde_json::Value;
@@ -32,10 +35,10 @@ pub(super) fn stranger() -> Did {
 }
 
 pub(super) struct Node {
-    db: Arc<DB<RegolithStore>>,
-    blockstore: Arc<DefraBlockstore<RegolithStore>>,
-    handler: Handler,
-    acp: Arc<dyn DocumentACP>,
+    pub(super) db: Arc<DB<RegolithStore>>,
+    pub(super) blockstore: Arc<DefraBlockstore<RegolithStore>>,
+    pub(super) handler: Handler,
+    pub(super) acp: Arc<dyn DocumentACP>,
 }
 
 pub(super) async fn node() -> Node {
@@ -63,18 +66,30 @@ pub(super) async fn node() -> Node {
 }
 
 impl Node {
-    fn chunks(&self) -> Collection {
+    pub(super) fn chunks(&self) -> Collection {
         self.db.get_collection(CHUNKS).unwrap().unwrap()
     }
 
     pub(super) async fn run(&self, query: &str, identity: Option<Did>) -> Value {
-        let runner = QueryRunner::with_arc_registry_and_provider(
+        self.run_with(query, identity, None).await
+    }
+
+    pub(super) async fn run_with(
+        &self,
+        query: &str,
+        identity: Option<Did>,
+        validator: Option<Arc<dyn ReadValidator>>,
+    ) -> Value {
+        let mut runner = QueryRunner::with_arc_registry_and_provider(
             LensedAutoCommitFetcher::new(self.db.clone()),
             DbCollectionProvider::new_arc(self.db.clone()),
             Arc::new(DbTransactionRegistry::new(self.db.clone())),
         )
         .with_mutator(Arc::new(AutoCommitMutator::new(self.db.clone())))
         .with_acp(self.acp.clone());
+        if let Some(validator) = validator {
+            runner = runner.with_read_validator(validator);
+        }
         let mut request = QueryRequest::new(query);
         request.identity = identity;
         let response = runner.execute(request).await;
@@ -82,7 +97,7 @@ impl Node {
         response.data.unwrap()
     }
 
-    async fn journal(&self, identity: Option<Did>) -> Vec<String> {
+    pub(super) async fn journal(&self, identity: Option<Did>) -> Vec<String> {
         let data = self
             .run(
                 &format!(
@@ -100,15 +115,26 @@ impl Node {
     }
 }
 
-async fn merge(from: &Node, to: &Node, cid: &cid::Cid, doc_id: &str) {
+pub(super) async fn merge_outcome(
+    from: &Node,
+    to: &Node,
+    cid: &cid::Cid,
+    doc_id: &str,
+) -> Result<MergeOutcome, MergeError> {
     let bytes = from.blockstore.get(cid).await.unwrap().unwrap();
-    for link in Block::from_dag_cbor(&bytes).unwrap().links.iter().flatten() {
+    let block = Block::from_dag_cbor(&bytes).unwrap();
+    let mut copies: Vec<cid::Cid> = block.signature.into_iter().collect();
+    for link in block.links.iter().flatten() {
         let data = from.blockstore.get(&link.link).await.unwrap().unwrap();
+        copies.extend(Block::from_dag_cbor(&data).unwrap().signature);
         to.blockstore.put(&link.link, &data).await.unwrap();
     }
+    for signature in copies {
+        let data = from.blockstore.get(&signature).await.unwrap().unwrap();
+        to.blockstore.put(&signature, &data).await.unwrap();
+    }
     to.blockstore.put(cid, &bytes).await.unwrap();
-    let outcome = to
-        .handler
+    to.handler
         .handle_block(
             cid,
             &bytes,
@@ -121,19 +147,26 @@ async fn merge(from: &Node, to: &Node, cid: &cid::Cid, doc_id: &str) {
             ),
         )
         .await
-        .unwrap();
+}
+
+async fn merge(from: &Node, to: &Node, cid: &cid::Cid, doc_id: &str) {
+    let outcome = merge_outcome(from, to, cid, doc_id).await.unwrap();
     assert!(outcome.is_merged(), "{outcome:?}");
 }
 
-/// A chunk of `parent`'s body, created on `author` and then written again
-/// unchanged, both merged into `peer`. The second write is one journal row.
-pub(super) async fn merge_updated_chunk(author: &Node, peer: &Node, parent: &str) -> String {
+/// A chunk of `body`'s first piece, created on `author` for `parent`.
+pub(super) async fn create_chunk(
+    author: &Node,
+    parent: &str,
+    body: &str,
+    signing: Option<&SigningConfig>,
+) -> (Document, u64, BlockResult) {
     let chunks = author.chunks();
     let articles = author.db.get_collection("Article").unwrap().unwrap();
     let config =
         db::chunk::chunk_config("Article", articles.schema().chunked_field("body").unwrap())
             .unwrap();
-    let piece = db::chunk::split::split(BODY, &config).remove(0);
+    let piece = db::chunk::split::split(body, &config).remove(0);
     let mut chunk = Document::new(chunks.schema_arc());
     chunk
         .set("_sourceID", NormalValue::String(parent.into()))
@@ -141,9 +174,64 @@ pub(super) async fn merge_updated_chunk(author: &Node, peer: &Node, parent: &str
     chunk.set("text", NormalValue::String(piece.text)).unwrap();
     chunk.set("hash", NormalValue::String(piece.hash)).unwrap();
 
-    let (chunk_id, short_id, created) =
-        super::merge_handler_tests::create_doc_locally(&author.handler, &chunks, &mut chunk).await;
-    let chunk_id = chunk_id.to_string();
+    let txn = author.db.new_txn(false).await.unwrap();
+    let systemstore = txn.systemstore().unwrap();
+    let short_id = author.db.next_doc_short_id().await.unwrap();
+    let created = db::block::builder::write_document_blocks(
+        &txn.blockstore().unwrap(),
+        &txn.headstore().unwrap(),
+        &chunk,
+        chunks.schema(),
+        db::block::builder::DocRef::new(chunks.resolved_root_id(), short_id),
+        None,
+        None,
+        signing,
+        None,
+    )
+    .await
+    .unwrap();
+    db::docid::map::set_doc_id_mapping(
+        &systemstore,
+        chunks.resolved_root_id(),
+        short_id,
+        &created.doc_id,
+    )
+    .await
+    .unwrap();
+    for cid in std::iter::once(&created.cid).chain(&created.field_cids) {
+        db::docid::map::set_block_doc_id_mapping(&systemstore, &cid.to_string(), &created.doc_id)
+            .await
+            .unwrap();
+    }
+    chunk.set_id(DocID::from_string(&created.doc_id).unwrap());
+    chunks
+        .save_with_datastore(&txn.datastore().unwrap(), &chunk, short_id)
+        .await
+        .unwrap();
+    drop(systemstore);
+    txn.force_commit().await.unwrap();
+    (chunk, short_id, created)
+}
+
+/// A chunk of `body`, created on `author` and merged into `peer`.
+pub(super) async fn merge_chunk(
+    author: &Node,
+    peer: &Node,
+    parent: &str,
+    body: &str,
+    signing: Option<&SigningConfig>,
+) -> (String, cid::Cid) {
+    let (_, _, created) = create_chunk(author, parent, body, signing).await;
+    merge(author, peer, &created.cid, &created.doc_id).await;
+    (created.doc_id, created.cid)
+}
+
+/// A chunk of `parent`'s body, created on `author` and then written again
+/// unchanged, both merged into `peer`. The second write is one journal row.
+pub(super) async fn merge_updated_chunk(author: &Node, peer: &Node, parent: &str) -> String {
+    let chunks = author.chunks();
+    let (chunk, short_id, created) = create_chunk(author, parent, BODY, None).await;
+    let chunk_id = created.doc_id.clone();
     merge(author, peer, &created.cid, &chunk_id).await;
 
     let modified: rapidhash::RapidHashSet<String> = ["text".to_string()].into_iter().collect();

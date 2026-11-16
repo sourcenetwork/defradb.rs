@@ -14,5 +14,6 @@ pub use user_writes::ensure_admin_changeable;
 pub mod access;
 mod config;
 pub mod guard;
+pub(crate) mod peer_delete;
 pub(crate) mod user_writes;
 pub mod window;

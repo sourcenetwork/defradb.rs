@@ -20,19 +20,30 @@
 \* receiver already stores, which would change it after it was created. The
 \* merge guard refuses both before anything is stored.
 \*
+\* A peer may delete the article. That delete also deletes every chunk it
+\* stores, and each chunk delete travels on its own, so a chunk delete can reach
+\* a peer before the article's delete. A peer can also send a chunk delete no
+\* article delete made. A chunk delete waits while the article here is live or
+\* has not arrived, and merges once the article is gone. A chunk the text does
+\* not use now may be used again by a later edit, so it waits too.
+\*
 \* What must never happen:
 \*   - a reader shows a chunk that is not part of the current text (INV_ReadsMatchText);
 \*   - once every edit and chunk has reached both peers, they show different
 \*     chunks, or miss a chunk of the text (INV_SettledPeersAgree);
 \*   - a peer stores a chunk whose hash does not match its text (INV_NoForgedChunk);
-\*   - a stored chunk is changed after it was created (INV_ChunksNeverChange).
+\*   - a stored chunk is changed after it was created (INV_ChunksNeverChange);
+\*   - a live article loses a chunk its text uses (INV_ListedChunksStay);
+\*   - a peer that holds the article's delete refuses one of its chunk deletes
+\*     for good, so it keeps chunks the other peers deleted (INV_DeletesNotLost).
 \*
 \* Code it models:
-\*   crates/query/src/plan/chunk_parent.rs  parent_hashes (the read rule)
-\*   crates/chunk-split/src/list.rs          describes, chunk_list (entry 0)
+\*   crates/query/src/plan/chunk_parent.rs  parent_hashes (the read rule: cut the text)
+\*   crates/chunk-split/src/list.rs          chunk_list (entry 0)
 \*   crates/crdt/src/field/lww.rs            merge (the per-field tie break)
 \*   crates/db/src/chunk/guard.rs            check_chunk_merge
 \*   crates/db/src/merge/merge_handler/composite_persist.rs  the guard's call on a chunk merge
+\*   crates/db/src/chunk/peer_delete.rs      delete_must_wait (a chunk delete waits for its article)
 \* The deleted-parent guard, the read-time hash check and races with a reader are
 \* ChunkRead.tla's. An encrypted chunk's hash can't be checked at merge, so that
 \* case is not modelled here.
@@ -44,7 +55,9 @@ CONSTANTS
   MaxEdits,    \* how many edits each peer makes, at most
   CheckEntry0, \* TRUE: a reader checks entry 0 against the text (the fix)
   CheckHash,   \* TRUE: the merge refuses a chunk whose hash does not match its text (the fix)
-  Immutable    \* TRUE: the merge refuses any change to a chunk that is already stored (the fix)
+  Immutable,   \* TRUE: the merge refuses any change to a chunk that is already stored (the fix)
+  Deletes,     \* TRUE: the article and its chunks can be deleted (kept off where a model would be too big)
+  DeleteRule   \* how a chunk delete is judged: "wait" (the fix), "listed", "none" or "refuse"
 
 \* Each peer edits at least once.
 ASSUME MaxEdits \in Nat \ {0}
@@ -52,6 +65,11 @@ ASSUME MaxEdits \in Nat \ {0}
 ASSUME CheckEntry0 \in BOOLEAN
 ASSUME CheckHash \in BOOLEAN
 ASSUME Immutable \in BOOLEAN
+\* Deletes are on or off.
+ASSUME Deletes \in BOOLEAN
+\* "listed" waits only for a chunk the text uses now, "none" merges every chunk
+\* delete, and "refuse" refuses a blocked one for good.
+ASSUME DeleteRule \in {"wait", "listed", "none", "refuse"}
 
 \* The texts an edit may write.
 Texts == {"t1", "t2", "t3"}
@@ -80,10 +98,14 @@ VARIABLES
   chunks,    \* chunks[p]: the chunks stored on peer p
   count,     \* count[p]: how many edits peer p has made
   forged,    \* forged[p]: chunks stored on p whose hash does not match their text
-  changed    \* changed[p]: chunks on p that were changed after they were stored
+  changed,   \* changed[p]: chunks on p that were changed after they were stored
+  dead,      \* dead[p]: whether peer p holds the article's delete
+  chunkDels, \* the chunks some article delete deleted, whose deletes now travel
+  gone,      \* gone[p]: the chunks deleted on peer p
+  refused    \* refused[p]: the chunk deletes peer p refused for good
 
 \* All the variables, for stuttering steps.
-vars == <<made, known, chunks, count, forged, changed>>
+vars == <<made, known, chunks, count, forged, changed, dead, chunkDels, gone, refused>>
 
 \* The edit among `es` that wins under a tie break `rank`: highest height
 \* first, then the higher rank.
@@ -107,9 +129,15 @@ Allowed(p) ==
   \* Otherwise trust the list.
   ELSE ChunksOf(ListTextOn(p))
 
-\* The chunks a reader on peer p sees: allowed, and stored there.
-\* A peer that has merged nothing has no article to show.
-Shown(p) == IF known[p] = {} THEN {} ELSE Allowed(p) \cap chunks[p]
+\* The chunks a reader on peer p sees: allowed, stored there and not deleted.
+\* A peer that has merged nothing, or the article's delete, has nothing to show.
+Shown(p) == IF known[p] = {} \/ dead[p] THEN {} ELSE (Allowed(p) \cap chunks[p]) \ gone[p]
+
+\* Whether a chunk delete of c must not merge on p yet: the article is not gone
+\* here. The "listed" rule blocks only a chunk the article uses now.
+Blocked(p, c) ==
+  /\ ~dead[p]                                                     \* the article is not gone here
+  /\ (DeleteRule = "listed" => (known[p] = {} \/ c \in Allowed(p)))  \* and, for "listed", uses c
 
 \* The heights an edit may use: one above what the peer has merged.
 NextHeight(p) ==
@@ -124,6 +152,10 @@ TypeOK ==
   /\ count \in [Peers -> 0..MaxEdits]                               \* edits made, per peer
   /\ forged \in [Peers -> SUBSET AllChunks]                         \* forged ones are real chunk names
   /\ changed \in [Peers -> SUBSET AllChunks]                        \* changed ones are real chunk names
+  /\ dead \in [Peers -> BOOLEAN]                                     \* each peer holds the delete or not
+  /\ chunkDels \subseteq AllChunks                                   \* deleted chunks are real chunk names
+  /\ gone \in [Peers -> SUBSET AllChunks]                           \* so are the ones gone on a peer
+  /\ refused \in [Peers -> SUBSET AllChunks]                        \* and the refused ones
 
 \* At the start no one has edited anything.
 Init ==
@@ -133,6 +165,10 @@ Init ==
   /\ count = [p \in Peers |-> 0]       \* no peer has edited
   /\ forged = [p \in Peers |-> {}]     \* nothing forged is stored
   /\ changed = [p \in Peers |-> {}]    \* nothing was changed
+  /\ dead = [p \in Peers |-> FALSE]     \* the article is not deleted
+  /\ chunkDels = {}                     \* no chunk delete exists
+  /\ gone = [p \in Peers |-> {}]       \* no chunk is deleted
+  /\ refused = [p \in Peers |-> {}]    \* nothing was refused
 
 \* Peer p edits the article to text t: one write sets text and list, and the
 \* chunks of t are created on p in the same transaction.
@@ -145,13 +181,14 @@ Edit(p, t) ==
         /\ known' = [known EXCEPT ![p] = @ \cup {e}]         \* and p has it
   /\ chunks' = [chunks EXCEPT ![p] = @ \cup ChunksOf(t)]    \* p stores t's chunks
   /\ count' = [count EXCEPT ![p] = @ + 1]                  \* one more edit by p
-  /\ UNCHANGED <<forged, changed>>                         \* no lie is involved
+  /\ ~dead[p]                                              \* p's article is not deleted
+  /\ UNCHANGED <<forged, changed, dead, chunkDels, gone, refused>>  \* no lie or delete is involved
 
 \* Peer p merges an edit another peer made. Both fields merge from it.
 MergeEdit(p) ==
   \E e \in made \ known[p] :                      \* an edit p lacks
     /\ known' = [known EXCEPT ![p] = @ \cup {e}]   \* is merged on p
-    /\ UNCHANGED <<made, chunks, count, forged, changed>>  \* nothing else changes
+    /\ UNCHANGED <<made, chunks, count, forged, changed, dead, chunkDels, gone, refused>>  \* nothing else changes
 
 \* A chunk document reaches peer p from the peer that created it.
 MergeChunk(p) ==
@@ -159,7 +196,7 @@ MergeChunk(p) ==
     \E c \in chunks[q] \ chunks[p] :   \* stores a chunk p lacks
       \* The merge guard accepts it: its hash is its text's, and it never changes.
       /\ chunks' = [chunks EXCEPT ![p] = @ \cup {c}]  \* p now stores it
-      /\ UNCHANGED <<made, known, count, forged, changed>>  \* nothing else changes
+      /\ UNCHANGED <<made, known, count, forged, changed, dead, chunkDels, gone, refused>>  \* nothing else changes
 
 \* A peer sends p a chunk whose hash does not match its text.
 PlantForged(p) ==
@@ -167,7 +204,7 @@ PlantForged(p) ==
   /\ \E c \in AllChunks :                               \* some chunk name
        /\ chunks' = [chunks EXCEPT ![p] = @ \cup {c}]   \* p stores it
        /\ forged' = [forged EXCEPT ![p] = @ \cup {c}]   \* and it is a forgery
-  /\ UNCHANGED <<made, known, count, changed>>         \* nothing else changes
+  /\ UNCHANGED <<made, known, count, changed, dead, chunkDels, gone, refused>>  \* nothing else changes
 
 \* A peer sends p a new version of a chunk p already stores, with a hash that
 \* matches the new version. The hash check alone can't tell.
@@ -175,7 +212,37 @@ Rewrite(p) ==
   /\ ~Immutable                                         \* only when the merge allows changes
   /\ \E c \in chunks[p] :                               \* a chunk p stores
        changed' = [changed EXCEPT ![p] = @ \cup {c}]    \* is now a different chunk
-  /\ UNCHANGED <<made, known, count, chunks, forged>>  \* nothing else changes
+  /\ UNCHANGED <<made, known, count, chunks, forged, dead, chunkDels, gone, refused>>  \* nothing else changes
+
+\* Peer p deletes the article it holds, and every chunk it stores with it.
+DeleteArticle(p) ==
+  /\ Deletes                                              \* deletes are modelled
+  /\ known[p] # {} /\ ~dead[p]                            \* p holds a live article
+  /\ dead' = [dead EXCEPT ![p] = TRUE]                     \* p deletes it
+  /\ chunkDels' = chunkDels \cup chunks[p]                 \* its chunk deletes now travel
+  /\ gone' = [gone EXCEPT ![p] = @ \cup chunks[p]]         \* and its chunks are gone on p
+  /\ UNCHANGED <<made, known, chunks, count, forged, changed, refused>>  \* nothing else changes
+
+\* The article's delete reaches peer p from a peer that holds it.
+MergeArticleDelete(p) ==
+  /\ ~dead[p] /\ \E q \in Peers : dead[q]                  \* p lacks a delete some peer holds
+  /\ dead' = [dead EXCEPT ![p] = TRUE]                     \* p holds it now
+  /\ UNCHANGED <<made, known, chunks, count, forged, changed, chunkDels, gone, refused>>  \* nothing else changes
+
+\* A delete of chunk c reaches peer p: an honest one an article delete made,
+\* or a forged one. DeleteRule decides what p does with it.
+ReceiveChunkDelete(p) ==
+  /\ Deletes                                              \* deletes are modelled
+  /\ \E c \in chunks[p] \ (gone[p] \cup refused[p]) :       \* a chunk p stores and still judges
+      \* With "wait" or "listed" a blocked delete does not merge yet; it stays on its way.
+      /\ (DeleteRule \in {"wait", "listed"}) => ~Blocked(p, c)
+      \* With "refuse" a blocked delete is refused for good.
+      /\ IF DeleteRule = "refuse" /\ Blocked(p, c)
+         THEN /\ refused' = [refused EXCEPT ![p] = @ \cup {c}]  \* refused
+              /\ UNCHANGED gone                                 \* and the chunk stays
+         ELSE /\ gone' = [gone EXCEPT ![p] = @ \cup {c}]        \* the delete merges
+              /\ UNCHANGED refused                              \* nothing refused
+      /\ UNCHANGED <<made, known, chunks, count, forged, changed, dead, chunkDels>>  \* nothing else changes
 
 \* Every step a peer can take.
 Next ==
@@ -184,7 +251,10 @@ Next ==
     \/ MergeEdit(p)                 \* merges an edit,
     \/ MergeChunk(p)                \* receives a chunk,
     \/ PlantForged(p)               \* is sent a forged chunk,
-    \/ Rewrite(p)                   \* or is sent a change to a stored chunk
+    \/ Rewrite(p)                   \* is sent a change to a stored chunk,
+    \/ DeleteArticle(p)             \* deletes the article,
+    \/ MergeArticleDelete(p)        \* merges the article's delete,
+    \/ ReceiveChunkDelete(p)        \* or is sent a chunk delete
 
 \* Start from Init and take any steps.
 Spec == Init /\ [][Next]_vars
@@ -199,11 +269,19 @@ INV_NoForgedChunk == \A p \in Peers : forged[p] = {}  \* nothing forged anywhere
 \* No stored chunk is ever changed.
 INV_ChunksNeverChange == \A p \in Peers : changed[p] = {}  \* nothing changed anywhere
 
+\* A live article keeps every stored chunk its text uses.
+INV_ListedChunksStay ==
+  \A p \in Peers : (known[p] # {} /\ ~dead[p]) => (Allowed(p) \cap chunks[p] \cap gone[p]) = {}  \* per live article
+
+\* A peer that holds the article's delete never refused one of its chunk deletes.
+INV_DeletesNotLost == \A p \in Peers : dead[p] => (refused[p] \cap chunkDels) = {}  \* per deleted article
+
 \* Every edit and chunk has reached every peer.
 Settled ==
   /\ made # {}                                    \* someone edited
   /\ \A p \in Peers : known[p] = made              \* every peer has every edit
   /\ \A p, q \in Peers : chunks[p] = chunks[q]    \* and every chunk
+  /\ \A p \in Peers : ~dead[p]                     \* and the article is live
 
 \* Settled peers show the same chunks: all of the text's, and no others.
 INV_SettledPeersAgree ==

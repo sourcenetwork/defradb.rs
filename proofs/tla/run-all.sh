@@ -143,6 +143,10 @@ RUNS=(
   "MC_ChunkMerge_Red_TrustList.cfg ChunkMerge.tla RED" # reader trusts the list (INV_ReadsMatchText)
   "MC_ChunkMerge_Red_NoHashCheck.cfg ChunkMerge.tla RED" # merge stores a chunk whose hash does not match (INV_NoForgedChunk)
   "MC_ChunkMerge_Red_MutableChunk.cfg ChunkMerge.tla RED" # merge lets a stored chunk change (INV_ChunksNeverChange)
+  "MC_ChunkMerge_Green_Delete.cfg ChunkMerge.tla GREEN" # a chunk delete waits until its article is gone here
+  "MC_ChunkMerge_Red_NoDeleteGuard.cfg ChunkMerge.tla RED" # merge takes a peer's chunk delete while the article is live (INV_ListedChunksStay)
+  "MC_ChunkMerge_Red_ListedDeleteOnly.cfg ChunkMerge.tla RED" # merge holds back only a listed chunk's delete (INV_ListedChunksStay)
+  "MC_ChunkMerge_Red_RefuseDelete.cfg ChunkMerge.tla RED" # merge refuses an early chunk delete for good (INV_DeletesNotLost)
   "MC_ChunkRead_Green.cfg ChunkRead.tla GREEN" # a chunk shows only while its parent is live, readable and uses it
   "MC_ChunkRead_Red_NoDeletedCheck.cfg ChunkRead.tla RED" # deleted parent still shows its chunks (INV_ShownIsLiveAndReadable)
   "MC_ChunkRead_Red_NoHashCheck.cfg ChunkRead.tla RED" # forged chunk claims a real hash (INV_ShownIsTheText)

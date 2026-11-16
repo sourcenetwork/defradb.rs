@@ -8,6 +8,7 @@ mod acp_protected_update;
 mod broadcast_mutator_broadcast;
 mod chunk_definition;
 mod chunk_definition_guard;
+mod chunk_delete;
 mod chunk_forged;
 mod chunk_query_row;
 mod chunk_update_journal;
