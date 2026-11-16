@@ -370,6 +370,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 policy_id: policy.id.clone(),
                 resource_name: policy.resource_name.clone(),
                 retry_inputs: self.retry_inputs.clone(),
+                projection: self.acp_registration_projection.clone(),
             });
 
             // Build the plan (ACP filter is inserted inside, after Select but before aggregates)

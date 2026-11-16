@@ -15,6 +15,57 @@ pub(crate) struct Relationship<'a> {
     pub(crate) target: &'a str,
 }
 
+/// What a relationship change made inside a transaction did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RelationshipChange {
+    /// Document ACP joined the transaction and the change is among its
+    /// writes: it takes effect, for every reader, when the transaction
+    /// commits. `existed` says whether the relationship was there before the
+    /// change: an add of one that existed changed nothing, and so did a
+    /// delete of one that did not.
+    Applied { existed: bool },
+    /// Document ACP is a remote provider that cannot join a transaction. The
+    /// change is recorded in the transaction as owed to the provider, at
+    /// place `seq` of the node's queue, and is submitted after the commit.
+    /// Whether the relationship exists on the provider is not known here.
+    Staged {
+        seq: u64,
+        /// Whether the acting DID's authority was checked before staging.
+        /// `false` when the provider could not answer: it decides at
+        /// submission.
+        authority_checked: bool,
+    },
+}
+
+impl RelationshipChange {
+    /// What an add answers as a boolean: whether the relationship existed
+    /// already. A staged add answers `false`: it is reported as new.
+    pub fn existed_already(self) -> bool {
+        match self {
+            Self::Applied { existed } => existed,
+            Self::Staged { .. } => false,
+        }
+    }
+
+    /// What a delete answers as a boolean: whether a relationship was found
+    /// to delete. A staged delete answers `true`: it is reported as found.
+    pub fn record_found(self) -> bool {
+        match self {
+            Self::Applied { existed } => existed,
+            Self::Staged { .. } => true,
+        }
+    }
+
+    /// The boolean of the change's kind.
+    pub(crate) fn reported(self, delete: bool) -> bool {
+        if delete {
+            self.record_found()
+        } else {
+            self.existed_already()
+        }
+    }
+}
+
 /// Whether a native node administrator may change a relationship it does not
 /// manage. Go's public routes refuse one; only a trusted embedder's route
 /// admits it.
@@ -36,7 +87,7 @@ where
         relationship: Relationship<'_>,
         delete: bool,
         node_admin: NodeAdmin,
-    ) -> Result<bool> {
+    ) -> Result<RelationshipChange> {
         let Relationship {
             collection,
             doc_id,
@@ -72,6 +123,7 @@ where
         let doc_id = doc_id.to_owned();
         let relation = relation.to_owned();
         let provider = acp::bound_to_request(&self.document_acp, actor_context);
+        let unbound = Arc::clone(&self.document_acp);
         let database = Arc::clone(&self.database);
         let event_bus = Arc::clone(&self.event_bus);
         let nac_configured = database.nac_manager().is_some();
@@ -124,11 +176,6 @@ where
                             }
                         }
                     }
-                    let acp = fetcher.transaction_acp(provider).await?.ok_or_else(|| {
-                        query::QueryError::execution(
-                            "transaction-bound document authorization is unavailable",
-                        )
-                    })?;
                     let collection_provider = ctx.collection_provider().ok_or_else(|| {
                         query::QueryError::execution("transaction-bound schema is unavailable")
                     })?;
@@ -158,6 +205,47 @@ where
                         .into_iter()
                         .map(str::to_owned)
                         .collect::<Vec<_>>();
+                    let Some(acp) = fetcher.transaction_acp(provider.clone()).await? else {
+                        // A provider that cannot join the transaction is owed
+                        // the change by it.
+                        let outbox =
+                            fetcher.transaction_outbox(provider).await?.ok_or_else(|| {
+                                query::QueryError::execution(
+                                    "transaction-bound document authorization is unavailable",
+                                )
+                            })?;
+                        let first = outbox.staged() == 0;
+                        let staged = outbox
+                            .stage(acp::StageRelationship {
+                                txn: Some(txn.0),
+                                actor: &actor,
+                                subject: target,
+                                policy_id: &binding.id,
+                                resource: &binding.resource_name,
+                                object: &doc_id,
+                                relation: &relation,
+                                managing_relations: &managers,
+                                op: if delete {
+                                    acp::OwedOp::Delete
+                                } else {
+                                    acp::OwedOp::Add
+                                },
+                            })
+                            .await?;
+                        drop(outbox);
+                        // One pass after the commit serves every change the
+                        // transaction staged. A statement that is undone
+                        // takes its hook and its count with it.
+                        if first {
+                            ctx.on_commit(OnCommit::Async(Box::new(move || {
+                                Box::pin(settle_owed_changes(unbound))
+                            })))?;
+                        }
+                        return Ok(RelationshipChange::Staged {
+                            seq: staged.seq,
+                            authority_checked: staged.authority_checked,
+                        });
+                    };
                     let ordinary = if delete {
                         acp.delete_relationship(
                             &actor,
@@ -239,7 +327,9 @@ where
                             })
                         })))?;
                     }
-                    Ok(if delete { changed } else { !changed })
+                    Ok(RelationshipChange::Applied {
+                        existed: if delete { changed } else { !changed },
+                    })
                 }
                 .await;
                 turn.end_statement(result.is_ok())?;
@@ -249,5 +339,22 @@ where
         self.registry
             .run_as(transaction_context, &handle, None, job)
             .await?
+    }
+}
+
+/// Submit what the committed transaction now owes the provider, with
+/// whatever was owed before it. The commit stands whatever this comes to:
+/// what is not settled here stays owed for the next pass.
+async fn settle_owed_changes(acp: Arc<dyn acp::DocumentACP>) {
+    match acp.settle_owed_changes().await {
+        Ok(settlement) if settlement.provider_unavailable => tracing::warn!(
+            settled = settlement.settled,
+            "ACP provider unavailable; owed relationship changes stay staged"
+        ),
+        Ok(_) => {}
+        Err(error) => tracing::warn!(
+            %error,
+            "Could not settle owed ACP relationship changes; they stay owed"
+        ),
     }
 }

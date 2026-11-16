@@ -217,8 +217,9 @@ where
 /// Gate a Vera provider with the registrations creates still owe it, and
 /// settle in the background any a previous run left owed (a crash, or a
 /// provider call that failed). Until settled, such a document is readable only
-/// by its creator. The redrive's storage runs on the pool it is started on;
-/// the provider sends its own calls to the network edge.
+/// by its creator. The relationship changes a previous run left owed are
+/// submitted after them, once. The redrive's storage runs on the pool it is
+/// started on; the provider sends its own calls to the network edge.
 #[cfg(feature = "vera")]
 fn gate_external_acp<S>(
     provider: Arc<dyn acp::DocumentACP>,
@@ -241,6 +242,21 @@ where
                 Err(error) => tracing::warn!(
                     %error,
                     "Could not read owed ACP registrations; their documents stay readable only by their creators"
+                ),
+            }
+            match redrive.settle_owed_changes_once().await {
+                Ok(settlement) if settlement != acp::OwedSettlement::default() => tracing::info!(
+                    settled = settlement.settled,
+                    refused = settlement.refused,
+                    awaiting_authority = settlement.awaiting_authority,
+                    left = settlement.left,
+                    provider_unavailable = settlement.provider_unavailable,
+                    "Submitted ACP relationship changes owed from a previous run"
+                ),
+                Ok(_) => {}
+                Err(error) => tracing::warn!(
+                    %error,
+                    "Could not read owed ACP relationship changes; they stay owed"
                 ),
             }
         })

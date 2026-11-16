@@ -86,6 +86,7 @@ pub use access_hooks::AccessHooks;
 /// [`Node::document_acp`] returns) without depending on `acp` directly.
 pub use acp::nac::NodePermission;
 pub use acp::{DocumentACP, DocumentPermission, Identity as AcpIdentity};
+pub use acp_ops::transactional::RelationshipChange;
 #[cfg(feature = "vera")]
 pub use acp_provider::DocumentAcpProvider;
 #[cfg(not(target_arch = "wasm32"))]
@@ -1712,6 +1713,10 @@ mod administrative_relationship_tests;
 #[cfg(test)]
 #[path = "../tests/unit/delegated_relationship.rs"]
 mod delegated_relationship_tests;
+
+#[cfg(all(test, feature = "vera", not(target_arch = "wasm32")))]
+#[path = "../tests/unit/staged_relationship.rs"]
+mod staged_relationship_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "../tests/unit/verified_create.rs"]
