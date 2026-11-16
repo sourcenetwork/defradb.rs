@@ -20,7 +20,11 @@
 \* Who acts:
 \*   * transactions: one at a time, a transaction creates the document and
 \*     stages changes, then commits or rolls back. Each staged change takes
-\*     the next sequence number;
+\*     the next sequence number. Before a change is staged the node checks
+\*     that its actor may make it: the creator of a document still owed, or
+\*     the owner the provider names. A change that fails is not staged. When
+\*     the provider cannot be asked, an add is staged unchecked and a delete
+\*     is not staged at all;
 \*   * the node may crash and restart at any point: an open transaction is
 \*     gone, and so is everything the settlement loop only remembered;
 \*   * the provider applies a request, refuses one from an actor that does
@@ -29,7 +33,9 @@
 \*   * the settlement loop (the redrive, the drainer) registers the document,
 \*     then submits the changes in sequence order. Before it sends a change it
 \*     marks the record "in flight"; after a send it asks for the receipt and
-\*     sends again only when the provider has none;
+\*     sends again only when the provider has none. A change the provider
+\*     refuses is parked if its actor was checked at staging, and removed if
+\*     it was not. A parked change holds the later changes of its tuple;
 \*   * authority: a change is signed with a key the node holds, or with a
 \*     stored delegation that can expire. A change whose delegation expired
 \*     waits for a fresh one;
@@ -58,7 +64,12 @@
 \*   6. while the registration is owed, anyone reads the document but its
 \*      creator and the identities the creator named - INV_OwedDocumentNarrow;
 \*   7. a committed change stays unsettled for ever though the provider keeps
-\*      coming back and fresh authority keeps being supplied - LIVE_Drains.
+\*      coming back and fresh authority keeps being supplied, unless it waits
+\*      behind a parked change of its tuple - LIVE_Drains;
+\*   8. a delete the node stores, and so denies by, was staged without its
+\*      actor being checked - INV_DenialsChecked;
+\*   9. a change staged unchecked is parked as refused, where it would hold
+\*      its tuple - INV_RefusedChecked.
 \*
 \* What exists in the code today, and what is specification ahead of code.
 \* Exists (the registry anchors these):
@@ -91,24 +102,27 @@
 \*                                          settle_change, submittable,
 \*                                          register_first;
 \*   parking a change                       crates/acp/src/outbox/ops.rs mark.
-\* In the model these are StageCreate, StageChange, Commit, Rollback, Crash,
-\* RegisterOnChain, ClearOwed, the deny overlay (DenyRule = "AnyOwedDelete",
-\* RefusedDeleteDenies), and the rules RegFirst, InOrder and ParkedBlocks. A
-\* pass that submits a change and reads the provider's answer is Mark, Land
-\* and Lookup taken together with nothing stored in between, which is the
-\* model with Marker = FALSE: MC_AcpOutbox_Green_NoMarker holds every
-\* property but INV_AtMostOneEffect, and MC_AcpOutbox_Red_NoInFlightMarker is
-\* the trace of what the code does after a crash (it sends again). A change
-\* without usable authority is parked as AwaitAuthority parks it.
+\* In the model these are StageCreate, StageChange with its check (CanCheck,
+\* Passes, CheckedDeletes), Commit, Rollback, Crash, RegisterOnChain,
+\* ClearOwed, the deny overlay (DenyRule = "AnyOwedDelete",
+\* RefusedDeleteDenies), and the rules RegFirst, InOrder, ParkedBlocks and
+\* DropUnchecked. A pass that submits a change and reads the provider's
+\* answer is Mark, Land and Lookup taken together with nothing stored in
+\* between, which is the model with Marker = FALSE:
+\* MC_AcpOutbox_Green_NoMarker holds every property but
+\* INV_AtMostOneEffect, and MC_AcpOutbox_Red_NoInFlightMarker is the trace
+\* of what the code does after a crash (it sends again). A change without
+\* usable authority is parked as AwaitAuthority parks it, checked or not: the
+\* provider has not refused it.
 \* Where the code differs from the model:
 \*   * it honours no owed add at all, not even the creator's own named grant
 \*     (OwedAdds has no such value; what the code honours is a subset of
 \*     "CreatorExplicit", so every property about not widening carries over);
-\*   * a refused change holds the later changes of its tuple, as a change
-\*     awaiting authority does. The model lets them pass (DrainPastRefused),
-\*     so LIVE_Drains does not describe the code: a change behind a parked
-\*     one stays staged until the parked one can be abandoned or retried;
-\*   * a parked change is never made owed again: nothing calls Reauthorize.
+\*   * its check also lets through an actor that holds a managing relation
+\*     on the provider; the model knows only the owner;
+\*   * a parked change is never made owed again: nothing calls Reauthorize,
+\*     so a change behind a parked one stays staged, which LIVE_Drains
+\*     allows.
 \* Specification ahead of code (#2954): the durable in-flight mark and the
 \* receipt lookup that give INV_AtMostOneEffect (Marker, Lookup after a
 \* restart), Reauthorize, the creator's owed grants, and a loop that takes
@@ -127,6 +141,12 @@
 \*   AssumeUncontested          the provider does not already hold the
 \*       document under another owner. When it does, settle keeps that owner,
 \*       and the creator read a document the provider gives to someone else.
+\*   AssumeOwnerStays           the provider's owner of the document does
+\*       not change after the node checked a change against it. When it
+\*       does, a change that passed the staging check is refused at
+\*       submission. Only then can a checked change be parked as refused in
+\*       an uncontested document, which the RED configurations about
+\*       refused changes need.
 \* Assumed without a switch:
 \*   * one request sent twice is executed once (the worker journal and the
 \*     provider's sequence, PendingSubmission.tla). A second effect here is a
@@ -143,8 +163,10 @@
 \* change, the registration-with-grants batch (without it a creator's grantee
 \* loses access between ClearOwed and the grant landing: narrower, never
 \* wider), limits on how much may be owed, a stale provider answer
-\* (Acp.tla), and a change sent to the provider outside a transaction while
-\* a change of its tuple stays parked (it overtakes the parked one).
+\* (Acp.tla), a change sent to the provider outside a transaction while a
+\* change of its tuple stays parked (it overtakes the parked one), and a
+\* provider answer that does not say whether it is final (the code takes
+\* the same such answer, several times in a row, as a refusal).
 
 EXTENDS Naturals, FiniteSets  \* numbers and finite sets
 
@@ -163,11 +185,14 @@ CONSTANTS
   OwedAdds,                  \* which owed adds grant: see Grants
   RegFirst,                  \* TRUE: no change is sent while the registration is owed
   InOrder,                   \* TRUE: changes are sent in sequence order
-  ParkedBlocks,              \* TRUE: a change awaiting authority holds its tuple
+  ParkedBlocks,              \* TRUE: a parked change holds its tuple
   DrainPastRefused,          \* TRUE: a refused change does not hold the rest
   Marker,                    \* TRUE: the in-flight mark survives a crash
+  CheckedDeletes,            \* TRUE: a delete is staged only with its actor checked
+  DropUnchecked,             \* TRUE: an unchecked change the provider refuses is removed
   AssumeReceiptRetrievable,  \* TRUE: a landed change's receipt can be read
-  AssumeUncontested          \* TRUE: the provider holds no other owner
+  AssumeUncontested,         \* TRUE: the provider holds no other owner
+  AssumeOwnerStays           \* TRUE: the provider's owner does not change
 
 ASSUME MaxChanges \in Nat /\ MaxCrashes \in Nat /\ MaxExpiries \in Nat  \* bounds are numbers
 ASSUME Subjects \subseteq {"g", "*"} /\ Subjects # {}       \* known subjects
@@ -196,6 +221,7 @@ VARIABLES
   receipt,      \* per slot: what the provider recorded: "none", "ok", "rejected"
   effects,      \* per slot: how often the change took effect on the provider
   checked,      \* per slot, in memory only: "I asked, the provider has no receipt"
+  chk,          \* per slot: TRUE when the actor's authority was checked at staging
   rolled,       \* the slots whose transaction rolled back (for the properties)
   chainOwner,   \* the provider's owner of the document, "none" if unregistered
   chainTuples,  \* the tuples the provider holds
@@ -204,18 +230,20 @@ VARIABLES
   crashes,      \* how often the node crashed
   expiries      \* how often the delegation expired
 
-vars == <<doc, owedReg, st, chg, receipt, effects, checked, rolled,
+vars == <<doc, owedReg, st, chg, receipt, effects, checked, chk, rolled,
           chainOwner, chainTuples, up, delegOk, crashes, expiries>>  \* every variable
 
 TypeOK ==
   /\ doc \in {"absent", "open", "exists"}                 \* a known document state
   /\ owedReg \in BOOLEAN                                  \* a flag
   /\ st \in [Slots -> {"free", "open", "void", "staged", "inflight",
-                       "awaiting", "refused", "settled"}]  \* a known step each
+                       "awaiting", "refused", "settled",
+                       "dropped"}]                        \* a known step each
   /\ chg \in [Slots -> Changes \cup {NoChange}]           \* a change or nothing
   /\ receipt \in [Slots -> {"none", "ok", "rejected"}]    \* a known receipt each
   /\ effects \in [Slots -> 0..2]                          \* a small count each
   /\ checked \in [Slots -> BOOLEAN]                       \* a flag each
+  /\ chk \in [Slots -> BOOLEAN]                           \* a flag each
   /\ rolled \subseteq Slots                               \* some slots
   /\ chainOwner \in {"none", "c", "o"}                    \* a known owner
   /\ chainTuples \subseteq Subjects                       \* some tuples
@@ -232,6 +260,7 @@ Init ==
   /\ receipt = [s \in Slots |-> "none"]                   \* the provider recorded nothing
   /\ effects = [s \in Slots |-> 0]                        \* nothing took effect
   /\ checked = [s \in Slots |-> FALSE]                    \* the loop remembers nothing
+  /\ chk = [s \in Slots |-> FALSE]                        \* nothing was checked
   /\ rolled = {}                                          \* nothing rolled back
   /\ chainOwner = (IF Preexisting THEN "c"                \* registered to the creator,
                    ELSE IF AssumeUncontested THEN "none"  \* or not registered,
@@ -345,13 +374,32 @@ StageCreate ==
   /\ doc' = "open"                                        \* now there is, uncommitted
   /\ UNCHANGED <<owedReg, st, chg, receipt, effects, checked, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+  /\ UNCHANGED chk                                       \* what was checked stays so
+
+\* The staging check can run: the document's registration is still owed
+\* (its creator is then the only authority, and the node knows it without
+\* asking), or the provider answers.
+CanCheck == doc = "open" \/ owedReg \/ up
+\* The check lets this change through: its actor is the owed creator, or the
+\* owner the provider names.
+Passes(c) ==
+  IF doc = "open" \/ owedReg THEN c.actor = "c"            \* owed: only the creator
+  ELSE c.actor = chainOwner                               \* else: only the provider's owner
 
 \* The open transaction stages one change on the document. It takes the next
-\* sequence number.
+\* sequence number. When the check can run, a change that fails it is not
+\* staged at all. When it cannot (the provider is down), an add is staged
+\* unchecked, and a delete is not staged: it would deny at once on the word
+\* of an actor nobody vouched for.
 StageChange(s, c) ==
   /\ doc \in {"open", "exists"}                           \* the transaction sees the document
   /\ st[s] = "free"                                       \* this number is not taken,
   /\ \A r \in Slots : r < s => st[r] # "free"             \* and every lower one is
+  /\ IF CanCheck                                          \* the check can run:
+     THEN /\ Passes(c)                                    \*   the change must pass it,
+          /\ chk' = [chk EXCEPT ![s] = TRUE]              \*   and is recorded as checked
+     ELSE /\ c.op = "add" \/ ~CheckedDeletes              \* else only an add (or, bug, any)
+          /\ chk' = [chk EXCEPT ![s] = FALSE]             \*   recorded as unchecked
   /\ st' = [st EXCEPT ![s] = "open"]                      \* staged, uncommitted
   /\ chg' = [chg EXCEPT ![s] = c]                         \* with this change
   /\ UNCHANGED <<doc, owedReg, receipt, effects, checked, rolled,
@@ -366,6 +414,7 @@ Commit ==
   /\ st' = [s \in Slots |-> IF st[s] = "open" THEN "staged" ELSE st[s]]  \* changes are owed
   /\ UNCHANGED <<chg, receipt, effects, checked, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+  /\ UNCHANGED chk                                       \* what was checked stays so
 
 \* What a discarded transaction leaves of its changes. Owned by the
 \* transaction, they are gone with it. Written beside it (the bug), they
@@ -393,6 +442,7 @@ Rollback ==
   /\ rolled' = rolled \cup Discarded                      \* remembered, for the properties
   /\ UNCHANGED <<receipt, effects, checked, chainOwner, chainTuples,
                  up, delegOk, crashes, expiries>>
+  /\ UNCHANGED chk                                       \* what was checked stays so
 
 \* The node crashes and restarts. An open transaction is rolled back. The
 \* settlement loop forgets what it had checked. Without a durable mark, a
@@ -412,6 +462,7 @@ Crash ==
   /\ rolled' = rolled \cup Discarded                      \* remembered, for the properties
   /\ checked' = [s \in Slots |-> FALSE]                   \* the loop remembers nothing
   /\ UNCHANGED <<receipt, effects, chainOwner, chainTuples, up, delegOk, expiries>>
+  /\ UNCHANGED chk                                       \* what was checked stays so
 
 \* ---- Settling the registration (ExternalDocumentAcp::settle) ----
 
@@ -423,6 +474,7 @@ RegisterOnChain ==
   /\ chainOwner' = "c"                                    \* now the creator owns it
   /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, rolled,
                  chainTuples, up, delegOk, crashes, expiries>>
+  /\ UNCHANGED chk                                       \* what was checked stays so
 
 \* The provider holds the document, so the record is cleared. An owner the
 \* provider already had stays: from here on the provider decides.
@@ -432,6 +484,7 @@ ClearOwed ==
   /\ owedReg' = FALSE                                     \* nothing is owed any more
   /\ UNCHANGED <<doc, st, chg, receipt, effects, checked, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+  /\ UNCHANGED chk                                       \* what was checked stays so
 
 \* ---- Settling the changes (the drainer of #2954) ----
 
@@ -440,9 +493,19 @@ Blocked(s) ==
   \E r \in Slots :
     /\ r < s                                              \* an earlier change
     /\ \/ InOrder /\ st[r] \in {"staged", "inflight"}     \* that is still to be delivered,
-       \/ /\ ParkedBlocks /\ st[r] = "awaiting"           \* or waits for authority
+       \/ /\ ParkedBlocks                                \* or is parked: it waits for
+          /\ st[r] \in {"awaiting", "refused"}            \* authority, or was refused,
           /\ chg[r].subj = chg[s].subj                    \* on the same tuple,
        \/ ~DrainPastRefused /\ st[r] = "refused"          \* or (bug) was refused
+
+\* Where a change the provider refused ends. One whose actor was checked at
+\* staging is parked and kept. One staged unchecked is removed: nobody
+\* vouched for it and the provider said no, so it may not hold its tuple or
+\* stay on the books. A change that only waits for authority is kept either
+\* way: the provider has not refused it, and it may be a good change whose
+\* delegation ran out while the provider was away.
+Refusal(s) ==
+  IF chk[s] \/ ~DropUnchecked THEN "refused" ELSE "dropped"
 
 \* The loop marks a change in flight, durably, before anything is sent. A
 \* fresh mark means nothing was sent, so there is no receipt to ask for.
@@ -455,6 +518,7 @@ Mark(s) ==
   /\ checked' = [checked EXCEPT ![s] = TRUE]              \* known not to have landed
   /\ UNCHANGED <<doc, owedReg, chg, receipt, effects, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+  /\ UNCHANGED chk                                       \* what was checked stays so
 
 \* The provider's tuples after it applied a change.
 Applied(s) ==
@@ -476,6 +540,7 @@ Land(s) ==
   /\ checked' = [checked EXCEPT ![s] = FALSE]             \* the loop must ask again
   /\ UNCHANGED <<doc, owedReg, st, chg, rolled, chainOwner, up, delegOk,
                  crashes, expiries>>
+  /\ UNCHANGED chk                                       \* what was checked stays so
 
 \* The loop sends the change while the provider cannot be reached: nothing
 \* lands, and the loop cannot know that either.
@@ -485,6 +550,7 @@ SendLost(s) ==
   /\ checked' = [checked EXCEPT ![s] = FALSE]             \* the loop must ask again
   /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+  /\ UNCHANGED chk                                       \* what was checked stays so
 
 \* The loop asks the provider for the receipt of a change in flight. This is
 \* also the first thing it does with one after a restart.
@@ -495,13 +561,14 @@ Lookup(s) ==
             /\ st' = [st EXCEPT ![s] = "settled"]         \*   the record is deleted
             /\ UNCHANGED checked
        [] receipt[s] = "rejected" ->                      \* it was refused:
-            /\ st' = [st EXCEPT ![s] = "refused"]         \*   the record is parked
+            /\ st' = [st EXCEPT ![s] = Refusal(s)]        \*   parked, or removed
             /\ UNCHANGED checked
        [] OTHER ->                                        \* no receipt:
             /\ checked' = [checked EXCEPT ![s] = TRUE]    \*   it may be sent again
             /\ UNCHANGED st
   /\ UNCHANGED <<doc, owedReg, chg, receipt, effects, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+  /\ UNCHANGED chk                                       \* what was checked stays so
 
 \* A change whose delegation expired waits for a fresh one. One in flight
 \* may do so only when it is known not to have landed.
@@ -512,6 +579,7 @@ AwaitAuthority(s) ==
   /\ checked' = [checked EXCEPT ![s] = FALSE]             \* nothing to remember
   /\ UNCHANGED <<doc, owedReg, chg, receipt, effects, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+  /\ UNCHANGED chk                                       \* what was checked stays so
 
 \* The embedder supplies a fresh delegation: the change is owed again.
 Reauthorize(s) ==
@@ -520,6 +588,7 @@ Reauthorize(s) ==
   /\ delegOk' = TRUE                                      \* with a valid delegation
   /\ UNCHANGED <<doc, owedReg, chg, receipt, effects, checked, rolled,
                  chainOwner, chainTuples, up, crashes, expiries>>
+  /\ UNCHANGED chk                                       \* what was checked stays so
 
 \* ---- The world around the node ----
 
@@ -531,18 +600,21 @@ Expire ==
   /\ expiries' = expiries + 1                             \* one more
   /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, rolled,
                  chainOwner, chainTuples, up, crashes>>
+  /\ UNCHANGED chk                                       \* what was checked stays so
 
 \* The provider becomes unreachable.
 ProviderDown ==
   /\ up /\ up' = FALSE                                    \* it stops answering
   /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, rolled,
                  chainOwner, chainTuples, delegOk, crashes, expiries>>
+  /\ UNCHANGED chk                                       \* what was checked stays so
 
 \* The provider comes back.
 ProviderUp ==
   /\ ~up /\ up' = TRUE                                    \* it answers again
   /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, rolled,
                  chainOwner, chainTuples, delegOk, crashes, expiries>>
+  /\ UNCHANGED chk                                       \* what was checked stays so
 
 \* The receipt of a landed change can no longer be read (the provider pruned
 \* it, the worker's journal entry is gone) while the node still has the
@@ -553,6 +625,18 @@ ReceiptLost(s) ==
   /\ receipt' = [receipt EXCEPT ![s] = "none"]            \* and now unreadable
   /\ UNCHANGED <<doc, owedReg, st, chg, effects, checked, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
+  /\ UNCHANGED chk                                       \* what was checked stays so
+
+\* Someone else takes the document over on the provider, after the node
+\* checked a change against the owner it then had. Possible only without
+\* AssumeOwnerStays. It is how a change that passed the staging check can
+\* still be refused.
+OwnerLost ==
+  /\ ~AssumeOwnerStays                                    \* the assumption is off
+  /\ chainOwner = "c"                                     \* the creator owns it,
+  /\ chainOwner' = "o"                                    \* and now another does
+  /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, chk, rolled,
+                 chainTuples, up, delegOk, crashes, expiries>>
 
 \* Any one thing happens.
 Next ==
@@ -562,7 +646,7 @@ Next ==
   \/ \E s \in Slots : Mark(s) \/ Land(s) \/ SendLost(s) \/ Lookup(s)  \* settling a change
   \/ \E s \in Slots : AwaitAuthority(s) \/ Reauthorize(s)  \* authority
   \/ \E s \in Slots : ReceiptLost(s)                      \* a receipt disappears
-  \/ Expire \/ ProviderDown \/ ProviderUp                 \* the world
+  \/ Expire \/ ProviderDown \/ ProviderUp \/ OwnerLost    \* the world
 
 \* Safety: start, then take steps. Nothing is promised to happen.
 Spec == Init /\ [][Next]_vars
@@ -625,9 +709,26 @@ INV_OwedDocumentNarrow ==
                          /\ Committed(s) /\ chg[s].op = "add"  \* granted,
                          /\ chg[s].actor = "c" /\ chg[s].subj = who  \* by name
 
+\* Every delete the node stores was staged by an actor whose authority was
+\* checked: nobody denies a reader on an unchecked word.
+INV_DenialsChecked ==
+  \A s \in Slots : Kept(s) /\ chg[s].op = "del" => chk[s]
+
+\* Every change parked as refused was checked at staging: an unchecked one
+\* the provider refuses is removed, so it holds no tuple.
+INV_RefusedChecked ==
+  \A s \in Slots : st[s] = "refused" => chk[s]
+
+\* A parked change of the same tuple, staged earlier, holds this one.
+Held(s) ==
+  \E r \in Slots : /\ r < s /\ chg[r].subj = chg[s].subj     \* earlier, same tuple,
+                   /\ st[r] \in {"refused", "awaiting"}       \* and parked
+
 \* Every committed change ends settled, or parked as refused or as awaiting
-\* authority, and stays so.
+\* authority, or staged behind a parked change of its tuple, and stays so.
 LIVE_Drains ==
-  <>[](\A s \in Slots : Committed(s) => st[s] \in {"settled", "refused", "awaiting"})
+  <>[](\A s \in Slots : Committed(s) =>
+         \/ st[s] \in {"settled", "refused", "awaiting"}   \* delivered or parked,
+         \/ st[s] = "staged" /\ Held(s))                   \* or held behind a parked one
 
 ====

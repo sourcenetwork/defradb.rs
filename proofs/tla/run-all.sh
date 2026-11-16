@@ -580,6 +580,8 @@ RUNS=(
   "MC_AcpOutbox_Red_ReceiptLost.cfg AcpOutbox.tla RED" # with no receipt to read a landed change is sent again (INV_AtMostOneEffect)
   "MC_AcpOutbox_Red_ContestedRegistration.cfg AcpOutbox.tla RED" # the provider holds another owner while the creator still reads (INV_NoWidening)
   "MC_AcpOutbox_Red_RefusedBlocksDrain.cfg AcpOutbox.tla RED" # a refused change holds every later one for ever (LIVE_Drains)
+  "MC_AcpOutbox_Red_UncheckedDelete.cfg AcpOutbox.tla RED" # a delete staged while nobody could check its actor denies at once (INV_DenialsChecked)
+  "MC_AcpOutbox_Red_UncheckedRefusedKept.cfg AcpOutbox.tla RED" # an unchecked change the provider refuses is parked and holds its tuple (INV_RefusedChecked)
   "MC_RegisterDocOnce_Green.cfg RegisterDocOnce.tla GREEN" # racing registrations of one document: one owner, the winner owns it, one wins
   "MC_RegisterDocOnce_Red_NoValidation.cfg RegisterDocOnce.tla RED" # deciding scan not validated: two owners (INV_OneOwner)
   "MC_RegisterDocOnce_Red_Sentinel.cfg RegisterDocOnce.tla RED" # main before the fix: the identical sentinel write commits, two owners (INV_OneOwner)
