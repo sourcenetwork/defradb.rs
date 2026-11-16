@@ -24,25 +24,36 @@ A relationship change made inside a transaction is staged the same way: recorded
 transaction as owed to the provider and submitted after the commit
 ([Owed relationship changes](transactional.md#owed-relationship-changes)). With vera.rs:
 
-- **Who signs.** The worker signs the submission; the change carries the acting DID's
-  authority. The node signs a delegation itself when it holds that DID's key (its own
-  actor, or a registered identity with a local secp256k1, Ed25519 or P-256 key);
+- **Who signs.** The worker signs the submission; the command inside it carries the
+  acting DID's authority, whatever its subject: an actor, everyone, or a userset or
+  cross-object subject. The node signs a delegation itself when it holds that DID's key
+  (its own actor, or a registered identity with a local secp256k1, Ed25519 or P-256 key);
   otherwise it stores the delegation the request presented and submits with it. A
   delegation that expired before the change could be submitted parks the change as
   awaiting authority.
 - **What the grantee and the revoked subject see.** A grantee reads once the chain holds
   the grant, normally when the committing request returns; with the chain unreachable,
-  not before a later request or a restart submits it. A revoked subject is denied by
-  this node from the commit, and by every node once the chain holds the revocation.
-- **The advisory check.** The document's owner comes from the light client's verified
-  state, and a managing relation is evaluated there as a permission on the document.
-  When the chain cannot be read the change is staged unchecked.
+  not before a later commit on the same document, a direct change of the tuple or a
+  restart submits it. A revoked subject is denied by this node from the commit, and by
+  every node once the chain holds the revocation.
+- **The check at staging.** The document's owner comes from the light client's verified
+  state, and a managing relation is evaluated there as a permission on the document. The
+  chain counts as unreachable when the read fails with a connection error, or when the
+  light client has no fresh verified state left (30 seconds after the chain stops
+  answering); then an
+  add is staged unchecked and a delete is refused. A read that fails any other way fails
+  the staging call.
 - **Outcomes.** A verified receipt that succeeded settles the change; one that was
-  rejected parks it as refused; a submission whose receipt could not be confirmed leaves
-  it staged. A repeated `SetRelationship` or `DeleteRelationship` succeeds without
-  effect, so a change submitted again after a crash settles, unless the acting DID lost
-  its authority in between (then it is parked as refused) or another manager changed the
-  relationship in between (then it is applied again).
+  rejected is the chain's refusal (the change is parked, or deleted if it was staged
+  unchecked); a submission whose receipt could not be confirmed leaves it staged. A
+  repeated `SetRelationship` or `DeleteRelationship` succeeds without effect, so a change
+  submitted again after a crash settles, unless the acting DID lost its authority in
+  between (then it is parked as refused) or another manager changed the relationship in
+  between (then it is applied again).
+- **The Cosmos provider.** A broadcast that timed out or failed in transport leaves the
+  change staged. Any other failed transaction is an answer the provider does not
+  classify: the change stays staged, the pass goes on, and five such answers in a row
+  with the same words park it as refused.
 
 ## Why it exists
 
