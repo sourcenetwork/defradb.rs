@@ -72,6 +72,14 @@ impl Request {
         crate::helpers::get_node_database(self.node())
     }
 
+    /// The node, whose operations run in the transaction the call's
+    /// [`context`](Self::context) names, or on their own.
+    pub(crate) fn node_handle(&self) -> Result<Arc<defra_node::Node>, DefraResult> {
+        NODES
+            .get(self.node(), |state| Arc::clone(&state.node))
+            .ok_or_else(|| DefraResult::error(ERR_INVALID_HANDLE))
+    }
+
     /// The node's executor, which runs a call in the transaction its context
     /// names, or in one of its own.
     pub(crate) fn runner(&self) -> Result<Arc<dyn query::QueryExecutor>, DefraResult> {

@@ -29,7 +29,6 @@ pub unsafe extern "C" fn defra_index_new(
 ) -> DefraResult {
     ffi_entry! {
         let request = try_ffi!(Request::begin(node_ptr, identity_ptr, NodePermission::IndexCreate));
-        let node = try_ffi!(request.require_node("index create"));
         let fields = try_ffi!(parse_fields(&go_string(fields)).map_err(DefraResult::error));
         let vector = match non_empty(vector_json) {
             Some(json) => match serde_json::from_str::<schema::VectorIndexDescription>(&json) {
@@ -40,13 +39,19 @@ pub unsafe extern "C" fn defra_index_new(
         };
         let index_name = non_empty(index_name);
         let collection_name = CollectionArgs::read(&opts).name.unwrap_or_default();
-        let database = try_ffi!(request.database());
+        let node = try_ffi!(request.node_handle());
+        let context = request.context();
 
-        ffi_async!(node, {
-            let kind = db::IndexManager::requested_kind(&fields, is_unique != 0, vector)
-                .map_err(|e| e.to_string())?;
-            let index = database
-                .create_index(&collection_name, index_name.as_deref(), fields, kind)
+        ffi_async!(caller, {
+            let index = node
+                .create_index_with_vector_as(
+                    &context,
+                    &collection_name,
+                    index_name.as_deref(),
+                    fields,
+                    is_unique != 0,
+                    vector,
+                )
                 .await
                 .map_err(|e| e.to_string())?;
             serde_json::to_string(&index).map_err(|e| format!("failed to serialize result: {}", e))

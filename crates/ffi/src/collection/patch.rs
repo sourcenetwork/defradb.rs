@@ -24,7 +24,6 @@ pub unsafe extern "C" fn defra_collection_patch(
 ) -> DefraResult {
     ffi_entry! {
         let request = try_ffi!(Request::begin(node_ptr, identity_ptr, NodePermission::CollectionPatch));
-        try_ffi!(request.require_node("collection patch"));
         let runner = try_ffi!(request.runner());
         let context = request.context();
         let patch = go_string(patch);

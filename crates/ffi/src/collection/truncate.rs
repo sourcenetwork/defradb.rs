@@ -75,7 +75,6 @@ unsafe fn truncate(
         identity_ptr,
         NodePermission::CollectionTruncate
     ));
-    try_ffi!(request.require_node("collection truncate"));
     let selector = CollectionArgs::read(opts).selector();
     let runner = try_ffi!(request.runner());
     let context = request.context();
