@@ -35,7 +35,10 @@
 \*     marks the record "in flight"; after a send it asks for the receipt and
 \*     sends again only when the provider has none. A change the provider
 \*     refuses is parked if its actor was checked at staging, and removed if
-\*     it was not. A parked change holds the later changes of its tuple;
+\*     it was not. A parked change holds the later changes of its tuple if
+\*     its actor was checked. An unchecked one that waits for authority
+\*     holds nothing, and is removed when a later change of its tuple is
+\*     sent, so it can never land after the change that passed it;
 \*   * authority: a change is signed with a key the node holds, or with a
 \*     stored delegation that can expire. A change whose delegation expired
 \*     waits for a fresh one;
@@ -69,7 +72,9 @@
 \*   8. a delete the node stores, and so denies by, was staged without its
 \*      actor being checked - INV_DenialsChecked;
 \*   9. a change staged unchecked is parked as refused, where it would hold
-\*      its tuple - INV_RefusedChecked.
+\*      its tuple - INV_RefusedChecked;
+\*  10. a parked change nobody checked holds a later change of its tuple
+\*      - INV_UncheckedYields.
 \*
 \* What exists in the code today, and what is specification ahead of code.
 \* Exists (the registry anchors these):
@@ -105,8 +110,8 @@
 \* In the model these are StageCreate, StageChange with its check (CanCheck,
 \* Passes, CheckedDeletes), Commit, Rollback, Crash, RegisterOnChain,
 \* ClearOwed, the deny overlay (DenyRule = "AnyOwedDelete",
-\* RefusedDeleteDenies), and the rules RegFirst, InOrder, ParkedBlocks and
-\* DropUnchecked. A pass that submits a change and reads the provider's
+\* RefusedDeleteDenies), and the rules RegFirst, InOrder, ParkedBlocks,
+\* DropUnchecked and UncheckedYields = "drop". A pass that submits a change and reads the provider's
 \* answer is Mark, Land and Lookup taken together with nothing stored in
 \* between, which is the model with Marker = FALSE:
 \* MC_AcpOutbox_Green_NoMarker holds every property but
@@ -190,6 +195,7 @@ CONSTANTS
   Marker,                    \* TRUE: the in-flight mark survives a crash
   CheckedDeletes,            \* TRUE: a delete is staged only with its actor checked
   DropUnchecked,             \* TRUE: an unchecked change the provider refuses is removed
+  UncheckedYields,           \* what a parked unchecked change does to its tuple: see Holds
   AssumeReceiptRetrievable,  \* TRUE: a landed change's receipt can be read
   AssumeUncontested,         \* TRUE: the provider holds no other owner
   AssumeOwnerStays           \* TRUE: the provider's owner does not change
@@ -203,6 +209,7 @@ ASSUME Preexisting \/ InitTuples = {}                       \* a new document ha
 ASSUME Preexisting => AssumeUncontested                     \* an existing one is the creator's
 ASSUME DenyRule \in {"AnyOwedDelete", "LatestOp", "None"}   \* a known deny rule
 ASSUME OwedAdds \in {"CreatorExplicit", "CreatorAny", "Any"}  \* a known grant rule
+ASSUME UncheckedYields \in {"drop", "pass", "hold"}       \* a known yielding rule
 
 Slots == 1..MaxChanges       \* the sequence numbers
 Readers == {"c", "g", "x"}   \* who asks for access: creator, grantee, stranger
@@ -279,8 +286,14 @@ Last(S) == CHOOSE s \in S : \A r \in S : r <= s
 Live(s) == st[s] \in {"staged", "inflight", "awaiting"}
 \* The node still stores a record for the change: owed, or parked as refused.
 Kept(s) == Live(s) \/ st[s] = "refused"
-\* The change belongs to a transaction that committed.
-Committed(s) == (Kept(s) \/ st[s] = "settled") /\ s \notin rolled
+\* The provider holds the change and the node keeps no record of it: the
+\* record was deleted after the provider answered, or it was removed as an
+\* unchecked change after it had in fact landed.
+Delivered(s) == st[s] = "settled" \/ (st[s] = "dropped" /\ effects[s] > 0)
+\* The change belongs to a transaction that committed, and still counts: the
+\* node keeps it or the provider holds it. An unchecked change removed before
+\* it ever landed counts for nothing.
+Committed(s) == (Kept(s) \/ Delivered(s)) /\ s \notin rolled
 \* A transaction is open: it created the document or staged a change.
 OpenTxn == doc = "open" \/ \E s \in Slots : st[s] = "open"
 \* The change can be signed now: the node's own key always can, a delegation
@@ -489,14 +502,37 @@ ClearOwed ==
 \* ---- Settling the changes (the drainer of #2954) ----
 
 \* An earlier stored change holds this one back.
+\* An earlier parked change holds this one: it waits for authority or was
+\* refused, on the same tuple, and its actor was checked at staging. A
+\* parked change nobody vouched for holds nothing: UncheckedYields says what
+\* happens instead.
+\*   drop  it does not hold, and it is removed when a later change of its
+\*         tuple is sent (the design);
+\*   pass  it does not hold, and it stays: the bug of letting it be
+\*         reauthorized after the change that passed it;
+\*   hold  it holds like a checked one: the bug of letting an actor nobody
+\*         checked keep the owner's change from the provider.
+Holds(r, s) ==
+  /\ r < s /\ ParkedBlocks                                \* earlier, and parking holds
+  /\ st[r] \in {"awaiting", "refused"}                    \* it is parked,
+  /\ chg[r].subj = chg[s].subj                            \* on the same tuple,
+  /\ chk[r] \/ UncheckedYields = "hold"                   \* and was checked (or, bug, not)
+
+\* An earlier stored change holds this one back.
 Blocked(s) ==
   \E r \in Slots :
     /\ r < s                                              \* an earlier change
     /\ \/ InOrder /\ st[r] \in {"staged", "inflight"}     \* that is still to be delivered,
-       \/ /\ ParkedBlocks                                \* or is parked: it waits for
-          /\ st[r] \in {"awaiting", "refused"}            \* authority, or was refused,
-          /\ chg[r].subj = chg[s].subj                    \* on the same tuple,
+       \/ Holds(r, s)                                     \* or is parked and holds it,
        \/ ~DrainPastRefused /\ st[r] = "refused"          \* or (bug) was refused
+
+\* Sending this change passes that one: an earlier unchecked change of the
+\* same tuple that waits for authority. It is removed then, so that it can
+\* never be sent after the change that passed it.
+Passed(r, s) ==
+  /\ UncheckedYields = "drop"                             \* the design removes it
+  /\ r < s /\ chg[r].subj = chg[s].subj                   \* earlier, same tuple,
+  /\ st[r] = "awaiting" /\ ~chk[r]                        \* parked and unchecked
 
 \* Where a change the provider refused ends. One whose actor was checked at
 \* staging is parked and kept. One staged unchecked is removed: nobody
@@ -514,7 +550,9 @@ Mark(s) ==
   /\ ~Blocked(s)                                          \* its turn has come
   /\ RegFirst => ~owedReg                                 \* the registration is settled
   /\ Valid(s)                                             \* it can be signed
-  /\ st' = [st EXCEPT ![s] = "inflight"]                  \* marked
+  /\ st' = [r \in Slots |-> IF r = s THEN "inflight"      \* marked,
+                            ELSE IF Passed(r, s) THEN "dropped"  \* what it passes is removed,
+                            ELSE st[r]]                   \* the rest stays
   /\ checked' = [checked EXCEPT ![s] = TRUE]              \* known not to have landed
   /\ UNCHANGED <<doc, owedReg, chg, receipt, effects, rolled,
                  chainOwner, chainTuples, up, delegOk, crashes, expiries>>
@@ -719,10 +757,14 @@ INV_DenialsChecked ==
 INV_RefusedChecked ==
   \A s \in Slots : st[s] = "refused" => chk[s]
 
+\* A parked change never holds a later one unless its actor was checked at
+\* staging: an actor nobody vouched for cannot keep the owner's change from
+\* the provider.
+INV_UncheckedYields ==
+  \A r, s \in Slots : Holds(r, s) => chk[r]
+
 \* A parked change of the same tuple, staged earlier, holds this one.
-Held(s) ==
-  \E r \in Slots : /\ r < s /\ chg[r].subj = chg[s].subj     \* earlier, same tuple,
-                   /\ st[r] \in {"refused", "awaiting"}       \* and parked
+Held(s) == \E r \in Slots : Holds(r, s)
 
 \* Every committed change ends settled, or parked as refused or as awaiting
 \* authority, or staged behind a parked change of its tuple, and stays so.
