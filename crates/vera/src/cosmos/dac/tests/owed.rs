@@ -766,3 +766,99 @@ async fn an_owed_change_under_a_delegation_bound_to_it_is_sent_until_that_lapses
     ));
     assert!(provider.sent().is_empty());
 }
+
+#[nuclei::test]
+async fn a_plain_delegation_is_checked_again_as_its_command_is_sent() {
+    let provider = OwedProvider::new(true);
+    let acp = VeraDocumentACP::without_access_cache(provider.clone());
+    let token = format!("delegation:{REMOTE}");
+    let grant = |acp: Arc<dyn DocumentACP>| async move {
+        acp.add_actor_relationship(
+            &did(REMOTE),
+            &did(REMOTE),
+            "policy-1",
+            "users",
+            "doc-1",
+            "reader",
+            &[],
+        )
+        .await
+    };
+    let refused = |result: Result<bool>| {
+        matches!(
+            result,
+            Err(acp::Error::OwedAuthorityUnavailable { actor, .. }) if actor == REMOTE
+        )
+    };
+
+    // A token that is no delegation, another signer's, and a plain one
+    // where the request presents one bound to a request.
+    for other in ["an.identity.token", &format!("delegation:{HELD}")] {
+        assert!(refused(grant(carrying(&acp, REMOTE, other)).await));
+    }
+    assert!(refused(grant(presenting(&acp, REMOTE, &token)).await));
+    assert!(provider.sent().is_empty());
+
+    assert!(grant(carrying(&acp, REMOTE, &token)).await.unwrap());
+    assert_eq!(provider.sent(), std::slice::from_ref(&token));
+
+    // Expired between the write and the commit: neither the registration
+    // nor a relationship goes out under it.
+    provider.expired.store(true, Ordering::Relaxed);
+    let stale = carrying(&acp, REMOTE, &token);
+    assert!(refused(grant(stale.clone()).await));
+    assert!(matches!(
+        stale
+            .register_doc_object(&did(REMOTE), "policy-1", "users", "doc-1")
+            .await,
+        Err(acp::Error::OwedAuthorityUnavailable { .. })
+    ));
+    assert!(provider.sent().is_empty());
+
+    // The node's own key signs a token as the command is sent.
+    assert!(carrying(&acp, HELD, "unused")
+        .add_actor_relationship(
+            &did(HELD),
+            &did(REMOTE),
+            "policy-1",
+            "users",
+            "doc-1",
+            "reader",
+            &[],
+        )
+        .await
+        .unwrap());
+    assert_eq!(provider.sent(), [format!("signed:{HELD}")]);
+}
+
+#[test]
+fn a_verified_write_takes_no_delegation_the_node_cannot_verify() {
+    let acp = VeraDocumentACP::without_access_cache(OwedProvider::new(false));
+    let verified = acp
+        .bind_request(
+            &RequestContext::default()
+                .with_transactional_authority_required()
+                .with_bearer(Some(REMOTE.to_string()), Some("a.cosmos.token".into())),
+        )
+        .expect("a Vera ACP serves the request it is bound to");
+    assert!(matches!(
+        verified.owed_authority(&did(REMOTE)),
+        Err(acp::Error::OwedAuthorityUnavailable { reason, .. }) if reason.contains("cannot verify")
+    ));
+    assert!(matches!(
+        verified.command_authority(
+            &did(REMOTE),
+            acp::ProviderCommand::RegisterObject {
+                policy_id: "policy-1",
+                resource: "users",
+                object: "doc-1",
+            },
+        ),
+        Err(acp::Error::OwedAuthorityUnavailable { .. })
+    ));
+    // A key the node holds still admits it.
+    assert_eq!(
+        verified.owed_authority(&did(HELD)).unwrap(),
+        OwedAuthority::NodeKey
+    );
+}

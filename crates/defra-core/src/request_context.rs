@@ -342,9 +342,10 @@ impl RequestContext {
     }
 
     /// This context carrying `token` as the delegation `did` bound to the
-    /// one command this request sends a remote ACP provider. The provider
-    /// takes it for that command and for nothing else, and takes no plain
-    /// delegation in its place.
+    /// one command this request sends a remote ACP provider. A provider
+    /// that knows such delegations takes it for that command and for
+    /// nothing else, and takes no plain delegation in its place, when the
+    /// command is admitted and again when it is sent.
     #[must_use]
     pub fn with_request_delegation(mut self, did: String, token: String) -> Self {
         let fields = Arc::make_mut(&mut self.0);

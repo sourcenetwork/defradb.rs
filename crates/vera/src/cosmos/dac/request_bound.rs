@@ -5,7 +5,8 @@
 //! when a transaction asks what lets the node send what it owes, when a
 //! command goes to the provider directly, and when an owed change is
 //! submitted. A token bound to another command is refused on this node,
-//! before anything is sent.
+//! before anything is sent, and so is a plain delegation that is no longer
+//! one the provider takes.
 
 use acp::{OwedOp, OwedSubject, ProviderCommand};
 
@@ -37,19 +38,48 @@ impl VeraDocumentACP {
         )
     }
 
-    /// Refuse `token` for `command` when it is bound to another request.
+    /// Whether the node may send `command` as `actor` under `token` now:
+    /// the checks made when the command was admitted, made again as it is
+    /// sent. A key the node holds for `actor` signed `token` a moment ago.
+    /// A token bound to one request must name `command`. Any other token
+    /// must be a delegation the provider takes for `actor` now, and is not
+    /// taken where the request presents one bound to a request. A provider
+    /// that takes no delegation is passed its caller's token as it is.
     pub(super) fn admit_for(
         &self,
         actor: &str,
         token: &str,
         command: &PolicyCommand<'_>,
     ) -> acp::Result<()> {
+        let canonical = self.provider.canonical_actor(actor);
+        if self.provider.holds_key_for(actor) || self.provider.holds_key_for(&canonical) {
+            return Ok(());
+        }
+        let refused = |reason: String| acp::Error::OwedAuthorityUnavailable {
+            actor: actor.to_owned(),
+            reason,
+        };
         match self.request_bound(actor, token, command) {
-            Some(Err(reason)) => Err(acp::Error::OwedAuthorityUnavailable {
-                actor: actor.to_owned(),
-                reason,
-            }),
-            _ => Ok(()),
+            Some(bound) => return bound.map_err(refused),
+            None if defra_core::RequestContext::bound_or_ambient(self.context.as_ref())
+                .bearer_names_request() =>
+            {
+                return Err(refused(
+                    "the delegation presented as bound to one request is bound to none".into(),
+                ))
+            }
+            None => {}
+        }
+        match self.provider.caller_of_delegation(token) {
+            Some(Ok(caller)) if self.provider.canonical_actor(&caller) == canonical => Ok(()),
+            Some(Ok(caller)) => Err(refused(format!(
+                "the request's delegation is signed by {caller}"
+            ))),
+            Some(Err(error)) => Err(refused(error.to_string())),
+            None if self.provider.delegation_audience().is_some() => Err(refused(
+                "the request's token is not a delegation to this node".into(),
+            )),
+            None => Ok(()),
         }
     }
 }

@@ -324,6 +324,16 @@ impl VeraDocumentACP {
             None if self.provider.delegation_audience().is_some() => Err(unavailable(
                 "the request's token is not a delegation to this node".into(),
             )),
+            // A verified write is staged on a credential the node checked,
+            // and a provider that takes no delegation gives it nothing to
+            // check a token against.
+            None if defra_core::RequestContext::bound_or_ambient(self.context.as_ref())
+                .transactional_authority_required() =>
+            {
+                Err(unavailable(
+                    "this provider cannot verify a delegation for a verified write".into(),
+                ))
+            }
             // A provider that takes no delegation is passed its caller's token.
             None => Ok(acp::OwedAuthority::Delegation { token }),
         }
