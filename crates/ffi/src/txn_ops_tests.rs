@@ -114,6 +114,25 @@ fn an_index_created_in_a_transaction_is_seen_only_in_it_until_it_commits() {
     close(node);
 }
 
+/// Deleting a missing index answers Go's error on a node and on a
+/// transaction alike.
+#[test]
+fn deleting_a_missing_index_answers_alike_on_a_node_and_a_transaction() {
+    let node = users();
+    let txn = begin(node);
+    let (user, name) = (Named::new("User"), cstr("missing"));
+    let delete = |handle: usize| {
+        err(unsafe { defra_index_delete(handle, name.as_ptr(), user.options(), 0) })
+    };
+
+    let expected = "index with name doesn't exists. Name: missing";
+    assert_eq!(delete(node), expected, "on the node");
+    assert_eq!(delete(txn), expected, "on the transaction");
+
+    defra_transaction_discard(txn);
+    close(node);
+}
+
 #[test]
 fn an_index_deleted_in_a_discarded_transaction_stays() {
     let node = users();

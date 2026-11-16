@@ -190,13 +190,7 @@ impl Node {
             database
                 .check_node_access_as(&context, NodePermission::IndexDelete)
                 .await?;
-            database
-                .drop_index(&collection, &name)
-                .await
-                .map_err(|error| match error {
-                    db::Error::IndexNotFound { index, .. } => Error::IndexNameMissing(index),
-                    other => Error::from(other),
-                })
+            Ok(database.drop_index(&collection, &name).await?)
         })
         .await
     }
