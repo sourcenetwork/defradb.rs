@@ -1154,3 +1154,102 @@ fn a_staged_userset_change_is_decided_on_its_actors_authority() {
     })
     .unwrap();
 }
+
+/// A secp256k1 actor registered with the node under the compressed spelling
+/// of its key, which is not the one DefraDB derives, and its DID as it was
+/// registered.
+fn registered_under_the_compressed_spelling() -> identity::Did {
+    use crypto::Key as _;
+    use identity::Identity as _;
+
+    let key = crypto::generate_secp256k1().expect("key");
+    let identity = identity::RawIdentity::from_secp256k1(key.clone()).expect("identity");
+    let derived = identity.did().expect("did");
+    let (kind, point) = crypto::parse_did_key(derived.as_str()).expect("did:key");
+    assert_eq!(point.len(), 65);
+    let mut compressed = vec![0x02 | (point[64] & 1)];
+    compressed.extend_from_slice(&point[1..33]);
+    let did = identity::Did::new(crypto::create_did_key(kind, &compressed).expect("did:key"))
+        .expect("DID");
+    assert_ne!(did, derived);
+    let public = identity.public_key_bytes();
+    defra_core::signing::store_identity(
+        did.as_str(),
+        defra_core::signing::SigningConfig {
+            key_type: defra_core::signing::SigningKeyType::Secp256k1,
+            private_key_bytes: key.raw().to_vec(),
+            public_key_hex: hex::encode(&public),
+            public_key_bytes: public,
+            remote_signer: None,
+            signing_authorization: None,
+        },
+    )
+    .expect("the store takes the identity");
+    did
+}
+
+/// An owner whose key is registered under another spelling than the one a
+/// staged change keeps stages a grant and a revocation on its document, and
+/// the chain takes both: the key is found at submission as it was at staging.
+#[test]
+fn a_key_registered_under_another_spelling_signs_its_staged_changes() {
+    workers::block_on(async {
+        let directory = tempfile::tempdir().unwrap();
+        let node = node(directory.path()).await;
+        let vera = node.vera_acp().expect("vera.rs document ACP").clone();
+        let actor = identity::Did::new(vera.self_did().expect("actor DID")).unwrap();
+        let policy = vera
+            .add_policy(actor.as_str(), POLICY)
+            .await
+            .expect("policy");
+        drop(vera);
+        node.add_collection(&users(&policy))
+            .await
+            .expect("collection");
+        let owner = registered_under_the_compressed_spelling();
+        let reader = identity::Did::new(STRANGER).unwrap();
+        let acting = defra_core::RequestContext::default().with_identity(Some(owner.to_string()));
+        let doc = created(node.execute_request(create_user("theirs", &owner)).await);
+
+        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        let staged = node
+            .add_dac_actor_relationship_change_for_in_txn(
+                transaction.handle(),
+                &acting,
+                "Users",
+                &doc,
+                "reader",
+                reader.as_str(),
+            )
+            .await
+            .expect("staged grant");
+        assert!(
+            matches!(
+                staged,
+                RelationshipChange::Staged {
+                    authority_checked: true,
+                    ..
+                }
+            ),
+            "{staged:?}"
+        );
+        transaction.commit().await.expect("commit");
+        assert!(chain_reads(&node, &reader, &policy, &doc).await);
+
+        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        node.delete_dac_actor_relationship_change_for_in_txn(
+            transaction.handle(),
+            &acting,
+            "Users",
+            &doc,
+            "reader",
+            reader.as_str(),
+        )
+        .await
+        .expect("staged revocation");
+        transaction.commit().await.expect("commit");
+        assert!(!chain_reads(&node, &reader, &policy, &doc).await);
+        node.shutdown().await.expect("shutdown");
+    })
+    .unwrap();
+}

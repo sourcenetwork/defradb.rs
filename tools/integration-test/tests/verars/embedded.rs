@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use vera::vera_rs::NativeWorker;
+use vera::vera_rs::{AcpTransport, NativeWorker, RpcTransport};
 use vera::{AcpTuning, ProviderError, VeraRsProvider};
 use vera_embedded::{Deployment, HostConfig, HostedNode};
 
@@ -89,6 +89,29 @@ impl Embedded {
             &ACTOR_KEY,
             worker,
             &tuning,
+            None,
+            &edge::testing::edge(),
+        )
+        .await
+    }
+
+    /// A provider that reaches the node in process, its submissions and
+    /// receipt reads through what `between` puts before the node's channel.
+    pub async fn in_process_behind(
+        &self,
+        worker: NativeWorker,
+        tuning: &AcpTuning,
+        between: impl FnOnce(Arc<dyn RpcTransport>) -> Arc<dyn RpcTransport>,
+    ) -> Result<VeraRsProvider, ProviderError> {
+        let transport = Arc::new(self.node.transport(tuning.request_timeout));
+        let acp: Arc<dyn AcpTransport> = transport.clone();
+        VeraRsProvider::with_transport(
+            between(transport),
+            acp,
+            self.node.consensus_key(),
+            &ACTOR_KEY,
+            worker,
+            tuning,
             None,
             &edge::testing::edge(),
         )
