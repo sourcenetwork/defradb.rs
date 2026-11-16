@@ -37,6 +37,7 @@ pub mod pending;
 mod permission;
 mod policy_cache;
 mod policy_lookup;
+mod provider_command;
 // Both persistent stores require `S: Store + Send + Sync`, which the wasm
 // LevelDB store cannot satisfy, so they are native-only.
 #[cfg(not(target_arch = "wasm32"))]
@@ -69,6 +70,7 @@ pub use persistent::PersistentAcpStore;
 pub use policy_lookup::{
     DelegationAudience, LightClientStatus, PolicyLookup, RemotePolicies, StorePolicies,
 };
+pub use provider_command::ProviderCommand;
 pub use read_access::{check_doc_read_access, DirectChecker, DocAccess, ObjectAccessChecker};
 pub use relation::{
     RelationTuple, DELETER_RELATION, OWNER_RELATION, READER_RELATION, UPDATER_RELATION,

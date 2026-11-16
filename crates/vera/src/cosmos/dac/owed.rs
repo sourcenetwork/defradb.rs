@@ -3,7 +3,8 @@
 //! The change is submitted as its acting DID with what was recorded when it
 //! was staged, never with the credentials of whatever request runs the
 //! submission: a token signed now with the node's key for that DID, or the
-//! caller's delegation as it was presented. That holds for every subject: a
+//! caller's delegation as it was presented, which may be bound to this one
+//! change. That holds for every subject: a
 //! userset or cross-object subject is sent under the same token, not under
 //! the provider's own actor. Vera sets a relationship it
 //! already holds and deletes one it does not hold without error, so a change
@@ -15,8 +16,21 @@ use defra_core::RequestContext;
 use super::{owned, VeraDocumentACP};
 use crate::provider::{ProviderError, SubjectRef};
 
-/// Why `token` no longer lets the node act as `actor`, if it does not.
-fn lapsed(acp: &VeraDocumentACP, actor: &str, token: &str) -> Option<String> {
+/// Why `token` no longer lets the node submit `change`, if it does not. A
+/// token bound to one request is checked against the change it is submitted
+/// with.
+fn lapsed(acp: &VeraDocumentACP, change: &OwedChange, token: &str) -> Option<String> {
+    let actor = change.actor.as_str();
+    let command = acp::ProviderCommand::Relationship {
+        tuple: &change.tuple,
+        op: change.op,
+    };
+    let bound = super::request_bound::with_policy_command(command, |command| {
+        command.and_then(|command| acp.request_bound(actor, token, command))
+    });
+    if let Some(bound) = bound {
+        return bound.err();
+    }
     match acp.provider.caller_of_delegation(token)? {
         Ok(caller)
             if acp.provider.canonical_actor(&caller) == acp.provider.canonical_actor(actor) =>
@@ -33,7 +47,7 @@ fn lapsed(acp: &VeraDocumentACP, actor: &str, token: &str) -> Option<String> {
 async fn token(acp: &VeraDocumentACP, change: &OwedChange) -> Result<String, Submission> {
     let actor = change.actor.as_str();
     match &change.authority {
-        OwedAuthority::Delegation { token } => match lapsed(acp, actor, token) {
+        OwedAuthority::Delegation { token } => match lapsed(acp, change, token) {
             Some(reason) => Err(Submission::AwaitingAuthority { reason }),
             None => Ok(token.clone()),
         },
@@ -152,7 +166,7 @@ pub(super) async fn submit(acp: &VeraDocumentACP, change: &OwedChange) -> Submis
             // A delegation that expired on the way is not the provider's
             // word on the change.
             let expired = match &change.authority {
-                OwedAuthority::Delegation { token } => lapsed(acp, change.actor.as_str(), token),
+                OwedAuthority::Delegation { token } => lapsed(acp, change, token),
                 OwedAuthority::NodeKey => None,
             };
             match expired {

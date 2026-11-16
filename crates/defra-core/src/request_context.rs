@@ -32,6 +32,9 @@ struct Fields {
     identity: Option<String>,
     dac_bypass: bool,
     require_transactional_authority: bool,
+    /// The document a verified write creates or changes, where the request
+    /// stages one.
+    verified_document: Option<String>,
     encryption: Option<EncryptionConfig>,
     signing: Option<SigningConfig>,
     /// Go's per-operation `EnableSigning`: `Some(false)` writes this
@@ -42,6 +45,9 @@ struct Fields {
     /// The DID that presented a bearer token and the token, when the request
     /// carries a bearer at all.
     bearer: Option<(Option<String>, Option<String>)>,
+    /// Whether the bearer is a delegation its presenter bound to the one
+    /// command this request sends a remote ACP provider.
+    bearer_names_request: bool,
     txn: Option<TxnId>,
     authorization_expiration: Option<u64>,
     /// The collection version the request works through, when it names one
@@ -60,6 +66,22 @@ impl RequestContext {
     pub fn transactional_authority_required(&self) -> bool {
         self.0.require_transactional_authority
     }
+
+    /// This context staging a verified write of the document `doc_id`: the
+    /// one object a document ACP that cannot join the transaction is owed a
+    /// registration for when the write creates it.
+    #[must_use]
+    pub fn with_verified_document(mut self, doc_id: Option<String>) -> Self {
+        Arc::make_mut(&mut self.0).verified_document = doc_id;
+        self
+    }
+
+    /// The document the verified write this request stages creates or
+    /// changes; `None` for any other request.
+    pub fn verified_document(&self) -> Option<&str> {
+        self.0.verified_document.as_deref()
+    }
+
     /// The context a call that arrives without one runs in: the default
     /// anonymous context. Built for tests with the `ambient` feature, it
     /// carries what the test set through the thread-local API instead (see
@@ -114,7 +136,10 @@ impl RequestContext {
                 .take()
                 .or_else(|| ambient.0.batch_session.clone());
             fields.creator = fields.creator.take().or_else(|| ambient.0.creator.clone());
-            fields.bearer = fields.bearer.take().or_else(|| ambient.0.bearer.clone());
+            if fields.bearer.is_none() {
+                fields.bearer = ambient.0.bearer.clone();
+                fields.bearer_names_request = ambient.0.bearer_names_request;
+            }
             context
         }
         #[cfg(not(any(test, feature = "ambient")))]
@@ -310,8 +335,29 @@ impl RequestContext {
     /// request with, `None` when it presented none.
     #[must_use]
     pub fn with_bearer(mut self, did: Option<String>, token: Option<String>) -> Self {
-        Arc::make_mut(&mut self.0).bearer = Some((did, token));
+        let fields = Arc::make_mut(&mut self.0);
+        fields.bearer = Some((did, token));
+        fields.bearer_names_request = false;
         self
+    }
+
+    /// This context carrying `token` as the delegation `did` bound to the
+    /// one command this request sends a remote ACP provider. The provider
+    /// takes it for that command and for nothing else, and takes no plain
+    /// delegation in its place.
+    #[must_use]
+    pub fn with_request_delegation(mut self, did: String, token: String) -> Self {
+        let fields = Arc::make_mut(&mut self.0);
+        fields.bearer = Some((Some(did), Some(token)));
+        fields.bearer_names_request = true;
+        self
+    }
+
+    /// Whether the bearer this request carries was presented as bound to the
+    /// one command the request sends
+    /// ([`with_request_delegation`](Self::with_request_delegation)).
+    pub fn bearer_names_request(&self) -> bool {
+        self.0.bearer_names_request
     }
 }
 
