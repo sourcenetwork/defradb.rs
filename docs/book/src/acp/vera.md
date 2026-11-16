@@ -122,7 +122,8 @@ Where a one-request delegation is taken, and where not:
   no verified write and stages no change.
 - **Checked wherever it is sent.** A command that goes to the chain with one, at once or
   after a commit, is compared with the command the token names first, and is not sent
-  when they differ.
+  when they differ. A plain delegation is checked again the same way as its command is
+  sent: one that expired since the write sends nothing.
 
 A command made as the write's signer is signed by the node's worker; the token is the
 signer's authority for it, and the chain records the signer, not the node, as owner.

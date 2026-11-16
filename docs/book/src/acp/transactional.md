@@ -262,12 +262,37 @@ of its call: `RequestContext::with_bearer` for a plain delegation, or
 `RequestContext::with_request_delegation` for one bound to that one change. A
 request-bound delegation covers one command, so a create and a grant beside it need two.
 
-What is recorded and what is not: the staged relationship change keeps its token in its
-record and is submitted with it, checked again against the change it is submitted with;
-one that has expired by then parks the change as awaiting authority. The owed
-registration keeps no token. The commit's own hook submits it with the token the write
-carried; if that fails, the registration stays owed, its document readable by its creator
-only, until a later request by the creator presents a credential for it.
+A provider that gives the node nothing to check a delegation against (the Cosmos
+provider, which is passed its caller's token as it is) admits a verified write with a key
+the node holds and with nothing else: `Delegation(token)` is refused there.
+
+What is recorded and what is not. The staged relationship change keeps its token in its
+record and is submitted with it. The owed registration keeps no token: the commit's own
+hook submits it with the token the write carried. Either way the credential is checked
+again as the command is sent, with the checks made at admission, so a delegation that
+expired between the write and the commit sends nothing.
+
+**What a failed submission leaves, as this step stands.** These are limits, not a
+recovery path. The outbox epic (#2954: report, await, reauthorize) removes them.
+
+- A registration the hook could not submit stays owed. The failure is logged; the commit
+  has already returned success. The document is readable by its creator only, on this
+  node, and the provider does not hold it.
+- No node call takes a fresh credential for an owed registration. It is submitted again
+  only as a side effect: when a later call on that document runs through the gate with a
+  credential the provider takes for the creator (an access decision, a relationship
+  change), when an owed change by the creator that carries a plain delegation is
+  settled, or when the node starts. A call that carries a delegation bound to that
+  registration settles it and then fails its own command, which the token does not name.
+- The pass at start and the settlement of an owed change serve no request. They register
+  with a key the node holds for the creator, or with the token the process holds for
+  that DID (`defra_core::signing::set_request_bearer_token`) where an embedder set one.
+  An owed registration does not record that it came from a verified write, so these two
+  paths treat it as any other.
+- A relationship change staged beside the registration waits behind it. It is not sent
+  and not parked while the registration is owed, whatever becomes of its own token. Once
+  the registration is settled, a change whose token has expired is parked as awaiting
+  authority.
 
 The model is `proofs/tla/VerifiedRemoteWrite.tla`, with `VerifiedRemoteAuthority.lean`
 for the rule itself.
