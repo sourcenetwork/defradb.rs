@@ -274,6 +274,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 .with_acp(self.acp.clone(), caller_identity.clone())
                 .with_dac_bypass(self.context().dac_bypass())
                 .with_read_validator(self.read_validator.clone())
+                .with_acp_registration_projection(self.acp_registration_projection.clone())
                 .with_retry_inputs(self.retry_inputs.clone())
                 .with_index_estimates(index_estimates);
             if let Some(ref lens_store) = self.lens_store {
@@ -290,7 +291,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             // warnings.
             if collection.query.is_some() {
                 let app_read = self.app_read_check(caller_identity.clone(), &collection);
-                plan = PermissionFilterNode::wrap(
+                plan = PermissionFilterNode::wrap_with_projection_and_inputs(
                     plan,
                     collection
                         .policy
@@ -303,6 +304,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                             resource_name: policy.resource_name.clone(),
                         }),
                     app_read,
+                    self.acp_registration_projection.clone(),
                     self.retry_inputs.clone(),
                 );
             }
