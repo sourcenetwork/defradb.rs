@@ -535,19 +535,6 @@ fn a_caller_that_keeps_its_key_writes_through_its_own_delegation() {
             Some(caller.did())
         );
 
-        let owner_did = identity::Did::new(&owner).unwrap();
-        let caller_did = identity::Did::new(caller.did()).unwrap();
-        node.document_acp()
-            .register_doc_object(&owner_did, &policy, "users", "users")
-            .await
-            .unwrap();
-        node.document_acp()
-            .add_actor_relationship(
-                &owner_did, &caller_did, &policy, "users", "users", "writer", &[],
-            )
-            .await
-            .unwrap();
-
         let signing = defra_core::signing::SigningConfig {
             key_type: defra_core::signing::SigningKeyType::Ed25519,
             private_key_bytes: caller_key.private_key_bytes(),

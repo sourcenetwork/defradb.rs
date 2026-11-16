@@ -36,6 +36,13 @@ pub use crate::ambient::{
 /// completion form the write path uses: one call per wave of signatures,
 /// completing without holding a thread while the service works.
 pub trait RemoteSigner: Send + Sync {
+    /// Only a connection signer verifying every signature against the
+    /// authenticated caller's key returns true. Signing services retain the
+    /// ACP decision that authorizes their signature ceremony.
+    fn uses_caller_key(&self, _caller: &str) -> bool {
+        false
+    }
+
     fn sign_sync(
         &self,
         data: &[u8],

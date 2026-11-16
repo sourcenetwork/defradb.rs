@@ -40,4 +40,15 @@ theorem expired_never_dispatches (credential : Verified) (now : Nat) (canWrite :
 theorem permission_denied_never_dispatches (credential : Verified) (now : Nat) :
     admitted credential now false = false := by simp [admitted]
 
+/-- A connection signer verifying the caller's own signatures needs no
+signing-service delegation. Other remote signers retain their policy decision. -/
+def needsPolicyDecision (remote callerKey : Bool) : Bool := remote && !callerKey
+
+/-- A client signs its own blocks without a synthetic collection-wide grant. -/
+theorem client_key_needs_no_service_grant (remote : Bool) :
+    needsPolicyDecision remote true = false := by simp [needsPolicyDecision]
+
+/-- An external signing service keeps its existing policy authorization. -/
+theorem service_keeps_policy_decision : needsPolicyDecision true false = true := rfl
+
 end ClientSigningCredential
