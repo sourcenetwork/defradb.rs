@@ -92,7 +92,7 @@ RUNS=(
   "MC_VerifiedClientGraph_Red_RevokeNac.cfg VerifiedClientGraph.tla RED" # NAC revocation is not validated at commit (INV_NacRevocation)
   "MC_VerifiedClientGraph_Red_RevokeDac.cfg VerifiedClientGraph.tla RED" # DAC revocation is not validated at commit (INV_DacRevocation)
   "MC_VerifiedClientGraph_Red_Rollback.cfg VerifiedClientGraph.tla RED" # a rejected graph publishes the Agent effect (INV_Atomic)
-  "MC_VerifiedRemoteWrite_Green.cfg VerifiedRemoteWrite.tla GREEN" # a verified write on a remote provider needs authority for its signer, and a request-bound delegation covers its own command only
+  "MC_VerifiedRemoteWrite_Green.cfg VerifiedRemoteWrite.tla GREEN" # a verified write on a remote provider needs authority for its signer, a request-bound delegation covers its own command only, and a failed submission is reported and takes a fresh credential by the same rule
   "MC_VerifiedRemoteWrite_Red_NoAuthority.cfg VerifiedRemoteWrite.tla RED" # the write is staged with no key and no delegation (INV_AuthorityAtAdmission)
   "MC_VerifiedRemoteWrite_Red_AnyIssuer.cfg VerifiedRemoteWrite.tla RED" # a delegation somebody else signed is taken (INV_AuthorityAtAdmission)
   "MC_VerifiedRemoteWrite_Red_AnyNode.cfg VerifiedRemoteWrite.tla RED" # a delegation given to another node is taken (INV_AuthorityAtAdmission)
@@ -103,6 +103,9 @@ RUNS=(
   "MC_VerifiedRemoteWrite_Red_SentExpired.cfg VerifiedRemoteWrite.tla RED" # an owed command is sent under an expired credential (INV_NothingSentStale)
   "MC_VerifiedRemoteWrite_Red_GrantFirst.cfg VerifiedRemoteWrite.tla RED" # a grant is sent before its document's registration (INV_RegistrationFirst)
   "MC_VerifiedRemoteWrite_Red_GrantUnchecked.cfg VerifiedRemoteWrite.tla RED" # a grant is staged with nothing that lets the node send it (INV_GrantAuthority)
+  "MC_VerifiedRemoteWrite_Red_AmbientRetry.cfg VerifiedRemoteWrite.tla RED" # a registration is sent with a token the process holds and nobody presented for it (INV_SentUnderRecordedAuthority)
+  "MC_VerifiedRemoteWrite_Red_ReauthUnchecked.cfg VerifiedRemoteWrite.tla RED" # a parked command is owed again on a fresh credential the rule of admission refuses (INV_ReauthorizedWithAuthority)
+  "MC_VerifiedRemoteWrite_Red_SilentFailure.cfg VerifiedRemoteWrite.tla RED" # a submission fails after the commit and the record does not say so (INV_FailureReported)
   "MC_SourceScopedNac_Green.cfg SourceScopedNac.tla GREEN"
   "MC_SourceScopedNac_Red_Authority.cfg SourceScopedNac.tla RED"
   "MC_SourceScopedNac_Red_Owner.cfg SourceScopedNac.tla RED"
@@ -601,6 +604,11 @@ RUNS=(
   "MC_AcpOutbox_Red_UncheckedHolds.cfg AcpOutbox.tla RED" # an unchecked change awaiting authority holds the owner's later change of its tuple (INV_UncheckedYields)
   "MC_AcpOutbox_Red_UncheckedPassedKept.cfg AcpOutbox.tla RED" # an unchecked change passed by a later one is kept, reauthorized and lands after it (INV_RevokedAtCommit)
   "MC_AcpOutbox_Red_TransferWhileOwed.cfg AcpOutbox.tla RED" # the owner changes on the provider while the node still holds the owed registration (INV_NoWidening)
+  "MC_AcpOutbox_Red_AbandonByAnyone.cfg AcpOutbox.tla RED" # the subject of a refused delete abandons it and reads again (INV_RevokedAtCommit)
+  "MC_AcpOutbox_Red_AbandonInFlight.cfg AcpOutbox.tla RED" # a change abandoned while it is being sent lands afterwards (INV_AbandonIsFinal)
+  "MC_AcpOutbox_Red_SilentFailure.cfg AcpOutbox.tla RED" # a registration whose submission failed stays owed with no reason recorded (INV_FailureReported)
+  "MC_AcpOutbox_Red_AmbientRegistration.cfg AcpOutbox.tla RED" # a retry sends the registration with a token the process holds (INV_RecordedAuthority)
+  "MC_AcpOutbox_Red_ReauthorizeUnchecked.cfg AcpOutbox.tla RED" # a fresh credential for the registration is taken from anyone and its signer becomes the owner (INV_NoWidening)
   "MC_RegisterDocOnce_Green.cfg RegisterDocOnce.tla GREEN" # racing registrations of one document: one owner, the winner owns it, one wins
   "MC_RegisterDocOnce_Red_NoValidation.cfg RegisterDocOnce.tla RED" # deciding scan not validated: two owners (INV_OneOwner)
   "MC_RegisterDocOnce_Red_Sentinel.cfg RegisterDocOnce.tla RED" # main before the fix: the identical sentinel write commits, two owners (INV_OneOwner)

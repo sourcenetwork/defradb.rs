@@ -109,4 +109,40 @@ theorem general_authority_covers_every_command (holdsKey : Bool) (c : Credential
   · cases hf : c.form <;> simp_all [mayAct, maySend]
   · simp [maySend]
 
+/-- Whether a command the node could not send is owed again when a fresh
+credential is handed in for it: the question asked when its write was
+admitted, asked of the fresh credential about that same command. There is no
+second rule. -/
+def reauthorized (holdsKey : Bool) (fresh : Credential) (command : Nat) : Bool :=
+  maySend holdsKey fresh command
+
+/-- A fresh credential is taken exactly when it would have admitted the
+command. -/
+theorem a_fresh_credential_is_taken_as_at_admission (holdsKey : Bool)
+    (fresh : Credential) (command : Nat) :
+    reauthorized holdsKey fresh command = maySend holdsKey fresh command := rfl
+
+/-- A fresh request-bound delegation that names another command leaves the
+owed command where it was. -/
+theorem a_fresh_request_for_another_command_is_refused (fresh : Credential)
+    (names command : Nat) (hf : fresh.form = .request names) (hne : names ≠ command) :
+    reauthorized false fresh command = false :=
+  a_request_sends_only_its_command fresh names command hf hne
+
+/-- A fresh credential somebody else signed leaves it where it was too. -/
+theorem a_fresh_credential_of_another_signer_is_refused (fresh : Credential)
+    (command : Nat) (h : fresh.signedBySigner = false) :
+    reauthorized false fresh command = false :=
+  a_foreign_signature_sends_nothing fresh command h
+
+/-- One fresh request-bound delegation makes at most one command owed again:
+the registration's does not release the grant staged beside it. -/
+theorem a_fresh_request_releases_one_command (fresh : Credential)
+    (names first second : Nat) (hf : fresh.form = .request names)
+    (h1 : reauthorized false fresh first = true)
+    (h2 : reauthorized false fresh second = true) : first = second := by
+  have a := a_sent_request_names_its_command fresh names first hf h1
+  have b := a_sent_request_names_its_command fresh names second hf h2
+  omega
+
 end VerifiedRemoteAuthority
