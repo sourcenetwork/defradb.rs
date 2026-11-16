@@ -709,10 +709,12 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
         if matches!(mutation.mutation_type, MutationType::Add) {
             match context.signing().cloned() {
                 Some(mut config)
-                    if config
-                        .remote_signer
-                        .as_ref()
-                        .is_some_and(|signer| signer.takes_authorization()) =>
+                    if config.remote_signer.as_ref().is_some_and(|signer| {
+                        signer.takes_authorization()
+                            && !caller_identity
+                                .as_ref()
+                                .is_some_and(|caller| signer.uses_caller_key(caller.as_str()))
+                    }) =>
                 {
                     tracing::info!(
                         collection = %mutation.collection_name,

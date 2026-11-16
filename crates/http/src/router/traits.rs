@@ -305,7 +305,10 @@ pub trait DocumentAcpOperations: defra_core::thread_bounds::MaybeSendSync {
     /// The DID that signed `token`, when `token` is a delegation the node's
     /// document ACP may act under now for that DID. `None` when `token` is
     /// not a delegation or the node's ACP takes none.
-    fn caller_of_delegation(&self, _token: &str) -> Option<Result<identity::Did, String>> {
+    fn caller_of_delegation(
+        &self,
+        _token: &str,
+    ) -> Option<Result<acp::AuthenticatedCaller, String>> {
         None
     }
 

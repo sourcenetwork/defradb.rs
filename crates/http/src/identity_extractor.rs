@@ -143,7 +143,7 @@ pub(crate) struct MiddlewareIdentity(pub Option<Did>);
 pub(crate) fn caller_from_headers(
     headers: &axum::http::HeaderMap,
     delegations: Option<&dyn crate::router::DocumentAcpOperations>,
-) -> Result<Option<Did>, IdentityExtractionError> {
+) -> Result<Option<acp::AuthenticatedCaller>, IdentityExtractionError> {
     let delegated = delegations.and_then(|acp| {
         let token = headers.get(AUTHORIZATION)?.to_str().ok()?;
         let token = token
@@ -153,7 +153,7 @@ pub(crate) fn caller_from_headers(
         acp.caller_of_delegation(token)
     });
     match delegated {
-        Some(Ok(did)) => Ok(Some(did)),
+        Some(Ok(caller)) => Ok(Some(caller)),
         Some(Err(error)) => Err(IdentityExtractionError::TokenVerificationFailed(error)),
         None => parse_identity_from_headers(headers),
     }
@@ -162,10 +162,10 @@ pub(crate) fn caller_from_headers(
 /// Parse identity from HTTP headers (shared between middleware and extractors).
 ///
 /// Extracts the Authorization header, validates the Host header for
-/// authenticated requests, and returns the parsed DID.
+/// authenticated requests, and returns the verified caller and expiration.
 pub(crate) fn parse_identity_from_headers(
     headers: &axum::http::HeaderMap,
-) -> Result<Option<Did>, IdentityExtractionError> {
+) -> Result<Option<acp::AuthenticatedCaller>, IdentityExtractionError> {
     let auth_value = match headers.get(AUTHORIZATION) {
         Some(value) => match value.to_str() {
             Ok(s) => Some(s.to_string()),
@@ -252,7 +252,7 @@ impl IntoResponse for IdentityExtractionError {
 fn extract_identity_from_auth_header(
     auth_value: Option<&str>,
     expected_audience: &str,
-) -> Result<Option<Did>, IdentityExtractionError> {
+) -> Result<Option<acp::AuthenticatedCaller>, IdentityExtractionError> {
     let Some(auth_value) = auth_value else {
         // No Authorization header = anonymous request
         return Ok(None);
@@ -291,7 +291,10 @@ fn extract_identity_from_auth_header(
         .did()
         .map_err(|e| IdentityExtractionError::InvalidToken(e.to_string()))?;
 
-    Ok(Some(did))
+    Ok(Some(acp::AuthenticatedCaller {
+        did,
+        expires_at: token_identity.claims.exp,
+    }))
 }
 
 impl<S> FromRequestParts<S> for ExtractIdentity
@@ -311,8 +314,14 @@ where
         }
 
         // Fallback: parse from headers (for routes/tests without the middleware).
-        let did = parse_identity_from_headers(&parts.headers)?;
-        Ok(ExtractIdentity { did, context })
+        let caller = parse_identity_from_headers(&parts.headers)?;
+        let context = context
+            .unwrap_or_default()
+            .with_authorization_expiration(caller.as_ref().map(|caller| caller.expires_at));
+        Ok(ExtractIdentity {
+            did: caller.map(|caller| caller.did),
+            context: Some(context),
+        })
     }
 }
 

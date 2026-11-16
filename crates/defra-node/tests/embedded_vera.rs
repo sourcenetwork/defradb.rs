@@ -433,7 +433,11 @@ fn a_caller_that_keeps_its_key_writes_through_its_own_delegation() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let node = Node::builder()
-            .with_http(defra_node::HttpConfig::with_listener(listener).unwrap())
+            .with_http(defra_node::HttpConfig::with_listener(listener).unwrap().with_authenticated_routes(
+                axum::Router::new().route("/application", axum::routing::get(|identity: defra_http::ExtractIdentity| async move {
+                    axum::Json(serde_json::json!({"caller": identity.did().map(|did| did.as_str()), "expiration": identity.context().authorization_expiration()}))
+                })),
+            ))
             .with_embedded_vera(EmbeddedVeraConfig {
                 data_dir: directory.path().join("vera"),
                 deployment: EmbeddedVeraDeployment {
@@ -464,7 +468,11 @@ fn a_caller_that_keeps_its_key_writes_through_its_own_delegation() {
         .await
         .expect("collection");
 
-        let caller = Ed25519Signer::from_slice(&[9; 32]).expect("key");
+        let caller_key =
+            identity::RawIdentity::from_private_key(crypto::generate_ed25519().unwrap()).unwrap();
+        let caller =
+            Ed25519Signer::from_slice(&caller_key.private_key_bytes())
+                .expect("key");
         let audience = vera
             .light_client_status()
             .expect("status")
@@ -500,10 +508,21 @@ fn a_caller_that_keeps_its_key_writes_through_its_own_delegation() {
                 .send()
         };
 
-        let refused = create(elsewhere).await.unwrap();
+        let application = client.get(format!("http://{address}/application"))
+            .header("Authorization", format!("Bearer {delegation}")).send().await.unwrap();
+        assert!(application.status().is_success());
+        let authenticated: serde_json::Value = application.json().await.unwrap();
+        let verified = node.document_acp().caller_of_delegation(&delegation).unwrap().unwrap();
+        assert_eq!(authenticated["caller"], caller.did());
+        assert_eq!(authenticated["expiration"], verified.expires_at);
+        let wrong_application = client.get(format!("http://{address}/application"))
+            .header("Authorization", format!("Bearer {elsewhere}")).send().await.unwrap();
+        assert_eq!(wrong_application.status().as_u16(), 403);
+
+        let refused = create(elsewhere.clone()).await.unwrap();
         assert_eq!(refused.status().as_u16(), 403);
 
-        let created = create(delegation).await.unwrap();
+        let created = create(delegation.clone()).await.unwrap();
         assert!(created.status().is_success(), "{}", created.status());
         let body: serde_json::Value = created.json().await.unwrap();
         let doc = body["data"]["add_Users"][0]["_docID"]
@@ -519,6 +538,59 @@ fn a_caller_that_keeps_its_key_writes_through_its_own_delegation() {
             registered.as_ref().map(|did| did.as_str()),
             Some(caller.did())
         );
+
+        let signing = defra_core::signing::SigningConfig {
+            key_type: defra_core::signing::SigningKeyType::Ed25519,
+            private_key_bytes: caller_key.private_key_bytes(),
+            public_key_bytes: caller_key.public_key_bytes(),
+            public_key_hex: hex::encode(caller_key.public_key_bytes()),
+            remote_signer: None,
+            signing_authorization: None,
+        };
+        assert!(defra_core::signing::get_identity(caller.did()).is_none());
+        let schema = node.get_collection("Users").unwrap().unwrap();
+        let input = serde_json::json!({"name": "signed by held key"});
+        let mut graph = db::block::builder::ClientCreateSignatures::from_input(
+            &storage::Crdts::default(),
+            &schema,
+            &input,
+            &signing,
+        )
+        .unwrap();
+        let query = query::QueryRequest::new(
+            "mutation($input: UsersMutationInputArg!) { add_Users(input: $input) { _docID } }",
+        )
+        .with_variables(serde_json::json!({"input": input}));
+        let endpoint = format!("ws://{address}/api/v0/graphql/client-sign");
+        assert!(defra_http::client_signed_create::execute(
+            &endpoint,
+            &format!("Bearer {elsewhere}"),
+            query.clone(),
+            None,
+            &mut graph,
+        )
+        .await
+        .is_err());
+        let signed = defra_http::client_signed_create::execute(
+            &endpoint,
+            &format!("Bearer {delegation}"),
+            query,
+            None,
+            &mut graph,
+        )
+        .await
+        .expect("the delegation authenticates the signing socket");
+        assert!(!signed.has_errors(), "{:?}", signed.errors);
+        assert_eq!(
+            node.document_acp()
+                .get_doc_owner(&policy, "users", graph.doc_id())
+                .await
+                .unwrap()
+                .as_ref()
+                .map(|did| did.as_str()),
+            Some(caller.did())
+        );
+        assert!(defra_core::signing::get_identity(caller.did()).is_none());
 
         // The caller grants another actor access the same way, and that actor
         // then reads with an ordinary identity token.

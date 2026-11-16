@@ -10,14 +10,13 @@ use axum::response::{IntoResponse, Response};
 use base64::Engine;
 use defra_core::signing::{SigningConfig, SigningKeyType};
 use futures::{FutureExt, StreamExt};
-use identity::Identity as _;
 use query::executor::{QueryRequest, QueryResponse};
 use serde::Deserialize;
 use serde_json::json;
 
 use crate::client_signer::{SessionSigner, Wave};
 use crate::error::HttpError;
-use crate::identity_extractor::{ExtractIdentity, ExtractTokenIdentity};
+use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
 use crate::router::{AppState, NodePermission};
 
@@ -72,7 +71,6 @@ fn has_token(value: Option<&axum::http::HeaderValue>, token: &str) -> bool {
 pub(crate) async fn upgrade(
     State(state): State<AppState>,
     identity: ExtractIdentity,
-    token: ExtractTokenIdentity,
     mut request: Request<Body>,
 ) -> Result<Response, HttpError> {
     if identity.did().is_none() {
@@ -80,13 +78,12 @@ pub(crate) async fn upgrade(
             "client signing requires an authenticated DID".into(),
         ));
     }
-    let token = token
-        .identity()
-        .ok_or_else(|| HttpError::Unauthorized("client signing requires a bearer".into()))?;
-    if token.did().ok().as_ref() != identity.did() {
-        return Err(HttpError::Unauthorized("bearer identity mismatch".into()));
-    }
-    let expiration = token.claims.exp;
+    let expiration = identity
+        .context()
+        .authorization_expiration()
+        .ok_or_else(|| {
+            HttpError::Unauthorized("client signing requires a verified bearer lifetime".into())
+        })?;
     let lifetime = current_lifetime(expiration)
         .ok_or_else(|| HttpError::Unauthorized("bearer expired".into()))?;
     require_permission(&state, &identity, NodePermission::DocumentUpdate).await?;

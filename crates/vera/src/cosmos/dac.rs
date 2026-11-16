@@ -314,11 +314,12 @@ impl VeraDocumentACP {
             };
         }
         match self.provider.caller_of_delegation(&token) {
-            Some(Ok(caller)) if self.provider.canonical_actor(&caller) == canonical => {
+            Some(Ok(caller)) if self.provider.canonical_actor(caller.did.as_str()) == canonical => {
                 Ok(acp::OwedAuthority::Delegation { token })
             }
             Some(Ok(caller)) => Err(unavailable(format!(
-                "the request's delegation is signed by {caller}"
+                "the request's delegation is signed by {}",
+                caller.did
             ))),
             Some(Err(error)) => Err(unavailable(error.to_string())),
             None if self.provider.delegation_audience().is_some() => Err(unavailable(
@@ -408,12 +409,14 @@ impl acp::RemotePolicies for VeraDocumentACP {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl DocumentACP for VeraDocumentACP {
-    fn caller_of_delegation(&self, token: &str) -> Option<std::result::Result<Did, String>> {
+    fn caller_of_delegation(
+        &self,
+        token: &str,
+    ) -> Option<std::result::Result<acp::AuthenticatedCaller, String>> {
         Some(
             self.provider
                 .caller_of_delegation(token)?
-                .map_err(|error| error.to_string())
-                .and_then(|did| Did::new(&did).map_err(|error| error.to_string())),
+                .map_err(|error| error.to_string()),
         )
     }
 

@@ -28,6 +28,12 @@ pub enum DocumentAccessDecision {
 pub enum DocumentAccessMode {
     /// Apply the principal's node read gate and the actor's ordinary read gates.
     DelegatedRead,
+    /// Evaluate ordinary document access, including the provider's registration
+    /// and pending-revocation gates, plus the actor's active node permission.
+    Document {
+        permission: acp::DocumentPermission,
+        node_permission: acp::nac::NodePermission,
+    },
     /// Evaluate a named document capability and the actor's active node permission.
     Named {
         permission: String,

@@ -335,7 +335,10 @@ pub trait VeraProvider: MaybeSendSync {
     /// provider may act under now: signed by its issuer, current, and naming
     /// this provider's worker and deployment. `None` when `token` is not a
     /// delegation at all, so the caller is authenticated some other way.
-    fn caller_of_delegation(&self, _token: &str) -> Option<Result<String, ProviderError>> {
+    fn caller_of_delegation(
+        &self,
+        _token: &str,
+    ) -> Option<Result<acp::AuthenticatedCaller, ProviderError>> {
         None
     }
 

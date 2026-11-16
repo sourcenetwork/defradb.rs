@@ -71,9 +71,12 @@ impl VeraDocumentACP {
             None => {}
         }
         match self.provider.caller_of_delegation(token) {
-            Some(Ok(caller)) if self.provider.canonical_actor(&caller) == canonical => Ok(()),
+            Some(Ok(caller)) if self.provider.canonical_actor(caller.did.as_str()) == canonical => {
+                Ok(())
+            }
             Some(Ok(caller)) => Err(refused(format!(
-                "the request's delegation is signed by {caller}"
+                "the request's delegation is signed by {}",
+                caller.did
             ))),
             Some(Err(error)) => Err(refused(error.to_string())),
             None if self.provider.delegation_audience().is_some() => Err(refused(

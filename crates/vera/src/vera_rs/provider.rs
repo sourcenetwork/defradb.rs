@@ -803,7 +803,10 @@ impl VeraProvider for VeraRsProvider {
         })
     }
 
-    fn caller_of_delegation(&self, token: &str) -> Option<Result<String, ProviderError>> {
+    fn caller_of_delegation(
+        &self,
+        token: &str,
+    ) -> Option<Result<acp::AuthenticatedCaller, ProviderError>> {
         bearer::is_delegation(token).then(|| {
             bearer::caller_of_delegation(token, &self.worker_did, self.deployment)
                 .map_err(|error| ProviderError::Config(format!("caller delegation: {error}")))

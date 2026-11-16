@@ -129,12 +129,15 @@ impl VeraProvider for OwedProvider {
     fn caller_of_delegation(
         &self,
         token: &str,
-    ) -> Option<std::result::Result<String, ProviderError>> {
+    ) -> Option<std::result::Result<acp::AuthenticatedCaller, ProviderError>> {
         let did = token.strip_prefix("delegation:")?;
         Some(if self.expired.load(Ordering::Relaxed) {
             Err(ProviderError::Config("caller delegation: expired".into()))
         } else {
-            Ok(did.to_string())
+            Ok(acp::AuthenticatedCaller {
+                did: identity::Did::new(did).expect("fixture DID"),
+                expires_at: u64::MAX,
+            })
         })
     }
 

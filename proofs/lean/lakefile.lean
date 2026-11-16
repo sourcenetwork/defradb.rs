@@ -49,6 +49,9 @@ lean_lib HttpOwnerRegistration where
 lean_lib SseDelivery where
 
 @[default_target]
+lean_lib ClientSigningCredential where
+
+@[default_target]
 lean_lib ClientSigningAdmission where
 
 @[default_target]
