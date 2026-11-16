@@ -1,8 +1,4 @@
-//! Whose permissions decide access to a chunk's blocks and keys.
-//!
-//! A chunk has no policy, so its parent's applies. Blocks are history, so old
-//! chunks and chunks of a deleted parent count too, and they replicate like
-//! the parent's own old versions.
+//! A chunk's blocks and keys follow its parent's permissions, old chunks too.
 
 use document::{DocID, NormalValue};
 use schema::{CollectionVersion, CHUNK_SOURCE_ID_FIELD};

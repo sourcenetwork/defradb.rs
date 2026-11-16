@@ -6,7 +6,6 @@ use document::{Document, NormalValue};
 use rapidhash::RapidHashSet;
 use schema::{ChunkedField, CHUNK_HASH_FIELD, CHUNK_SOURCE_ID_FIELD, CHUNK_TEXT_FIELD};
 
-/// The fields of a chunk the read check uses.
 pub(crate) struct ChunkFields {
     pub(crate) parent_id: String,
     text: String,
@@ -74,7 +73,6 @@ pub(crate) fn parent_hashes(
     )
 }
 
-/// The fields of a chunk the read check uses.
 pub(crate) fn chunk_fields() -> RapidHashSet<String> {
     [CHUNK_SOURCE_ID_FIELD, CHUNK_TEXT_FIELD, CHUNK_HASH_FIELD]
         .into_iter()
@@ -82,7 +80,6 @@ pub(crate) fn chunk_fields() -> RapidHashSet<String> {
         .collect()
 }
 
-/// The fields of a parent the read check uses.
 pub(crate) fn parent_fields(chunked: &ChunkedField) -> RapidHashSet<String> {
     [chunked.field_name.clone()].into_iter().collect()
 }

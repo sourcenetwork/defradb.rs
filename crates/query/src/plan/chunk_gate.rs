@@ -1,8 +1,4 @@
-//! Read checks for chunk collections.
-//!
-//! A chunk has no policy and is never registered with ACP, so no grant can make
-//! it more visible than its parent. A chunk is readable only while its parent is
-//! live, the parent's current list names it, and the reader may read the parent.
+//! Read checks for chunks. A chunk has no ACP entry, so its live parent decides.
 
 use std::sync::Arc;
 

@@ -73,10 +73,7 @@ impl<S: Store + 'static> DbBlockClassifier<S> {
         None
     }
 
-    /// The metadata a block's read is checked against.
-    ///
-    /// A `@chunk` chunk's blocks are part of its parent's history, so they are
-    /// checked as the parent's. A chunk this node doesn't have is denied.
+    /// A chunk's blocks are checked as its parent's, so a missing parent denies.
     async fn attribute(
         &self,
         txn: &db::DbTxn<S>,
