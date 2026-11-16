@@ -71,6 +71,12 @@ pub enum Error {
     #[error("an owed ACP change takes {size} bytes, over the limit of {limit}")]
     OwedChangeTooLarge { size: usize, limit: usize },
 
+    /// The node cannot submit a relationship change as its acting DID: it
+    /// holds no key for that DID and the request carries no delegation the
+    /// provider takes for it.
+    #[error("no authority to submit ACP changes as {actor}: {reason}")]
+    OwedAuthorityUnavailable { actor: String, reason: String },
+
     /// Invalid policy configuration
     #[error("invalid policy: {0}")]
     InvalidPolicy(String),

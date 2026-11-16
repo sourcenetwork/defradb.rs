@@ -174,6 +174,28 @@ impl OwedChange {
         }
     }
 
+    /// Halve the provider's words kept with the change, in its state and in
+    /// its last error. `false` when nothing is left to cut.
+    pub(crate) fn shorten_reason(&mut self) -> bool {
+        fn halve(text: &mut String) -> bool {
+            let mut keep = text.len() / 2;
+            while !text.is_char_boundary(keep) {
+                keep -= 1;
+            }
+            let cut = keep < text.len();
+            text.truncate(keep);
+            cut
+        }
+        let mut cut = false;
+        if let OwedState::Refused { reason } = &mut self.state {
+            cut |= halve(reason);
+        }
+        if let Some(error) = &mut self.last_error {
+            cut |= halve(error);
+        }
+        cut
+    }
+
     /// The record's bytes, refused over [`MAX_OWED_CHANGE_BYTES`].
     pub fn encode(&self) -> Result<Vec<u8>> {
         let mut bytes = vec![RECORD_VERSION];

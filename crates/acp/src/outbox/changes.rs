@@ -8,7 +8,7 @@ use storage::corekv::Store;
 
 use super::keys::OwedTupleState;
 use super::ops;
-use super::record::{NewOwedChange, OwedChange, OwedTuple};
+use super::record::{NewOwedChange, OwedChange, OwedState, OwedTuple};
 use crate::error::{Error, Result};
 
 /// The most changes one transaction may stage.
@@ -76,6 +76,11 @@ impl OwedChanges {
         self
     }
 
+    /// How many changes the transaction has staged and kept so far.
+    pub fn staged(&self) -> u32 {
+        self.staged.get()
+    }
+
     fn active_view(&self) -> Result<NamespaceView> {
         self.view
             .upgrade()
@@ -128,6 +133,14 @@ impl OwedChanges {
     /// change is owed.
     pub async fn settle(&self, seq: u64) -> Result<bool> {
         ops::settle(&self.active_view()?, seq).await
+    }
+
+    /// Record, in this transaction, what a submission of the change at `seq`
+    /// came to: its state, one more attempt and the provider's words. The
+    /// change stays unsettled, so its tuple's state and the counts do not
+    /// move. `false` when no such change is owed.
+    pub async fn mark(&self, seq: u64, state: OwedState, error: Option<String>) -> Result<bool> {
+        ops::mark(&self.active_view()?, seq, state, error).await
     }
 
     /// What is unsettled on `tuple`, if anything is.

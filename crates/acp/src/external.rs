@@ -13,6 +13,13 @@
 //! serves: document access, access decisions, and the authority to change a
 //! document's relationships. The owner is spared, as the provider names it.
 //! Named permission checks and relationship listings are not served here.
+//!
+//! A transaction stages its relationship changes through the gate
+//! ([`DocumentACP::transaction_outbox`]), and the gate submits what is owed
+//! after the commit and at start
+//! ([`ExternalDocumentAcp::settle_owed_changes_once`]). A relationship change
+//! made through the gate outside a transaction goes to the provider at once,
+//! after what is owed on its tuple.
 
 use std::sync::Arc;
 
@@ -25,10 +32,14 @@ use zanzibar::types::Subject;
 use crate::dac::DocumentACP;
 use crate::error::{Error, Result};
 use crate::identity::Identity;
-use crate::outbox::deny::{owed_denial, Denial};
-use crate::outbox::{OwedChanges, StagedCount};
+use crate::outbox::deny::{owed_denial, OwedDenial};
+use crate::outbox::{OwedChanges, StagedCount, TransactionOutbox};
 use crate::pending::{pending_key, PendingRegistration, PENDING_PREFIX};
 use crate::permission::DocumentPermission;
+
+mod settle;
+
+pub use settle::OwedSettlement;
 
 /// Records read into memory per redrive page, bounded by their encoded size.
 const REDRIVE_PAGE_BYTES: usize = 256 * 1024;
@@ -50,6 +61,9 @@ where
 {
     provider: Arc<dyn DocumentACP>,
     store: NamespacedStore<S>,
+    /// Held by the one pass that submits owed changes: a second pass waits,
+    /// so no change is submitted by two at once.
+    settling: Arc<regolith::sync::Mutex<()>>,
 }
 
 fn storage_error(error: storage::corekv::Error) -> Error {
@@ -65,6 +79,7 @@ where
         Self {
             provider,
             store: NamespacedStore::new(store, Namespace::Acpstore),
+            settling: Arc::default(),
         }
     }
 
@@ -104,17 +119,26 @@ where
     ) -> Result<bool> {
         let denial = {
             let txn = self.store.new_txn(true).await.map_err(storage_error)?;
-            owed_denial(&txn, identity, policy_id, resource_name, object_id).await?
+            owed_denial(
+                &txn,
+                &*self.provider,
+                identity,
+                policy_id,
+                resource_name,
+                object_id,
+            )
+            .await?
         };
         match (denial, identity) {
-            (Denial::None, _) => Ok(false),
-            (Denial::Always, _) | (Denial::UnlessOwner, Identity::Anonymous) => Ok(true),
-            (Denial::UnlessOwner, Identity::Authenticated(actor)) => {
+            (OwedDenial::None, _) => Ok(false),
+            (OwedDenial::Always, _) | (OwedDenial::UnlessOwner, Identity::Anonymous) => Ok(true),
+            (OwedDenial::UnlessOwner, Identity::Authenticated(actor)) => {
                 let owner = self
                     .provider
                     .get_doc_owner(policy_id, resource_name, object_id)
-                    .await?;
-                Ok(owner.as_ref() != Some(actor))
+                    .await?
+                    .map(|owner| self.provider.canonical_actor(&owner));
+                Ok(owner != Some(self.provider.canonical_actor(actor)))
             }
         }
     }
@@ -147,9 +171,20 @@ where
             .provider
             .is_doc_registered(&owed.policy_id, &owed.resource_name, &owed.doc_id)
             .await?;
+        self.register_and_clear(&self.provider, owed, registered)
+            .await
+    }
+
+    /// [`Self::settle`] once the provider said whether it holds the object,
+    /// registering through `provider`.
+    async fn register_and_clear(
+        &self,
+        provider: &Arc<dyn DocumentACP>,
+        owed: &PendingRegistration,
+        registered: bool,
+    ) -> Result<()> {
         if !registered {
-            match self
-                .provider
+            match provider
                 .register_doc_object(
                     &owed.creator,
                     &owed.policy_id,
@@ -281,7 +316,40 @@ where
         Some(Arc::new(Self {
             provider,
             store: NamespacedStore::new(Arc::clone(self.store.inner()), self.store.namespace()),
+            settling: Arc::clone(&self.settling),
         }))
+    }
+
+    fn transaction_outbox(
+        &self,
+        view: &datastore::NamespaceView,
+        staged: StagedCount,
+    ) -> Option<TransactionOutbox> {
+        Some(TransactionOutbox::new(
+            Arc::clone(&self.provider),
+            view,
+            Arc::new(self.store.clone()),
+            staged,
+        ))
+    }
+
+    fn canonical_actor(&self, did: &Did) -> Did {
+        self.provider.canonical_actor(did)
+    }
+
+    fn owed_authority(&self, actor: &Did) -> Result<crate::outbox::OwedAuthority> {
+        self.provider.owed_authority(actor)
+    }
+
+    async fn submit_owed_change(
+        &self,
+        change: &crate::outbox::OwedChange,
+    ) -> crate::outbox::Submission {
+        self.provider.submit_owed_change(change).await
+    }
+
+    async fn settle_owed_changes(&self) -> Result<OwedSettlement> {
+        self.settle_owed_changes_once().await
     }
 
     fn bearer_token_for(&self, did: &str) -> Option<String> {
@@ -410,6 +478,9 @@ where
     ) -> Result<bool> {
         self.settle_if_owed(policy_id, collection_id, doc_id)
             .await?;
+        let subject = Subject::Entity(target.clone());
+        self.settle_owed_before(&subject, policy_id, collection_id, doc_id, relation)
+            .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
         self.provider
@@ -436,6 +507,8 @@ where
         managing_relations: &[String],
     ) -> Result<bool> {
         self.settle_if_owed(policy_id, collection_id, doc_id)
+            .await?;
+        self.settle_owed_before(&target, policy_id, collection_id, doc_id, relation)
             .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
@@ -464,6 +537,9 @@ where
     ) -> Result<bool> {
         self.settle_if_owed(policy_id, collection_id, doc_id)
             .await?;
+        let subject = Subject::Entity(target.clone());
+        self.settle_owed_before(&subject, policy_id, collection_id, doc_id, relation)
+            .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;
         self.provider
@@ -490,6 +566,8 @@ where
         managing_relations: &[String],
     ) -> Result<bool> {
         self.settle_if_owed(policy_id, collection_id, doc_id)
+            .await?;
+        self.settle_owed_before(&target, policy_id, collection_id, doc_id, relation)
             .await?;
         self.refuse_revoked(requestor, policy_id, collection_id, doc_id)
             .await?;

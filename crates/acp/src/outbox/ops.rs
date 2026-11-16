@@ -3,7 +3,7 @@
 use storage::corekv::{IterOptions, Reader, Store, Writer};
 
 use super::keys::{self, OwedTupleState};
-use super::record::{NewOwedChange, OwedChange, OwedOp, OwedTuple};
+use super::record::{NewOwedChange, OwedChange, OwedOp, OwedState, OwedTuple};
 use crate::error::{Error, Result};
 
 fn storage_error(error: storage::corekv::Error) -> Error {
@@ -275,5 +275,37 @@ where
         put(txn, &object_key, &keys::encode_count(on_object - 1)).await?;
     }
     count_node(txn, -1).await?;
+    Ok(true)
+}
+
+/// Record what a submission of change `seq` came to: its new state, one more
+/// attempt and the provider's words. Only the change's own record is written;
+/// its tuple's state and both counts stay as they are, since the change is
+/// as unsettled as before. `false` when no such change is owed.
+///
+/// The provider's words are cut until the record fits.
+pub(super) async fn mark<T>(
+    txn: &T,
+    seq: u64,
+    state: OwedState,
+    error: Option<String>,
+) -> Result<bool>
+where
+    T: Reader + Writer + ?Sized,
+{
+    let Some(mut marked) = change(txn, seq).await? else {
+        return Ok(false);
+    };
+    marked.attempts = marked.attempts.saturating_add(1);
+    marked.state = state;
+    marked.last_error = error;
+    let record = loop {
+        match marked.encode() {
+            Ok(record) => break record,
+            Err(Error::OwedChangeTooLarge { .. }) if marked.shorten_reason() => {}
+            Err(error) => return Err(error),
+        }
+    };
+    put(txn, &keys::queue_key(seq), &record).await?;
     Ok(true)
 }
