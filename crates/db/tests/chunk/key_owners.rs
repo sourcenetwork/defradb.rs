@@ -174,3 +174,36 @@ fn chunk_parents_are_read_in_the_callers_transaction() {
     })
     .unwrap()
 }
+
+#[test]
+fn a_document_whose_collection_is_unknown_has_no_key_owner() {
+    workers::block_on(async {
+        let db = chunked_db().await;
+        let doc_id = DocID::new_v0_from_seed("doc of an unknown collection").to_string();
+        let block = generate_cid_from_bytes(doc_id.as_bytes()).unwrap();
+        let unknown_root = u32::MAX;
+        assert!(db.find_collection_by_root_id(unknown_root).is_none());
+
+        let txn = db.new_txn(false).await.unwrap();
+        let systemstore = txn.systemstore().unwrap();
+        let short_id = db::docid::map::next_doc_short_id(&systemstore)
+            .await
+            .unwrap();
+        db::docid::map::set_doc_id_mapping(&systemstore, unknown_root, short_id, &doc_id)
+            .await
+            .unwrap();
+        db::docid::map::set_block_doc_id_mapping(&systemstore, &block.to_string(), &doc_id)
+            .await
+            .unwrap();
+        drop(systemstore);
+        txn.commit().await.unwrap();
+
+        let owners = DbBlockDocIDResolver::new(Arc::clone(&db))
+            .doc_ids_for_block(&block)
+            .await
+            .unwrap();
+
+        assert!(owners.is_empty(), "{owners:?}");
+    })
+    .unwrap()
+}

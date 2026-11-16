@@ -32,9 +32,28 @@ where
     merged(txn, parents).await
 }
 
+/// The collection whose readers decide a chunk collection's reads.
+///
+/// `None` when it is missing or doesn't chunk the field the chunks name, so the caller denies.
+pub fn parent_collection<S>(
+    db: &DB<S>,
+    chunks_col: &CollectionVersion,
+) -> Result<Option<Collection>>
+where
+    S: Store,
+{
+    let Some(source) = &chunks_col.chunk_of else {
+        return Ok(None);
+    };
+    Ok(db
+        .get_collection(&source.collection)?
+        .filter(|parent| parent.schema().chunked_field(&source.field_name).is_some()))
+}
+
 /// `doc_ids` with each chunk replaced by its parent, whose permissions decide.
 ///
-/// A parent this node hasn't merged yet is left out, as in [`history_parents`].
+/// A parent this node hasn't merged yet is left out, as in [`history_parents`],
+/// and so is a document whose collection this node can't find.
 pub async fn read_owners<S>(db: &DB<S>, txn: &DbTxn<S>, doc_ids: Vec<String>) -> Result<Vec<String>>
 where
     S: Store,
@@ -45,15 +64,19 @@ where
     let systemstore = txn.systemstore()?;
     let mut owners = Vec::with_capacity(doc_ids.len());
     for doc_id in doc_ids {
-        let doc_ref = crate::docid::map::get_doc_ref(&systemstore, &doc_id).await?;
-        let chunks_col = doc_ref
-            .and_then(|r| db.find_collection_by_root_id(r.collection_short_id))
-            .filter(|collection| collection.schema().is_generated());
-        let Some(chunks_col) = chunks_col else {
+        let Some(doc_ref) = crate::docid::map::get_doc_ref(&systemstore, &doc_id).await? else {
             owners.push(doc_id);
             continue;
         };
-        let parents = parents_of_chunks(txn, &chunks_col, &[doc_id]).await?;
+        // An unknown collection might be a chunk one, and a chunk has no policy of its own.
+        let Some(collection) = db.find_collection_by_root_id(doc_ref.collection_short_id) else {
+            continue;
+        };
+        if !collection.schema().is_generated() {
+            owners.push(doc_id);
+            continue;
+        }
+        let parents = parents_of_chunks(txn, &collection, &[doc_id]).await?;
         owners.extend(merged(txn, parents).await?);
     }
     Ok(owners)

@@ -109,8 +109,9 @@ impl EventAccessContext {
                 .map_err(HttpError::Internal)?,
         };
 
+        // An unknown collection could be a chunk one, which is gated even without ACP.
         let Some(collection) = collection else {
-            return Ok(!self.acp_enabled);
+            return Ok(false);
         };
 
         // A chunk is gated by its parent even without ACP.

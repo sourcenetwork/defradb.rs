@@ -394,7 +394,7 @@ where
             // A `@chunk` collection has no policy. Its blocks are part of the parent's
             // history, so the parent's policy decides, even for a deleted parent.
             let mut owners_override = None;
-            if let Some(source) = collection.chunk_of.clone() {
+            if collection.chunk_of.is_some() {
                 let owners =
                     crate::docid::map::resolve_block_doc_ids(&systemstore, &parsed_cid, &block)
                         .await
@@ -407,13 +407,12 @@ where
                 if parents.is_empty() {
                     return Err("missing permission: the chunk's parent is not known here".into());
                 }
-                collection = database
-                    .get_collection(&source.collection)
+                collection = crate::chunk::access::parent_collection(database, &collection)
                     .map_err(|e| format!("failed to get collection: {}", e))?
                     .ok_or_else(|| {
                         format!(
-                            "missing permission: parent collection {} not found",
-                            source.collection
+                            "missing permission: no parent collection chunks {}",
+                            collection.name
                         )
                     })?
                     .schema()

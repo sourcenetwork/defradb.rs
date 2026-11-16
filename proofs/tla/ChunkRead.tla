@@ -15,6 +15,12 @@
 \* local access rules. So a block is served only for an article that has
 \* arrived, under that article's rules.
 \*
+\* To find those rules, the node must also know the chunk's collection and the
+\* article collection that chunks it. A node that can't find them would see a
+\* collection with no rules, which counts as public. So it serves nothing
+\* until it finds them. Releasing a chunk's key and pushing a chunk's event
+\* follow the same rule as serving its block.
+\*
 \* What must never happen:
 \*   - a query shows a chunk of a deleted article, or of one the reader may not
 \*     read at the query's snapshot (INV_ShownIsLiveAndReadable);
@@ -24,12 +30,18 @@
 \*     the peer may not read it (INV_ServedIsReadable).
 \*
 \* Code it models:
-\*   crates/query/src/plan/chunk_parent.rs  parent_hashes (deleted parent), verified_hash
+\*   crates/query/src/plan/chunk_parent.rs  parent_hashes (deleted parent), ChunkFields::verified_hash
 \*   crates/query/src/plan/chunk_gate.rs    ChunkGate::allows, ChunkGate::decide (one decision per parent per query)
+\*   crates/query/src/plan/permission_filter.rs PermissionFilterNode::permission_check (the chunk's fields
+\*                                          come from its scan row, read at the query's snapshot)
 \*   crates/query/src/planner/builder/mod.rs maybe_wrap_with_acp_filter (a new gate per query)
+\*   crates/query/src/runner/chunk_access.rs chunk_readable, ChunkReads (commits, arrivals, updates and
+\*                                          version reads; one decision per parent per request)
 \*   crates/db/src/chunk/access.rs         history_parents, read_owners, merged (an unarrived parent owns nothing)
+\*   crates/db/src/chunk/access.rs         parent_collection, read_owners (an unknown collection owns nothing)
 \*   crates/p2p-adapter/src/read_gate.rs    DbBlockReadGate::may_read, DbBlockClassifier::classify (chunk block serving)
 \*   crates/db/src/block/verify.rs          load_authorized_block_signature (the chunk branch)
+\*   crates/http/src/handlers/events.rs     can_observe_document_event (an unknown collection's event)
 \* Merging text and list across peers is ChunkMerge.tla's job, not this one's.
 EXTENDS Naturals, FiniteSets
 
@@ -40,7 +52,8 @@ CONSTANTS
   MemoPerQuery,  \* TRUE: each query starts with no remembered decision (the guard)
   CheckMerged,   \* TRUE: a block's owner must be an article that has arrived (the guard)
   CheckGranted,  \* TRUE: the reader must be allowed to read the article (the guard)
-  CheckListed    \* TRUE: a chunk shows only if the article's current list names it (the guard)
+  CheckListed,   \* TRUE: a chunk shows only if the article's current list names it (the guard)
+  CheckResolved  \* TRUE: nothing is served while the chunk's collections are unknown here (the guard)
 
 \* Writers edit at least once.
 ASSUME MaxEdits \in Nat \ {0}
@@ -49,6 +62,8 @@ ASSUME CheckDeleted \in BOOLEAN /\ CheckHash \in BOOLEAN /\ MemoPerQuery \in BOO
 ASSUME CheckMerged \in BOOLEAN
 \* The last two switches are yes-or-no too.
 ASSUME CheckGranted \in BOOLEAN /\ CheckListed \in BOOLEAN
+\* And the resolve switch.
+ASSUME CheckResolved \in BOOLEAN
 
 \* The texts an edit may write.
 Texts == {"t1", "t2"}
@@ -80,10 +95,11 @@ VARIABLES
   snap,     \* the snapshot the current query reads
   memo,     \* the decision about the article the reader holds
   result,   \* the chunks the last query showed
-  leaked    \* whether a peer was ever served a block it may not have
+  leaked,   \* whether a peer was ever served a block it may not have
+  resolved  \* whether this node knows the chunk collection and the article collection that chunks it
 
 \* All the variables, for stuttering steps.
-vars == <<text, merged, deleted, granted, stored, edits, phase, snap, memo, result, leaked>>
+vars == <<text, merged, deleted, granted, stored, edits, phase, snap, memo, result, leaked, resolved>>
 
 \* The chunks an honest write of text t stores.
 HonestChunks(t) == {[hash |-> h, honest |-> TRUE] : h \in ChunksOf(t)}
@@ -106,10 +122,12 @@ ListedOK(c, d) == CheckListed => c.hash \in d.hashes
 
 \* Whether serving a chunk's block is allowed: the owner is the article, which
 \* with the guard must have arrived. An article that hasn't arrived has no
-\* access rules here, so it counts as public.
+\* access rules here, so it counts as public. The same holds when the node
+\* can't find the collections, since then it finds no rules at all.
 ServeAllowed ==
+  /\ CheckResolved => resolved                       \* the guard: the collections are known
   /\ CheckMerged => merged                           \* the guard: the owner is known
-  /\ merged => granted                               \* a known article's rules apply
+  /\ (resolved /\ merged) => granted                 \* a known article's rules apply
 
 \* The type of every variable.
 TypeOK ==
@@ -123,6 +141,7 @@ TypeOK ==
   /\ memo \in [ok : BOOLEAN, hashes : SUBSET Hashes, made : BOOLEAN]  \* a decision or none
   /\ result \subseteq Stored                           \* shown chunks
   /\ leaked \in BOOLEAN                               \* a bad serve happened
+  /\ resolved \in BOOLEAN                             \* collections known or not
 
 \* At the start the chunks of t1 are here but the article hasn't arrived yet,
 \* and the reader may read the article.
@@ -138,6 +157,7 @@ Init ==
   /\ memo = NoDecision                     \* nothing remembered
   /\ result = {}                           \* nothing shown
   /\ leaked = FALSE                        \* nothing served yet
+  /\ resolved = FALSE                      \* the collections haven't arrived either
 
 \* A writer edits the live article to text t, storing t's chunks with it.
 Edit(t) ==
@@ -145,25 +165,25 @@ Edit(t) ==
   /\ text' = t                                      \* the new text
   /\ stored' = stored \cup HonestChunks(t)          \* and its chunks
   /\ edits' = edits + 1                             \* one more edit
-  /\ UNCHANGED <<merged, deleted, granted, phase, snap, memo, result, leaked>>
+  /\ UNCHANGED <<merged, deleted, granted, phase, snap, memo, result, leaked, resolved>>
 
 \* A writer deletes the article. Its chunks stay stored.
 Delete ==
   /\ ~deleted                                       \* not yet deleted
   /\ deleted' = TRUE                                \* now deleted
-  /\ UNCHANGED <<merged, text, granted, stored, edits, phase, snap, memo, result, leaked>>
+  /\ UNCHANGED <<merged, text, granted, stored, edits, phase, snap, memo, result, leaked, resolved>>
 
 \* The owner revokes the reader's access.
 Revoke ==
   /\ granted                                        \* still granted
   /\ granted' = FALSE                               \* now revoked
-  /\ UNCHANGED <<merged, text, deleted, stored, edits, phase, snap, memo, result, leaked>>
+  /\ UNCHANGED <<merged, text, deleted, stored, edits, phase, snap, memo, result, leaked, resolved>>
 
 \* A chunk that claims hash h but holds other text reaches the store by some
 \* route that skipped the write guard.
 Plant(h) ==
   /\ stored' = stored \cup {[hash |-> h, honest |-> FALSE]}  \* the forged chunk
-  /\ UNCHANGED <<merged, text, deleted, granted, edits, phase, snap, memo, result, leaked>>
+  /\ UNCHANGED <<merged, text, deleted, granted, edits, phase, snap, memo, result, leaked, resolved>>
 
 \* A query starts: it takes its snapshot, and with the guard forgets old decisions.
 Start ==
@@ -172,7 +192,7 @@ Start ==
   /\ snap' = Now                                    \* reading this moment
   /\ memo' = IF MemoPerQuery THEN NoDecision ELSE memo  \* the guard: a fresh gate
   /\ result' = {}                                   \* nothing shown yet
-  /\ UNCHANGED <<text, merged, deleted, granted, stored, edits, leaked>>
+  /\ UNCHANGED <<text, merged, deleted, granted, stored, edits, leaked, resolved>>
 
 \* The query shows the chunks the decision allows, deciding first if needed.
 Answer ==
@@ -182,13 +202,19 @@ Answer ==
         /\ result' = {c \in snap.stored :           \* the stored chunks that
              HashOK(c) /\ d.ok /\ ListedOK(c, d)}  \* pass every check
   /\ phase' = "done"                                \* the query has answered
-  /\ UNCHANGED <<text, merged, deleted, granted, stored, edits, snap, leaked>>
+  /\ UNCHANGED <<text, merged, deleted, granted, stored, edits, snap, leaked, resolved>>
 
 \* The article arrives on this node, with its access rules.
 Arrive ==
   /\ ~merged                                        \* not here yet
   /\ merged' = TRUE                                 \* here now
-  /\ UNCHANGED <<text, deleted, granted, stored, edits, phase, snap, memo, result, leaked>>
+  /\ UNCHANGED <<text, deleted, granted, stored, edits, phase, snap, memo, result, leaked, resolved>>
+
+\* The chunk collection and the article collection that chunks it become known here.
+Resolve ==
+  /\ ~resolved                                      \* not known yet
+  /\ resolved' = TRUE                               \* known now
+  /\ UNCHANGED <<text, merged, deleted, granted, stored, edits, phase, snap, memo, result, leaked>>
 
 \* A peer that may read only what the reader may asks for a stored chunk's block.
 \* It is served when allowed; a serve the peer may not have is a leak.
@@ -196,7 +222,7 @@ Serve ==
   /\ stored # {}                                    \* there is a block to ask for
   /\ ServeAllowed                                   \* this node hands it over
   /\ leaked' = (leaked \/ ~(merged /\ granted))     \* bad if the article is unknown or unreadable
-  /\ UNCHANGED <<text, merged, deleted, granted, stored, edits, phase, snap, memo, result>>
+  /\ UNCHANGED <<text, merged, deleted, granted, stored, edits, phase, snap, memo, result, resolved>>
 
 \* Every step anyone can take.
 Next ==
@@ -205,6 +231,7 @@ Next ==
   \/ Revoke                      \* a revoke,
   \/ \E h \in Hashes : Plant(h)  \* a forged chunk,
   \/ Arrive                      \* the article arrives,
+  \/ Resolve                     \* the collections become known,
   \/ Serve                       \* a peer is served a block,
   \/ Start                       \* a query starts,
   \/ Answer                      \* or answers

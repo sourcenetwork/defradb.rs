@@ -92,9 +92,9 @@ impl<S: Store + 'static> DbBlockClassifier<S> {
                 .map(|p| (p.id.clone(), p.resource_name.clone())),
             doc_ids,
         };
-        let Some(source) = &collection.chunk_of else {
+        if collection.chunk_of.is_none() {
             return Some(meta(collection, doc_ids));
-        };
+        }
         let parents =
             match db::chunk::access::history_parents(&self.db, txn, collection, &doc_ids).await {
                 Ok(parents) if !parents.is_empty() => parents,
@@ -107,14 +107,14 @@ impl<S: Store + 'static> DbBlockClassifier<S> {
                     return None;
                 }
             };
-        let parent = match self.db.get_collection(&source.collection) {
+        let parent = match db::chunk::access::parent_collection(&self.db, collection) {
             Ok(Some(parent)) => parent,
             Ok(None) => {
-                tracing::debug!(parent = %source.collection, "chunk parent collection not found");
+                tracing::debug!(chunks = %collection.name, "chunk parent collection not found");
                 return None;
             }
             Err(error) => {
-                tracing::warn!(parent = %source.collection, %error, "parent collection lookup failed");
+                tracing::warn!(chunks = %collection.name, %error, "parent collection lookup failed");
                 return None;
             }
         };

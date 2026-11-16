@@ -6,6 +6,7 @@ mod admin_ops;
 mod config;
 mod guard;
 mod key_owners;
+mod parent_collection;
 mod schema;
 mod user_writes;
 mod window;
