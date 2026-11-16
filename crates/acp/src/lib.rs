@@ -32,6 +32,7 @@ mod external;
 mod identity;
 mod local;
 pub mod nac;
+pub mod outbox;
 pub mod pending;
 mod permission;
 mod policy_cache;
@@ -54,6 +55,10 @@ pub use error::{Error, Result};
 pub use external::{ExternalDocumentAcp, RedriveReport};
 pub use identity::Identity;
 pub use local::{LocalDocumentACP, MemoryAcpStore};
+pub use outbox::{
+    NewOwedChange, OwedAuthority, OwedChange, OwedChanges, OwedOp, OwedState, OwedSubject,
+    OwedTuple, OwedTupleState,
+};
 pub use pending::{PendingRegistration, PendingRegistrations};
 pub use permission::DocumentPermission;
 #[cfg(not(target_arch = "wasm32"))]
