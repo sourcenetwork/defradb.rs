@@ -155,10 +155,17 @@ pub enum BearerError {
 
     #[error(transparent)]
     Signer(#[from] SignerError),
+
+    #[error("a delegation bound to one request lasts between 1 and 600 seconds")]
+    RequestLifetime,
 }
 
 #[cfg(test)]
 mod key_types;
+mod request;
+
+pub(super) use request::caller_of_request_delegation;
+pub use request::{request_delegation, RequestBinding};
 #[cfg(test)]
 mod pinned;
 
@@ -355,6 +362,10 @@ pub(super) enum CallerDelegationError {
     Kind,
     #[error("the system clock is before the Unix epoch")]
     Clock,
+    #[error("the delegation is bound to another request")]
+    OtherRequest,
+    #[error("the command the delegation is presented for has no digest: {0}")]
+    Command(String),
 }
 
 #[cfg(test)]

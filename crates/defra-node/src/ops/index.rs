@@ -5,7 +5,7 @@ use std::sync::Arc;
 use acp::nac::NodePermission;
 use db::IndexManager;
 use defra_core::{ActionExecution, RequestContext};
-use schema::{IndexDescription, IndexedFieldDescription};
+use schema::{IndexDescription, IndexedFieldDescription, VectorIndexDescription};
 use serde::Serialize;
 
 use crate::ops::request::transaction_error;
@@ -35,7 +35,22 @@ impl Node {
         fields: Vec<IndexedFieldDescription>,
         unique: bool,
     ) -> Result<IndexDescription> {
-        self.new_index_as(context, collection, name, fields, unique, true)
+        self.new_index_as(context, collection, name, fields, unique, None, true)
+            .await
+    }
+
+    /// [`Self::create_index_as`] for an index that is a vector index when
+    /// `vector` describes one, and an ordered one otherwise.
+    pub async fn create_index_with_vector_as(
+        &self,
+        context: &RequestContext,
+        collection: &str,
+        name: Option<&str>,
+        fields: Vec<IndexedFieldDescription>,
+        unique: bool,
+        vector: Option<VectorIndexDescription>,
+    ) -> Result<IndexDescription> {
+        self.new_index_as(context, collection, name, fields, unique, vector, true)
             .await
     }
 
@@ -50,10 +65,11 @@ impl Node {
         fields: Vec<IndexedFieldDescription>,
         unique: bool,
     ) -> Result<IndexDescription> {
-        self.new_index_as(context, collection, name, fields, unique, false)
+        self.new_index_as(context, collection, name, fields, unique, None, false)
             .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn new_index_as(
         &self,
         context: &RequestContext,
@@ -61,12 +77,13 @@ impl Node {
         name: Option<&str>,
         fields: Vec<IndexedFieldDescription>,
         unique: bool,
+        vector: Option<VectorIndexDescription>,
         wait_for_build: bool,
     ) -> Result<IndexDescription> {
         let caller = self.caller(context);
         if caller.txn().is_some() {
             let kind =
-                IndexManager::requested_kind(&fields, unique, None).map_err(db::Error::from)?;
+                IndexManager::requested_kind(&fields, unique, vector).map_err(db::Error::from)?;
             return self
                 .runner()
                 .create_index_in_txn_as(&caller, collection, name, fields, kind)
@@ -84,7 +101,7 @@ impl Node {
                 .check_node_access_as(&context, NodePermission::IndexCreate)
                 .await?;
             let kind =
-                IndexManager::requested_kind(&fields, unique, None).map_err(db::Error::from)?;
+                IndexManager::requested_kind(&fields, unique, vector).map_err(db::Error::from)?;
             Ok(match wait_for_build {
                 true => {
                     database
@@ -173,13 +190,7 @@ impl Node {
             database
                 .check_node_access_as(&context, NodePermission::IndexDelete)
                 .await?;
-            database
-                .drop_index(&collection, &name)
-                .await
-                .map_err(|error| match error {
-                    db::Error::IndexNotFound { index, .. } => Error::IndexNameMissing(index),
-                    other => Error::from(other),
-                })
+            Ok(database.drop_index(&collection, &name).await?)
         })
         .await
     }

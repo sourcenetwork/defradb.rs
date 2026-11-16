@@ -39,7 +39,7 @@ pub unsafe extern "C" fn defra_document_purge(
         let call = try_ffi!(DocumentCall::begin(node_ptr, &opts, identity_ptr, NodePermission::CollectionTruncate));
         let target = call.target().clone();
         let registry = try_ffi!(NODES
-            .get(target.node(), |state| state._node.txn_registry().clone())
+            .get(target.node(), |state| state.node.txn_registry().clone())
             .ok_or_else(|| DefraResult::error(ERR_INVALID_NODE_HANDLE)));
         ffi_async!(target &target, {
             let name = call.collection().await?.name;

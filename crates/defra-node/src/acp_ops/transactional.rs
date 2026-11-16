@@ -364,6 +364,9 @@ async fn settle_owed_changes(acp: Arc<dyn acp::DocumentACP>, staged_by: u64) {
             %error,
             "Could not settle owed ACP relationship changes; they stay owed"
         ),
+        // Dropping the pass leaves its submission in flight. It cannot land
+        // after a later change of its tuple, because the provider takes one
+        // signer's requests in order (`DocumentACP::submit_owed_change`).
         Err(workers::Error::TimedOut) => tracing::warn!(
             deadline = ?OWED_SETTLE_DEADLINE,
             "ACP provider did not take the staged relationship changes in time; they stay owed"

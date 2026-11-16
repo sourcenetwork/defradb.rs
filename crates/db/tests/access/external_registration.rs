@@ -62,6 +62,8 @@ pub(super) struct RemoteAcp {
     pub(super) malformed_owner: AtomicBool,
     /// The node cannot make the request for an owed change at all.
     pub(super) unsendable: AtomicBool,
+    /// The actors the node cannot make that request for.
+    unsigned: Set<String>,
     /// Every relationship write applied, in order: add or delete, document,
     /// subject.
     writes: SegQueue<(bool, String, String)>,
@@ -94,6 +96,7 @@ impl RemoteAcp {
             writes: SegQueue::new(),
             credentials: AtomicBool::new(false),
             keys: set(),
+            unsigned: set(),
             delegations: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
             expired: set(),
             spellings: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
@@ -111,6 +114,15 @@ impl RemoteAcp {
     /// The node holds `did`'s key.
     pub(super) fn hold_key(&self, did: &Did) {
         self.keys.insert(did.to_string(), ());
+    }
+
+    /// Whether the node can make the request for an owed change of `did`.
+    pub(super) fn can_sign(&self, did: &Did, can: bool) {
+        if can {
+            self.unsigned.remove(&did.to_string());
+        } else {
+            self.unsigned.insert(did.to_string(), ());
+        }
     }
 
     pub(super) fn drop_key(&self, did: &Did) {
@@ -334,7 +346,9 @@ impl DocumentACP for RemoteAcp {
     }
 
     async fn submit_owed_change(&self, change: &acp::OwedChange) -> acp::Submission {
-        if self.unsendable.load(Ordering::SeqCst) {
+        if self.unsendable.load(Ordering::SeqCst)
+            || self.unsigned.contains_key(change.actor.as_str())
+        {
             return acp::Submission::NotSent {
                 reason: "the node could not sign the request".into(),
             };

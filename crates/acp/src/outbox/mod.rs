@@ -38,7 +38,7 @@ pub use deny::{OwedDenial, OwedDenials};
 pub use keys::OwedTupleState;
 pub use record::{
     NewOwedChange, OwedAuthority, OwedChange, OwedOp, OwedState, OwedSubject, OwedTuple,
-    MAX_OWED_CHANGE_BYTES,
+    MAX_OWED_CHANGE_BYTES, RESERVED_REASON_BYTES,
 };
 pub use staging::{StageRelationship, Staged, TransactionOutbox};
 pub use submission::{submit_relationship, Submission};

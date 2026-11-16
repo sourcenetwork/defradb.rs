@@ -432,6 +432,74 @@ fn a_change_the_provider_cannot_take_at_all_is_discarded() {
 }
 
 /// A pass that submits nothing and leaves `left` changes behind parked ones.
+/// A change the node could not send stays staged with the reason and no
+/// attempt counted. One whose acting DID was checked keeps the later changes
+/// of its tuple waiting; one staged unchecked yields to them.
+#[test]
+fn a_change_the_node_could_not_send_holds_its_tuple_only_when_checked() {
+    workers::block_on(async {
+        let staging = Staging::new().await;
+        let doc = staging.create(alice(), "shared", None).await;
+        let reason = Some("the node could not sign the request");
+
+        staging.remote.can_sign(&alice(), false);
+        staging.commit_change(add(alice(), &doc, bob())).await;
+        staging.commit_change(delete(alice(), &doc, bob())).await;
+        for _ in 0..2 {
+            assert_eq!(staging.pass().await, left_only(2));
+            let queue = staging.queue().await;
+            assert!(queue[0].authority_checked);
+            assert_eq!(queue[0].state, OwedState::Staged);
+            assert_eq!(queue[0].attempts, 0);
+            assert_eq!(queue[0].last_error.as_deref(), reason);
+            // The later change was not tried: it waits behind the first.
+            assert_eq!(queue[1].last_error, None);
+        }
+        assert!(staging.remote.take_writes().is_empty());
+        staging.remote.can_sign(&alice(), true);
+        assert_eq!(staging.pass().await.settled, 2);
+        assert_eq!(
+            staging.remote.take_writes(),
+            [
+                (true, doc.clone(), bob().to_string()),
+                (false, doc.clone(), bob().to_string())
+            ]
+        );
+
+        // Mallory's add is staged while nobody can check it, and then cannot
+        // be sent either.
+        staging.remote.down.store(true, Ordering::SeqCst);
+        let unchecked = staging.commit_change(add(mallory(), &doc, carol())).await;
+        assert!(!unchecked.authority_checked);
+        staging.remote.down.store(false, Ordering::SeqCst);
+        staging.remote.can_sign(&mallory(), false);
+        assert_eq!(staging.pass().await, left_only(1));
+        let queue = staging.queue().await;
+        assert_eq!(queue[0].state, OwedState::Staged);
+        assert_eq!(queue[0].attempts, 0);
+        assert_eq!(queue[0].last_error.as_deref(), reason);
+
+        // The owner's change of the same tuple passes it: the pass comes
+        // to Mallory's first, cannot send it, and deletes it for the next.
+        staging.commit_change(delete(alice(), &doc, carol())).await;
+        assert_eq!(
+            staging.pass().await,
+            OwedSettlement {
+                settled: 1,
+                discarded: 1,
+                left: 1,
+                ..OwedSettlement::default()
+            }
+        );
+        assert_eq!(
+            staging.remote.take_writes(),
+            [(false, doc.clone(), carol().to_string())]
+        );
+        assert!(staging.queue().await.is_empty());
+    })
+    .unwrap()
+}
+
 fn left_only(left: u64) -> OwedSettlement {
     OwedSettlement {
         left,

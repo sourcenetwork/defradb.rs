@@ -345,6 +345,14 @@ where
         self.provider.owed_authority(actor)
     }
 
+    fn command_authority(
+        &self,
+        actor: &Did,
+        command: crate::ProviderCommand<'_>,
+    ) -> Result<crate::outbox::OwedAuthority> {
+        self.provider.command_authority(actor, command)
+    }
+
     async fn submit_owed_change(
         &self,
         change: &crate::outbox::OwedChange,

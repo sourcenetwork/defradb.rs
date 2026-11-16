@@ -110,6 +110,14 @@ pub trait DocumentACP: MaybeSendSync {
     /// be bound to. Submitting a change the provider already holds is
     /// [`Submission::Applied`](crate::outbox::Submission::Applied) wherever
     /// the provider can tell.
+    ///
+    /// The caller may stop waiting for the answer, and submits the later
+    /// changes of the tuple afterwards. A submission must therefore never
+    /// take effect after one made later through this provider: what is
+    /// still in flight when the next is made has to execute before it or
+    /// not at all. vera.rs holds one journaled request per worker and
+    /// prepares the next only once that one has a verified receipt; Cosmos
+    /// orders one signer's transactions by account sequence.
     async fn submit_owed_change(
         &self,
         change: &crate::outbox::OwedChange,
@@ -149,6 +157,20 @@ pub trait DocumentACP: MaybeSendSync {
     /// bound to none.
     fn bearer_token_for(&self, did: &str) -> Option<String> {
         RequestContext::ambient().bearer_token_for(did)
+    }
+
+    /// What lets the node send one command as `actor`: what
+    /// [`owed_authority`](Self::owed_authority) gives for any command, or a
+    /// delegation the request this provider serves carries for `actor` that
+    /// is bound to exactly that command. A delegation bound to another
+    /// command is [`Error::OwedAuthorityUnavailable`], as no authority at
+    /// all is.
+    fn command_authority(
+        &self,
+        actor: &Did,
+        _command: crate::ProviderCommand<'_>,
+    ) -> Result<crate::outbox::OwedAuthority> {
+        self.owed_authority(actor)
     }
 
     /// Whether missing registrations allow public access or require a collection grant.

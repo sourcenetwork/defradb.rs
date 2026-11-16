@@ -194,7 +194,7 @@ where
         .map_err(storage_error)?
         .start;
     let change = OwedChange::staged(seq, new);
-    let record = change.encode()?;
+    let record = change.encode_admitted()?;
 
     put(txn, &keys::queue_key(seq), &record).await?;
     let delete = u32::from(change.op == OwedOp::Delete);

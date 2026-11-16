@@ -111,7 +111,9 @@ nothing, until a caller can abandon a staged change and a drainer settles them.
 - **One spelling.** The acting DID and an actor subject are stored in the provider's one
   spelling of the key (for vera.rs, the uncompressed `did:key` DefraDB derives), and the
   gate compares a requester in the same spelling, so a revocation staged under one
-  spelling of a key denies a request under another.
+  spelling of a key denies a request under another. A key the node holds is found under
+  whichever spelling it was registered with, at staging and at submission alike, so a
+  change recorded as `node_key` is signed with it whatever spelling the record keeps.
 - **Settlement.** A pass submits what is owed in sequence order from the head of the
   queue, read again each pass. A change is submitted only when it is the oldest unsettled
   change of its tuple, and only after the registration its document still owes. What the
@@ -129,14 +131,19 @@ nothing, until a caller can abandon a staged change and a drainer settles them.
     on. Five such answers (`MAX_FAILED_SUBMISSIONS`), whatever their words, are taken as
     a refusal. Only the provider's answers count: an unreachable provider is not one;
   - an error of the node's own before anything was sent (a request it could not build
-    or sign): the change stays staged, nothing is counted, a warning is logged and the
-    pass goes on;
+    or sign): the change stays staged with the error as its last error, nothing is
+    counted, and the pass goes on. Every pass that comes to it logs a warning naming the
+    change;
   - *unreachable* (a transport failure, a timeout): the pass stops and nothing is
     written.
 
   A parked change whose acting DID was checked holds every later change of its tuple and
-  nothing else: changes of other tuples go on past it. A change staged unchecked holds
-  nothing (above). Every record deleted without the provider holding the change is
+  nothing else: changes of other tuples go on past it. A checked change the node could
+  not send holds its tuple the same way, for as long as the node cannot send it: it is
+  not counted towards a refusal, so nothing parks it, and a direct change of the tuple
+  fails with `OwedChangesPending` meanwhile. A change staged unchecked holds nothing
+  (above): one the node could not send is deleted, like one waiting for authority, when
+  a later change of its tuple comes up. Every record deleted without the provider holding the change is
   counted in the pass's report (`OwedSettlement::discarded`) and logged with its
   sequence, actor, document and relation.
 - **When a pass runs.**
@@ -148,6 +155,17 @@ nothing, until a caller can abandon a staged change and a drainer settles them.
   - Once at start, after the owed registrations, over everything.
   - Before a relationship change made outside a transaction on a tuple that has changes
     owed, over that document.
+
+  A commit that stops waiting leaves the submission it was waiting for in flight. That
+  submission cannot take effect after a later change of the same tuple: the node sends
+  the later change only after the earlier one, and both providers take one signer's
+  requests in order. vera.rs keeps one journaled request per worker and prepares the
+  next only once that one has a verified receipt, so while the earlier submission is in
+  flight nothing else is sent; Cosmos orders one signer's transactions by account
+  sequence. A provider supplied by a host has to give the same guarantee
+  (`DocumentACP::submit_owed_change`). Two nodes that change one relationship through
+  different workers are ordered by the provider alone, as they are for changes made
+  outside a transaction.
 
   There is no background drainer, timer or back-off yet. **A change left staged (the
   provider was down, or the deadline passed) is submitted by the next commit that stages
@@ -180,6 +198,11 @@ nothing, until a caller can abandon a staged change and a drainer settles them.
     group object only. Documents that grant access through a userset naming that group
     keep honouring the member until the provider holds the delete.
   - No event is published when a staged add settles.
+  - A document's owner is taken to stay the same on the provider while the node still
+    holds the document's owed registration. If the creator gives the document away
+    through another client after the provider registered it and before this node
+    cleared its record, this node goes on letting the creator read it until the record
+    is cleared (`AssumeNoTransferWhileOwed` in `proofs/tla/AcpOutbox.tla`).
   - A create that requires transaction-bound authority
     (`with_transactional_authority_required`, used by verified creates) is refused on an
     external provider as before.
@@ -188,7 +211,9 @@ nothing, until a caller can abandon a staged change and a drainer settles them.
   namespace, and commits or rolls back with its rows: `/acp-owed/q/<seq>` holds the
   change (tuple, add or delete, acting DID, the authority to submit it as that DID,
   whether that DID was checked at staging, its state, attempts and last error; at most
-  16 KiB), `/acp-owed/t/<tuple>` what is
+  16 KiB, and staged only if it would still fit parked as refused or awaiting authority
+  with 128 bytes of the provider's words in each place they are kept, so a change that
+  was staged can always be parked; longer words are cut), `/acp-owed/t/<tuple>` what is
   unsettled on that tuple (its oldest and latest sequences, how many changes and how many
   of them deletes), and `/acp-owed/o/<object>` the number of unsettled changes on that
   object. A change is unsettled while it has a record, a refused one included; a settled
@@ -221,6 +246,81 @@ nothing, until a caller can abandon a staged change and a drainer settles them.
   revoked subject is denied before the commit and a statement that is rolled back
   revokes nothing. An owed add grants nothing, in its own transaction either. With
   nothing owed on an object the gate costs one point read.
+
+### Verified writes on an external provider
+
+A verified write (`Node::execute_verified_create_in_txn`,
+`Node::execute_verified_mutation_in_txn`) is one create, update or delete an embedder has
+checked against its signer's signature, run in a transaction the node owns. On a local
+ACP its authority is *bound*: decided inside the transaction and validated at the
+commit. An external provider cannot be bound that way. There its authority counts as
+bound when what the write needs from the provider is **owed in the transaction, with
+authority to send it as the signer**:
+
+- a **create** owes the registration of its document, recorded with the row as an
+  ordinary create records it;
+- a relationship change made in the same transaction is staged as above, and is sent
+  after the registration;
+- an **update** or a **delete** owes nothing. The provider decides the signer's
+  permission at the network edge, as for any write on an external provider.
+
+The embedder hands the node what lets it act for the signer, as an argument beside the
+write (`SignerCredential`), and the node carries it for that signer only. Nothing is read
+from process-wide state:
+
+| Credential | The write is staged when |
+|---|---|
+| `None` | the node holds a key for the signer |
+| `Delegation(token)` | the provider takes `token` now as the signer's delegation to this node for its policy commands |
+| `RequestBound(token)` | `token` is the signer's delegation bound to exactly the command the write sends: the registration of the document a create makes |
+
+Anything else is refused before the statement writes a row or an owed record, with the
+error code `WRITE_AUTHORITY_UNAVAILABLE`, and the node discards the transaction: no
+credential and no key, a delegation signed by somebody else, made for another node or
+expired, a plain delegation presented as request-bound, a request-bound one presented as
+plain, and a request-bound one that names another document or another command. An update
+or a delete sends the provider no command, so a request-bound delegation has nothing to
+name there and is refused; those writes need the key or a plain delegation.
+
+A relationship change in the same transaction carries its own credential in the context
+of its call: `RequestContext::with_bearer` for a plain delegation, or
+`RequestContext::with_request_delegation` for one bound to that one change. A
+request-bound delegation covers one command, so a create and a grant beside it need two.
+
+A provider that gives the node nothing to check a delegation against (the Cosmos
+provider, which is passed its caller's token as it is) admits a verified write with a key
+the node holds and with nothing else: `Delegation(token)` is refused there.
+
+What is recorded and what is not. The staged relationship change keeps its token in its
+record and is submitted with it. The owed registration keeps no token: the commit's own
+hook submits it with the token the write carried. Either way the credential is checked
+again as the command is sent, with the checks made at admission, so a delegation that
+expired between the write and the commit sends nothing.
+
+**What a failed submission leaves, as this step stands.** These are limits, not a
+recovery path. The outbox epic (#2954: report, await, reauthorize) removes them.
+
+- A registration the hook could not submit stays owed. The failure is logged; the commit
+  has already returned success. The document is readable by its creator only, on this
+  node, and the provider does not hold it.
+- No node call takes a fresh credential for an owed registration. It is submitted again
+  only as a side effect: when a later call on that document runs through the gate with a
+  credential the provider takes for the creator (an access decision, a relationship
+  change), when an owed change by the creator that carries a plain delegation is
+  settled, or when the node starts. A call that carries a delegation bound to that
+  registration settles it and then fails its own command, which the token does not name.
+- The pass at start and the settlement of an owed change serve no request. They register
+  with a key the node holds for the creator, or with the token the process holds for
+  that DID (`defra_core::signing::set_request_bearer_token`) where an embedder set one.
+  An owed registration does not record that it came from a verified write, so these two
+  paths treat it as any other.
+- A relationship change staged beside the registration waits behind it. It is not sent
+  and not parked while the registration is owed, whatever becomes of its own token. Once
+  the registration is settled, a change whose token has expired is parked as awaiting
+  authority.
+
+The model is `proofs/tla/VerifiedRemoteWrite.tla`, with `VerifiedRemoteAuthority.lean`
+for the rule itself.
 
 ## The query engine's side
 
