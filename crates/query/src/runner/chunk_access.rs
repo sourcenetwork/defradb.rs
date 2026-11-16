@@ -47,6 +47,7 @@ where
             return Ok(false);
         };
         let Some(hash) = chunk.verified_hash() else {
+            tracing::debug!(chunks = %chunks_col.name, %doc_id, "chunk hash does not match its text; hidden");
             return Ok(false);
         };
         let key = (chunks_col.name.clone(), chunk.parent_id.clone());

@@ -50,13 +50,22 @@ pub(crate) fn parent_hashes(
         .and_then(NormalValue::as_str)?;
     // The list is written by the parent's writer and merges apart from the text,
     // so only a split of the text itself decides.
-    // A splitter version this node lacks can't check the text, so nothing shows.
-    let config = ChunkConfig::new(
+    let config = match ChunkConfig::new(
         chunked.splitter_version,
         chunked.max_chars as usize,
         chunked.overlap as usize,
-    )
-    .ok()?;
+    ) {
+        Ok(config) => config,
+        Err(error) => {
+            tracing::warn!(
+                field = %chunked.field_name,
+                splitter_version = chunked.splitter_version,
+                %error,
+                "chunk splitter not supported on this node; this field's chunks are hidden"
+            );
+            return None;
+        }
+    };
     Some(
         split(parent_text, &config)
             .into_iter()

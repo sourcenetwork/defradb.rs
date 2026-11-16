@@ -61,7 +61,7 @@ impl ChunkGate {
         parent_acp: Option<AcpReadCheck>,
         parent_app: Option<AppReadCheck>,
     ) -> Self {
-        Self {
+        let gate = Self {
             fetcher,
             chunk_collection: Arc::from(chunks_col.name.as_str()),
             parent: chunks_col
@@ -76,7 +76,14 @@ impl ChunkGate {
             parent_acp,
             parent_app,
             decided: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
+        };
+        if gate.fetcher.is_none() || gate.parent.is_none() {
+            tracing::warn!(
+                chunks = %gate.chunk_collection,
+                "chunk read gate has no fetcher or parent collection; every chunk is hidden"
+            );
         }
+        gate
     }
 
     /// Whether the chunk `doc_id` may show. `row` holds its fields when the
@@ -102,6 +109,7 @@ impl ChunkGate {
             }
         };
         let Some(hash) = chunk.verified_hash() else {
+            tracing::debug!(chunks = %self.chunk_collection, %doc_id, "chunk hash does not match its text; hidden");
             return Ok(false);
         };
         let decision = match self.decided.get(&chunk.parent_id) {
