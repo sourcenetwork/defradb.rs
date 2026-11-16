@@ -13,6 +13,10 @@ use crate::{ffi_async, ffi_entry, try_ffi};
 /// vector index (null or empty for none). Answers with the index
 /// description as JSON.
 ///
+/// On a node the call returns once the index is built. On a transaction it
+/// returns before: the index is built from what the transaction commits, after
+/// the commit, and is listed as building until then.
+///
 /// # Safety
 ///
 /// `index_name`, `fields` and `vector_json` must be null or valid

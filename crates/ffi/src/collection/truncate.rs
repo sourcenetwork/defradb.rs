@@ -12,6 +12,11 @@ use crate::{ffi_async_ok, ffi_entry, try_ffi};
 /// collection. Every version of a collection shares its documents, so which
 /// version `opts` selects does not change what is deleted.
 ///
+/// Truncate is not transactional, as in Go: on a transaction handle it applies
+/// at once and stays if the transaction is discarded, and a filtered truncate
+/// is refused. The GraphQL `truncate_*` mutation refuses to run in a
+/// transaction at all, as Go's does (`ErrTruncateMutationInTransaction`).
+///
 /// # Safety
 ///
 /// Every non-null string in `opts` must be a valid null-terminated string.

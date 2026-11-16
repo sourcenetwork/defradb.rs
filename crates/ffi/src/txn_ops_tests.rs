@@ -1,7 +1,8 @@
 //! Index, encrypted index and view calls on a transaction handle run in that
 //! transaction: what they change is seen in it, unseen outside it until it
 //! commits, and gone if it is discarded, as Go's transactions keep them.
-//! Truncate, which Go does not run in a transaction, applies at once.
+//! Truncate, which Go does not run in a transaction, applies at once, and a
+//! filtered one is refused.
 
 use std::ptr;
 use std::time::Duration;
@@ -12,8 +13,12 @@ use serde_json::{json, Value};
 use crate::collection::defra_collection_truncate;
 use crate::encrypted_index::{defra_encrypted_index_list, defra_encrypted_index_new};
 use crate::index::{defra_index_delete, defra_index_list, defra_index_new};
-use crate::test_support::{add_collection, close, cstr, node, ok, ok_json, query, wait_for, Named};
+use crate::test_support::{
+    add_collection, close, cstr, err, local_options, node, node_with, ok, ok_json, query, take,
+    wait_for, Named,
+};
 use crate::txn::{defra_transaction_commit, defra_transaction_create, defra_transaction_discard};
+use crate::types::NodeInitOptions;
 use crate::view::defra_view_add;
 
 /// A node holding `User { name }` with one document.
@@ -209,9 +214,230 @@ fn a_view_added_in_a_transaction_exists_only_once_it_commits() {
         ok_json(unsafe { defra_view_add(txn, view_query.as_ptr(), sdl.as_ptr(), ptr::null(), 0) });
     assert_eq!(created[0]["Name"], "UserView");
     let view = |handle: usize| query(handle, "{ UserView { name } }");
+    assert_eq!(
+        view(txn)["data"]["UserView"],
+        json!([{"name": "A"}]),
+        "the transaction queries it"
+    );
     assert!(view(node).get("errors").is_some(), "outside, no view yet");
 
     ok(defra_transaction_commit(txn));
     assert_eq!(view(node)["data"]["UserView"], json!([{"name": "A"}]));
     close(node);
+}
+
+/// A refresh on a transaction handle rebuilds the view from what the
+/// transaction commits: a document it added shows only once it commits.
+#[test]
+fn a_view_refreshed_in_a_transaction_shows_its_documents_once_it_commits() {
+    let node = users();
+    let (view_query, sdl) = (
+        cstr("User { name }"),
+        cstr("type UserView @materialized(if: true) { name: String }"),
+    );
+    ok(unsafe { defra_view_add(node, view_query.as_ptr(), sdl.as_ptr(), ptr::null(), 0) });
+    let names = |handle: usize| {
+        let mut names: Vec<String> = query(handle, "{ UserView { name } }")["data"]["UserView"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a view answer"))
+            .iter()
+            .map(|row| row["name"].as_str().unwrap().to_owned())
+            .collect();
+        names.sort();
+        names
+    };
+
+    let txn = begin(node);
+    query(
+        txn,
+        r#"mutation { add_User(input: {name: "B"}) { _docID } }"#,
+    );
+    ok(unsafe { crate::view::defra_view_refresh(txn, Default::default(), 0) });
+    assert_eq!(names(node), ["A"], "outside, the view is as it was");
+
+    ok(defra_transaction_commit(txn));
+    assert_eq!(names(node), ["A", "B"], "rebuilt from what committed");
+    close(node);
+}
+
+#[test]
+fn an_encrypted_index_deleted_in_a_discarded_transaction_stays() {
+    let node = users();
+    let (collection, field) = (cstr("User"), cstr("name"));
+    ok(unsafe {
+        defra_encrypted_index_new(node, collection.as_ptr(), field.as_ptr(), ptr::null(), 0)
+    });
+    let count = |handle: usize| {
+        let listed = ok_json(unsafe { defra_encrypted_index_list(handle, collection.as_ptr(), 0) });
+        listed.as_array().map(Vec::len).unwrap_or_default()
+    };
+
+    let txn = begin(node);
+    ok(unsafe {
+        crate::encrypted_index::defra_encrypted_index_delete(
+            txn,
+            collection.as_ptr(),
+            field.as_ptr(),
+            0,
+        )
+    });
+    assert_eq!(count(txn), 0, "deleted in the transaction");
+    assert_eq!(count(node), 1, "still there outside");
+
+    defra_transaction_discard(txn);
+    assert_eq!(count(node), 1);
+    close(node);
+}
+
+/// Go refuses a filtered truncate in a transaction
+/// (`ErrFilteredTruncateInTransaction`): it cannot be run apart from it.
+#[test]
+fn a_filtered_truncate_on_a_transaction_is_refused() {
+    let node = users();
+    let txn = begin(node);
+    let (user, filter) = (Named::new("User"), cstr(r#"{"name": {"_eq": "A"}}"#));
+
+    let refused = err(unsafe {
+        crate::collection::defra_collection_truncate_with_filter(
+            txn,
+            user.options(),
+            0,
+            filter.as_ptr(),
+        )
+    });
+    assert!(
+        refused.contains("filtered truncate cannot run in a transaction"),
+        "{refused}"
+    );
+    defra_transaction_discard(txn);
+    assert_eq!(user_names(node), json!([{"name": "A"}]), "nothing removed");
+    close(node);
+}
+
+/// A truncate on a transaction handle that already added a document: the
+/// truncate removes what was committed at once, and the transaction's own
+/// document, written apart from the truncate, lands when it commits.
+#[test]
+fn a_truncate_after_a_write_in_the_same_transaction_keeps_that_write() {
+    let node = users();
+    let txn = begin(node);
+    query(
+        txn,
+        r#"mutation { add_User(input: {name: "B"}) { _docID } }"#,
+    );
+    let user = Named::new("User");
+
+    ok(unsafe { defra_collection_truncate(txn, user.options(), 0) });
+    assert_eq!(user_names(node), json!([]), "the committed A is gone");
+
+    let committed = take(defra_transaction_commit(txn));
+    assert!(committed.1.is_ok(), "the commit: {committed:?}");
+    assert_eq!(user_names(node), json!([{"name": "B"}]), "B landed");
+    close(node);
+}
+
+/// A node holding `Note { embedding }`, a vector of three numbers.
+fn notes() -> usize {
+    let node = node();
+    add_collection(node, "type Note { embedding: [Float32!] }");
+    node
+}
+
+fn new_vector_index(handle: usize, name: &str) -> Value {
+    let (collection, name, fields) = (Named::new("Note"), cstr(name), cstr("embedding"));
+    let vector = cstr(r#"{"Algorithm": "HNSW", "Dimensions": 3}"#);
+    ok_json(unsafe {
+        defra_index_new(
+            handle,
+            name.as_ptr(),
+            fields.as_ptr(),
+            0,
+            vector.as_ptr(),
+            collection.options(),
+            0,
+        )
+    })
+}
+
+fn note_index_names(handle: usize) -> Vec<String> {
+    let collection = Named::new("Note");
+    let listed = ok_json(unsafe { defra_index_list(handle, collection.options(), 0) });
+    listed
+        .as_array()
+        .unwrap_or_else(|| panic!("an index list: {listed}"))
+        .iter()
+        .map(|index| index["Description"]["Name"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[test]
+fn a_vector_index_is_created_on_a_node() {
+    let node = notes();
+    let index = new_vector_index(node, "by_embedding");
+    assert_eq!(index["KindDescription"]["Algorithm"], "HNSW", "{index}");
+    assert_eq!(index["KindDescription"]["Dimensions"], 3, "{index}");
+    assert_eq!(note_index_names(node), ["by_embedding"]);
+    close(node);
+}
+
+#[test]
+fn a_vector_index_created_in_a_transaction_is_seen_only_in_it_until_it_commits() {
+    let node = notes();
+    let txn = begin(node);
+    let index = new_vector_index(txn, "by_embedding");
+    assert_eq!(index["KindDescription"]["Algorithm"], "HNSW", "{index}");
+    assert_eq!(note_index_names(txn), ["by_embedding"]);
+    assert!(note_index_names(node).is_empty(), "outside, nothing yet");
+
+    ok(defra_transaction_commit(txn));
+    assert_eq!(note_index_names(node), ["by_embedding"]);
+    close(node);
+}
+
+/// A node with node access control on, owned by `owner`, holding `User`.
+fn owned_users(owner: usize) -> usize {
+    let node = node_with(NodeInitOptions {
+        identity_ptr: owner,
+        enable_node_acp: 1,
+        ..local_options()
+    });
+    let sdl = cstr("type User { name: String }");
+    ok(unsafe { crate::collection::defra_collection_add(node, sdl.as_ptr(), owner) });
+    node
+}
+
+fn new_identity() -> usize {
+    let result = unsafe { crate::identities::defra_identity_new(ptr::null()) };
+    assert_eq!(result.status, 0);
+    result.identity_ptr
+}
+
+/// Node access control decides a call on a transaction handle as on the node:
+/// a caller without the permission is refused, the owner is not.
+#[test]
+fn node_access_control_refuses_an_index_create_on_a_transaction_handle() {
+    let (owner, stranger) = (new_identity(), new_identity());
+    let node = owned_users(owner);
+    let txn = begin(node);
+    let (user, name, fields) = (Named::new("User"), cstr("by_name"), cstr("name"));
+    let create = |identity: usize| unsafe {
+        defra_index_new(
+            txn,
+            name.as_ptr(),
+            fields.as_ptr(),
+            0,
+            ptr::null(),
+            user.options(),
+            identity,
+        )
+    };
+
+    let refused = err(create(stranger));
+    assert!(refused.contains("not authorized"), "{refused}");
+    ok(create(owner));
+
+    defra_transaction_discard(txn);
+    close(node);
+    crate::identities::defra_identity_free(owner);
+    crate::identities::defra_identity_free(stranger);
 }
