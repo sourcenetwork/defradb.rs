@@ -63,11 +63,12 @@ where
                 .await?;
             reads.decided.insert(key.clone(), decision);
         }
-        Ok(reads
+        let listed = reads
             .decided
             .get(&key)
             .and_then(Option::as_ref)
-            .is_some_and(|hashes| hashes.contains(hash)))
+            .is_some_and(|hashes| hashes.contains(hash));
+        Ok(listed && self.app_may_read(caller, chunks_col, doc_id).await?)
     }
 
     async fn chunk_parent(&self, reads: &mut ChunkReads, chunks_col: &CollectionVersion) -> Parent {

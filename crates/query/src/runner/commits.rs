@@ -222,8 +222,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                         })?,
                     },
                 };
+                // `chunk_readable` already ran the chunk collection's own app check.
                 let allowed = match &collection {
-                    Some(collection) if allowed => {
+                    Some(collection) if allowed && collection.chunk_of.is_none() => {
                         self.app_may_read(caller_identity.as_ref(), collection, doc_id)
                             .await?
                     }

@@ -319,7 +319,8 @@ impl PermissionFilterNode {
 
         Box::pin(async move {
             if let Some(chunk) = chunk {
-                let allowed = chunk.allows(&doc_id, row).await?;
+                let allowed =
+                    chunk.allows(&doc_id, row).await? && app_allows(app.as_ref(), &doc_id).await?;
                 return Ok((doc, allowed));
             }
             let allowed = match &acp {
