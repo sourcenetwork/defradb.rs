@@ -89,6 +89,66 @@ mod unit_tests {
         .unwrap()
     }
 
+    /// The NAC store a node keeps in its own regolith store.
+    type Stored = acp::PersistentZanzibarStore<storage::RegolithStore>;
+
+    /// A manager over the same stored state, as a restarted node builds one.
+    fn restarted(store: &std::sync::Arc<Stored>, config: NacConfig) -> db::NacManager<Stored> {
+        db::NacManager::new(std::sync::Arc::clone(store), config)
+    }
+
+    /// Go's TestNAC_DisableSuccessfullyThenRestartWithStartArgs_RemainsDisabled:
+    /// starting again with the enable option sets NAC up only the first time,
+    /// so a disabled NAC stays disabled until an authorized re-enable.
+    #[test]
+    fn a_disabled_nac_stays_disabled_when_restarted_with_the_enable_option() {
+        workers::block_on(async {
+            let store = std::sync::Arc::new(acp::PersistentZanzibarStore::from_store(
+                std::sync::Arc::new(storage::RegolithStore::in_memory().unwrap()),
+            ));
+            let owner = test_did();
+            let caller = NacCaller {
+                identity: Some(owner.clone()),
+                node: None,
+            };
+            let first = restarted(&store, NacConfig::new().with_enabled());
+            first.initialize(Some(&owner)).await.unwrap();
+            first.disable_as(&caller).await.unwrap();
+            drop(first);
+
+            let second = restarted(&store, NacConfig::new().with_enabled());
+            second.initialize(Some(&owner)).await.unwrap();
+            assert_eq!(second.status().await, NacStatus::DisabledTemporarily);
+
+            second.re_enable_as(&caller).await.unwrap();
+            assert_eq!(second.status().await, NacStatus::Enabled);
+        })
+        .unwrap()
+    }
+
+    /// Enabling never turns a disabled NAC back on, nor adds an owner: that
+    /// would skip the stored re-enable permission.
+    #[test]
+    fn enabling_a_disabled_nac_is_refused() {
+        workers::block_on(async {
+            let manager = create_memory_nac_manager(NacConfig::new().with_enabled());
+            let owner = test_did();
+            let stranger = test_did2();
+            manager.initialize(Some(&owner)).await.unwrap();
+            let caller = NacCaller {
+                identity: Some(owner.clone()),
+                node: None,
+            };
+            manager.disable_as(&caller).await.unwrap();
+
+            let refused = manager.enable(&stranger).await.unwrap_err().to_string();
+            assert!(refused.contains("re-enable it instead"), "{refused}");
+            assert_eq!(manager.status().await, NacStatus::DisabledTemporarily);
+            assert!(!manager.is_owner(&stranger).await, "no owner was added");
+        })
+        .unwrap()
+    }
+
     #[test]
     fn test_nac_manager_disable_reenable() {
         workers::block_on(async {
