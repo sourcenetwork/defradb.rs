@@ -305,6 +305,7 @@ impl<H: Hosted + 'static> Node<H> {
                     .borrow()
                     .contains(topic_name(topic).as_str()),
                 Event::Lost { .. }
+                | Event::Missed { .. }
                 | Event::Joined { .. }
                 | Event::AdjacencyShort { .. }
                 | Event::ReachRefused { .. }
@@ -335,6 +336,14 @@ impl<H: Hosted + 'static> Node<H> {
                 },
                 Event::Lost { count } => {
                     warn!(count, "vinc topic events were dropped: the queue was full");
+                    continue;
+                }
+                Event::Missed { topic, hub } => {
+                    warn!(
+                        topic = %topic_name(&topic),
+                        hub = %node_to_peer_id(&hub),
+                        "a vinc hub says messages of a topic may be missing"
+                    );
                     continue;
                 }
                 Event::Joined { topic, .. } => {
