@@ -39,11 +39,16 @@ transaction as owed to the provider and submitted after the commit
   every node once the chain holds the revocation.
 - **The check at staging.** The document's owner comes from the light client's verified
   state, and a managing relation is evaluated there as a permission on the document. The
-  chain counts as unreachable when the read fails with a connection error, or when the
-  light client has no fresh verified state left (30 seconds after the chain stops
-  answering); then an
-  add is staged unchecked and a delete is refused. A read that fails any other way fails
-  the staging call.
+  chain counts as not having answered in three cases: the read's error holds an I/O
+  error (a refused or reset connection); it holds a failure of the transport itself
+  that is not a JSON-RPC answer (a response over the size limit, a response with no
+  result, any failure of the in-process transport); or the light client has no fresh
+  verified state left. A plain request timeout and a response body that is not JSON are
+  none of these as the HTTP transport reports them, so they fail the staging call until
+  the verified state has gone stale; the light client's default freshness window is 30 seconds, and it is the
+  light client's setting, not a constant of this code. When the chain did not answer, an
+  add is staged unchecked and a delete is refused. A read that fails any other way (a
+  JSON-RPC error, a proof that does not verify) fails the staging call.
 - **Outcomes.** A verified receipt that succeeded settles the change; one that was
   rejected is the chain's refusal (the change is parked, or deleted if it was staged
   unchecked); a submission whose receipt could not be confirmed leaves it staged. A
@@ -52,9 +57,11 @@ transaction as owed to the provider and submitted after the commit
   between (then it is parked as refused) or another manager changed the relationship in
   between (then it is applied again).
 - **The Cosmos provider.** A broadcast that timed out or failed in transport leaves the
-  change staged. Any other failed transaction is an answer the provider does not
-  classify: the change stays staged, the pass goes on, and five such answers in a row
-  with the same words park it as refused.
+  change staged. A transaction the node could not key or sign is the node's own error
+  and counts for nothing. Any other failed transaction is an answer the provider does
+  not classify: the change stays staged, the pass goes on, and five such answers park it
+  as refused. It takes no userset or cross-object subject, so such a change is refused
+  at staging.
 
 ## Why it exists
 

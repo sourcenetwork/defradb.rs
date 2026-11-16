@@ -94,14 +94,20 @@ nothing, until a caller can abandon a staged change and a drainer settles them.
   (`ProviderUnavailable`); any other error of the provider, such as an owner it names
   that is no DID, fails the staging call. With the provider unreachable:
   - an **add** is staged unchecked. `authority_checked` is `false`, in the answer and in
-    the record, and a warning is logged. It grants nothing until the provider takes it,
-    and if the provider refuses it the record is deleted, so it holds no tuple and
-    counts against no bound;
+    the record, and a warning is logged. It grants nothing until the provider takes it.
+    It never holds its tuple: if the provider refuses it the record is deleted, and if
+    it is left waiting for authority, or the provider answered it with an error, it is
+    deleted as soon as a later change of its tuple comes up for submission. An actor
+    nobody checked cannot keep the owner's change from the provider;
   - a **delete** is not staged: the call fails with `OwedCheckUnavailable`, to be made
     again once the provider answers. A delete denies from its commit, and is never taken
     on the word of an actor nobody could check. The creator of a document whose
     registration is still owed is checked without the provider, so it can revoke on that
     document during an outage.
+- **Subjects the provider cannot be sent.** A change whose subject is of a kind the
+  provider cannot take (a userset or cross-object subject on the Cosmos provider, a typed
+  wildcard on either) fails with `UnsupportedSubject` and records nothing. It could never
+  be submitted, and a delete of it would deny for ever.
 - **One spelling.** The acting DID and an actor subject are stored in the provider's one
   spelling of the key (for vera.rs, the uncompressed `did:key` DefraDB derives), and the
   gate compares a requester in the same spelling, so a revocation staged under one
@@ -114,17 +120,25 @@ nothing, until a caller can abandon a staged change and a drainer settles them.
   - *refused* (the acting DID lacks the authority, or the provider rejected the
     request): a change whose check ran is parked as `refused{reason}`; one staged
     unchecked is deleted;
+  - a kind of change the provider cannot take at all: the record is deleted, checked or
+    not;
   - no usable authority (the delegation expired, the key is no longer held): it is
     parked as `awaiting_authority`, checked or not;
-  - an error that does not say whether it is final: the change stays staged, with the
-    error and how many times in a row the provider gave it, and the pass goes on. Five
-    such answers in a row with the same words (`MAX_FAILED_SUBMISSIONS`) are taken as a
-    refusal. Only answers count: an unreachable provider is not one;
+  - an error of the provider that does not say whether it is final: the change stays
+    staged, with the last error and how many such answers it has had, and the pass goes
+    on. Five such answers (`MAX_FAILED_SUBMISSIONS`), whatever their words, are taken as
+    a refusal. Only the provider's answers count: an unreachable provider is not one;
+  - an error of the node's own before anything was sent (a request it could not build
+    or sign): the change stays staged, nothing is counted, a warning is logged and the
+    pass goes on;
   - *unreachable* (a transport failure, a timeout): the pass stops and nothing is
     written.
 
-  A parked change holds every later change of its tuple and nothing else: changes of
-  other tuples go on past it.
+  A parked change whose acting DID was checked holds every later change of its tuple and
+  nothing else: changes of other tuples go on past it. A change staged unchecked holds
+  nothing (above). Every record deleted without the provider holding the change is
+  counted in the pass's report (`OwedSettlement::discarded`) and logged with its
+  sequence, actor, document and relation.
 - **When a pass runs.**
   - After the commit of a request that staged a change, over the documents that
     transaction staged on (its own changes and what was owed on them before). The commit
