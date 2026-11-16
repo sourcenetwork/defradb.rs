@@ -7,6 +7,7 @@ mod doc_sync;
 mod gossip;
 mod pubsub_raw;
 mod pushlog;
+mod topic_missed;
 
 use blockstore::Blockstore;
 use std::time::Duration;
@@ -454,6 +455,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             TransportEvent::PeerUnsubscribed { peer_id, topic } => {
                 self.handle_peer_unsubscribed(peer_id, topic);
             }
+            TransportEvent::TopicMissed { topic, hub } => {
+                self.handle_topic_missed(&topic, &hub).await;
+            }
             TransportEvent::GossipMessage {
                 propagation_source,
                 message,
@@ -758,6 +762,10 @@ mod tests {
         peer_id: PeerId,
         pubkey: Vec<u8>,
         published_raw: Arc<kovan_queue::seg_queue::SegQueue<String>>,
+        connected: Vec<PeerId>,
+        /// The DocSync and BranchableSync requests sent, as
+        /// `doc:<peer>:<doc IDs>` or `collection:<peer>:<collection>`.
+        pub(super) pulls: Arc<kovan_queue::seg_queue::SegQueue<String>>,
     }
 
     impl TestTransport {
@@ -770,7 +778,14 @@ mod tests {
                 peer_id,
                 pubkey: vec![1, 2, 3],
                 published_raw: Arc::new(kovan_queue::seg_queue::SegQueue::new()),
+                connected: Vec::new(),
+                pulls: Arc::new(kovan_queue::seg_queue::SegQueue::new()),
             }
+        }
+
+        pub(super) fn with_connected(mut self, peers: Vec<PeerId>) -> Self {
+            self.connected = peers;
+            self
         }
     }
 
@@ -804,7 +819,7 @@ mod tests {
         }
 
         async fn connected_peers(&self) -> P2PResult<Vec<PeerId>> {
-            Ok(Vec::new())
+            Ok(self.connected.clone())
         }
 
         async fn listen_addresses(&self) -> P2PResult<Vec<PeerAddr>> {
@@ -878,9 +893,11 @@ mod tests {
 
         async fn send_doc_sync_request(
             &self,
-            _peer_id: &PeerId,
-            _req: DocSyncRequest,
+            peer_id: &PeerId,
+            req: DocSyncRequest,
         ) -> P2PResult<()> {
+            self.pulls
+                .push(format!("doc:{peer_id}:{}", req.doc_ids.join(",")));
             Ok(())
         }
 
@@ -894,9 +911,11 @@ mod tests {
 
         async fn send_branchable_sync_request(
             &self,
-            _peer_id: &PeerId,
-            _req: BranchableSyncRequest,
+            peer_id: &PeerId,
+            req: BranchableSyncRequest,
         ) -> P2PResult<()> {
+            self.pulls
+                .push(format!("collection:{peer_id}:{}", req.collection_id));
             Ok(())
         }
 

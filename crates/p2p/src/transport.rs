@@ -177,6 +177,11 @@ pub enum TransportEvent<ResponseToken> {
         peer_id: PeerId,
         topic: String,
     },
+    /// A hub says messages of `topic` may not have reached this node.
+    TopicMissed {
+        topic: String,
+        hub: PeerId,
+    },
     BitswapProgress {
         query_id: QueryId,
         missing_count: usize,
@@ -281,6 +286,7 @@ impl<ResponseToken> TransportEvent<ResponseToken> {
             Self::GossipRawMessage { .. } => "gossip_raw_message",
             Self::PeerSubscribed { .. } => "peer_subscribed",
             Self::PeerUnsubscribed { .. } => "peer_unsubscribed",
+            Self::TopicMissed { .. } => "topic_missed",
             Self::BitswapProgress { .. } => "bitswap_progress",
             Self::BitswapComplete { .. } => "bitswap_complete",
             Self::BitswapBlockReceived { .. } => "bitswap_block_received",
@@ -304,7 +310,7 @@ impl<ResponseToken> TransportEvent<ResponseToken> {
 
     /// Assign every transport event to the shared bounded scheduler.
     pub fn dispatch_class(&self) -> crate::sync::DispatchClass {
-        crate::sync::classify_p2p_event!(self, TransportEvent)
+        crate::sync::classify_p2p_event!(self, TransportEvent, Self::TopicMissed { .. })
     }
 }
 

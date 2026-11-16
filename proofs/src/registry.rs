@@ -2862,6 +2862,15 @@ pub const PROPERTIES: &[Property] = &[
         bound_by: "",
     },
     Property {
+        family: "vinc topics",
+        name: "INV_Converges / INV_OnlyOwnTopics for a hub's missed report",
+        axis: Tla,
+        anchor: "crates/p2p/src/vinc/topics.rs topic_events; crates/p2p/src/sync/coordinator/event_handler/topic_missed.rs handle_topic_missed; crates/p2p/src/sync/coordinator/event_handler/doc_sync.rs handle_doc_sync_reply; crates/p2p/src/sync/coordinator/event_handler/branchable_sync.rs handle_branchable_sync_reply",
+        model_ref: "MC_MissedTopicResync_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
         family: "Have-set DAG fetch",
         name: "INV_OneMarkWriter / INV_HeldNeverContends / INV_Lands",
         axis: Tla,

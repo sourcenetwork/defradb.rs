@@ -40,9 +40,10 @@ pub enum DispatchClass {
 /// Keep the libp2p host and transport-agnostic event enums on one exhaustive
 /// scheduling contract.  Both enums intentionally share these variant names;
 /// adding a variant to either enum now fails to compile until its ownership
-/// class is chosen here.
+/// class is chosen here. A variant only one enum has is passed by that enum's
+/// call as a further completion pattern.
 macro_rules! classify_p2p_event {
-    ($event:expr, $event_type:ident) => {
+    ($event:expr, $event_type:ident $(, $completion:pat)*) => {
         match $event {
             $event_type::CarFetchRequest { .. } => $crate::sync::DispatchClass::Recovery,
 
@@ -67,7 +68,8 @@ macro_rules! classify_p2p_event {
             | $event_type::CarFetchResponse { .. }
             | $event_type::SEQueryReply { .. }
             | $event_type::ManageReply { .. }
-            | $event_type::ManageQueryReply { .. } => $crate::sync::DispatchClass::Completion,
+            | $event_type::ManageQueryReply { .. }
+            $(| $completion)* => $crate::sync::DispatchClass::Completion,
 
             $event_type::PeerSubscribed { .. }
             | $event_type::PeerUnsubscribed { .. }

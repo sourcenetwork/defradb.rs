@@ -19,7 +19,11 @@ async fn hub() -> String {
 }
 
 async fn node_on(hub: &str) -> TestNode {
-    let mut config = VincEndpointConfig::new(seed(), loopback());
+    node_as(hub, seed()).await
+}
+
+async fn node_as(hub: &str, identity: zeroize::Zeroizing<[u8; 32]>) -> TestNode {
+    let mut config = VincEndpointConfig::new(identity, loopback());
     config.max_connections = 8;
     config.hubs = vec![hub.to_owned()];
     TestNode::with_config(config).await
@@ -44,6 +48,19 @@ async fn head_hint(node: &mut TestNode) -> (PeerId, String, PushLogBroadcast) {
         _ => None,
     })
     .await
+}
+
+/// Whether `node` takes a head hint within a short wait.
+async fn heard(node: &mut TestNode) -> bool {
+    crate::rt::time::timeout(std::time::Duration::from_millis(50), async {
+        loop {
+            if let Some(TransportEvent::GossipMessage { .. }) = node.events.recv().await {
+                break;
+            }
+        }
+    })
+    .await
+    .is_ok()
 }
 
 fn broadcast(block: Vec<u8>) -> PushLogBroadcast {
@@ -271,5 +288,97 @@ fn a_subscribe_no_hub_confirms_fails_and_its_retry_waits_again() {
         assert!(a.transport.subscribe(topic.clone()).await.is_err());
         a.shutdown().await;
         silent.shutdown().await;
+    });
+}
+
+/// A node that comes back, as the same identity, after the hub's log of its
+/// topic moved past it hears that the topic's messages may be missing.
+#[test]
+fn a_node_back_after_the_hub_log_moved_past_it_hears_its_topic_was_missed() {
+    run(async {
+        let hub = hub().await;
+        let topic = DefraTopic::document("doc-1");
+        let name = topic.to_string();
+        let publisher = node_on(&hub).await;
+        // The watcher takes messages only while it has a peer; that peer is
+        // not the publisher, so the burst goes through the hub's log.
+        let bystander = node_on(&hub).await;
+        let mut watcher = node_on(&hub).await;
+        connect(&bystander.transport, &watcher.transport).await;
+        let identity = seed();
+        let mut first = node_as(&hub, identity.clone()).await;
+        connect(&bystander.transport, &first.transport).await;
+        assert!(first.transport.subscribe(topic.clone()).await.unwrap());
+        assert!(watcher.transport.subscribe(topic.clone()).await.unwrap());
+        // The hub keeps the first node's place in its log once it has taken a
+        // message: publish until both subscribers have one.
+        let (mut first_heard, mut watcher_heard) = (false, false);
+        for _ in 0..200 {
+            publisher
+                .transport
+                .publish(topic.clone(), broadcast(b"before".to_vec()))
+                .await
+                .unwrap();
+            first_heard = first_heard || heard(&mut first).await;
+            watcher_heard = watcher_heard || heard(&mut watcher).await;
+            if first_heard && watcher_heard {
+                break;
+            }
+        }
+        assert!(
+            first_heard && watcher_heard,
+            "no message reached the subscribers"
+        );
+        first.shutdown().await;
+        // More head hints than the hub's log holds (2,048), none to the node
+        // that stopped; the watcher hearing the last shows the hub logged them.
+        for k in 0..2_200u32 {
+            publisher
+                .transport
+                .publish(topic.clone(), broadcast(k.to_be_bytes().to_vec()))
+                .await
+                .unwrap();
+        }
+        publisher
+            .transport
+            .publish(topic.clone(), broadcast(b"last".to_vec()))
+            .await
+            .unwrap();
+        // The watcher's event queue may drop part of the burst (Event::Lost), so
+        // it waits for the last message or for the burst to go quiet.
+        crate::rt::time::timeout(std::time::Duration::from_secs(60), async {
+            loop {
+                let quiet = std::time::Duration::from_secs(2);
+                match crate::rt::time::timeout(quiet, watcher.events.recv()).await {
+                    Ok(Some(TransportEvent::GossipMessage { message, .. }))
+                        if message.block.as_ref() == b"last" =>
+                    {
+                        break;
+                    }
+                    Ok(Some(_)) => {}
+                    Ok(None) | Err(_) => break,
+                }
+            }
+        })
+        .await
+        .expect("the burst reached the watcher");
+        let mut again = node_as(&hub, identity).await;
+        assert!(again.transport.subscribe(topic.clone()).await.unwrap());
+        let missed = crate::rt::time::timeout(std::time::Duration::from_secs(60), async {
+            loop {
+                match again.events.recv().await {
+                    Some(TransportEvent::TopicMissed { topic, .. }) => break Some(topic),
+                    Some(_) => {}
+                    None => break None,
+                }
+            }
+        })
+        .await
+        .expect("a missed report within a minute");
+        assert_eq!(missed, Some(name));
+        again.shutdown().await;
+        watcher.shutdown().await;
+        bystander.shutdown().await;
+        publisher.shutdown().await;
     });
 }

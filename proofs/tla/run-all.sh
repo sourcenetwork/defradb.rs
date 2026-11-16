@@ -314,6 +314,10 @@ RUNS=(
   "MC_RootNamedFetch_Red_Window.cfg RootNamedFetch.tla RED" # a document with no haves asks with a doubling cut (INV_HeldNotResent)
   "MC_RootNamedFetch_Red_Whole.cfg RootNamedFetch.tla RED" # a branchable fetch asks uncut (INV_BranchCut)
   "MC_RootNamedFetch_Red_RootAny.cfg RootNamedFetch.tla RED" # a document holding unmerged blocks below its root, with no have, names the root (INV_HeldNotResent)
+  "MC_MissedTopicResync_Green.cfg MissedTopicResync.tla GREEN" # a hub's missed report on a followed topic is pulled again, and the receiver ends at the latest head
+  "MC_MissedTopicResync_Red_NoPull.cfg MissedTopicResync.tla RED" # a missed report is only logged (INV_Converges)
+  "MC_MissedTopicResync_Red_WrongKind.cfg MissedTopicResync.tla RED" # a document topic is pulled with BranchableSync (INV_Converges)
+  "MC_MissedTopicResync_Red_AnyTopic.cfg MissedTopicResync.tla RED" # a foreign topic is pulled (INV_OnlyOwnTopics)
   "MC_HeldBlockIngest_Green.cfg HeldBlockIngest.tla GREEN" # ingest owns only the blocks it stores; one writer per mark, no contention on held blocks
   "MC_HeldBlockIngest_Red_NoOwners.cfg HeldBlockIngest.tla RED" # ingest owns nothing (INV_OneMarkWriter)
   "MC_HeldBlockIngest_Red_OwnHeld.cfg HeldBlockIngest.tla RED" # ingest also owns held blocks (INV_HeldNeverContends)

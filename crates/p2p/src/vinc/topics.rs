@@ -339,12 +339,10 @@ impl<H: Hosted + 'static> Node<H> {
                     continue;
                 }
                 Event::Missed { topic, hub } => {
-                    warn!(
-                        topic = %topic_name(&topic),
-                        hub = %node_to_peer_id(&hub),
-                        "a vinc hub says messages of a topic may be missing"
-                    );
-                    continue;
+                    let topic = topic_name(&topic);
+                    let hub = node_to_peer_id(&hub);
+                    warn!(%topic, %hub, "a vinc hub says messages of a topic may be missing");
+                    TransportEvent::TopicMissed { topic, hub }
                 }
                 Event::Joined { topic, .. } => {
                     self.joined(&topic_name(&topic));
