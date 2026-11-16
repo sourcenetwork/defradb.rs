@@ -8,6 +8,7 @@ use super::*;
 mod cache_mutations;
 #[path = "../../../tests/unit/access_cache_race.rs"]
 mod cache_race;
+mod owed;
 
 /// Which relationship-emitting provider method a routing test drove, plus
 /// the structured-subject codec tuple for the EntitySet path. Each field

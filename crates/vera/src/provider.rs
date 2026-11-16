@@ -81,6 +81,26 @@ pub trait VeraProvider: MaybeSendSync {
 
     fn self_did(&self) -> Option<String>;
 
+    /// `did` in the one spelling this provider keeps and returns an actor
+    /// under, for a provider whose actors can be written in several.
+    fn canonical_actor(&self, did: &str) -> String {
+        did.to_owned()
+    }
+
+    /// Whether [`Self::create_bearer_token`] signs for `did` with a key the
+    /// node holds, so it needs nothing from a request to act as `did`.
+    fn holds_key_for(&self, _did: &str) -> bool {
+        false
+    }
+
+    /// Whether `error`, returned by a relationship write, is the provider's
+    /// own final answer to that request (a verified rejection) and not a
+    /// failure to reach it or to learn the outcome. The default knows no
+    /// such error, so a failed write is taken as possibly not delivered.
+    fn write_refused(&self, _error: &ProviderError) -> bool {
+        false
+    }
+
     async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError>;
 
     async fn register_object(

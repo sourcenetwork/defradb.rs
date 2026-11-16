@@ -77,6 +77,7 @@ UNIT_NAMES = (
     "provider_commands::tests::encodes_register_object_as_vera_rs_policy_cmd",
     "provider_commands::tests::encodes_relationship_subjects_as_vera_rs_policy_cmds",
     "provider_commands::request_bearer_tests::a_remote_identity_acts_with_the_token_its_request_carries",
+    "provider_commands::request_bearer_tests::the_node_holds_a_registered_local_key_and_not_a_request_token",
     "signer::key_type_tests::a_der_signature_becomes_the_low_s_form_vera_rs_accepts",
     "signer::key_type_tests::the_ed25519_signer_signs_under_the_one_did_of_its_key",
     "signer::key_type_tests::the_p256_signer_signs_low_s_and_is_named_in_two_spellings",

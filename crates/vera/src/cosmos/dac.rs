@@ -354,6 +354,71 @@ impl DocumentACP for VeraDocumentACP {
         defra_core::RequestContext::bound_or_ambient(self.context.as_ref()).bearer_token_for(did)
     }
 
+    fn canonical_actor(&self, did: &Did) -> Did {
+        Did::new_unchecked(self.provider.canonical_actor(did.as_str()))
+    }
+
+    fn owed_authority(&self, actor: &Did) -> Result<acp::OwedAuthority> {
+        let canonical = self.provider.canonical_actor(actor.as_str());
+        if self.provider.holds_key_for(actor.as_str()) || self.provider.holds_key_for(&canonical) {
+            return Ok(acp::OwedAuthority::NodeKey);
+        }
+        let unavailable = |reason: String| acp::Error::OwedAuthorityUnavailable {
+            actor: actor.to_string(),
+            reason,
+        };
+        let token = self
+            .bearer_token_for(actor.as_str())
+            .or_else(|| self.bearer_token_for(&canonical))
+            .ok_or_else(|| {
+                unavailable(
+                    "the node holds no key for it and the request carries no delegation".into(),
+                )
+            })?;
+        match self.provider.caller_of_delegation(&token) {
+            Some(Ok(caller)) if self.provider.canonical_actor(&caller) == canonical => {
+                Ok(acp::OwedAuthority::Delegation { token })
+            }
+            Some(Ok(caller)) => Err(unavailable(format!(
+                "the request's delegation is signed by {caller}"
+            ))),
+            Some(Err(error)) => Err(unavailable(error.to_string())),
+            None if self.provider.delegation_audience().is_some() => Err(unavailable(
+                "the request's token is not a delegation to this node".into(),
+            )),
+            // A provider that takes no delegation is passed its caller's token.
+            None => Ok(acp::OwedAuthority::Delegation { token }),
+        }
+    }
+
+    async fn submit_owed_change(&self, change: &acp::OwedChange) -> acp::Submission {
+        owed::submit(self, change).await
+    }
+
+    async fn check_named_permission(
+        &self,
+        subject: &Did,
+        permission: &str,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> Result<bool> {
+        let [policy, resource, object, permission, actor] = owned([
+            policy_id,
+            resource_name,
+            doc_id,
+            permission,
+            subject.as_str(),
+        ]);
+        self.remote(move |provider| async move {
+            provider
+                .verify_access(&policy, &resource, &object, &permission, &actor)
+                .await
+        })
+        .await
+        .map_err(provider_err)
+    }
+
     fn unregistered_documents_are_public(&self) -> bool {
         self.provider.unregistered_documents_are_public()
     }
@@ -699,6 +764,8 @@ impl DocumentACP for VeraDocumentACP {
         Ok(())
     }
 }
+
+mod owed;
 
 #[cfg(test)]
 mod tests;

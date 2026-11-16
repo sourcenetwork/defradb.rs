@@ -117,6 +117,21 @@ fn subject_to_json(subject: &SubjectRef) -> serde_json::Value {
     }
 }
 
+/// Whether the node holds, for `did`, a local key
+/// [`resolve_cosmos_bearer_token_as`] builds a token with before it falls
+/// back to a request's token.
+fn holds_local_key(did: &str) -> bool {
+    use defra_core::signing::SigningKeyType;
+
+    defra_core::signing::get_identity(did).is_some_and(|signing_config| {
+        signing_config.has_local_private_key()
+            && matches!(
+                signing_config.key_type,
+                SigningKeyType::Ed25519 | SigningKeyType::Secp256k1 | SigningKeyType::Secp256r1
+            )
+    })
+}
+
 /// [`resolve_cosmos_bearer_token_as`] in [`defra_core::RequestContext::ambient`].
 #[cfg(test)]
 fn resolve_cosmos_bearer_token(
@@ -217,6 +232,10 @@ impl VeraProvider for CosmosProvider {
 
     fn self_did(&self) -> Option<String> {
         None
+    }
+
+    fn holds_key_for(&self, did: &str) -> bool {
+        holds_local_key(did)
     }
 
     async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError> {
@@ -426,6 +445,7 @@ mod tests {
             .expect("resolution should succeed")
             .expect("token should resolve");
         assert_eq!(resolved, token);
+        assert!(!holds_local_key(did), "a remote identity's key is not held");
 
         defra_core::signing::clear_request_bearer_token(did);
     }
@@ -458,6 +478,7 @@ mod tests {
         let parsed = identity::from_token(token.as_bytes()).expect("token should parse");
         assert_eq!(parsed.did().expect("did should parse").as_str(), did);
         assert_eq!(parsed.authorized_account(), Some("cosmos1device"));
+        assert!(holds_local_key(&did));
 
         defra_core::signing::clear_request_bearer_token(&did);
     }

@@ -61,6 +61,40 @@ pub(crate) fn encode_delete_relationship_cmd(
     .unwrap_or_default()
 }
 
+/// The signer of a registered identity's local key, for the key types a
+/// delegation can be signed with.
+fn registered_signer(
+    signing_config: &defra_core::signing::SigningConfig,
+) -> Option<Result<Box<dyn super::signer::DelegationSigner>, super::signer::SignerError>> {
+    use defra_core::signing::SigningKeyType;
+
+    use super::signer::{DelegationSigner, Ed25519Signer, P256Signer, Secp256k1Signer};
+
+    let key = signing_config.private_key_bytes.as_slice();
+    match signing_config.key_type {
+        SigningKeyType::Secp256k1 => {
+            Some(Secp256k1Signer::from_slice(key).map(|s| Box::new(s) as Box<dyn DelegationSigner>))
+        }
+        SigningKeyType::Ed25519 => {
+            Some(Ed25519Signer::from_slice(key).map(|s| Box::new(s) as Box<dyn DelegationSigner>))
+        }
+        SigningKeyType::Secp256r1 => {
+            Some(P256Signer::from_slice(key).map(|s| Box::new(s) as Box<dyn DelegationSigner>))
+        }
+        _ => None,
+    }
+}
+
+/// Whether the node holds, for `did`, a registered key it signs a delegation
+/// with: what [`resolve_registered_or_passthrough_bearer_token_as`] signs
+/// with before it falls back to a request's token.
+pub(crate) fn holds_registered_key(did: &str) -> bool {
+    defra_core::signing::get_identity(did).is_some_and(|signing_config| {
+        signing_config.has_local_private_key()
+            && matches!(registered_signer(&signing_config), Some(Ok(_)))
+    })
+}
+
 /// [`resolve_registered_or_passthrough_bearer_token_as`] in
 /// [`defra_core::RequestContext::ambient`].
 #[cfg(test)]
@@ -88,29 +122,9 @@ pub(crate) async fn resolve_registered_or_passthrough_bearer_token_as(
     submitter: &str,
     deployment_id: u64,
 ) -> Result<Option<String>, crate::provider::ProviderError> {
-    use defra_core::signing::SigningKeyType;
-
-    use super::signer::{DelegationSigner, Ed25519Signer, P256Signer, Secp256k1Signer};
-
     if let Some(signing_config) = defra_core::signing::get_identity(did) {
         if signing_config.has_local_private_key() {
-            let key = signing_config.private_key_bytes.as_slice();
-            let signer: Option<Result<Box<dyn DelegationSigner>, _>> = match signing_config.key_type
-            {
-                SigningKeyType::Secp256k1 => Some(
-                    Secp256k1Signer::from_slice(key)
-                        .map(|s| Box::new(s) as Box<dyn DelegationSigner>),
-                ),
-                SigningKeyType::Ed25519 => Some(
-                    Ed25519Signer::from_slice(key)
-                        .map(|s| Box::new(s) as Box<dyn DelegationSigner>),
-                ),
-                SigningKeyType::Secp256r1 => Some(
-                    P256Signer::from_slice(key).map(|s| Box::new(s) as Box<dyn DelegationSigner>),
-                ),
-                _ => None,
-            };
-            if let Some(signer) = signer {
+            if let Some(signer) = registered_signer(&signing_config) {
                 let signer = signer.map_err(|e| {
                     crate::provider::ProviderError::Config(format!("invalid signing key: {}", e))
                 })?;
@@ -259,5 +273,39 @@ mod request_bearer_tests {
 
         assert_eq!(own.as_deref(), Some("request"));
         assert_eq!(unscoped.as_deref(), Some("stored"));
+    }
+
+    #[test]
+    fn the_node_holds_a_registered_local_key_and_not_a_request_token() {
+        use defra_core::signing::{SigningConfig, SigningKeyType};
+        use identity::Identity as _;
+
+        let identity =
+            identity::RawIdentity::from_secp256k1(crypto::generate_secp256k1().expect("key"))
+                .expect("identity");
+        let held = identity.did().expect("did").to_string();
+        defra_core::signing::store_identity(
+            &held,
+            SigningConfig {
+                key_type: SigningKeyType::Secp256k1,
+                private_key_bytes: SigningConfig::private_key_bytes_from_vec(
+                    identity.private_key_bytes().to_vec(),
+                ),
+                public_key_bytes: identity.public_key_bytes().to_vec(),
+                public_key_hex: hex::encode(identity.public_key_bytes()),
+                remote_signer: None,
+                signing_authorization: None,
+            },
+        )
+        .expect("the store takes the identity");
+        let carried = "did:key:z6MkVeraRsCarriedToken";
+        defra_core::signing::set_request_bearer_token(carried, "stored");
+
+        assert!(holds_registered_key(&held));
+        assert!(!holds_registered_key(carried));
+        assert!(!holds_registered_key("did:key:z6MkVeraRsUnknown"));
+
+        defra_core::signing::clear_request_bearer_token(carried);
+        defra_core::signing::release_identity(&held);
     }
 }

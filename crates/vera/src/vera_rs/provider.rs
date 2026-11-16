@@ -23,7 +23,8 @@ use super::did_spelling;
 use super::provider_commands::resolve_registered_or_passthrough_bearer_token;
 use super::provider_commands::{
     encode_archive_object_cmd, encode_delete_relationship_cmd, encode_register_object_cmd,
-    encode_set_relationship_cmd, resolve_registered_or_passthrough_bearer_token_as,
+    encode_set_relationship_cmd, holds_registered_key,
+    resolve_registered_or_passthrough_bearer_token_as,
 };
 use super::signer::{admission, DelegationSigner, Secp256k1Signer};
 use super::transport::RpcTransport;
@@ -425,6 +426,20 @@ impl VeraProvider for VeraRsProvider {
 
     fn self_did(&self) -> Option<String> {
         Some(self.actor_did.clone())
+    }
+
+    fn canonical_actor(&self, did: &str) -> String {
+        did_spelling::defra(did).into_owned()
+    }
+
+    fn holds_key_for(&self, did: &str) -> bool {
+        did_spelling::defra(did) == self.actor_did || holds_registered_key(did)
+    }
+
+    /// A submission is confirmed by its verified receipt, so a rejected one
+    /// was executed and refused.
+    fn write_refused(&self, error: &ProviderError) -> bool {
+        matches!(error, ProviderError::Transaction(_))
     }
 
     async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError> {
