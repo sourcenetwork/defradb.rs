@@ -660,16 +660,27 @@ impl DocumentACP for VeraDocumentACP {
                 )
                 .await
             }
+            // A userset or cross-object subject is decided on the
+            // requestor's authority, as an actor subject is.
             Subject::EntitySet { .. } => {
                 let (kind, sr, so, srel) =
                     zanzibar::encode_subject(&target).map_err(acp::Error::from)?;
+                let bearer_token = self.create_bearer_token(requestor.as_str()).await?;
                 let [policy, resource, doc, relation] =
                     owned([policy_id, resource_name, doc_id, relation]);
                 let result = self
                     .remote(move |provider| async move {
                         provider
-                            .set_relationship_subject(
-                                &policy, &resource, &doc, &relation, kind, &sr, &so, &srel,
+                            .set_relationship_subject_as(
+                                &bearer_token,
+                                &policy,
+                                &resource,
+                                &doc,
+                                &relation,
+                                kind,
+                                &sr,
+                                &so,
+                                &srel,
                             )
                             .await
                     })
@@ -706,16 +717,27 @@ impl DocumentACP for VeraDocumentACP {
                 )
                 .await
             }
+            // A userset or cross-object subject is decided on the
+            // requestor's authority, as an actor subject is.
             Subject::EntitySet { .. } => {
                 let (kind, sr, so, srel) =
                     zanzibar::encode_subject(&target).map_err(acp::Error::from)?;
+                let bearer_token = self.create_bearer_token(requestor.as_str()).await?;
                 let [policy, resource, doc, relation] =
                     owned([policy_id, resource_name, doc_id, relation]);
                 let result = self
                     .remote(move |provider| async move {
                         provider
-                            .delete_relationship_subject(
-                                &policy, &resource, &doc, &relation, kind, &sr, &so, &srel,
+                            .delete_relationship_subject_as(
+                                &bearer_token,
+                                &policy,
+                                &resource,
+                                &doc,
+                                &relation,
+                                kind,
+                                &sr,
+                                &so,
+                                &srel,
                             )
                             .await
                     })

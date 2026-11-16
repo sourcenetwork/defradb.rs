@@ -26,7 +26,8 @@ transaction as owed to the provider and submitted after the commit
 
 - **Who signs.** The worker signs the submission; the command inside it carries the
   acting DID's authority, whatever its subject: an actor, everyone, or a userset or
-  cross-object subject. The node signs a delegation itself when it holds that DID's key
+  cross-object subject. The same holds for a relationship changed outside a
+  transaction: it is sent under its requestor's token, never under the node's own actor. The node signs a delegation itself when it holds that DID's key
   (its own actor, or a registered identity with a local secp256k1, Ed25519 or P-256 key);
   otherwise it stores the delegation the request presented and submits with it. A
   delegation that expired before the change could be submitted parks the change as
