@@ -542,8 +542,10 @@ git log origin/develop --oneline --since="1 week ago"
 
 The Go repo has two remotes:
 - `origin` → `sourcenetwork/defradb` (upstream)
-- `fork` → `edjroz/defradb` (our fork; the rustffi client branches
-  `edjroz/ffi-rust-compat` and `jack/ffi-rust-compat` both live on `origin`)
+- `fork` → `edjroz/defradb` (our fork)
+
+The rustffi client `ffi-test` runs is the commit `GO_FFI_CLIENT_COMMIT` in
+`crates/defra-version/src/lib.rs` names on `origin`.
 
 `DEFRADB_GO_REPO` covers the shell commands above and `ffi-test`, which also
 accepts `--go-path <PATH>` to override it. Integration tests that consume Go
