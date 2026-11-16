@@ -258,6 +258,10 @@ impl BlockReadGate for DbBlockReadGate {
 }
 
 #[cfg(test)]
+#[path = "read_gate_chunk_tests.rs"]
+mod chunk_tests;
+
+#[cfg(test)]
 mod tests {
     use std::sync::Arc;
 

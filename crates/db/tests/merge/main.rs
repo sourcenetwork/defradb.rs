@@ -11,6 +11,7 @@ mod chunk_definition_guard;
 mod chunk_delete;
 mod chunk_forged;
 mod chunk_query_row;
+mod chunk_surfaces;
 mod chunk_update_journal;
 mod collection_block_links;
 mod collection_guard_race;
