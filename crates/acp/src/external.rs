@@ -12,7 +12,7 @@
 //! [`crate::outbox`]) before it asks the provider, on every decision it
 //! serves: document access, access decisions, and the authority to change a
 //! document's relationships. The owner is spared, as the provider names it.
-//! Named permission checks and relationship listings are not served here.
+//! Named permission checks use the same gates; relationship listings are not served here.
 //!
 //! A transaction stages its relationship changes through the gate
 //! ([`DocumentACP::transaction_outbox`]), and the gate submits what is owed
@@ -447,6 +447,36 @@ where
         }
         self.provider
             .check_doc_access(identity, permission, policy_id, resource_name, doc_id)
+            .await
+    }
+
+    async fn check_named_permission(
+        &self,
+        subject: &Did,
+        permission: &str,
+        policy_id: &str,
+        resource_name: &str,
+        doc_id: &str,
+    ) -> Result<bool> {
+        if subject.is_wildcard() {
+            return Err(Error::PermissionDenied(
+                "an explicit actor DID is required".into(),
+            ));
+        }
+        if self.owed(policy_id, resource_name, doc_id).await?.is_some()
+            || self
+                .revoked(
+                    &Identity::Authenticated(subject.clone()),
+                    policy_id,
+                    resource_name,
+                    doc_id,
+                )
+                .await?
+        {
+            return Ok(false);
+        }
+        self.provider
+            .check_named_permission(subject, permission, policy_id, resource_name, doc_id)
             .await
     }
 
