@@ -5,3 +5,5 @@
 # - a listed test that no go-http shard selects fails the summary ("missing");
 # - an entry a pull request adds is printed as a warning naming that pull request.
 # A test belongs here or in known-failures/go-http.txt, never both.
+testo collection_version::updates::add::simple::collection_version_updates_add_simple_errors_adding_unsupported_collection_prop Rust names the missing path ("path /Foo/Fields does not exist"); Go reports "add operation does not apply: doc is missing path"
+testo collection_version::updates::add::simple::collection_version_updates_add_simple_errors_adding_unsupported_collection_prop_at_root Rust names the missing path ("path /Foo does not exist"); Go reports "add operation does not apply: doc is missing path"
