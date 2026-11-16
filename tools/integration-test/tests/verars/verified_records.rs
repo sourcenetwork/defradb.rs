@@ -93,10 +93,15 @@ pub(super) async fn archived_owner_record(provider: Arc<VeraRsProvider>) {
         .is_doc_registered(&policy, "users", "never-registered")
         .await
         .unwrap());
-    assert!(provider
-        .query_object_owner(&policy, "users/other", "archived-document")
-        .await
-        .is_err());
+    // A separator in a resource name names another resource, not a path
+    // into this one: its object has no owner.
+    assert_eq!(
+        provider
+            .query_object_owner(&policy, "users/other", "archived-document")
+            .await
+            .unwrap(),
+        (false, String::new())
+    );
     // A document delete no longer archives the shared object (a replica may
     // still refuse the delete), so nothing changes for it.
     document_acp
