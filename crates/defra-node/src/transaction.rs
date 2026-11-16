@@ -453,8 +453,10 @@ impl Node {
     /// privileged in-process API returns no document metadata; its decisions
     /// must not be exposed to untrusted requesters. The caller authenticates
     /// the actor and chooses the authorization mode and node permission.
-    /// Local ACP and row reads share the transaction. Delegated application
-    /// hooks may read external state and are not fenced by this transaction.
+    /// Local ACP and row reads share the transaction. Remote ACP evaluates
+    /// its current authority and cannot share the row transaction; subsequent
+    /// writes must still pass the provider’s own authorization. Delegated
+    /// application hooks may also read external state.
     pub async fn observe_document_access_in_txn(
         &self,
         handle: &TransactionHandle,

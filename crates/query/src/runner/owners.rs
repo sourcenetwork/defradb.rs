@@ -100,9 +100,15 @@ where
                 let ctx = turn
                     .context()
                     .map_err(|error| QueryError::execution(error.to_string()))?;
-                let acp = match ctx.doc_fetcher().transaction_acp(acp).await? {
-                    Some(acp) => acp,
-                    None => return Ok(vec![DocumentAccessDecision::Unavailable; doc_ids.len()]),
+                let acp = if acp.supports_transactions() {
+                    match ctx.doc_fetcher().transaction_acp(acp).await? {
+                        Some(acp) => acp,
+                        None => {
+                            return Ok(vec![DocumentAccessDecision::Unavailable; doc_ids.len()])
+                        }
+                    }
+                } else {
+                    acp
                 };
                 let provider = ctx.collection_provider().ok_or_else(|| {
                     QueryError::execution("transaction schema observation is unavailable")
