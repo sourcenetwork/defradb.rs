@@ -24,6 +24,11 @@ pub enum Submission {
     /// The provider answered with an error that does not say whether it is
     /// its final word on the change.
     Failed { reason: String },
+    /// The provider cannot take this kind of change at all, whoever asks.
+    Unsupported { reason: String },
+    /// The node could not make or send the request: an error of its own,
+    /// which says nothing about the provider or the change.
+    NotSent { reason: String },
 }
 
 impl Submission {
@@ -39,9 +44,11 @@ impl Submission {
                 | Error::NotManager { .. }
                 | Error::PermissionDenied(_)
                 | Error::DocumentNotRegistered(_)
-                | Error::InvalidRelation(_)
-                | Error::UnsupportedSubject(_)),
+                | Error::InvalidRelation(_)),
             ) => Self::Refused {
+                reason: error.to_string(),
+            },
+            Err(error @ Error::UnsupportedSubject(_)) => Self::Unsupported {
                 reason: error.to_string(),
             },
             Err(error @ Error::OwedAuthorityUnavailable { .. }) => Self::AwaitingAuthority {
@@ -140,6 +147,10 @@ mod tests {
         assert!(matches!(
             Submission::of(Err(Error::Storage("no such policy".into()))),
             Submission::Failed { .. }
+        ));
+        assert!(matches!(
+            Submission::of(Err(Error::UnsupportedSubject("groups:g#member".into()))),
+            Submission::Unsupported { .. }
         ));
     }
 }

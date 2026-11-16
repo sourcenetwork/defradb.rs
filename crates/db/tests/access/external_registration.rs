@@ -60,6 +60,8 @@ pub(super) struct RemoteAcp {
     garbled: HopscotchMap<(), String, rapidhash::fast::RandomState>,
     /// The owner the provider names is not a DID the node can read.
     pub(super) malformed_owner: AtomicBool,
+    /// The node cannot make the request for an owed change at all.
+    pub(super) unsendable: AtomicBool,
     /// Every relationship write applied, in order: add or delete, document,
     /// subject.
     writes: SegQueue<(bool, String, String)>,
@@ -88,6 +90,7 @@ impl RemoteAcp {
             refuse_registration: AtomicBool::new(false),
             garbled: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
             malformed_owner: AtomicBool::new(false),
+            unsendable: AtomicBool::new(false),
             writes: SegQueue::new(),
             credentials: AtomicBool::new(false),
             keys: set(),
@@ -331,6 +334,11 @@ impl DocumentACP for RemoteAcp {
     }
 
     async fn submit_owed_change(&self, change: &acp::OwedChange) -> acp::Submission {
+        if self.unsendable.load(Ordering::SeqCst) {
+            return acp::Submission::NotSent {
+                reason: "the node could not sign the request".into(),
+            };
+        }
         if self.credentials.load(Ordering::SeqCst) {
             let usable = match &change.authority {
                 acp::OwedAuthority::NodeKey => self.keys.contains_key(change.actor.as_str()),

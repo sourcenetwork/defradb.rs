@@ -119,11 +119,15 @@ fn subject_to_json(subject: &SubjectRef) -> serde_json::Value {
 
 /// A failed transaction as the provider reports it: one whose fate is
 /// unknown because the chain was not reached is
-/// [`ProviderError::Unavailable`], any other is the chain's answer.
+/// [`ProviderError::Unavailable`], one the node could not key or sign is
+/// its own [`ProviderError::Config`], and any other is the chain's answer.
 fn tx_error(error: super::tx::TxSignerError) -> ProviderError {
+    use super::tx::TxSignerError;
+
     match error {
-        super::tx::TxSignerError::Unreachable(_) => ProviderError::Unavailable(error.to_string()),
-        other => ProviderError::Transaction(other.to_string()),
+        TxSignerError::Unreachable(_) => ProviderError::Unavailable(error.to_string()),
+        TxSignerError::Key(_) | TxSignerError::Sign(_) => ProviderError::Config(error.to_string()),
+        TxSignerError::Broadcast(_) => ProviderError::Transaction(error.to_string()),
     }
 }
 

@@ -82,6 +82,13 @@ pub trait DocumentACP: MaybeSendSync {
         did.clone()
     }
 
+    /// Whether this provider can be sent a relationship change with this
+    /// kind of subject. A change it cannot take is not staged. The default
+    /// is what the default relationship calls take: one actor, or all.
+    fn submits_subject(&self, subject: &Subject) -> bool {
+        matches!(subject, Subject::Entity(_) | Subject::Wildcard)
+    }
+
     /// What lets the node submit a relationship change as `actor` after the
     /// request that made it is gone: the node's own key for `actor`, or the
     /// delegation the request this provider serves carries for it. With

@@ -9,14 +9,22 @@
 //! - refused: a change whose acting DID was checked at staging is parked as
 //!   refused, and one staged unchecked is deleted, so it holds no tuple and
 //!   counts against no bound;
+//! - a kind of change the provider cannot take at all: deleted;
 //! - no usable authority: it is parked as awaiting authority;
-//! - an error that does not say whether it is final: the change stays
-//!   staged and the pass goes on. [`MAX_FAILED_SUBMISSIONS`] such answers in
-//!   a row with the same words are taken as a refusal;
+//! - an error of the provider that does not say whether it is final: the
+//!   change stays staged and the pass goes on.
+//!   [`MAX_FAILED_SUBMISSIONS`] such answers in a row, whatever their
+//!   words, are taken as a refusal;
+//! - an error of the node's own before anything was sent: the change stays
+//!   staged, nothing is counted, and the pass goes on;
 //! - unreachable: the pass stops, and nothing is written.
 //!
-//! A parked change keeps every later change of its tuple waiting behind it.
-//! Changes of other tuples go on past it.
+//! A parked change whose acting DID was checked keeps every later change of
+//! its tuple waiting behind it. Changes of other tuples go on past it. A
+//! change staged unchecked never holds its tuple: when a later change of the
+//! tuple comes up and the unchecked one is waiting for authority, or the
+//! provider has answered it with an error, the unchecked one is deleted, so
+//! it cannot be submitted after the change that passed it.
 //!
 //! Nothing here retries, waits or runs by itself: a pass runs after the
 //! commit of a request that staged a change (over that transaction's
@@ -39,9 +47,10 @@ use crate::outbox::{
     OwedAuthority, OwedChange, OwedState, OwedSubject, OwedTuple, StagedCount, Submission,
 };
 
-/// How many submissions in a row the provider may answer with the same
-/// unclassified error before the change is taken as refused. Only answers
-/// count: a provider that could not be reached is not one.
+/// How many submissions in a row the provider may answer with an
+/// unclassified error before the change is taken as refused. Only the
+/// provider's answers count: one that could not be reached is none, and
+/// neither is an error of the node's own.
 pub const MAX_FAILED_SUBMISSIONS: u32 = 5;
 
 /// Which owed changes a pass submits.
@@ -61,7 +70,9 @@ pub struct OwedSettlement {
     pub settled: u64,
     /// Changes the provider refused for good, now parked as refused.
     pub refused: u64,
-    /// Changes staged unchecked that the provider refused, deleted.
+    /// Changes deleted without the provider holding them: staged unchecked
+    /// and refused, or passed by a later change of their tuple; or of a kind
+    /// the provider cannot take.
     pub discarded: u64,
     /// Changes whose recorded authority no longer lets the node submit them.
     pub awaiting_authority: u64,
@@ -172,6 +183,7 @@ where
                 if objects.is_some_and(|objects| !objects.contains(&object_of(&change.tuple))) {
                     continue;
                 }
+                report.discarded += self.pass_unchecked(change).await?;
                 match self.settle_change(change, &mut held).await? {
                     Step::Settled => report.settled += 1,
                     Step::Refused => report.refused += 1,
@@ -279,6 +291,34 @@ where
         page
     }
 
+    /// Delete the unchecked changes `change` passes: earlier changes of its
+    /// tuple, staged without the authority check, that the provider has not
+    /// taken (they wait for authority, or it answered them with an error).
+    /// Nobody vouched for them, so they may not keep a later change from the
+    /// provider, and once passed they must never be submitted after it.
+    /// Returns how many were deleted.
+    async fn pass_unchecked(&self, change: &OwedChange) -> Result<u64> {
+        if change.state != OwedState::Staged {
+            return Ok(0);
+        }
+        let mut passed = 0;
+        while let Some(oldest) = self.oldest_on(&change.tuple).await? {
+            let yields = oldest.seq < change.seq
+                && !oldest.authority_checked
+                && match oldest.state {
+                    OwedState::AwaitingAuthority => true,
+                    OwedState::Staged => oldest.attempts > 0,
+                    OwedState::Refused { .. } => false,
+                };
+            if !yields || !self.write(oldest.seq, Write::Settle).await? {
+                break;
+            }
+            discarded(&oldest, "a later change of its tuple passed it");
+            passed += 1;
+        }
+        Ok(passed)
+    }
+
     /// `change` as committed now, when it is staged and the oldest unsettled
     /// change of its tuple.
     async fn submittable(&self, change: &OwedChange) -> Result<Option<OwedChange>> {
@@ -324,20 +364,25 @@ where
                 Write::Mark(OwedState::AwaitingAuthority, attempts, reason),
                 Step::Awaiting,
             ),
-            Submission::Failed { reason } => {
-                let repeated = if change.last_error.as_deref() == Some(reason.as_str()) {
-                    attempts
-                } else {
-                    1
-                };
-                if repeated >= MAX_FAILED_SUBMISSIONS {
-                    refusal(&change, repeated, reason)
-                } else {
-                    (
-                        Write::Mark(OwedState::Staged, repeated, reason),
-                        Step::Failed,
-                    )
-                }
+            Submission::Failed { reason } if attempts >= MAX_FAILED_SUBMISSIONS => {
+                refusal(&change, attempts, reason)
+            }
+            Submission::Failed { reason } => (
+                Write::Mark(OwedState::Staged, attempts, reason),
+                Step::Failed,
+            ),
+            Submission::Unsupported { reason } => {
+                discarded(&change, &reason);
+                (Write::Settle, Step::Discarded)
+            }
+            Submission::NotSent { reason } => {
+                tracing::warn!(
+                    target: "acp::audit",
+                    seq = change.seq,
+                    reason,
+                    "Could not submit an owed ACP change; it stays staged"
+                );
+                return Ok(Step::Left);
             }
             Submission::Unavailable { reason } => {
                 tracing::debug!(
@@ -465,13 +510,22 @@ fn refusal(change: &OwedChange, attempts: u32, reason: String) -> (Write, Step) 
             Step::Refused,
         )
     } else {
-        tracing::warn!(
-            target: "acp::audit",
-            seq = change.seq,
-            actor = %change.actor,
-            reason,
-            "ACP provider refused a change staged without the authority check; discarded"
-        );
+        discarded(change, &reason);
         (Write::Settle, Step::Discarded)
     }
+}
+
+/// Say which change was deleted without the provider holding it, and why.
+fn discarded(change: &OwedChange, reason: &str) {
+    tracing::warn!(
+        target: "acp::audit",
+        seq = change.seq,
+        op = ?change.op,
+        actor = %change.actor,
+        object = %change.tuple.object,
+        relation = %change.tuple.relation,
+        authority_checked = change.authority_checked,
+        reason,
+        "Owed ACP change discarded"
+    );
 }

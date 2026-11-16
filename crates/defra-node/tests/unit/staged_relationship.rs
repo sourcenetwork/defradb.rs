@@ -39,6 +39,10 @@ struct Remote {
     tuples: Map<(String, String, String), ()>,
     writes: SegQueue<(bool, String, String)>,
     down: AtomicBool,
+    /// A relationship write does not answer until `released`, and then
+    /// fails as not delivered.
+    stalled: AtomicBool,
+    released: regolith::sync::Event,
 }
 
 impl Remote {
@@ -49,12 +53,23 @@ impl Remote {
             tuples: map(),
             writes: SegQueue::new(),
             down: AtomicBool::new(false),
+            stalled: AtomicBool::new(false),
+            released: regolith::sync::Event::new(),
         })
     }
 
     fn reachable(&self) -> Result<(), ProviderError> {
         if self.down.load(Ordering::SeqCst) {
             return Err(ProviderError::Unavailable("stub provider is down".into()));
+        }
+        Ok(())
+    }
+
+    /// Hold a relationship write while the provider is stalled.
+    async fn stall(&self) -> Result<(), ProviderError> {
+        if self.stalled.load(Ordering::SeqCst) {
+            self.released.wait().await;
+            return Err(ProviderError::Unavailable("stub provider stalled".into()));
         }
         Ok(())
     }
@@ -136,6 +151,10 @@ impl VeraProvider for Remote {
         matches!(error, ProviderError::Transaction(_))
     }
 
+    fn takes_subject_commands(&self) -> bool {
+        true
+    }
+
     fn delegation_audience(&self) -> Option<acp::DelegationAudience> {
         Some(acp::DelegationAudience {
             worker: "did:key:stub-worker".into(),
@@ -201,6 +220,7 @@ impl VeraProvider for Remote {
         relation: &str,
         subject: &SubjectRef,
     ) -> Result<bool, ProviderError> {
+        self.stall().await?;
         self.write(true, bearer_token, object_id, relation, subject)
     }
 
@@ -753,6 +773,11 @@ fn a_revocation_is_not_staged_while_nobody_can_check_its_actor() {
         let remote = Remote::new();
         let node = node_on(Some(&remote)).await;
         let doc = created(node.execute_request(create("shared")).await);
+        node.add_dac_actor_relationship(OWNER, "Record", &doc, "reader", READER)
+            .await
+            .unwrap();
+        remote.take_writes();
+        assert_eq!(reads(&node, READER).await, ["shared"]);
         remote.down.store(true, Ordering::SeqCst);
 
         let transaction = node.begin_transaction_guard(false).await.unwrap();
@@ -775,7 +800,88 @@ fn a_revocation_is_not_staged_while_nobody_can_check_its_actor() {
         );
         transaction.commit().await.unwrap();
         remote.down.store(false, Ordering::SeqCst);
-        assert!(remote.take_writes().is_empty());
+
+        // No record was written: a delete of everyone would deny the reader
+        // from this commit on, and the next commit on the document would
+        // submit it.
+        assert_eq!(reads(&node, READER).await, ["shared"]);
+        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        node.add_dac_actor_relationship_change_for_in_txn(
+            transaction.handle(),
+            &actor(OWNER),
+            "Record",
+            &doc,
+            "reader",
+            CALLER,
+        )
+        .await
+        .unwrap();
+        transaction.commit().await.unwrap();
+        assert_eq!(
+            remote.take_writes(),
+            [(true, doc.clone(), CALLER.to_string())]
+        );
+        assert_eq!(reads(&node, READER).await, ["shared"]);
+        node.shutdown().await.unwrap();
+    })
+    .unwrap();
+}
+
+/// A commit waits for the provider no longer than the deadline, and what
+/// the provider did not take by then is still owed.
+#[test]
+fn a_commit_returns_at_the_deadline_with_the_change_still_staged() {
+    workers::block_on(async {
+        let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
+        let remote = Remote::new();
+        let node = node_on(Some(&remote)).await;
+        let doc = created(node.execute_request(create("shared")).await);
+        let deadline = crate::acp_ops::transactional::OWED_SETTLE_DEADLINE;
+
+        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        node.add_dac_actor_relationship_change_for_in_txn(
+            transaction.handle(),
+            &actor(OWNER),
+            "Record",
+            &doc,
+            "reader",
+            READER,
+        )
+        .await
+        .unwrap();
+        remote.stalled.store(true, Ordering::SeqCst);
+        let committing = std::time::Instant::now();
+        transaction.commit().await.unwrap();
+        let waited = committing.elapsed();
+        assert!(
+            waited >= deadline && waited < deadline + std::time::Duration::from_secs(5),
+            "the commit waited {waited:?}"
+        );
+        assert!(!remote.holds(&doc, READER));
+
+        // The stalled submission never lands. The next commit on the
+        // document finds the change still staged and submits it first.
+        remote.stalled.store(false, Ordering::SeqCst);
+        remote.released.set();
+        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        node.add_dac_actor_relationship_change_for_in_txn(
+            transaction.handle(),
+            &actor(OWNER),
+            "Record",
+            &doc,
+            "reader",
+            CALLER,
+        )
+        .await
+        .unwrap();
+        transaction.commit().await.unwrap();
+        assert_eq!(
+            remote.take_writes(),
+            [
+                (true, doc.clone(), READER.to_string()),
+                (true, doc.clone(), CALLER.to_string()),
+            ]
+        );
         node.shutdown().await.unwrap();
     })
     .unwrap();

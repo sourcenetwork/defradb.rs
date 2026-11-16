@@ -337,6 +337,10 @@ where
         self.provider.canonical_actor(did)
     }
 
+    fn submits_subject(&self, subject: &Subject) -> bool {
+        self.provider.submits_subject(subject)
+    }
+
     fn owed_authority(&self, actor: &Did) -> Result<crate::outbox::OwedAuthority> {
         self.provider.owed_authority(actor)
     }

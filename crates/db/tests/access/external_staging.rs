@@ -42,6 +42,8 @@ pub(super) struct Change {
     pub(super) managed: bool,
     /// The transaction the record names as staging it.
     pub(super) txn: Option<u64>,
+    /// A subject that is not one actor, in place of `subject`.
+    pub(super) other_subject: Option<Subject>,
 }
 
 impl Change {
@@ -54,6 +56,7 @@ impl Change {
             op,
             managed: true,
             txn: None,
+            other_subject: None,
         }
     }
 }
@@ -146,7 +149,10 @@ impl Staging {
                                 .stage(StageRelationship {
                                     txn: change.txn,
                                     actor: &change.actor,
-                                    subject: Subject::Entity(change.subject.clone()),
+                                    subject: change
+                                        .other_subject
+                                        .clone()
+                                        .unwrap_or_else(|| Subject::Entity(change.subject.clone())),
                                     policy_id: POLICY,
                                     resource: RESOURCE,
                                     object: &change.doc,
@@ -802,6 +808,33 @@ fn a_committed_revocation_denies_a_write_and_spares_the_owner() {
         assert_eq!(rename(bob(), "by bob again").await, 0);
         assert_eq!(rename(alice(), "by alice").await, 1);
         assert_eq!(staging.reads_in(&staging.begin().await, alice()).await, ["by alice"]);
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_subject_the_provider_cannot_be_sent_is_not_staged() {
+    workers::block_on(async {
+        let staging = Staging::new().await;
+        let doc = staging.create(alice(), "shared", None).await;
+        let members = Subject::entity_set("groups", "team", "member");
+        assert!(!staging.gate.submits_subject(&members));
+        assert!(staging.gate.submits_subject(&Subject::Wildcard));
+
+        let handle = staging.begin().await;
+        for op in [OwedOp::Add, OwedOp::Delete] {
+            let change = Change {
+                other_subject: Some(members.clone()),
+                ..Change::new(alice(), &doc, op, bob())
+            };
+            assert!(matches!(
+                staging.stage(&handle, change).await,
+                Err(acp::Error::UnsupportedSubject(_))
+            ));
+        }
+        staging.commit(&handle).await;
+        assert!(staging.queue().await.is_empty());
+        assert!(staging.allowed(&alice(), &doc).await);
     })
     .unwrap()
 }

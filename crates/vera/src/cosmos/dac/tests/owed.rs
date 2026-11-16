@@ -25,6 +25,8 @@ enum Answer {
 struct OwedProvider {
     answer: std::sync::atomic::AtomicU8,
     takes_delegations: bool,
+    /// Whether a failed transaction is a verified rejection.
+    classifies: AtomicBool,
     key_held: AtomicBool,
     expired: AtomicBool,
     /// Expire the delegation while the write is on its way.
@@ -38,6 +40,7 @@ impl OwedProvider {
         Arc::new(Self {
             answer: std::sync::atomic::AtomicU8::new(Answer::Applied as u8),
             takes_delegations,
+            classifies: AtomicBool::new(true),
             key_held: AtomicBool::new(true),
             expired: AtomicBool::new(false),
             expires_in_flight: AtomicBool::new(false),
@@ -108,7 +111,11 @@ impl VeraProvider for OwedProvider {
     }
 
     fn write_refused(&self, error: &ProviderError) -> bool {
-        matches!(error, ProviderError::Transaction(_))
+        self.classifies.load(Ordering::Relaxed) && matches!(error, ProviderError::Transaction(_))
+    }
+
+    fn takes_subject_commands(&self) -> bool {
+        self.takes_delegations
     }
 
     fn delegation_audience(&self) -> Option<acp::DelegationAudience> {
@@ -375,10 +382,19 @@ async fn a_submission_is_read_as_applied_refused_or_not_delivered() {
         bound.submit_owed_change(&keyed).await,
         Submission::Unavailable { .. }
     ));
+    // A failed transaction the provider does not classify is its answer
+    // all the same. An error before anything was sent is the node's own.
+    provider.classifies.store(false, Ordering::Relaxed);
+    provider.answer(Answer::Rejected);
+    assert!(matches!(
+        bound.submit_owed_change(&keyed).await,
+        Submission::Failed { reason } if reason.contains("rejected")
+    ));
+    provider.classifies.store(true, Ordering::Relaxed);
     provider.answer(Answer::Unclear);
     assert!(matches!(
         bound.submit_owed_change(&keyed).await,
-        Submission::Failed { reason } if reason.contains("no answer")
+        Submission::NotSent { reason } if reason.contains("no answer")
     ));
 
     provider.answer(Answer::Applied);
@@ -394,7 +410,7 @@ async fn a_submission_is_read_as_applied_refused_or_not_delivered() {
     provider.sent();
     assert!(matches!(
         bound.submit_owed_change(&typed).await,
-        Submission::Refused { .. }
+        Submission::Unsupported { .. }
     ));
     assert!(
         provider.sent().is_empty(),
@@ -513,4 +529,19 @@ async fn a_change_of_a_userset_subject_is_sent_under_its_recorded_authority() {
         Submission::Refused { .. }
     ));
     assert_eq!(provider.sent(), [format!("delegation:{REMOTE}")]);
+}
+
+#[test]
+fn a_subject_is_staged_only_where_the_provider_can_be_sent_it() {
+    let members = Subject::entity_set("groups", "team", "member");
+    let typed = Subject::TypedWildcard {
+        resource: "groups".into(),
+    };
+    for takes in [true, false] {
+        let acp = VeraDocumentACP::without_access_cache(OwedProvider::new(takes));
+        assert!(acp.submits_subject(&Subject::Entity(did(REMOTE))));
+        assert!(acp.submits_subject(&Subject::Wildcard));
+        assert_eq!(acp.submits_subject(&members), takes);
+        assert!(!acp.submits_subject(&typed));
+    }
 }

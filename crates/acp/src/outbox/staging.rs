@@ -104,8 +104,14 @@ impl TransactionOutbox {
     /// spelling of them. The change records what will let the node submit it
     /// as its acting DID; with nothing to record the call fails with
     /// [`Error::OwedAuthorityUnavailable`] and stages nothing. A refusal of
-    /// the advisory check is the error a local ACP gives.
+    /// the advisory check is the error a local ACP gives. A subject of a
+    /// kind the provider cannot be sent is refused with
+    /// [`Error::UnsupportedSubject`] before anything is recorded: such a
+    /// change could never be submitted.
     pub async fn stage(&self, request: StageRelationship<'_>) -> Result<Staged> {
+        if !self.provider.submits_subject(&request.subject) {
+            return Err(Error::UnsupportedSubject(request.subject.to_string()));
+        }
         let actor = self.provider.canonical_actor(request.actor);
         let subject = match OwedSubject::try_from(request.subject.clone())? {
             OwedSubject::Actor { did } => OwedSubject::Actor {

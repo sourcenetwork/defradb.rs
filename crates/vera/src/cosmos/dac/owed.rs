@@ -103,7 +103,7 @@ pub(super) async fn submit(acp: &VeraDocumentACP, change: &OwedChange) -> Submis
                         encoded
                     }
                     _ => {
-                        return Submission::Refused {
+                        return Submission::Unsupported {
                             reason: acp::Error::UnsupportedSubject(subject.to_string()).to_string(),
                         }
                     }
@@ -162,8 +162,13 @@ pub(super) async fn submit(acp: &VeraDocumentACP, change: &OwedChange) -> Submis
                 },
             }
         }
-        Err(ProviderError::Unsupported(reason)) => Submission::Refused { reason },
-        Err(error) => Submission::Failed {
+        Err(ProviderError::Unsupported(reason)) => Submission::Unsupported { reason },
+        // The provider executed or admitted the request and failed it.
+        Err(error @ ProviderError::Transaction(_)) => Submission::Failed {
+            reason: error.to_string(),
+        },
+        // Anything else failed on this node before the request was sent.
+        Err(error) => Submission::NotSent {
             reason: error.to_string(),
         },
     }

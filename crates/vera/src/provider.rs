@@ -93,6 +93,13 @@ pub trait VeraProvider: MaybeSendSync {
         false
     }
 
+    /// Whether a relationship whose subject is a userset or another object
+    /// can be submitted to this provider
+    /// ([`Self::set_relationship_subject_as`]).
+    fn takes_subject_commands(&self) -> bool {
+        false
+    }
+
     /// Whether `error`, returned by a relationship write, is the provider's
     /// own final answer to that request (a verified rejection) and not a
     /// failure to reach it or to learn the outcome. The default knows no

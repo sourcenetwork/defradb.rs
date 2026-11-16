@@ -6,6 +6,12 @@
 //! client has no fresh verified state left, which is how a chain that has
 //! stopped answering shows after the freshness window. Any other failure is
 //! the chain's answer or a proof that did not verify, and stays an error.
+//!
+//! The light client's HTTP transport reports its HTTP and JSON errors as
+//! themselves, not as transport failures, and their types are not ones this
+//! crate can name. So a request that timed out, or a body that is not JSON,
+//! is recognised only through an I/O error in its chain, if it has one, or
+//! once the verified state has gone stale.
 
 use std::error::Error;
 

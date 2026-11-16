@@ -437,6 +437,10 @@ impl VeraProvider for VeraRsProvider {
         did_spelling::defra(did) == self.actor_did || holds_registered_key(did)
     }
 
+    fn takes_subject_commands(&self) -> bool {
+        true
+    }
+
     /// A submission is confirmed by its verified receipt, so a rejected one
     /// was executed and refused.
     fn write_refused(&self, error: &ProviderError) -> bool {

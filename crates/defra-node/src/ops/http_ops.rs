@@ -147,8 +147,7 @@ impl BackupOperations for HttpNodeOps {
 impl DocumentAcpOperations for HttpNodeOps {
     /// Only a provider that joins the transaction serves a relationship
     /// change in one over HTTP. A remote provider would stage the change,
-    /// and until a caller can abandon a staged change and a drainer settles
-    /// them, staging is for embedders that call the node directly.
+    /// and staging is for embedders that call the node directly.
     fn supports_transactional_relationships(&self) -> bool {
         self.ops.document_acp.supports_transactions()
     }

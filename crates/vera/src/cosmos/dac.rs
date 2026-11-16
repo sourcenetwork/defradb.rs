@@ -363,6 +363,14 @@ impl DocumentACP for VeraDocumentACP {
         Did::new_unchecked(self.provider.canonical_actor(did.as_str()))
     }
 
+    fn submits_subject(&self, subject: &Subject) -> bool {
+        match subject {
+            Subject::Entity(_) | Subject::Wildcard => true,
+            Subject::EntitySet { .. } => self.provider.takes_subject_commands(),
+            _ => false,
+        }
+    }
+
     fn owed_authority(&self, actor: &Did) -> Result<acp::OwedAuthority> {
         let canonical = self.provider.canonical_actor(actor.as_str());
         if self.provider.holds_key_for(actor.as_str()) || self.provider.holds_key_for(&canonical) {

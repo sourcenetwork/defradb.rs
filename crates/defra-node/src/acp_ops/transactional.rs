@@ -364,9 +364,13 @@ async fn settle_owed_changes(acp: Arc<dyn acp::DocumentACP>, staged_by: u64) {
             %error,
             "Could not settle owed ACP relationship changes; they stay owed"
         ),
-        Err(_) => tracing::warn!(
+        Err(workers::Error::TimedOut) => tracing::warn!(
             deadline = ?OWED_SETTLE_DEADLINE,
             "ACP provider did not take the staged relationship changes in time; they stay owed"
+        ),
+        Err(error) => tracing::warn!(
+            %error,
+            "Could not wait for the staged relationship changes to settle; they stay owed"
         ),
     }
 }

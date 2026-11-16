@@ -247,7 +247,7 @@ fn an_unchecked_change_the_provider_refuses_is_discarded_and_holds_nothing() {
 }
 
 #[test]
-fn an_answer_that_is_not_classified_parks_only_after_it_repeats() {
+fn answers_that_are_not_classified_park_a_change_once_there_are_enough() {
     workers::block_on(async {
         let staging = Staging::new().await;
         let doc = staging.create(alice(), "shared", None).await;
@@ -257,7 +257,7 @@ fn an_answer_that_is_not_classified_parks_only_after_it_repeats() {
         staging.commit_change(add(alice(), &other, bob())).await;
         // The pass does not stop at a change the provider answers with an
         // error: it goes on and submits the other document's change too.
-        staging.remote.garble(Some("code 13"));
+        staging.remote.garble(Some("code 13, attempt 1"));
         assert_eq!(
             staging.pass().await,
             OwedSettlement {
@@ -266,43 +266,41 @@ fn an_answer_that_is_not_classified_parks_only_after_it_repeats() {
                 ..OwedSettlement::default()
             }
         );
-        staging.remote.garble(None);
         let queue = staging.queue().await;
         assert_eq!(queue[0].seq, failing.seq);
         assert_eq!(queue[0].state, OwedState::Staged);
         assert_eq!(queue[0].attempts, 1);
         assert_eq!(
             queue[0].last_error.as_deref(),
-            Some("storage error: code 13")
+            Some("storage error: code 13, attempt 1")
         );
 
-        // An outage is not an answer, and another answer starts the count
-        // again.
-        staging.remote.garble(Some("code 13"));
-        for _ in 2..MAX_FAILED_SUBMISSIONS {
-            staging.remote.down.store(true, Ordering::SeqCst);
-            assert!(staging.pass().await.provider_unavailable);
-            staging.remote.down.store(false, Ordering::SeqCst);
-            assert_eq!(staging.pass().await.failed, 2);
+        // Neither an outage nor an error of the node's own is an answer.
+        staging.remote.down.store(true, Ordering::SeqCst);
+        assert!(staging.pass().await.provider_unavailable);
+        staging.remote.down.store(false, Ordering::SeqCst);
+        staging.remote.unsendable.store(true, Ordering::SeqCst);
+        for _ in 0..MAX_FAILED_SUBMISSIONS {
+            assert_eq!(staging.pass().await, left_only(3));
         }
-        assert_eq!(
-            staging.queue().await[0].attempts,
-            MAX_FAILED_SUBMISSIONS - 1
-        );
-        staging.remote.garble(Some("code 14"));
-        assert_eq!(staging.pass().await.failed, 2);
+        staging.remote.unsendable.store(false, Ordering::SeqCst);
         assert_eq!(staging.queue().await[0].attempts, 1);
 
-        // The same answer, enough times in a row, is the provider's refusal.
-        for _ in 2..MAX_FAILED_SUBMISSIONS {
+        // Answers count whatever their words, and the last one is kept.
+        for attempt in 2..MAX_FAILED_SUBMISSIONS {
+            staging
+                .remote
+                .garble(Some(&format!("code 13, attempt {attempt}")));
             assert_eq!(staging.pass().await.failed, 2);
+            assert_eq!(staging.queue().await[0].attempts, attempt);
         }
+        staging.remote.garble(Some("code 13, the last attempt"));
         let parked = staging.pass().await;
         assert_eq!((parked.refused, parked.failed), (2, 0));
         let queue = staging.queue().await;
         assert!(matches!(
             &queue[0].state,
-            OwedState::Refused { reason } if reason.contains("code 14")
+            OwedState::Refused { reason } if reason.contains("the last attempt")
         ));
         assert_eq!(queue[0].attempts, MAX_FAILED_SUBMISSIONS);
         assert_eq!(
@@ -311,6 +309,124 @@ fn an_answer_that_is_not_classified_parks_only_after_it_repeats() {
             "held behind the parked one"
         );
         assert_eq!(staging.pass().await, left_only(1));
+    })
+    .unwrap()
+}
+
+#[test]
+fn an_unchecked_change_never_keeps_a_later_one_from_the_provider() {
+    workers::block_on(async {
+        let staging = Staging::new().await;
+        let doc = staging.create(alice(), "shared", None).await;
+        staging
+            .on_provider(alice(), add(alice(), &doc, bob()))
+            .await;
+        staging.remote.credentials.store(true, Ordering::SeqCst);
+        staging.remote.hold_key(&alice());
+
+        // Mallory stages an add on Alice's tuple while nobody can check it,
+        // under a delegation that lapses before the provider is back.
+        staging.remote.carry_delegation(&mallory(), "short");
+        staging.remote.down.store(true, Ordering::SeqCst);
+        let unchecked = staging.commit_change(add(mallory(), &doc, bob())).await;
+        assert!(!unchecked.authority_checked);
+        staging.remote.down.store(false, Ordering::SeqCst);
+        staging.remote.expire("short");
+        assert_eq!(staging.pass().await.awaiting_authority, 1);
+        // Alone on its tuple it waits: its authority may yet be renewed.
+        assert_eq!(staging.states().await, [OwedState::AwaitingAuthority]);
+
+        // The owner's revocation of the same tuple is not kept behind it:
+        // it passes the unchecked change, which is deleted for good.
+        staging.commit_change(delete(alice(), &doc, bob())).await;
+        assert_eq!(
+            staging.pass().await,
+            OwedSettlement {
+                settled: 1,
+                discarded: 1,
+                ..OwedSettlement::default()
+            }
+        );
+        assert_eq!(
+            staging.remote.take_writes(),
+            [(false, doc.clone(), bob().to_string())]
+        );
+        assert!(staging.queue().await.is_empty());
+        assert!(!staging.remote.holds(&doc, &bob()));
+
+        // One the provider answered with an error is passed the same way.
+        staging.remote.down.store(true, Ordering::SeqCst);
+        staging.remote.carry_delegation(&mallory(), "fresh");
+        staging.commit_change(add(mallory(), &doc, carol())).await;
+        staging.remote.down.store(false, Ordering::SeqCst);
+        staging.remote.garble(Some("code 13"));
+        assert_eq!(staging.pass().await.failed, 1);
+        staging.remote.garble(None);
+        staging.commit_change(delete(alice(), &doc, carol())).await;
+        let passed = staging.pass().await;
+        assert_eq!((passed.discarded, passed.settled), (1, 1));
+        assert!(staging.queue().await.is_empty());
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_change_the_provider_cannot_take_at_all_is_discarded() {
+    workers::block_on(async {
+        let staging = Staging::new().await;
+        let doc = staging.create(alice(), "shared", None).await;
+        staging
+            .on_provider(alice(), add(alice(), &doc, bob()))
+            .await;
+        // Staging refuses such a subject; a record of one is put here below
+        // the staging check.
+        let members = acp::OwedSubject::EntitySet {
+            resource: "groups".into(),
+            object: "team".into(),
+            relation: "member".into(),
+        };
+        let txn = datastore::BasicTxn::new(staging.store.as_ref(), 0, false)
+            .await
+            .unwrap();
+        let changes = staging
+            .gate
+            .owed_changes(&txn.acpstore(), acp::StagedCount::new());
+        changes
+            .stage(acp::NewOwedChange {
+                txn: None,
+                tuple: acp::OwedTuple {
+                    policy_id: POLICY.into(),
+                    resource: RESOURCE.into(),
+                    object: doc.clone(),
+                    relation: "reader".into(),
+                    subject: members,
+                },
+                op: OwedOp::Delete,
+                actor: alice(),
+                authority: acp::OwedAuthority::NodeKey,
+                authority_checked: true,
+            })
+            .await
+            .unwrap();
+        drop(changes);
+        txn.commit().await.unwrap();
+        assert!(
+            !staging.allowed(&bob(), &doc).await,
+            "the owed delete denies"
+        );
+
+        // A checked change too: it could never be submitted, and parked it
+        // would deny for ever.
+        assert_eq!(
+            staging.pass().await,
+            OwedSettlement {
+                discarded: 1,
+                ..OwedSettlement::default()
+            }
+        );
+        assert!(staging.queue().await.is_empty());
+        assert!(staging.remote.take_writes().is_empty());
+        assert!(staging.allowed(&bob(), &doc).await);
     })
     .unwrap()
 }
