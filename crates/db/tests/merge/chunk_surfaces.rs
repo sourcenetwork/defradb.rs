@@ -215,7 +215,7 @@ fn a_parent_edit_hides_the_old_chunk_and_shows_the_new_one() {
         let peer = node().await;
         let parent = add_article(&peer).await;
         let (old, _) = merge_chunk(&author, &peer, &parent, BODY, None).await;
-        assert_eq!(chunks(&peer, Some(owner())).await, [old.clone()]);
+        assert_eq!(chunks(&peer, Some(owner())).await, std::slice::from_ref(&old));
 
         peer.run(
             &format!(
@@ -226,7 +226,7 @@ fn a_parent_edit_hides_the_old_chunk_and_shows_the_new_one() {
         .await;
         let (new, _) = merge_chunk(&author, &peer, &parent, NEW_BODY, None).await;
 
-        assert_eq!(chunks(&peer, Some(owner())).await, [new.clone()]);
+        assert_eq!(chunks(&peer, Some(owner())).await, std::slice::from_ref(&new));
         assert_eq!(commits(&peer, &old, Some(owner())).await, 0);
         assert!(commits(&peer, &new, Some(owner())).await > 0);
     })
