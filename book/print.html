@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-15d837ed.js";
+            window.path_to_searchindex_js = "searchindex-b50b4971.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-8198d451.js"></script>
@@ -1852,31 +1852,196 @@ engine retries, an external decision is asked once, memoized by request bytes, a
 replayed identically for later attempts. Failures of the provider fail closed
 (<code>Unavailable</code> denies).</p>
 <h3 id="owed-relationship-changes"><a class="header" href="#owed-relationship-changes">Owed relationship changes</a></h3>
-<p>The same bridge has a record for a relationship change made inside a transaction
-(<code>acp::outbox</code>). Nothing stages one yet: the in-transaction relationship call still
-refuses on an external provider, so the records below stay empty and every path behaves
-as before. What exists is the record and the gate that reads it.</p>
+<p>The same bridge carries a relationship change made inside a transaction
+(<code>acp::outbox</code>). The in-transaction relationship call (<code>relationship_in_txn</code>, behind
+<code>Node::add_dac_actor_relationship_change_for_in_txn</code>, its delete counterpart and
+<code>Node::change_dac_actor_relationship_as</code>) does not refuse on an external provider: it
+<em>stages</em> the change, a record written in the transaction that commits or rolls back with
+its rows, and the provider is sent the change after the commit.</p>
+<p>Staging is for embedders that call the node directly. The HTTP relationship route with
+<code>x-defradb-tx</code> serves only a provider that joins the transaction; on an external one it
+answers 501, <code>transaction-bound document relationships are unavailable</code>, and records
+nothing, until a caller can abandon a staged change and a drainer settles them.</p>
 <ul>
-<li><strong>The record.</strong> A change is written in the transaction that stages it, under the ACP
+<li>
+<p><strong>What staging returns.</strong> <code>RelationshipChange::Staged { seq, authority_checked }</code>: the
+change’s place in the node’s queue and whether its acting DID’s authority was checked.
+A provider that joins the transaction (local ACP) still answers
+<code>RelationshipChange::Applied { existed }</code>, and nothing a local caller sees has changed.
+The methods that answer a boolean keep their meaning for an applied change and report a
+staged add as new (<code>false</code>, not “existed already”) and a staged delete as found
+(<code>true</code>): whether the relationship exists on the provider is not known at staging.</p>
+</li>
+<li>
+<p><strong>When a staged change takes effect.</strong> A staged <em>add</em> grants nothing until the provider
+holds it. A staged <em>delete</em> denies its subject through the staging transaction from the
+statement that staged it, and on this node from the commit, whatever the provider
+still holds (the gate below). Other nodes see either once the provider holds it.</p>
+</li>
+<li>
+<p><strong>The authority recorded.</strong> The change is submitted after the request that made it is
+gone, so the record says how: <code>node_key</code> when the node holds a key for the acting DID
+(the one it signs that DID’s delegations with), otherwise the delegation the request
+carries for it (<code>delegation{token}</code>), kept as presented. With neither, or with a token
+that is no delegation to this node, staging fails with <code>OwedAuthorityUnavailable</code> and
+records nothing. The token is stored in the clear in the node’s store, in a record no
+API returns.</p>
+</li>
+<li>
+<p><strong>The check at staging.</strong> Staging refuses what a local ACP would refuse in the common
+case: the acting DID must own the document or hold a relation that manages the changed
+one. While the document’s registration is still owed (it was created in this
+transaction, or by one whose registration has not settled), its recorded creator is the
+owner and the only authority, and the provider is not asked. Otherwise the owner and
+the managing relations are read from the provider as its last round trip saw them, and
+an acting DID that an unsettled delete names is refused. The provider still decides at
+submission.</p>
+</li>
+<li>
+<p><strong>When the check cannot run.</strong> Only a provider that could not be reached counts
+(<code>ProviderUnavailable</code>); any other error of the provider, such as an owner it names
+that is no DID, fails the staging call. With the provider unreachable:</p>
+<ul>
+<li>an <strong>add</strong> is staged unchecked. <code>authority_checked</code> is <code>false</code>, in the answer and in
+the record, and a warning is logged. It grants nothing until the provider takes it.
+It never holds its tuple: if the provider refuses it the record is deleted, and if
+it is left waiting for authority, or the provider answered it with an error, it is
+deleted as soon as a later change of its tuple comes up for submission. An actor
+nobody checked cannot keep the owner’s change from the provider;</li>
+<li>a <strong>delete</strong> is not staged: the call fails with <code>OwedCheckUnavailable</code>, to be made
+again once the provider answers. A delete denies from its commit, and is never taken
+on the word of an actor nobody could check. The creator of a document whose
+registration is still owed is checked without the provider, so it can revoke on that
+document during an outage.</li>
+</ul>
+</li>
+<li>
+<p><strong>Subjects the provider cannot be sent.</strong> A change whose subject is of a kind the
+provider cannot take (a userset or cross-object subject on the Cosmos provider, a typed
+wildcard on either) fails with <code>UnsupportedSubject</code> and records nothing. It could never
+be submitted, and a delete of it would deny for ever.</p>
+</li>
+<li>
+<p><strong>One spelling.</strong> The acting DID and an actor subject are stored in the provider’s one
+spelling of the key (for vera.rs, the uncompressed <code>did:key</code> DefraDB derives), and the
+gate compares a requester in the same spelling, so a revocation staged under one
+spelling of a key denies a request under another.</p>
+</li>
+<li>
+<p><strong>Settlement.</strong> A pass submits what is owed in sequence order from the head of the
+queue, read again each pass. A change is submitted only when it is the oldest unsettled
+change of its tuple, and only after the registration its document still owes. What the
+provider answers decides it:</p>
+<ul>
+<li><em>applied</em>: the record is deleted;</li>
+<li><em>refused</em> (the acting DID lacks the authority, or the provider rejected the
+request): a change whose check ran is parked as <code>refused{reason}</code>; one staged
+unchecked is deleted;</li>
+<li>a kind of change the provider cannot take at all: the record is deleted, checked or
+not;</li>
+<li>no usable authority (the delegation expired, the key is no longer held): it is
+parked as <code>awaiting_authority</code>, checked or not;</li>
+<li>an error of the provider that does not say whether it is final: the change stays
+staged, with the last error and how many such answers it has had, and the pass goes
+on. Five such answers (<code>MAX_FAILED_SUBMISSIONS</code>), whatever their words, are taken as
+a refusal. Only the provider’s answers count: an unreachable provider is not one;</li>
+<li>an error of the node’s own before anything was sent (a request it could not build
+or sign): the change stays staged, nothing is counted, a warning is logged and the
+pass goes on;</li>
+<li><em>unreachable</em> (a transport failure, a timeout): the pass stops and nothing is
+written.</li>
+</ul>
+<p>A parked change whose acting DID was checked holds every later change of its tuple and
+nothing else: changes of other tuples go on past it. A change staged unchecked holds
+nothing (above). Every record deleted without the provider holding the change is
+counted in the pass’s report (<code>OwedSettlement::discarded</code>) and logged with its
+sequence, actor, document and relation.</p>
+</li>
+<li>
+<p><strong>When a pass runs.</strong></p>
+<ul>
+<li>After the commit of a request that staged a change, over the documents that
+transaction staged on (its own changes and what was owed on them before). The commit
+waits for it, for at most 10 seconds (<code>OWED_SETTLE_DEADLINE</code>): that is the most a
+staged change adds to its commit, and past it the commit returns with the rest still
+owed. With the provider answering, the wait is one round trip per change.</li>
+<li>Once at start, after the owed registrations, over everything.</li>
+<li>Before a relationship change made outside a transaction on a tuple that has changes
+owed, over that document.</li>
+</ul>
+<p>There is no background drainer, timer or back-off yet. <strong>A change left staged (the
+provider was down, or the deadline passed) is submitted by the next commit that stages
+on the same document, by a direct change of its tuple, or at the next start</strong>; until
+then an owed add stays ungranted and an owed delete keeps denying.</p>
+</li>
+<li>
+<p><strong>A change made outside a transaction.</strong> It goes to the provider at once, as before.
+When changes are owed on its tuple a pass over the document runs first. If a <em>staged</em>
+change is still owed on the tuple afterwards (the provider was not reached, or the
+document’s registration is still owed), the direct change fails with
+<code>OwedChangesPending</code> and is to be made again: sent now, it would reach the provider
+before the staged change it follows, and a revocation would be undone when the staged
+grant lands. If only a <em>parked</em> change remains on the tuple, the direct change is sent
+and overtakes it: nothing submits a parked change again by itself.</p>
+</li>
+<li>
+<p><strong>A change submitted twice.</strong> A record is deleted after the provider applied its
+change, in a transaction of its own; nothing marks a change as in flight. A crash, a
+lost answer or a lost commit between the two leaves the change staged, and the next
+pass submits it again. vera.rs sets a relationship it already holds and deletes one it
+does not hold without error (a successful receipt saying the record existed, or was not
+found), so the second submission is read as applied and the record is deleted. Two
+windows remain open. If the acting DID lost its authority in between, the second
+submission is rejected and the change is parked as refused although the provider holds
+it; a rejected receipt carries no reason that tells the two apart. And if someone else
+changed the same relationship on the provider in between, the second submission applies
+the change again over theirs.</p>
+</li>
+<li>
+<p><strong>Limits of this step.</strong></p>
+<ul>
+<li>A parked change stays parked: nothing here retries, abandons or reauthorizes one, so
+the changes behind it on its tuple wait, and a parked delete keeps denying.</li>
+<li>The denial of an owed delete is scoped to its document. A staged delete of a
+membership tuple (a member removed from a group object) denies that subject on the
+group object only. Documents that grant access through a userset naming that group
+keep honouring the member until the provider holds the delete.</li>
+<li>No event is published when a staged add settles.</li>
+<li>A create that requires transaction-bound authority
+(<code>with_transactional_authority_required</code>, used by verified creates) is refused on an
+external provider as before.</li>
+</ul>
+</li>
+<li>
+<p><strong>The record.</strong> A change is written in the transaction that stages it, under the ACP
 namespace, and commits or rolls back with its rows: <code>/acp-owed/q/&lt;seq&gt;</code> holds the
-change (tuple, add or delete, acting DID, the authority to submit it as that DID, its
-state, attempts and last error; at most 16 KiB), <code>/acp-owed/t/&lt;tuple&gt;</code> what is
+change (tuple, add or delete, acting DID, the authority to submit it as that DID,
+whether that DID was checked at staging, its state, attempts and last error; at most
+16 KiB), <code>/acp-owed/t/&lt;tuple&gt;</code> what is
 unsettled on that tuple (its oldest and latest sequences, how many changes and how many
 of them deletes), and <code>/acp-owed/o/&lt;object&gt;</code> the number of unsettled changes on that
 object. A change is unsettled while it has a record, a refused one included; a settled
-change has none.</li>
-<li><strong>The order.</strong> A sequence comes from <code>Db::allocate</code> after the staging transaction read
+change has none.</p>
+</li>
+<li>
+<p><strong>The order.</strong> A sequence comes from <code>Db::allocate</code> after the staging transaction read
 the tuple’s key, which it also writes. Two transactions that stage the same tuple
 conflict, and the one that commits later holds the higher sequence. Across tuples a
 sequence follows the order of staging, not of commit, so a lower sequence can appear
 in the queue after a higher one: a reader of the queue starts from its head each time
-instead of keeping a high-water mark.</li>
-<li><strong>The bounds.</strong> One transaction stages at most 256 changes and a node holds at most
-10,000 unsettled; either is a typed error before the commit. The node’s bound is a
-constant with no configuration key yet, and it is checked against the count the staging
-transaction sees, so transactions staging at once can pass it by what they stage
-together.</li>
-<li><strong>The gate.</strong> While any delete of a tuple is unsettled, the adapter denies that
+instead of keeping a high-water mark.</p>
+</li>
+<li>
+<p><strong>The bounds.</strong> One transaction stages at most 256 changes, one acting DID holds at
+most 1,000 unsettled (<code>/acp-owed/a/&lt;actor&gt;</code> counts them), and a node holds at most
+10,000; each is a typed error before the commit. A parked change stays unsettled, so
+the acting DID’s bound is what keeps one actor’s parked changes from taking the whole
+of the node’s. The bounds are constants with no configuration key yet. The actor’s and
+the node’s are checked against the counts the staging transaction sees, so
+transactions staging at once can pass either by what they stage together.</p>
+</li>
+<li>
+<p><strong>The gate.</strong> While any delete of a tuple is unsettled, the adapter denies that
 tuple’s subject on that object before it asks the provider: on document access, on
 access decisions, and on the authority to add or delete relationships. An add staged
 after the delete does not lift the denial: the provider may refuse that add and apply
@@ -1885,9 +2050,13 @@ denial covers every permission on the object, so a subject that also holds acces
 another path waits for the settlement. A delete whose subject is wider than one actor
 (the wildcard, a set of another object’s holders) denies everyone. The owner, as the
 provider names it, is spared in both cases. The denial starts at the commit, on this
-node: a transaction is not denied by a delete it has staged and not yet committed, and
-other nodes see the revocation once the provider holds it. An owed add grants nothing.
-With nothing owed on an object the gate costs one point read.</li>
+node, and other nodes see the revocation once the provider holds it. Inside the
+transaction that staged the delete it starts at once: every read and access check made
+through that transaction applies the same rule to the transaction’s own view, so the
+revoked subject is denied before the commit and a statement that is rolled back
+revokes nothing. An owed add grants nothing, in its own transaction either. With
+nothing owed on an object the gate costs one point read.</p>
+</li>
 </ul>
 <h2 id="the-query-engines-side"><a class="header" href="#the-query-engines-side">The query engine’s side</a></h2>
 <p>The planner wraps collection plans in permission filter nodes; <code>_commits</code> rows,
@@ -1921,8 +2090,50 @@ and submitted through a worker, and the chain state verified by a light client
 <p>Both are wrapped as a <code>DocumentACP</code> and installed as the node’s document ACP. Because
 the provider cannot join local transactions, the node wraps it in the external-ACP
 adapter: owed registrations, gated reads until confirmation, fail-closed
-<code>Unavailable</code> (the previous chapter’s shape). The adapter also holds the record and the
-read gate for relationship changes owed to the provider, which nothing stages yet.</p>
+<code>Unavailable</code> (the previous chapter’s shape).</p>
+<p>A relationship change made inside a transaction is staged the same way: recorded in the
+transaction as owed to the provider and submitted after the commit
+(<a href="#owed-relationship-changes">Owed relationship changes</a>). With vera.rs:</p>
+<ul>
+<li><strong>Who signs.</strong> The worker signs the submission; the command inside it carries the
+acting DID’s authority, whatever its subject: an actor, everyone, or a userset or
+cross-object subject. The same holds for a relationship changed outside a
+transaction: it is sent under its requestor’s token, never under the node’s own actor. The node signs a delegation itself when it holds that DID’s key
+(its own actor, or a registered identity with a local secp256k1, Ed25519 or P-256 key);
+otherwise it stores the delegation the request presented and submits with it. A
+delegation that expired before the change could be submitted parks the change as
+awaiting authority.</li>
+<li><strong>What the grantee and the revoked subject see.</strong> A grantee reads once the chain holds
+the grant, normally when the committing request returns; with the chain unreachable,
+not before a later commit on the same document, a direct change of the tuple or a
+restart submits it. A revoked subject is denied by this node from the commit, and by
+every node once the chain holds the revocation.</li>
+<li><strong>The check at staging.</strong> The document’s owner comes from the light client’s verified
+state, and a managing relation is evaluated there as a permission on the document. The
+chain counts as not having answered in three cases: the read’s error holds an I/O
+error (a refused or reset connection); it holds a failure of the transport itself
+that is not a JSON-RPC answer (a response over the size limit, a response with no
+result, any failure of the in-process transport); or the light client has no fresh
+verified state left. A plain request timeout and a response body that is not JSON are
+none of these as the HTTP transport reports them, so they fail the staging call until
+the verified state has gone stale; the light client’s default freshness window is 30 seconds, and it is the
+light client’s setting, not a constant of this code. When the chain did not answer, an
+add is staged unchecked and a delete is refused. A read that fails any other way (a
+JSON-RPC error, a proof that does not verify) fails the staging call.</li>
+<li><strong>Outcomes.</strong> A verified receipt that succeeded settles the change; one that was
+rejected is the chain’s refusal (the change is parked, or deleted if it was staged
+unchecked); a submission whose receipt could not be confirmed leaves it staged. A
+repeated <code>SetRelationship</code> or <code>DeleteRelationship</code> succeeds without effect, so a change
+submitted again after a crash settles, unless the acting DID lost its authority in
+between (then it is parked as refused) or another manager changed the relationship in
+between (then it is applied again).</li>
+<li><strong>The Cosmos provider.</strong> A broadcast that timed out or failed in transport leaves the
+change staged. A transaction the node could not key or sign is the node’s own error
+and counts for nothing. Any other failed transaction is an answer the provider does
+not classify: the change stays staged, the pass goes on, and five such answers park it
+as refused. It takes no userset or cross-object subject, so such a change is refused
+at staging.</li>
+</ul>
 <h2 id="why-it-exists"><a class="header" href="#why-it-exists">Why it exists</a></h2>
 <p>Some deployments need authorization decisions that no single database node can make or
 forge: multi-party deployments where the policy is shared infrastructure, audits that
