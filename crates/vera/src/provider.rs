@@ -204,6 +204,70 @@ pub trait VeraProvider: MaybeSendSync {
         ))
     }
 
+    /// [`set_relationship_subject`](Self::set_relationship_subject) under
+    /// `bearer_token`: the command carries its caller's authority, as an
+    /// actor subject's does, and the backend decides on it. The default
+    /// rejects with [`ProviderError::Unsupported`].
+    #[allow(clippy::too_many_arguments)]
+    async fn set_relationship_subject_as(
+        &self,
+        bearer_token: &str,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+        relation: &str,
+        kind: u8,
+        subject_resource: &str,
+        subject_object_id: &str,
+        subject_relation: &str,
+    ) -> Result<bool, ProviderError> {
+        let _ = (
+            bearer_token,
+            policy_id,
+            resource,
+            object_id,
+            relation,
+            kind,
+            subject_resource,
+            subject_object_id,
+            subject_relation,
+        );
+        Err(ProviderError::Unsupported(
+            "structured cross-object/userset subjects are not supported by this provider".into(),
+        ))
+    }
+
+    /// Revoke mirror of
+    /// [`set_relationship_subject_as`](Self::set_relationship_subject_as).
+    #[allow(clippy::too_many_arguments)]
+    async fn delete_relationship_subject_as(
+        &self,
+        bearer_token: &str,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+        relation: &str,
+        kind: u8,
+        subject_resource: &str,
+        subject_object_id: &str,
+        subject_relation: &str,
+    ) -> Result<bool, ProviderError> {
+        let _ = (
+            bearer_token,
+            policy_id,
+            resource,
+            object_id,
+            relation,
+            kind,
+            subject_resource,
+            subject_object_id,
+            subject_relation,
+        );
+        Err(ProviderError::Unsupported(
+            "structured cross-object/userset subjects are not supported by this provider".into(),
+        ))
+    }
+
     async fn query_policy(
         &self,
         policy_id: &str,

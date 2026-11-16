@@ -7,7 +7,9 @@
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use acp::outbox::{StagedCount, MAX_OWED_CHANGES_PER_TRANSACTION};
+use acp::outbox::{
+    StagedCount, MAX_OWED_CHANGES_PER_TRANSACTION, MAX_UNSETTLED_OWED_CHANGES_PER_ACTOR,
+};
 use acp::{
     DocumentACP, DocumentPermission, Identity, OwedAuthority, OwedChange, OwedOp, OwedState,
     OwedSubject, StageRelationship, Staged, Subject,
@@ -38,6 +40,8 @@ pub(super) struct Change {
     pub(super) op: OwedOp,
     /// Whether the policy names a relation that manages `relation`.
     pub(super) managed: bool,
+    /// The transaction the record names as staging it.
+    pub(super) txn: Option<u64>,
 }
 
 impl Change {
@@ -49,6 +53,7 @@ impl Change {
             subject,
             op,
             managed: true,
+            txn: None,
         }
     }
 }
@@ -139,7 +144,7 @@ impl Staging {
                         results.push(
                             outbox
                                 .stage(StageRelationship {
-                                    txn: None,
+                                    txn: change.txn,
                                     actor: &change.actor,
                                     subject: Subject::Entity(change.subject.clone()),
                                     policy_id: POLICY,
@@ -417,7 +422,7 @@ fn a_creator_grants_on_a_document_created_in_the_same_transaction() {
 }
 
 #[test]
-fn a_provider_that_cannot_answer_leaves_the_change_staged_and_unchecked() {
+fn while_the_provider_is_unreachable_an_add_is_staged_unchecked_and_a_delete_is_not() {
     workers::block_on(async {
         let staging = Staging::new().await;
         let doc = staging.create(alice(), "shared", None).await;
@@ -433,8 +438,103 @@ fn a_provider_that_cannot_answer_leaves_the_change_staged_and_unchecked() {
             .await
             .unwrap();
         assert!(!staged.authority_checked);
+        // A delete would deny at the commit on an unchecked word: not even
+        // the owner's is taken.
+        for actor in [mallory(), alice()] {
+            assert!(matches!(
+                staging
+                    .stage(&handle, Change::new(actor.clone(), &doc, OwedOp::Delete, bob()))
+                    .await,
+                Err(acp::Error::OwedCheckUnavailable { actor: refused, object })
+                    if refused == actor.as_str() && object == doc
+            ));
+        }
         staging.commit(&handle).await;
-        assert_eq!(staging.queue().await.len(), 1);
+        let queue = staging.queue().await;
+        assert_eq!(queue.len(), 1);
+        assert!(!queue[0].authority_checked);
+        assert_eq!(queue[0].op, OwedOp::Add);
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_provider_error_that_is_not_unavailability_fails_the_staging_call() {
+    workers::block_on(async {
+        let staging = Staging::new().await;
+        let doc = staging.create(alice(), "shared", None).await;
+        staging.remote.malformed_owner.store(true, Ordering::SeqCst);
+
+        let handle = staging.begin().await;
+        for op in [OwedOp::Add, OwedOp::Delete] {
+            assert!(matches!(
+                staging
+                    .stage(&handle, Change::new(alice(), &doc, op, bob()))
+                    .await,
+                Err(acp::Error::Storage(message)) if message.contains("invalid owner DID")
+            ));
+        }
+        staging.commit(&handle).await;
+        assert!(staging.queue().await.is_empty());
+    })
+    .unwrap()
+}
+
+#[test]
+fn one_actor_holds_a_bounded_share_of_what_the_node_owes() {
+    workers::block_on(async {
+        let staging = Staging::new().await;
+        let doc = staging.create(alice(), "shared", None).await;
+        let mut manager = Change::new(alice(), &doc, OwedOp::Add, bob());
+        manager.relation = MANAGER;
+        staging.on_provider(alice(), manager).await;
+        let limit = MAX_UNSETTLED_OWED_CHANGES_PER_ACTOR;
+        let per_txn = u64::from(MAX_OWED_CHANGES_PER_TRANSACTION);
+        let by_alice = |count: u64| {
+            (0..count)
+                .map(|_| Change::new(alice(), &doc, OwedOp::Add, carol()))
+                .collect::<Vec<_>>()
+        };
+
+        let mut staged = 0;
+        while staged < limit {
+            let batch = per_txn.min(limit - staged);
+            let handle = staging.begin().await;
+            assert!(staging
+                .statement(&handle, by_alice(batch), true)
+                .await
+                .iter()
+                .all(Result::is_ok));
+            staging.commit(&handle).await;
+            staged += batch;
+        }
+
+        let handle = staging.begin().await;
+        assert!(matches!(
+            staging.stage(&handle, by_alice(1).remove(0)).await,
+            Err(acp::Error::OwedChangesPerActor { actor, unsettled, limit: bound })
+                if actor == alice().as_str() && unsettled == limit && bound == limit
+        ));
+        // Another actor is not held back by what Alice owes.
+        assert!(staging
+            .stage(&handle, Change::new(bob(), &doc, OwedOp::Add, carol()))
+            .await
+            .is_ok());
+        staging.node.runner.discard_txn(&handle).await.unwrap();
+
+        // What settles frees the actor's share again.
+        assert_eq!(
+            staging
+                .gate
+                .settle_owed_changes_once(acp::OwedScope::All)
+                .await
+                .unwrap()
+                .settled,
+            limit
+        );
+        let handle = staging.begin().await;
+        assert!(staging.stage(&handle, by_alice(1).remove(0)).await.is_ok());
+        staging.node.runner.discard_txn(&handle).await.unwrap();
     })
     .unwrap()
 }

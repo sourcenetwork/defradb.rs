@@ -6,7 +6,7 @@
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use acp::{DocumentACP, OwedOp, OwedSettlement, OwedState};
+use acp::{DocumentACP, OwedOp, OwedScope, OwedSettlement, OwedState, MAX_FAILED_SUBMISSIONS};
 use identity::Did;
 use query::QueryExecutor;
 use storage::RegolithStore;
@@ -31,7 +31,10 @@ fn settled(count: u64) -> OwedSettlement {
 
 impl Staging {
     async fn pass(&self) -> OwedSettlement {
-        self.gate.settle_owed_changes_once().await.unwrap()
+        self.gate
+            .settle_owed_changes_once(OwedScope::All)
+            .await
+            .unwrap()
     }
 
     /// The states of the committed queue, in sequence order.
@@ -133,18 +136,23 @@ fn a_documents_owed_registration_is_settled_before_its_changes() {
 }
 
 #[test]
-fn a_refused_change_holds_its_tuple_and_nothing_else() {
+fn a_checked_change_the_provider_refuses_holds_its_tuple_and_nothing_else() {
     workers::block_on(async {
         let staging = Staging::new().await;
         let doc = staging.create(alice(), "shared", None).await;
         staging
             .on_provider(alice(), add(alice(), &doc, bob()))
             .await;
+        let mut manager = add(alice(), &doc, mallory());
+        manager.relation = MANAGER;
+        staging.on_provider(alice(), manager.clone()).await;
 
-        // Staged while nobody could check it: Mallory manages nothing.
-        staging.remote.down.store(true, Ordering::SeqCst);
+        // Mallory manages when the change is staged, and no longer when it
+        // is submitted.
         let refused = staging.commit_change(add(mallory(), &doc, bob())).await;
-        staging.remote.down.store(false, Ordering::SeqCst);
+        assert!(refused.authority_checked);
+        manager.op = OwedOp::Delete;
+        staging.on_provider(alice(), manager).await;
         let held = staging.commit_change(delete(alice(), &doc, bob())).await;
         staging.commit_change(add(alice(), &doc, carol())).await;
 
@@ -187,6 +195,174 @@ fn a_refused_change_holds_its_tuple_and_nothing_else() {
         );
         assert!(staging.remote.take_writes().is_empty());
         assert_eq!(staging.queue().await.len(), 2);
+    })
+    .unwrap()
+}
+
+#[test]
+fn an_unchecked_change_the_provider_refuses_is_discarded_and_holds_nothing() {
+    workers::block_on(async {
+        let staging = Staging::new().await;
+        let doc = staging.create(alice(), "shared", None).await;
+        staging
+            .on_provider(alice(), add(alice(), &doc, bob()))
+            .await;
+
+        // Staged while nobody could check it: Mallory manages nothing.
+        staging.remote.down.store(true, Ordering::SeqCst);
+        let unchecked = staging.commit_change(add(mallory(), &doc, bob())).await;
+        assert!(!unchecked.authority_checked);
+        staging.remote.down.store(false, Ordering::SeqCst);
+        staging.commit_change(delete(alice(), &doc, bob())).await;
+
+        // The owner's revocation behind it reaches the provider in the same
+        // pass, and nothing of Mallory's stays on the books.
+        assert_eq!(
+            staging.pass().await,
+            OwedSettlement {
+                settled: 1,
+                discarded: 1,
+                ..OwedSettlement::default()
+            }
+        );
+        assert_eq!(
+            staging.remote.take_writes(),
+            [(false, doc.clone(), bob().to_string())]
+        );
+        assert!(staging.queue().await.is_empty());
+        assert!(!staging.remote.holds(&doc, &bob()));
+        let txn = datastore::BasicTxn::new(staging.store.as_ref(), 0, true)
+            .await
+            .unwrap();
+        let changes = staging
+            .gate
+            .owed_changes(&txn.acpstore(), acp::StagedCount::new());
+        assert_eq!(changes.unsettled().await.unwrap(), 0);
+        assert_eq!(changes.unsettled_by(&mallory()).await.unwrap(), 0);
+        assert_eq!(changes.unsettled_by(&alice()).await.unwrap(), 0);
+        drop(changes);
+        txn.discard().unwrap();
+    })
+    .unwrap()
+}
+
+#[test]
+fn an_answer_that_is_not_classified_parks_only_after_it_repeats() {
+    workers::block_on(async {
+        let staging = Staging::new().await;
+        let doc = staging.create(alice(), "shared", None).await;
+        let failing = staging.commit_change(add(alice(), &doc, bob())).await;
+        staging.commit_change(delete(alice(), &doc, bob())).await;
+        let other = staging.create(alice(), "other", None).await;
+        staging.commit_change(add(alice(), &other, bob())).await;
+        // The pass does not stop at a change the provider answers with an
+        // error: it goes on and submits the other document's change too.
+        staging.remote.garble(Some("code 13"));
+        assert_eq!(
+            staging.pass().await,
+            OwedSettlement {
+                failed: 2,
+                left: 1,
+                ..OwedSettlement::default()
+            }
+        );
+        staging.remote.garble(None);
+        let queue = staging.queue().await;
+        assert_eq!(queue[0].seq, failing.seq);
+        assert_eq!(queue[0].state, OwedState::Staged);
+        assert_eq!(queue[0].attempts, 1);
+        assert_eq!(
+            queue[0].last_error.as_deref(),
+            Some("storage error: code 13")
+        );
+
+        // An outage is not an answer, and another answer starts the count
+        // again.
+        staging.remote.garble(Some("code 13"));
+        for _ in 2..MAX_FAILED_SUBMISSIONS {
+            staging.remote.down.store(true, Ordering::SeqCst);
+            assert!(staging.pass().await.provider_unavailable);
+            staging.remote.down.store(false, Ordering::SeqCst);
+            assert_eq!(staging.pass().await.failed, 2);
+        }
+        assert_eq!(
+            staging.queue().await[0].attempts,
+            MAX_FAILED_SUBMISSIONS - 1
+        );
+        staging.remote.garble(Some("code 14"));
+        assert_eq!(staging.pass().await.failed, 2);
+        assert_eq!(staging.queue().await[0].attempts, 1);
+
+        // The same answer, enough times in a row, is the provider's refusal.
+        for _ in 2..MAX_FAILED_SUBMISSIONS {
+            assert_eq!(staging.pass().await.failed, 2);
+        }
+        let parked = staging.pass().await;
+        assert_eq!((parked.refused, parked.failed), (2, 0));
+        let queue = staging.queue().await;
+        assert!(matches!(
+            &queue[0].state,
+            OwedState::Refused { reason } if reason.contains("code 14")
+        ));
+        assert_eq!(queue[0].attempts, MAX_FAILED_SUBMISSIONS);
+        assert_eq!(
+            queue[1].state,
+            OwedState::Staged,
+            "held behind the parked one"
+        );
+        assert_eq!(staging.pass().await, left_only(1));
+    })
+    .unwrap()
+}
+
+/// A pass that submits nothing and leaves `left` changes behind parked ones.
+fn left_only(left: u64) -> OwedSettlement {
+    OwedSettlement {
+        left,
+        ..OwedSettlement::default()
+    }
+}
+
+#[test]
+fn a_pass_for_one_transaction_submits_what_is_owed_on_its_objects_only() {
+    workers::block_on(async {
+        let staging = Staging::new().await;
+        let first = staging.create(alice(), "first", None).await;
+        let second = staging.create(alice(), "second", None).await;
+        let by = |txn: u64, change: Change| Change {
+            txn: Some(txn),
+            ..change
+        };
+        staging
+            .commit_change(by(1, add(alice(), &first, bob())))
+            .await;
+        staging
+            .commit_change(by(1, add(alice(), &second, bob())))
+            .await;
+        staging
+            .commit_change(by(2, add(alice(), &second, carol())))
+            .await;
+
+        let pass = |scope| {
+            let gate = &staging.gate;
+            async move { gate.settle_owed_changes_once(scope).await.unwrap() }
+        };
+        assert_eq!(
+            pass(OwedScope::Transaction(3)).await,
+            OwedSettlement::default()
+        );
+        // The second transaction's object, with what the first owed on it.
+        assert_eq!(pass(OwedScope::Transaction(2)).await, settled(2));
+        assert_eq!(
+            staging.remote.take_writes(),
+            [
+                (true, second.clone(), bob().to_string()),
+                (true, second.clone(), carol().to_string()),
+            ]
+        );
+        assert_eq!(staging.queue().await.len(), 1);
+        assert_eq!(pass(OwedScope::All).await, settled(1));
+        assert!(staging.remote.holds(&first, &bob()));
     })
     .unwrap()
 }
@@ -353,28 +529,48 @@ fn a_change_made_outside_a_transaction_follows_what_is_owed_on_its_tuple() {
         let staging = Staging::new().await;
         let doc = staging.create(alice(), "shared", None).await;
         staging.commit_change(add(alice(), &doc, bob())).await;
-        staging.commit_change(add(alice(), &doc, carol())).await;
+        let other = staging.create(alice(), "other", None).await;
+        staging.commit_change(add(alice(), &other, carol())).await;
+        let revoke = || {
+            let (gate, doc) = (&staging.gate, &doc);
+            async move {
+                gate.delete_actor_relationship(
+                    &alice(),
+                    &bob(),
+                    POLICY,
+                    RESOURCE,
+                    doc,
+                    "reader",
+                    &[],
+                )
+                .await
+            }
+        };
 
-        // The revocation is the later change: it must not land before the
-        // grant it takes back.
-        assert!(staging
-            .gate
-            .delete_actor_relationship(&alice(), &bob(), POLICY, RESOURCE, &doc, "reader", &[])
-            .await
-            .unwrap());
+        // While the staged grant cannot be submitted, the revocation that
+        // follows it is not sent ahead of it.
+        staging.remote.lose_answer.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            revoke().await,
+            Err(acp::Error::OwedChangesPending { object, relation })
+                if object == doc && relation == "reader"
+        ));
+        staging.remote.take_writes();
+
+        // Once it can, the pass before the direct change submits what is
+        // owed on the document and nothing else.
+        assert!(revoke().await.unwrap());
         assert_eq!(
             staging.remote.take_writes(),
             [
                 (true, doc.clone(), bob().to_string()),
-                (true, doc.clone(), carol().to_string()),
                 (false, doc.clone(), bob().to_string()),
             ]
         );
-        assert!(staging.queue().await.is_empty());
+        assert_eq!(staging.queue().await.len(), 1, "the other document's stays");
         assert!(!staging.allowed(&bob(), &doc).await);
 
         // With nothing owed on the tuple the provider is asked alone.
-        staging.commit_change(add(alice(), &doc, mallory())).await;
         assert!(staging
             .gate
             .add_actor_relationship(&alice(), &bob(), POLICY, RESOURCE, &doc, "reader", &[])
@@ -384,7 +580,29 @@ fn a_change_made_outside_a_transaction_follows_what_is_owed_on_its_tuple() {
             staging.remote.take_writes(),
             [(true, doc.clone(), bob().to_string())]
         );
-        assert_eq!(staging.queue().await.len(), 1);
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_change_made_outside_a_transaction_overtakes_a_parked_one() {
+    workers::block_on(async {
+        let staging = Staging::new().await;
+        let doc = staging.create(alice(), "shared", None).await;
+        staging.remote.credentials.store(true, Ordering::SeqCst);
+        staging.remote.carry_delegation(&alice(), "short");
+        staging.commit_change(add(alice(), &doc, bob())).await;
+        staging.remote.expire("short");
+        assert_eq!(staging.pass().await.awaiting_authority, 1);
+
+        // Nothing submits the parked grant again by itself, so the direct
+        // change does not wait for it.
+        assert!(staging
+            .gate
+            .add_actor_relationship(&alice(), &bob(), POLICY, RESOURCE, &doc, "reader", &[])
+            .await
+            .unwrap());
+        assert_eq!(staging.states().await, [OwedState::AwaitingAuthority]);
     })
     .unwrap()
 }

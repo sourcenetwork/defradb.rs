@@ -21,12 +21,16 @@ pub enum Submission {
     /// The provider could not be reached or did not answer. Nothing is known
     /// about the change, which may have been applied.
     Unavailable { reason: String },
+    /// The provider answered with an error that does not say whether it is
+    /// its final word on the change.
+    Failed { reason: String },
 }
 
 impl Submission {
     /// How the answer of a provider's relationship call is read when the
     /// provider classifies nothing itself: an error that names a refusal is
-    /// one, and any other error leaves the change to be submitted again.
+    /// one, [`Error::ProviderUnavailable`] says the provider was not
+    /// reached, and any other error is the provider's unclassified answer.
     pub fn of(result: Result<bool>) -> Self {
         match result {
             Ok(_) => Self::Applied,
@@ -43,7 +47,8 @@ impl Submission {
             Err(error @ Error::OwedAuthorityUnavailable { .. }) => Self::AwaitingAuthority {
                 reason: error.to_string(),
             },
-            Err(error) => Self::Unavailable {
+            Err(Error::ProviderUnavailable(reason)) => Self::Unavailable { reason },
+            Err(error) => Self::Failed {
                 reason: error.to_string(),
             },
         }
@@ -129,8 +134,12 @@ mod tests {
             Submission::AwaitingAuthority { .. }
         ));
         assert!(matches!(
-            Submission::of(Err(Error::Storage("unreachable".into()))),
+            Submission::of(Err(Error::ProviderUnavailable("unreachable".into()))),
             Submission::Unavailable { .. }
+        ));
+        assert!(matches!(
+            Submission::of(Err(Error::Storage("no such policy".into()))),
+            Submission::Failed { .. }
         ));
     }
 }

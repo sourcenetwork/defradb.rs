@@ -31,8 +31,9 @@ pub enum RelationshipChange {
     Staged {
         seq: u64,
         /// Whether the acting DID's authority was checked before staging.
-        /// `false` when the provider could not answer: it decides at
-        /// submission.
+        /// `false` for an add staged while the provider could not be
+        /// reached: the provider decides at submission, and the change is
+        /// removed if it refuses.
         authority_checked: bool,
     },
 }
@@ -237,8 +238,9 @@ where
                         // transaction staged. A statement that is undone
                         // takes its hook and its count with it.
                         if first {
+                            let staged_by = txn.0;
                             ctx.on_commit(OnCommit::Async(Box::new(move || {
-                                Box::pin(settle_owed_changes(unbound))
+                                Box::pin(settle_owed_changes(unbound, staged_by))
                             })))?;
                         }
                         return Ok(RelationshipChange::Staged {
@@ -342,19 +344,29 @@ where
     }
 }
 
-/// Submit what the committed transaction now owes the provider, with
-/// whatever was owed before it. The commit stands whatever this comes to:
-/// what is not settled here stays owed for the next pass.
-async fn settle_owed_changes(acp: Arc<dyn acp::DocumentACP>) {
-    match acp.settle_owed_changes().await {
-        Ok(settlement) if settlement.provider_unavailable => tracing::warn!(
+/// The longest a commit waits for the provider to take what its transaction
+/// staged. Past it the commit returns, and what is not settled stays owed
+/// for the next pass.
+pub(crate) const OWED_SETTLE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Submit what the committed transaction `staged_by` now owes the provider:
+/// the changes on the objects it staged on, within
+/// [`OWED_SETTLE_DEADLINE`]. The commit stands whatever this comes to.
+async fn settle_owed_changes(acp: Arc<dyn acp::DocumentACP>, staged_by: u64) {
+    let pass = acp.settle_owed_changes(acp::OwedScope::Transaction(staged_by));
+    match workers::timeout(OWED_SETTLE_DEADLINE, pass).await {
+        Ok(Ok(settlement)) if settlement.provider_unavailable => tracing::warn!(
             settled = settlement.settled,
             "ACP provider unavailable; owed relationship changes stay staged"
         ),
-        Ok(_) => {}
-        Err(error) => tracing::warn!(
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => tracing::warn!(
             %error,
             "Could not settle owed ACP relationship changes; they stay owed"
+        ),
+        Err(_) => tracing::warn!(
+            deadline = ?OWED_SETTLE_DEADLINE,
+            "ACP provider did not take the staged relationship changes in time; they stay owed"
         ),
     }
 }

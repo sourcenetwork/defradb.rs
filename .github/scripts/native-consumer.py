@@ -61,6 +61,7 @@ UNIT_NAMES = (
     "did_spelling::tests::both_spellings_of_a_secp256k1_key_meet_at_the_uncompressed_did",
     "did_spelling::tests::other_identifiers_pass_through_unchanged",
     "did_spelling::tests::the_uncompressed_spelling_is_the_one_defradb_derives",
+    "provider::reach::tests::a_transport_failure_is_told_from_an_answer",
     "provider::signer_tests::a_signature_vera_rs_would_refuse_is_never_sent",
     "provider::signer_tests::the_provider_signs_its_delegations_through_its_signer",
     "provider::tests::a_request_token_under_either_issuer_spelling_is_passed_through",

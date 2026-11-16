@@ -216,6 +216,24 @@ impl VeraProvider for Remote {
         self.write(false, bearer_token, object_id, relation, subject)
     }
 
+    async fn set_relationship_subject_as(
+        &self,
+        bearer_token: &str,
+        _policy_id: &str,
+        _resource: &str,
+        object_id: &str,
+        relation: &str,
+        _kind: u8,
+        subject_resource: &str,
+        subject_object_id: &str,
+        subject_relation: &str,
+    ) -> Result<bool, ProviderError> {
+        let subject = SubjectRef::Actor(format!(
+            "{subject_resource}:{subject_object_id}#{subject_relation}"
+        ));
+        self.write(true, bearer_token, object_id, relation, &subject)
+    }
+
     async fn query_object_owner(
         &self,
         _policy_id: &str,
@@ -553,7 +571,8 @@ fn a_staged_grant_waits_for_the_provider_and_a_staged_revocation_does_not() {
         assert!(reads(&node, READER).await.is_empty());
         assert!(remote.take_writes().is_empty());
 
-        // The next request that settles submits it with its own change.
+        // A commit submits what is owed on the documents its own
+        // transaction staged on, and leaves the rest.
         let other = created(node.execute_request(create("other")).await);
         let transaction = node.begin_transaction_guard(false).await.unwrap();
         node.add_dac_actor_relationship_change_for_in_txn(
@@ -569,13 +588,33 @@ fn a_staged_grant_waits_for_the_provider_and_a_staged_revocation_does_not() {
         transaction.commit().await.unwrap();
         assert_eq!(
             remote.take_writes(),
+            [(true, other.clone(), READER.to_string())]
+        );
+        assert!(remote.holds(&doc, READER));
+        assert_eq!(reads(&node, READER).await, ["other"]);
+
+        // The next commit that stages on the first document submits the
+        // revocation before its own change.
+        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        node.add_dac_actor_relationship_change_for_in_txn(
+            transaction.handle(),
+            &owner,
+            "Record",
+            &doc,
+            "reader",
+            CALLER,
+        )
+        .await
+        .unwrap();
+        transaction.commit().await.unwrap();
+        assert_eq!(
+            remote.take_writes(),
             [
                 (false, doc.clone(), READER.to_string()),
-                (true, other.clone(), READER.to_string()),
+                (true, doc.clone(), CALLER.to_string()),
             ]
         );
         assert!(!remote.holds(&doc, READER));
-        assert_eq!(reads(&node, READER).await, ["other"]);
         node.shutdown().await.unwrap();
     })
     .unwrap();
@@ -703,6 +742,217 @@ fn a_restart_submits_what_the_provider_could_not_take_at_the_commit() {
         );
         assert_eq!(reads(&second, READER).await, ["kept"]);
         second.shutdown().await.unwrap();
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_revocation_is_not_staged_while_nobody_can_check_its_actor() {
+    workers::block_on(async {
+        let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
+        let remote = Remote::new();
+        let node = node_on(Some(&remote)).await;
+        let doc = created(node.execute_request(create("shared")).await);
+        remote.down.store(true, Ordering::SeqCst);
+
+        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        let revoked = node
+            .delete_dac_actor_relationship_change_for_in_txn(
+                transaction.handle(),
+                &actor(OWNER),
+                "Record",
+                &doc,
+                "reader",
+                "*",
+            )
+            .await;
+        assert!(
+            matches!(
+                revoked,
+                Err(crate::Error::Acp(acp::Error::OwedCheckUnavailable { .. }))
+            ),
+            "{revoked:?}"
+        );
+        transaction.commit().await.unwrap();
+        remote.down.store(false, Ordering::SeqCst);
+        assert!(remote.take_writes().is_empty());
+        node.shutdown().await.unwrap();
+    })
+    .unwrap();
+}
+
+/// A userset subject is submitted under the authority recorded with the
+/// change: the provider applies the owner's and refuses a stranger's, though
+/// the node could sign either as the owner.
+#[test]
+fn a_userset_grant_is_decided_under_its_own_actors_authority() {
+    workers::block_on(async {
+        let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
+        let remote = Remote::new();
+        let node = node_on(Some(&remote)).await;
+        let doc = created(node.execute_request(create("shared")).await);
+        let members = "groups:team#member";
+        let stage = |context: RequestContext| {
+            let (node, doc) = (&node, &doc);
+            async move {
+                let transaction = node.begin_transaction_guard(false).await.unwrap();
+                let staged = node
+                    .add_dac_actor_relationship_change_for_in_txn(
+                        transaction.handle(),
+                        &context,
+                        "Record",
+                        doc,
+                        "reader",
+                        members,
+                    )
+                    .await;
+                transaction.commit().await.unwrap();
+                staged
+            }
+        };
+
+        // The caller owns nothing here. With the provider up it is refused
+        // at staging.
+        let delegation = format!("delegation:{CALLER}");
+        assert!(matches!(
+            stage(carrying(CALLER, &delegation)).await,
+            Err(crate::Error::Acp(acp::Error::NotOwner { .. }))
+        ));
+        // With the provider down its add is staged unchecked, submitted
+        // under its own delegation, refused by the provider and discarded.
+        remote.down.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            stage(carrying(CALLER, &delegation)).await,
+            Ok(RelationshipChange::Staged {
+                authority_checked: false,
+                ..
+            })
+        ));
+        remote.down.store(false, Ordering::SeqCst);
+        assert!(matches!(
+            stage(actor(OWNER)).await,
+            Ok(RelationshipChange::Staged {
+                authority_checked: true,
+                ..
+            })
+        ));
+
+        // One write reached the provider's state: the owner's.
+        assert_eq!(
+            remote.take_writes(),
+            [(true, doc.clone(), members.to_string())]
+        );
+        assert!(remote.holds(&doc, members));
+        // Nothing of the caller's is left to be submitted again.
+        remote
+            .tuples
+            .remove(&(doc.clone(), "reader".into(), members.into()));
+        let transaction = node.begin_transaction_guard(false).await.unwrap();
+        node.add_dac_actor_relationship_change_for_in_txn(
+            transaction.handle(),
+            &actor(OWNER),
+            "Record",
+            &doc,
+            "reader",
+            READER,
+        )
+        .await
+        .unwrap();
+        transaction.commit().await.unwrap();
+        assert_eq!(
+            remote.take_writes(),
+            [(true, doc.clone(), READER.to_string())]
+        );
+        node.shutdown().await.unwrap();
+    })
+    .unwrap();
+}
+
+/// Over HTTP a relationship change in a transaction is served only by a
+/// provider that joins the transaction: staging on a remote one is refused
+/// before anything is recorded.
+#[cfg(feature = "http")]
+#[test]
+fn the_http_route_refuses_to_stage_on_a_remote_provider() {
+    use std::time::Duration;
+
+    workers::block_on(async {
+        let _serial = super::tests::SIGNING_STORE_GUARD.lock().await;
+        let remote = Remote::new();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let node = Node::builder()
+            .with_node_identity_did(node_identity())
+            .with_document_acp_provider(DocumentAcpProvider::new(remote.clone()))
+            .with_http(crate::HttpConfig::with_listener(listener).unwrap())
+            .build()
+            .await
+            .unwrap();
+        provision(&node).await;
+        let doc = created(node.execute_request(create("shared")).await);
+
+        let caller = RawIdentity::from_private_key(crypto::generate_ed25519().unwrap()).unwrap();
+        let token = identity::new_token(
+            &caller,
+            Duration::from_secs(60),
+            Some(address.to_string()),
+            None,
+        )
+        .unwrap();
+        let auth = format!("Bearer {}", String::from_utf8(token).unwrap());
+        let client = net::http::Client::builder(edge::testing::edge())
+            .no_proxy()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+        let begun = client
+            .post(format!("http://{address}/api/v0/tx"))
+            .header("Authorization", auth.as_str())
+            .send()
+            .await
+            .unwrap();
+        assert!(begun.status().is_success(), "{}", begun.status());
+        let body: serde_json::Value = begun.json().await.unwrap();
+        let tx = body["id"].as_u64().unwrap().to_string();
+
+        let relationship = serde_json::json!({
+            "collection": "Record",
+            "doc_id": doc,
+            "relation": "reader",
+            "target_actor": READER,
+        });
+        let url = format!("http://{address}/api/v0/acp/document/relationship");
+        for delete in [false, true] {
+            let request = if delete {
+                client.delete(&url)
+            } else {
+                client.post(&url)
+            };
+            let refused = request
+                .header("Authorization", auth.as_str())
+                .header("x-defradb-tx", tx.as_str())
+                .json(&relationship)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(refused.status().as_u16(), 501);
+            let text = refused.text().await.unwrap();
+            assert!(
+                text.contains("transaction-bound document relationships are unavailable"),
+                "{text}"
+            );
+        }
+        // Outside a transaction the route serves the provider as before.
+        let outside = client
+            .post(&url)
+            .header("Authorization", auth.as_str())
+            .json(&relationship)
+            .send()
+            .await
+            .unwrap();
+        assert_ne!(outside.status().as_u16(), 501);
+        assert!(remote.take_writes().is_empty());
+        node.shutdown().await.unwrap();
     })
     .unwrap();
 }

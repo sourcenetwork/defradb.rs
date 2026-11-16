@@ -32,6 +32,7 @@ mod submission;
 
 pub use changes::{
     OwedChanges, StagedCount, MAX_OWED_CHANGES_PER_TRANSACTION, MAX_UNSETTLED_OWED_CHANGES,
+    MAX_UNSETTLED_OWED_CHANGES_PER_ACTOR,
 };
 pub use deny::{OwedDenial, OwedDenials};
 pub use keys::OwedTupleState;

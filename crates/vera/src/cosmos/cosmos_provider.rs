@@ -117,6 +117,16 @@ fn subject_to_json(subject: &SubjectRef) -> serde_json::Value {
     }
 }
 
+/// A failed transaction as the provider reports it: one whose fate is
+/// unknown because the chain was not reached is
+/// [`ProviderError::Unavailable`], any other is the chain's answer.
+fn tx_error(error: super::tx::TxSignerError) -> ProviderError {
+    match error {
+        super::tx::TxSignerError::Unreachable(_) => ProviderError::Unavailable(error.to_string()),
+        other => ProviderError::Transaction(other.to_string()),
+    }
+}
+
 /// Whether the node holds, for `did`, a local key
 /// [`resolve_cosmos_bearer_token_as`] builds a token with before it falls
 /// back to a request's token.
@@ -242,7 +252,7 @@ impl VeraProvider for CosmosProvider {
         self.signer
             .create_policy(&self.client, policy_yaml)
             .await
-            .map_err(|e| ProviderError::Transaction(e.to_string()))
+            .map_err(tx_error)
     }
 
     async fn register_object(
@@ -260,7 +270,7 @@ impl VeraProvider for CosmosProvider {
         self.signer
             .bearer_policy_cmd(&self.client, bearer_token, policy_id, cmd)
             .await
-            .map_err(|e| ProviderError::Transaction(e.to_string()))?;
+            .map_err(tx_error)?;
         Ok(())
     }
 
@@ -279,7 +289,7 @@ impl VeraProvider for CosmosProvider {
         self.signer
             .bearer_policy_cmd(&self.client, bearer_token, policy_id, cmd)
             .await
-            .map_err(|e| ProviderError::Transaction(e.to_string()))?;
+            .map_err(tx_error)?;
         Ok(())
     }
 
@@ -305,7 +315,7 @@ impl VeraProvider for CosmosProvider {
             .signer
             .bearer_policy_cmd(&self.client, bearer_token, policy_id, cmd)
             .await
-            .map_err(|e| ProviderError::Transaction(e.to_string()))?;
+            .map_err(tx_error)?;
 
         let record_existed = result
             .get("record_existed")
@@ -336,7 +346,7 @@ impl VeraProvider for CosmosProvider {
             .signer
             .bearer_policy_cmd(&self.client, bearer_token, policy_id, cmd)
             .await
-            .map_err(|e| ProviderError::Transaction(e.to_string()))?;
+            .map_err(tx_error)?;
 
         let record_found = result
             .get("record_found")

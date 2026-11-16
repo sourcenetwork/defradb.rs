@@ -55,6 +55,11 @@ pub(super) struct RemoteAcp {
     pub(super) lose_answer: AtomicBool,
     /// A registration is refused: its creator's credentials are missing.
     pub(super) refuse_registration: AtomicBool,
+    /// A relationship write is answered with this error, which does not say
+    /// whether it is final, and is not applied.
+    garbled: HopscotchMap<(), String, rapidhash::fast::RandomState>,
+    /// The owner the provider names is not a DID the node can read.
+    pub(super) malformed_owner: AtomicBool,
     /// Every relationship write applied, in order: add or delete, document,
     /// subject.
     writes: SegQueue<(bool, String, String)>,
@@ -81,6 +86,8 @@ impl RemoteAcp {
             strict: AtomicBool::new(false),
             lose_answer: AtomicBool::new(false),
             refuse_registration: AtomicBool::new(false),
+            garbled: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
+            malformed_owner: AtomicBool::new(false),
             writes: SegQueue::new(),
             credentials: AtomicBool::new(false),
             keys: set(),
@@ -88,6 +95,14 @@ impl RemoteAcp {
             expired: set(),
             spellings: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
         })
+    }
+
+    /// Answer relationship writes with `error`, or apply them again.
+    pub(super) fn garble(&self, error: Option<&str>) {
+        match error {
+            Some(error) => self.garbled.insert((), error.to_string()),
+            None => self.garbled.remove(&()),
+        };
     }
 
     /// The node holds `did`'s key.
@@ -139,6 +154,9 @@ impl RemoteAcp {
         relation: &str,
     ) -> acp::Result<bool> {
         self.reachable()?;
+        if let Some(error) = self.garbled.get(&()) {
+            return Err(acp::Error::Storage(error));
+        }
         if self.strict.load(Ordering::SeqCst) && !self.manages(requestor, doc_id) {
             return Err(acp::Error::NotManager {
                 operation: "change relationship".into(),
@@ -158,7 +176,7 @@ impl RemoteAcp {
         self.writes
             .push((add, doc_id.to_string(), target.to_string()));
         if self.lose_answer.swap(false, Ordering::SeqCst) {
-            return Err(acp::Error::Storage("answer lost".into()));
+            return Err(acp::Error::ProviderUnavailable("answer lost".into()));
         }
         Ok(changed)
     }
@@ -170,7 +188,9 @@ impl RemoteAcp {
 
     fn reachable(&self) -> acp::Result<()> {
         if self.down.load(Ordering::SeqCst) {
-            return Err(acp::Error::Storage("provider unreachable".into()));
+            return Err(acp::Error::ProviderUnavailable(
+                "provider unreachable".into(),
+            ));
         }
         Ok(())
     }
@@ -224,6 +244,9 @@ impl DocumentACP for RemoteAcp {
     ) -> acp::Result<Option<Did>> {
         self.reachable()?;
         self.owner_lookups.fetch_add(1, Ordering::SeqCst);
+        if self.malformed_owner.load(Ordering::SeqCst) {
+            return Err(acp::Error::Storage("invalid owner DID".into()));
+        }
         Ok(self.owners.get(doc_id))
     }
 

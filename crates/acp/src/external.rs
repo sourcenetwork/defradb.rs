@@ -39,7 +39,7 @@ use crate::permission::DocumentPermission;
 
 mod settle;
 
-pub use settle::OwedSettlement;
+pub use settle::{OwedScope, OwedSettlement, MAX_FAILED_SUBMISSIONS};
 
 /// Records read into memory per redrive page, bounded by their encoded size.
 const REDRIVE_PAGE_BYTES: usize = 256 * 1024;
@@ -348,8 +348,8 @@ where
         self.provider.submit_owed_change(change).await
     }
 
-    async fn settle_owed_changes(&self) -> Result<OwedSettlement> {
-        self.settle_owed_changes_once().await
+    async fn settle_owed_changes(&self, scope: OwedScope) -> Result<OwedSettlement> {
+        self.settle_owed_changes_once(scope).await
     }
 
     fn bearer_token_for(&self, did: &str) -> Option<String> {

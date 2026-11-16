@@ -7,10 +7,16 @@
 //! advisory. It reads the registration this transaction or an earlier one
 //! still owes (its creator is the only authority on the object until the
 //! provider holds it), then the provider's state as its last round trip saw
-//! it. When the provider cannot answer, the change is staged unchecked and
-//! says so ([`Staged::authority_checked`]): commits keep succeeding while the
-//! provider is down, and the provider refuses at submission what it would
-//! have refused here.
+//! it.
+//!
+//! When the provider cannot be reached
+//! ([`Error::ProviderUnavailable`], and no other error), the check cannot
+//! run. An add is then staged unchecked and says so
+//! ([`Staged::authority_checked`]): it grants nothing until the provider
+//! takes it, and is removed if the provider refuses it. A delete is not
+//! staged ([`Error::OwedCheckUnavailable`]): it would deny its subject from
+//! the commit on, on the word of an actor nobody vouched for. Any other
+//! error of the provider fails the call.
 
 use std::sync::Arc;
 
@@ -48,9 +54,9 @@ pub struct StageRelationship<'a> {
 pub struct Staged {
     /// The change's place in the queue.
     pub seq: u64,
-    /// Whether the acting DID's authority was checked against the provider.
-    /// `false` when the provider could not answer: the change is staged all
-    /// the same and the provider decides at submission.
+    /// Whether the acting DID's authority was checked. `false` for an add
+    /// staged while the provider could not be reached: the provider decides
+    /// at submission, and the change is removed if it refuses.
     pub authority_checked: bool,
 }
 
@@ -123,6 +129,7 @@ impl TransactionOutbox {
                 op: request.op,
                 actor,
                 authority,
+                authority_checked,
             })
             .await?;
         Ok(Staged {
@@ -132,7 +139,7 @@ impl TransactionOutbox {
     }
 
     /// Whether `actor` may make the change, as far as can be known now.
-    /// `Ok(false)` when the provider could not say.
+    /// `Ok(false)` for an add the provider could not be asked about.
     async fn advise(&self, actor: &Did, request: &StageRelationship<'_>) -> Result<bool> {
         let (policy_id, resource, object) = (request.policy_id, request.resource, request.object);
         if let Some(owed) = self.pending.get(policy_id, resource, object).await? {
@@ -168,8 +175,11 @@ impl TransactionOutbox {
             Ok(owner) => owner.map(|owner| self.provider.canonical_actor(&owner)),
             // A denial that spares only the owner stands while nobody can
             // say who the owner is.
-            Err(_) if denial == OwedDenial::UnlessOwner => return Err(revoked()),
-            Err(error) => return Ok(unchecked(actor, object, &error)),
+            Err(Error::ProviderUnavailable(_)) if denial == OwedDenial::UnlessOwner => {
+                return Err(revoked())
+            }
+            Err(Error::ProviderUnavailable(reason)) => return unchecked(actor, request, &reason),
+            Err(error) => return Err(error),
         };
         match owner {
             Some(owner) if owner == *actor => return Ok(true),
@@ -185,7 +195,10 @@ impl TransactionOutbox {
             {
                 Ok(true) => return Ok(true),
                 Ok(false) => {}
-                Err(error) => return Ok(unchecked(actor, object, &error)),
+                Err(Error::ProviderUnavailable(reason)) => {
+                    return unchecked(actor, request, &reason)
+                }
+                Err(error) => return Err(error),
             }
         }
         Err(refusal(request))
@@ -210,13 +223,21 @@ fn refusal(request: &StageRelationship<'_>) -> Error {
     }
 }
 
-fn unchecked(actor: &Did, object: &str, error: &Error) -> bool {
+/// What staging does when the provider cannot be asked: an add goes on
+/// unchecked, a delete does not go on.
+fn unchecked(actor: &Did, request: &StageRelationship<'_>, reason: &str) -> Result<bool> {
+    if request.op == OwedOp::Delete {
+        return Err(Error::OwedCheckUnavailable {
+            actor: actor.to_string(),
+            object: request.object.to_owned(),
+        });
+    }
     tracing::warn!(
         target: "acp::audit",
         %actor,
-        object,
-        %error,
-        "ACP provider did not answer; relationship change staged without the advisory authority check"
+        object = request.object,
+        reason,
+        "ACP provider unavailable; relationship add staged without the authority check"
     );
-    false
+    Ok(false)
 }

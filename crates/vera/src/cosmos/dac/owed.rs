@@ -3,7 +3,9 @@
 //! The change is submitted as its acting DID with what was recorded when it
 //! was staged, never with the credentials of whatever request runs the
 //! submission: a token signed now with the node's key for that DID, or the
-//! caller's delegation as it was presented. Vera sets a relationship it
+//! caller's delegation as it was presented. That holds for every subject: a
+//! userset or cross-object subject is sent under the same token, not under
+//! the provider's own actor. Vera sets a relationship it
 //! already holds and deletes one it does not hold without error, so a change
 //! submitted a second time is applied again and found applied.
 
@@ -109,7 +111,8 @@ pub(super) async fn submit(acp: &VeraDocumentACP, change: &OwedChange) -> Submis
             acp.remote(move |provider| async move {
                 if add {
                     provider
-                        .set_relationship_subject(
+                        .set_relationship_subject_as(
+                            &token,
                             &policy,
                             &resource,
                             &object,
@@ -122,7 +125,8 @@ pub(super) async fn submit(acp: &VeraDocumentACP, change: &OwedChange) -> Submis
                         .await
                 } else {
                     provider
-                        .delete_relationship_subject(
+                        .delete_relationship_subject_as(
+                            &token,
                             &policy,
                             &resource,
                             &object,
@@ -159,7 +163,7 @@ pub(super) async fn submit(acp: &VeraDocumentACP, change: &OwedChange) -> Submis
             }
         }
         Err(ProviderError::Unsupported(reason)) => Submission::Refused { reason },
-        Err(error) => Submission::Unavailable {
+        Err(error) => Submission::Failed {
             reason: error.to_string(),
         },
     }

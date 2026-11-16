@@ -292,8 +292,13 @@ fn owned<const N: usize>(parts: [&str; N]) -> [String; N] {
     parts.map(str::to_owned)
 }
 
-fn provider_err(e: impl std::fmt::Display) -> acp::Error {
-    acp::Error::Storage(format!("Vera: {}", e))
+/// A provider's failure as document ACP reports it. One that says the
+/// provider was not reached keeps saying so, since a caller may act on it.
+fn provider_err(error: impl std::borrow::Borrow<ProviderError>) -> acp::Error {
+    match error.borrow() {
+        ProviderError::Unavailable(reason) => acp::Error::ProviderUnavailable(reason.clone()),
+        other => acp::Error::Storage(format!("Vera: {other}")),
+    }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -523,7 +528,7 @@ impl DocumentACP for VeraDocumentACP {
             .await
             .map_err(|error| match error {
                 inputs::Error::Source(error) => provider_err(error),
-                other => provider_err(other),
+                other => acp::Error::Storage(format!("Vera: {other}")),
             })?;
 
         // A denial is cached only where invalidation events reach the cache

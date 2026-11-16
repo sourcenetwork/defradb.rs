@@ -103,9 +103,11 @@ pub trait DocumentACP: MaybeSendSync {
         crate::outbox::submit_relationship(self, change).await
     }
 
-    /// Submit the relationship changes owed to this provider, once, in
-    /// order. Nothing is owed to a provider that keeps no outbox.
-    async fn settle_owed_changes(&self) -> Result<crate::OwedSettlement> {
+    /// Submit the relationship changes owed to this provider that `scope`
+    /// names, once, in order. Nothing is owed to a provider that keeps no
+    /// outbox.
+    async fn settle_owed_changes(&self, scope: crate::OwedScope) -> Result<crate::OwedSettlement> {
+        let _ = scope;
         Ok(crate::OwedSettlement::default())
     }
 

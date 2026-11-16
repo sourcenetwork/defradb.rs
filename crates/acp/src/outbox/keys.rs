@@ -6,6 +6,8 @@
 //!   unsettled on one tuple ([`OwedTupleState`]).
 //! - `/acp-owed/o/<policy><resource><object>`: how many changes are unsettled
 //!   on one object.
+//! - `/acp-owed/a/<actor>`: how many changes are unsettled that one acting
+//!   DID staged.
 //! - `/acp-owed/n`: how many changes are unsettled on the node.
 //! - `/acp-owed/seq`: the counter sequences are allocated from.
 //!
@@ -23,6 +25,7 @@ use crate::error::{Error, Result};
 const QUEUE_PREFIX: &[u8] = b"/acp-owed/q/";
 const TUPLE_PREFIX: &[u8] = b"/acp-owed/t/";
 const OBJECT_PREFIX: &[u8] = b"/acp-owed/o/";
+const ACTOR_PREFIX: &[u8] = b"/acp-owed/a/";
 pub(super) const UNSETTLED_KEY: &[u8] = b"/acp-owed/n";
 pub(super) const SEQUENCE_KEY: &[u8] = b"/acp-owed/seq";
 
@@ -136,6 +139,12 @@ pub(super) fn object_key(policy_id: &str, resource: &str, object: &str) -> Vec<u
     for part in [policy_id, resource, object] {
         push_part(&mut key, part.as_bytes());
     }
+    key
+}
+
+pub(super) fn actor_key(actor: &Did) -> Vec<u8> {
+    let mut key = ACTOR_PREFIX.to_vec();
+    push_part(&mut key, actor.as_str().as_bytes());
     key
 }
 
@@ -333,9 +342,14 @@ mod tests {
             assert!(!key.starts_with(TUPLE_PREFIX) && !key.starts_with(QUEUE_PREFIX));
         }
         for reserved in [UNSETTLED_KEY, SEQUENCE_KEY] {
-            for space in [QUEUE_PREFIX, TUPLE_PREFIX, OBJECT_PREFIX] {
+            for space in [QUEUE_PREFIX, TUPLE_PREFIX, OBJECT_PREFIX, ACTOR_PREFIX] {
                 assert!(!reserved.starts_with(space));
             }
+        }
+        let actor = actor_key(&Did::new("did:key:owner").unwrap());
+        assert!(actor.starts_with(ACTOR_PREFIX));
+        for space in [QUEUE_PREFIX, TUPLE_PREFIX, OBJECT_PREFIX] {
+            assert!(!actor.starts_with(space));
         }
     }
 

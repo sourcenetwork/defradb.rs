@@ -145,8 +145,12 @@ impl BackupOperations for HttpNodeOps {
 
 #[async_trait::async_trait]
 impl DocumentAcpOperations for HttpNodeOps {
+    /// Only a provider that joins the transaction serves a relationship
+    /// change in one over HTTP. A remote provider would stage the change,
+    /// and until a caller can abandon a staged change and a drainer settles
+    /// them, staging is for embedders that call the node directly.
     fn supports_transactional_relationships(&self) -> bool {
-        true
+        self.ops.document_acp.supports_transactions()
     }
 
     fn caller_of_delegation(&self, token: &str) -> Option<Result<identity::Did, String>> {

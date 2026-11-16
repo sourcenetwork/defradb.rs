@@ -150,8 +150,10 @@ impl Node {
     /// did. With local document ACP it is applied in the transaction. With a
     /// remote provider it is staged: recorded in the transaction as owed to
     /// the provider, committed or rolled back with the transaction's rows,
-    /// and submitted after the commit. A staged add grants nothing until the
-    /// provider holds it.
+    /// and submitted after the commit, which waits for the provider for at
+    /// most ten seconds. A staged add grants nothing until the provider
+    /// holds it. One staged while the provider could not be reached is
+    /// unchecked, and is removed if the provider refuses it.
     pub async fn add_dac_actor_relationship_change_for_in_txn(
         &self,
         handle: &TransactionHandle,
@@ -178,7 +180,11 @@ impl Node {
     /// [`Self::delete_dac_actor_relationship_for_in_txn`], saying what the
     /// delete did. A delete staged for a remote provider denies its subject
     /// through this transaction at once, and on this node from the commit,
-    /// before the provider holds it.
+    /// before the provider holds it. It is staged only once its acting DID's
+    /// authority was checked: while the provider cannot be reached the call
+    /// fails with `acp::Error::OwedCheckUnavailable` and is to be made
+    /// again, unless the acting DID created the document and its
+    /// registration is still owed.
     pub async fn delete_dac_actor_relationship_change_for_in_txn(
         &self,
         handle: &TransactionHandle,

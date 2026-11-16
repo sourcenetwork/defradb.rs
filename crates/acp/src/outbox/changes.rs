@@ -18,6 +18,11 @@ pub const MAX_OWED_CHANGES_PER_TRANSACTION: u32 = 256;
 /// [`OwedChanges::with_node_limit`] sets another bound.
 pub const MAX_UNSETTLED_OWED_CHANGES: u64 = 10_000;
 
+/// The most changes one acting DID holds unsettled on a node. A change that
+/// is parked stays unsettled, so without this bound one actor's parked
+/// changes could take the whole of the node's.
+pub const MAX_UNSETTLED_OWED_CHANGES_PER_ACTOR: u64 = 1_000;
+
 /// Records read into memory per page of the queue, bounded by their encoded
 /// size.
 const PAGE_BYTES: usize = 256 * 1024;
@@ -96,8 +101,9 @@ impl OwedChanges {
     /// their sequences follow the order they were staged in, which is not
     /// always the order their transactions commit in.
     ///
-    /// The node's bound is checked against what this transaction sees, so
-    /// transactions staging at once may pass it by what they stage together.
+    /// The node's bound and the acting DID's are checked against what this
+    /// transaction sees, so transactions staging at once may pass either by
+    /// what they stage together.
     pub async fn stage(&self, new: NewOwedChange) -> Result<OwedChange> {
         let view = self.active_view()?;
         if self.staged.get() >= MAX_OWED_CHANGES_PER_TRANSACTION {
@@ -110,6 +116,14 @@ impl OwedChanges {
             return Err(Error::OwedChangesPerNode {
                 unsettled,
                 limit: self.node_limit,
+            });
+        }
+        let by_actor = ops::unsettled_by(&view, &new.actor).await?;
+        if by_actor >= MAX_UNSETTLED_OWED_CHANGES_PER_ACTOR {
+            return Err(Error::OwedChangesPerActor {
+                actor: new.actor.to_string(),
+                unsettled: by_actor,
+                limit: MAX_UNSETTLED_OWED_CHANGES_PER_ACTOR,
             });
         }
         let change = ops::stage(&view, self.sequences.as_ref(), new).await?;
@@ -136,11 +150,23 @@ impl OwedChanges {
     }
 
     /// Record, in this transaction, what a submission of the change at `seq`
-    /// came to: its state, one more attempt and the provider's words. The
-    /// change stays unsettled, so its tuple's state and the counts do not
-    /// move. `false` when no such change is owed.
-    pub async fn mark(&self, seq: u64, state: OwedState, error: Option<String>) -> Result<bool> {
-        ops::mark(&self.active_view()?, seq, state, error).await
+    /// came to: its state, how many submissions in a row the provider
+    /// answered this way, and its words. The change stays unsettled, so its
+    /// tuple's state and the counts do not move. `false` when no such change
+    /// is owed.
+    pub async fn mark(
+        &self,
+        seq: u64,
+        state: OwedState,
+        attempts: u32,
+        error: Option<String>,
+    ) -> Result<bool> {
+        ops::mark(&self.active_view()?, seq, state, attempts, error).await
+    }
+
+    /// How many changes `actor` has unsettled on the node.
+    pub async fn unsettled_by(&self, actor: &identity::Did) -> Result<u64> {
+        ops::unsettled_by(&self.active_view()?, actor).await
     }
 
     /// What is unsettled on `tuple`, if anything is.

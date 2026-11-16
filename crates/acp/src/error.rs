@@ -77,6 +77,37 @@ pub enum Error {
     #[error("no authority to submit ACP changes as {actor}: {reason}")]
     OwedAuthorityUnavailable { actor: String, reason: String },
 
+    /// An external provider could not be reached or did not answer in time.
+    /// Nothing is known about what was asked; the same call may be made
+    /// again.
+    #[error("ACP provider unavailable: {0}")]
+    ProviderUnavailable(String),
+
+    /// A relationship delete cannot be staged while the provider cannot
+    /// confirm its acting DID's authority: an owed delete denies its subject
+    /// from the commit on, so it is never taken on an unchecked word. The
+    /// same call succeeds once the provider answers.
+    #[error("cannot check {actor}'s authority to revoke on {object} while the ACP provider is unavailable; try again")]
+    OwedCheckUnavailable { actor: String, object: String },
+
+    /// One acting DID already owes the provider as many relationship changes
+    /// as one may hold unsettled; staging resumes as they settle.
+    #[error("{unsettled} ACP changes by {actor} are owed to the provider, at the limit of {limit} for one actor")]
+    OwedChangesPerActor {
+        actor: String,
+        unsettled: u64,
+        limit: u64,
+    },
+
+    /// A relationship change made outside a transaction would reach the
+    /// provider before a change of the same relationship that a transaction
+    /// staged earlier and that is still owed. The same call succeeds once
+    /// that change is settled.
+    #[error(
+        "an earlier change of {relation} on {object} is still owed to the ACP provider; try again"
+    )]
+    OwedChangesPending { object: String, relation: String },
+
     /// Invalid policy configuration
     #[error("invalid policy: {0}")]
     InvalidPolicy(String),

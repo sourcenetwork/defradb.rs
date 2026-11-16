@@ -181,6 +181,50 @@ impl VeraProvider for OwedProvider {
         self.write(bearer_token)
     }
 
+    async fn set_relationship_subject_as(
+        &self,
+        bearer_token: &str,
+        _policy_id: &str,
+        _resource: &str,
+        _object_id: &str,
+        _relation: &str,
+        _kind: u8,
+        _subject_resource: &str,
+        _subject_object_id: &str,
+        _subject_relation: &str,
+    ) -> std::result::Result<bool, ProviderError> {
+        self.write(bearer_token)
+    }
+
+    async fn delete_relationship_subject_as(
+        &self,
+        bearer_token: &str,
+        _policy_id: &str,
+        _resource: &str,
+        _object_id: &str,
+        _relation: &str,
+        _kind: u8,
+        _subject_resource: &str,
+        _subject_object_id: &str,
+        _subject_relation: &str,
+    ) -> std::result::Result<bool, ProviderError> {
+        self.write(bearer_token)
+    }
+
+    async fn set_relationship_subject(
+        &self,
+        _policy_id: &str,
+        _resource: &str,
+        _object_id: &str,
+        _relation: &str,
+        _kind: u8,
+        _subject_resource: &str,
+        _subject_object_id: &str,
+        _subject_relation: &str,
+    ) -> std::result::Result<bool, ProviderError> {
+        self.write("the providers own actor")
+    }
+
     async fn query_policy(
         &self,
         _policy_id: &str,
@@ -230,6 +274,7 @@ fn change(actor: &str, authority: OwedAuthority, op: OwedOp) -> OwedChange {
         state: OwedState::Staged,
         attempts: 0,
         last_error: None,
+        authority_checked: true,
     }
 }
 
@@ -322,13 +367,19 @@ async fn a_submission_is_read_as_applied_refused_or_not_delivered() {
         bound.submit_owed_change(&keyed).await,
         Submission::Refused { reason } if reason.contains("rejected")
     ));
-    for unknown in [Answer::Unreachable, Answer::Unclear] {
-        provider.answer(unknown);
-        assert!(matches!(
-            bound.submit_owed_change(&keyed).await,
-            Submission::Unavailable { .. }
-        ));
-    }
+    // A chain that was not reached and one that answered with an error it
+    // does not classify are told apart: only the second counts toward
+    // taking the change as refused.
+    provider.answer(Answer::Unreachable);
+    assert!(matches!(
+        bound.submit_owed_change(&keyed).await,
+        Submission::Unavailable { .. }
+    ));
+    provider.answer(Answer::Unclear);
+    assert!(matches!(
+        bound.submit_owed_change(&keyed).await,
+        Submission::Failed { reason } if reason.contains("no answer")
+    ));
 
     provider.answer(Answer::Applied);
     let typed = OwedChange {
@@ -411,4 +462,55 @@ async fn a_managing_relation_is_asked_as_a_named_permission() {
         acp.canonical_actor(&did(&format!("{REMOTE}#alias"))),
         did(REMOTE)
     );
+}
+
+/// A userset or cross-object subject is submitted under the authority
+/// recorded with the change, as an actor subject is, and never under the
+/// provider's own actor.
+#[nuclei::test]
+async fn a_change_of_a_userset_subject_is_sent_under_its_recorded_authority() {
+    let provider = OwedProvider::new(true);
+    let acp = VeraDocumentACP::without_access_cache(provider.clone());
+    let members = OwedSubject::EntitySet {
+        resource: "groups".into(),
+        object: "team".into(),
+        relation: "member".into(),
+    };
+    let on_members = |actor: &str, authority: OwedAuthority, op: OwedOp| {
+        let mut change = change(actor, authority, op);
+        change.tuple.subject = members.clone();
+        change
+    };
+
+    for op in [OwedOp::Add, OwedOp::Delete] {
+        assert_eq!(
+            acp.submit_owed_change(&on_members(REMOTE, delegation(REMOTE), op))
+                .await,
+            Submission::Applied
+        );
+        assert_eq!(
+            acp.submit_owed_change(&on_members(HELD, OwedAuthority::NodeKey, op))
+                .await,
+            Submission::Applied
+        );
+    }
+    assert_eq!(
+        provider.sent(),
+        [
+            format!("delegation:{REMOTE}"),
+            format!("signed:{HELD}"),
+            format!("delegation:{REMOTE}"),
+            format!("signed:{HELD}"),
+        ]
+    );
+
+    // The provider's refusal of the caller is the change's, whoever the
+    // provider's own actor is.
+    provider.answer(Answer::Rejected);
+    assert!(matches!(
+        acp.submit_owed_change(&on_members(REMOTE, delegation(REMOTE), OwedOp::Add))
+            .await,
+        Submission::Refused { .. }
+    ));
+    assert_eq!(provider.sent(), [format!("delegation:{REMOTE}")]);
 }

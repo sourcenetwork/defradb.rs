@@ -244,10 +244,12 @@ where
                     "Could not read owed ACP registrations; their documents stay readable only by their creators"
                 ),
             }
-            match redrive.settle_owed_changes_once().await {
+            match redrive.settle_owed_changes_once(acp::OwedScope::All).await {
                 Ok(settlement) if settlement != acp::OwedSettlement::default() => tracing::info!(
                     settled = settlement.settled,
                     refused = settlement.refused,
+                    discarded = settlement.discarded,
+                    failed = settlement.failed,
                     awaiting_authority = settlement.awaiting_authority,
                     left = settlement.left,
                     provider_unavailable = settlement.provider_unavailable,
