@@ -88,7 +88,9 @@ pub trait VeraProvider: MaybeSendSync {
     }
 
     /// Whether [`Self::create_bearer_token`] signs for `did` with a key the
-    /// node holds, so it needs nothing from a request to act as `did`.
+    /// node holds, so it needs nothing from a request to act as `did`. The
+    /// answer is the same for every spelling [`Self::canonical_actor`]
+    /// brings to one: a staged change keeps the canonical one only.
     fn holds_key_for(&self, _did: &str) -> bool {
         false
     }

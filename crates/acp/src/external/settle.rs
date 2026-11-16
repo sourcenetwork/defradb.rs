@@ -16,15 +16,18 @@
 //!   [`MAX_FAILED_SUBMISSIONS`] such answers in a row, whatever their
 //!   words, are taken as a refusal;
 //! - an error of the node's own before anything was sent: the change stays
-//!   staged, nothing is counted, and the pass goes on;
+//!   staged with the error recorded, nothing is counted, and the pass goes
+//!   on. A checked change in this state holds its tuple until the node can
+//!   send it; every pass says so in a warning that names it;
 //! - unreachable: the pass stops, and nothing is written.
 //!
 //! A parked change whose acting DID was checked keeps every later change of
 //! its tuple waiting behind it. Changes of other tuples go on past it. A
 //! change staged unchecked never holds its tuple: when a later change of the
 //! tuple comes up and the unchecked one is waiting for authority, or the
-//! provider has answered it with an error, the unchecked one is deleted, so
-//! it cannot be submitted after the change that passed it.
+//! provider has answered it with an error, or the node could not send it,
+//! the unchecked one is deleted, so it cannot be submitted after the change
+//! that passed it.
 //!
 //! Nothing here retries, waits or runs by itself: a pass runs after the
 //! commit of a request that staged a change (over that transaction's
@@ -80,8 +83,10 @@ pub struct OwedSettlement {
     /// staged.
     pub failed: u64,
     /// Staged changes the pass came to and did not submit: behind an earlier
-    /// change of their tuple, behind their object's owed registration, or
-    /// changed by a transaction that committed meanwhile.
+    /// change of their tuple, behind their object's owed registration,
+    /// changed by a transaction that committed meanwhile, or not sent for an
+    /// error of the node's own. One of the last kind that a later change
+    /// then passes is counted in `discarded` too.
     pub left: u64,
     /// The provider could not be reached and the pass stopped there; what
     /// follows in the queue was not looked at.
@@ -293,7 +298,8 @@ where
 
     /// Delete the unchecked changes `change` passes: earlier changes of its
     /// tuple, staged without the authority check, that the provider has not
-    /// taken (they wait for authority, or it answered them with an error).
+    /// taken (they wait for authority, it answered them with an error, or
+    /// the node could not send them).
     /// Nobody vouched for them, so they may not keep a later change from the
     /// provider, and once passed they must never be submitted after it.
     /// Returns how many were deleted.
@@ -307,7 +313,9 @@ where
                 && !oldest.authority_checked
                 && match oldest.state {
                     OwedState::AwaitingAuthority => true,
-                    OwedState::Staged => oldest.attempts > 0,
+                    // Tried, and not taken: answered with an error, or
+                    // never sent.
+                    OwedState::Staged => oldest.last_error.is_some(),
                     OwedState::Refused { .. } => false,
                 };
             if !yields || !self.write(oldest.seq, Write::Settle).await? {
@@ -375,13 +383,27 @@ where
                 discarded(&change, &reason);
                 (Write::Settle, Step::Discarded)
             }
+            // The node's own error: kept with the record so the change is
+            // seen not to have gone, and never counted against it.
             Submission::NotSent { reason } => {
                 tracing::warn!(
                     target: "acp::audit",
                     seq = change.seq,
+                    op = ?change.op,
+                    actor = %change.actor,
+                    object = %change.tuple.object,
+                    relation = %change.tuple.relation,
+                    authority_checked = change.authority_checked,
                     reason,
-                    "Could not submit an owed ACP change; it stays staged"
+                    "Could not send an owed ACP change; it stays staged and holds its tuple unless it was staged unchecked"
                 );
+                if change.last_error.as_deref() != Some(reason.as_str()) {
+                    self.write(
+                        change.seq,
+                        Write::Mark(OwedState::Staged, change.attempts, reason),
+                    )
+                    .await?;
+                }
                 return Ok(Step::Left);
             }
             Submission::Unavailable { reason } => {

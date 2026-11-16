@@ -67,6 +67,7 @@ UNIT_NAMES = (
     "did_spelling::tests::a_secp256k1_actor_is_sent_as_it_is_kept",
     "did_spelling::tests::an_actor_vera_rs_names_in_the_compressed_spelling_is_the_same_actor",
     "did_spelling::tests::both_spellings_of_a_secp256k1_key_meet_at_the_uncompressed_did",
+    "did_spelling::tests::every_spelling_of_a_key_is_listed_once_and_the_given_one_first",
     "did_spelling::tests::other_identifiers_pass_through_unchanged",
     "did_spelling::tests::the_uncompressed_spelling_is_the_one_defradb_derives",
     "provider::reach::tests::a_transport_failure_is_told_from_an_answer",
