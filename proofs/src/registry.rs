@@ -3031,10 +3031,10 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Text chunking",
-        name: "INV_ReadsMatchText / INV_SettledPeersAgree",
+        name: "INV_ReadsMatchText / INV_SettledPeersAgree / INV_NoForgedChunk / INV_ChunksNeverChange",
         axis: Tla,
-        anchor: "crates/query/src/plan/chunk_parent.rs parent_hashes; crates/chunk-split/src/list.rs describes",
-        model_ref: "MC_ChunkMerge_Green.cfg / MC_ChunkMerge_Red_TrustList.cfg",
+        anchor: "crates/query/src/plan/chunk_parent.rs parent_hashes; crates/chunk-split/src/list.rs describes; crates/crdt/src/field/lww.rs merge; crates/db/src/chunk/guard.rs check_chunk_merge; crates/db/src/merge/merge_handler/composite_persist.rs",
+        model_ref: "MC_ChunkMerge_Green.cfg / MC_ChunkMerge_Red_TrustList.cfg / MC_ChunkMerge_Red_NoHashCheck.cfg / MC_ChunkMerge_Red_MutableChunk.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },

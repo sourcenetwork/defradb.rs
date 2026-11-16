@@ -141,6 +141,8 @@ RUNS=(
   "MC_HttpRouterComposition_Red_Overdeny.cfg HttpRouterComposition.tla RED"
   "MC_ChunkMerge_Green.cfg ChunkMerge.tla GREEN" # readers cut the text when a peer merge kept another edit's list
   "MC_ChunkMerge_Red_TrustList.cfg ChunkMerge.tla RED" # reader trusts the list (INV_ReadsMatchText)
+  "MC_ChunkMerge_Red_NoHashCheck.cfg ChunkMerge.tla RED" # merge stores a chunk whose hash does not match (INV_NoForgedChunk)
+  "MC_ChunkMerge_Red_MutableChunk.cfg ChunkMerge.tla RED" # merge lets a stored chunk change (INV_ChunksNeverChange)
   "MC_ChunkRead_Green.cfg ChunkRead.tla GREEN" # a chunk shows only while its parent is live, readable and uses it
   "MC_ChunkRead_Red_NoDeletedCheck.cfg ChunkRead.tla RED" # deleted parent still shows its chunks (INV_ShownIsLiveAndReadable)
   "MC_ChunkRead_Red_NoHashCheck.cfg ChunkRead.tla RED" # forged chunk claims a real hash (INV_ShownIsTheText)
