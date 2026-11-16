@@ -3,7 +3,7 @@
 use storage::corekv::{IterOptions, Reader, Store, Writer};
 
 use super::keys::{self, OwedTupleState};
-use super::record::{NewOwedChange, OwedChange, OwedOp, OwedTuple};
+use super::record::{NewOwedChange, OwedChange, OwedOp, OwedState, OwedTuple};
 use crate::error::{Error, Result};
 
 fn storage_error(error: storage::corekv::Error) -> Error {
@@ -48,17 +48,29 @@ pub(super) async fn unsettled<R>(reader: &R) -> Result<u64>
 where
     R: Reader + ?Sized,
 {
-    let Some(bytes) = reader
-        .get_parts(keys::UNSETTLED_KEY, &[])
-        .await
-        .map_err(storage_error)?
-    else {
+    merged_count(reader, keys::UNSETTLED_KEY).await
+}
+
+/// How many changes one acting DID has unsettled, read without validation as
+/// the node's count is.
+pub(super) async fn unsettled_by<R>(reader: &R, actor: &identity::Did) -> Result<u64>
+where
+    R: Reader + ?Sized,
+{
+    merged_count(reader, &keys::actor_key(actor)).await
+}
+
+async fn merged_count<R>(reader: &R, key: &[u8]) -> Result<u64>
+where
+    R: Reader + ?Sized,
+{
+    let Some(bytes) = reader.get_parts(key, &[]).await.map_err(storage_error)? else {
         return Ok(0);
     };
     let count: [u8; 8] = bytes
         .as_ref()
         .try_into()
-        .map_err(|_| Error::Serialization("owed ACP node count is malformed".into()))?;
+        .map_err(|_| Error::Serialization("owed ACP count is malformed".into()))?;
     Ok(u64::try_from(i64::from_be_bytes(count)).unwrap_or(0))
 }
 
@@ -140,11 +152,17 @@ where
     txn.delete_shared(key).await.map_err(storage_error)
 }
 
-async fn count_node<T>(txn: &T, delta: i64) -> Result<()>
+/// Move the node's count and the acting DID's by `delta`. Both are blind
+/// merges, so no two transactions conflict on them.
+async fn count<T>(txn: &T, actor: &identity::Did, delta: i64) -> Result<()>
 where
     T: Writer + ?Sized,
 {
-    txn.merge_shared(keys::UNSETTLED_KEY, &storage::merge::counter_i64(delta))
+    let delta = storage::merge::counter_i64(delta);
+    txn.merge_shared(keys::UNSETTLED_KEY, &delta)
+        .await
+        .map_err(storage_error)?;
+    txn.merge_shared(&keys::actor_key(actor), &delta)
         .await
         .map_err(storage_error)
 }
@@ -201,7 +219,7 @@ where
         &change.tuple.object,
     );
     put(txn, &object_key, &keys::encode_count(on_object + 1)).await?;
-    count_node(txn, 1).await?;
+    count(txn, &change.actor, 1).await?;
     Ok(change)
 }
 
@@ -274,6 +292,40 @@ where
     } else {
         put(txn, &object_key, &keys::encode_count(on_object - 1)).await?;
     }
-    count_node(txn, -1).await?;
+    count(txn, &settled.actor, -1).await?;
+    Ok(true)
+}
+
+/// Record what a submission of change `seq` came to: its state, how many
+/// submissions in a row the provider answered this way, and its words. Only
+/// the change's own record is written; its tuple's state and the counts stay
+/// as they are, since the change is as unsettled as before. `false` when no
+/// such change is owed.
+///
+/// The provider's words are cut until the record fits.
+pub(super) async fn mark<T>(
+    txn: &T,
+    seq: u64,
+    state: OwedState,
+    attempts: u32,
+    error: Option<String>,
+) -> Result<bool>
+where
+    T: Reader + Writer + ?Sized,
+{
+    let Some(mut marked) = change(txn, seq).await? else {
+        return Ok(false);
+    };
+    marked.attempts = attempts;
+    marked.state = state;
+    marked.last_error = error;
+    let record = loop {
+        match marked.encode() {
+            Ok(record) => break record,
+            Err(Error::OwedChangeTooLarge { .. }) if marked.shorten_reason() => {}
+            Err(error) => return Err(error),
+        }
+    };
+    put(txn, &keys::queue_key(seq), &record).await?;
     Ok(true)
 }

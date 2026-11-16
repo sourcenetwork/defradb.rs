@@ -13,33 +13,175 @@ use db::{
 };
 use identity::Did;
 use query::{QueryExecutor, QueryRequest, QueryRunner};
-use regolith::sync::HopscotchMap;
+use regolith::sync::{HopscotchMap, SegQueue};
 use schema::PolicyDescription;
 use storage::RegolithStore;
 
 pub(super) const POLICY: &str = "remote-policy";
 pub(super) const RESOURCE: &str = "users";
 
+type Set<K> = HopscotchMap<K, (), rapidhash::fast::RandomState>;
+
+fn set<K>() -> Set<K>
+where
+    K: std::hash::Hash + Eq + Clone + 'static,
+{
+    HopscotchMap::with_hasher(rapidhash::fast::RandomState::default())
+}
+
+/// The relation whose holders manage the others on [`RemoteAcp`].
+pub(super) const MANAGER: &str = "manager";
+
 /// A remote provider: unregistered documents are public, a registered one is
 /// readable by its owner and by whoever holds a relationship on it, and every
 /// call fails while it is down.
-#[derive(Default)]
+///
+/// It can be told to behave as a provider that decides authority itself
+/// (`strict`), that takes its callers' credentials (`credentials`), and that
+/// applies a write and loses the answer (`lose_answer`).
 pub(super) struct RemoteAcp {
     owners: HopscotchMap<String, Did, rapidhash::fast::RandomState>,
-    grants: HopscotchMap<(String, String), (), rapidhash::fast::RandomState>,
+    grants: Set<(String, String)>,
+    managers: Set<(String, String)>,
     pub(super) down: AtomicBool,
-    registrations: AtomicUsize,
+    pub(super) registrations: AtomicUsize,
     pub(super) access_checks: AtomicUsize,
     pub(super) owner_lookups: AtomicUsize,
+    /// A relationship write is refused unless its requestor owns the
+    /// document or holds [`MANAGER`] on it.
+    pub(super) strict: AtomicBool,
+    /// The next relationship write is applied and then fails, as when the
+    /// answer is lost on the way back.
+    pub(super) lose_answer: AtomicBool,
+    /// A registration is refused: its creator's credentials are missing.
+    pub(super) refuse_registration: AtomicBool,
+    /// A relationship write is answered with this error, which does not say
+    /// whether it is final, and is not applied.
+    garbled: HopscotchMap<(), String, rapidhash::fast::RandomState>,
+    /// The owner the provider names is not a DID the node can read.
+    pub(super) malformed_owner: AtomicBool,
+    /// The node cannot make the request for an owed change at all.
+    pub(super) unsendable: AtomicBool,
+    /// Every relationship write applied, in order: add or delete, document,
+    /// subject.
+    writes: SegQueue<(bool, String, String)>,
+    /// Authority is decided from `keys` and `delegations` instead of being
+    /// the node's for every DID.
+    pub(super) credentials: AtomicBool,
+    keys: Set<String>,
+    delegations: HopscotchMap<String, String, rapidhash::fast::RandomState>,
+    expired: Set<String>,
+    /// Other spellings of an actor, by the one the provider keeps.
+    spellings: HopscotchMap<String, Did, rapidhash::fast::RandomState>,
 }
 
 impl RemoteAcp {
     pub(super) fn new() -> Arc<Self> {
         Arc::new(Self {
             owners: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
-            grants: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
-            ..Self::default()
+            grants: set(),
+            managers: set(),
+            down: AtomicBool::new(false),
+            registrations: AtomicUsize::new(0),
+            access_checks: AtomicUsize::new(0),
+            owner_lookups: AtomicUsize::new(0),
+            strict: AtomicBool::new(false),
+            lose_answer: AtomicBool::new(false),
+            refuse_registration: AtomicBool::new(false),
+            garbled: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
+            malformed_owner: AtomicBool::new(false),
+            unsendable: AtomicBool::new(false),
+            writes: SegQueue::new(),
+            credentials: AtomicBool::new(false),
+            keys: set(),
+            delegations: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
+            expired: set(),
+            spellings: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
         })
+    }
+
+    /// Answer relationship writes with `error`, or apply them again.
+    pub(super) fn garble(&self, error: Option<&str>) {
+        match error {
+            Some(error) => self.garbled.insert((), error.to_string()),
+            None => self.garbled.remove(&()),
+        };
+    }
+
+    /// The node holds `did`'s key.
+    pub(super) fn hold_key(&self, did: &Did) {
+        self.keys.insert(did.to_string(), ());
+    }
+
+    pub(super) fn drop_key(&self, did: &Did) {
+        self.keys.remove(&did.to_string());
+    }
+
+    /// The request being served carries `token` for `did`.
+    pub(super) fn carry_delegation(&self, did: &Did, token: &str) {
+        self.delegations.insert(did.to_string(), token.to_string());
+    }
+
+    pub(super) fn expire(&self, token: &str) {
+        self.expired.insert(token.to_string(), ());
+    }
+
+    /// `other` is another spelling of the actor the provider keeps as `kept`.
+    pub(super) fn respell(&self, other: &Did, kept: &Did) {
+        self.spellings.insert(other.to_string(), kept.clone());
+    }
+
+    /// The relationship writes applied so far, oldest first, taken out.
+    pub(super) fn take_writes(&self) -> Vec<(bool, String, String)> {
+        std::iter::from_fn(|| self.writes.pop()).collect()
+    }
+
+    pub(super) fn holds(&self, doc_id: &str, subject: &Did) -> bool {
+        self.granted(doc_id, subject.as_str())
+    }
+
+    fn manages(&self, requestor: &Did, doc_id: &str) -> bool {
+        self.owners.get(doc_id).as_ref() == Some(requestor)
+            || self
+                .managers
+                .contains_key(&(doc_id.to_string(), requestor.to_string()))
+    }
+
+    /// Apply one relationship write as the provider decides it.
+    fn write(
+        &self,
+        add: bool,
+        requestor: &Did,
+        target: &Did,
+        doc_id: &str,
+        relation: &str,
+    ) -> acp::Result<bool> {
+        self.reachable()?;
+        if let Some(error) = self.garbled.get(&()) {
+            return Err(acp::Error::Storage(error));
+        }
+        if self.strict.load(Ordering::SeqCst) && !self.manages(requestor, doc_id) {
+            return Err(acp::Error::NotManager {
+                operation: "change relationship".into(),
+            });
+        }
+        let key = (doc_id.to_string(), target.to_string());
+        let held = if relation == MANAGER {
+            &self.managers
+        } else {
+            &self.grants
+        };
+        let changed = if add {
+            held.insert(key, ()).is_none()
+        } else {
+            held.remove(&key).is_some()
+        };
+        self.writes
+            .push((add, doc_id.to_string(), target.to_string()));
+        if self.lose_answer.swap(false, Ordering::SeqCst) {
+            return Err(acp::Error::ProviderUnavailable("answer lost".into()));
+        }
+        Ok(changed)
     }
 
     fn granted(&self, doc_id: &str, subject: &str) -> bool {
@@ -49,7 +191,9 @@ impl RemoteAcp {
 
     fn reachable(&self) -> acp::Result<()> {
         if self.down.load(Ordering::SeqCst) {
-            return Err(acp::Error::Storage("provider unreachable".into()));
+            return Err(acp::Error::ProviderUnavailable(
+                "provider unreachable".into(),
+            ));
         }
         Ok(())
     }
@@ -69,6 +213,11 @@ impl DocumentACP for RemoteAcp {
         doc_id: &str,
     ) -> acp::Result<()> {
         self.reachable()?;
+        if self.refuse_registration.load(Ordering::SeqCst) {
+            return Err(acp::Error::PermissionDenied(
+                "no credentials for the creator".into(),
+            ));
+        }
         if let Some(owner) = self.owners.get(doc_id) {
             if owner != *identity {
                 return Err(acp::Error::DocumentAlreadyRegistered(doc_id.into()));
@@ -98,6 +247,9 @@ impl DocumentACP for RemoteAcp {
     ) -> acp::Result<Option<Did>> {
         self.reachable()?;
         self.owner_lookups.fetch_add(1, Ordering::SeqCst);
+        if self.malformed_owner.load(Ordering::SeqCst) {
+            return Err(acp::Error::Storage("invalid owner DID".into()));
+        }
         Ok(self.owners.get(doc_id))
     }
 
@@ -123,36 +275,82 @@ impl DocumentACP for RemoteAcp {
 
     async fn add_actor_relationship(
         &self,
-        _requestor: &Did,
+        requestor: &Did,
         target: &Did,
         _policy_id: &str,
         _collection_id: &str,
         doc_id: &str,
-        _relation: &str,
+        relation: &str,
         _managing_relations: &[String],
     ) -> acp::Result<bool> {
-        self.reachable()?;
-        Ok(self
-            .grants
-            .insert((doc_id.to_string(), target.to_string()), ())
-            .is_none())
+        self.write(true, requestor, target, doc_id, relation)
     }
 
     async fn delete_actor_relationship(
         &self,
-        _requestor: &Did,
+        requestor: &Did,
         target: &Did,
         _policy_id: &str,
         _collection_id: &str,
         doc_id: &str,
-        _relation: &str,
+        relation: &str,
         _managing_relations: &[String],
     ) -> acp::Result<bool> {
+        self.write(false, requestor, target, doc_id, relation)
+    }
+
+    async fn check_named_permission(
+        &self,
+        subject: &Did,
+        permission: &str,
+        _policy_id: &str,
+        _resource_name: &str,
+        doc_id: &str,
+    ) -> acp::Result<bool> {
         self.reachable()?;
-        Ok(self
-            .grants
-            .remove(&(doc_id.to_string(), target.to_string()))
-            .is_some())
+        Ok(permission == MANAGER
+            && self
+                .managers
+                .contains_key(&(doc_id.to_string(), subject.to_string())))
+    }
+
+    fn canonical_actor(&self, did: &Did) -> Did {
+        self.spellings
+            .get(did.as_str())
+            .unwrap_or_else(|| did.clone())
+    }
+
+    fn owed_authority(&self, actor: &Did) -> acp::Result<acp::OwedAuthority> {
+        if !self.credentials.load(Ordering::SeqCst) || self.keys.contains_key(actor.as_str()) {
+            return Ok(acp::OwedAuthority::NodeKey);
+        }
+        match self.delegations.get(actor.as_str()) {
+            Some(token) => Ok(acp::OwedAuthority::Delegation { token }),
+            None => Err(acp::Error::OwedAuthorityUnavailable {
+                actor: actor.to_string(),
+                reason: "no key and no delegation".into(),
+            }),
+        }
+    }
+
+    async fn submit_owed_change(&self, change: &acp::OwedChange) -> acp::Submission {
+        if self.unsendable.load(Ordering::SeqCst) {
+            return acp::Submission::NotSent {
+                reason: "the node could not sign the request".into(),
+            };
+        }
+        if self.credentials.load(Ordering::SeqCst) {
+            let usable = match &change.authority {
+                acp::OwedAuthority::NodeKey => self.keys.contains_key(change.actor.as_str()),
+                acp::OwedAuthority::Delegation { token } => !self.expired.contains_key(token),
+            };
+            if !usable {
+                return acp::Submission::AwaitingAuthority {
+                    reason: "the recorded authority no longer holds".into(),
+                };
+            }
+        }
+        acp::outbox::submit_relationship(self, change).await
     }
 
     async fn unregister_doc_object(
@@ -193,6 +391,7 @@ pub(super) type Runner =
 pub(super) struct Node {
     pub(super) db: Arc<DB<RegolithStore>>,
     pub(super) runner: Runner,
+    pub(super) registry: Arc<DbTransactionRegistry<RegolithStore>>,
 }
 
 pub(super) async fn node(
@@ -212,11 +411,15 @@ pub(super) async fn node(
     let runner = QueryRunner::with_arc_registry_and_provider(
         LensedAutoCommitFetcher::new(Arc::clone(&db)),
         DbCollectionProvider::new_arc(Arc::clone(&db)),
-        registry,
+        Arc::clone(&registry),
     )
     .with_mutator(Arc::new(AutoCommitMutator::new(Arc::clone(&db))))
     .with_acp(acp);
-    Node { db, runner }
+    Node {
+        db,
+        runner,
+        registry,
+    }
 }
 
 pub(super) fn request(query: &str, identity: Option<Did>) -> QueryRequest {

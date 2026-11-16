@@ -400,6 +400,17 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         Ok(provider.bind_transaction(view))
     }
 
+    async fn transaction_outbox(
+        &self,
+        provider: Arc<dyn acp::DocumentACP>,
+    ) -> query::error::Result<Option<acp::TransactionOutbox>> {
+        let txn = &*self.shared_txn()?;
+        let view = txn
+            .acpstore()
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
+        Ok(provider.transaction_outbox(&view, txn.owed_staged()))
+    }
+
     async fn transaction_dac_policy(&self, id: &str) -> query::error::Result<Option<acp::Policy>> {
         use acp::ZanzibarStore;
         let txn = self.shared_txn()?;

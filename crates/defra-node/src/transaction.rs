@@ -3,7 +3,9 @@ use std::sync::Arc;
 use defra_core::RequestContext;
 use query::{TransactionError, TransactionGuard};
 
-use crate::{Node, QueryExecutor, QueryRequest, QueryResponse, TransactionHandle};
+use crate::{
+    Node, QueryExecutor, QueryRequest, QueryResponse, RelationshipChange, TransactionHandle,
+};
 
 /// Owns a transaction while its begin result or commit task is unobserved.
 pub(crate) struct OwnedTransaction {
@@ -89,6 +91,11 @@ impl Node {
     /// embedding process has authenticated. Transaction ownership is checked
     /// as the node; native NAC and DAC check the explicit actor. This trusted
     /// embedder boundary must not be exposed as HTTP actor impersonation.
+    ///
+    /// Returns whether the relationship existed already, as
+    /// [`RelationshipChange::existed_already`] reads what
+    /// [`Self::add_dac_actor_relationship_change_for_in_txn`] returns: on a
+    /// remote provider the add is staged and answers `false`.
     pub async fn add_dac_actor_relationship_for_in_txn(
         &self,
         handle: &TransactionHandle,
@@ -98,6 +105,64 @@ impl Node {
         relation: &str,
         target: &str,
     ) -> crate::Result<bool> {
+        self.add_dac_actor_relationship_change_for_in_txn(
+            handle,
+            actor_context,
+            collection,
+            doc_id,
+            relation,
+            target,
+        )
+        .await
+        .map(RelationshipChange::existed_already)
+    }
+
+    /// Delete a relationship in a node-owned transaction for an actor that
+    /// the embedding process has authenticated. Authorization checks and
+    /// transaction ownership follow the add method's trusted boundary.
+    ///
+    /// Returns whether a relationship was found to delete, as
+    /// [`RelationshipChange::record_found`] reads what
+    /// [`Self::delete_dac_actor_relationship_change_for_in_txn`] returns: on a
+    /// remote provider the delete is staged and answers `true`.
+    pub async fn delete_dac_actor_relationship_for_in_txn(
+        &self,
+        handle: &TransactionHandle,
+        actor_context: &defra_core::RequestContext,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+        target: &str,
+    ) -> crate::Result<bool> {
+        self.delete_dac_actor_relationship_change_for_in_txn(
+            handle,
+            actor_context,
+            collection,
+            doc_id,
+            relation,
+            target,
+        )
+        .await
+        .map(RelationshipChange::record_found)
+    }
+
+    /// [`Self::add_dac_actor_relationship_for_in_txn`], saying what the add
+    /// did. With local document ACP it is applied in the transaction. With a
+    /// remote provider it is staged: recorded in the transaction as owed to
+    /// the provider, committed or rolled back with the transaction's rows,
+    /// and submitted after the commit, which waits for the provider for at
+    /// most ten seconds. A staged add grants nothing until the provider
+    /// holds it. One staged while the provider could not be reached is
+    /// unchecked, and is removed if the provider refuses it.
+    pub async fn add_dac_actor_relationship_change_for_in_txn(
+        &self,
+        handle: &TransactionHandle,
+        actor_context: &defra_core::RequestContext,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+        target: &str,
+    ) -> crate::Result<RelationshipChange> {
         self.change_dac_actor_relationship_for_in_txn(
             handle,
             actor_context,
@@ -112,10 +177,15 @@ impl Node {
         .await
     }
 
-    /// Delete a relationship in a node-owned transaction for an actor that
-    /// the embedding process has authenticated. Authorization checks and
-    /// transaction ownership follow the add method's trusted boundary.
-    pub async fn delete_dac_actor_relationship_for_in_txn(
+    /// [`Self::delete_dac_actor_relationship_for_in_txn`], saying what the
+    /// delete did. A delete staged for a remote provider denies its subject
+    /// through this transaction at once, and on this node from the commit,
+    /// before the provider holds it. It is staged only once its acting DID's
+    /// authority was checked: while the provider cannot be reached the call
+    /// fails with `acp::Error::OwedCheckUnavailable` and is to be made
+    /// again, unless the acting DID created the document and its
+    /// registration is still owed.
+    pub async fn delete_dac_actor_relationship_change_for_in_txn(
         &self,
         handle: &TransactionHandle,
         actor_context: &defra_core::RequestContext,
@@ -123,7 +193,7 @@ impl Node {
         doc_id: &str,
         relation: &str,
         target: &str,
-    ) -> crate::Result<bool> {
+    ) -> crate::Result<RelationshipChange> {
         self.change_dac_actor_relationship_for_in_txn(
             handle,
             actor_context,
@@ -144,7 +214,7 @@ impl Node {
         actor_context: &defra_core::RequestContext,
         relationship: crate::acp_ops::transactional::Relationship<'_>,
         delete: bool,
-    ) -> crate::Result<bool> {
+    ) -> crate::Result<RelationshipChange> {
         let id = handle
             .as_str()
             .parse()
@@ -205,6 +275,48 @@ impl Node {
                 &doc_id,
                 &relation,
                 &target,
+            )
+            .await
+        })
+        .await
+    }
+
+    /// [`Self::add_dac_actor_relationship_as`] or
+    /// [`Self::delete_dac_actor_relationship_as`], saying what the change
+    /// did. In a transaction on a remote provider it is staged; outside one
+    /// it is applied before the call returns, whatever the provider.
+    pub async fn change_dac_actor_relationship_as(
+        &self,
+        context: &defra_core::RequestContext,
+        collection: &str,
+        doc_id: &str,
+        relation: &str,
+        target: &str,
+        delete: bool,
+    ) -> crate::Result<RelationshipChange> {
+        let identity = context
+            .identity()
+            .ok_or_else(|| query::QueryError::execution("identity required for document ACP"))?
+            .to_owned();
+        let context = context.clone();
+        let ops = std::sync::Arc::clone(&self.acp_ops);
+        let (collection, doc_id, relation, target) = (
+            collection.to_owned(),
+            doc_id.to_owned(),
+            relation.to_owned(),
+            target.to_owned(),
+        );
+        self.on_acp(move || async move {
+            ops.change_dac_actor_relationship(
+                &context,
+                &identity,
+                crate::acp_ops::transactional::Relationship {
+                    collection: &collection,
+                    doc_id: &doc_id,
+                    relation: &relation,
+                    target: &target,
+                },
+                delete,
             )
             .await
         })

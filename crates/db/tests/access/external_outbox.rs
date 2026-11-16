@@ -38,6 +38,7 @@ pub(super) fn owed(tuple: &OwedTuple, op: OwedOp) -> NewOwedChange {
         op,
         actor: alice(),
         authority: OwedAuthority::NodeKey,
+        authority_checked: true,
     }
 }
 

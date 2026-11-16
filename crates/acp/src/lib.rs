@@ -52,12 +52,15 @@ pub mod zanzibar;
 pub use auth_error::normalize_auth_error;
 pub use dac::{bound_to_request, with_request_bearer, DocumentACP, DocumentRelationship};
 pub use error::{Error, Result};
-pub use external::{ExternalDocumentAcp, RedriveReport};
+pub use external::{
+    ExternalDocumentAcp, OwedScope, OwedSettlement, RedriveReport, MAX_FAILED_SUBMISSIONS,
+};
 pub use identity::Identity;
 pub use local::{LocalDocumentACP, MemoryAcpStore};
 pub use outbox::{
-    NewOwedChange, OwedAuthority, OwedChange, OwedChanges, OwedOp, OwedState, OwedSubject,
-    OwedTuple, OwedTupleState,
+    NewOwedChange, OwedAuthority, OwedChange, OwedChanges, OwedDenial, OwedDenials, OwedOp,
+    OwedState, OwedSubject, OwedTuple, OwedTupleState, StageRelationship, Staged, StagedCount,
+    Submission, TransactionOutbox,
 };
 pub use pending::{PendingRegistration, PendingRegistrations};
 pub use permission::DocumentPermission;

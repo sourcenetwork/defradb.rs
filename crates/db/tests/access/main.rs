@@ -9,4 +9,6 @@ mod enforcement;
 mod external_outbox;
 mod external_outbox_gate;
 mod external_registration;
+mod external_settlement;
+mod external_staging;
 mod nac_toggle_race;

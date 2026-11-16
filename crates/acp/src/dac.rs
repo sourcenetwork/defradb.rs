@@ -61,6 +61,63 @@ pub trait DocumentACP: MaybeSendSync {
         None
     }
 
+    /// Where a transaction stages the relationship changes it owes this
+    /// provider, for a provider that cannot join a transaction
+    /// ([`bind_transaction`](Self::bind_transaction) is `None`) but keeps
+    /// what is owed to it (see [`crate::outbox`]). `view` is the transaction's
+    /// ACP namespace and `staged` its count of staged changes. `None` for a
+    /// provider that joins the transaction, and for one that keeps nothing.
+    fn transaction_outbox(
+        &self,
+        _view: &datastore::NamespaceView,
+        _staged: crate::outbox::StagedCount,
+    ) -> Option<crate::outbox::TransactionOutbox> {
+        None
+    }
+
+    /// `did` in the one spelling this provider keeps an actor under. A key
+    /// that can be written in several ways names one actor, and what is
+    /// stored about it is compared under this spelling.
+    fn canonical_actor(&self, did: &Did) -> Did {
+        did.clone()
+    }
+
+    /// Whether this provider can be sent a relationship change with this
+    /// kind of subject. A change it cannot take is not staged. The default
+    /// is what the default relationship calls take: one actor, or all.
+    fn submits_subject(&self, subject: &Subject) -> bool {
+        matches!(subject, Subject::Entity(_) | Subject::Wildcard)
+    }
+
+    /// What lets the node submit a relationship change as `actor` after the
+    /// request that made it is gone: the node's own key for `actor`, or the
+    /// delegation the request this provider serves carries for it. With
+    /// neither, [`Error::OwedAuthorityUnavailable`]. A provider that takes
+    /// no credentials submits as any DID.
+    fn owed_authority(&self, _actor: &Did) -> Result<crate::outbox::OwedAuthority> {
+        Ok(crate::outbox::OwedAuthority::NodeKey)
+    }
+
+    /// Submit one owed relationship change as its acting DID, with the
+    /// authority recorded with it and none of the request this provider may
+    /// be bound to. Submitting a change the provider already holds is
+    /// [`Submission::Applied`](crate::outbox::Submission::Applied) wherever
+    /// the provider can tell.
+    async fn submit_owed_change(
+        &self,
+        change: &crate::outbox::OwedChange,
+    ) -> crate::outbox::Submission {
+        crate::outbox::submit_relationship(self, change).await
+    }
+
+    /// Submit the relationship changes owed to this provider that `scope`
+    /// names, once, in order. Nothing is owed to a provider that keeps no
+    /// outbox.
+    async fn settle_owed_changes(&self, scope: crate::OwedScope) -> Result<crate::OwedSettlement> {
+        let _ = scope;
+        Ok(crate::OwedSettlement::default())
+    }
+
     /// This provider serving the request `context` serves: one that acts on
     /// its callers' behalf with the credentials the request carries (see
     /// [`RequestContext::bearer_token_for`]). Providers that present no

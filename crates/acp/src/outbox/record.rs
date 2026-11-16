@@ -5,6 +5,10 @@
 //! fields beside the others, and every enum as an object tagged by `kind` in
 //! snake case (`op` is the bare string `add` or `delete`). A reader ignores
 //! fields it does not know, so a later version of the same byte may add some.
+//!
+//! `authority_checked` is such a field. It is written only when it is
+//! `false`, and a record without it reads as checked, so a record of a
+//! checked change keeps the bytes it always had.
 
 use identity::Did;
 use serde::{Deserialize, Serialize};
@@ -140,6 +144,17 @@ pub struct NewOwedChange {
     /// The DID the change is made as.
     pub actor: Did,
     pub authority: OwedAuthority,
+    /// Whether the acting DID's authority was checked when the change was
+    /// staged.
+    pub authority_checked: bool,
+}
+
+fn checked() -> bool {
+    true
+}
+
+fn is_checked(checked: &bool) -> bool {
+    *checked
 }
 
 /// One relationship change owed to the provider.
@@ -154,9 +169,15 @@ pub struct OwedChange {
     pub actor: Did,
     pub authority: OwedAuthority,
     pub state: OwedState,
-    /// Submissions tried so far.
+    /// Submissions the provider answered with the error in `last_error`,
+    /// one after the other.
     pub attempts: u32,
     pub last_error: Option<String>,
+    /// Whether the acting DID's authority was checked when the change was
+    /// staged. A change staged unchecked is removed, not parked, when the
+    /// provider refuses it.
+    #[serde(default = "checked", skip_serializing_if = "is_checked")]
+    pub authority_checked: bool,
 }
 
 impl OwedChange {
@@ -171,7 +192,30 @@ impl OwedChange {
             state: OwedState::Staged,
             attempts: 0,
             last_error: None,
+            authority_checked: new.authority_checked,
         }
+    }
+
+    /// Halve the provider's words kept with the change, in its state and in
+    /// its last error. `false` when nothing is left to cut.
+    pub(crate) fn shorten_reason(&mut self) -> bool {
+        fn halve(text: &mut String) -> bool {
+            let mut keep = text.len() / 2;
+            while !text.is_char_boundary(keep) {
+                keep -= 1;
+            }
+            let cut = keep < text.len();
+            text.truncate(keep);
+            cut
+        }
+        let mut cut = false;
+        if let OwedState::Refused { reason } = &mut self.state {
+            cut |= halve(reason);
+        }
+        if let Some(error) = &mut self.last_error {
+            cut |= halve(error);
+        }
+        cut
     }
 
     /// The record's bytes, refused over [`MAX_OWED_CHANGE_BYTES`].
@@ -225,6 +269,7 @@ mod tests {
             state,
             attempts: 3,
             last_error: Some("provider unreachable".into()),
+            authority_checked: true,
         }
     }
 
@@ -289,6 +334,27 @@ mod tests {
                 r#""state":{"kind":"staged"},"attempts":0,"last_error":null}"#
             )
         );
+    }
+
+    #[test]
+    fn an_unchecked_change_says_so_and_a_record_without_the_field_is_checked() {
+        let mut unchecked = change(
+            OwedSubject::Wildcard,
+            OwedAuthority::NodeKey,
+            OwedState::Staged,
+        );
+        let checked_bytes = unchecked.encode().unwrap();
+        assert!(!String::from_utf8_lossy(&checked_bytes).contains("authority_checked"));
+        assert!(
+            OwedChange::decode(&checked_bytes)
+                .unwrap()
+                .authority_checked
+        );
+
+        unchecked.authority_checked = false;
+        let bytes = unchecked.encode().unwrap();
+        assert!(String::from_utf8_lossy(&bytes).ends_with(r#","authority_checked":false}"#));
+        assert_eq!(OwedChange::decode(&bytes).unwrap(), unchecked);
     }
 
     #[test]

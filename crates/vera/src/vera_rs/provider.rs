@@ -23,12 +23,14 @@ use super::did_spelling;
 use super::provider_commands::resolve_registered_or_passthrough_bearer_token;
 use super::provider_commands::{
     encode_archive_object_cmd, encode_delete_relationship_cmd, encode_register_object_cmd,
-    encode_set_relationship_cmd, resolve_registered_or_passthrough_bearer_token_as,
+    encode_set_relationship_cmd, holds_registered_key,
+    resolve_registered_or_passthrough_bearer_token_as,
 };
 use super::signer::{admission, DelegationSigner, Secp256k1Signer};
 use super::transport::RpcTransport;
 use super::worker::NativeWorker;
 
+mod reach;
 #[cfg(test)]
 mod signer_tests;
 mod submission;
@@ -427,6 +429,24 @@ impl VeraProvider for VeraRsProvider {
         Some(self.actor_did.clone())
     }
 
+    fn canonical_actor(&self, did: &str) -> String {
+        did_spelling::defra(did).into_owned()
+    }
+
+    fn holds_key_for(&self, did: &str) -> bool {
+        did_spelling::defra(did) == self.actor_did || holds_registered_key(did)
+    }
+
+    fn takes_subject_commands(&self) -> bool {
+        true
+    }
+
+    /// A submission is confirmed by its verified receipt, so a rejected one
+    /// was executed and refused.
+    fn write_refused(&self, error: &ProviderError) -> bool {
+        matches!(error, ProviderError::Transaction(_))
+    }
+
     async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError> {
         let token = bearer::create_scoped_bearer_token(
             self.signer.as_ref(),
@@ -587,12 +607,65 @@ impl VeraProvider for VeraRsProvider {
         subject_object_id: &str,
         subject_relation: &str,
     ) -> Result<bool, ProviderError> {
+        let token = self.create_bearer_token(&self.actor_did).await?;
+        self.set_relationship_subject_as(
+            &token,
+            policy_id,
+            resource,
+            object_id,
+            relation,
+            kind,
+            subject_resource,
+            subject_object_id,
+            subject_relation,
+        )
+        .await
+    }
+
+    async fn delete_relationship_subject(
+        &self,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+        relation: &str,
+        kind: u8,
+        subject_resource: &str,
+        subject_object_id: &str,
+        subject_relation: &str,
+    ) -> Result<bool, ProviderError> {
+        let token = self.create_bearer_token(&self.actor_did).await?;
+        self.delete_relationship_subject_as(
+            &token,
+            policy_id,
+            resource,
+            object_id,
+            relation,
+            kind,
+            subject_resource,
+            subject_object_id,
+            subject_relation,
+        )
+        .await
+    }
+
+    async fn set_relationship_subject_as(
+        &self,
+        bearer_token: &str,
+        policy_id: &str,
+        resource: &str,
+        object_id: &str,
+        relation: &str,
+        kind: u8,
+        subject_resource: &str,
+        subject_object_id: &str,
+        subject_relation: &str,
+    ) -> Result<bool, ProviderError> {
         let subject = vera_subject(kind, subject_resource, subject_object_id, subject_relation)?;
         let cmd = serde_json::to_vec(&serde_json::json!({
             "SetRelationship": { "resource": resource, "object_id": object_id, "relation": relation, "subject": subject }
         })).map_err(|e| ProviderError::Config(e.to_string()))?;
         let call = IAcp::bearerPolicyCmdCall {
-            bearerToken: self.create_bearer_token(&self.actor_did).await?,
+            bearerToken: bearer_token.to_string(),
             policyId: Self::policy_id_to_bytes32(policy_id)?,
             cmd: cmd.into(),
         };
@@ -600,8 +673,9 @@ impl VeraProvider for VeraRsProvider {
         Ok(true)
     }
 
-    async fn delete_relationship_subject(
+    async fn delete_relationship_subject_as(
         &self,
+        bearer_token: &str,
         policy_id: &str,
         resource: &str,
         object_id: &str,
@@ -616,7 +690,7 @@ impl VeraProvider for VeraRsProvider {
             "DeleteRelationship": { "resource": resource, "object_id": object_id, "relation": relation, "subject": subject }
         })).map_err(|e| ProviderError::Config(e.to_string()))?;
         let call = IAcp::bearerPolicyCmdCall {
-            bearerToken: self.create_bearer_token(&self.actor_did).await?,
+            bearerToken: bearer_token.to_string(),
             policyId: Self::policy_id_to_bytes32(policy_id)?,
             cmd: cmd.into(),
         };
@@ -662,7 +736,7 @@ impl VeraProvider for VeraRsProvider {
         };
         let owner = verified(|| self.light_client.read_object_owner(&policy, &object))
             .await
-            .map_err(|e| ProviderError::Query(format!("owner proof: {e}")))?;
+            .map_err(|e| reach::read_error(&self.light_client, "owner proof", e))?;
         Ok(match owner {
             Some(owner) => (true, did_spelling::defra(owner.0.as_str()).into_owned()),
             None => (false, String::new()),
@@ -680,7 +754,7 @@ impl VeraProvider for VeraRsProvider {
         let request = access_request(resource, object_id, permission, actor_did)?;
         verified(|| self.light_client.verify_access(policy_id, &request))
             .await
-            .map_err(|e| ProviderError::Query(format!("verified permission: {e}")))
+            .map_err(|e| reach::read_error(&self.light_client, "verified permission", e))
     }
 
     async fn create_access_decision(
