@@ -1636,22 +1636,30 @@ pub const PROPERTIES: &[Property] = &[
         // A remote provider cannot join the row transaction, so a create
         // writes the registration it owes into that transaction and the
         // node settles it after the commit and again at start. Until the
-        // record is cleared the gate lets only the creator read. That part
-        // exists and is anchored here. Owed relationship changes (#2954) are
-        // specified in the same model before their code: an owed delete
-        // denies from the commit on, an owed add grants nothing but the
-        // creator's own named grant on a document still owed, the
-        // registration settles first, changes go in sequence order behind a
-        // durable in-flight mark, and a refused or unauthorized change is
-        // parked. INV_AtMostOneEffect rests on a receipt staying readable
+        // record is cleared the gate lets only the creator read. A
+        // relationship change made in a transaction is staged the same way
+        // and submitted after the commit: an owed delete denies from the
+        // commit on, an owed add grants nothing, the registration settles
+        // first, one tuple's changes go one behind the other, and a refused
+        // or unauthorized change is parked and holds its tuple. All of that
+        // is anchored here. The durable in-flight mark and the receipt
+        // lookup are specification ahead of code (#2954), so the code
+        // matches the model with Marker = FALSE (Green_NoMarker):
+        // INV_AtMostOneEffect does not hold for it, and a change the
+        // provider applied before a crash is sent again
+        // (Red_NoInFlightMarker). The creator's own named grant on a
+        // document still owed, and Reauthorize, are ahead of code too. The
+        // code holds a tuple behind a refused change, which the model does
+        // not, so LIVE_Drains describes the design and not this code.
+        // INV_AtMostOneEffect also rests on a receipt staying readable
         // (Red_ReceiptLost), and the creator-only gate on the provider not
         // already holding the document for another owner
         // (Red_ContestedRegistration).
         family: "ACP outbox and owed registrations",
         name: "INV_NoWidening / INV_RevokedAtCommit / INV_RegistrationFirst / INV_AtMostOneEffect / INV_RollbackLeavesNothing / INV_OwedDocumentNarrow / LIVE_Drains: what a node owes a remote ACP provider never widens access before it is settled, a committed delete denies at once, the registration settles before any change, a change takes effect once across a crash, a rollback leaves nothing owed, and every committed change ends settled or parked",
         axis: Tla,
-        anchor: "crates/acp/src/pending.rs PendingRegistration, PendingRegistrations::record, PendingRegistrations::get, PendingRegistrations::clear; crates/acp/src/external.rs ExternalDocumentAcp::settle, ExternalDocumentAcp::clear, ExternalDocumentAcp::redrive_owed, ExternalDocumentAcp::check_doc_access, ExternalDocumentAcp::redrive_registration; crates/db/src/write/autocommit/helpers.rs register_created_doc, unregister_deleted_doc; crates/db/src/write/autocommit/create.rs acp_registration_retry_callback; crates/query/src/txn/context.rs AcpRegistrationProjection; crates/defra-node/src/node_acp.rs gate_external_acp",
-        model_ref: "MC_AcpOutbox_{Green,Green_Registered,Green_Three,Green_Three_Registered,Green_Live,Red_OwedOutsideTxn,Red_NoDenyOverlay,Red_LatestOpOverlay,Red_RefusedDeleteForgotten,Red_OwedAddGrants,Red_WildcardGrant,Red_ChangeBeforeRegistration,Red_OutOfOrder,Red_DrainPastAwaiting,Red_NoInFlightMarker,Red_ReceiptLost,Red_ContestedRegistration,Red_RefusedBlocksDrain}.cfg",
+        anchor: "crates/acp/src/pending.rs PendingRegistration, PendingRegistrations::record, PendingRegistrations::get, PendingRegistrations::clear; crates/acp/src/external.rs ExternalDocumentAcp::settle, ExternalDocumentAcp::clear, ExternalDocumentAcp::redrive_owed, ExternalDocumentAcp::check_doc_access, ExternalDocumentAcp::redrive_registration, ExternalDocumentAcp::revoked, ExternalDocumentAcp::transaction_outbox; crates/acp/src/external/settle.rs settle_owed_changes_once, settle_change, submittable, register_first, settle_owed_before; crates/acp/src/outbox/staging.rs TransactionOutbox::stage; crates/acp/src/outbox/ops.rs stage, settle, mark; crates/acp/src/outbox/deny.rs owed_denial, OwedDenials::on; crates/acp/src/outbox/submission.rs Submission; crates/db/src/write/autocommit/helpers.rs register_created_doc, unregister_deleted_doc; crates/db/src/write/autocommit/create.rs acp_registration_retry_callback; crates/db/src/txn/mod.rs DbTxn::owed_staged, rollback_statement_savepoint; crates/query/src/txn/context.rs AcpRegistrationProjection, denied_by_owed_delete; crates/defra-node/src/acp_ops/transactional.rs relationship_in_txn, settle_owed_changes; crates/defra-node/src/node_acp.rs gate_external_acp; crates/vera/src/cosmos/dac/owed.rs submit",
+        model_ref: "MC_AcpOutbox_{Green,Green_Registered,Green_Three,Green_Three_Registered,Green_Live,Green_NoMarker,Red_OwedOutsideTxn,Red_NoDenyOverlay,Red_LatestOpOverlay,Red_RefusedDeleteForgotten,Red_OwedAddGrants,Red_WildcardGrant,Red_ChangeBeforeRegistration,Red_OutOfOrder,Red_DrainPastAwaiting,Red_NoInFlightMarker,Red_ReceiptLost,Red_ContestedRegistration,Red_RefusedBlocksDrain}.cfg",
         tiers: &[Boundary],
         bound_by: "",
     },

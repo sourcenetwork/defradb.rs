@@ -566,6 +566,7 @@ RUNS=(
   "MC_AcpOutbox_Green_Three.cfg AcpOutbox.tla GREEN" # three changes on one tuple in every order, with an actor the provider refuses
   "MC_AcpOutbox_Green_Three_Registered.cfg AcpOutbox.tla GREEN" # a change awaiting authority holds the later changes on its tuple
   "MC_AcpOutbox_Green_Live.cfg AcpOutbox.tla GREEN" # every committed change ends settled, refused or awaiting authority
+  "MC_AcpOutbox_Green_NoMarker.cfg AcpOutbox.tla GREEN" # without the in-flight mark every property but at-most-one-effect still holds
   "MC_AcpOutbox_Red_OwedOutsideTxn.cfg AcpOutbox.tla RED" # owed records written beside the transaction survive its rollback (INV_RollbackLeavesNothing)
   "MC_AcpOutbox_Red_NoDenyOverlay.cfg AcpOutbox.tla RED" # a committed delete counts only once it lands (INV_RevokedAtCommit)
   "MC_AcpOutbox_Red_LatestOpOverlay.cfg AcpOutbox.tla RED" # a later owed add that the provider refuses lifts an owed delete's denial (INV_NoWidening)

@@ -76,15 +76,46 @@
 \*                                          redrive_registration;
 \*   the redrive at start                   ExternalDocumentAcp::redrive_owed,
 \*                                          started by gate_external_acp in
-\*                                          crates/defra-node/src/node_acp.rs.
-\* In the model these are StageCreate, Commit, Rollback, Crash,
-\* RegisterOnChain, ClearOwed, and the "registration is owed" branch of
-\* Honours without the grants.
-\* Specification ahead of code (#2954): everything about relationship
-\* changes. StageChange, Mark, Land, SendLost, Lookup, AwaitAuthority,
-\* Reauthorize, the deny overlay, the creator's owed grants, and the rules
-\* RegFirst, InOrder, ParkedBlocks, DrainPastRefused and Marker. No Rust code
-\* is named for them because none exists yet.
+\*                                          crates/defra-node/src/node_acp.rs;
+\*   staging a change in its transaction    crates/acp/src/outbox/staging.rs
+\*                                          TransactionOutbox::stage, over
+\*                                          crates/acp/src/outbox/ops.rs stage,
+\*                                          called by relationship_in_txn in
+\*                                          crates/defra-node/src/acp_ops/
+\*                                          transactional.rs;
+\*   the deny overlay on committed state    crates/acp/src/outbox/deny.rs
+\*                                          owed_denial, read by
+\*                                          ExternalDocumentAcp::revoked;
+\*   the settlement pass                    crates/acp/src/external/settle.rs
+\*                                          settle_owed_changes_once,
+\*                                          settle_change, submittable,
+\*                                          register_first;
+\*   parking a change                       crates/acp/src/outbox/ops.rs mark.
+\* In the model these are StageCreate, StageChange, Commit, Rollback, Crash,
+\* RegisterOnChain, ClearOwed, the deny overlay (DenyRule = "AnyOwedDelete",
+\* RefusedDeleteDenies), and the rules RegFirst, InOrder and ParkedBlocks. A
+\* pass that submits a change and reads the provider's answer is Mark, Land
+\* and Lookup taken together with nothing stored in between, which is the
+\* model with Marker = FALSE: MC_AcpOutbox_Green_NoMarker holds every
+\* property but INV_AtMostOneEffect, and MC_AcpOutbox_Red_NoInFlightMarker is
+\* the trace of what the code does after a crash (it sends again). A change
+\* without usable authority is parked as AwaitAuthority parks it.
+\* Where the code differs from the model:
+\*   * it honours no owed add at all, not even the creator's own named grant
+\*     (OwedAdds has no such value; what the code honours is a subset of
+\*     "CreatorExplicit", so every property about not widening carries over);
+\*   * a refused change holds the later changes of its tuple, as a change
+\*     awaiting authority does. The model lets them pass (DrainPastRefused),
+\*     so LIVE_Drains does not describe the code: a change behind a parked
+\*     one stays staged until the parked one can be abandoned or retried;
+\*   * a parked change is never made owed again: nothing calls Reauthorize.
+\* Specification ahead of code (#2954): the durable in-flight mark and the
+\* receipt lookup that give INV_AtMostOneEffect (Marker, Lookup after a
+\* restart), Reauthorize, the creator's owed grants, and a loop that takes
+\* its turns by itself (the fairness of SpecLive): a pass runs only after a
+\* commit that staged a change, once at start, and before a change made
+\* outside a transaction on a tuple that has changes owed
+\* (settle_owed_before, so that such a change follows the staged ones).
 \*
 \* Assumptions, by name. Each is a switch, and a RED configuration turns it
 \* off to show what rests on it.
@@ -101,7 +132,9 @@
 \*     provider's sequence, PendingSubmission.tla). A second effect here is a
 \*     second, newly prepared request;
 \*   * transactions commit one after another, so sequence order is commit
-\*     order. #2954 leaves the allocator open;
+\*     order. In the code that holds per tuple only (two transactions that
+\*     stage one tuple conflict); the pass reads the queue from its head
+\*     each time and orders one tuple's changes by the tuple's own record;
 \*   * nobody else changes this document on the provider;
 \*   * an unregistered document is closed on the provider (Vera's rule).
 \*
@@ -109,8 +142,9 @@
 \* the open transaction (DeferredAcp.tla), abandoning or retrying a refused
 \* change, the registration-with-grants batch (without it a creator's grantee
 \* loses access between ClearOwed and the grant landing: narrower, never
-\* wider), limits on how much may be owed, and a stale provider answer
-\* (Acp.tla).
+\* wider), limits on how much may be owed, a stale provider answer
+\* (Acp.tla), and a change sent to the provider outside a transaction while
+\* a change of its tuple stays parked (it overtakes the parked one).
 
 EXTENDS Naturals, FiniteSets  \* numbers and finite sets
 
