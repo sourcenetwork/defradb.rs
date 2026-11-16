@@ -338,4 +338,19 @@ pub trait VeraProvider: MaybeSendSync {
     fn caller_of_delegation(&self, _token: &str) -> Option<Result<String, ProviderError>> {
         None
     }
+
+    /// The DID that signed `token`, when `token` is a delegation bound to
+    /// one request and this provider may send `command` under it now: signed
+    /// by its issuer, current, naming this provider's worker and deployment,
+    /// and bound to exactly `command`. An error when it is bound to another
+    /// command. `None` when `token` is bound to no request, or this provider
+    /// takes no such delegation: [`Self::caller_of_delegation`] then says
+    /// who signed it.
+    fn caller_of_request_delegation(
+        &self,
+        _token: &str,
+        _command: &crate::PolicyCommand<'_>,
+    ) -> Option<Result<String, ProviderError>> {
+        None
+    }
 }

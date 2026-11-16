@@ -92,6 +92,17 @@ RUNS=(
   "MC_VerifiedClientGraph_Red_RevokeNac.cfg VerifiedClientGraph.tla RED" # NAC revocation is not validated at commit (INV_NacRevocation)
   "MC_VerifiedClientGraph_Red_RevokeDac.cfg VerifiedClientGraph.tla RED" # DAC revocation is not validated at commit (INV_DacRevocation)
   "MC_VerifiedClientGraph_Red_Rollback.cfg VerifiedClientGraph.tla RED" # a rejected graph publishes the Agent effect (INV_Atomic)
+  "MC_VerifiedRemoteWrite_Green.cfg VerifiedRemoteWrite.tla GREEN" # a verified write on a remote provider needs authority for its signer, and a request-bound delegation covers its own command only
+  "MC_VerifiedRemoteWrite_Red_NoAuthority.cfg VerifiedRemoteWrite.tla RED" # the write is staged with no key and no delegation (INV_AuthorityAtAdmission)
+  "MC_VerifiedRemoteWrite_Red_AnyIssuer.cfg VerifiedRemoteWrite.tla RED" # a delegation somebody else signed is taken (INV_AuthorityAtAdmission)
+  "MC_VerifiedRemoteWrite_Red_AnyNode.cfg VerifiedRemoteWrite.tla RED" # a delegation given to another node is taken (INV_AuthorityAtAdmission)
+  "MC_VerifiedRemoteWrite_Red_ExpiredAccepted.cfg VerifiedRemoteWrite.tla RED" # an expired delegation admits the write (INV_AuthorityAtAdmission)
+  "MC_VerifiedRemoteWrite_Red_AnyCommand.cfg VerifiedRemoteWrite.tla RED" # a request-bound delegation is sent with another command (INV_RequestOnlyItsRequest)
+  "MC_VerifiedRemoteWrite_Red_RequestLogsIn.cfg VerifiedRemoteWrite.tla RED" # a request-bound delegation authenticates an HTTP caller (INV_RequestIsNoLogin)
+  "MC_VerifiedRemoteWrite_Red_RecordedFirst.cfg VerifiedRemoteWrite.tla RED" # a refused write leaves its row and owed registration (INV_RefusalRecordsNothing)
+  "MC_VerifiedRemoteWrite_Red_SentExpired.cfg VerifiedRemoteWrite.tla RED" # an owed command is sent under an expired credential (INV_NothingSentStale)
+  "MC_VerifiedRemoteWrite_Red_GrantFirst.cfg VerifiedRemoteWrite.tla RED" # a grant is sent before its document's registration (INV_RegistrationFirst)
+  "MC_VerifiedRemoteWrite_Red_GrantUnchecked.cfg VerifiedRemoteWrite.tla RED" # a grant is staged with nothing that lets the node send it (INV_GrantAuthority)
   "MC_SourceScopedNac_Green.cfg SourceScopedNac.tla GREEN"
   "MC_SourceScopedNac_Red_Authority.cfg SourceScopedNac.tla RED"
   "MC_SourceScopedNac_Red_Owner.cfg SourceScopedNac.tla RED"

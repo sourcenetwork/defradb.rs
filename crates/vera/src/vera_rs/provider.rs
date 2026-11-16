@@ -18,6 +18,7 @@ use vera_modules::acp::types::PolicyRecord;
 use super::abi::{IAcp, ACP_ADDRESS};
 use super::bearer;
 use super::client::{HttpTransport, VeraRsClient};
+use super::command_digest::{encode_subject_relationship_cmd, request_digest, vera_subject};
 use super::did_spelling;
 #[cfg(test)]
 use super::provider_commands::resolve_registered_or_passthrough_bearer_token;
@@ -267,23 +268,6 @@ impl VeraRsProvider {
     fn policy_id_to_bytes32(policy_id: &str) -> Result<FixedBytes<32>, ProviderError> {
         vera_client::parse_policy_id(policy_id).map_err(|e| ProviderError::Query(e.to_string()))
     }
-}
-
-/// A relationship subject as vera.rs is sent it: an actor in the spelling
-/// vera.rs takes, which is the one an access check for it is sent in.
-fn vera_subject(
-    kind: u8,
-    resource: &str,
-    object_id: &str,
-    relation: &str,
-) -> Result<zanzibar::Subject, ProviderError> {
-    let object_id = if kind == 0 {
-        did_spelling::wire(object_id)
-    } else {
-        object_id.into()
-    };
-    zanzibar::decode_subject(kind, resource, &object_id, relation)
-        .map_err(|e| ProviderError::Config(format!("relationship subject: {e}")))
 }
 
 fn access_request(
@@ -661,9 +645,7 @@ impl VeraProvider for VeraRsProvider {
         subject_relation: &str,
     ) -> Result<bool, ProviderError> {
         let subject = vera_subject(kind, subject_resource, subject_object_id, subject_relation)?;
-        let cmd = serde_json::to_vec(&serde_json::json!({
-            "SetRelationship": { "resource": resource, "object_id": object_id, "relation": relation, "subject": subject }
-        })).map_err(|e| ProviderError::Config(e.to_string()))?;
+        let cmd = encode_subject_relationship_cmd(true, resource, object_id, relation, &subject)?;
         let call = IAcp::bearerPolicyCmdCall {
             bearerToken: bearer_token.to_string(),
             policyId: Self::policy_id_to_bytes32(policy_id)?,
@@ -686,9 +668,7 @@ impl VeraProvider for VeraRsProvider {
         subject_relation: &str,
     ) -> Result<bool, ProviderError> {
         let subject = vera_subject(kind, subject_resource, subject_object_id, subject_relation)?;
-        let cmd = serde_json::to_vec(&serde_json::json!({
-            "DeleteRelationship": { "resource": resource, "object_id": object_id, "relation": relation, "subject": subject }
-        })).map_err(|e| ProviderError::Config(e.to_string()))?;
+        let cmd = encode_subject_relationship_cmd(false, resource, object_id, relation, &subject)?;
         let call = IAcp::bearerPolicyCmdCall {
             bearerToken: bearer_token.to_string(),
             policyId: Self::policy_id_to_bytes32(policy_id)?,
@@ -827,6 +807,19 @@ impl VeraProvider for VeraRsProvider {
         bearer::is_delegation(token).then(|| {
             bearer::caller_of_delegation(token, &self.worker_did, self.deployment)
                 .map_err(|error| ProviderError::Config(format!("caller delegation: {error}")))
+        })
+    }
+
+    fn caller_of_request_delegation(
+        &self,
+        token: &str,
+        command: &crate::PolicyCommand<'_>,
+    ) -> Option<Result<String, ProviderError>> {
+        bearer::caller_of_request_delegation(token, &self.worker_did, self.deployment, || {
+            request_digest(command)
+        })
+        .map(|caller| {
+            caller.map_err(|error| ProviderError::Config(format!("request delegation: {error}")))
         })
     }
 }

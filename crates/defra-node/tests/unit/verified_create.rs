@@ -93,7 +93,7 @@ resources:
         let txn = node.begin_transaction(false).await.unwrap();
         let first = node.execute_request_in_txn(signer.attach(marker()), &txn).await;
         assert!(!first.has_errors(), "{:?}", first.errors);
-        let bad = node.execute_verified_create_in_txn(replacement(&user_did, json!({"session":"other", "agent":"agent-doc", "content":"approved"})), &txn, &graph).await;
+        let bad = node.execute_verified_create_in_txn(replacement(&user_did, json!({"session":"other", "agent":"agent-doc", "content":"approved"})), &txn, &graph, crate::SignerCredential::None).await;
         assert!(bad.has_errors());
         assert!(node.commit_transaction(&txn).await.is_err());
         let observe = node.execute_request(query::QueryRequest::new("{ Marker {_docID} }")
@@ -107,12 +107,12 @@ resources:
             query::QueryLimits::default()).unwrap();
         let mut mismatched = replacement(&user_did, input.clone());
         mismatched.parsed = Some(std::sync::Arc::new(parsed));
-        assert!(node.execute_verified_create_in_txn(mismatched, &txn, &graph).await.has_errors());
+        assert!(node.execute_verified_create_in_txn(mismatched, &txn, &graph, crate::SignerCredential::None).await.has_errors());
         assert!(node.commit_transaction(&txn).await.is_err());
         let txn = node.begin_transaction(false).await.unwrap();
         let first = node.execute_request_in_txn(signer.attach(marker()), &txn).await;
         assert!(!first.has_errors(), "{:?}", first.errors);
-        let wrong_actor = node.execute_verified_create_in_txn(replacement(&agent_did, input.clone()), &txn, &graph).await;
+        let wrong_actor = node.execute_verified_create_in_txn(replacement(&agent_did, input.clone()), &txn, &graph, crate::SignerCredential::None).await;
         assert!(wrong_actor.has_errors());
         assert!(node.commit_transaction(&txn).await.is_err());
         let txn = node.begin_transaction(false).await.unwrap();
@@ -120,20 +120,20 @@ resources:
         assert!(!first.has_errors(), "{:?}", first.errors);
         let bypass = replacement(&user_did, input.clone()).with_context(
             defra_core::RequestContext::default().with_dac_bypass(true));
-        assert!(node.execute_verified_create_in_txn(bypass, &txn, &graph).await.has_errors());
+        assert!(node.execute_verified_create_in_txn(bypass, &txn, &graph, crate::SignerCredential::None).await.has_errors());
         assert!(node.commit_transaction(&txn).await.is_err());
         node.delete_nac_actor_relationship_as(&admin, acp::nac::NodePermission::DocumentUpdate.as_str(), &user_did).await.unwrap();
         let txn = node.begin_transaction(false).await.unwrap();
         let first = node.execute_request_in_txn(signer.attach(marker()), &txn).await;
         assert!(!first.has_errors(), "{:?}", first.errors);
-        let denied = node.execute_verified_create_in_txn(replacement(&user_did, input.clone()), &txn, &graph).await;
+        let denied = node.execute_verified_create_in_txn(replacement(&user_did, input.clone()), &txn, &graph, crate::SignerCredential::None).await;
         assert!(denied.has_errors());
         assert!(node.commit_transaction(&txn).await.is_err());
         node.add_nac_actor_relationship_as(&admin, acp::nac::NodePermission::DocumentUpdate.as_str(), &user_did).await.unwrap();
         let txn = node.begin_transaction(false).await.unwrap();
         let first = node.execute_request_in_txn(signer.attach(marker()), &txn).await;
         assert!(!first.has_errors(), "{:?}", first.errors);
-        let result = node.execute_verified_create_in_txn(replacement(&user_did, input.clone()), &txn, &graph).await;
+        let result = node.execute_verified_create_in_txn(replacement(&user_did, input.clone()), &txn, &graph, crate::SignerCredential::None).await;
         assert!(!result.has_errors(), "{:?}", result.errors);
         let row = &result.data.as_ref().unwrap()["add_Replacement"][0];
         assert_eq!(row["_docID"], graph.doc_id());
@@ -146,7 +146,7 @@ resources:
             .with_identity(Some(agent.did().unwrap()));
         let staged = node.execute_request_in_txn(signer.attach(next_marker), &txn).await;
         assert!(!staged.has_errors(), "{:?}", staged.errors);
-        let duplicate = node.execute_verified_create_in_txn(replacement(&user_did, input.clone()), &txn, &graph).await;
+        let duplicate = node.execute_verified_create_in_txn(replacement(&user_did, input.clone()), &txn, &graph, crate::SignerCredential::None).await;
         assert!(duplicate.has_errors());
         assert!(node.commit_transaction(&txn).await.is_err());
         let markers = node.execute_request(query::QueryRequest::new("{ Marker {name} }")
@@ -200,7 +200,7 @@ fn verified_update_and_delete_use_exact_actor_and_transaction_state() {
         let request = query::QueryRequest::new("mutation($input:VerifiedRecordMutationInputArg!) { create_VerifiedRecord(input:$input) {_docID} }")
             .with_variables(json!({"input":input})).with_identity(Some(user.did().unwrap()));
         let txn = node.begin_transaction(false).await.unwrap();
-        let result = node.execute_verified_create_in_txn(request, &txn, &create).await;
+        let result = node.execute_verified_create_in_txn(request, &txn, &create, crate::SignerCredential::None).await;
         assert!(!result.has_errors(), "{:?}", result.errors);
         node.commit_transaction(&txn).await.unwrap();
         let doc_id = create.doc_id().to_owned();
@@ -226,18 +226,18 @@ fn verified_update_and_delete_use_exact_actor_and_transaction_state() {
         let other_graph = VerifiedClientMutation::verify_update(&crdts, &schema, &doc_id, &patch, &snapshot, other_graph.evidence()).unwrap();
         node.delete_dac_actor_relationship_as(&user_context, "VerifiedRecord", &doc_id, "editor", &other_did).await.unwrap();
         let txn = node.begin_transaction(false).await.unwrap();
-        assert!(node.execute_verified_mutation_in_txn(update_request(&other_did), &txn, &other_graph).await.has_errors());
+        assert!(node.execute_verified_mutation_in_txn(update_request(&other_did), &txn, &other_graph, crate::SignerCredential::None).await.has_errors());
         assert!(node.commit_transaction(&txn).await.is_err());
         let txn = node.begin_transaction(false).await.unwrap();
-        assert!(node.execute_verified_mutation_in_txn(update_request(&other_did), &txn, &update).await.has_errors());
+        assert!(node.execute_verified_mutation_in_txn(update_request(&other_did), &txn, &update, crate::SignerCredential::None).await.has_errors());
         assert!(node.commit_transaction(&txn).await.is_err());
         node.delete_nac_actor_relationship_as(&admin_context, acp::nac::NodePermission::DocumentUpdate.as_str(), &user_did).await.unwrap();
         let txn = node.begin_transaction(false).await.unwrap();
-        assert!(node.execute_verified_mutation_in_txn(update_request(&user_did), &txn, &update).await.has_errors());
+        assert!(node.execute_verified_mutation_in_txn(update_request(&user_did), &txn, &update, crate::SignerCredential::None).await.has_errors());
         assert!(node.commit_transaction(&txn).await.is_err());
         node.add_nac_actor_relationship_as(&admin_context, acp::nac::NodePermission::DocumentUpdate.as_str(), &user_did).await.unwrap();
         let txn = node.begin_transaction(false).await.unwrap();
-        let result = node.execute_verified_mutation_in_txn(update_request(&user_did), &txn, &update).await;
+        let result = node.execute_verified_mutation_in_txn(update_request(&user_did), &txn, &update, crate::SignerCredential::None).await;
         assert!(!result.has_errors(), "{:?}", result.errors);
         node.commit_transaction(&txn).await.unwrap();
         assert_user_signed_block(&node, &update_cid, &user_did, &signing).await;
@@ -247,7 +247,7 @@ fn verified_update_and_delete_use_exact_actor_and_transaction_state() {
             .with_identity(Some(agent.did().unwrap()));
         let staged = node.execute_request_in_txn(agent_signer.attach(marker), &txn).await;
         assert!(!staged.has_errors(), "{:?}", staged.errors);
-        let stale_equal = node.execute_verified_mutation_in_txn(update_request(&user_did), &txn, &update).await;
+        let stale_equal = node.execute_verified_mutation_in_txn(update_request(&user_did), &txn, &update, crate::SignerCredential::None).await;
         assert!(stale_equal.has_errors());
         assert!(node.commit_transaction(&txn).await.is_err());
         let marker = node.execute_request(query::QueryRequest::new("{ VerifiedMarker {_docID} }")
@@ -256,7 +256,7 @@ fn verified_update_and_delete_use_exact_actor_and_transaction_state() {
         let delete_request = || query::QueryRequest::new("mutation($id:ID!) { delete_VerifiedRecord(docIDs:[$id]) {_docID} }")
             .with_variables(json!({"id":doc_id})).with_identity(Some(user.did().unwrap()));
         let txn = node.begin_transaction(false).await.unwrap();
-        assert!(node.execute_verified_mutation_in_txn(delete_request(), &txn, &stale_delete).await.has_errors());
+        assert!(node.execute_verified_mutation_in_txn(delete_request(), &txn, &stale_delete, crate::SignerCredential::None).await.has_errors());
         assert!(node.commit_transaction(&txn).await.is_err());
         let history = node.execute_request(history_request()).await;
         let snapshot = ClientUpdateSnapshot::from_commits(&doc_id, history.data.unwrap()["_commits"].as_array().unwrap()).unwrap();
@@ -270,7 +270,7 @@ fn verified_update_and_delete_use_exact_actor_and_transaction_state() {
             .with_identity(Some(agent.did().unwrap()));
         let txn = node.begin_transaction(false).await.unwrap();
         assert!(!node.execute_request_in_txn(agent_signer.attach(marker("nac-revoked")), &txn).await.has_errors());
-        let staged = node.execute_verified_mutation_in_txn(delete_request(), &txn, &delete).await;
+        let staged = node.execute_verified_mutation_in_txn(delete_request(), &txn, &delete, crate::SignerCredential::None).await;
         assert!(!staged.has_errors(), "{:?}", staged.errors);
         node.delete_nac_actor_relationship_as(&admin_context, acp::nac::NodePermission::DocumentDelete.as_str(), &user_did).await.unwrap();
         assert!(node.commit_transaction(&txn).await.is_err());
@@ -282,7 +282,7 @@ fn verified_update_and_delete_use_exact_actor_and_transaction_state() {
         assert!(!node.execute_request_in_txn(agent_signer.attach(marker("dac-revoked")), &txn).await.has_errors());
         let request = query::QueryRequest::new("mutation($id:ID!) { delete_VerifiedRecord(docIDs:[$id]) {_docID} }")
             .with_variables(json!({"id":doc_id})).with_identity(Some(other.did().unwrap()));
-        let staged = node.execute_verified_mutation_in_txn(request, &txn, &other_delete).await;
+        let staged = node.execute_verified_mutation_in_txn(request, &txn, &other_delete, crate::SignerCredential::None).await;
         assert!(!staged.has_errors(), "{:?}", staged.errors);
         node.delete_dac_actor_relationship_as(&user_context, "VerifiedRecord", &doc_id, "deleter", &other_did).await.unwrap();
         assert!(node.commit_transaction(&txn).await.is_err());
@@ -290,13 +290,13 @@ fn verified_update_and_delete_use_exact_actor_and_transaction_state() {
             .with_identity(Some(agent.did().unwrap()))).await;
         assert!(markers.data.unwrap()["VerifiedMarker"].as_array().unwrap().is_empty());
         let txn = node.begin_transaction(false).await.unwrap();
-        let result = node.execute_verified_mutation_in_txn(delete_request(), &txn, &delete).await;
+        let result = node.execute_verified_mutation_in_txn(delete_request(), &txn, &delete, crate::SignerCredential::None).await;
         assert!(!result.has_errors(), "{:?}", result.errors);
         node.discard_transaction(&txn).await.unwrap();
         let retained = node.execute_request(query::QueryRequest::new("{ VerifiedRecord {_docID name} }").with_identity(Some(user.did().unwrap()))).await;
         assert_eq!(retained.data.unwrap()["VerifiedRecord"][0]["name"], "after");
         let txn = node.begin_transaction(false).await.unwrap();
-        let result = node.execute_verified_mutation_in_txn(delete_request(), &txn, &delete).await;
+        let result = node.execute_verified_mutation_in_txn(delete_request(), &txn, &delete, crate::SignerCredential::None).await;
         assert!(!result.has_errors(), "{:?}", result.errors);
         node.commit_transaction(&txn).await.unwrap();
         assert_user_signed_block(&node, &delete_cid, &user_did, &signing).await;
@@ -334,6 +334,7 @@ fn signed_writes_are_refused_once_requests_have_drained() {
                 .with_variables(json!({"input":input})).with_identity(Some(user.did().unwrap())),
             &txn,
             &graph,
+            crate::SignerCredential::None,
         ).await;
         for response in [caller_signed, client_signed] {
             assert_eq!(
@@ -359,7 +360,7 @@ fn verified_create_allows_disabled_nac_and_unbound_collection() {
         let request = query::QueryRequest::new("mutation($input:PlainVerifiedRecordMutationInputArg!) { create_PlainVerifiedRecord(input:$input) {_docID} }")
             .with_variables(json!({"input":input})).with_identity(Some(user.did().unwrap()));
         let txn = node.begin_transaction(false).await.unwrap();
-        let result = node.execute_verified_create_in_txn(request, &txn, &graph).await;
+        let result = node.execute_verified_create_in_txn(request, &txn, &graph, crate::SignerCredential::None).await;
         assert!(!result.has_errors(), "{:?}", result.errors);
         node.commit_transaction(&txn).await.unwrap();
         node.shutdown().await.unwrap();
@@ -383,7 +384,7 @@ fn verified_create_on_an_identity_only_node_is_signed_by_its_caller() {
         let request = query::QueryRequest::new("mutation($input:PlainVerifiedRecordMutationInputArg!) { create_PlainVerifiedRecord(input:$input) {_docID _version {cid}} }")
             .with_variables(json!({"input":input})).with_identity(Some(user.did().unwrap()));
         let txn = node.begin_transaction(false).await.unwrap();
-        let result = node.execute_verified_create_in_txn(request, &txn, &graph).await;
+        let result = node.execute_verified_create_in_txn(request, &txn, &graph, crate::SignerCredential::None).await;
         assert!(!result.has_errors(), "{:?}", result.errors);
         let row = &result.data.as_ref().unwrap()["add_PlainVerifiedRecord"][0];
         assert_eq!(row["_docID"], graph.doc_id());

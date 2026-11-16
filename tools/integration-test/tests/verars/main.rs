@@ -9,6 +9,7 @@ mod owed_order;
 mod p2p_acp;
 mod policy_generations;
 mod policy_lifecycle;
+mod request_bound;
 mod smoke;
 mod transport_latency;
 mod verified_records;

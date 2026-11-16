@@ -63,6 +63,71 @@ transaction as owed to the provider and submitted after the commit
   as refused. It takes no userset or cross-object subject, so such a change is refused
   at staging.
 
+## Acting for a signer: delegations and the one-request form
+
+vera.rs takes a policy command from a node's worker only under the authority of the
+actor the command is made as. A node has that authority in three ways.
+
+- **A key it holds.** Its own actor, or a registered identity with a local key: the node
+  signs a five-minute delegation itself.
+- **The actor's delegation.** A token the actor signed for this node's worker and
+  deployment with the scope `acp:policy`
+  (`vera::vera_rs::caller_delegation`). It authenticates an HTTP caller, and it covers
+  every registration and relationship command the node sends for that actor until it
+  expires.
+- **A delegation bound to one request.** The same token with vera.rs's `request` claim
+  (`vera::vera_rs::request_delegation`): the digest of one command, the deployment's
+  genesis identity and an operation identity. It covers that command and nothing else.
+
+What vera.rs checks for the one-request form, and the node checks first:
+
+- the signature, the worker (`sub`), the deployment (`aud`), the scope and the validity
+  interval, as for any delegation;
+- the **digest**: SHA-256 of `vera/acp-operation/v1\0` and the compact JSON
+  `{"PolicyCommand":[policy ID, command]}`, with the policy ID as 64 lowercase
+  hexadecimal digits. One token names one command on one policy. There is no digest over
+  a list of commands, so a create that also grants needs a token for the registration and
+  one for each grant;
+- the **operation identity**: eight bytes of expiry and 24 bytes the signer chooses. It
+  must not have expired and may expire at most **600 seconds** after the chain's clock
+  at execution, and the token may not outlive it. A request-bound delegation is therefore
+  usable for at most ten minutes, and `request_delegation` issues none that lasts longer;
+- the **genesis identity** of the deployment, which only the chain knows. The node
+  checks everything else before it sends, and refuses a token bound to another command
+  without sending it.
+
+vera.rs keeps the outcome of an executed request under the actor and the operation
+identity until that identity expires. The same token sent again is answered with the
+recorded outcome and changes nothing; a different command under a used identity is
+rejected. A registration or a grant submitted twice across a crash therefore takes effect
+once, even when the relationship was changed in between.
+
+A signer can make the token before the write runs. `vera::vera_rs::request_digest`
+gives the digest from the same bytes the node submits, so an actor inside the command is
+in the spelling the node sends. A document ID comes from the document's content: the
+client that signs a create's blocks (`ClientCreateSignatures::from_input`) has it before
+the node sees the write. The policy ID and the resource are the collection's. The worker
+and the deployment are in the node's light client status (`delegation`); the genesis
+identity is provisioned out of band, and is the parent of the deployment's first block.
+
+Where a one-request delegation is taken, and where not:
+
+- **Taken** beside a verified write
+  ([Verified writes on an external provider](transactional.md#verified-writes-on-an-external-provider)),
+  as `SignerCredential::RequestBound` for the registration a create owes, and in the
+  context of a relationship call (`RequestContext::with_request_delegation`) for that one
+  change.
+- **Not taken** as a caller's credential. `caller_of_delegation` refuses it, so an HTTP
+  request that presents one is not authenticated. Presented as a plain bearer it admits
+  no verified write and stages no change.
+- **Checked wherever it is sent.** A command that goes to the chain with one, at once or
+  after a commit, is compared with the command the token names first, and is not sent
+  when they differ. A plain delegation is checked again the same way as its command is
+  sent: one that expired since the write sends nothing.
+
+A command made as the write's signer is signed by the node's worker; the token is the
+signer's authority for it, and the chain records the signer, not the node, as owner.
+
 ## Why it exists
 
 Some deployments need authorization decisions that no single database node can make or
