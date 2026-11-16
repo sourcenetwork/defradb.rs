@@ -6,26 +6,48 @@ use document::{Document, NormalValue};
 use rapidhash::RapidHashSet;
 use schema::{ChunkedField, CHUNK_HASH_FIELD, CHUNK_SOURCE_ID_FIELD, CHUNK_TEXT_FIELD};
 
-/// The parent DocID stored on a chunk.
-pub(crate) fn chunk_parent_id(chunk: &Document) -> Option<&str> {
-    chunk
-        .get(CHUNK_SOURCE_ID_FIELD)
-        .and_then(NormalValue::as_str)
+/// The fields of a chunk the read check uses.
+pub(crate) struct ChunkFields {
+    pub(crate) parent_id: String,
+    text: String,
+    hash: String,
 }
 
-/// Whether `parent` is live and its current text uses `chunk`.
-pub(crate) fn parent_lists(parent: &Document, chunk: &Document, chunked: &ChunkedField) -> bool {
-    match (verified_hash(chunk), parent_hashes(parent, chunked)) {
-        (Some(hash), Some(hashes)) => hashes.contains(hash),
-        _ => false,
+impl ChunkFields {
+    pub(crate) fn new(parent_id: &str, text: &str, hash: &str) -> Self {
+        Self {
+            parent_id: parent_id.to_owned(),
+            text: text.to_owned(),
+            hash: hash.to_owned(),
+        }
+    }
+
+    pub(crate) fn from_document(chunk: &Document) -> Option<Self> {
+        let field = |name| chunk.get(name).and_then(NormalValue::as_str);
+        Some(Self::new(
+            field(CHUNK_SOURCE_ID_FIELD)?,
+            field(CHUNK_TEXT_FIELD)?,
+            field(CHUNK_HASH_FIELD)?,
+        ))
+    }
+
+    /// The chunk's hash, if it matches its text, so a chunk can't claim another's hash.
+    pub(crate) fn verified_hash(&self) -> Option<&str> {
+        (text_hash(&self.text) == self.hash).then_some(self.hash.as_str())
     }
 }
 
-/// The chunk's hash, if it matches its text, so a chunk can't claim another's hash.
-pub(crate) fn verified_hash(chunk: &Document) -> Option<&str> {
-    let hash = chunk.get(CHUNK_HASH_FIELD).and_then(NormalValue::as_str)?;
-    let text = chunk.get(CHUNK_TEXT_FIELD).and_then(NormalValue::as_str)?;
-    (text_hash(text) == hash).then_some(hash)
+/// Whether `parent` is live and its current text uses `chunk`.
+#[cfg(test)]
+fn parent_lists(parent: &Document, chunk: &Document, chunked: &ChunkedField) -> bool {
+    let chunk = ChunkFields::from_document(chunk);
+    match (
+        chunk.as_ref().and_then(ChunkFields::verified_hash),
+        parent_hashes(parent, chunked),
+    ) {
+        (Some(hash), Some(hashes)) => hashes.contains(hash),
+        _ => false,
+    }
 }
 
 /// The hashes of the chunks a live parent's current text uses.

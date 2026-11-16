@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use defra_core::thread_bounds::MaybeBoxFuture;
 use futures::{stream::FuturesOrdered, FutureExt, StreamExt};
 use identity::Did;
+use schema::{CHUNK_HASH_FIELD, CHUNK_SOURCE_ID_FIELD, CHUNK_TEXT_FIELD};
 use sync_wrapper::SyncWrapper;
 
 use crate::access_hooks::read::app_allows;
@@ -116,6 +117,9 @@ pub struct PermissionFilterNode {
     /// Set for a `@chunk` collection, whose chunks are as readable as their parent.
     chunk: Option<super::chunk_gate::ChunkGate>,
 
+    /// Where a row holds a chunk's parent, text and hash, when the scan carries them.
+    chunk_row: Option<[usize; 3]>,
+
     /// Current document
     current_doc: Doc,
 
@@ -163,6 +167,7 @@ impl PermissionFilterNode {
             }),
             app: None,
             chunk: None,
+            chunk_row: None,
             current_doc: Doc::default(),
             document_mapping,
             pending: SyncWrapper::new(FuturesOrdered::new()),
@@ -198,6 +203,7 @@ impl PermissionFilterNode {
             acp: None,
             app: Some(app),
             chunk: None,
+            chunk_row: None,
             current_doc: Doc::default(),
             document_mapping,
             pending: SyncWrapper::new(FuturesOrdered::new()),
@@ -208,11 +214,17 @@ impl PermissionFilterNode {
     /// A filter for a `@chunk` collection, which checks each chunk against its parent.
     pub(crate) fn inherited(source: Box<dyn PlanNode>, gate: super::chunk_gate::ChunkGate) -> Self {
         let document_mapping = source.document_map().clone();
+        let index = |name| document_mapping.first_index_of_name(name);
+        let chunk_row = index(CHUNK_SOURCE_ID_FIELD)
+            .zip(index(CHUNK_TEXT_FIELD))
+            .zip(index(CHUNK_HASH_FIELD))
+            .map(|((parent, text), hash)| [parent, text, hash]);
         Self {
             source,
             acp: None,
             app: None,
             chunk: Some(gate),
+            chunk_row,
             current_doc: Doc::default(),
             document_mapping,
             pending: SyncWrapper::new(FuturesOrdered::new()),
@@ -296,10 +308,18 @@ impl PermissionFilterNode {
         let acp = self.acp.clone();
         let app = self.app.clone();
         let chunk = self.chunk.clone();
+        let row = self.chunk_row.and_then(|[parent, text, hash]| {
+            let field = |index| doc.get(index).and_then(|value| value.as_str());
+            Some(super::chunk_parent::ChunkFields::new(
+                field(parent)?,
+                field(text)?,
+                field(hash)?,
+            ))
+        });
 
         Box::pin(async move {
             if let Some(chunk) = chunk {
-                let allowed = chunk.allows(&doc_id).await?;
+                let allowed = chunk.allows(&doc_id, row).await?;
                 return Ok((doc, allowed));
             }
             let allowed = match &acp {

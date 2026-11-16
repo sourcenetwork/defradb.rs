@@ -32,7 +32,8 @@ pub use aggregate::{
 pub use alldocs::AllDocsNode;
 pub use bm25::BM25Node;
 pub use cached_view_fetcher::CachedViewFetcher;
-pub(crate) use chunk_gate::{live_parent_of, ChunkGate};
+pub(crate) use chunk_gate::{get_projected, ChunkGate};
+pub(crate) use chunk_parent::{chunk_fields, parent_fields, parent_hashes, ChunkFields};
 pub use cursor::{CursorDirection, CursorNode, CursorPageInfo};
 pub use groupby::{ChildSelectMeta, DocumentGroup, GroupAlias, GroupByNode, InnerAggregateDef};
 pub use index_scan::IndexScanNode;

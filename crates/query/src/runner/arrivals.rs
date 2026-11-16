@@ -42,6 +42,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         }
         let identity = acp::Identity::from(caller.clone());
         let context = self.context();
+        let mut chunk_reads = super::chunk_access::ChunkReads::default();
         if select.collection_name == "_documentUpdates" {
             let page = fetcher
                 .get_document_updates(
@@ -63,6 +64,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 if collection.chunk_of.is_some()
                     && !self
                         .chunk_readable(
+                            &mut chunk_reads,
                             fetcher,
                             &identity,
                             caller.as_ref(),
@@ -102,6 +104,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             let allowed = match &collection.policy {
                 None if collection.chunk_of.is_some() => {
                     self.chunk_readable(
+                        &mut chunk_reads,
                         fetcher,
                         &identity,
                         caller.as_ref(),

@@ -156,6 +156,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 Option<std::sync::Arc<schema::CollectionVersion>>,
             > = RapidHashMap::new();
 
+            let mut chunk_reads = super::chunk_access::ChunkReads::default();
             let mut keep = Vec::with_capacity(commits.len());
             for commit in &mut commits {
                 let version_id = commit.get("collectionVersionId").and_then(|v| v.as_str());
@@ -188,6 +189,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     None => false,
                     Some(collection) if collection.chunk_of.is_some() => self
                         .chunk_readable(
+                            &mut chunk_reads,
                             fetcher,
                             &identity,
                             caller_identity.as_ref(),

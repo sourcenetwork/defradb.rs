@@ -3,7 +3,7 @@
 //! Builds the `ScanSetup` struct that determines which fields appear in scan output
 //! and whether joins are needed.
 
-use schema::CollectionVersion;
+use schema::{CollectionVersion, CHUNK_HASH_FIELD, CHUNK_SOURCE_ID_FIELD, CHUNK_TEXT_FIELD};
 
 use crate::document::DocumentMapping;
 use crate::error::{QueryError, Result};
@@ -316,6 +316,18 @@ impl Planner {
                         let idx = scan_mapping.next_index();
                         scan_mapping.add(idx, target_field);
                     }
+                }
+            }
+        }
+
+        // The chunk gate reads these from the row instead of reading each chunk again.
+        if collection.chunk_of.is_some() {
+            for name in [CHUNK_SOURCE_ID_FIELD, CHUNK_TEXT_FIELD, CHUNK_HASH_FIELD] {
+                if scan_mapping.first_index_of_name(name).is_none()
+                    && collection.field_by_name(name).is_some()
+                {
+                    let idx = scan_mapping.next_index();
+                    scan_mapping.add(idx, name);
                 }
             }
         }
