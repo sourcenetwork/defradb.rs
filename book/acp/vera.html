@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-b29c2469.js";
+            window.path_to_searchindex_js = "../searchindex-15d837ed.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -198,7 +198,8 @@ and submitted through a worker, and the chain state verified by a light client
 <p>Both are wrapped as a <code>DocumentACP</code> and installed as the node’s document ACP. Because
 the provider cannot join local transactions, the node wraps it in the external-ACP
 adapter: owed registrations, gated reads until confirmation, fail-closed
-<code>Unavailable</code> (the previous chapter’s shape).</p>
+<code>Unavailable</code> (the previous chapter’s shape). The adapter also holds the record and the
+read gate for relationship changes owed to the provider, which nothing stages yet.</p>
 <h2 id="why-it-exists"><a class="header" href="#why-it-exists">Why it exists</a></h2>
 <p>Some deployments need authorization decisions that no single database node can make or
 forge: multi-party deployments where the policy is shared infrastructure, audits that
