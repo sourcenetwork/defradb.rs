@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "ayu";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-b50b4971.js";
+            window.path_to_searchindex_js = "../searchindex-0e56e7bd.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-8198d451.js"></script>
@@ -295,7 +295,9 @@ be submitted, and a delete of it would deny for ever.</p>
 <p><strong>One spelling.</strong> The acting DID and an actor subject are stored in the provider’s one
 spelling of the key (for vera.rs, the uncompressed <code>did:key</code> DefraDB derives), and the
 gate compares a requester in the same spelling, so a revocation staged under one
-spelling of a key denies a request under another.</p>
+spelling of a key denies a request under another. A key the node holds is found under
+whichever spelling it was registered with, at staging and at submission alike, so a
+change recorded as <code>node_key</code> is signed with it whatever spelling the record keeps.</p>
 </li>
 <li>
 <p><strong>Settlement.</strong> A pass submits what is owed in sequence order from the head of the
@@ -316,14 +318,19 @@ staged, with the last error and how many such answers it has had, and the pass g
 on. Five such answers (<code>MAX_FAILED_SUBMISSIONS</code>), whatever their words, are taken as
 a refusal. Only the provider’s answers count: an unreachable provider is not one;</li>
 <li>an error of the node’s own before anything was sent (a request it could not build
-or sign): the change stays staged, nothing is counted, a warning is logged and the
-pass goes on;</li>
+or sign): the change stays staged with the error as its last error, nothing is
+counted, and the pass goes on. Every pass that comes to it logs a warning naming the
+change;</li>
 <li><em>unreachable</em> (a transport failure, a timeout): the pass stops and nothing is
 written.</li>
 </ul>
 <p>A parked change whose acting DID was checked holds every later change of its tuple and
-nothing else: changes of other tuples go on past it. A change staged unchecked holds
-nothing (above). Every record deleted without the provider holding the change is
+nothing else: changes of other tuples go on past it. A checked change the node could
+not send holds its tuple the same way, for as long as the node cannot send it: it is
+not counted towards a refusal, so nothing parks it, and a direct change of the tuple
+fails with <code>OwedChangesPending</code> meanwhile. A change staged unchecked holds nothing
+(above): one the node could not send is deleted, like one waiting for authority, when
+a later change of its tuple comes up. Every record deleted without the provider holding the change is
 counted in the pass’s report (<code>OwedSettlement::discarded</code>) and logged with its
 sequence, actor, document and relation.</p>
 </li>
@@ -339,6 +346,16 @@ owed. With the provider answering, the wait is one round trip per change.</li>
 <li>Before a relationship change made outside a transaction on a tuple that has changes
 owed, over that document.</li>
 </ul>
+<p>A commit that stops waiting leaves the submission it was waiting for in flight. That
+submission cannot take effect after a later change of the same tuple: the node sends
+the later change only after the earlier one, and both providers take one signer’s
+requests in order. vera.rs keeps one journaled request per worker and prepares the
+next only once that one has a verified receipt, so while the earlier submission is in
+flight nothing else is sent; Cosmos orders one signer’s transactions by account
+sequence. A provider supplied by a host has to give the same guarantee
+(<code>DocumentACP::submit_owed_change</code>). Two nodes that change one relationship through
+different workers are ordered by the provider alone, as they are for changes made
+outside a transaction.</p>
 <p>There is no background drainer, timer or back-off yet. <strong>A change left staged (the
 provider was down, or the deadline passed) is submitted by the next commit that stages
 on the same document, by a direct change of its tuple, or at the next start</strong>; until
@@ -377,6 +394,11 @@ membership tuple (a member removed from a group object) denies that subject on t
 group object only. Documents that grant access through a userset naming that group
 keep honouring the member until the provider holds the delete.</li>
 <li>No event is published when a staged add settles.</li>
+<li>A document’s owner is taken to stay the same on the provider while the node still
+holds the document’s owed registration. If the creator gives the document away
+through another client after the provider registered it and before this node
+cleared its record, this node goes on letting the creator read it until the record
+is cleared (<code>AssumeNoTransferWhileOwed</code> in <code>proofs/tla/AcpOutbox.tla</code>).</li>
 <li>A create that requires transaction-bound authority
 (<code>with_transactional_authority_required</code>, used by verified creates) is refused on an
 external provider as before.</li>
@@ -387,7 +409,9 @@ external provider as before.</li>
 namespace, and commits or rolls back with its rows: <code>/acp-owed/q/&lt;seq&gt;</code> holds the
 change (tuple, add or delete, acting DID, the authority to submit it as that DID,
 whether that DID was checked at staging, its state, attempts and last error; at most
-16 KiB), <code>/acp-owed/t/&lt;tuple&gt;</code> what is
+16 KiB, and staged only if it would still fit parked as refused or awaiting authority
+with 128 bytes of the provider’s words in each place they are kept, so a change that
+was staged can always be parked; longer words are cut), <code>/acp-owed/t/&lt;tuple&gt;</code> what is
 unsettled on that tuple (its oldest and latest sequences, how many changes and how many
 of them deletes), and <code>/acp-owed/o/&lt;object&gt;</code> the number of unsettled changes on that
 object. A change is unsettled while it has a record, a refused one included; a settled
