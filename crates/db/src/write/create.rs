@@ -308,7 +308,7 @@ where
     let block_result = &computed.block_result;
     let doc_id = register_created_doc(
         db.document_acp(),
-        context.creator(),
+        context,
         stores.systemstore,
         stores.datastore,
         collection,

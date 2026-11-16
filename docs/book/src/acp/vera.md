@@ -31,7 +31,13 @@ transaction as owed to the provider and submitted after the commit
   (its own actor, or a registered identity with a local secp256k1, Ed25519 or P-256 key);
   otherwise it stores the delegation the request presented and submits with it. A
   delegation that expired before the change could be submitted parks the change as
-  awaiting authority.
+  awaiting authority. The registration a create owes records its authority the same
+  way, and a retry of it reads nothing else.
+- **After a failed submission.** The node reports what an actor still owes, waits for
+  one transaction's entries, takes a fresh delegation for one owed registration or
+  change, and lets the actor that staged a refused change abandon it
+  ([What is owed after the commit](transactional.md#what-is-owed-after-the-commit)). A
+  fresh delegation is verified against the owed command as the first one was.
 - **What the grantee and the revoked subject see.** A grantee reads once the chain holds
   the grant, normally when the committing request returns; with the chain unreachable,
   not before a later commit on the same document, a direct change of the tuple or a
@@ -114,9 +120,10 @@ Where a one-request delegation is taken, and where not:
 
 - **Taken** beside a verified write
   ([Verified writes on an external provider](transactional.md#verified-writes-on-an-external-provider)),
-  as `SignerCredential::RequestBound` for the registration a create owes, and in the
+  as `SignerCredential::RequestBound` for the registration a create owes, in the
   context of a relationship call (`RequestContext::with_request_delegation`) for that one
-  change.
+  change, and as the fresh credential of one owed registration or change
+  (`Node::reauthorize_owed_acp_as`), whose command it must name.
 - **Not taken** as a caller's credential. `caller_of_delegation` refuses it, so an HTTP
   request that presents one is not authenticated. Presented as a plain bearer it admits
   no verified write and stages no change.

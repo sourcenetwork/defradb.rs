@@ -148,6 +148,15 @@ pub enum Error {
     #[error("cycle detected in permission evaluation: {0}")]
     CycleDetected(String),
 
+    /// Nothing is owed under the reference its caller gave, or what is
+    /// owed there belongs to another actor.
+    #[error("no owed ACP entry {entry} for {actor}")]
+    OwedEntryNotFound { entry: String, actor: String },
+
+    /// Only a change the provider refused may be abandoned.
+    #[error("owed ACP change {seq} is {state}, and only a refused change may be abandoned; present a fresh credential for it instead")]
+    OwedChangeNotRefused { seq: u64, state: &'static str },
+
     /// Invalid expression
     #[error("invalid expression: {0}")]
     InvalidExpression(String),

@@ -134,6 +134,11 @@ impl RemoteAcp {
         self.delegations.insert(did.to_string(), token.to_string());
     }
 
+    /// The request being served carries nothing for `did` any more.
+    pub(super) fn forget_delegation(&self, did: &Did) {
+        self.delegations.remove(did.as_str());
+    }
+
     pub(super) fn expire(&self, token: &str) {
         self.expired.insert(token.to_string(), ());
     }

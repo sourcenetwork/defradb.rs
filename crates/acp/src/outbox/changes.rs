@@ -8,7 +8,7 @@ use storage::corekv::Store;
 
 use super::keys::OwedTupleState;
 use super::ops;
-use super::record::{NewOwedChange, OwedChange, OwedState, OwedTuple};
+use super::record::{NewOwedChange, OwedAuthority, OwedChange, OwedState, OwedTuple};
 use crate::error::{Error, Result};
 
 /// The most changes one transaction may stage.
@@ -162,6 +162,13 @@ impl OwedChanges {
         error: Option<String>,
     ) -> Result<bool> {
         ops::mark(&self.active_view()?, seq, state, attempts, error).await
+    }
+
+    /// Record, in this transaction, a fresh authority with the change at
+    /// `seq` and make it owed again: staged, with nothing counted against
+    /// it. `false` when no such change is owed.
+    pub async fn reauthorize(&self, seq: u64, authority: OwedAuthority) -> Result<bool> {
+        ops::reauthorize(&self.active_view()?, seq, authority).await
     }
 
     /// How many changes `actor` has unsettled on the node.

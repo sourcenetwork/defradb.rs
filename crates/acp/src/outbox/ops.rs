@@ -3,7 +3,7 @@
 use storage::corekv::{IterOptions, Reader, Store, Writer};
 
 use super::keys::{self, OwedTupleState};
-use super::record::{NewOwedChange, OwedChange, OwedOp, OwedState, OwedTuple};
+use super::record::{NewOwedChange, OwedAuthority, OwedChange, OwedOp, OwedState, OwedTuple};
 use crate::error::{Error, Result};
 
 fn storage_error(error: storage::corekv::Error) -> Error {
@@ -327,5 +327,23 @@ where
         }
     };
     put(txn, &keys::queue_key(seq), &record).await?;
+    Ok(true)
+}
+
+/// Record a fresh authority with change `seq` and make it owed again: staged,
+/// with no submission counted against it and no error kept. Only the
+/// change's own record is written. `false` when no such change is owed.
+pub(super) async fn reauthorize<T>(txn: &T, seq: u64, authority: OwedAuthority) -> Result<bool>
+where
+    T: Reader + Writer + ?Sized,
+{
+    let Some(mut owed) = change(txn, seq).await? else {
+        return Ok(false);
+    };
+    owed.authority = authority;
+    owed.state = OwedState::Staged;
+    owed.attempts = 0;
+    owed.last_error = None;
+    put(txn, &keys::queue_key(seq), &owed.encode_admitted()?).await?;
     Ok(true)
 }
