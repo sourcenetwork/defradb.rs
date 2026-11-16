@@ -102,6 +102,7 @@ RUNS=(
   "MC_VerifiedRemoteWrite_Red_RecordedFirst.cfg VerifiedRemoteWrite.tla RED" # a refused write leaves its row and owed registration (INV_RefusalRecordsNothing)
   "MC_VerifiedRemoteWrite_Red_SentExpired.cfg VerifiedRemoteWrite.tla RED" # an owed command is sent under an expired credential (INV_NothingSentStale)
   "MC_VerifiedRemoteWrite_Red_GrantFirst.cfg VerifiedRemoteWrite.tla RED" # a grant is sent before its document's registration (INV_RegistrationFirst)
+  "MC_VerifiedRemoteWrite_Red_GrantUnchecked.cfg VerifiedRemoteWrite.tla RED" # a grant is staged with nothing that lets the node send it (INV_GrantAuthority)
   "MC_SourceScopedNac_Green.cfg SourceScopedNac.tla GREEN"
   "MC_SourceScopedNac_Red_Authority.cfg SourceScopedNac.tla RED"
   "MC_SourceScopedNac_Red_Owner.cfg SourceScopedNac.tla RED"

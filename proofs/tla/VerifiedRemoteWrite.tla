@@ -32,7 +32,10 @@
 \*   - a grant reaches the provider before its document's registration.
 \*
 \* The provider's own checks (vera.rs `authorize_delegation`) are not modelled:
-\* this is what the Node does before it sends anything.
+\* this is what the Node does before it sends anything. A provider that gives
+\* the Node nothing to check a delegation against (it takes no delegation of
+\* this kind) is the case where bySigner and forNode can never be found TRUE:
+\* there a verified write is staged with a key the Node holds, or not at all.
 \*
 \* Rust owners: crates/defra-node/src/lib.rs execute_verified_graph_in_txn;
 \* crates/defra-node/src/signer_credential.rs SignerCredential::carried_by;
@@ -167,7 +170,7 @@ StageGrant ==
   /\ phase = "staged"                                           \* inside the transaction
   /\ kind = "create"                                            \* on the new document
   /\ "grant" \notin owed                                        \* at most once
-  /\ MaySend("grant", grantForm, grantNames)                    \* authority for the grant
+  /\ (MaySend("grant", grantForm, grantNames) \/ Bug = "grantUnchecked") \* authority for the grant
   /\ owed' = owed \cup {"grant"}                                \* the grant is owed
   /\ UNCHANGED <<kind, holdsKey, writeForm, writeNames, grantForm, grantNames,
                  bySigner, forNode, current, phase, rows, sent, parked, misused,
