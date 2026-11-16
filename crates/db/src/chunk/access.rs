@@ -50,26 +50,22 @@ where
         .filter(|parent| parent.schema().chunked_field(&source.field_name).is_some()))
 }
 
-/// `doc_ids` with each chunk replaced by its parent, whose permissions decide.
-///
-/// A parent this node hasn't merged yet is left out, as in [`history_parents`],
-/// and so is a document whose collection this node can't find.
+/// Each chunk replaced by its parent, so the parent's readers decide.
 pub async fn read_owners<S>(db: &DB<S>, txn: &DbTxn<S>, doc_ids: Vec<String>) -> Result<Vec<String>>
 where
     S: Store,
 {
-    if !db.has_chunk_collections() {
-        return Ok(doc_ids);
-    }
     let systemstore = txn.systemstore()?;
     let mut owners = Vec::with_capacity(doc_ids.len());
     for doc_id in doc_ids {
+        // A document of an unknown collection might be a chunk, which has no policy of its own.
         let Some(doc_ref) = crate::docid::map::get_doc_ref(&systemstore, &doc_id).await? else {
-            owners.push(doc_id);
             continue;
         };
-        // An unknown collection might be a chunk one, and a chunk has no policy of its own.
         let Some(collection) = db.find_collection_by_root_id(doc_ref.collection_short_id) else {
+            if stored_as_plain(txn, &doc_id).await? {
+                owners.push(doc_id);
+            }
             continue;
         };
         if !collection.schema().is_generated() {
@@ -80,6 +76,21 @@ where
         owners.extend(merged(txn, parents).await?);
     }
     Ok(owners)
+}
+
+// The cache can miss a collection the store holds, such as a synced one whose name another holds.
+async fn stored_as_plain<S>(txn: &DbTxn<S>, doc_id: &str) -> Result<bool>
+where
+    S: Store,
+{
+    let found = crate::collection::retriever::stored_doc_collection(
+        &txn.headstore()?,
+        &txn.blockstore()?,
+        &txn.systemstore()?,
+        doc_id,
+    )
+    .await?;
+    Ok(found.is_some_and(|collection| !collection.is_generated()))
 }
 
 async fn merged<S>(txn: &DbTxn<S>, parents: Vec<String>) -> Result<Vec<String>>
