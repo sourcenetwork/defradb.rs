@@ -5,6 +5,7 @@ mod helpers;
 mod in_process;
 mod native_worker;
 mod node_builder;
+mod owed_order;
 mod p2p_acp;
 mod policy_generations;
 mod policy_lifecycle;

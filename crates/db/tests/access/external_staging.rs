@@ -793,20 +793,28 @@ fn a_committed_revocation_denies_a_write_and_spares_the_owner() {
                         Some(identity),
                     ))
                     .await;
-                response
-                    .data
-                    .filter(|_| response.errors.is_empty())
-                    .and_then(|data| data["update_Users"].as_array().map(Vec::len))
-                    .unwrap_or(0)
+                let errors: Vec<String> =
+                    response.errors.iter().map(|error| format!("{error:?}")).collect();
+                if errors.is_empty() {
+                    Ok(response.data.expect("data")["update_Users"]
+                        .as_array()
+                        .expect("rows")
+                        .len())
+                } else {
+                    Err(errors)
+                }
             }
         };
-        assert_eq!(rename(bob(), "by bob").await, 1);
+        assert_eq!(rename(bob(), "by bob").await, Ok(1));
 
         staging
             .commit_change(Change::new(alice(), &doc, OwedOp::Delete, Did::wildcard()))
             .await;
-        assert_eq!(rename(bob(), "by bob again").await, 0);
-        assert_eq!(rename(alice(), "by alice").await, 1);
+        // The denial is the document filtered out of the update, with no
+        // error: an error here would be a failure of something else.
+        assert_eq!(rename(bob(), "by bob again").await, Ok(0));
+        assert_eq!(staging.reads_in(&staging.begin().await, alice()).await, ["by bob"]);
+        assert_eq!(rename(alice(), "by alice").await, Ok(1));
         assert_eq!(staging.reads_in(&staging.begin().await, alice()).await, ["by alice"]);
     })
     .unwrap()
