@@ -106,12 +106,15 @@
 \*          back -> INV_DisabledPersistsAcrossRestart breaks.
 \*   RED    MC_Nac_Red_EnableReEnables   Mode=BugEnableReEnables: enable() does
 \*          not refuse a disabled NAC; any caller enables it, turning NAC back
-\*          on and becoming an owner, with no re-enable permission ->
-\*          INV_ReEnableNeedsPersistedAdmin and INV_NoNonAdminMutatesAdminSet
-\*          break.
+\*          on with no re-enable permission -> INV_ReEnableNeedsPersistedAdmin
+\*          breaks.
+\*   RED    MC_Nac_Red_EnableAddsOwner   the same bug, checked against the admin
+\*          set alone: the caller becomes an owner ->
+\*          INV_NoNonAdminMutatesAdminSet breaks.
 \*   RED    MC_Nac_Red_StartReEnables    Mode=BugStartReEnables: starting the
 \*          node with the enable option re-enables a stored disabled NAC, with
 \*          no one authorizing it -> INV_ReEnableNeedsPersistedAdmin breaks.
+\*          The code already keeps it off; this guards against a regression.
 \*
 \* RUN
 \*   cd proofs/tla

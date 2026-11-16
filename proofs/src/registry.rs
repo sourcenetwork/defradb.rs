@@ -1930,9 +1930,9 @@ pub const PROPERTIES: &[Property] = &[
         name: "INV_ReEnableNeedsPersistedAdmin through enable and startup: a disabled NAC stays disabled until an authorized re-enable",
         axis: Tla,
         anchor: "crates/acp/src/nac/node_acp/lifecycle.rs NodeACP::enable; crates/db/src/nac/mod.rs NacManager::initialize",
-        model_ref: "MC_Nac_{Green,Red_EnableReEnables,Red_StartReEnables}.cfg",
+        model_ref: "MC_Nac_{Green,Red_EnableReEnables,Red_EnableAddsOwner,Red_StartReEnables}.cfg",
         tiers: &[Contract],
-        bound_by: "crates/acp/tests/nac_tests.rs enabling_a_disabled_nac_is_refused; crates/db/tests/nac/tests.rs a_disabled_nac_stays_disabled_when_restarted_with_the_enable_option, enabling_a_disabled_nac_is_refused",
+        bound_by: "crates/acp/tests/nac_tests.rs enabling_a_disabled_nac_is_refused; crates/db/tests/nac/tests.rs a_disabled_nac_stays_disabled_when_restarted_with_the_enable_option, enabling_a_disabled_nac_is_refused; crates/defra-node/tests/unit/http_acp.rs a_stranger_cannot_enable_a_disabled_nac_over_http",
     },
     Property {
         // No-loss / no-double-apply under concurrent same-document mutation is now

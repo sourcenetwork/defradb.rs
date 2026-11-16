@@ -20,11 +20,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> NodeACP<S> {
     pub async fn enable(&self, owner: &Did) -> Result<()> {
         match *self.status.load() {
             NacStatus::Enabled => return Ok(()),
-            NacStatus::DisabledTemporarily => {
-                return Err(Error::InvalidPolicy(
-                    "node acp is disabled; re-enable it instead".into(),
-                ));
-            }
+            NacStatus::DisabledTemporarily => return Err(Error::NacTemporarilyDisabled),
             NacStatus::NotConfigured => {}
         }
 

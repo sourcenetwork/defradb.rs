@@ -626,7 +626,8 @@ RUNS=(
   "MC_Nac_Red_NoPersist.cfg        MC_Nac_Red_NoPersist.tla        RED"   # NAC: disabled-flag not persisted across restart
   "MC_Nac_Red_ReEnableLive.cfg     MC_Nac_Red_ReEnableLive.tla     RED"   # NAC: re-enable from stale live admin (escalation)
   "MC_Nac_Red_WriteWhileDisabled.cfg MC_Nac_Red_WriteWhileDisabled.tla RED" # NAC: admin write accepted while disabled
-  "MC_Nac_Red_EnableReEnables.cfg  MC_Nac_Red_EnableReEnables.tla  RED"   # NAC: enable() turns a disabled NAC back on, caller becomes owner (INV_ReEnableNeedsPersistedAdmin)
+  "MC_Nac_Red_EnableReEnables.cfg  MC_Nac_Red_EnableReEnables.tla  RED"   # NAC: enable() turns a disabled NAC back on (INV_ReEnableNeedsPersistedAdmin)
+  "MC_Nac_Red_EnableAddsOwner.cfg  MC_Nac_Red_EnableReEnables.tla  RED"   # NAC: enable() on a disabled NAC makes the caller an owner (INV_NoNonAdminMutatesAdminSet)
   "MC_Nac_Red_StartReEnables.cfg   MC_Nac_Red_StartReEnables.tla   RED"   # NAC: start with the enable option re-enables a disabled NAC (INV_ReEnableNeedsPersistedAdmin)
   "MC_TxnRegistry_Green.cfg        MC_TxnRegistry_Green.tla        GREEN" # txn cleanup never evicts a live transaction
   "MC_TxnRegistry_Red_NaiveSweep.cfg MC_TxnRegistry_Red_NaiveSweep.tla RED" # naive sweep evicts a still-live txn

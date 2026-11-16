@@ -1050,6 +1050,54 @@ fn embedded_encrypted_index_list_refusal_is_unauthorized() {
         .unwrap();
 }
 
+/// A stranger cannot use the enable route to turn a temporarily disabled NAC
+/// back on: the route answers 409, NAC stays disabled and the stranger is not
+/// made an owner. Only an authorized re-enable turns it back on.
+#[test]
+fn a_stranger_cannot_enable_a_disabled_nac_over_http() {
+    edge::testing::edge()
+        .block_on(async {
+            let _serial = crate::tests::SIGNING_STORE_GUARD.lock().await;
+            let owner_did = store_signing_identity(&identity());
+            let stranger = identity();
+            let stranger_did = stranger.did().unwrap();
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let node = Node::builder()
+                .with_node_identity_did(&owner_did)
+                .with_node_acp_enabled()
+                .with_http(HttpConfig::with_listener(listener).unwrap())
+                .build()
+                .await
+                .unwrap();
+            let owner = defra_core::RequestContext::default().with_identity(Some(owner_did));
+            node.disable_nac_as(&owner).await.unwrap();
+
+            let response = http_client()
+                .post(format!("http://{address}/api/v0/acp/node/enable"))
+                .header("Authorization", bearer(&stranger, &address.to_string()))
+                .json(&json!({ "OwnerDID": stranger_did.as_str() }))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status().as_u16(), 409, "the enable is refused");
+            let body = response.text().await.unwrap();
+            assert!(body.contains("re-enable it instead"), "{body}");
+
+            assert_eq!(
+                node.nac_status_as(&owner).await.unwrap(),
+                acp::nac::NacStatus::DisabledTemporarily,
+                "NAC stays disabled"
+            );
+            assert!(
+                !node.nac_manager().is_owner(&stranger_did).await,
+                "the stranger is not an owner"
+            );
+            node.shutdown().await.unwrap();
+        })
+        .unwrap();
+}
+
 /// An embedder's own routes are not node routes: the edge's node ACP check,
 /// and its `DocumentRead` default for routes outside the table, stay off them.
 #[test]
