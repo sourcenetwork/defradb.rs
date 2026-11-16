@@ -240,6 +240,37 @@ impl TestTransport {
         self.force_rooted_sync.store(true, Ordering::SeqCst);
     }
 
+    /// What a provider sends for `missing`: a rooted transport answers a
+    /// request naming the root with the root's closure, as vinc and iroh do;
+    /// any other request with the CIDs it names.
+    async fn served(&self, root: Cid, missing: &[Cid]) -> Vec<Cid> {
+        if !(self.supports_cancellable_rooted_sync() && missing == [root]) {
+            return missing.to_vec();
+        }
+        let mut served = Vec::new();
+        let mut stack = vec![root];
+        while let Some(cid) = stack.pop() {
+            if served.contains(&cid) {
+                continue;
+            }
+            let data = match self.selective_blocks.get(&cid) {
+                Some(data) => Some(data.clone()),
+                None => self
+                    .blockstore
+                    .get(&cid)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|data| data.to_vec()),
+            };
+            if let Some(data) = data {
+                stack.extend(crate::sync::car::extract_links(&data));
+            }
+            served.push(cid);
+        }
+        served
+    }
+
     fn car_request_count(&self) -> usize {
         self.car_requests.load(Ordering::SeqCst)
     }
@@ -534,10 +565,11 @@ impl P2PTransport for TestTransport {
 
     async fn sync_blocks(
         &self,
-        _root: Cid,
+        root: Cid,
         providers: Vec<PeerId>,
         missing: Vec<Cid>,
     ) -> P2PResult<QueryId> {
+        let served = self.served(root, &missing).await;
         let mut call_index = 0;
         self.sync_batches.rcu(|batches| {
             let mut next = batches.clone();
@@ -610,7 +642,7 @@ impl P2PTransport for TestTransport {
             completion.complete(query_id, true);
             let blockstore = Arc::clone(&self.blockstore);
             let delay = self.stream_block_delay();
-            let blocks: Vec<(Cid, Vec<u8>)> = missing
+            let blocks: Vec<(Cid, Vec<u8>)> = served
                 .iter()
                 .filter_map(|cid| {
                     self.selective_blocks
@@ -661,7 +693,7 @@ impl P2PTransport for TestTransport {
         let drip = Duration::from_nanos(self.drip_delay_nanos.load(Ordering::SeqCst));
         if !drip.is_zero() {
             let blockstore = Arc::clone(&self.blockstore);
-            let blocks: Vec<(Cid, Vec<u8>)> = missing
+            let blocks: Vec<(Cid, Vec<u8>)> = served
                 .iter()
                 .filter_map(|cid| {
                     self.selective_blocks
@@ -678,7 +710,7 @@ impl P2PTransport for TestTransport {
             .detach();
             return Ok(query_id);
         }
-        for cid in missing {
+        for cid in served {
             if let Some(data) = self.selective_blocks.get(&cid) {
                 self.blockstore
                     .put(&cid, data)

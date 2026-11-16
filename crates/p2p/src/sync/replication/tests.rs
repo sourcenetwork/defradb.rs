@@ -550,7 +550,9 @@ impl P2PTransport for PollFetchTransport {
             // transmitted, so nothing is served and nothing completes.
             return Ok(QueryId(1));
         }
-        if missing.is_empty() {
+        // A rooted transport answers a request naming the root with the
+        // root's closure, as vinc and iroh do.
+        if missing.is_empty() || (self.rooted_sync.load(Ordering::SeqCst) && missing == [root]) {
             if let Some(source) = &self.source_blockstore {
                 let collected =
                     crate::sync::car::collect_dag_blocks_from_roots(source.as_ref(), &[root])

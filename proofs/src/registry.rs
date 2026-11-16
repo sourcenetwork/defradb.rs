@@ -2854,6 +2854,15 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Have-set DAG fetch",
+        name: "INV_HeldNotResent / INV_OneRequest / INV_BranchCut / INV_Converges for the rooted request",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/rooted_request.rs rooted_request; crates/p2p/src/sync/coordinator/dag_fetcher.rs poll_fetch_blocks, poll_fetch_rooted_provider; crates/p2p/src/sync/coordinator/closure_depth.rs ClosureDepth::whole; crates/p2p/src/sync/car/region.rs collect_missing_region; crates/p2p/src/sync/coordinator/event_handler/car.rs drop_held_blocks",
+        model_ref: "MC_RootNamedFetch_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+        bound_by: "",
+    },
+    Property {
+        family: "Have-set DAG fetch",
         name: "INV_OneMarkWriter / INV_HeldNeverContends / INV_Lands",
         axis: Tla,
         anchor: "crates/p2p/src/sync/coordinator/event_handler/car.rs drop_held_blocks; crates/p2p/src/sync/manager/process/mod.rs try_acquire_car_storage_owners; crates/storage/src/stores/blockstore.rs BlockWritesAttempt",

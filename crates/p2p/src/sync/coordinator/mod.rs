@@ -71,6 +71,7 @@ mod push_worker;
 mod receive_gate;
 mod replicators;
 mod result_types;
+mod rooted_request;
 mod selective_car_access;
 mod subscriptions;
 

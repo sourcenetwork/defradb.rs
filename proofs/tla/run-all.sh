@@ -309,6 +309,11 @@ RUNS=(
   "MC_ExactDagFetch_Red_FlipWant.cfg ExactDagFetch.tla RED" # held overrides a block asked for by name (INV_RoundsBounded)
   "MC_ExactDagFetch_Red_TrustProvider.cfg ExactDagFetch.tla RED" # the receiver merges on the provider's word (INV_MergeComplete)
   "MC_ExactDagFetch_Red_SkipCid.cfg ExactDagFetch.tla RED" # the receiver skips the CID check (INV_NoForged)
+  "MC_RootNamedFetch_Green.cfg RootNamedFetch.tla GREEN" # a document asks once, naming the root, uncut: nothing held is sent back; a branchable fetch keeps its cut
+  "MC_RootNamedFetch_Red_Frontier.cfg RootNamedFetch.tla RED" # a document asks for its field frontier at a cut (INV_HeldNotResent)
+  "MC_RootNamedFetch_Red_Window.cfg RootNamedFetch.tla RED" # a document with no haves asks with a doubling cut (INV_HeldNotResent)
+  "MC_RootNamedFetch_Red_Whole.cfg RootNamedFetch.tla RED" # a branchable fetch asks uncut (INV_BranchCut)
+  "MC_RootNamedFetch_Red_RootAny.cfg RootNamedFetch.tla RED" # a document holding unmerged blocks below its root, with no have, names the root (INV_HeldNotResent)
   "MC_HeldBlockIngest_Green.cfg HeldBlockIngest.tla GREEN" # ingest owns only the blocks it stores; one writer per mark, no contention on held blocks
   "MC_HeldBlockIngest_Red_NoOwners.cfg HeldBlockIngest.tla RED" # ingest owns nothing (INV_OneMarkWriter)
   "MC_HeldBlockIngest_Red_OwnHeld.cfg HeldBlockIngest.tla RED" # ingest also owns held blocks (INV_HeldNeverContends)
