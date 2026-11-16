@@ -1,6 +1,6 @@
 //! Checks whether a parent's current text uses a chunk.
 
-use chunk_split::list::{describes, text_hash};
+use chunk_split::list::text_hash;
 use chunk_split::split::{split, ChunkConfig};
 use document::{Document, NormalValue};
 use rapidhash::RapidHashSet;
@@ -37,19 +37,6 @@ impl ChunkFields {
     }
 }
 
-/// Whether `parent` is live and its current text uses `chunk`.
-#[cfg(test)]
-fn parent_lists(parent: &Document, chunk: &Document, chunked: &ChunkedField) -> bool {
-    let chunk = ChunkFields::from_document(chunk);
-    match (
-        chunk.as_ref().and_then(ChunkFields::verified_hash),
-        parent_hashes(parent, chunked),
-    ) {
-        (Some(hash), Some(hashes)) => hashes.contains(hash),
-        _ => false,
-    }
-}
-
 /// The hashes of the chunks a live parent's current text uses.
 pub(crate) fn parent_hashes(
     parent: &Document,
@@ -61,30 +48,21 @@ pub(crate) fn parent_hashes(
     let parent_text = parent
         .get(&chunked.field_name)
         .and_then(NormalValue::as_str)?;
-    let list = match parent.get(&chunked.list_field()) {
-        Some(NormalValue::StringArray(list)) => Some(list),
-        Some(NormalValue::NillableStringArray(Some(list))) => Some(list),
-        _ => None,
-    };
-    Some(match list {
-        // The first entry is the whole text's hash, not a chunk.
-        Some(list) if describes(list, parent_text) => list.iter().skip(1).cloned().collect(),
-        // Text and list merge as separate fields, so concurrent writes can leave one
-        // peer's text with the other's list. Split the text again to be sure.
-        _ => {
-            // A splitter version this node lacks can't check the text, so nothing shows.
-            let config = ChunkConfig::new(
-                chunked.splitter_version,
-                chunked.max_chars as usize,
-                chunked.overlap as usize,
-            )
-            .ok()?;
-            split(parent_text, &config)
-                .into_iter()
-                .map(|chunk| chunk.hash)
-                .collect()
-        }
-    })
+    // The list is written by the parent's writer and merges apart from the text,
+    // so only a split of the text itself decides.
+    // A splitter version this node lacks can't check the text, so nothing shows.
+    let config = ChunkConfig::new(
+        chunked.splitter_version,
+        chunked.max_chars as usize,
+        chunked.overlap as usize,
+    )
+    .ok()?;
+    Some(
+        split(parent_text, &config)
+            .into_iter()
+            .map(|chunk| chunk.hash)
+            .collect(),
+    )
 }
 
 /// The fields of a chunk the read check uses.
@@ -97,9 +75,7 @@ pub(crate) fn chunk_fields() -> RapidHashSet<String> {
 
 /// The fields of a parent the read check uses.
 pub(crate) fn parent_fields(chunked: &ChunkedField) -> RapidHashSet<String> {
-    [chunked.field_name.clone(), chunked.list_field()]
-        .into_iter()
-        .collect()
+    [chunked.field_name.clone()].into_iter().collect()
 }
 
 #[cfg(test)]

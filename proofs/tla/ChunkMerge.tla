@@ -11,9 +11,9 @@
 \* bytes, so a tie can keep one peer's text and the other peer's list.
 \*
 \* A reader shows the chunks of the current text. Entry 0 of the list is the
-\* hash of the text the list was cut from; when it is not the hash of the
-\* current text, the reader cuts the current text itself instead of trusting
-\* the list.
+\* hash of the text the list was cut from. The code always cuts the current text
+\* itself; the model's reader cuts it when entry 0 names other text, which shows
+\* the same chunks for the honest lists here and why a list can't be trusted.
 \*
 \* A peer can also send a chunk document that lies. One lie is a chunk whose
 \* hash is not the hash of its text. Another is a new version of a chunk the
