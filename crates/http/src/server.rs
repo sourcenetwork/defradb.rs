@@ -117,6 +117,7 @@ pub struct Server {
     node_identity_did: Option<String>,
     dev_mode: bool,
     extra_routes: Option<Router>,
+    authenticated_routes: Option<Router>,
     router_transform: Option<RouterTransform>,
 }
 
@@ -183,11 +184,18 @@ impl Server {
             node_identity_did: None,
             dev_mode: false,
             extra_routes: None,
+            authenticated_routes: None,
             router_transform: None,
         }
     }
 
     /// Serve `routes` beside the API's own.
+    /// Application routes whose optional credentials are verified by this node.
+    pub fn with_authenticated_routes(mut self, routes: Router) -> Self {
+        self.authenticated_routes = Some(routes);
+        self
+    }
+
     pub fn with_extra_routes(mut self, routes: Router) -> Self {
         self.extra_routes = Some(routes);
         self
@@ -542,6 +550,17 @@ impl Server {
         // clone that already carries the complete auth and request middleware.
         let normalized = NormalizePathLayer::trim_trailing_slash().layer(router.clone());
         let mut router = router.fallback_service(normalized);
+        if let Some(routes) = &self.authenticated_routes {
+            router = router.merge(
+                routes
+                    .clone()
+                    .route_layer(axum::middleware::from_fn_with_state(
+                        self.app_state(),
+                        crate::auth_middleware::authenticate_application,
+                    ))
+                    .layer(admitted.clone()),
+            );
+        }
         if let Some(extra) = &self.extra_routes {
             router = router.merge(extra.clone().layer(admitted.clone()));
         }

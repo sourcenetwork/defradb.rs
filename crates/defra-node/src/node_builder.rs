@@ -685,6 +685,10 @@ impl NodeBuilder {
                 server
             };
 
+            let server = match http_cfg.authenticated_routes {
+                Some(routes) => server.with_authenticated_routes(routes),
+                None => server,
+            };
             let server = match http_cfg.extra_routes {
                 Some(extra) => server.with_extra_routes(extra),
                 None => server,

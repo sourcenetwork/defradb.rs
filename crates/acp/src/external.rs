@@ -360,7 +360,10 @@ where
         self.provider.bearer_token_for(did)
     }
 
-    fn caller_of_delegation(&self, token: &str) -> Option<std::result::Result<Did, String>> {
+    fn caller_of_delegation(
+        &self,
+        token: &str,
+    ) -> Option<std::result::Result<crate::AuthenticatedCaller, String>> {
         self.provider.caller_of_delegation(token)
     }
 

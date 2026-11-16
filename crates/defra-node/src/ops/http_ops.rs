@@ -152,7 +152,10 @@ impl DocumentAcpOperations for HttpNodeOps {
         self.ops.document_acp.supports_transactions()
     }
 
-    fn caller_of_delegation(&self, token: &str) -> Option<Result<identity::Did, String>> {
+    fn caller_of_delegation(
+        &self,
+        token: &str,
+    ) -> Option<Result<acp::AuthenticatedCaller, String>> {
         self.ops.document_acp.caller_of_delegation(token)
     }
 

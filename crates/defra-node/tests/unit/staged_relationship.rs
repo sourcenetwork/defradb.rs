@@ -162,9 +162,15 @@ impl VeraProvider for Remote {
         })
     }
 
-    fn caller_of_delegation(&self, token: &str) -> Option<Result<String, ProviderError>> {
+    fn caller_of_delegation(
+        &self,
+        token: &str,
+    ) -> Option<Result<acp::AuthenticatedCaller, ProviderError>> {
         let did = token.strip_prefix("delegation:")?;
-        Some(Ok(did.to_string()))
+        Some(Ok(acp::AuthenticatedCaller {
+            did: identity::Did::new(did).expect("fixture DID"),
+            expires_at: u64::MAX,
+        }))
     }
 
     async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError> {

@@ -50,7 +50,7 @@ pub async fn auth_middleware(
     // Parse the caller's identity once. The same value is reused below both to
     // pre-populate the handler extension and to bind the request-scoped NAC
     // context, so the JWT is verified only once per request.
-    let acting_did = match permission {
+    let caller = match permission {
         RoutePermission::Exempt => None,
         RoutePermission::IdentityOnly | RoutePermission::Dynamic | RoutePermission::Required(_) => {
             match caller_from_headers(request.headers(), state.doc_acp.as_deref()) {
@@ -60,35 +60,7 @@ pub async fn auth_middleware(
         }
     };
 
-    if !is_exempt {
-        request
-            .extensions_mut()
-            .insert(MiddlewareIdentity(acting_did.clone()));
-    }
-
-    // The request's context carries the caller's DID to the DB-layer NAC
-    // checks the handlers reach, mirroring Go's `identity.FromContext`, and
-    // this request's verified token from its header, the one a remote ACP
-    // acts on the caller's behalf with. Never publish the token in the
-    // process-wide DID map: concurrent requests can share a DID while
-    // carrying different authorization tokens.
-    let scoped = acting_did.as_ref().map(ToString::to_string);
-    let bearer = acting_did.as_ref().and_then(|_| {
-        request
-            .headers()
-            .get(axum::http::header::AUTHORIZATION)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| {
-                value
-                    .strip_prefix("Bearer ")
-                    .or_else(|| value.strip_prefix("bearer "))
-            })
-            .map(|token| token.trim().to_owned())
-    });
-    let context = RequestContext::default()
-        .with_identity(scoped.clone())
-        .with_bearer(scoped, bearer);
-    request.extensions_mut().insert(context.clone());
+    let (acting_did, context) = bind_caller(&mut request, caller, !is_exempt);
     let execution = async move {
         let identity = ExtractIdentity::from_did(acting_did);
         // `get-collection` first on the collection handler routes, then the
@@ -110,4 +82,53 @@ pub async fn auth_middleware(
         next.run(request).await
     };
     context.mirror(execution).await
+}
+
+fn bind_caller(
+    request: &mut Request,
+    caller: Option<acp::AuthenticatedCaller>,
+    publish_identity: bool,
+) -> (Option<identity::Did>, RequestContext) {
+    let expiration = caller.as_ref().map(|caller| caller.expires_at);
+    let acting_did = caller.map(|caller| caller.did);
+    if publish_identity {
+        request
+            .extensions_mut()
+            .insert(MiddlewareIdentity(acting_did.clone()));
+    }
+    let scoped = acting_did.as_ref().map(ToString::to_string);
+    let bearer = acting_did.as_ref().and_then(|_| {
+        request
+            .headers()
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| {
+                value
+                    .strip_prefix("Bearer ")
+                    .or_else(|| value.strip_prefix("bearer "))
+            })
+            .map(|token| token.trim().to_owned())
+    });
+    let context = RequestContext::default()
+        .with_identity(scoped.clone())
+        .with_bearer(scoped, bearer)
+        .with_authorization_expiration(expiration);
+    request.extensions_mut().insert(context.clone());
+    (acting_did, context)
+}
+
+/// Authenticate application routes with this node's credential verifier.
+/// The application owner decides operation permissions; a verified caller is
+/// never itself a document or node-access grant.
+pub async fn authenticate_application(
+    State(state): State<AppState>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    let caller = match caller_from_headers(request.headers(), state.doc_acp.as_deref()) {
+        Ok(caller) => caller,
+        Err(error) => return error.into_response(),
+    };
+    let (_, context) = bind_caller(&mut request, caller, true);
+    context.mirror(next.run(request)).await
 }

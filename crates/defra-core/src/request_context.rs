@@ -136,6 +136,10 @@ impl RequestContext {
         self
     }
 
+    pub fn authorization_expiration(&self) -> Option<u64> {
+        self.0.authorization_expiration
+    }
+
     /// Whether a new database attempt may be dispatched now.
     pub fn authorization_valid_now(&self) -> bool {
         match self.0.authorization_expiration {

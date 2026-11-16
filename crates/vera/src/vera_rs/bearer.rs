@@ -325,7 +325,7 @@ pub(super) fn caller_of_delegation(
     token: &str,
     worker: &str,
     deployment_id: u64,
-) -> Result<String, CallerDelegationError> {
+) -> Result<acp::AuthenticatedCaller, CallerDelegationError> {
     let claims = vera_crypto::jwt::verify_bearer_token(token)?;
     if claims.relay.is_some()
         || claims.request.is_some()
@@ -338,12 +338,17 @@ pub(super) fn caller_of_delegation(
         .map_err(|_| CallerDelegationError::Clock)?
         .as_secs();
     claims.authorize(worker, deployment_id, now)?;
-    Ok(super::did_spelling::defra(&claims.iss).into_owned())
+    Ok(acp::AuthenticatedCaller {
+        did: identity::Did::new(super::did_spelling::defra(&claims.iss).into_owned())?,
+        expires_at: claims.exp,
+    })
 }
 
 /// Why a caller's delegation was refused.
 #[derive(Debug, thiserror::Error)]
 pub(super) enum CallerDelegationError {
+    #[error(transparent)]
+    Identity(#[from] identity::Error),
     #[error(transparent)]
     Token(#[from] vera_crypto::jwt::JwtError),
     #[error("the delegation is not a plain delegation for policy commands")]
@@ -376,7 +381,10 @@ mod caller_tests {
                 .unwrap();
             assert!(is_delegation(&token));
             assert_eq!(
-                caller_of_delegation(&token, WORKER, 9).unwrap(),
+                caller_of_delegation(&token, WORKER, 9)
+                    .unwrap()
+                    .did
+                    .as_str(),
                 signer.did()
             );
             assert!(caller_of_delegation(&token, WORKER, 10).is_err());

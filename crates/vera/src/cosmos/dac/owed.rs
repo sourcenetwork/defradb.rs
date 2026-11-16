@@ -19,11 +19,15 @@ use crate::provider::{ProviderError, SubjectRef};
 fn lapsed(acp: &VeraDocumentACP, actor: &str, token: &str) -> Option<String> {
     match acp.provider.caller_of_delegation(token)? {
         Ok(caller)
-            if acp.provider.canonical_actor(&caller) == acp.provider.canonical_actor(actor) =>
+            if acp.provider.canonical_actor(caller.did.as_str())
+                == acp.provider.canonical_actor(actor) =>
         {
             None
         }
-        Ok(caller) => Some(format!("the recorded delegation is signed by {caller}")),
+        Ok(caller) => Some(format!(
+            "the recorded delegation is signed by {}",
+            caller.did
+        )),
         Err(error) => Some(error.to_string()),
     }
 }

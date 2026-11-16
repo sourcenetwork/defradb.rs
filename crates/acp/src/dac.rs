@@ -12,6 +12,13 @@ use crate::error::{Error, Result};
 use crate::identity::Identity;
 use crate::permission::DocumentPermission;
 
+/// A caller and expiration established by a credential's verification owner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthenticatedCaller {
+    pub did: identity::Did,
+    pub expires_at: u64,
+}
+
 /// One relationship stored on a document: its relation and its subject, as
 /// a DID, `*`, or `resource:object#relation`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -130,7 +137,10 @@ pub trait DocumentACP: MaybeSendSync {
     /// act under now for that DID through this node. `None` when `token` is
     /// not a delegation, or this ACP takes none: the caller is then
     /// authenticated by its identity token.
-    fn caller_of_delegation(&self, _token: &str) -> Option<std::result::Result<Did, String>> {
+    fn caller_of_delegation(
+        &self,
+        _token: &str,
+    ) -> Option<std::result::Result<AuthenticatedCaller, String>> {
         None
     }
 
