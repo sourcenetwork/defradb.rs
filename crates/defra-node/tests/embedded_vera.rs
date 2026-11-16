@@ -10,6 +10,10 @@ use defra_node::{
     QueryRequest, RelationshipChange,
 };
 
+#[cfg(feature = "http")]
+#[path = "embedded_vera/verified.rs"]
+mod verified;
+
 /// The compressed secp256k1 key of the account that administers the deployment.
 const ACCOUNT_KEY: &str = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 const STRANGER: &str = "did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR";

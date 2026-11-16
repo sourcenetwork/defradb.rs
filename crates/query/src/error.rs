@@ -219,6 +219,11 @@ pub enum QueryError {
     #[error("permission denied: {0}")]
     PermissionDenied(String),
 
+    /// A verified write was not staged: the node cannot send the document
+    /// ACP provider what the write owes it as the write's signer.
+    #[error("verified write refused: {0}")]
+    WriteAuthorityUnavailable(String),
+
     /// ACP registration failed during document creation
     #[error("ACP registration failed for document '{doc_id}': {message}")]
     AcpRegistrationFailed { doc_id: String, message: String },

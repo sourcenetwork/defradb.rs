@@ -34,10 +34,12 @@
 \* The provider's own checks (vera.rs `authorize_delegation`) are not modelled:
 \* this is what the Node does before it sends anything.
 \*
-\* The model comes before its code. Rust owners as the code stands:
-\* crates/defra-node/src/lib.rs execute_verified_graph_in_txn;
-\* crates/query/src/runner/turn.rs lent;
-\* crates/vera/src/cosmos/dac.rs owed_authority;
+\* Rust owners: crates/defra-node/src/lib.rs execute_verified_graph_in_txn;
+\* crates/defra-node/src/signer_credential.rs SignerCredential::carried_by;
+\* crates/query/src/runner/remote_authority.rs remote_write_authority;
+\* crates/vera/src/cosmos/dac.rs authority;
+\* crates/vera/src/cosmos/dac/request_bound.rs request_bound, admit_for;
+\* crates/vera/src/vera_rs/bearer/request.rs caller_of_request_delegation;
 \* crates/vera/src/vera_rs/bearer.rs caller_of_delegation (the HTTP door);
 \* crates/vera/src/cosmos/dac/owed.rs token, lapsed;
 \* crates/acp/src/outbox/staging.rs TransactionOutbox::stage;

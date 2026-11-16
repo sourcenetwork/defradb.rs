@@ -62,6 +62,14 @@ pub trait RemoteSigner: Send + Sync {
         Box::pin(std::future::ready(signatures))
     }
 
+    /// Whether this signer signs under an access decision
+    /// ([`SigningAuthorization::Decision`]) that a create obtains from
+    /// document ACP for it first. A signer that takes none says so, and the
+    /// create asks for no decision.
+    fn takes_authorization(&self) -> bool {
+        true
+    }
+
     /// The host context this signer calls, if it calls one. Two signers with
     /// the same context sign through the same host state, which the host
     /// keeps valid while either is held, so the identity store treats them
