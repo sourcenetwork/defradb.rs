@@ -586,6 +586,7 @@ RUNS=(
   "MC_AcpOutbox_Red_UncheckedRefusedKept.cfg AcpOutbox.tla RED" # an unchecked change the provider refuses is parked and holds its tuple (INV_RefusedChecked)
   "MC_AcpOutbox_Red_UncheckedHolds.cfg AcpOutbox.tla RED" # an unchecked change awaiting authority holds the owner's later change of its tuple (INV_UncheckedYields)
   "MC_AcpOutbox_Red_UncheckedPassedKept.cfg AcpOutbox.tla RED" # an unchecked change passed by a later one is kept, reauthorized and lands after it (INV_RevokedAtCommit)
+  "MC_AcpOutbox_Red_TransferWhileOwed.cfg AcpOutbox.tla RED" # the owner changes on the provider while the node still holds the owed registration (INV_NoWidening)
   "MC_RegisterDocOnce_Green.cfg RegisterDocOnce.tla GREEN" # racing registrations of one document: one owner, the winner owns it, one wins
   "MC_RegisterDocOnce_Red_NoValidation.cfg RegisterDocOnce.tla RED" # deciding scan not validated: two owners (INV_OneOwner)
   "MC_RegisterDocOnce_Red_Sentinel.cfg RegisterDocOnce.tla RED" # main before the fix: the identical sentinel write commits, two owners (INV_OneOwner)

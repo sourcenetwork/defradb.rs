@@ -152,6 +152,15 @@
 \*       submission. Only then can a checked change be parked as refused in
 \*       an uncontested document, which the RED configurations about
 \*       refused changes need.
+\*   AssumeNoTransferWhileOwed  the document does not change owner on the
+\*       provider while this node still holds its owed registration. The
+\*       provider registers the creator and the node clears its record in
+\*       two steps. A transfer between them (only the creator can make it,
+\*       since it owns the document then) leaves the node letting the
+\*       creator read, by the owed-registration rule, a document the
+\*       provider now gives to the new owner alone, until the record is
+\*       cleared. INV_NoWidening holds only under this assumption once the
+\*       owner can change.
 \* Assumed without a switch:
 \*   * one request sent twice is executed once (the worker journal and the
 \*     provider's sequence, PendingSubmission.tla). A second effect here is a
@@ -198,7 +207,8 @@ CONSTANTS
   UncheckedYields,           \* what a parked unchecked change does to its tuple: see Holds
   AssumeReceiptRetrievable,  \* TRUE: a landed change's receipt can be read
   AssumeUncontested,         \* TRUE: the provider holds no other owner
-  AssumeOwnerStays           \* TRUE: the provider's owner does not change
+  AssumeOwnerStays,          \* TRUE: the provider's owner does not change
+  AssumeNoTransferWhileOwed  \* TRUE: no owner change while the registration is owed here
 
 ASSUME MaxChanges \in Nat /\ MaxCrashes \in Nat /\ MaxExpiries \in Nat  \* bounds are numbers
 ASSUME Subjects \subseteq {"g", "*"} /\ Subjects # {}       \* known subjects
@@ -315,11 +325,18 @@ Final(Counted) ==
 
 \* The intended state: every committed change applied.
 IntendedTuples == Final({s \in Slots : Committed(s)})
-\* The owner the provider ends with: the creator, unless another holds it.
-SettledOwner == IF AssumeUncontested THEN "c" ELSE "o"
+\* The owner the provider ends with: the creator, unless another holds the
+\* document, from the start or since it took it over.
+SettledOwner == IF AssumeUncontested /\ chainOwner # "o" THEN "c" ELSE "o"
+\* The provider accepts a change only from the document's owner at the time.
+\* So the changes it holds or will hold are those that took effect, and
+\* those still to be delivered whose actor owns the document now.
+Accepted(s) ==
+  /\ Committed(s)                                         \* it counts at all,
+  /\ \/ effects[s] > 0                                    \* and it landed,
+     \/ Live(s) /\ chg[s].actor = SettledOwner            \* or it will, as things stand
 \* The settled state: every committed change the provider accepts applied.
-\* It accepts a change only from the document's owner.
-SettledTuples == Final({s \in Slots : Committed(s) /\ chg[s].actor = SettledOwner})
+SettledTuples == Final({s \in Slots : Accepted(s)})
 
 \* The intended state lets this reader in: the creator, or a tuple.
 IntendedAllows(who) == doc = "exists" /\ (who = "c" \/ Carries(IntendedTuples, who))
@@ -518,21 +535,26 @@ Holds(r, s) ==
   /\ chg[r].subj = chg[s].subj                            \* on the same tuple,
   /\ chk[r] \/ UncheckedYields = "hold"                   \* and was checked (or, bug, not)
 
+\* Sending this change passes that one: an earlier unchecked change of the
+\* same tuple that the provider has not taken. It waits for authority, or
+\* it is still owed and not in flight: the node could not send it, or the
+\* provider answered it with an error. It is removed then, so that it can
+\* never be sent after the change that passed it. The node passes a change
+\* still owed only after trying it; here it may at any time, which covers
+\* that.
+Passed(r, s) ==
+  /\ UncheckedYields = "drop"                             \* the design removes it
+  /\ r < s /\ chg[r].subj = chg[s].subj                   \* earlier, same tuple,
+  /\ st[r] \in {"awaiting", "staged"} /\ ~chk[r]          \* not taken, and unchecked
+
 \* An earlier stored change holds this one back.
 Blocked(s) ==
   \E r \in Slots :
     /\ r < s                                              \* an earlier change
-    /\ \/ InOrder /\ st[r] \in {"staged", "inflight"}     \* that is still to be delivered,
+    /\ \/ /\ InOrder /\ st[r] \in {"staged", "inflight"}  \* that is still to be delivered
+          /\ ~Passed(r, s)                                \* and does not yield,
        \/ Holds(r, s)                                     \* or is parked and holds it,
        \/ ~DrainPastRefused /\ st[r] = "refused"          \* or (bug) was refused
-
-\* Sending this change passes that one: an earlier unchecked change of the
-\* same tuple that waits for authority. It is removed then, so that it can
-\* never be sent after the change that passed it.
-Passed(r, s) ==
-  /\ UncheckedYields = "drop"                             \* the design removes it
-  /\ r < s /\ chg[r].subj = chg[s].subj                   \* earlier, same tuple,
-  /\ st[r] = "awaiting" /\ ~chk[r]                        \* parked and unchecked
 
 \* Where a change the provider refused ends. One whose actor was checked at
 \* staging is parked and kept. One staged unchecked is removed: nobody
@@ -671,6 +693,7 @@ ReceiptLost(s) ==
 \* still be refused.
 OwnerLost ==
   /\ ~AssumeOwnerStays                                    \* the assumption is off
+  /\ AssumeNoTransferWhileOwed => ~owedReg                \* not while the node still owes it
   /\ chainOwner = "c"                                     \* the creator owns it,
   /\ chainOwner' = "o"                                    \* and now another does
   /\ UNCHANGED <<doc, owedReg, st, chg, receipt, effects, checked, chk, rolled,
